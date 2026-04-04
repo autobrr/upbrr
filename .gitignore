@@ -7,3 +7,4 @@ internal/guiapp/assets/*
 dist/
 .trunk/
 *.exe
+/scripts/__pycache__/

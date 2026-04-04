@@ -81,9 +81,12 @@ The app embeds a default YAML config template at `internal/config/defaults/examp
 
 Typical first-run options:
 
+- start the program once and let it create a new blank/default config state automatically
+- if a `config.yaml` already exists in the same directory as the database, the app will automatically import it into the SQLite config store on startup
 - use the embedded defaults and save changes through the GUI
 - pass `--config path/to/config.yaml` to import a YAML file
 - export the current SQLite-backed config with `--export-config path/to/config.yaml`
+- convert an older Upload Assistant `config.py` with `python scripts/convert_ua_config.py path/to/config.py -o config.yaml` and then import or use that YAML
 
 Important: `main_settings.tmdb_api` must be set before the core can run normally.
 
