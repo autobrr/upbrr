@@ -252,7 +252,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 			if ep.ReleaseYear == 0 {
 				continue
 			}
-			if closest == 0 || absInt(ep.ReleaseYear-nowYear) < absInt(closest-nowYear) {
+			if closest == 0 || metautil.AbsInt(ep.ReleaseYear-nowYear) < metautil.AbsInt(closest-nowYear) {
 				closest = ep.ReleaseYear
 			}
 		}
@@ -319,12 +319,12 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		results = run(parsedTitle, searchYear, true)
 	}
 	if len(results) == 0 {
-		if reduced := reduceTitle(filename, 1); reduced != "" {
+		if reduced := metautil.ReduceTitle(filename, 1); reduced != "" {
 			results = run(reduced, searchYear, true)
 		}
 	}
 	if len(results) == 0 {
-		if reduced := reduceTitle(filename, 2); reduced != "" {
+		if reduced := metautil.ReduceTitle(filename, 2); reduced != "" {
 			results = run(reduced, searchYear, true)
 		}
 	}
@@ -344,7 +344,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 			if searchYear > 0 && year != 0 && year != searchYear {
 				return SearchResult{}, nil
 			}
-			imdbID = parseIMDbNumeric(id)
+			imdbID = metautil.ParseIMDbNumeric(id)
 		}
 		if imdbID != 0 {
 			if c.logger != nil {
@@ -356,7 +356,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	}
 
 	if len(results) == 1 {
-		imdbID = parseIMDbNumeric(getStringFromMap(results[0], "node", "title", "id"))
+		imdbID = metautil.ParseIMDbNumeric(getStringFromMap(results[0], "node", "title", "id"))
 		if imdbID != 0 {
 			if c.logger != nil {
 				c.logger.Infof("imdb: search auto-selected single result id=%d", imdbID)
@@ -585,10 +585,10 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 		title := getMapFromMap(node, "title")
 		text := getStringFromMap(title, "titleText", "text")
 		year := getIntFromMap(title, "releaseYear", "year")
-		imdbID := parseIMDbNumeric(getStringFromMap(title, "id"))
+		imdbID := metautil.ParseIMDbNumeric(getStringFromMap(title, "id"))
 		plot := getStringFromMap(title, "plot", "plotText", "plainText")
 		posterURL := getStringFromMap(title, "primaryImage", "url")
-		similarity := similarityRatio(filenameNorm, strings.ToLower(strings.TrimSpace(text)))
+		similarity := metautil.SimilarityRatio(filenameNorm, strings.ToLower(strings.TrimSpace(text)))
 		if similarity >= 0.99 && searchYearInt > 0 && year > 0 {
 			switch year {
 			case searchYearInt:
@@ -630,10 +630,6 @@ func typeMatches(category, titleType string) bool {
 	return !strings.Contains(titleType, "tv series")
 }
 
-func parseIMDbNumeric(value string) int {
-	return metautil.ParseIMDbNumeric(value)
-}
-
 func trimLeadingThe(value string) string {
 	fields := strings.Fields(value)
 	if len(fields) == 0 {
@@ -645,25 +641,6 @@ func trimLeadingThe(value string) string {
 	return ""
 }
 
-func reduceTitle(filename string, drop int) string {
-	words := strings.Fields(filename)
-	if len(words) <= drop {
-		return ""
-	}
-	extensions := map[string]struct{}{"mp4": {}, "mkv": {}, "avi": {}, "webm": {}, "mov": {}, "wmv": {}}
-	filtered := make([]string, 0, len(words))
-	for _, word := range words {
-		if _, ok := extensions[strings.ToLower(word)]; ok {
-			continue
-		}
-		filtered = append(filtered, word)
-	}
-	if len(filtered) <= drop {
-		return ""
-	}
-	return strings.Join(filtered[:len(filtered)-drop], " ")
-}
-
 func fallbackParsedTitle(untouched string) string {
 	trimmed := strings.TrimSpace(untouched)
 	if trimmed == "" {
@@ -671,57 +648,6 @@ func fallbackParsedTitle(untouched string) string {
 	}
 	release := rls.ParseString(trimmed)
 	return strings.TrimSpace(release.Title)
-}
-
-func similarityRatio(a, b string) float64 {
-	if a == "" || b == "" {
-		return 0
-	}
-	matches := float64(matchCount([]rune(a), []rune(b)))
-	if matches == 0 {
-		return 0
-	}
-	total := float64(len([]rune(a)) + len([]rune(b)))
-	return (2 * matches) / total
-}
-
-func matchCount(a, b []rune) int {
-	if len(a) == 0 || len(b) == 0 {
-		return 0
-	}
-	la, lb, length := longestCommonSubstring(a, b)
-	if length == 0 {
-		return 0
-	}
-	return length + matchCount(a[:la], b[:lb]) + matchCount(a[la+length:], b[lb+length:])
-}
-
-func longestCommonSubstring(a, b []rune) (int, int, int) {
-	longest := 0
-	endA := 0
-	endB := 0
-
-	matrix := make([][]int, len(a)+1)
-	for i := range matrix {
-		matrix[i] = make([]int, len(b)+1)
-	}
-
-	for i, aRune := range a {
-		row := i + 1
-		for j, bRune := range b {
-			col := j + 1
-			if aRune == bRune {
-				matrix[row][col] = matrix[row-1][col-1] + 1
-				if matrix[row][col] > longest {
-					longest = matrix[row][col]
-					endA = row
-					endB = col
-				}
-			}
-		}
-	}
-
-	return endA - longest, endB - longest, longest
 }
 
 func escapeGraphQLString(value string) string {
@@ -905,11 +831,4 @@ func toFloat(value any) float64 {
 		}
 	}
 	return 0
-}
-
-func absInt(value int) int {
-	if value < 0 {
-		return -value
-	}
-	return value
 }

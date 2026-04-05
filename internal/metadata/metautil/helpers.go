@@ -66,6 +66,15 @@ func ParseIMDbNumeric(value string) int {
 	return id
 }
 
+func FirstInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
 func FirstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -73,6 +82,54 @@ func FirstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func FirstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func ReduceTitle(filename string, drop int) string {
+	words := strings.Fields(filename)
+	if len(words) <= drop {
+		return ""
+	}
+	extensions := map[string]struct{}{"mp4": {}, "mkv": {}, "avi": {}, "webm": {}, "mov": {}, "wmv": {}}
+	filtered := make([]string, 0, len(words))
+	for _, word := range words {
+		if _, ok := extensions[strings.ToLower(word)]; ok {
+			continue
+		}
+		filtered = append(filtered, word)
+	}
+	if len(filtered) <= drop {
+		return ""
+	}
+	return strings.Join(filtered[:len(filtered)-drop], " ")
+}
+
+func SimilarityRatio(a, b string) float64 {
+	if a == "" || b == "" {
+		return 0
+	}
+	matches := float64(matchCount([]rune(a), []rune(b)))
+	if matches == 0 {
+		return 0
+	}
+	total := float64(len([]rune(a)) + len([]rune(b)))
+	return (2 * matches) / total
+}
+
+func AbsInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func releaseCategory(value string) string {
@@ -85,4 +142,43 @@ func releaseCategory(value string) string {
 	default:
 		return ""
 	}
+}
+
+func matchCount(a, b []rune) int {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	la, lb, length := longestCommonSubstring(a, b)
+	if length == 0 {
+		return 0
+	}
+	return length + matchCount(a[:la], b[:lb]) + matchCount(a[la+length:], b[lb+length:])
+}
+
+func longestCommonSubstring(a, b []rune) (int, int, int) {
+	longest := 0
+	endA := 0
+	endB := 0
+
+	matrix := make([][]int, len(a)+1)
+	for i := range matrix {
+		matrix[i] = make([]int, len(b)+1)
+	}
+
+	for i, aRune := range a {
+		row := i + 1
+		for j, bRune := range b {
+			col := j + 1
+			if aRune == bRune {
+				matrix[row][col] = matrix[row-1][col-1] + 1
+				if matrix[row][col] > longest {
+					longest = matrix[row][col]
+					endA = row
+					endB = col
+				}
+			}
+		}
+	}
+
+	return endA - longest, endB - longest, longest
 }

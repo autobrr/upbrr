@@ -19,6 +19,7 @@ import (
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	"github.com/autobrr/upbrr/internal/metadata/thexem"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
@@ -139,16 +140,16 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		applyResolvedID(&ids.IMDBID, &ids.SourceIMDB, meta.SceneIMDB, "scene")
 	}
 	if !overrideTMDB && !clearedTMDB {
-		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, meta.ArrTMDBID, firstNonEmpty(strings.TrimSpace(meta.ArrSource), "arr"))
+		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, meta.ArrTMDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
 	}
 	if !overrideIMDB && !clearedIMDB {
-		applyResolvedID(&ids.IMDBID, &ids.SourceIMDB, meta.ArrIMDBID, firstNonEmpty(strings.TrimSpace(meta.ArrSource), "arr"))
+		applyResolvedID(&ids.IMDBID, &ids.SourceIMDB, meta.ArrIMDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
 	}
 	if !overrideTVDB && !clearedTVDB {
-		applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, meta.ArrTVDBID, firstNonEmpty(strings.TrimSpace(meta.ArrSource), "arr"))
+		applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, meta.ArrTVDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
 	}
 	if !overrideTVmaze {
-		applyResolvedID(&ids.TVmazeID, &ids.SourceTVmaze, meta.ArrTVmazeID, firstNonEmpty(strings.TrimSpace(meta.ArrSource), "arr"))
+		applyResolvedID(&ids.TVmazeID, &ids.SourceTVmaze, meta.ArrTVmazeID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
 	}
 	if s.logger != nil {
 		s.logger.Debugf(
@@ -1002,7 +1003,7 @@ func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBM
 }
 
 func mapIMDBMetadata(info imdb.Info) *api.IMDBMetadata {
-	imdbID := parseIMDbNumeric(info.IMDbID)
+	imdbID := metautil.ParseIMDbNumeric(info.IMDbID)
 	if imdbID == 0 {
 		return nil
 	}
@@ -1163,7 +1164,7 @@ func mapIMDBSeasons(values []imdb.SeasonSummary) []api.IMDBSeasonSummary {
 }
 
 func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadata) *api.TVDBMetadata {
-	id := firstInt(details.TVDBID, tvdbID)
+	id := metautil.FirstInt(details.TVDBID, tvdbID)
 	if id == 0 {
 		return nil
 	}
@@ -1173,7 +1174,7 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 		year = slugYear
 		yearFromAlias = true
 	}
-	name := firstNonEmptyTrimmed(details.Name, fallbackName)
+	name := metautil.FirstNonEmptyTrimmed(details.Name, fallbackName)
 	aliases := make([]string, 0, len(details.Aliases))
 	for _, alias := range details.Aliases {
 		trimmed := strings.TrimSpace(alias.Name)
@@ -1275,7 +1276,7 @@ func mapTVmazeMetadata(result tvmaze.SearchResult) *api.TVmazeMetadata {
 	}
 	imdbID := result.IMDBID
 	if imdbID == 0 {
-		imdbID = parseIMDbNumeric(selected.Externals.IMDB)
+		imdbID = metautil.ParseIMDbNumeric(selected.Externals.IMDB)
 	}
 	tvdbID := result.TVDBID
 	if tvdbID == 0 {
@@ -1289,8 +1290,8 @@ func mapTVmazeMetadata(result tvmaze.SearchResult) *api.TVmazeMetadata {
 		}
 		genres = append(genres, trimmed)
 	}
-	poster := firstNonEmptyTrimmed(selected.Image.Original, selected.Image.Medium)
-	posterMedium := firstNonEmptyTrimmed(selected.Image.Medium, selected.Image.Original)
+	poster := metautil.FirstNonEmptyTrimmed(selected.Image.Original, selected.Image.Medium)
+	posterMedium := metautil.FirstNonEmptyTrimmed(selected.Image.Medium, selected.Image.Original)
 	return &api.TVmazeMetadata{
 		TVmazeID:       result.SelectedID,
 		Name:           strings.TrimSpace(selected.Name),
@@ -1309,10 +1310,10 @@ func mapTVmazeMetadata(result tvmaze.SearchResult) *api.TVmazeMetadata {
 		Country:        strings.TrimSpace(selected.Country),
 		Network:        strings.TrimSpace(selected.Network.Name),
 		NetworkCountry: strings.TrimSpace(selected.Network.Country),
-		NetworkLogo:    firstNonEmptyTrimmed(selected.Network.Logo, selected.Network.LogoSmall),
+		NetworkLogo:    metautil.FirstNonEmptyTrimmed(selected.Network.Logo, selected.Network.LogoSmall),
 		WebChannel:     strings.TrimSpace(selected.WebChannel.Name),
 		WebCountry:     strings.TrimSpace(selected.WebChannel.Country),
-		WebLogo:        firstNonEmptyTrimmed(selected.WebChannel.Logo, selected.WebChannel.LogoSmall),
+		WebLogo:        metautil.FirstNonEmptyTrimmed(selected.WebChannel.Logo, selected.WebChannel.LogoSmall),
 		Poster:         poster,
 		PosterMedium:   posterMedium,
 		Backdrop:       poster,
@@ -1320,13 +1321,6 @@ func mapTVmazeMetadata(result tvmaze.SearchResult) *api.TVmazeMetadata {
 		IMDBID:         imdbID,
 		TVDBID:         tvdbID,
 	}
-}
-
-func parseIMDbNumeric(value string) int {
-	trimmed := strings.TrimSpace(value)
-	trimmed = strings.TrimPrefix(trimmed, "tt")
-	id, _ := strconv.Atoi(trimmed)
-	return id
 }
 
 func (s *Service) applyTVEpisodeMetadata(
@@ -1347,7 +1341,7 @@ func (s *Service) applyTVEpisodeMetadata(
 		meta.MALID = external.TMDB.MALID
 	}
 	if overrideMAL {
-		meta.MALID = firstInt(*meta.ExternalIDOverrides.MALID, 0)
+		meta.MALID = metautil.FirstInt(*meta.ExternalIDOverrides.MALID, 0)
 	}
 
 	if !isLikelyTV(meta) && !strings.EqualFold(ids.Category, "TV") {
@@ -1386,8 +1380,8 @@ func (s *Service) applyTVEpisodeMetadata(
 						season = mappedSeason
 						episode = mappedEpisode
 					} else {
-						season = firstInt(mappedSeason, season)
-						episode = firstInt(mappedEpisode, episode)
+						season = metautil.FirstInt(mappedSeason, season)
+						episode = metautil.FirstInt(mappedEpisode, episode)
 					}
 				} else if s.logger != nil {
 					s.logger.Debugf("metadata: tmdb daily season/episode lookup returned no exact match")
@@ -1404,8 +1398,8 @@ func (s *Service) applyTVEpisodeMetadata(
 		if absoluteEpisode > 0 {
 			xemClient := thexem.NewClient(nil, s.logger)
 			if mappedSeason, mappedEpisode, err := xemClient.MapAbsoluteEpisode(ctx, ids.TVDBID, absoluteEpisode); err == nil {
-				season = firstInt(mappedSeason, season)
-				episode = firstInt(mappedEpisode, episode)
+				season = metautil.FirstInt(mappedSeason, season)
+				episode = metautil.FirstInt(mappedEpisode, episode)
 			} else if s.logger != nil {
 				s.logger.Debugf("metadata: thexem absolute mapping failed: %v", err)
 			}
@@ -1481,7 +1475,7 @@ func (s *Service) applyTVEpisodeMetadata(
 						external.TVDB.EpisodeNumber = match.EpisodeNumber
 						external.TVDB.EpisodeName = strings.TrimSpace(match.EpisodeName)
 						external.TVDB.EpisodeOverview = strings.TrimSpace(match.Overview)
-						external.TVDB.EpisodeAired = firstNonEmptyTrimmed(match.Aired, query.AiredDate)
+						external.TVDB.EpisodeAired = metautil.FirstNonEmptyTrimmed(match.Aired, query.AiredDate)
 						if isEnglishLanguage(external.TVDB.OriginalLanguage) {
 							external.TVDB.EpisodeNameEnglish = strings.TrimSpace(match.EpisodeName)
 							external.TVDB.EpisodeOverviewEnglish = strings.TrimSpace(match.Overview)
@@ -1492,13 +1486,13 @@ func (s *Service) applyTVEpisodeMetadata(
 									s.logger.Debugf("metadata: tvdb episode english translation lookup failed: %v", translationErr)
 								}
 							} else {
-								external.TVDB.EpisodeNameEnglish = firstNonEmptyTrimmed(translated.Name, external.TVDB.EpisodeNameEnglish)
-								external.TVDB.EpisodeOverviewEnglish = firstNonEmptyTrimmed(translated.Overview, external.TVDB.EpisodeOverviewEnglish)
+								external.TVDB.EpisodeNameEnglish = metautil.FirstNonEmptyTrimmed(translated.Name, external.TVDB.EpisodeNameEnglish)
+								external.TVDB.EpisodeOverviewEnglish = metautil.FirstNonEmptyTrimmed(translated.Overview, external.TVDB.EpisodeOverviewEnglish)
 							}
 						}
 						external.TVDB.HasEnglish = tvdbHasEnglishContent(external.TVDB)
 						englishTVDBEpisodeTitle = strings.TrimSpace(external.TVDB.EpisodeNameEnglish)
-						preferredTVDBEpisodeTitle = firstNonEmptyTrimmed(external.TVDB.EpisodeNameEnglish, preferredTVDBEpisodeTitle)
+						preferredTVDBEpisodeTitle = metautil.FirstNonEmptyTrimmed(external.TVDB.EpisodeNameEnglish, preferredTVDBEpisodeTitle)
 					}
 					if englishTVDBEpisodeTitle != "" {
 						tvdbEpisodeTitle = englishTVDBEpisodeTitle
@@ -1585,9 +1579,9 @@ func (s *Service) applyTVEpisodeMetadata(
 	meta.EpisodeInt = episode
 	meta.SeasonStr = seasonep.FormatSeason(season)
 	meta.EpisodeStr = seasonep.FormatEpisode(episode)
-	meta.EpisodeYear = firstInt(episodeYear, meta.EpisodeYear)
-	meta.EpisodeTitle = sanitizeEpisodeTitle(firstNonEmptyTrimmed(episodeTitle, tvdbEpisodeTitle, tvmazeEpisodeTitle, tmdbEpisodeTitle))
-	meta.EpisodeOverview = firstNonEmptyTrimmed(episodeOverview, tvdbEpisodeOverview, tvmazeEpisodeOverview, tmdbEpisodeOverview)
+	meta.EpisodeYear = metautil.FirstInt(episodeYear, meta.EpisodeYear)
+	meta.EpisodeTitle = sanitizeEpisodeTitle(metautil.FirstNonEmptyTrimmed(episodeTitle, tvdbEpisodeTitle, tvmazeEpisodeTitle, tmdbEpisodeTitle))
+	meta.EpisodeOverview = metautil.FirstNonEmptyTrimmed(episodeOverview, tvdbEpisodeOverview, tvmazeEpisodeOverview, tmdbEpisodeOverview)
 
 	if s.logger != nil && (initialSeason != season || initialEpisode != episode || initialSeasonStr != meta.SeasonStr || initialEpisodeStr != meta.EpisodeStr) {
 		s.logger.Debugf(
@@ -1617,15 +1611,6 @@ func hasManualSeasonEpisodeOverrides(overrides api.ReleaseNameOverrides) bool {
 		return true
 	}
 	return overrides.Episode != nil && strings.TrimSpace(*overrides.Episode) != ""
-}
-
-func firstInt(values ...int) int {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
-	}
-	return 0
 }
 
 func isEnglishLanguage(language string) bool {
@@ -1690,16 +1675,6 @@ func parseYearFromSlug(value string) int {
 		return 0
 	}
 	return year
-}
-
-func firstNonEmptyTrimmed(values ...string) string {
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func isGenericEpisodeTitle(value string) bool {

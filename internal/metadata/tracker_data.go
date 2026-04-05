@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -340,7 +341,7 @@ func (s *Service) lookupTrackerData(
 		record.TVDBID = result.TVDBID
 		record.MALID = result.MALID
 		record.Category = normalizeUnit3DCategory(result.Category)
-		record.InfoHash = firstNonEmpty(record.InfoHash, result.InfoHash)
+		record.InfoHash = metautil.FirstNonEmptyTrimmed(record.InfoHash, result.InfoHash)
 		record.Description = result.Description
 		record.ImageURLs = downloadedImages
 		record.Filename = result.FileName
@@ -677,8 +678,8 @@ func applyTrackerDataResult(record *api.TrackerMetadata, result trackerdata.Resu
 	if record == nil {
 		return
 	}
-	record.TrackerID = firstNonEmpty(strings.TrimSpace(result.TrackerID), strings.TrimSpace(record.TrackerID))
-	record.InfoHash = firstNonEmpty(strings.TrimSpace(record.InfoHash), strings.TrimSpace(result.InfoHash))
+	record.TrackerID = metautil.FirstNonEmptyTrimmed(result.TrackerID, record.TrackerID)
+	record.InfoHash = metautil.FirstNonEmptyTrimmed(record.InfoHash, result.InfoHash)
 	record.TMDBID = result.TMDBID
 	record.IMDBID = result.IMDBID
 	record.TVDBID = result.TVDBID
@@ -877,14 +878,4 @@ func hasUnit3DData(result trackerdata.Result) bool {
 
 func hasTrackerMetadataIDs(record api.TrackerMetadata) bool {
 	return record.TMDBID != 0 || record.IMDBID != 0 || record.TVDBID != 0 || record.MALID != 0
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }

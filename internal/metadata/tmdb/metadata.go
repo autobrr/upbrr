@@ -567,7 +567,7 @@ func shouldKeepAKA(title, aka string, year int) bool {
 	if cleanAKA == "" {
 		return false
 	}
-	if similarityRatio(cleanTitle, cleanAKA) >= 0.7 {
+	if metautil.SimilarityRatio(cleanTitle, cleanAKA) >= 0.7 {
 		return false
 	}
 	if year > 0 {

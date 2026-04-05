@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -84,7 +85,7 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		dvdDetails.VOBSet = meta.DVDVOBSet
 		dvdDetails.MediaInfoJSON = meta.MediaInfoJSONPath
 		dvdDetails.MediaInfoText = meta.MediaInfoTextPath
-		dvdDetails.VOBMediaInfoRaw = firstNonEmpty(strings.TrimSpace(meta.DVDVOBMediaInfoText), strings.TrimSpace(meta.DVDVOBMediaInfoJSON))
+		dvdDetails.VOBMediaInfoRaw = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), strings.TrimSpace(meta.DVDVOBMediaInfoJSON))
 		dvdDetails.UpdatedAt = time.Now().UTC()
 		if err := s.repo.SaveDVDMediaInfo(ctx, dvdDetails); err != nil {
 			return api.PreparedMetadata{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
@@ -482,7 +483,7 @@ func normalizeAudioFormat(track map[string]any) string {
 			return "MP3"
 		}
 	}
-	value := firstNonEmpty(commercial, format)
+	value := metautil.FirstNonEmptyTrimmed(commercial, format)
 	lower := strings.ToLower(value)
 
 	switch {
@@ -804,7 +805,7 @@ func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo) string {
 		compat := trackString(track, "HDR_Format_Compatibility")
 		formatStr := trackString(track, "HDR_Format_String")
 		format := trackString(track, "HDR_Format")
-		hdrFormat := firstNonEmpty(compat, formatStr, format)
+		hdrFormat := metautil.FirstNonEmptyTrimmed(compat, formatStr, format)
 		upperFormat := strings.ToUpper(hdrFormat)
 		switch {
 		case strings.Contains(upperFormat, "HDR10+"):

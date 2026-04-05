@@ -255,7 +255,7 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 	}
 
 	metadata := SeriesMetadata{
-		TVDBID:           firstInt(resp.Data.ID, seriesID),
+		TVDBID:           metautil.FirstInt(resp.Data.ID, seriesID),
 		Name:             strings.TrimSpace(resp.Data.Name),
 		Overview:         strings.TrimSpace(resp.Data.Overview),
 		NameEnglish:      deriveEnglishSeriesName(resp.Data, language),
@@ -285,10 +285,10 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 				}
 			} else {
 				if needsEnglishName {
-					metadata.NameEnglish = firstNonEmptyTrimmed(translated.Name, metadata.NameEnglish)
+					metadata.NameEnglish = metautil.FirstNonEmptyTrimmed(translated.Name, metadata.NameEnglish)
 				}
 				if needsEnglishOverview {
-					metadata.OverviewEnglish = firstNonEmptyTrimmed(translated.Overview, metadata.OverviewEnglish)
+					metadata.OverviewEnglish = metautil.FirstNonEmptyTrimmed(translated.Overview, metadata.OverviewEnglish)
 				}
 			}
 		}
@@ -576,11 +576,11 @@ func extractTVDBAirsSchedule(data seriesExtendedDataResponse) ([]string, string,
 		}
 
 		if airsTime == "" {
-			airsTime = firstNonEmptyTrimmed(candidate.time, candidate.timeAlt, candidate.timeUTC, candidate.airTime)
+			airsTime = metautil.FirstNonEmptyTrimmed(candidate.time, candidate.timeAlt, candidate.timeUTC, candidate.airTime)
 		}
 
 		if airsTimezone == "" {
-			if value := firstNonEmptyTrimmed(candidate.timezone, candidate.timezoneAlt, candidate.timeZone, candidate.zone); value != "" {
+			if value := metautil.FirstNonEmptyTrimmed(candidate.timezone, candidate.timezoneAlt, candidate.timeZone, candidate.zone); value != "" {
 				airsTimezone = value
 				airsTimezoneSource = "field"
 			}
@@ -754,16 +754,6 @@ func (c *Client) fetchSeriesTranslation(ctx context.Context, seriesID int, langu
 	return resp.Data, nil
 }
 
-func firstNonEmptyTrimmed(values ...string) string {
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
 func containsEnglishTranslation(values []string) bool {
 	for _, value := range values {
 		if isEnglishCode(value) {
@@ -853,15 +843,6 @@ func extractPosterURL(data seriesExtendedDataResponse) string {
 		}
 	}
 	return ""
-}
-
-func firstInt(values ...int) int {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
-	}
-	return 0
 }
 
 func episodeFromResponse(item episodeResponse) Episode {

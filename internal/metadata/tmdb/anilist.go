@@ -74,7 +74,7 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 			if clean == "" {
 				continue
 			}
-			score = maxFloat(score, similarityRatio(clean, searchName))
+			score = maxFloat(score, metautil.SimilarityRatio(clean, searchName))
 		}
 		if expectedSeason != 0 && seasonFromTitle == expectedSeason {
 			if score > bestSeasonScore {
