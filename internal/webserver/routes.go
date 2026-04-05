@@ -75,8 +75,9 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 		return
 	}
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+		RetainLogin bool   `json:"retainLogin"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -86,7 +87,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	current, err := s.sessions.Create(req.Username)
+	current, err := s.sessions.Create(req.Username, req.RetainLogin)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -111,8 +112,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		return
 	}
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+		RetainLogin bool   `json:"retainLogin"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -127,7 +129,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	current, err := s.sessions.Create(record.Username)
+	current, err := s.sessions.Create(record.Username, req.RetainLogin)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -147,7 +149,13 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	s.sessions.Delete(current.ID)
+	if err := s.sessions.Delete(current.ID); err != nil {
+		if s != nil && s.backend != nil && s.backend.logger != nil {
+			s.backend.logger.Errorf("web: failed to delete session during logout: %v", err)
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to clear session"})
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
@@ -223,15 +231,19 @@ func (s *Server) currentSession(r *http.Request) (session, bool) {
 }
 
 func (s *Server) writeSessionCookie(w http.ResponseWriter, r *http.Request, current session) {
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    current.ID,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   s.requestScheme(r) == "https",
-		Expires:  current.ExpiresAt,
-	})
+	}
+	if current.Retain {
+		cookie.Expires = current.ExpiresAt
+		cookie.MaxAge = max(1, int(time.Until(current.ExpiresAt).Seconds()))
+	}
+	http.SetCookie(w, cookie)
 }
 
 func (s *Server) allowAuthRequest(r *http.Request) bool {
