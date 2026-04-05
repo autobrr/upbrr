@@ -26,6 +26,7 @@ export default function WebRoot() {
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [retainLogin, setRetainLogin] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -79,8 +80,8 @@ export default function WebRoot() {
     setError("");
     try {
       const payload = status.needsSetup
-        ? await browserAuth.bootstrap(username, password)
-        : await browserAuth.login(username, password);
+        ? await browserAuth.bootstrap(username, password, retainLogin)
+        : await browserAuth.login(username, password, retainLogin);
       const next = { ...initialStatus, ...(payload as Partial<AuthStatus>) };
       setStatus(next);
       updateBrowserCSRFToken(next.csrfToken || "");
@@ -109,6 +110,10 @@ export default function WebRoot() {
         <label>
           <span>Password</span>
           <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={status.needsSetup ? "new-password" : "current-password"} />
+        </label>
+        <label className="web-auth-card__checkbox">
+          <input type="checkbox" checked={retainLogin} onChange={(event) => setRetainLogin(event.target.checked)} />
+          <span>Keep me signed in on this device</span>
         </label>
         {error ? <p className="web-auth-card__error">{error}</p> : null}
         <button type="button" onClick={submit} disabled={submitting || !username.trim() || !password.trim()}>

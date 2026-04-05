@@ -1273,6 +1273,20 @@ h2 {
   color: inherit;
 }
 
+.web-auth-card__checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 0.75rem;
+  color: rgba(226, 232, 240, 0.9);
+}
+
+.web-auth-card__checkbox input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  padding: 0;
+}
+
 .web-auth-card button {
   border: none;
   border-radius: 1rem;

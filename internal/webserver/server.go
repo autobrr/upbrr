@@ -63,19 +63,26 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessions, err := newSessionManager(cliCfg.SessionTTL, cfg.MainSettings.DBPath)
+	if err != nil {
+		return nil, err
+	}
 	srv := &Server{
 		cfg:            cfg,
 		cliCfg:         cliCfg,
 		backend:        backend,
 		picker:         newNativePicker(),
 		auth:           authStore,
-		sessions:       newSessionManager(cliCfg.SessionTTL),
+		sessions:       sessions,
 		hub:            hub,
 		authLimiter:    newFixedWindowLimiter(10, 5*time.Minute),
 		generalLimiter: newFixedWindowLimiter(300, time.Minute),
 		trustedProxies: parseTrustedProxies(cliCfg.TrustedProxies),
 		assets:         assets,
 	}
+	sessions.SetLogger(func(format string, args ...any) {
+		backend.logger.Warnf(format, args...)
+	})
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 	srv.server = &http.Server{

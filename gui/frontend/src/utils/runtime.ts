@@ -188,8 +188,8 @@ export const browserAuth = {
     }
     return payload || {};
   },
-  bootstrap: (username: string, password: string) => postJSON("/api/auth/bootstrap", { username, password }),
-  login: (username: string, password: string) => postJSON("/api/auth/login", { username, password }),
+  bootstrap: (username: string, password: string, retainLogin: boolean) => postJSON("/api/auth/bootstrap", { username, password, retainLogin }),
+  login: (username: string, password: string, retainLogin: boolean) => postJSON("/api/auth/login", { username, password, retainLogin }),
   logout: () => postJSON("/api/auth/logout")
 };
 
