@@ -453,23 +453,24 @@ func readBDInfoNoErr(_ string, meta api.PreparedMetadata) string {
 	if summary, ok := meta.BDInfo["summary"].(string); ok {
 		return strings.TrimSpace(summary)
 	}
-	for _, key := range []string{"BD_SUMMARY_00.txt", "BD_SUMMARY_EXT.txt"} {
-		if infoPath := guessBDInfoPath(meta, key); infoPath != "" {
-			payload, err := os.ReadFile(infoPath)
-			if err == nil {
-				return strings.TrimSpace(string(payload))
-			}
+	if infoPath := guessBDInfoPath(meta); infoPath != "" {
+		payload, err := os.ReadFile(infoPath)
+		if err == nil {
+			return strings.TrimSpace(string(payload))
 		}
 	}
 	return ""
 }
 
-func guessBDInfoPath(meta api.PreparedMetadata, name string) string {
-	base := strings.TrimSpace(meta.MediaInfoTextPath)
-	if base == "" {
+func guessBDInfoPath(meta api.PreparedMetadata) string {
+	if len(meta.SelectedBDMVPlaylists) == 0 {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(base), name)
+	base := strings.TrimSpace(meta.MediaInfoTextPath)
+	if base != "" {
+		return filepath.Join(filepath.Dir(base), paths.BDMVSummaryFilename(paths.PrimaryBDMVPlaylist(meta)))
+	}
+	return ""
 }
 
 func normalizeResolution(value string) string {

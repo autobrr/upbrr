@@ -75,6 +75,7 @@ type cliOptions struct {
 	PersonalRelease   bool
 	StreamOptimized   bool
 	WebDV             bool
+	ConfirmBDMVRescan bool
 	NotAnime          bool
 	Anon              bool
 	Draft             bool
@@ -501,6 +502,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 		ImageHostOverrides:     buildImageHostOverrides(opts, visited),
 		ScreenshotOverrides:    buildScreenshotOverrides(opts, visited),
 		TorrentOverrides:       buildTorrentOverrides(opts, visited),
+		ConfirmBDMVRescan:      opts.ConfirmBDMVRescan,
 	}
 	if req.Execution.SiteUploadTracker != "" {
 		req.Trackers = []string{req.Execution.SiteUploadTracker}

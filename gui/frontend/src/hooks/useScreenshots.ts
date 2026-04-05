@@ -375,37 +375,40 @@ export const useScreenshots = ({
   };
 
   // Delete a set of images
-  const deleteImageSet = async (images: ScreenshotImage[], label: string): Promise<ScreenshotImage[]> => {
-    if (images.length === 0) return [];
-    const deleter = globalThis.go?.guiapp?.App?.DeleteScreenshot;
-    if (!deleter || !path.trim()) {
-      return [] as ScreenshotImage[];
-    }
-    if (!globalThis.confirm(`Delete all ${label} images from the temp folder?`)) {
-      return [] as ScreenshotImage[];
-    }
-
-    const deleted: ScreenshotImage[] = [];
-    const failures: string[] = [];
-    for (const image of images) {
-      try {
-        await deleter(
-          path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          image.Path
-        );
-        deleted.push(image);
-      } catch (err) {
-        failures.push(String(err));
+  const deleteImageSet = useCallback(
+    async (images: ScreenshotImage[], label: string): Promise<ScreenshotImage[]> => {
+      if (images.length === 0) return [];
+      const deleter = globalThis.go?.guiapp?.App?.DeleteScreenshot;
+      if (!deleter || !path.trim()) {
+        return [] as ScreenshotImage[];
       }
-    }
+      if (!globalThis.confirm(`Delete all ${label} images from the temp folder?`)) {
+        return [] as ScreenshotImage[];
+      }
 
-    if (failures.length > 0) {
-      setScreenshotsError(failures[0]);
-    }
-    return deleted;
-  };
+      const deleted: ScreenshotImage[] = [];
+      const failures: string[] = [];
+      for (const image of images) {
+        try {
+          await deleter(
+            path.trim(),
+            normalizeOverrides(idOverrideState?.overrides || {}),
+            normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+            image.Path
+          );
+          deleted.push(image);
+        } catch (err) {
+          failures.push(String(err));
+        }
+      }
+
+      if (failures.length > 0) {
+        setScreenshotsError(failures[0]);
+      }
+      return deleted;
+    },
+    [path, idOverrideState, releaseOverrideState]
+  );
 
   const deleteTrackerImageURL = useCallback(
     async (url: string) => {
@@ -639,7 +642,7 @@ export const useScreenshots = ({
     if (removedFinal) {
       await saveFinalSelections(finalImagesRef.current);
     }
-  }, [trackerImageURLs, handleDeleteTrackerImageURL]);
+  }, [trackerImageURLs, handleDeleteTrackerImageURL, saveFinalSelections]);
 
   // Reset all screenshot state
   const resetScreenshotState = useCallback(() => {

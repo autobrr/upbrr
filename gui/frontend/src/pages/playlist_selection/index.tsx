@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { PlaylistInfo } from "../../types";
 import "./styles.css";
 
@@ -29,11 +29,7 @@ const PlaylistSelectionPage = ({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    discoverPlaylists();
-  }, [path]);
-
-  const discoverPlaylists = async () => {
+  const discoverPlaylists = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
@@ -57,7 +53,11 @@ const PlaylistSelectionPage = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [path]);
+
+  useEffect(() => {
+    discoverPlaylists();
+  }, [discoverPlaylists]);
 
   const handleTogglePlaylist = (index: number) => {
     setUseAll(false);

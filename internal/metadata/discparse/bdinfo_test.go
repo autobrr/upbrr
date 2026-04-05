@@ -3,7 +3,10 @@
 
 package discparse
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseBDInfoFiles(t *testing.T) {
 	input := "00001.m2ts        00:10:00     1,000,000,000  25.00 Mbps"
@@ -104,5 +107,102 @@ func TestSplitBDInfoReportExtSummaryUsesSecondCodeMarker(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tt.want, got)
 			}
 		})
+	}
+}
+
+func TestNormalizePlaylistName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "00001", want: "00001.MPLS"},
+		{input: "00002.mpls", want: "00002.MPLS"},
+		{input: `BDMV\PLAYLIST\00003.mpls`, want: "00003.MPLS"},
+	}
+
+	for _, tt := range tests {
+		if got := NormalizePlaylistName(tt.input); got != tt.want {
+			t.Fatalf("normalize %q: expected %q, got %q", tt.input, tt.want, got)
+		}
+	}
+}
+
+func TestExtractPlaylistReports(t *testing.T) {
+	report := strings.Join([]string{
+		"header",
+		"********************",
+		"PLAYLIST: 00001.MPLS",
+		"********************",
+		"[code]",
+		"table one",
+		"[/code]",
+		"[code]",
+		"DISC INFO:",
+		"extended summary one",
+		"FILES:",
+		"-------------",
+		"00001.m2ts        00:10:00     1,000,000,000",
+		"CHAPTERS:",
+		"QUICK SUMMARY:",
+		"Playlist: 00001.MPLS",
+		"Disc Label: DISCONE",
+		"********************",
+		"FILES:",
+		"[/code]",
+		"********************",
+		"PLAYLIST: 00002.MPLS",
+		"********************",
+		"[code]",
+		"table two",
+		"[/code]",
+		"[code]",
+		"DISC INFO:",
+		"extended summary two",
+		"FILES:",
+		"-------------",
+		"00002.m2ts        00:20:00     2,000,000,000",
+		"CHAPTERS:",
+		"QUICK SUMMARY:",
+		"Playlist: 00002.MPLS",
+		"Disc Label: DISCTWO",
+		"********************",
+		"FILES:",
+		"[/code]",
+	}, "\n")
+
+	reports, err := ExtractPlaylistReports(report, []string{"00002.mpls", "00001"})
+	if err != nil {
+		t.Fatalf("extract reports: %v", err)
+	}
+	if len(reports) != 2 {
+		t.Fatalf("expected 2 reports, got %d", len(reports))
+	}
+	if reports[0].Playlist != "00002.MPLS" || !strings.Contains(reports[0].Summary, "DISCTWO") {
+		t.Fatalf("unexpected first report: %#v", reports[0])
+	}
+	if reports[1].Playlist != "00001.MPLS" || !strings.Contains(reports[1].ExtSummary, "extended summary one") {
+		t.Fatalf("unexpected second report: %#v", reports[1])
+	}
+}
+
+func TestSplitBDInfoPlaylistReportsErrorsOnDuplicateNormalizedPlaylist(t *testing.T) {
+	report := strings.Join([]string{
+		"********************",
+		"PLAYLIST: 00001.MPLS",
+		"********************",
+		"[code]",
+		"one",
+		"[/code]",
+		"********************",
+		"PLAYLIST: BDMV/PLAYLIST/00001",
+		"********************",
+		"[code]",
+		"two",
+		"[/code]",
+	}, "\n")
+
+	_, err := SplitBDInfoPlaylistReports(report)
+	if err == nil || !strings.Contains(err.Error(), "duplicate playlist block 00001.MPLS") {
+		t.Fatalf("expected duplicate playlist error, got %v", err)
 	}
 }

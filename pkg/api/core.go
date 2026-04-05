@@ -42,6 +42,7 @@ type Request struct {
 	TrackerQuestionnaireAnswers  map[string]map[string]string // keyed by tracker, then questionnaire field key
 	PlaylistSelections           map[string][]string          // keyed by source path, value is selected playlist files
 	PlaylistSelectionsUseAll     map[string]bool              // keyed by source path, value is use-all flag
+	ConfirmBDMVRescan            bool
 }
 
 type ExecutionOptions struct {

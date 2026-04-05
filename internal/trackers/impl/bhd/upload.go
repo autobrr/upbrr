@@ -310,7 +310,7 @@ func resolveMediaPath(meta api.PreparedMetadata, dbPath string) string {
 		if err != nil {
 			return ""
 		}
-		return filepath.Join(tmpDir, "BD_SUMMARY_00.txt")
+		return paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
 	default:
 		return strings.TrimSpace(meta.MediaInfoTextPath)
 	}

@@ -96,7 +96,7 @@ func TestContextCancellation(t *testing.T) {
 	cancel() // Cancel immediately
 
 	// ExecuteForPlaylist should respect context cancellation
-	_, err := svc.ExecuteForPlaylist(ctx, "/nonexistent", "00001.mpls", "/nonexistent")
+	_, err := svc.ExecuteForPlaylist(ctx, "/nonexistent", "00001.mpls", "/nonexistent/BD_SUMMARY_00001.MPLS.txt")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled, got %v", err)
 	}
@@ -104,8 +104,7 @@ func TestContextCancellation(t *testing.T) {
 
 func TestExecuteForPlaylistUsesInProcessRunner(t *testing.T) {
 	tmpDir := t.TempDir()
-	outputDir := filepath.Join(tmpDir, "out")
-	expectedOutput := filepath.Join(outputDir, "BD_SUMMARY_00.txt")
+	expectedOutput := filepath.Join(tmpDir, "out", "BD_SUMMARY_00001.MPLS.txt")
 
 	var captured runRequest
 	originalRunner := runBDInfo
@@ -125,7 +124,7 @@ func TestExecuteForPlaylistUsesInProcessRunner(t *testing.T) {
 	ctx := WithProgressReporter(context.Background(), func(_ string) {
 		reported = true
 	})
-	outputPath, err := svc.ExecuteForPlaylist(ctx, `D:\Media\Movie\BDMV`, "00001", outputDir)
+	outputPath, err := svc.ExecuteForPlaylist(ctx, `D:\Media\Movie\BDMV`, "00001", expectedOutput)
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -143,6 +142,9 @@ func TestExecuteForPlaylistUsesInProcessRunner(t *testing.T) {
 	if captured.ReportPath != expectedOutput {
 		t.Fatalf("expected output path in runner request, got: %s", captured.ReportPath)
 	}
+	if !captured.SummaryOnly {
+		t.Fatalf("expected summary-only mode for playlist scans")
+	}
 	if captured.Reporter == nil {
 		t.Fatalf("expected reporter to be passed to runner")
 	}
@@ -151,9 +153,46 @@ func TestExecuteForPlaylistUsesInProcessRunner(t *testing.T) {
 	}
 }
 
-func TestExecuteForPlaylistNormalizesLowercaseAndPathPlaylist(t *testing.T) {
+func TestExecuteFullScanUsesFullReportMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputDir := filepath.Join(tmpDir, "out")
+	expectedOutput := filepath.Join(outputDir, "BD_FULL.txt")
+
+	var captured runRequest
+	originalRunner := runBDInfo
+	runBDInfo = func(ctx context.Context, req runRequest) (bdrunner.Result, error) {
+		captured = req
+		return bdrunner.Result{
+			Report:     "full report content",
+			ReportPath: req.ReportPath,
+		}, nil
+	}
+	t.Cleanup(func() {
+		runBDInfo = originalRunner
+	})
+
+	svc := New(api.NopLogger{})
+	result, err := svc.ExecuteFullScan(context.Background(), `D:\Media\Movie\BDMV`, outputDir)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	if result.ReportPath != expectedOutput {
+		t.Fatalf("expected output %s, got %s", expectedOutput, result.ReportPath)
+	}
+	if result.ReportText != "full report content" {
+		t.Fatalf("unexpected report text: %q", result.ReportText)
+	}
+	if captured.PlaylistName != "" {
+		t.Fatalf("expected no playlist filter for full scan, got %q", captured.PlaylistName)
+	}
+	if captured.SummaryOnly {
+		t.Fatalf("expected full report mode for multi-playlist scans")
+	}
+}
+
+func TestExecuteForPlaylistNormalizesLowercaseAndPathPlaylist(t *testing.T) {
+	tmpDir := t.TempDir()
 
 	tests := []struct {
 		name         string
@@ -181,7 +220,8 @@ func TestExecuteForPlaylistNormalizesLowercaseAndPathPlaylist(t *testing.T) {
 			})
 
 			svc := New(api.NopLogger{})
-			if _, err := svc.ExecuteForPlaylist(context.Background(), `D:\Media\Movie\BDMV`, tc.playlistFile, outputDir); err != nil {
+			outputPath := filepath.Join(tmpDir, tc.want+".txt")
+			if _, err := svc.ExecuteForPlaylist(context.Background(), `D:\Media\Movie\BDMV`, tc.playlistFile, outputPath); err != nil {
 				t.Fatalf("execute failed: %v", err)
 			}
 

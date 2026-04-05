@@ -250,7 +250,10 @@ func loadBDInfo(tmpRoot string, meta api.PreparedMetadata) (*discparse.BDInfo, e
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(tmpDir, "BD_SUMMARY_00.txt")
+	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
 	payload, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

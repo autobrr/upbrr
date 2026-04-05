@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -239,7 +240,10 @@ func loadBDInfo(meta api.PreparedMetadata, dbPath string) *discparse.BDInfo {
 	if err != nil {
 		return nil
 	}
-	path := filepath.Join(tmpDir, "BD_SUMMARY_00.txt")
+	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
 	payload, err := os.ReadFile(path)
 	if err != nil {
 		return nil
@@ -944,7 +948,10 @@ func videoEncodeFromMedia(doc mediaInfoDoc, typeValue string) (string, string, b
 }
 
 func editionFromMeta(meta api.PreparedMetadata) (string, string, bool) {
-	edition := strings.TrimSpace(meta.Edition)
+	edition := strings.TrimSpace(resolveMultiPlaylistEdition(meta))
+	if edition == "" {
+		edition = strings.TrimSpace(meta.Edition)
+	}
 	if edition == "" && len(meta.Release.Edition) > 0 {
 		edition = strings.TrimSpace(strings.Join(meta.Release.Edition, " "))
 	}
@@ -958,6 +965,77 @@ func editionFromMeta(meta api.PreparedMetadata) (string, string, bool) {
 		edition = strings.ReplaceAll(edition, "  ", " ")
 	}
 	return edition, repack, false
+}
+
+func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
+	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		return ""
+	}
+	if len(meta.SelectedBDMVPlaylists) < 2 || meta.ExternalMetadata.IMDB == nil || len(meta.ExternalMetadata.IMDB.EditionDetails) == 0 {
+		return ""
+	}
+
+	const leewaySeconds = 50.0
+	withAttributes := make(map[string]struct{})
+	withoutAttributes := false
+
+	for _, playlist := range meta.SelectedBDMVPlaylists {
+		if playlist.Duration <= 0 {
+			continue
+		}
+
+		var best *api.IMDBEditionDetail
+		bestDiff := leewaySeconds + 1
+		for _, detail := range meta.ExternalMetadata.IMDB.EditionDetails {
+			diff := absFloat(playlist.Duration - float64(detail.Seconds))
+			if diff > leewaySeconds {
+				continue
+			}
+			if best == nil || diff < bestDiff {
+				copy := detail
+				best = &copy
+				bestDiff = diff
+			}
+		}
+		if best == nil {
+			continue
+		}
+		if len(best.Attributes) > 0 {
+			name := strings.TrimSpace(strings.Join(best.Attributes, " "))
+			if name != "" {
+				withAttributes[name] = struct{}{}
+			}
+			continue
+		}
+		withoutAttributes = true
+	}
+
+	if len(withAttributes) == 0 {
+		return ""
+	}
+
+	editions := make([]string, 0, len(withAttributes)+1)
+	if withoutAttributes {
+		editions = append(editions, "Theatrical")
+	}
+	attributeNames := make([]string, 0, len(withAttributes))
+	for name := range withAttributes {
+		attributeNames = append(attributeNames, name)
+	}
+	sort.Strings(attributeNames)
+	editions = append(editions, attributeNames...)
+
+	if len(editions) == 1 {
+		return editions[0]
+	}
+	return fmt.Sprintf("%din1 %s", len(editions), strings.Join(editions, " / "))
+}
+
+func absFloat(value float64) float64 {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func validateMediaInfoSettings(doc mediaInfoDoc) bool {

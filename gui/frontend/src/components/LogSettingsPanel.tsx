@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventsOn } from "../utils/runtime";
 
 type LogEntry = {
@@ -98,7 +98,7 @@ export default function LogSettingsPanel({
     }
   };
 
-  const appendEntries = (incoming: LogEntry[]) => {
+  const appendEntries = useCallback((incoming: LogEntry[]) => {
     if (incoming.length === 0) return;
     setEntries((prev) => {
       let next = [...prev, ...incoming];
@@ -110,7 +110,7 @@ export default function LogSettingsPanel({
       }
       return next;
     });
-  };
+  }, [autoScroll]);
 
   useEffect(() => {
     const fetchLogPath = async () => {
@@ -141,7 +141,7 @@ export default function LogSettingsPanel({
       }
     };
     fetchRecent();
-  }, []);
+  }, [appendEntries]);
 
   useEffect(() => {
     const fetchMuted = async () => {
@@ -157,7 +157,7 @@ export default function LogSettingsPanel({
       }
     };
     fetchMuted();
-  }, []);
+  }, [appendEntries]);
 
   useEffect(() => {
     let active = true;
@@ -200,7 +200,7 @@ export default function LogSettingsPanel({
         streamStopRef.current = null;
       }
     };
-  }, []);
+  }, [appendEntries]);
 
   useEffect(() => {
     if (!autoScroll) return;

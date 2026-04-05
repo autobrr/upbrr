@@ -162,6 +162,7 @@ type PreparedMetadata struct {
 	EpisodeTitle                string
 	EpisodeOverview             string
 	EpisodeYear                 int
+	SelectedBDMVPlaylists       []PlaylistInfo
 	ExternalIDs                 ExternalIDs
 	ExternalIDCandidates        ExternalIDCandidates
 	ExternalMetadata            ExternalMetadata

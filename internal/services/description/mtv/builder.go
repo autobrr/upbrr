@@ -6,7 +6,6 @@ package mtv
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -114,7 +113,10 @@ func resolveBDInfoPath(meta api.PreparedMetadata, dbPath string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(tmpDir, "BD_SUMMARY_00.txt")
+	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
