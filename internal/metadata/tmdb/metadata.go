@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 )
 
 const imageBaseURL = "https://image.tmdb.org/t/p/original"
@@ -48,7 +50,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		originalTitle = media.OriginalName
 	}
 	result.Title = title
-	result.OriginalTitle = firstNonEmpty(originalTitle, title)
+	result.OriginalTitle = metautil.FirstNonEmpty(originalTitle, title)
 	result.Overview = media.Overview
 	result.OriginCountry = append([]string{}, media.OriginCountry...)
 	result.ProductionCompanies = media.ProductionCompanies
@@ -85,7 +87,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		}
 		result.Runtime = runtime
 	} else {
-		result.TMDBType = firstNonEmpty(media.Type, "Scripted")
+		result.TMDBType = metautil.FirstNonEmpty(media.Type, "Scripted")
 		year := parseYear(media.FirstAirDate)
 		if year == 0 {
 			year = input.SearchYear
@@ -439,7 +441,7 @@ func collectCredits(credits creditsResponse) ([]string, []string) {
 	seenCast := make(map[string]struct{})
 
 	for _, item := range append(credits.Cast, credits.Crew...) {
-		name := firstNonEmpty(item.OriginalName, item.Name)
+		name := metautil.FirstNonEmpty(item.OriginalName, item.Name)
 		if name == "" {
 			continue
 		}
@@ -470,7 +472,7 @@ func uniqueNames(creators []creator) []string {
 	seen := make(map[string]struct{})
 	out := make([]string, 0)
 	for _, item := range creators {
-		name := firstNonEmpty(item.OriginalName, item.Name)
+		name := metautil.FirstNonEmpty(item.OriginalName, item.Name)
 		if name == "" {
 			continue
 		}

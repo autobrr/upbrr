@@ -21,9 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moistari/rls"
-
-	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -125,12 +123,10 @@ func (c *Client) SearchSeries(ctx context.Context, filename, year string) ([]Ser
 }
 
 func applyReleaseHints(filename, year string) (string, string) {
-	base := strings.TrimSpace(filename)
-	if base == "" {
+	if strings.TrimSpace(filename) == "" {
 		return filename, year
 	}
-	base = pathutil.Base(base)
-	release := rls.ParseString(base)
+	release := metautil.ParseRelease(filename)
 	mainTitle := release.Title
 	if mainTitle == "" {
 		mainTitle = release.Alt

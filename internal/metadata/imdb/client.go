@@ -17,7 +17,8 @@ import (
 
 	"github.com/moistari/rls"
 
-	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -41,7 +42,7 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 
 func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (Info, error) {
 	info := Info{}
-	id := normalizeIMDbID(imdbID)
+	id := metautil.NormalizeIMDbID(imdbID)
 	if id == "" {
 		return info, nil
 	}
@@ -190,7 +191,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 			}
 			info.Episodes = append(info.Episodes, Episode{
 				ID:          getStringFromMap(node, "id"),
-				Title:       firstNonEmpty(getStringFromMap(node, "titleText", "text"), "Unknown Title"),
+				Title:       metautil.FirstNonEmpty(getStringFromMap(node, "titleText", "text"), "Unknown Title"),
 				ReleaseYear: releaseYear,
 				ReleaseDate: releaseDate,
 				Season:      season,
@@ -402,9 +403,7 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	if base == "" {
 		return input
 	}
-	base = pathutil.Base(base)
-	release := rls.ParseString(base)
-	category := releaseCategory(release.Type.String())
+	release := metautil.ParseRelease(base)
 
 	mainTitle := release.Title
 	secondaryTitle := release.Alt
@@ -424,8 +423,8 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	if secondaryTitle != "" {
 		input.SecondaryTitle = secondaryTitle
 	}
-	if strings.TrimSpace(input.Category) == "" && category != "" {
-		input.Category = category
+	if strings.TrimSpace(input.Category) == "" && release.Category != "" {
+		input.Category = release.Category
 	}
 	if input.SearchYear == 0 && release.Year != 0 {
 		input.SearchYear = release.Year
@@ -436,19 +435,8 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	return input
 }
 
-func releaseCategory(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	switch {
-	case strings.Contains(value, "movie"):
-		return "MOVIE"
-	case value != "":
-		return "TV"
-	}
-	return ""
-}
-
 func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) (EpisodeLookup, error) {
-	id := normalizeIMDbID(imdbID)
+	id := metautil.NormalizeIMDbID(imdbID)
 	if id == "" {
 		return EpisodeLookup{}, nil
 	}
@@ -642,33 +630,8 @@ func typeMatches(category, titleType string) bool {
 	return !strings.Contains(titleType, "tv series")
 }
 
-func normalizeIMDbID(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || trimmed == "0" {
-		return ""
-	}
-	if strings.HasPrefix(trimmed, "tt") {
-		return trimmed
-	}
-	id, err := strconv.Atoi(trimmed)
-	if err != nil {
-		return trimmed
-	}
-	return fmt.Sprintf("tt%07d", id)
-}
-
 func parseIMDbNumeric(value string) int {
-	value = strings.TrimSpace(value)
-	value = strings.TrimPrefix(value, "tt")
-	value = strings.Trim(value, "/")
-	if value == "" {
-		return 0
-	}
-	id, err := strconv.Atoi(value)
-	if err != nil {
-		return 0
-	}
-	return id
+	return metautil.ParseIMDbNumeric(value)
 }
 
 func trimLeadingThe(value string) string {
@@ -743,14 +706,16 @@ func longestCommonSubstring(a, b []rune) (int, int, int) {
 		matrix[i] = make([]int, len(b)+1)
 	}
 
-	for i := 1; i <= len(a); i++ {
-		for j := 1; j <= len(b); j++ {
-			if a[i-1] == b[j-1] {
-				matrix[i][j] = matrix[i-1][j-1] + 1
-				if matrix[i][j] > longest {
-					longest = matrix[i][j]
-					endA = i
-					endB = j
+	for i, aRune := range a {
+		row := i + 1
+		for j, bRune := range b {
+			col := j + 1
+			if aRune == bRune {
+				matrix[row][col] = matrix[row-1][col-1] + 1
+				if matrix[row][col] > longest {
+					longest = matrix[row][col]
+					endA = row
+					endB = col
 				}
 			}
 		}
@@ -947,13 +912,4 @@ func absInt(value int) int {
 		return -value
 	}
 	return value
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
