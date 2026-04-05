@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
@@ -617,6 +618,9 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 	}
 	req.Options.DryRun = true
+	if err := guishared.SeedRunCorePreparedMeta(ctx, a.core, runCore, req); err != nil {
+		return api.TrackerDryRunPreview{}, err
+	}
 
 	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
 		if strings.TrimSpace(line) == "" {

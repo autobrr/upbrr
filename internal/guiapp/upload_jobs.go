@@ -16,6 +16,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -104,8 +105,27 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	if err != nil {
 		return "", err
 	}
+	baseCtx := a.ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+
 	runCore, runLogger, err := a.buildRunCore(runOpts)
 	if err != nil {
+		return "", err
+	}
+
+	seedReq := api.Request{
+		Paths:                []string{trimmedPath},
+		Mode:                 api.ModeGUI,
+		Trackers:             resolvedTrackers,
+		IgnoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
+		ExternalIDOverrides:  overrides,
+		ReleaseNameOverrides: nameOverrides,
+	}
+	if err := guishared.SeedRunCorePreparedMeta(baseCtx, a.core, runCore, seedReq); err != nil {
+		_ = runCore.Close()
+		_ = runLogger.Close()
 		return "", err
 	}
 
@@ -130,10 +150,6 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
 	}
 
-	baseCtx := a.ctx
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
 	//nolint:gosec // The cancel func is stored on the job and invoked on completion/cancel paths.
 	jobCtx, cancel := context.WithCancel(baseCtx)
 	job.cancel = cancel

@@ -78,7 +78,6 @@ func (a *App) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
 
 	return coreSvc, logger, nil
 }
-
 func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
 	return api.UploadOptions{
 		Debug:       opts.Debug,

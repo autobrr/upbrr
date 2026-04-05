@@ -1569,6 +1569,437 @@ func (c *Core) getGUICachedMeta(path string, signature string, overrides api.Ext
 	return c.getDupeCache(path, "")
 }
 
+// ExportGUICachedPreparedMeta exposes the resolved GUI prepared metadata cache entry
+// so callers can hand off metadata to isolated per-run cores.
+func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request) (api.PreparedMetadata, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return api.PreparedMetadata{}, false, err
+	}
+	path, err := c.resolveSinglePreparedMetaPath(ctx, req.Paths)
+	if err != nil {
+		return api.PreparedMetadata{}, false, err
+	}
+	overrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
+	signature := overrideSignature(overrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
+	meta, ok := c.getGUICachedMeta(path, signature, overrides)
+	if !ok {
+		return api.PreparedMetadata{}, false, nil
+	}
+	return deepCopyPreparedMetadata(meta), true, nil
+}
+
+// ImportPreparedMetadataForGUI stores prepared metadata on a per-run core so GUI dry-run
+// and upload-only flows can reuse metadata prepared on the long-lived GUI core.
+func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request, meta api.PreparedMetadata) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path, err := c.resolveSinglePreparedMetaPath(ctx, req.Paths)
+	if err != nil {
+		return err
+	}
+	overrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
+	signature := overrideSignature(overrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
+	c.storeDupeCache(path, signature, deepCopyPreparedMetadata(meta))
+	return nil
+}
+
+func (c *Core) resolveSinglePreparedMetaPath(ctx context.Context, paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", internalerrors.ErrInvalidInput
+	}
+	if c.services.Filesystem == nil {
+		return "", errors.New("core: filesystem service not configured")
+	}
+
+	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, paths)
+	if err != nil {
+		return "", err
+	}
+	if len(normalizedPaths) == 0 {
+		return "", internalerrors.ErrInvalidInput
+	}
+
+	first := normalizedPaths[0]
+	for _, path := range normalizedPaths[1:] {
+		if path != first {
+			return "", internalerrors.ErrInvalidInput
+		}
+	}
+	return first, nil
+}
+
+func deepCopyPreparedMetadata(meta api.PreparedMetadata) api.PreparedMetadata {
+	copyMeta := meta
+	copyMeta.LookupWarnings = append([]string(nil), meta.LookupWarnings...)
+	copyMeta.Paths = append([]string(nil), meta.Paths...)
+	copyMeta.FileList = append([]string(nil), meta.FileList...)
+	copyMeta.Trackers = append([]string(nil), meta.Trackers...)
+	copyMeta.TrackersRemove = append([]string(nil), meta.TrackersRemove...)
+	copyMeta.MatchedTrackers = append([]string(nil), meta.MatchedTrackers...)
+	copyMeta.Release = deepCopyReleaseInfo(meta.Release)
+	copyMeta.TagOverride = deepCopyTagOverride(meta.TagOverride)
+	copyMeta.MetadataOverrides = deepCopyMetadataOverrides(meta.MetadataOverrides)
+	copyMeta.TrackerConfigOverrides = deepCopyTrackerConfigOverrides(meta.TrackerConfigOverrides)
+	copyMeta.TrackerSiteOverrides = deepCopyTrackerSiteOverrides(meta.TrackerSiteOverrides)
+	copyMeta.ClientOverrides = deepCopyClientOverrides(meta.ClientOverrides)
+	copyMeta.ImageHostOverrides = deepCopyImageHostOverrides(meta.ImageHostOverrides)
+	copyMeta.ScreenshotOverrides = deepCopyScreenshotOverrides(meta.ScreenshotOverrides)
+	copyMeta.TorrentOverrides = deepCopyTorrentOverrides(meta.TorrentOverrides)
+	copyMeta.TrackerIDs = cloneStringMap(meta.TrackerIDs)
+	copyMeta.TorrentComments = deepCopyTorrentMatches(meta.TorrentComments)
+	copyMeta.TrackerData = deepCopyTrackerMetadata(meta.TrackerData)
+	copyMeta.ArrGenres = append([]string(nil), meta.ArrGenres...)
+	copyMeta.ExternalIDOverrides = deepCopyExternalIDOverrides(meta.ExternalIDOverrides)
+	copyMeta.ReleaseNameOverrides = deepCopyReleaseNameOverrides(meta.ReleaseNameOverrides)
+	copyMeta.TrackerQuestionnaireAnswers = deepCopyQuestionnaireAnswers(meta.TrackerQuestionnaireAnswers)
+	copyMeta.TVDBAirsDays = append([]string(nil), meta.TVDBAirsDays...)
+	copyMeta.SelectedBDMVPlaylists = deepCopyPlaylistInfos(meta.SelectedBDMVPlaylists)
+	copyMeta.ExternalIDCandidates = deepCopyExternalIDCandidates(meta.ExternalIDCandidates)
+	copyMeta.ExternalMetadata = deepCopyExternalMetadata(meta.ExternalMetadata)
+	copyMeta.AudioLanguages = append([]string(nil), meta.AudioLanguages...)
+	copyMeta.SubtitleLanguages = append([]string(nil), meta.SubtitleLanguages...)
+	copyMeta.ReleaseNameMissing = append([]string(nil), meta.ReleaseNameMissing...)
+	copyMeta.BlockedTrackers = deepCopyBlockedTrackers(meta.BlockedTrackers)
+	copyMeta.TrackerRuleFailures = deepCopyTrackerRuleFailures(meta.TrackerRuleFailures)
+	copyMeta.BDInfo = deepCopyStringInterfaceMap(meta.BDInfo)
+	return copyMeta
+}
+
+func deepCopyReleaseInfo(info api.ReleaseInfo) api.ReleaseInfo {
+	copyInfo := info
+	copyInfo.Codec = append([]string(nil), info.Codec...)
+	copyInfo.Audio = append([]string(nil), info.Audio...)
+	copyInfo.HDR = append([]string(nil), info.HDR...)
+	copyInfo.Language = append([]string(nil), info.Language...)
+	copyInfo.Edition = append([]string(nil), info.Edition...)
+	copyInfo.Other = append([]string(nil), info.Other...)
+	return copyInfo
+}
+
+func deepCopyTagOverride(tag *api.TagOverride) *api.TagOverride {
+	if tag == nil {
+		return nil
+	}
+	copyTag := *tag
+	return &copyTag
+}
+
+func deepCopyMetadataOverrides(overrides api.MetadataOverrides) api.MetadataOverrides {
+	return api.MetadataOverrides{
+		Distributor:      clonePtr(overrides.Distributor),
+		OriginalLanguage: clonePtr(overrides.OriginalLanguage),
+		PersonalRelease:  clonePtr(overrides.PersonalRelease),
+		Commentary:       clonePtr(overrides.Commentary),
+		WebDV:            clonePtr(overrides.WebDV),
+		StreamOptimized:  clonePtr(overrides.StreamOptimized),
+		Anime:            clonePtr(overrides.Anime),
+	}
+}
+
+func deepCopyTrackerConfigOverrides(overrides api.TrackerConfigOverrides) api.TrackerConfigOverrides {
+	return api.TrackerConfigOverrides{
+		Anon:    clonePtr(overrides.Anon),
+		Draft:   clonePtr(overrides.Draft),
+		ModQ:    clonePtr(overrides.ModQ),
+		Channel: clonePtr(overrides.Channel),
+	}
+}
+
+func deepCopyTrackerSiteOverrides(overrides api.TrackerSiteOverrides) api.TrackerSiteOverrides {
+	return api.TrackerSiteOverrides{
+		TIK: api.TIKOverrides{
+			Foreign:  clonePtr(overrides.TIK.Foreign),
+			Opera:    clonePtr(overrides.TIK.Opera),
+			Asian:    clonePtr(overrides.TIK.Asian),
+			DiscType: clonePtr(overrides.TIK.DiscType),
+		},
+	}
+}
+
+func deepCopyClientOverrides(overrides api.ClientOverrides) api.ClientOverrides {
+	return api.ClientOverrides{
+		Client:       clonePtr(overrides.Client),
+		QbitCategory: clonePtr(overrides.QbitCategory),
+		QbitTag:      clonePtr(overrides.QbitTag),
+		ForceRecheck: clonePtr(overrides.ForceRecheck),
+	}
+}
+
+func deepCopyImageHostOverrides(overrides api.ImageHostOverrides) api.ImageHostOverrides {
+	return api.ImageHostOverrides{
+		PreferredHost: clonePtr(overrides.PreferredHost),
+		SkipUpload:    clonePtr(overrides.SkipUpload),
+	}
+}
+
+func deepCopyScreenshotOverrides(overrides api.ScreenshotOverrides) api.ScreenshotOverrides {
+	return api.ScreenshotOverrides{
+		ManualFrames:           append([]int(nil), overrides.ManualFrames...),
+		ComparisonPaths:        append([]string(nil), overrides.ComparisonPaths...),
+		ComparisonPrimaryIndex: clonePtr(overrides.ComparisonPrimaryIndex),
+	}
+}
+
+func deepCopyTorrentOverrides(overrides api.TorrentOverrides) api.TorrentOverrides {
+	return api.TorrentOverrides{
+		InfoHash:        clonePtr(overrides.InfoHash),
+		MaxPieceSizeMiB: clonePtr(overrides.MaxPieceSizeMiB),
+		NoHash:          clonePtr(overrides.NoHash),
+		Rehash:          clonePtr(overrides.Rehash),
+	}
+}
+
+func deepCopyExternalIDOverrides(overrides api.ExternalIDOverrides) api.ExternalIDOverrides {
+	return api.ExternalIDOverrides{
+		TMDBID:   clonePtr(overrides.TMDBID),
+		IMDBID:   clonePtr(overrides.IMDBID),
+		TVDBID:   clonePtr(overrides.TVDBID),
+		TVmazeID: clonePtr(overrides.TVmazeID),
+		MALID:    clonePtr(overrides.MALID),
+	}
+}
+
+func deepCopyReleaseNameOverrides(overrides api.ReleaseNameOverrides) api.ReleaseNameOverrides {
+	return api.ReleaseNameOverrides{
+		Category:         clonePtr(overrides.Category),
+		Type:             clonePtr(overrides.Type),
+		Source:           clonePtr(overrides.Source),
+		Resolution:       clonePtr(overrides.Resolution),
+		Tag:              clonePtr(overrides.Tag),
+		Service:          clonePtr(overrides.Service),
+		Edition:          clonePtr(overrides.Edition),
+		Season:           clonePtr(overrides.Season),
+		Episode:          clonePtr(overrides.Episode),
+		EpisodeTitle:     clonePtr(overrides.EpisodeTitle),
+		ManualYear:       clonePtr(overrides.ManualYear),
+		ManualDate:       clonePtr(overrides.ManualDate),
+		UseSeasonEpisode: clonePtr(overrides.UseSeasonEpisode),
+		NoSeason:         clonePtr(overrides.NoSeason),
+		NoYear:           clonePtr(overrides.NoYear),
+		NoAKA:            clonePtr(overrides.NoAKA),
+		NoTag:            clonePtr(overrides.NoTag),
+		NoEdition:        clonePtr(overrides.NoEdition),
+		NoDub:            clonePtr(overrides.NoDub),
+		NoDual:           clonePtr(overrides.NoDual),
+		DualAudio:        clonePtr(overrides.DualAudio),
+		Region:           clonePtr(overrides.Region),
+	}
+}
+
+func deepCopyQuestionnaireAnswers(input map[string]map[string]string) map[string]map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	cloned := make(map[string]map[string]string, len(input))
+	for tracker, values := range input {
+		inner := make(map[string]string, len(values))
+		for key, value := range values {
+			inner[key] = value
+		}
+		cloned[tracker] = inner
+	}
+	return cloned
+}
+
+func deepCopyPlaylistInfos(playlists []api.PlaylistInfo) []api.PlaylistInfo {
+	if len(playlists) == 0 {
+		return nil
+	}
+	cloned := make([]api.PlaylistInfo, len(playlists))
+	for idx, playlist := range playlists {
+		cloned[idx] = playlist
+		cloned[idx].Items = append([]api.PlaylistItem(nil), playlist.Items...)
+	}
+	return cloned
+}
+
+func deepCopyExternalIDCandidates(candidates api.ExternalIDCandidates) api.ExternalIDCandidates {
+	return api.ExternalIDCandidates{
+		TMDB:             append([]api.ExternalIDCandidate(nil), candidates.TMDB...),
+		IMDB:             append([]api.ExternalIDCandidate(nil), candidates.IMDB...),
+		TMDBAutoSelected: candidates.TMDBAutoSelected,
+		IMDBAutoSelected: candidates.IMDBAutoSelected,
+	}
+}
+
+func deepCopyExternalMetadata(metadata api.ExternalMetadata) api.ExternalMetadata {
+	return api.ExternalMetadata{
+		SourcePath: metadata.SourcePath,
+		TMDB:       deepCopyTMDBMetadata(metadata.TMDB),
+		IMDB:       deepCopyIMDBMetadata(metadata.IMDB),
+		TVDB:       deepCopyTVDBMetadata(metadata.TVDB),
+		TVmaze:     deepCopyTVmazeMetadata(metadata.TVmaze),
+		UpdatedAt:  metadata.UpdatedAt,
+	}
+}
+
+func deepCopyTMDBMetadata(metadata *api.TMDBMetadata) *api.TMDBMetadata {
+	if metadata == nil {
+		return nil
+	}
+	cloned := *metadata
+	cloned.OriginCountry = append([]string(nil), metadata.OriginCountry...)
+	cloned.Creators = append([]string(nil), metadata.Creators...)
+	cloned.Directors = append([]string(nil), metadata.Directors...)
+	cloned.Cast = append([]string(nil), metadata.Cast...)
+	cloned.ProductionCompanies = append([]api.TMDBCompany(nil), metadata.ProductionCompanies...)
+	cloned.ProductionCountries = append([]api.TMDBCountry(nil), metadata.ProductionCountries...)
+	cloned.Networks = append([]api.TMDBNetwork(nil), metadata.Networks...)
+	return &cloned
+}
+
+func deepCopyIMDBMetadata(metadata *api.IMDBMetadata) *api.IMDBMetadata {
+	if metadata == nil {
+		return nil
+	}
+	cloned := *metadata
+	cloned.Directors = append([]api.IMDBPerson(nil), metadata.Directors...)
+	cloned.Creators = append([]api.IMDBPerson(nil), metadata.Creators...)
+	cloned.Writers = append([]api.IMDBPerson(nil), metadata.Writers...)
+	cloned.Stars = append([]api.IMDBPerson(nil), metadata.Stars...)
+	cloned.Editions = append([]string(nil), metadata.Editions...)
+	cloned.EditionDetails = deepCopyIMDBEditionDetails(metadata.EditionDetails)
+	cloned.Akas = deepCopyIMDBAKAs(metadata.Akas)
+	cloned.Episodes = append([]api.IMDBEpisode(nil), metadata.Episodes...)
+	cloned.SeasonsSummary = append([]api.IMDBSeasonSummary(nil), metadata.SeasonsSummary...)
+	cloned.SoundMixes = append([]string(nil), metadata.SoundMixes...)
+	return &cloned
+}
+
+func deepCopyTVDBMetadata(metadata *api.TVDBMetadata) *api.TVDBMetadata {
+	if metadata == nil {
+		return nil
+	}
+	cloned := *metadata
+	cloned.Aliases = append([]string(nil), metadata.Aliases...)
+	return &cloned
+}
+
+func deepCopyTVmazeMetadata(metadata *api.TVmazeMetadata) *api.TVmazeMetadata {
+	if metadata == nil {
+		return nil
+	}
+	cloned := *metadata
+	return &cloned
+}
+
+func deepCopyTorrentMatches(matches []api.TorrentMatch) []api.TorrentMatch {
+	if len(matches) == 0 {
+		return nil
+	}
+	cloned := make([]api.TorrentMatch, len(matches))
+	for idx, match := range matches {
+		cloned[idx] = match
+		cloned[idx].TrackerURLsRaw = append([]string(nil), match.TrackerURLsRaw...)
+		cloned[idx].TrackerURLs = append([]api.TrackerMatch(nil), match.TrackerURLs...)
+	}
+	return cloned
+}
+
+func deepCopyTrackerMetadata(metadata []api.TrackerMetadata) []api.TrackerMetadata {
+	if len(metadata) == 0 {
+		return nil
+	}
+	cloned := make([]api.TrackerMetadata, len(metadata))
+	for idx, item := range metadata {
+		cloned[idx] = item
+		cloned[idx].ImageURLs = append([]string(nil), item.ImageURLs...)
+	}
+	return cloned
+}
+
+func deepCopyBlockedTrackers(blocked map[string][]api.TrackerBlockReason) map[string][]api.TrackerBlockReason {
+	if len(blocked) == 0 {
+		return nil
+	}
+	cloned := make(map[string][]api.TrackerBlockReason, len(blocked))
+	for tracker, reasons := range blocked {
+		cloned[tracker] = append([]api.TrackerBlockReason(nil), reasons...)
+	}
+	return cloned
+}
+
+func deepCopyTrackerRuleFailures(failures map[string][]api.RuleFailure) map[string][]api.RuleFailure {
+	if len(failures) == 0 {
+		return nil
+	}
+	cloned := make(map[string][]api.RuleFailure, len(failures))
+	for tracker, items := range failures {
+		cloned[tracker] = append([]api.RuleFailure(nil), items...)
+	}
+	return cloned
+}
+
+func deepCopyIMDBEditionDetails(details map[string]api.IMDBEditionDetail) map[string]api.IMDBEditionDetail {
+	if len(details) == 0 {
+		return nil
+	}
+	cloned := make(map[string]api.IMDBEditionDetail, len(details))
+	for key, detail := range details {
+		copied := detail
+		copied.Attributes = append([]string(nil), detail.Attributes...)
+		cloned[key] = copied
+	}
+	return cloned
+}
+
+func deepCopyIMDBAKAs(items []api.IMDBAKA) []api.IMDBAKA {
+	if len(items) == 0 {
+		return nil
+	}
+	cloned := make([]api.IMDBAKA, len(items))
+	for idx, item := range items {
+		cloned[idx] = item
+		cloned[idx].Attributes = append([]string(nil), item.Attributes...)
+	}
+	return cloned
+}
+
+func deepCopyStringInterfaceMap(input map[string]interface{}) map[string]interface{} {
+	if len(input) == 0 {
+		return nil
+	}
+	cloned := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		cloned[key] = deepCopyInterfaceValue(value)
+	}
+	return cloned
+}
+
+func deepCopyInterfaceValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return deepCopyStringInterfaceMap(typed)
+	case []interface{}:
+		cloned := make([]interface{}, len(typed))
+		for idx, item := range typed {
+			cloned[idx] = deepCopyInterfaceValue(item)
+		}
+		return cloned
+	case []string:
+		return append([]string(nil), typed...)
+	case []int:
+		return append([]int(nil), typed...)
+	case []int64:
+		return append([]int64(nil), typed...)
+	case []float64:
+		return append([]float64(nil), typed...)
+	case []bool:
+		return append([]bool(nil), typed...)
+	default:
+		return typed
+	}
+}
+
+func clonePtr[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
 func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.PlaylistInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

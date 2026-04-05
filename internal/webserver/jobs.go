@@ -15,13 +15,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const (
-	completedJobRetention  = 24 * time.Hour
-	maxCompletedDupeJobs   = 200
-	maxCompletedUploadJobs = 200
+	completedJobRetention   = 24 * time.Hour
+	maxCompletedDupeJobs    = 200
+	maxCompletedUploadJobs  = 200
+	seedPreparedMetaTimeout = 30 * time.Second
 )
 
 type DupeCheckTrackerState struct {
@@ -384,6 +386,21 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	}
 	runCore, runLogger, err := b.buildRunCore(runOpts)
 	if err != nil {
+		return "", err
+	}
+	seedReq := api.Request{
+		Paths:                []string{trimmedPath},
+		Mode:                 api.ModeGUI,
+		Trackers:             resolvedTrackers,
+		IgnoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
+		ExternalIDOverrides:  overrides,
+		ReleaseNameOverrides: nameOverrides,
+	}
+	seedCtx, cancel := context.WithTimeout(context.Background(), seedPreparedMetaTimeout)
+	defer cancel()
+	if err := guishared.SeedRunCorePreparedMeta(seedCtx, b.core, runCore, seedReq); err != nil {
+		_ = runCore.Close()
+		_ = runLogger.Close()
 		return "", err
 	}
 

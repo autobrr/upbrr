@@ -20,6 +20,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guiapp"
+	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
@@ -390,6 +391,9 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 	}
 	req.Options.DryRun = true
+	if err := guishared.SeedRunCorePreparedMeta(ctx, b.core, runCore, req); err != nil {
+		return api.TrackerDryRunPreview{}, err
+	}
 	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
 		if strings.TrimSpace(line) == "" {
 			return

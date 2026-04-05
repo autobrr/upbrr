@@ -12,6 +12,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -27,6 +28,11 @@ func (c *closeCounter) Close() error {
 
 type closeCounterCore struct {
 	closeCounter
+	exportedMeta api.PreparedMetadata
+	exportFound  bool
+	exportErr    error
+	importedMeta api.PreparedMetadata
+	importedReq  api.Request
 }
 
 func (c *closeCounterCore) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -137,6 +143,16 @@ func (c *closeCounterCore) SaveDescriptionOverride(context.Context, api.Request,
 	return nil
 }
 
+func (c *closeCounterCore) ExportGUICachedPreparedMeta(context.Context, api.Request) (api.PreparedMetadata, bool, error) {
+	return c.exportedMeta, c.exportFound, c.exportErr
+}
+
+func (c *closeCounterCore) ImportPreparedMetadataForGUI(_ context.Context, req api.Request, meta api.PreparedMetadata) error {
+	c.importedReq = req
+	c.importedMeta = meta
+	return nil
+}
+
 func TestBuildRunOptionsDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -233,5 +249,46 @@ func TestTrackerUploadJobCloseResourcesIsIdempotent(t *testing.T) {
 	}
 	if got := loggerCloser.count.Load(); got != 1 {
 		t.Fatalf("expected logger close once, got %d", got)
+	}
+}
+
+func TestSeedRunCorePreparedMetaCopiesPreparedMetadata(t *testing.T) {
+	t.Parallel()
+
+	source := &closeCounterCore{
+		exportFound:  true,
+		exportedMeta: api.PreparedMetadata{SourcePath: "C:\\releases\\movie.mkv"},
+	}
+	target := &closeCounterCore{}
+	req := api.Request{
+		Paths: []string{"C:\\releases\\movie.mkv"},
+		Mode:  api.ModeGUI,
+	}
+
+	if err := guishared.SeedRunCorePreparedMeta(context.Background(), source, target, req); err != nil {
+		t.Fatalf("seed run core prepared meta: %v", err)
+	}
+	if target.importedMeta.SourcePath != "C:\\releases\\movie.mkv" {
+		t.Fatalf("expected imported source path, got %q", target.importedMeta.SourcePath)
+	}
+	if len(target.importedReq.Paths) != 1 || target.importedReq.Paths[0] != "C:\\releases\\movie.mkv" {
+		t.Fatalf("expected import request paths to be preserved, got %#v", target.importedReq.Paths)
+	}
+}
+
+func TestSeedRunCorePreparedMetaSkipsWhenNoCacheFound(t *testing.T) {
+	t.Parallel()
+
+	source := &closeCounterCore{}
+	target := &closeCounterCore{}
+
+	if err := guishared.SeedRunCorePreparedMeta(context.Background(), source, target, api.Request{
+		Paths: []string{"C:\\releases\\movie.mkv"},
+		Mode:  api.ModeGUI,
+	}); err != nil {
+		t.Fatalf("seed run core prepared meta: %v", err)
+	}
+	if target.importedMeta.SourcePath != "" {
+		t.Fatalf("expected no metadata import when cache missing, got %#v", target.importedMeta)
 	}
 }

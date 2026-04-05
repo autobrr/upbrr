@@ -5,7 +5,10 @@ package core
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +17,10 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func ptr[T any](v T) *T {
+	return &v
+}
 
 func TestRunUploadMultiplePaths(t *testing.T) {
 	t.Parallel()
@@ -750,6 +757,473 @@ func TestRunUploadPersistsInfoHash(t *testing.T) {
 	}
 	if repo.saved[0].InfoHash != "hash123" {
 		t.Fatalf("expected info hash saved, got %q", repo.saved[0].InfoHash)
+	}
+}
+
+func TestExportGUICachedPreparedMetaExactSignature(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	prepared := api.PreparedMetadata{
+		SourcePath:           "/tmp/a",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: ptr("Exact Match")},
+	}
+	req := api.Request{
+		Paths:                []string{"/tmp/a"},
+		Mode:                 api.ModeGUI,
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: ptr("Exact Match")},
+	}
+	if err := core.ImportPreparedMetadataForGUI(context.Background(), req, prepared); err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+
+	exported, ok, err := core.ExportGUICachedPreparedMeta(context.Background(), req)
+	if err != nil {
+		t.Fatalf("export gui cached prepared meta: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected cached metadata export to succeed")
+	}
+	if exported.ReleaseNameOverrides.Edition == nil || *exported.ReleaseNameOverrides.Edition != "Exact Match" {
+		t.Fatalf("expected exact-signature metadata, got %#v", exported.ReleaseNameOverrides)
+	}
+}
+
+func TestExportGUICachedPreparedMetaFallsBackForGUIWithoutExternalOverrides(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	prepared := api.PreparedMetadata{SourcePath: "/tmp/a"}
+	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, prepared); err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+
+	exported, ok, err := core.ExportGUICachedPreparedMeta(context.Background(), api.Request{
+		Paths:                []string{"/tmp/a"},
+		Mode:                 api.ModeGUI,
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: ptr("Later UI edit")},
+	})
+	if err != nil {
+		t.Fatalf("export gui cached prepared meta: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected GUI fallback cache hit")
+	}
+	if exported.SourcePath != "/tmp/a" {
+		t.Fatalf("expected cached source path /tmp/a, got %q", exported.SourcePath)
+	}
+}
+
+func TestExportGUICachedPreparedMetaRequiresExactMatchForExternalOverrides(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, api.PreparedMetadata{SourcePath: "/tmp/a"}); err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+
+	tmdbID := 1234
+
+	_, ok, err := core.ExportGUICachedPreparedMeta(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			TMDBID: &tmdbID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("export gui cached prepared meta: %v", err)
+	}
+	if ok {
+		t.Fatal("expected external ID override to require exact cache signature")
+	}
+}
+
+func TestExportGUICachedPreparedMetaReturnsIsolatedCopy(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Trackers:   []string{"AITHER", "BLU"},
+		TrackerIDs: map[string]string{"AITHER": "111"},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{
+			"AITHER": {"season": "1"},
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"AITHER": {{Rule: "rule_a", Reason: "bad"}},
+		},
+		Release: api.ReleaseInfo{
+			Codec: []string{"x264"},
+		},
+		BDInfo: map[string]interface{}{
+			"playlists": []interface{}{"00001", "00002"},
+		},
+	}
+	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, prepared); err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+
+	exported, ok, err := core.ExportGUICachedPreparedMeta(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("export gui cached prepared meta: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected cached metadata export to succeed")
+	}
+
+	exported.Trackers[0] = "HDB"
+	exported.TrackerIDs["AITHER"] = "222"
+	exported.TrackerQuestionnaireAnswers["AITHER"]["season"] = "2"
+	exported.TrackerRuleFailures["AITHER"][0].Rule = "rule_b"
+	exported.Release.Codec[0] = "x265"
+	exported.BDInfo["playlists"].([]interface{})[0] = "99999"
+
+	cached, ok := core.getDupeCache("/tmp/a", "")
+	if !ok {
+		t.Fatal("expected cached metadata to remain available")
+	}
+	if cached.Trackers[0] != "AITHER" {
+		t.Fatalf("expected cached trackers to remain isolated, got %#v", cached.Trackers)
+	}
+	if cached.TrackerIDs["AITHER"] != "111" {
+		t.Fatalf("expected cached tracker ids to remain isolated, got %#v", cached.TrackerIDs)
+	}
+	if cached.TrackerQuestionnaireAnswers["AITHER"]["season"] != "1" {
+		t.Fatalf("expected cached questionnaire answers to remain isolated, got %#v", cached.TrackerQuestionnaireAnswers)
+	}
+	if cached.TrackerRuleFailures["AITHER"][0].Rule != "rule_a" {
+		t.Fatalf("expected cached rule failures to remain isolated, got %#v", cached.TrackerRuleFailures)
+	}
+	if cached.Release.Codec[0] != "x264" {
+		t.Fatalf("expected cached release info to remain isolated, got %#v", cached.Release)
+	}
+	if cached.BDInfo["playlists"].([]interface{})[0] != "00001" {
+		t.Fatalf("expected cached BDInfo to remain isolated, got %#v", cached.BDInfo)
+	}
+}
+
+func TestExportGUICachedPreparedMetaConcurrentCopiesStayIsolated(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Trackers:   []string{"AITHER"},
+		TrackerIDs: map[string]string{"AITHER": "111"},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{
+			"AITHER": {"season": "1"},
+		},
+	}); err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for idx := 0; idx < 16; idx++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			exported, ok, exportErr := core.ExportGUICachedPreparedMeta(context.Background(), api.Request{
+				Paths: []string{"/tmp/a"},
+				Mode:  api.ModeGUI,
+			})
+			if exportErr != nil || !ok {
+				t.Errorf("export gui cached prepared meta: ok=%t err=%v", ok, exportErr)
+				return
+			}
+			exported.Trackers[0] = "TRACKER"
+			exported.TrackerIDs["AITHER"] = "mutated"
+			exported.TrackerQuestionnaireAnswers["AITHER"]["season"] = strconv.Itoa(i)
+		}(idx)
+	}
+	wg.Wait()
+
+	cached, ok := core.getDupeCache("/tmp/a", "")
+	if !ok {
+		t.Fatal("expected cached metadata to remain available")
+	}
+	if cached.Trackers[0] != "AITHER" {
+		t.Fatalf("expected cached trackers unchanged, got %#v", cached.Trackers)
+	}
+	if cached.TrackerIDs["AITHER"] != "111" {
+		t.Fatalf("expected cached tracker ids unchanged, got %#v", cached.TrackerIDs)
+	}
+	if cached.TrackerQuestionnaireAnswers["AITHER"]["season"] != "1" {
+		t.Fatalf("expected cached questionnaire answers unchanged, got %#v", cached.TrackerQuestionnaireAnswers)
+	}
+}
+
+func TestExportGUICachedPreparedMetaHonorsContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, ok, err := core.ExportGUICachedPreparedMeta(ctx, api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	if ok {
+		t.Fatal("expected canceled export to report no cached metadata")
+	}
+}
+
+func TestImportPreparedMetadataForGUIHonorsContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = core.ImportPreparedMetadataForGUI(ctx, api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, api.PreparedMetadata{SourcePath: "/tmp/a"})
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	if _, ok := core.getDupeCache("/tmp/a", ""); ok {
+		t.Fatal("expected canceled import not to populate cache")
+	}
+}
+
+func TestExportGUICachedPreparedMetaReturnsFilesystemValidationError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("validate boom")
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: stubFS{err: wantErr},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, _, err = core.ExportGUICachedPreparedMeta(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected filesystem validation error, got %v", err)
+	}
+}
+
+func TestImportPreparedMetadataForGUIReturnsFilesystemValidationError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("validate boom")
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: stubFS{err: wantErr},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	err = core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, api.PreparedMetadata{SourcePath: "/tmp/a"})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected filesystem validation error, got %v", err)
+	}
+}
+
+func TestExportGUICachedPreparedMetaAllowsDuplicatePathsResolvingToOne(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: stubFS{normalized: []string{"/tmp/a", "/tmp/a"}},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, api.PreparedMetadata{SourcePath: "/tmp/a"}); err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+
+	_, ok, err := core.ExportGUICachedPreparedMeta(context.Background(), api.Request{
+		Paths: []string{"/tmp/a", "/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("export gui cached prepared meta: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected duplicate normalized paths to resolve to one cache hit")
+	}
+}
+
+func TestImportPreparedMetadataForGUIAllowsDuplicatePathsResolvingToOne(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: stubFS{normalized: []string{"/tmp/a", "/tmp/a"}},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	err = core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a", "/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, api.PreparedMetadata{SourcePath: "/tmp/a"})
+	if err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+	if _, ok := core.getDupeCache("/tmp/a", ""); !ok {
+		t.Fatal("expected duplicate normalized paths to import one cache entry")
 	}
 }
 
@@ -1538,9 +2012,18 @@ func (r *recordingRepo) PurgeContentData(_ context.Context, path string) error {
 	return nil
 }
 
-type stubFS struct{}
+type stubFS struct {
+	normalized []string
+	err        error
+}
 
-func (stubFS) ValidatePaths(_ context.Context, paths []string) ([]string, error) {
+func (s stubFS) ValidatePaths(_ context.Context, paths []string) ([]string, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.normalized != nil {
+		return append([]string(nil), s.normalized...), nil
+	}
 	return paths, nil
 }
 
