@@ -113,3 +113,20 @@ pnpm run dev          # Vite dev server on :5173
 - `test.yml` - Go tests + frontend lint/typecheck
 - `golangci-lint.yml` - Go linting with golangci-lint
 - `build-binaries.yml` - multi-platform binary builds (CLI + GUI) and Docker images
+
+## Agent Workflow Rules
+
+See AGENTS.md for the full list. Key rules:
+
+- **Never hallucinate** API usage, library signatures, or config formats. Always fetch current docs (context7 MCP, web fetch) or read source.
+- **New functionality must include tests.** Write tests that bring value: real behavior, edge cases, error paths.
+- **If a test fails, assume your code is wrong, not the test.** Never simplify or weaken a test to make it pass — do full research first.
+- Before modifying shared code (`pkg/api/`, `internal/core/`), check all call sites across CLI, GUI, and web-serve surfaces.
+- Before creating common/generic/helper functions, search for existing utilities — do not duplicate.
+- **Update README.md** when adding features or changing setup/CLI flags.
+- **Update AGENTS.md** when adding conventions or project structure changes, then run the sync script.
+- Use interactive tools (askQuestion in VS Code) to clarify ambiguous requirements instead of guessing.
+- When changing `pkg/api` types, verify impact on: `cmd/upbrr/` (CLI), `internal/guiapp/` (GUI), `internal/webserver/` (web), `gui/frontend/wailsjs/` (TypeScript).
+- When adding a new tracker: implement dupe checking, tracker config, description builder, and tracker-specific overrides.
+- Keep changes narrow. Do not add dependencies, abstractions, or refactoring beyond what was asked.
+- After every change: run linters, run tests, verify build compiles.

@@ -80,3 +80,20 @@ pnpm run build
 - Unattended flows are safety-critical and must stay non-blocking
 - site-check implies dry-run; debug implies safe non-upload behavior
 - Preserve safe skip/override behavior for dupes, rule failures, screenshots, torrent injection
+
+## Agent Workflow Rules
+
+See AGENTS.md for the full list. Key rules:
+
+- **Never hallucinate** API usage, library signatures, or config formats. Always fetch current docs or read source.
+- **New functionality must include tests.** Write tests that bring value: real behavior, edge cases, error paths.
+- **If a test fails, assume your code is wrong, not the test.** Never simplify or weaken a test to make it pass.
+- Before modifying shared code (`pkg/api/`, `internal/core/`), check all call sites across CLI, GUI, and web-serve surfaces.
+- Before creating common/generic/helper functions, search for existing utilities — do not duplicate.
+- **Update README.md** when adding features or changing setup/CLI flags.
+- **Update AGENTS.md** when adding conventions or structure changes, then run the sync script.
+- Use interactive tools to clarify ambiguous requirements instead of guessing.
+- When changing `pkg/api` types, verify impact on CLI, GUI bindings, web-serve, and frontend TypeScript.
+- When adding a new tracker: implement dupe checking, tracker config, description builder.
+- Keep changes narrow. No speculative abstractions or refactoring beyond what was asked.
+- After every change: run linters, run tests, verify build compiles.

@@ -35,6 +35,65 @@
 - Preserve existing invariants such as site-check implying dry-run, debug implying safe non-upload behavior, and unattended flows keeping their current questionnaire/default-selection behavior unless the change explicitly updates those rules everywhere.
 - Preserve safe skip and override behavior for dupes, rule failures, screenshot/image-host uploads, torrent injection, and retry flows. If one surface supports a skip or override, keep parity in the other surface when that behavior is shared.
 
+## Agent Workflow Rules
+
+These rules are mandatory for all AI coding agents working on this repository.
+
+### Research Before Acting
+
+- **Never hallucinate** API usage, library signatures, CLI flags, or configuration formats. Always use context7 MCP, web fetch, or read the actual source to verify before writing code.
+- Before modifying any file, read it first. Understand existing patterns, naming, and flow before proposing changes.
+- When working with third-party libraries (Wails, golangci-lint, Tailwind, Vite, etc.), fetch current docs rather than relying on training data.
+- Use interactive tools when available — askQuestion in VS Code, terminal prompts — to clarify ambiguous requirements instead of guessing.
+
+### Testing Discipline
+
+- **New functionality must include tests.** No feature or behavior change ships without corresponding test coverage.
+- Write tests that bring actual value: test real behavior, edge cases, error paths, and cross-surface consistency — not just happy paths.
+- **If a test fails after code changes, assume your code is wrong, not the test.** Tests encode the project's intended behavior.
+- Never blindly simplify, weaken, or rewrite a test to make it pass. Always do full research: read the test, understand what it asserts, trace the code path, and fix the root cause.
+- Follow existing test patterns: `t.Parallel()`, stub service interfaces, table-driven tests, `ptr[T]()` helper for pointer values.
+- When fixing a bug, first write a test that reproduces it, then fix the code to make the test pass.
+
+### Impact Analysis
+
+- Before modifying shared code (`pkg/api/`, `internal/core/`, `internal/errors/`), check all call sites across CLI, GUI, and web-serve surfaces.
+- Before modifying or creating common/generic/helper functions, search for existing utilities that already do what you need — do not duplicate.
+- When changing `pkg/api` types or interfaces, verify impact on: `cmd/upbrr/` (CLI), `internal/guiapp/` (GUI bindings), `internal/webserver/` (web), and `gui/frontend/wailsjs/` (generated TypeScript).
+- When changing config struct fields, check YAML tag consistency (`snake_case`), defaults in `internal/config/defaults.go`, and any frontend settings UI that reads those fields.
+- When adding a new tracker, verify that dupe checking (`internal/dupechecking/`), tracker config, description builder, and any tracker-specific overrides are all addressed.
+- When adding a new Wails binding method in `internal/guiapp/`, the frontend TypeScript types in `wailsjs/` will need regeneration.
+
+### Documentation & Maintenance
+
+- **Update README.md** when adding features, changing setup steps, modifying CLI flags, or altering build/run instructions.
+- **Update AGENTS.md** when adding new conventions, project structure changes, key type additions, or workflow rules.
+- After updating any AI instruction file (AGENTS.md, .claude/rules/, .cursor/rules/, .github/instructions/), **run the sync script** (`scripts/sync-ai-instructions.ps1` on Windows, `scripts/sync-ai-instructions.sh` on Unix) — do not manually duplicate content across instruction files.
+- Do not duplicate information that already exists in AGENTS.md into other instruction files. The sync script and import references (`@AGENTS.md`) handle propagation.
+
+### Code Change Discipline
+
+- Keep changes narrow and focused. A bug fix does not need surrounding refactoring. A feature does not need speculative configurability.
+- Do not add dependencies without clear justification. Check if existing stdlib or project utilities cover the need first.
+- Do not create new abstractions, helpers, or utilities for one-time operations.
+- Check existing patterns before introducing new approaches — consistency matters more than novelty.
+- Do not leave dead code, commented-out blocks, or TODO comments without associated issue references.
+- After every change: run linters, run affected tests, verify the build compiles. Never submit changes that break CI.
+
+### Cross-Surface Awareness
+
+- This project ships three surfaces (CLI, GUI, web-serve) from shared core logic. When changing shared behavior, verify all three surfaces still work correctly.
+- CLI-only changes (`cmd/upbrr/`) do not need GUI validation. GUI-only changes (`internal/guiapp/`, `gui/frontend/`) do not need CLI validation. But changes to `internal/core/`, `pkg/api/`, or shared services need both.
+- When adding a new option, flag, or override: add it to `api.Request`/`api.UploadOptions`/`api.ExecutionOptions` first, then wire it through every surface that needs it.
+- Frontend changes must work in both Wails native and browser (web-serve) runtimes. Test the code path for `isWebUIRuntime()` when touching API calls or event handling.
+
+### Error Handling & Safety
+
+- Wrap errors with context: `fmt.Errorf("what failed: %w", err)`. Never swallow errors silently.
+- Preserve safe defaults: DryRun, SiteCheck, Debug flags must remain respected everywhere they are checked.
+- Never introduce panics in production code paths. Return errors and let callers decide.
+- Check context cancellation in long-running operations: `select { case <-ctx.Done(): return ctx.Err() }`.
+
 ## Scope Notes
 
 - Keep guidance consistent with .golangci.yml, gui/frontend/package.json, and .github/workflows/*.yml rather than inventing new required steps.

@@ -16,6 +16,7 @@
       "request": "launch",
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/upbrr",
+      "buildFlags": "-tags dev",
       "args": ["--gui"],
       "cwd": "${workspaceFolder}"
     },
@@ -26,6 +27,7 @@
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/upbrr",
       "args": ["serve"],
+      "console": "integratedTerminal",
       "cwd": "${workspaceFolder}"
     },
     {
@@ -52,6 +54,7 @@
       "request": "launch",
       "mode": "auto",
       "program": "${workspaceFolder}/gui",
+      "buildFlags": "-tags dev",
       "cwd": "${workspaceFolder}"
     },
     {
