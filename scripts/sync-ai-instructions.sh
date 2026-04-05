@@ -38,16 +38,21 @@ while [[ $# -gt 0 ]]; do
       echo "Default source: copilot"
       echo ""
       echo "File mapping:"
-      echo "  Copilot:  .github/copilot-instructions.md (repo-wide)"
-      echo "            .github/instructions/go.instructions.md"
-      echo "            .github/instructions/frontend.instructions.md"
-      echo "  Cursor:   .cursor/rules/project.mdc"
-      echo "            .cursor/rules/go.mdc"
-      echo "            .cursor/rules/frontend.mdc"
-      echo "  Claude:   .claude/CLAUDE.md (repo-wide)"
-      echo "            .claude/rules/go.md"
-      echo "            .claude/rules/frontend.md"
-      echo "            .claude/rules/safety.md"
+      echo "  Repo-wide:"
+      echo "    Copilot:  .github/copilot-instructions.md"
+      echo "    Cursor:   .cursor/rules/project.mdc"
+      echo "    Claude:   .claude/CLAUDE.md"
+      echo ""
+      echo "  Scoped rules:"
+      echo "    Copilot:  .github/instructions/go.instructions.md"
+      echo "              .github/instructions/frontend.instructions.md"
+      echo "    Cursor:   .cursor/rules/go.mdc"
+      echo "              .cursor/rules/frontend.mdc"
+      echo "    Claude:   .claude/rules/go.md"
+      echo "              .claude/rules/frontend.md"
+      echo ""
+      echo "  Manual files (never overwritten by sync):"
+      echo "    .claude/rules/safety.md"
       echo ""
       echo "AGENTS.md is shared by all three and is never overwritten by sync."
       exit 0
@@ -59,41 +64,101 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-sync_file() {
-  local src="$1"
-  local dst="$2"
-
-  if [[ ! -f "$src" ]]; then
-    echo "  SKIP  $src (not found)"
-    return
-  fi
-
-  local dst_dir
-  dst_dir="$(dirname "$dst")"
-
-  if $DRY_RUN; then
-    if [[ -f "$dst" ]]; then
-      if diff -q "$src" "$dst" > /dev/null 2>&1; then
-        echo "  OK    $dst (identical)"
-      else
-        echo "  WOULD $src -> $dst"
-      fi
-    else
-      echo "  WOULD $src -> $dst (new)"
-    fi
-    return
-  fi
-
-  mkdir -p "$dst_dir"
-  cp "$src" "$dst"
-  echo "  SYNC  $src -> $dst"
-}
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 extract_body() {
   # Strip YAML frontmatter (--- ... ---) from a file, output only the body
   local file="$1"
   awk 'BEGIN{f=0} /^---$/{f++; next} f>=2{print} f==0{print}' "$file"
 }
+
+strip_agents_import() {
+  # Strip the @AGENTS.md import line (and trailing blank lines) from CLAUDE.md
+  sed '/^@AGENTS\.md$/d' | sed '/./,$!d'
+}
+
+write_file() {
+  # Write content from stdin to dst. In dry-run mode, only report.
+  local dst="$1"
+  local content
+  content="$(cat)"
+
+  if $DRY_RUN; then
+    if [[ -f "$dst" ]]; then
+      local existing
+      existing="$(cat "$dst")"
+      if [[ "$existing" == "$content" ]]; then
+        echo "  OK      $dst (identical)"
+      else
+        echo "  WOULD   $dst"
+      fi
+    else
+      echo "  WOULD   $dst (new)"
+    fi
+    return
+  fi
+
+  mkdir -p "$(dirname "$dst")"
+  printf '%s\n' "$content" > "$dst"
+
+  echo "  SYNC    $dst"
+}
+
+sync_rule() {
+  # Sync a scoped rule file: extract body from src, optionally prepend
+  # frontmatter, write to dst.
+  local src="$1"
+  local dst="$2"
+  local frontmatter="${3:-}"
+
+  if [[ ! -f "$src" ]]; then
+    echo "  SKIP    $src (not found)"
+    return
+  fi
+
+  if [[ -n "$frontmatter" ]]; then
+    { printf '%s\n\n' "$frontmatter"; extract_body "$src"; } | write_file "$dst"
+  else
+    extract_body "$src" | write_file "$dst"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Frontmatter templates
+# ---------------------------------------------------------------------------
+
+GOCOPILOT_FM='---
+description: Go backend code style, linting, and testing rules for all .go files
+applyTo: "**/*.go"
+---'
+
+FRONTENDCOPILOT_FM='---
+description: Frontend code style, linting, and build rules for React/Vite/TypeScript files
+applyTo: "gui/frontend/**/*.{ts,tsx,css}"
+---'
+
+GOCURSOR_FM='---
+description: Go backend code style, linting, and testing rules
+globs: "**/*.go"
+alwaysApply: false
+---'
+
+FRONTENDCURSOR_FM='---
+description: Frontend code style and build rules for React/Vite/TypeScript
+globs: "gui/frontend/**/*.ts,gui/frontend/**/*.tsx,gui/frontend/**/*.css"
+alwaysApply: false
+---'
+
+PROJECT_CURSOR_FM='---
+description: Project-wide guidelines for upbrr - upload preparation and tracker submission tool
+alwaysApply: true
+---'
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 echo "=== AI Instructions Sync ==="
 echo "Source: $SOURCE"
@@ -104,198 +169,70 @@ echo ""
 
 case "$SOURCE" in
   copilot)
-    echo "Syncing Copilot -> Cursor..."
-    # Extract body from copilot instructions and wrap with cursor frontmatter
-    if [[ -f ".github/instructions/go.instructions.md" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .github/instructions/go.instructions.md -> .cursor/rules/go.mdc"
-      else
-        mkdir -p .cursor/rules
-        {
-          echo '---'
-          echo 'description: Go backend code style, linting, and testing rules'
-          echo 'globs: "**/*.go"'
-          echo 'alwaysApply: false'
-          echo '---'
-          echo ''
-          extract_body ".github/instructions/go.instructions.md"
-        } > .cursor/rules/go.mdc
-        echo "  SYNC  go.instructions.md -> go.mdc"
-      fi
-    fi
-
-    if [[ -f ".github/instructions/frontend.instructions.md" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .github/instructions/frontend.instructions.md -> .cursor/rules/frontend.mdc"
-      else
-        mkdir -p .cursor/rules
-        {
-          echo '---'
-          echo 'description: Frontend code style and build rules for React/Vite/TypeScript'
-          echo 'globs: "gui/frontend/**/*.ts,gui/frontend/**/*.tsx,gui/frontend/**/*.css"'
-          echo 'alwaysApply: false'
-          echo '---'
-          echo ''
-          extract_body ".github/instructions/frontend.instructions.md"
-        } > .cursor/rules/frontend.mdc
-        echo "  SYNC  frontend.instructions.md -> frontend.mdc"
-      fi
-    fi
+    echo "Syncing scoped rules: Copilot -> Cursor..."
+    sync_rule ".github/instructions/go.instructions.md" ".cursor/rules/go.mdc" "$GOCURSOR_FM"
+    sync_rule ".github/instructions/frontend.instructions.md" ".cursor/rules/frontend.mdc" "$FRONTENDCURSOR_FM"
 
     echo ""
-    echo "Syncing Copilot -> Claude..."
-    if [[ -f ".github/instructions/go.instructions.md" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .github/instructions/go.instructions.md -> .claude/rules/go.md"
-      else
-        mkdir -p .claude/rules
-        extract_body ".github/instructions/go.instructions.md" > .claude/rules/go.md
-        echo "  SYNC  go.instructions.md -> go.md"
-      fi
-    fi
+    echo "Syncing scoped rules: Copilot -> Claude..."
+    sync_rule ".github/instructions/go.instructions.md" ".claude/rules/go.md"
+    sync_rule ".github/instructions/frontend.instructions.md" ".claude/rules/frontend.md"
 
-    if [[ -f ".github/instructions/frontend.instructions.md" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .github/instructions/frontend.instructions.md -> .claude/rules/frontend.md"
-      else
-        mkdir -p .claude/rules
-        extract_body ".github/instructions/frontend.instructions.md" > .claude/rules/frontend.md
-        echo "  SYNC  frontend.instructions.md -> frontend.md"
-      fi
+    echo ""
+    echo "Syncing project-level: Copilot -> Cursor + Claude..."
+    if [[ -f ".github/copilot-instructions.md" ]]; then
+      # -> Cursor: wrap with cursor frontmatter
+      { printf '%s\n\n' "$PROJECT_CURSOR_FM"; cat ".github/copilot-instructions.md"; } | write_file ".cursor/rules/project.mdc"
+      # -> Claude: prepend @AGENTS.md import
+      { printf '@AGENTS.md\n\n'; cat ".github/copilot-instructions.md"; } | write_file ".claude/CLAUDE.md"
+    else
+      echo "  SKIP    .github/copilot-instructions.md (not found)"
     fi
     ;;
 
   cursor)
-    echo "Syncing Cursor -> Copilot..."
-    if [[ -f ".cursor/rules/go.mdc" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .cursor/rules/go.mdc -> .github/instructions/go.instructions.md"
-      else
-        mkdir -p .github/instructions
-        {
-          echo '---'
-          echo 'description: Go backend code style, linting, and testing rules for all .go files'
-          echo 'applyTo: "**/*.go"'
-          echo '---'
-          echo ''
-          extract_body ".cursor/rules/go.mdc"
-        } > .github/instructions/go.instructions.md
-        echo "  SYNC  go.mdc -> go.instructions.md"
-      fi
-    fi
-
-    if [[ -f ".cursor/rules/frontend.mdc" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .cursor/rules/frontend.mdc -> .github/instructions/frontend.instructions.md"
-      else
-        mkdir -p .github/instructions
-        {
-          echo '---'
-          echo 'description: Frontend code style, linting, and build rules for React/Vite/TypeScript files'
-          echo 'applyTo: "gui/frontend/**/*.{ts,tsx,css}"'
-          echo '---'
-          echo ''
-          extract_body ".cursor/rules/frontend.mdc"
-        } > .github/instructions/frontend.instructions.md
-        echo "  SYNC  frontend.mdc -> frontend.instructions.md"
-      fi
-    fi
+    echo "Syncing scoped rules: Cursor -> Copilot..."
+    sync_rule ".cursor/rules/go.mdc" ".github/instructions/go.instructions.md" "$GOCOPILOT_FM"
+    sync_rule ".cursor/rules/frontend.mdc" ".github/instructions/frontend.instructions.md" "$FRONTENDCOPILOT_FM"
 
     echo ""
-    echo "Syncing Cursor -> Claude..."
-    if [[ -f ".cursor/rules/go.mdc" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .cursor/rules/go.mdc -> .claude/rules/go.md"
-      else
-        mkdir -p .claude/rules
-        extract_body ".cursor/rules/go.mdc" > .claude/rules/go.md
-        echo "  SYNC  go.mdc -> go.md"
-      fi
-    fi
+    echo "Syncing scoped rules: Cursor -> Claude..."
+    sync_rule ".cursor/rules/go.mdc" ".claude/rules/go.md"
+    sync_rule ".cursor/rules/frontend.mdc" ".claude/rules/frontend.md"
 
-    if [[ -f ".cursor/rules/frontend.mdc" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .cursor/rules/frontend.mdc -> .claude/rules/frontend.md"
-      else
-        mkdir -p .claude/rules
-        extract_body ".cursor/rules/frontend.mdc" > .claude/rules/frontend.md
-        echo "  SYNC  frontend.mdc -> frontend.md"
-      fi
+    echo ""
+    echo "Syncing project-level: Cursor -> Copilot + Claude..."
+    if [[ -f ".cursor/rules/project.mdc" ]]; then
+      local_body="$(extract_body ".cursor/rules/project.mdc")"
+      # -> Copilot: body only (no frontmatter needed for copilot-instructions.md)
+      printf '%s\n' "$local_body" | write_file ".github/copilot-instructions.md"
+      # -> Claude: prepend @AGENTS.md import
+      { printf '@AGENTS.md\n\n'; printf '%s\n' "$local_body"; } | write_file ".claude/CLAUDE.md"
+    else
+      echo "  SKIP    .cursor/rules/project.mdc (not found)"
     fi
     ;;
 
   claude)
-    echo "Syncing Claude -> Copilot..."
-    if [[ -f ".claude/rules/go.md" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .claude/rules/go.md -> .github/instructions/go.instructions.md"
-      else
-        mkdir -p .github/instructions
-        {
-          echo '---'
-          echo 'description: Go backend code style, linting, and testing rules for all .go files'
-          echo 'applyTo: "**/*.go"'
-          echo '---'
-          echo ''
-          cat ".claude/rules/go.md"
-        } > .github/instructions/go.instructions.md
-        echo "  SYNC  go.md -> go.instructions.md"
-      fi
-    fi
-
-    if [[ -f ".claude/rules/frontend.md" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .claude/rules/frontend.md -> .github/instructions/frontend.instructions.md"
-      else
-        mkdir -p .github/instructions
-        {
-          echo '---'
-          echo 'description: Frontend code style, linting, and build rules for React/Vite/TypeScript files'
-          echo 'applyTo: "gui/frontend/**/*.{ts,tsx,css}"'
-          echo '---'
-          echo ''
-          cat ".claude/rules/frontend.md"
-        } > .github/instructions/frontend.instructions.md
-        echo "  SYNC  frontend.md -> frontend.instructions.md"
-      fi
-    fi
+    echo "Syncing scoped rules: Claude -> Copilot..."
+    sync_rule ".claude/rules/go.md" ".github/instructions/go.instructions.md" "$GOCOPILOT_FM"
+    sync_rule ".claude/rules/frontend.md" ".github/instructions/frontend.instructions.md" "$FRONTENDCOPILOT_FM"
 
     echo ""
-    echo "Syncing Claude -> Cursor..."
-    if [[ -f ".claude/rules/go.md" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .claude/rules/go.md -> .cursor/rules/go.mdc"
-      else
-        mkdir -p .cursor/rules
-        {
-          echo '---'
-          echo 'description: Go backend code style, linting, and testing rules'
-          echo 'globs: "**/*.go"'
-          echo 'alwaysApply: false'
-          echo '---'
-          echo ''
-          cat ".claude/rules/go.md"
-        } > .cursor/rules/go.mdc
-        echo "  SYNC  go.md -> go.mdc"
-      fi
-    fi
+    echo "Syncing scoped rules: Claude -> Cursor..."
+    sync_rule ".claude/rules/go.md" ".cursor/rules/go.mdc" "$GOCURSOR_FM"
+    sync_rule ".claude/rules/frontend.md" ".cursor/rules/frontend.mdc" "$FRONTENDCURSOR_FM"
 
-    if [[ -f ".claude/rules/frontend.md" ]]; then
-      if $DRY_RUN; then
-        echo "  WOULD .claude/rules/frontend.md -> .cursor/rules/frontend.mdc"
-      else
-        mkdir -p .cursor/rules
-        {
-          echo '---'
-          echo 'description: Frontend code style and build rules for React/Vite/TypeScript'
-          echo 'globs: "gui/frontend/**/*.ts,gui/frontend/**/*.tsx,gui/frontend/**/*.css"'
-          echo 'alwaysApply: false'
-          echo '---'
-          echo ''
-          cat ".claude/rules/frontend.md"
-        } > .cursor/rules/frontend.mdc
-        echo "  SYNC  frontend.md -> frontend.mdc"
-      fi
+    echo ""
+    echo "Syncing project-level: Claude -> Copilot + Cursor..."
+    if [[ -f ".claude/CLAUDE.md" ]]; then
+      local_body="$(cat ".claude/CLAUDE.md" | strip_agents_import)"
+      # -> Copilot: body without @AGENTS.md import
+      printf '%s\n' "$local_body" | write_file ".github/copilot-instructions.md"
+      # -> Cursor: wrap with cursor frontmatter
+      { printf '%s\n\n' "$PROJECT_CURSOR_FM"; printf '%s\n' "$local_body"; } | write_file ".cursor/rules/project.mdc"
+    else
+      echo "  SKIP    .claude/CLAUDE.md (not found)"
     fi
     ;;
 
@@ -308,4 +245,5 @@ esac
 
 echo ""
 echo "Note: AGENTS.md is shared across all assistants and was not modified."
+echo "Manual files (never overwritten): .claude/rules/safety.md"
 echo "Done."

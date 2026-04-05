@@ -62,7 +62,10 @@
       "type": "go",
       "request": "launch",
       "mode": "exec",
-      "program": "${workspaceFolder}/gui/build/bin/upbrr-gui.exe",
+      "program": "${workspaceFolder}/gui/build/bin/upbrr-gui",
+      "windows": {
+        "program": "${workspaceFolder}/gui/build/bin/upbrr-gui.exe"
+      },
       "preLaunchTask": "build-gui",
       "cwd": "${workspaceFolder}"
     },

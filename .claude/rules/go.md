@@ -1,4 +1,4 @@
-# Go Code Rules
+# Go Code Guidelines
 
 - Format with gofmt and goimports. Local import prefix: `github.com/autobrr/upbrr`
 - `.golangci.yml` is the lint standard. Run: `golangci-lint run --timeout=5m`
@@ -7,7 +7,7 @@
 - Run narrowest relevant tests first, expand to `go test -v -timeout 20m ./...` for cross-package changes
 - Preserve `api.Mode` usage across CLI/GUI/web surfaces
 - Unattended flows must stay non-blocking and conservative
-- Cross-platform: no OS-specific assumptions unless intentionally gated
+- Cross-platform: no OS-specific assumptions unless intentionally platform-gated
 
 ## Import Grouping
 
@@ -32,3 +32,4 @@ Three groups separated by blank lines: stdlib → third-party → local (`github
 - Services: dependency injection via `api.ServiceSet` and `api.CoreDependencies`
 - Progress: reporters attached to context via `WithXxxProgressReporter()`
 - Config: nested struct with `snake_case` YAML tags
+

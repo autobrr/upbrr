@@ -4,13 +4,13 @@ globs: "gui/frontend/**/*.ts,gui/frontend/**/*.tsx,gui/frontend/**/*.css"
 alwaysApply: false
 ---
 
-# Frontend Rules
+# Frontend Guidelines
 
-- Working directory: `gui/frontend/`
+- Working directory for all frontend commands: `gui/frontend/`
 - Package manager: pnpm 10 (`pnpm install --frozen-lockfile`)
-- TypeScript strict, ESLint clean — no rule weakening or type error bypasses
-- Validate: `pnpm run lint` and `pnpm run typecheck`
-- For build/config changes: `pnpm run build`
+- TypeScript strict mode, ESLint clean — no rule weakening or type error bypasses
+- Validate with: `pnpm run lint` and `pnpm run typecheck`
+- For build/config changes also run: `pnpm run build`
 - Vite dev server: `pnpm run dev` (port 5173)
 - Stack: React 18 + Vite 5 + TypeScript 5 + Tailwind 4
 
@@ -22,3 +22,4 @@ alwaysApply: false
 - State management: React hooks (useState, useCallback, useMemo)
 - Custom hooks: `src/hooks/` (useSettingsState, useScreenshots, useUploadImages)
 - Page-based layout: `src/` organized by workflow step (input, dupe_check, preparation, tracker_upload, etc.)
+

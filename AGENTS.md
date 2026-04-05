@@ -69,7 +69,7 @@ These rules are mandatory for all AI coding agents working on this repository.
 - **Update README.md** when adding features, changing setup steps, modifying CLI flags, or altering build/run instructions.
 - **Update AGENTS.md** when adding new conventions, project structure changes, key type additions, or workflow rules.
 - After updating any AI instruction file (AGENTS.md, .claude/rules/, .cursor/rules/, .github/instructions/), **run the sync script** (`scripts/sync-ai-instructions.ps1` on Windows, `scripts/sync-ai-instructions.sh` on Unix) — do not manually duplicate content across instruction files.
-- Do not duplicate information that already exists in AGENTS.md into other instruction files. The sync script and import references (`@AGENTS.md`) handle propagation.
+- Do not duplicate information that already exists in AGENTS.md into other instruction files. The sync script handles both scoped rule files (Go, frontend) and repo-wide files (`copilot-instructions.md`, `project.mdc`, `CLAUDE.md`). Claude's `CLAUDE.md` uses an `@AGENTS.md` import that the sync script manages automatically.
 
 ### Code Change Discipline
 

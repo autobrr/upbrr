@@ -403,9 +403,9 @@ func loadServeConfig(configPath string, configProvided bool) (config.Config, str
 			}
 			cfg.MainSettings.DBPath = dbPath
 		}
-		if err := saveConfigToDatabase(ctx, &cfg, dbPath); err != nil {
-			return config.Config{}, "", err
-		}
+		// Do not persist the imported YAML to the database. Writing it back would
+		// overwrite previously valid database-backed config with zero values for
+		// any fields omitted from the YAML file. Use it for this process only.
 		return cfg, dbPath, nil
 	}
 

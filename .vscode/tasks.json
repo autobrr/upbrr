@@ -5,7 +5,10 @@
       "label": "build-cli",
       "type": "shell",
       "command": "go",
-      "args": ["build", "-o", "dist/upbrr.exe", "./cmd/upbrr"],
+      "args": ["build", "-o", "dist/upbrr", "./cmd/upbrr"],
+      "windows": {
+        "args": ["build", "-o", "dist/upbrr.exe", "./cmd/upbrr"]
+      },
       "options": { "cwd": "${workspaceFolder}" },
       "group": "build",
       "problemMatcher": ["$go"]
@@ -18,9 +21,18 @@
         "build",
         "-tags", "dev",
         "-gcflags", "all=-N -l",
-        "-o", "gui/build/bin/upbrr-gui.exe",
+        "-o", "gui/build/bin/upbrr-gui",
         "./gui"
       ],
+      "windows": {
+        "args": [
+          "build",
+          "-tags", "dev",
+          "-gcflags", "all=-N -l",
+          "-o", "gui/build/bin/upbrr-gui.exe",
+          "./gui"
+        ]
+      },
       "options": { "cwd": "${workspaceFolder}" },
       "dependsOn": ["frontend-install", "frontend-build"],
       "group": "build",
