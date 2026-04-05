@@ -1018,6 +1018,11 @@ export default function App() {
     screenshotsSettingsSaving,
     setScreenshotsSettingsSaving,
     setScreenshotsError,
+    loadScreenshotPlan,
+    readScreenshotImage,
+    setExistingImages,
+    resetScreenshotState: resetScreenshots,
+    handleDeleteTrackerImageURL,
   } = screenshots;
 
   // Upload images workflow hook
@@ -1028,6 +1033,13 @@ export default function App() {
     uploadCandidates: screenshots.uploadCandidates,
     configuredImageHosts,
   });
+  const {
+    refreshUploadedImages,
+    resetUploadState,
+    setUploadSelections,
+    setUploadHost,
+    uploadHost,
+  } = uploadImages;
 
   // Tracker image URL handling
   const trackerImageURLs = useMemo(() => {
@@ -1054,9 +1066,9 @@ export default function App() {
       return;
     }
     for (const url of trackerImageURLs) {
-      await screenshots.handleDeleteTrackerImageURL(url);
+      await handleDeleteTrackerImageURL(url);
     }
-  }, [trackerImageURLs, screenshots.handleDeleteTrackerImageURL]);
+  }, [trackerImageURLs, handleDeleteTrackerImageURL]);
 
   const uploadCandidatePaths = useMemo(() => {
     return new Set(
@@ -1064,14 +1076,14 @@ export default function App() {
     );
   }, [screenshots.uploadCandidates]);
 
-  const resetScreenshotState = () => {
-    screenshots.resetScreenshotState();
-    uploadImages.resetUploadState();
+  const resetScreenshotState = useCallback(() => {
+    resetScreenshots();
+    resetUploadState();
     setUploadToggles({});
     setOverrideRuleBlocks(false);
     setFinalDragIndex(null);
     setLiveCaptureLoading(false);
-  };
+  }, [resetScreenshots, resetUploadState]);
 
 
 
@@ -1593,7 +1605,9 @@ export default function App() {
         path.trim(),
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
-        getSelectedTrackers(),
+        Object.entries(releasePageTrackerSelection)
+          .filter(([, selected]) => selected)
+          .map(([name]) => name),
         ignoredDupeTrackers
       );
       const filteredDescriptions = filterPrepDescriptions(result.Descriptions || []);
@@ -1610,7 +1624,7 @@ export default function App() {
     }
   };
 
-  const runDescriptionBuilder = async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
+  const runDescriptionBuilder = useCallback(async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
     setBuilderError("");
     setBuilderSaved("");
     const fetcher = globalThis.go?.guiapp?.App?.FetchDescriptionBuilder;
@@ -1628,7 +1642,9 @@ export default function App() {
         path.trim(),
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
-        getSelectedTrackers(),
+        Object.entries(releasePageTrackerSelection)
+          .filter(([, selected]) => selected)
+          .map(([name]) => name),
         ignoredDupeTrackers
       );
       setBuilderPreview(result);
@@ -1640,7 +1656,7 @@ export default function App() {
     } finally {
       setBuilderLoading(false);
     }
-  };
+  }, [path, releasePageTrackerSelection, ignoredDupeTrackers]);
 
   const resetBuilderDescription = async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
     setBuilderError("");
@@ -1765,24 +1781,24 @@ export default function App() {
   const previewFrameRate = useMemo(() => {
     const rate = screenshots.screenshotPlan?.FrameRate || 0;
     return rate > 0 ? rate : 24;
-  }, [screenshots.screenshotPlan, screenshots]);
+  }, [screenshots.screenshotPlan]);
 
-  const previewDuration = useMemo(() => screenshots.screenshotPlan?.DurationSeconds || 0, [screenshots.screenshotPlan, screenshots]);
+  const previewDuration = useMemo(() => screenshots.screenshotPlan?.DurationSeconds || 0, [screenshots.screenshotPlan]);
 
-  const clampPreviewSeconds = (value: number) => {
+  const clampPreviewSeconds = useCallback((value: number) => {
     if (!Number.isFinite(value)) return 0;
     if (previewDuration > 0) {
       return Math.min(Math.max(value, 0), previewDuration);
     }
     return Math.max(value, 0);
-  };
+  }, [previewDuration]);
 
   const livePreviewFrame = useMemo(() => {
     if (previewFrameRate <= 0) return 0;
     const seconds = clampPreviewSeconds(livePreviewSeconds);
     const frame = Math.round(seconds * previewFrameRate);
     return Number.isFinite(frame) ? frame : 0;
-  }, [livePreviewSeconds, previewFrameRate, previewDuration]);
+  }, [livePreviewSeconds, previewFrameRate, clampPreviewSeconds]);
 
   const runLivePreviewAt = async (timestampSeconds: number) => {
     setLivePreviewError("");
@@ -2169,7 +2185,7 @@ export default function App() {
     setMetadataProgressActive(false);
     setMetadataProgressUpdates([]);
     resetScreenshotState();
-  }, [path]);
+  }, [path, resetScreenshotState]);
 
   useEffect(() => {
     if (activeTab !== "description_builder") return;
@@ -2186,21 +2202,21 @@ export default function App() {
     if (builderAutoRequestKey === requestKey) return;
     setBuilderAutoRequestKey(requestKey);
     runDescriptionBuilder(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {});
-  }, [activeTab, dupeChecked, builderLoading, builderSaving, builderDirty, path, idOverrideState, releaseOverrideState, builderAutoRequestKey]);
+  }, [activeTab, dupeChecked, builderLoading, builderSaving, builderDirty, path, idOverrideState, releaseOverrideState, builderAutoRequestKey, runDescriptionBuilder]);
 
   useEffect(() => {
     if (activeTab !== "screenshots") return;
     if (!dupeChecked) return;
     if (screenshots.screenshotPlan || screenshots.screenshotsLoading) return;
-    screenshots.loadScreenshotPlan();
-  }, [activeTab, dupeChecked, screenshots.screenshotPlan, screenshots.screenshotsLoading, screenshots.loadScreenshotPlan]);
+    loadScreenshotPlan();
+  }, [activeTab, dupeChecked, screenshots.screenshotPlan, screenshots.screenshotsLoading, loadScreenshotPlan]);
 
   useEffect(() => {
     if (activeTab !== "upload_images") return;
     if (!dupeChecked) return;
     if (screenshots.screenshotPlan || screenshots.screenshotsLoading) return;
-    screenshots.loadScreenshotPlan();
-  }, [activeTab, dupeChecked, screenshots.screenshotPlan, screenshots.screenshotsLoading, screenshots.loadScreenshotPlan]);
+    loadScreenshotPlan();
+  }, [activeTab, dupeChecked, screenshots.screenshotPlan, screenshots.screenshotsLoading, loadScreenshotPlan]);
 
   useEffect(() => {
     if (activeTab !== "upload_images") return;
@@ -2213,27 +2229,27 @@ export default function App() {
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
         );
         if (!candidates || candidates.length === 0) {
-          screenshots.setExistingImages([]);
-          await uploadImages.refreshUploadedImages();
+          setExistingImages([]);
+          await refreshUploadedImages();
           return;
         }
         const previews = await Promise.all(
           candidates.map(async (image: ScreenshotImage) => {
             try {
-              return await screenshots.readScreenshotImage(image);
+              return await readScreenshotImage(image);
             } catch {
               return null;
             }
           })
         );
-        screenshots.setExistingImages(previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)));
-        await uploadImages.refreshUploadedImages();
+        setExistingImages(previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)));
+        await refreshUploadedImages();
       } catch (err) {
         console.error("Failed to load upload candidates:", err);
       }
     };
     loadUploadCandidates();
-  }, [activeTab, path, idOverrideState, releaseOverrideState, screenshots.setExistingImages, screenshots.readScreenshotImage, uploadImages.refreshUploadedImages]);
+  }, [activeTab, path, idOverrideState, releaseOverrideState, setExistingImages, readScreenshotImage, refreshUploadedImages]);
 
   useEffect(() => {
     if (trackerUploadItems.length === 0) return;
@@ -2264,10 +2280,10 @@ export default function App() {
 
   useEffect(() => {
     if (screenshots.uploadCandidates.length === 0) {
-      uploadImages.setUploadSelections({});
+      setUploadSelections({});
       return;
     }
-    uploadImages.setUploadSelections((prev) => {
+    setUploadSelections((prev) => {
       const next: Record<string, boolean> = { ...prev };
       screenshots.uploadCandidates.forEach((item) => {
         const pathValue = item.image.Path;
@@ -2283,12 +2299,12 @@ export default function App() {
       });
       return next;
     });
-  }, [screenshots.uploadCandidates, uploadCandidatePaths, uploadImages.setUploadSelections]);
+  }, [screenshots.uploadCandidates, uploadCandidatePaths, setUploadSelections]);
 
   useEffect(() => {
-    if (uploadImages.uploadHost || configuredImageHosts.length === 0) return;
-    uploadImages.setUploadHost(configuredImageHosts[0]);
-  }, [configuredImageHosts, uploadImages.uploadHost, uploadImages.setUploadHost]);
+    if (uploadHost || configuredImageHosts.length === 0) return;
+    setUploadHost(configuredImageHosts[0]);
+  }, [configuredImageHosts, uploadHost, setUploadHost]);
 
   // Initialize release page tracker selection when preview loads or trackers change
   useEffect(() => {

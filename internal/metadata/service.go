@@ -856,8 +856,14 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 		}
 		extPath := paths.BDMVExtSummaryPath(tmpDir, playlist)
 		extPayload := ""
-		if rawExt, err := os.ReadFile(extPath); err == nil {
-			extPayload = string(rawExt)
+		if extPath != "" {
+			cleanTmpDir := filepath.Clean(tmpDir)
+			cleanExtPath := filepath.Clean(extPath)
+			if relPath, err := filepath.Rel(cleanTmpDir, cleanExtPath); err == nil && relPath != ".." && !strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+				if rawExt, err := os.ReadFile(cleanExtPath); err == nil {
+					extPayload = string(rawExt)
+				}
+			}
 		}
 		cache.Entries[playlist] = cachedBDMVSummary{
 			Playlist:    playlist,

@@ -626,8 +626,8 @@ export default function InputPage(props: Props) {
     [preview.ExternalIDInfo]
   );
 
-  const tmdbCandidates = preview.ExternalIDCandidates?.TMDB || [];
-  const imdbCandidates = preview.ExternalIDCandidates?.IMDB || [];
+  const tmdbCandidates = useMemo(() => preview.ExternalIDCandidates?.TMDB || [], [preview.ExternalIDCandidates?.TMDB]);
+  const imdbCandidates = useMemo(() => preview.ExternalIDCandidates?.IMDB || [], [preview.ExternalIDCandidates?.IMDB]);
   const [candidatePreview, setCandidatePreview] = useState<{
     provider: "tmdb" | "imdb";
     candidate: ExternalIDCandidate;

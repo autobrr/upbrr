@@ -4,6 +4,7 @@
 package discparse
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -109,7 +110,7 @@ func ExtractPlaylistReports(text string, selected []string) ([]PlaylistReport, e
 		return nil, err
 	}
 	if len(blocks) == 0 {
-		return nil, fmt.Errorf("no playlist blocks found in BDInfo report")
+		return nil, errors.New("no playlist blocks found in BDInfo report")
 	}
 
 	reports := make([]PlaylistReport, 0, len(selected))

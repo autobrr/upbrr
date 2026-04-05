@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ConfigMap, ConfigValue, FieldMeta } from "../types";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
@@ -460,10 +460,10 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     setSettingsError(message);
   };
 
-  const clearSettingsStatus = () => {
+  const clearSettingsStatus = useCallback(() => {
     setSettingsError("");
     setSettingsSaved("");
-  };
+  }, []);
 
   const markSettingsSaved = (message: string) => {
     setSettingsSaved(message);
@@ -568,7 +568,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     });
   };
 
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     clearSettingsStatus();
     const getConfig = globalThis.go?.guiapp?.App?.GetConfig;
     if (!getConfig) {
@@ -589,9 +589,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     } finally {
       setSettingsLoading(false);
     }
-  };
+  }, [clearSettingsStatus]);
 
-  const loadDefaultConfig = async () => {
+  const loadDefaultConfig = useCallback(async () => {
     const getDefaultConfig = globalThis.go?.guiapp?.App?.GetDefaultConfig;
     if (!getDefaultConfig) {
       return;
@@ -603,9 +603,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     } catch (err) {
       // Silently fail if we can't load default config; it's optional for tracker comparison
     }
-  };
+  }, []);
 
-  const loadKnownTrackers = async () => {
+  const loadKnownTrackers = useCallback(async () => {
     if (knownTrackersLoading) return;
     const listKnown = globalThis.go?.guiapp?.App?.ListKnownTrackers;
     if (!listKnown) return;
@@ -620,7 +620,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     } finally {
       setKnownTrackersLoading(false);
     }
-  };
+  }, [knownTrackersLoading]);
 
   const handleSaveSettings = async () => {
     clearSettingsStatus();
@@ -649,25 +649,25 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if ((activeTab === "input" || activeTab === "settings" || activeTab === "logging" || activeTab === "upload" || activeTab === "upload_images") && !configData) {
       loadSettings();
     }
-  }, [activeTab, configData]);
+  }, [activeTab, configData, loadSettings]);
 
   useEffect(() => {
     if ((activeTab === "settings" || activeTab === "input" || activeTab === "upload") && !defaultConfig) {
       loadDefaultConfig();
     }
-  }, [activeTab, defaultConfig]);
+  }, [activeTab, defaultConfig, loadDefaultConfig]);
 
   useEffect(() => {
     if (activeTab === "settings" && knownTrackers.length === 0 && !knownTrackersLoading) {
       loadKnownTrackers();
     }
-  }, [activeTab, knownTrackers.length, knownTrackersLoading]);
+  }, [activeTab, knownTrackers.length, knownTrackersLoading, loadKnownTrackers]);
 
   useEffect(() => {
     if ((activeTab === "screenshots" || activeTab === "upload_images") && !configData) {
       loadSettings();
     }
-  }, [activeTab, configData]);
+  }, [activeTab, configData, loadSettings]);
 
   const advancedOpen = settingsAdvanced[settingsSection] ?? false;
   const showAdvancedToggle = (() => {
@@ -873,7 +873,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
    * - The baseline doesn't have the tracker
    * - It has Unknown keys (custom fields not in the schema)
    */
-  const isTrackerConfigured = (trackerName: string, trackerValue: ConfigMap): boolean => {
+  const isTrackerConfigured = useCallback((trackerName: string, trackerValue: ConfigMap): boolean => {
     if (!defaultConfig || typeof defaultConfig !== "object" || Array.isArray(defaultConfig)) {
       return true; // If we can't load defaults, assume it's configured
     }
@@ -933,7 +933,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
     // All fields match baseline exactly
     return false;
-  };
+  }, [defaultConfig]);
 
   const trackerSelectionNames = useMemo(() => {
     if (!configData || !configData.Trackers || typeof configData.Trackers !== "object" || Array.isArray(configData.Trackers)) {
@@ -962,7 +962,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       )
       .map(([trackerName]) => trackerName)
       .sort((left, right) => left.localeCompare(right));
-  }, [configData, manualTrackerEntries, defaultConfig, isTrackerConfigured]);
+  }, [configData, manualTrackerEntries, isTrackerConfigured]);
 
   const renderTrackerSection = (advancedOpen: boolean) => {
     try {

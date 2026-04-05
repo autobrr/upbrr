@@ -3,10 +3,7 @@
 
 package api
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 const ErrCodeBDMVRescanRequired = "bdmv_rescan_required"
 
@@ -24,5 +21,5 @@ func (e *BDMVRescanRequiredError) Error() string {
 	if len(e.MissingPlaylists) == 0 {
 		return "BDMV rescan confirmation required"
 	}
-	return fmt.Sprintf("BDMV rescan confirmation required for playlist(s): %s", strings.Join(e.MissingPlaylists, ", "))
+	return "BDMV rescan confirmation required for playlist(s): " + strings.Join(e.MissingPlaylists, ", ")
 }
