@@ -742,6 +742,52 @@ func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
 	return disabled
 }
 
+func ResolveBTNAPIToken(cfg Config) string {
+	if trackerCfg, ok := cfg.Trackers.Trackers["BTN"]; ok {
+		token := strings.TrimSpace(trackerCfg.APIKey)
+		if token != "" {
+			return token
+		}
+	}
+	token := strings.TrimSpace(cfg.Metadata.BTNAPI)
+	return token
+}
+
+// MergeMissingTrackerDefaults backfills tracker stubs from the embedded example
+// config so older saved configs can discover newly added trackers in the GUI.
+func MergeMissingTrackerDefaults(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.Trackers.Trackers == nil {
+		cfg.Trackers.Trackers = map[string]TrackerConfig{}
+	}
+	if cfg.Trackers.DefaultTrackers == nil {
+		cfg.Trackers.DefaultTrackers = CSVList{}
+	}
+	defaults, err := loadEmbeddedDefaultConfigRaw()
+	if err != nil || defaults == nil || len(defaults.Trackers.Trackers) == 0 {
+		if err != nil {
+			return fmt.Errorf("load embedded tracker defaults: %w", err)
+		}
+		return errors.New("load embedded tracker defaults: embedded default trackers missing")
+	}
+	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
+		if _, ok := cfg.Trackers.Trackers[trackerName]; ok {
+			continue
+		}
+		cfg.Trackers.Trackers[trackerName] = trackerCfg
+	}
+	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" {
+		btnCfg := cfg.Trackers.Trackers["BTN"]
+		if strings.TrimSpace(btnCfg.APIKey) == "" {
+			btnCfg.APIKey = token
+			cfg.Trackers.Trackers["BTN"] = btnCfg
+		}
+	}
+	return nil
+}
+
 func (c TorrentClientConfig) QbitHost() string {
 	if strings.TrimSpace(c.QuiProxyURL) != "" {
 		host := strings.TrimSpace(c.QuiProxyURL)

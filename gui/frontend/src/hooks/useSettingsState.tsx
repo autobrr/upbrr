@@ -176,6 +176,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
   BJS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.ShowGroupIfAnon],
   BLU: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   BT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
+  BTN: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Username, trackerFieldMeta.Password, trackerFieldMeta.URL, trackerFieldMeta.OTPURI],
   CBR: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ, trackerFieldMeta.TagForCustomRelease],
   CZ: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.CheckForRules],
   DC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],

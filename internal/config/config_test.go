@@ -368,6 +368,68 @@ func TestLoadEmbeddedDefaultConfig(t *testing.T) {
 	if _, ok := cfg.Trackers.Trackers["AITHER"]; !ok {
 		t.Fatalf("embedded default trackers should include AITHER")
 	}
+	if _, ok := cfg.Trackers.Trackers["BTN"]; !ok {
+		t.Fatalf("embedded default trackers should include BTN")
+	}
+}
+
+func TestMergeMissingTrackerDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"AITHER": {APIKey: "existing"},
+			},
+		},
+	}
+
+	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+
+	if _, ok := cfg.Trackers.Trackers["BTN"]; !ok {
+		t.Fatalf("expected BTN to be backfilled from embedded defaults")
+	}
+	if got := cfg.Trackers.Trackers["AITHER"].APIKey; got != "existing" {
+		t.Fatalf("expected existing tracker config to be preserved, got %q", got)
+	}
+}
+
+func TestResolveBTNAPITokenPrefersTrackerConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"BTN": {APIKey: "tracker-token"},
+			},
+		},
+	}
+
+	if got := ResolveBTNAPIToken(cfg); got != "tracker-token" {
+		t.Fatalf("expected tracker token, got %q", got)
+	}
+}
+
+func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{},
+		},
+	}
+
+	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+
+	if got := cfg.Trackers.Trackers["BTN"].APIKey; got != "legacy-token" {
+		t.Fatalf("expected legacy BTN api token to backfill tracker config, got %q", got)
+	}
 }
 
 func TestDisableUnsupportedTrackerImageRehosts(t *testing.T) {

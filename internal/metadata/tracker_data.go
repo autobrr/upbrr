@@ -608,7 +608,7 @@ func configuredTrackers(cfg api.Config) ([]string, []string) {
 		}
 		configured = append(configured, upper)
 	}
-	if len(strings.TrimSpace(cfg.Metadata.BTNAPI)) >= minTrackerTokenLen {
+	if len(config.ResolveBTNAPIToken(cfg)) >= minTrackerTokenLen {
 		configured = append(configured, "BTN")
 	}
 	configured = uniqueSorted(configured)
@@ -624,10 +624,10 @@ func filterConfiguredTrackers(cfg api.Config, trackers []string, logger api.Logg
 	filtered := make([]string, 0, len(trackers))
 	for _, tracker := range trackers {
 		if strings.EqualFold(strings.TrimSpace(tracker), "BTN") {
-			if len(strings.TrimSpace(cfg.Metadata.BTNAPI)) >= minTrackerTokenLen {
+			if len(config.ResolveBTNAPIToken(cfg)) >= minTrackerTokenLen {
 				filtered = append(filtered, tracker)
 			} else if logger != nil {
-				logger.Debugf("metadata: tracker %s missing metadata.btn_api token", tracker)
+				logger.Debugf("metadata: tracker %s missing BTN api token", tracker)
 			}
 			continue
 		}

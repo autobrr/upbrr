@@ -6,7 +6,9 @@ package metadata
 import (
 	"context"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -442,9 +444,9 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{
-		Metadata: config.MetadataConfig{BTNAPI: strings.Repeat("b", minTrackerTokenLen)},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
+				"BTN": {APIKey: strings.Repeat("b", minTrackerTokenLen)},
 				"BHD": {APIKey: longToken, BhdRSSKey: longToken},
 			},
 		},
@@ -488,9 +490,9 @@ func TestEnrichTrackerDataKeepsBTNAsFallbackWhenKeepingImages(t *testing.T) {
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{
-		Metadata: config.MetadataConfig{BTNAPI: strings.Repeat("b", minTrackerTokenLen)},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
+				"BTN": {APIKey: strings.Repeat("b", minTrackerTokenLen)},
 				"BHD": {APIKey: longToken, BhdRSSKey: longToken},
 			},
 		},
@@ -648,6 +650,76 @@ func TestExtractBTNClaimedShowsParsesCurrentSection(t *testing.T) {
 	}
 }
 
+func TestExtractBTNClaimedShowsScopesToClaimedPost(t *testing.T) {
+	t.Parallel()
+
+	html := `
+	<div>
+	  <strong>Current Shows:</strong><br>
+	  Wrong Show -- BTN<br>
+	</div>
+	<table id="post1405482">
+	  <tr>
+	    <td>
+	      <div id="content1405482" class="postcontent">
+	        <strong>Current Shows:</strong><br>
+	        Example Show -- BTN<br>
+	        Another Show (aka: Alt Name) -- BTN<br>
+	        Upcoming Shows:<br>
+	        Ignored Show -- BTN
+	      </div>
+	    </td>
+	  </tr>
+	</table>`
+
+	claimed := extractBTNClaimedShows(html)
+	if _, ok := claimed[normalizeBTNTitle("Example Show")]; !ok {
+		t.Fatalf("expected scoped example show to be extracted, got %#v", claimed)
+	}
+	if _, ok := claimed[normalizeBTNTitle("Alt Name")]; !ok {
+		t.Fatalf("expected scoped AKA alias to be extracted, got %#v", claimed)
+	}
+	if _, ok := claimed[normalizeBTNTitle("Wrong Show")]; ok {
+		t.Fatalf("did not expect out-of-post show to be extracted, got %#v", claimed)
+	}
+}
+
+func TestMirrorBTNCookiesForClaimedThreadCopiesBackupDomainSession(t *testing.T) {
+	t.Parallel()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+
+	backupURL := mustParseURL(t, "https://backup.landof.tv/")
+	broadcastURL := mustParseURL(t, "https://broadcasthe.net/")
+	client.Jar.SetCookies(backupURL, []*http.Cookie{{
+		Name:   "session",
+		Value:  "abc123",
+		Domain: "backup.landof.tv",
+		Path:   "/",
+	}})
+
+	mirrorBTNCookiesForClaimedThread(client)
+
+	broadcastCookies := client.Jar.Cookies(broadcastURL)
+	if len(broadcastCookies) == 0 {
+		t.Fatalf("expected mirrored cookies for broadcasthe.net")
+	}
+	found := false
+	for _, cookie := range broadcastCookies {
+		if cookie.Name == "session" && cookie.Value == "abc123" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected mirrored session cookie, got %#v", broadcastCookies)
+	}
+}
+
 func TestBTNClaimWindowExpiredUsesAiredDateAndTimezone(t *testing.T) {
 	t.Parallel()
 
@@ -673,4 +745,14 @@ func TestBTNClaimWindowExpiredUsesAiredDateAndTimezone(t *testing.T) {
 	if threshold != 48 {
 		t.Fatalf("expected threshold 48h when explicit air time is present, got %d", threshold)
 	}
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse url %q: %v", raw, err)
+	}
+	return parsed
 }

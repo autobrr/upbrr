@@ -35,16 +35,18 @@ const (
 )
 
 var (
-	btnLineBreakPattern  = regexp.MustCompile(`(?i)<br\s*/?>`)
-	btnTagPattern        = regexp.MustCompile(`(?s)<[^>]*>`)
-	btnAKAExtractPattern = regexp.MustCompile(`(?i)\(\s*aka\s*:\s*([^\)]*?)\)`)
-	btnSxxExxCutPattern  = regexp.MustCompile(`(?i)\bS\d{1,2}E\d{1,3}\b`)
-	btnSeasonCutPattern  = regexp.MustCompile(`(?i)\bS\d{1,2}\b`)
-	btnDateCutPattern    = regexp.MustCompile(`\b\d{4}[\-\.]\d{2}[\-\.]\d{2}\b`)
-	btnNonAlnumPattern   = regexp.MustCompile(`[^a-z0-9]+`)
-	btnSpacePattern      = regexp.MustCompile(`\s+`)
-	btnTime24Pattern     = regexp.MustCompile(`^(\d{1,2}):(\d{2})(?::(\d{2}))?$`)
-	btnTime12Pattern     = regexp.MustCompile(`^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$`)
+	btnLineBreakPattern       = regexp.MustCompile(`(?i)<br\s*/?>`)
+	btnTagPattern             = regexp.MustCompile(`(?s)<[^>]*>`)
+	btnAKAExtractPattern      = regexp.MustCompile(`(?i)\(\s*aka\s*:\s*([^\)]*?)\)`)
+	btnSxxExxCutPattern       = regexp.MustCompile(`(?i)\bS\d{1,2}E\d{1,3}\b`)
+	btnSeasonCutPattern       = regexp.MustCompile(`(?i)\bS\d{1,2}\b`)
+	btnDateCutPattern         = regexp.MustCompile(`\b\d{4}[\-\.]\d{2}[\-\.]\d{2}\b`)
+	btnNonAlnumPattern        = regexp.MustCompile(`[^a-z0-9]+`)
+	btnSpacePattern           = regexp.MustCompile(`\s+`)
+	btnTime24Pattern          = regexp.MustCompile(`^(\d{1,2}):(\d{2})(?::(\d{2}))?$`)
+	btnTime12Pattern          = regexp.MustCompile(`^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$`)
+	btnClaimedPostTableRegex  = regexp.MustCompile(`(?is)<table[^>]*id=["']` + btnClaimedShowsPostID + `["'][^>]*>(.*?)</table>`)
+	btnClaimedContentDivRegex = regexp.MustCompile(`(?is)<div[^>]*(?:id=["']content1405482["'][^>]*|class=["'][^"']*\bpostcontent\b[^"']*["'][^>]*)>(.*?)</div>`)
 )
 
 type btnClaimedShowsCache struct {
@@ -142,6 +144,7 @@ func (s *Service) fetchBTNClaimedTitles(ctx context.Context) (map[string]struct{
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
 
 	_ = s.loginBTNForClaims(ctx, client)
+	mirrorBTNCookiesForClaimedThread(client)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, btnClaimedShowsURL, nil)
 	if err != nil {
@@ -202,7 +205,8 @@ func (s *Service) loginBTNForClaims(ctx context.Context, client *http.Client) er
 }
 
 func extractBTNClaimedShows(rawHTML string) map[string]struct{} {
-	normalized := btnLineBreakPattern.ReplaceAllString(rawHTML, "\n")
+	scopedHTML := extractBTNClaimedPostHTML(rawHTML)
+	normalized := btnLineBreakPattern.ReplaceAllString(scopedHTML, "\n")
 	normalized = btnTagPattern.ReplaceAllString(normalized, "")
 	normalized = html.UnescapeString(normalized)
 
@@ -237,6 +241,20 @@ func extractBTNClaimedShows(rawHTML string) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+func extractBTNClaimedPostHTML(rawHTML string) string {
+	if strings.TrimSpace(rawHTML) == "" {
+		return rawHTML
+	}
+	if tableMatch := btnClaimedPostTableRegex.FindStringSubmatch(rawHTML); len(tableMatch) > 1 {
+		scoped := tableMatch[1]
+		if contentMatch := btnClaimedContentDivRegex.FindStringSubmatch(scoped); len(contentMatch) > 1 {
+			return contentMatch[1]
+		}
+		return scoped
+	}
+	return rawHTML
 }
 
 func matchBTNClaimedTitle(meta api.PreparedMetadata, claimed map[string]struct{}) (bool, string) {
@@ -479,6 +497,44 @@ func parseOptionalInt(value any) int {
 		}
 	}
 	return 0
+}
+
+func mirrorBTNCookiesForClaimedThread(client *http.Client) {
+	if client == nil || client.Jar == nil {
+		return
+	}
+
+	backupURL, backupErr := url.Parse("https://backup.landof.tv/")
+	broadcastURL, broadcastErr := url.Parse("https://broadcasthe.net/")
+	if backupErr != nil || broadcastErr != nil {
+		return
+	}
+
+	backupCookies := client.Jar.Cookies(backupURL)
+	if len(backupCookies) == 0 {
+		return
+	}
+
+	mirrored := make([]*http.Cookie, 0, len(backupCookies)*2)
+	for _, cookie := range backupCookies {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
+			continue
+		}
+		copied := *cookie
+		copied.Domain = "broadcasthe.net"
+		if copied.Path == "" {
+			copied.Path = "/"
+		}
+		mirrored = append(mirrored, &copied)
+
+		dotted := copied
+		dotted.Domain = ".broadcasthe.net"
+		mirrored = append(mirrored, &dotted)
+	}
+	if len(mirrored) == 0 {
+		return
+	}
+	client.Jar.SetCookies(broadcastURL, mirrored)
 }
 
 func encodeForm(values map[string]string) string {
