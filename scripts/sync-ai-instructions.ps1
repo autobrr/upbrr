@@ -5,7 +5,9 @@
 
 .DESCRIPTION
     Keeps rule/instruction files in sync so all LLM coding assistants see the
-    same project guidance. Source of truth: AGENTS.md (project guidelines).
+    same project guidance. Sync source: the file set selected by -Source
+    (copilot, cursor, or claude). AGENTS.md provides shared project guidelines
+    and is referenced by CLAUDE.md, but is not read or modified by this script.
 
     File mapping:
       Repo-wide:
@@ -54,7 +56,7 @@ function Extract-Body {
     $lines = Get-Content $FilePath -Raw
     # Strip YAML frontmatter (--- ... ---)
     if ($lines -match "(?s)^---\r?\n.*?\r?\n---\r?\n(.*)$") {
-        return $Matches[1].TrimStart()
+        return $Matches[1]
     }
     return $lines
 }
@@ -74,7 +76,8 @@ function Sync-RuleFile {
     $body = Extract-Body -FilePath $SrcPath
 
     if ($Frontmatter) {
-        $content = "$Frontmatter`n`n$body"
+        $fm = $Frontmatter.TrimEnd("`r", "`n")
+        $content = "$fm`n`n$body"
     } else {
         $content = $body
     }

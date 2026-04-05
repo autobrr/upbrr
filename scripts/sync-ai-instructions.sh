@@ -4,7 +4,9 @@
 # Synchronizes AI coding assistant instruction files across Copilot, Cursor,
 # and Claude Code directories. Run from the repository root.
 #
-# Source of truth: AGENTS.md (project guidelines)
+# Sync source: the file set selected by --source (copilot, cursor, or claude).
+# AGENTS.md provides shared project guidelines and is referenced by CLAUDE.md,
+# but is not read or modified by this script.
 #
 # Usage:
 #   ./scripts/sync-ai-instructions.sh                    # default: copilot -> cursor, claude
