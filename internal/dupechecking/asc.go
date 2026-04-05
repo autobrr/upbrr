@@ -69,7 +69,6 @@ func (h ascHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 		for _, t := range tasks {
-			t := t
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -196,19 +195,20 @@ func processASCListItem(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDeta
 
 		for _, b := range badges {
 			bUp := strings.ToUpper(b)
-			if len(bUp) == 4 && ascIsDigit(bUp) {
+			switch {
+			case len(bUp) == 4 && ascIsDigit(bUp):
 				year = bUp
-			} else if ascContainsAnyStrict(bUp, resTypes) {
+			case ascContainsAnyStrict(bUp, resTypes):
 				if bUp == "4K" {
 					resolution = "2160p"
 				} else {
 					resolution = bUp
 				}
-			} else if ascContainsAny(bUp, codecTerms) {
+			case ascContainsAny(bUp, codecTerms):
 				videoCodec = strings.TrimSpace(b)
-			} else if ascContainsAny(bUp, audioTerms) {
+			case ascContainsAny(bUp, audioTerms):
 				audioCodec = strings.TrimSpace(b)
-			} else if ascContainsAny(bUp, discTypes) {
+			case ascContainsAny(bUp, discTypes):
 				diskType = strings.TrimSpace(b)
 			}
 		}
@@ -311,6 +311,8 @@ func getASCFilenameFromFiles(n *html.Node) string {
 					if txt != "" {
 						return txt
 					}
+				case html.ErrorNode, html.DocumentNode, html.CommentNode, html.DoctypeNode, html.RawNode:
+					// ignore
 				}
 			}
 		}
