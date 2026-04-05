@@ -1,0 +1,38 @@
+---
+description: Go backend code style, linting, and testing rules
+globs: "**/*.go"
+alwaysApply: false
+---
+
+# Go Code Rules
+
+- Format with gofmt and goimports. Local import prefix: `github.com/autobrr/upbrr`
+- `.golangci.yml` is the lint standard. Run: `golangci-lint run --timeout=5m`
+- Enabled linters: copyloopvar, errname, errorlint, exhaustive, fatcontext, gocritic, gosec, loggercheck, mirror, misspell, perfsprint, prealloc, rowserrcheck, spancheck, testifylint, unconvert, unused, whitespace
+- Disabled linters are intentional policy: containedctx, noctx, revive
+- Run narrowest relevant tests first, expand to `go test -v -timeout 20m ./...` for cross-package changes
+- Preserve `api.Mode` usage across CLI/GUI/web surfaces
+- Unattended flows must stay non-blocking and conservative
+- Cross-platform: no OS-specific assumptions unless intentionally gated
+
+## Import Grouping
+
+Three groups separated by blank lines: stdlib → third-party → local (`github.com/autobrr/upbrr`)
+
+## Error Handling
+
+- Wrap errors with context: `fmt.Errorf("operation failed: %w", err)`
+- Check with `errors.Is()` / `errors.As()`
+- Sentinel errors in `internal/errors/errors.go`
+
+## Testing
+
+- Use `t.Parallel()` for test concurrency
+- Create stub implementations of service interfaces for unit tests
+
+## Key Patterns
+
+- Logger: `api.Logger` interface (Tracef, Debugf, Infof, Warnf, Errorf)
+- Services: dependency injection via `api.ServiceSet` and `api.CoreDependencies`
+- Progress: reporters attached to context via `WithXxxProgressReporter()`
+- Config: nested struct with `snake_case` YAML tags

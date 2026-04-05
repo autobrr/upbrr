@@ -1,0 +1,19 @@
+{
+  "go.lintTool": "golangci-lint",
+  "go.lintFlags": ["--timeout=5m"],
+  "go.testTimeout": "20m",
+  "go.buildTags": "",
+  "gopls": {
+    "formatting.local": "github.com/autobrr/upbrr"
+  },
+  "files.associations": {
+    "*.instructions.md": "markdown"
+  },
+  "search.exclude": {
+    "gui/frontend/node_modules": true,
+    "gui/frontend/dist": true,
+    "gui/build/bin": true,
+    "internal/guiapp/assets": true,
+    "dist": true
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "CLI: Run",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/upbrr",
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "CLI: Run with --gui",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/upbrr",
+      "args": ["--gui"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "CLI: Serve (Web Mode)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/upbrr",
+      "args": ["serve"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "CLI: Site Check",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/upbrr",
+      "args": ["--site-check", "${input:sourcePath}"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "CLI: Dry Run",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/upbrr",
+      "args": ["--dry-run", "${input:sourcePath}"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "GUI: Run (Wails Entrypoint)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/gui",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "GUI: Debug (Wails Build)",
+      "type": "go",
+      "request": "launch",
+      "mode": "exec",
+      "program": "${workspaceFolder}/gui/build/bin/upbrr-gui.exe",
+      "preLaunchTask": "build-gui",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Test: Current Package",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Test: All Packages",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "./...",
+      "args": ["-v", "-timeout", "20m"],
+      "cwd": "${workspaceFolder}"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "sourcePath",
+      "type": "promptString",
+      "description": "Path to the release source directory",
+      "default": ""
+    }
+  ]
+}
