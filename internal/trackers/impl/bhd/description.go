@@ -6,7 +6,6 @@ package bhd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -162,7 +161,7 @@ func readBDInfoNoErr(dbPath string, meta api.PreparedMetadata) string {
 	if err != nil {
 		return ""
 	}
-	return readTextFileNoErr(filepath.Join(tmpDir, "BD_SUMMARY_00.txt"))
+	return readTextFileNoErr(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta)))
 }
 
 func hasGroup(tag string, name string) bool {

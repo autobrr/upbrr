@@ -1197,7 +1197,7 @@ func readBDSummary(meta api.PreparedMetadata, dbPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return readTextFile(filepath.Join(tmpDir, "BD_SUMMARY_00.txt"))
+	return readTextFile(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta)))
 }
 
 func readTextFile(path string) (string, error) {

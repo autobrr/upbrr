@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -26,6 +27,18 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 		}
 		preview, err := coreSvc.FetchMetadataPreview(ctx, req)
 		if err != nil {
+			var rescanErr *api.BDMVRescanRequiredError
+			if errors.As(err, &rescanErr) && currentOpts.interactionMode() != api.InteractionModeUnattended {
+				confirm, promptErr := promptYesNo(reader, fmt.Sprintf("Cached BDMV summaries exist, but selected playlist(s) %s require a rescan. Rescan now? [Y/n]: ", strings.Join(rescanErr.MissingPlaylists, ", ")), true)
+				if promptErr != nil {
+					return promptErr
+				}
+				if !confirm {
+					return err
+				}
+				currentOpts.ConfirmBDMVRescan = true
+				continue
+			}
 			return err
 		}
 

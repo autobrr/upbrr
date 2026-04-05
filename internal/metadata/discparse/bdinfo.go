@@ -5,9 +5,37 @@ package discparse
 
 import (
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+var playlistReportHeaderPattern = regexp.MustCompile(`(?m)^\*{20}\r?\nPLAYLIST:\s+([^\r\n]+)\r?\n\*{20}`)
+
+type PlaylistReport struct {
+	Playlist   string
+	Raw        string
+	Summary    string
+	Files      string
+	ExtSummary string
+}
+
+func NormalizePlaylistName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	trimmed = strings.ReplaceAll(trimmed, "\\", "/")
+	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
+		trimmed = trimmed[idx+1:]
+	}
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.HasSuffix(strings.ToUpper(trimmed), ".MPLS") {
+		trimmed += ".MPLS"
+	}
+	return strings.ToUpper(filepath.Base(trimmed))
+}
 
 // SplitBDInfoReport extracts summary and files sections from a BDInfo report.
 func SplitBDInfoReport(text string) (summary string, files string, extSummary string) {
@@ -38,6 +66,75 @@ func SplitBDInfoReport(text string) (summary string, files string, extSummary st
 	}
 
 	return summary, files, extSummary
+}
+
+// SplitBDInfoPlaylistReports extracts each playlist section from a full BDInfo report.
+func SplitBDInfoPlaylistReports(text string) (map[string]string, error) {
+	matches := playlistReportHeaderPattern.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return nil, nil
+	}
+
+	reports := make(map[string]string, len(matches))
+	for idx, match := range matches {
+		start := match[0]
+		end := len(text)
+		if idx+1 < len(matches) {
+			end = matches[idx+1][0]
+		}
+		name := NormalizePlaylistName(text[match[2]:match[3]])
+		if name == "" {
+			continue
+		}
+		if _, exists := reports[name]; exists {
+			return nil, fmt.Errorf("duplicate playlist block %s found in BDInfo report", name)
+		}
+		reports[name] = strings.TrimSpace(text[start:end])
+	}
+
+	if len(reports) == 0 {
+		return nil, nil
+	}
+	return reports, nil
+}
+
+// ExtractPlaylistReports returns selected playlist reports in selection order.
+func ExtractPlaylistReports(text string, selected []string) ([]PlaylistReport, error) {
+	if len(selected) == 0 {
+		return nil, nil
+	}
+
+	blocks, err := SplitBDInfoPlaylistReports(text)
+	if err != nil {
+		return nil, err
+	}
+	if len(blocks) == 0 {
+		return nil, fmt.Errorf("no playlist blocks found in BDInfo report")
+	}
+
+	reports := make([]PlaylistReport, 0, len(selected))
+	for _, selectedName := range selected {
+		normalized := NormalizePlaylistName(selectedName)
+		block, ok := blocks[normalized]
+		if !ok {
+			return nil, fmt.Errorf("playlist block %s not found in BDInfo report", normalized)
+		}
+
+		summary, files, extSummary := SplitBDInfoReport(block)
+		if strings.TrimSpace(summary) == "" {
+			return nil, fmt.Errorf("playlist block %s did not contain a quick summary", normalized)
+		}
+
+		reports = append(reports, PlaylistReport{
+			Playlist:   normalized,
+			Raw:        block,
+			Summary:    summary,
+			Files:      files,
+			ExtSummary: extSummary,
+		})
+	}
+
+	return reports, nil
 }
 
 // ParseBDInfoFiles parses the FILES section of a BDInfo report.

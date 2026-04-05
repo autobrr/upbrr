@@ -110,6 +110,9 @@ func TestBuildUnit3DDescriptionSkipsBDInfo(t *testing.T) {
 	meta := api.PreparedMetadata{
 		SourcePath: filepath.Join(root, "Movie.mkv"),
 		DiscType:   "BDMV",
+		SelectedBDMVPlaylists: []api.PlaylistInfo{
+			{File: "00001.MPLS"},
+		},
 	}
 
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
@@ -120,7 +123,7 @@ func TestBuildUnit3DDescriptionSkipsBDInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("release temp dir: %v", err)
 	}
-	bdinfoPath := filepath.Join(tmpDir, "BD_SUMMARY_00.txt")
+	bdinfoPath := paths.BDMVSummaryPath(tmpDir, "00001.MPLS")
 	if err := os.WriteFile(bdinfoPath, []byte("BDINFO_CONTENT"), 0o600); err != nil {
 		t.Fatalf("write bdinfo: %v", err)
 	}

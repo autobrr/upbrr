@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -86,7 +85,10 @@ func buildDiscSection(meta api.PreparedMetadata, dbPath string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(tmpDir, "BD_SUMMARY_00.txt")
+	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

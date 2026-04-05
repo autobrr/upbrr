@@ -4,6 +4,7 @@
 package webserver
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -60,19 +61,20 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/app/FetchMetadata", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		var req struct {
-			Path            string
-			SourceLookupURL string
-			Overrides       api.ExternalIDOverrides
-			NameOverrides   api.ReleaseNameOverrides
-			Trackers        []string
+			Path              string
+			SourceLookupURL   string
+			Overrides         api.ExternalIDOverrides
+			NameOverrides     api.ReleaseNameOverrides
+			Trackers          []string
+			ConfirmBDMVRescan bool
 		}
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.FetchMetadata(current.ID, req.Path, req.SourceLookupURL, req.Overrides, req.NameOverrides, req.Trackers)
+		value, err := s.backend.FetchMetadata(current.ID, req.Path, req.SourceLookupURL, req.Overrides, req.NameOverrides, req.Trackers, req.ConfirmBDMVRescan)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAppError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, value)
@@ -80,19 +82,20 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/app/ResetMetadata", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		var req struct {
-			Path            string
-			SourceLookupURL string
-			Overrides       api.ExternalIDOverrides
-			NameOverrides   api.ReleaseNameOverrides
-			Trackers        []string
+			Path              string
+			SourceLookupURL   string
+			Overrides         api.ExternalIDOverrides
+			NameOverrides     api.ReleaseNameOverrides
+			Trackers          []string
+			ConfirmBDMVRescan bool
 		}
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.ResetMetadata(current.ID, req.Path, req.SourceLookupURL, req.Overrides, req.NameOverrides, req.Trackers)
+		value, err := s.backend.ResetMetadata(current.ID, req.Path, req.SourceLookupURL, req.Overrides, req.NameOverrides, req.Trackers, req.ConfirmBDMVRescan)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAppError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, value)
@@ -704,4 +707,20 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, value)
 	}))
+}
+
+func writeAppError(w http.ResponseWriter, err error) {
+	var rescanErr *api.BDMVRescanRequiredError
+	if errors.As(err, &rescanErr) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":              err.Error(),
+			"code":               api.ErrCodeBDMVRescanRequired,
+			"source_path":        rescanErr.SourcePath,
+			"selected_playlists": rescanErr.SelectedPlaylists,
+			"cached_playlists":   rescanErr.CachedPlaylists,
+			"missing_playlists":  rescanErr.MissingPlaylists,
+		})
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 }

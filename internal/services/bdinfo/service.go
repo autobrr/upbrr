@@ -21,6 +21,7 @@ type runRequest struct {
 	PlaylistName string
 	ReportPath   string
 	Reporter     ProgressReporter
+	SummaryOnly  bool
 }
 
 var runBDInfo = func(ctx context.Context, req runRequest) (bdrunner.Result, error) {
@@ -30,6 +31,7 @@ var runBDInfo = func(ctx context.Context, req runRequest) (bdrunner.Result, erro
 	settings.SummaryOnly = true
 	settings.GenerateTextSummary = true
 	settings.PlaylistOnly = req.PlaylistName
+	settings.SummaryOnly = req.SummaryOnly
 
 	var reporter func(bdrunner.ProgressEvent)
 	if req.Reporter != nil {
@@ -97,6 +99,12 @@ type Service struct {
 	logger api.Logger
 }
 
+// ScanResult contains the rendered report payload and its persisted location.
+type ScanResult struct {
+	ReportPath string
+	ReportText string
+}
+
 type progressReporterKey struct{}
 
 // ProgressReporter receives raw BDInfo progress lines.
@@ -139,33 +147,48 @@ func New(logger api.Logger) *Service {
 	return &Service{logger: logger}
 }
 
-// ExecuteForPlaylist runs the embedded Go BDInfo scanner for a specific playlist and returns the output path.
-func (s *Service) ExecuteForPlaylist(ctx context.Context, bdmvPath string, playlistFile string, outputDir string) (string, error) {
-	if err := ctx.Err(); err != nil {
+// ExecuteForPlaylist runs the embedded Go BDInfo scanner for a specific playlist and writes to the caller-provided path.
+func (s *Service) ExecuteForPlaylist(ctx context.Context, bdmvPath string, playlistFile string, outputPath string) (string, error) {
+	result, err := s.execute(ctx, bdmvPath, normalizePlaylistSelector(playlistFile), outputPath, true)
+	if err != nil {
 		return "", err
 	}
+	return result.ReportPath, nil
+}
+
+// ExecuteFullScan runs the embedded Go BDInfo scanner for the full disc and returns the raw report.
+func (s *Service) ExecuteFullScan(ctx context.Context, bdmvPath string, outputDir string) (ScanResult, error) {
+	return s.execute(ctx, bdmvPath, "", filepath.Join(outputDir, "BD_FULL.txt"), false)
+}
+
+func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName string, outputPath string, summaryOnly bool) (ScanResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ScanResult{}, err
+	}
 	reporter := progressReporterFromContext(ctx)
+	outputDir := filepath.Dir(outputPath)
 
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return "", fmt.Errorf("bdinfo: create output dir: %w", err)
+		return ScanResult{}, fmt.Errorf("bdinfo: create output dir: %w", err)
 	}
 
-	s.logger.Debugf("bdinfo: bdmvPath=%s, playlistFile=%s, outputDir=%s", bdmvPath, playlistFile, outputDir)
-
-	playlistName := normalizePlaylistSelector(playlistFile)
-	s.logger.Debugf("bdinfo: normalized playlist name: %s", playlistName)
-
-	outputPath := filepath.Join(outputDir, "BD_SUMMARY_00.txt")
-	s.logger.Debugf("bdinfo: running in-process for playlist %s", playlistName)
+	s.logger.Debugf("bdinfo: bdmvPath=%s, playlistFile=%s, outputDir=%s", bdmvPath, playlistName, filepath.Dir(outputPath))
+	if playlistName != "" {
+		s.logger.Debugf("bdinfo: normalized playlist name: %s", playlistName)
+		s.logger.Debugf("bdinfo: running in-process for playlist %s", playlistName)
+	} else {
+		s.logger.Debugf("bdinfo: running in-process full-disc scan")
+	}
 	result, err := runBDInfo(ctx, runRequest{
 		BDMVPath:     bdmvPath,
 		PlaylistName: playlistName,
 		ReportPath:   outputPath,
 		Reporter:     reporter,
+		SummaryOnly:  summaryOnly,
 	})
 	if err != nil {
 		s.logger.Debugf("bdinfo: in-process execution failed: %v", err)
-		return "", fmt.Errorf("bdinfo: execution failed: %w", err)
+		return ScanResult{}, fmt.Errorf("bdinfo: execution failed: %w", err)
 	}
 	if strings.TrimSpace(result.ReportPath) != "" {
 		outputPath = result.ReportPath
@@ -173,21 +196,28 @@ func (s *Service) ExecuteForPlaylist(ctx context.Context, bdmvPath string, playl
 
 	reportText := result.Report
 	if strings.TrimSpace(reportText) == "" {
-		return "", errors.New("bdinfo: empty report content")
+		return ScanResult{}, errors.New("bdinfo: empty report content")
 	}
 
 	if err := os.WriteFile(outputPath, []byte(reportText), 0o600); err != nil {
-		return "", fmt.Errorf("bdinfo: write output: %w", err)
+		return ScanResult{}, fmt.Errorf("bdinfo: write output: %w", err)
 	}
 
-	s.logger.Debugf("bdinfo: successfully completed for playlist %s", playlistFile)
+	if playlistName != "" {
+		s.logger.Debugf("bdinfo: successfully completed for playlist %s", playlistName)
+	} else {
+		s.logger.Debugf("bdinfo: successfully completed full-disc scan")
+	}
 
 	if _, err := os.Stat(outputPath); err != nil {
-		return "", fmt.Errorf("bdinfo: output not found: %w", err)
+		return ScanResult{}, fmt.Errorf("bdinfo: output not found: %w", err)
 	}
 
 	s.logger.Debugf("bdinfo: output file found at %s", outputPath)
-	return outputPath, nil
+	return ScanResult{
+		ReportPath: outputPath,
+		ReportText: reportText,
+	}, nil
 }
 
 // ParseOutput parses BDInfo output and returns structured data

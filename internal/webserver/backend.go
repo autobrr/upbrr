@@ -166,7 +166,7 @@ func (b *Backend) DetectDiscType(path string) (string, error) {
 	return filesystem.DetectDiscType(ctx, path)
 }
 
-func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string) (api.MetadataPreview, error) {
+func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.MetadataPreview{}, err
 	}
@@ -199,12 +199,13 @@ func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL s
 		},
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		ConfirmBDMVRescan:    confirmBDMVRescan,
 	}
 
 	return b.core.FetchMetadataPreview(progressCtx, req)
 }
 
-func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string) (api.MetadataPreview, error) {
+func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.MetadataPreview{}, err
 	}
@@ -302,6 +303,7 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 		},
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		ConfirmBDMVRescan:    confirmBDMVRescan,
 	}
 	return b.core.FetchMetadataPreview(progressCtx, req)
 }

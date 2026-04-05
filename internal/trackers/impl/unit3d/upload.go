@@ -535,7 +535,10 @@ func readBDInfo(dbPath string, meta api.PreparedMetadata) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(tmpDir, "BD_SUMMARY_00.txt")
+	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
 	if !existsFile(path) {
 		return "", nil
 	}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	"github.com/autobrr/upbrr/internal/paths"
@@ -44,6 +46,34 @@ type Service struct {
 	radarr   ArrLookupClient
 	tracker  TrackerDataLookup
 }
+
+type cachedBDMVSummary struct {
+	Playlist    string
+	Summary     string
+	ExtSummary  string
+	SummaryPath string
+	ExtPath     string
+}
+
+type bdmvSummaryCache struct {
+	Entries map[string]cachedBDMVSummary
+}
+
+var bdmvSummaryPlaylistPattern = regexp.MustCompile(`(?mi)^Playlist:\s*(.+?)\s*$`)
+
+var (
+	discoverBDMVPlaylists = filesystem.DiscoverPlaylists
+	parseBDMVPlaylist     = filesystem.ParseMPLS
+	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputPath string) (string, error) {
+		return svc.ExecuteForPlaylist(ctx, bdmvPath, playlistFile, outputPath)
+	}
+	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+		return svc.ExecuteFullScan(ctx, bdmvPath, outputDir)
+	}
+	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+		return svc.ParseOutput(filePath)
+	}
+)
 
 type TrackerDataLookup interface {
 	Lookup(
@@ -359,6 +389,12 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 
 		if found && len(sel.SelectedPlaylists) > 0 {
 			s.logger.Debugf("metadata: found playlist selection with %d playlists at %s", len(sel.SelectedPlaylists), playlistPath)
+			selectedPlaylists, derr := loadSelectedBDMVPlaylists(ctx, playlistPath, sel.SelectedPlaylists)
+			if derr != nil {
+				return api.PreparedMetadata{}, fmt.Errorf("metadata: discover selected playlists: %w", derr)
+			}
+			meta.SelectedBDMVPlaylists = selectedPlaylists
+			selectedPlaylistNames := playlistNames(meta.SelectedBDMVPlaylists)
 
 			// Execute BDInfo on selected playlists
 			if s.bdinfo != nil {
@@ -374,30 +410,29 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 				if err := os.MkdirAll(tmpDir, 0755); err != nil {
 					return api.PreparedMetadata{}, fmt.Errorf("metadata: create bdinfo temp dir: %w", err)
 				}
-				// Execute bdinfo on first selected playlist
-				if len(sel.SelectedPlaylists) > 0 {
-					playlistName := sel.SelectedPlaylists[0]
-					s.logger.Debugf("metadata: executing bdinfo for playlist %s in path %s", playlistName, playlistPath)
 
-					outputPath, berr := s.bdinfo.ExecuteForPlaylist(ctx, playlistPath, playlistName, tmpDir)
-					if berr != nil {
-						return api.PreparedMetadata{}, fmt.Errorf("metadata: bdinfo execution failed: %w", berr)
-					}
-					// Parse bdinfo output
-					s.logger.Debugf("metadata: parsing bdinfo output from %s", outputPath)
-					bdinfoParsed, perr := s.bdinfo.ParseOutput(outputPath)
+				outputPath, needScan, berr := s.resolveOrCreateBDMVSummaries(ctx, req, tmpDir, playlistPath, selectedPlaylistNames)
+				if berr != nil {
+					return api.PreparedMetadata{}, berr
+				}
+				if strings.TrimSpace(outputPath) != "" {
+					s.logger.Debugf("metadata: parsing canonical bdinfo output from %s", outputPath)
+					bdinfoParsed, perr := parseBDInfoOutput(s.bdinfo, outputPath)
 					if perr != nil {
 						return api.PreparedMetadata{}, fmt.Errorf("metadata: bdinfo parse failed: %w", perr)
 					}
 					meta.BDInfo = bdinfoParsed
 					s.logger.Debugf("metadata: bdinfo data collected with %d fields", len(bdinfoParsed))
 				}
+				if needScan {
+					s.logger.Debugf("metadata: bdinfo scan completed for %d selected playlists", len(selectedPlaylistNames))
+				}
 			} else {
 				s.logger.Debugf("metadata: bdinfo service is nil, skipping disc analysis")
 			}
 
 			// Extract m2ts files from selected playlist(s)
-			m2tsFiles, mainFile, err := s.extractM2TSFromPlaylist(ctx, playlistPath, sel.SelectedPlaylists)
+			m2tsFiles, mainFile, err := s.extractM2TSFromPlaylist(ctx, playlistPath, selectedPlaylistNames)
 			if err != nil {
 				s.logger.Debugf("metadata: failed to extract m2ts from playlist: %v", err)
 				// Fall back to regular disc handling
@@ -657,7 +692,7 @@ func (s *Service) extractM2TSFromPlaylist(ctx context.Context, bdmvPath string, 
 		}
 
 		// Parse the playlist file
-		duration, items, err := filesystem.ParseMPLS(playlistPath)
+		duration, items, err := parseBDMVPlaylist(playlistPath)
 		if err != nil {
 			s.logger.Debugf("metadata: failed to parse playlist %s: %v", playlistFile, err)
 			continue
@@ -691,6 +726,231 @@ func (s *Service) extractM2TSFromPlaylist(ctx context.Context, bdmvPath string, 
 
 	s.logger.Debugf("metadata: extracted %d m2ts files from playlists, largest is %s (%d bytes)", len(m2tsFiles), filepath.Base(largestFile), largestSize)
 	return m2tsFiles, largestFile, nil
+}
+
+func loadSelectedBDMVPlaylists(ctx context.Context, bdmvPath string, selected []string) ([]api.PlaylistInfo, error) {
+	discovered, err := discoverBDMVPlaylists(ctx, bdmvPath)
+	if err != nil {
+		return nil, err
+	}
+
+	byName := make(map[string]filesystem.PlaylistInfo, len(discovered))
+	for _, playlist := range discovered {
+		byName[discparse.NormalizePlaylistName(playlist.File)] = playlist
+	}
+
+	result := make([]api.PlaylistInfo, 0, len(selected))
+	for _, name := range selected {
+		normalized := discparse.NormalizePlaylistName(name)
+		playlist, ok := byName[normalized]
+		if !ok {
+			return nil, fmt.Errorf("selected playlist %s was not found during discovery", normalized)
+		}
+		items := make([]api.PlaylistItem, 0, len(playlist.Items))
+		for _, item := range playlist.Items {
+			items = append(items, api.PlaylistItem{
+				File: item.File,
+				Size: item.Size,
+			})
+		}
+		result = append(result, api.PlaylistInfo{
+			File:     playlist.File,
+			Duration: playlist.Duration,
+			Items:    items,
+			Score:    playlist.Score,
+			Edition:  playlist.Edition,
+		})
+	}
+
+	return result, nil
+}
+
+func playlistNames(playlists []api.PlaylistInfo) []string {
+	names := make([]string, 0, len(playlists))
+	for _, playlist := range playlists {
+		normalized := discparse.NormalizePlaylistName(playlist.File)
+		if normalized == "" {
+			continue
+		}
+		names = append(names, normalized)
+	}
+	return names
+}
+
+func writeSelectedPlaylistSummaries(tmpDir string, fullReport string, selected []string) (string, error) {
+	reports, err := discparse.ExtractPlaylistReports(fullReport, selected)
+	if err != nil {
+		return "", err
+	}
+	if len(reports) == 0 {
+		return "", errors.New("no selected playlist reports extracted")
+	}
+
+	rawPath := filepath.Join(tmpDir, "BD_FULL.txt")
+	if err := os.WriteFile(rawPath, []byte(fullReport), 0o600); err != nil {
+		return "", fmt.Errorf("write full report: %w", err)
+	}
+
+	for _, report := range reports {
+		summaryPath := paths.BDMVSummaryPath(tmpDir, report.Playlist)
+		if err := os.WriteFile(summaryPath, []byte(strings.TrimSpace(report.Summary)+"\n"), 0o600); err != nil {
+			return "", fmt.Errorf("write summary %s: %w", report.Playlist, err)
+		}
+
+		extSidecarPath := paths.BDMVExtSummaryPath(tmpDir, report.Playlist)
+		if err := os.WriteFile(extSidecarPath, []byte(strings.TrimSpace(report.ExtSummary)+"\n"), 0o600); err != nil {
+			return "", fmt.Errorf("write extended summary %s: %w", report.Playlist, err)
+		}
+	}
+
+	return paths.BDMVSummaryPath(tmpDir, reports[0].Playlist), nil
+}
+
+func writeCachedSelectedPlaylistSummaries(tmpDir string, cache bdmvSummaryCache, selected []string) (string, error) {
+	if len(selected) == 0 {
+		return "", errors.New("no selected playlists")
+	}
+	entry, ok := cache.Entries[discparse.NormalizePlaylistName(selected[0])]
+	if !ok {
+		return "", fmt.Errorf("cached summary for %s not found", selected[0])
+	}
+	return entry.SummaryPath, nil
+}
+
+func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
+	cache := bdmvSummaryCache{Entries: map[string]cachedBDMVSummary{}}
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cache, nil
+		}
+		return cache, fmt.Errorf("read tmp dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "BD_SUMMARY_") || strings.HasPrefix(name, "BD_SUMMARY_EXT_") || !strings.HasSuffix(name, ".txt") {
+			continue
+		}
+		playlistFromName := paths.BDMVPlaylistKey(strings.TrimSuffix(strings.TrimPrefix(name, "BD_SUMMARY_"), ".txt"))
+		if playlistFromName == "" {
+			continue
+		}
+		summaryPath := filepath.Join(tmpDir, name)
+		summaryPayload, err := os.ReadFile(summaryPath)
+		if err != nil {
+			return bdmvSummaryCache{}, fmt.Errorf("read cached summary %s: %w", name, err)
+		}
+		playlist := parsePlaylistFromSummaryText(string(summaryPayload))
+		if playlist == "" {
+			continue
+		}
+		if playlist != playlistFromName {
+			return bdmvSummaryCache{}, fmt.Errorf("cached summary filename %s does not match playlist %s", name, playlist)
+		}
+		if _, exists := cache.Entries[playlist]; exists {
+			return bdmvSummaryCache{}, fmt.Errorf("duplicate cached playlist summary for %s", playlist)
+		}
+		extPath := paths.BDMVExtSummaryPath(tmpDir, playlist)
+		extPayload := ""
+		if rawExt, err := os.ReadFile(extPath); err == nil {
+			extPayload = string(rawExt)
+		}
+		cache.Entries[playlist] = cachedBDMVSummary{
+			Playlist:    playlist,
+			Summary:     string(summaryPayload),
+			ExtSummary:  extPayload,
+			SummaryPath: summaryPath,
+			ExtPath:     extPath,
+		}
+	}
+
+	return cache, nil
+}
+
+func parsePlaylistFromSummaryText(summary string) string {
+	matches := bdmvSummaryPlaylistPattern.FindStringSubmatch(summary)
+	if len(matches) != 2 {
+		return ""
+	}
+	return discparse.NormalizePlaylistName(matches[1])
+}
+
+func missingCachedPlaylists(cache bdmvSummaryCache, selected []string) []string {
+	var missing []string
+	for _, playlist := range selected {
+		normalized := discparse.NormalizePlaylistName(playlist)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := cache.Entries[normalized]; !ok {
+			missing = append(missing, normalized)
+		}
+	}
+	return missing
+}
+
+func cachedPlaylistNames(cache bdmvSummaryCache) []string {
+	names := make([]string, 0, len(cache.Entries))
+	for name := range cache.Entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Request, tmpDir string, playlistPath string, selected []string) (string, bool, error) {
+	cache, err := discoverBDMVSummaryCache(tmpDir)
+	if err != nil {
+		return "", false, fmt.Errorf("metadata: discover bdmv tmp cache: %w", err)
+	}
+
+	missing := missingCachedPlaylists(cache, selected)
+	switch {
+	case len(selected) > 0 && len(missing) == 0:
+		outputPath, err := writeCachedSelectedPlaylistSummaries(tmpDir, cache, selected)
+		if err != nil {
+			return "", false, fmt.Errorf("metadata: refresh cached bdmv summaries: %w", err)
+		}
+		return outputPath, false, nil
+	case len(missing) > 0 && len(missing) < len(selected):
+		if req.Options.InteractionMode == api.InteractionModeUnattended || req.ConfirmBDMVRescan {
+			// proceed to rescan
+		} else {
+			return "", false, &api.BDMVRescanRequiredError{
+				SourcePath:        req.Paths[0],
+				SelectedPlaylists: append([]string(nil), selected...),
+				CachedPlaylists:   cachedPlaylistNames(cache),
+				MissingPlaylists:  missing,
+			}
+		}
+	case len(selected) > 0 && len(missing) == len(selected):
+		// No selected playlists are cached, so we need a fresh scan.
+	}
+
+	if len(selected) > 1 {
+		s.logger.Debugf("metadata: executing full-disc bdinfo for %d selected playlists", len(selected))
+		scanResult, berr := executeFullBDInfoScan(s.bdinfo, ctx, playlistPath, tmpDir)
+		if berr != nil {
+			return "", false, fmt.Errorf("metadata: bdinfo full scan failed: %w", berr)
+		}
+		outputPath, werr := writeSelectedPlaylistSummaries(tmpDir, scanResult.ReportText, selected)
+		if werr != nil {
+			return "", false, fmt.Errorf("metadata: derive playlist summaries: %w", werr)
+		}
+		return outputPath, true, nil
+	}
+
+	playlistName := selected[0]
+	s.logger.Debugf("metadata: executing bdinfo for playlist %s in path %s", playlistName, playlistPath)
+	outputPath, berr := executePlaylistBDInfo(s.bdinfo, ctx, playlistPath, playlistName, paths.BDMVSummaryPath(tmpDir, playlistName))
+	if berr != nil {
+		return "", false, fmt.Errorf("metadata: bdinfo execution failed: %w", berr)
+	}
+	return outputPath, true, nil
 }
 
 func metadataFingerprintMatches(primary string, current api.PreparedMetadata, stored db.FileMetadata) bool {

@@ -8,12 +8,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
+	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -135,9 +141,538 @@ func TestResolveServiceDarkroom(t *testing.T) {
 	}
 }
 
+func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "disc")
+	bdmvPath := filepath.Join(sourcePath, "BDMV")
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "PLAYLIST"), 0o755); err != nil {
+		t.Fatalf("mkdir playlist failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
+		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	repo := &stubRepo{
+		playlistSelection: db.PlaylistSelection{
+			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
+		},
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+
+	originalDiscover := discoverBDMVPlaylists
+	originalParse := parseBDMVPlaylist
+	originalFullScan := executeFullBDInfoScan
+	originalPlaylistScan := executePlaylistBDInfo
+	originalParseOutput := parseBDInfoOutput
+	t.Cleanup(func() {
+		discoverBDMVPlaylists = originalDiscover
+		parseBDMVPlaylist = originalParse
+		executeFullBDInfoScan = originalFullScan
+		executePlaylistBDInfo = originalPlaylistScan
+		parseBDInfoOutput = originalParseOutput
+	})
+
+	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{
+			{File: "00001.MPLS", Duration: 5400},
+			{File: "00002.MPLS", Duration: 6000},
+		}, nil
+	}
+	parseBDMVPlaylist = func(mplsPath string) (float64, []filesystem.PlaylistItem, error) {
+		switch filepath.Base(strings.ToUpper(mplsPath)) {
+		case "00001.MPLS":
+			return 5400, []filesystem.PlaylistItem{
+				{File: "00001.m2ts", Size: 100},
+				{File: "00002.m2ts", Size: 150},
+			}, nil
+		case "00002.MPLS":
+			return 6000, []filesystem.PlaylistItem{
+				{File: "00002.m2ts", Size: 150},
+				{File: "00003.m2ts", Size: 200},
+			}, nil
+		default:
+			return 0, nil, errors.New("unexpected playlist")
+		}
+	}
+
+	fullReport := strings.Join([]string{
+		"header",
+		"********************",
+		"PLAYLIST: 00002.MPLS",
+		"********************",
+		"[code]",
+		"table two",
+		"[/code]",
+		"[code]",
+		"DISC INFO:",
+		"extended summary two",
+		"FILES:",
+		"-------------",
+		"00003.m2ts        01:40:00     2,000,000,000",
+		"CHAPTERS:",
+		"QUICK SUMMARY:",
+		"Playlist: 00002.MPLS",
+		"Disc Label: DISC-TWO",
+		"Length: 01:40:00.000",
+		"********************",
+		"FILES:",
+		"[/code]",
+		"********************",
+		"PLAYLIST: 00001.MPLS",
+		"********************",
+		"[code]",
+		"table one",
+		"[/code]",
+		"[code]",
+		"DISC INFO:",
+		"extended summary one",
+		"FILES:",
+		"-------------",
+		"00001.m2ts        01:30:00     1,000,000,000",
+		"CHAPTERS:",
+		"QUICK SUMMARY:",
+		"Playlist: 00001.MPLS",
+		"Disc Label: DISC-ONE",
+		"Length: 01:30:00.000",
+		"********************",
+		"FILES:",
+		"[/code]",
+	}, "\n")
+
+	fullScans := 0
+	playlistScans := 0
+	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+		fullScans++
+		return bdinfo.ScanResult{
+			ReportPath: filepath.Join(outputDir, "BD_FULL.txt"),
+			ReportText: fullReport,
+		}, nil
+	}
+	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string) (string, error) {
+		playlistScans++
+		return "", errors.New("unexpected playlist scan")
+	}
+	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+		payload, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"summary": string(payload)}, nil
+	}
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+
+	if fullScans != 1 {
+		t.Fatalf("expected 1 full scan, got %d", fullScans)
+	}
+	if playlistScans != 0 {
+		t.Fatalf("expected 0 playlist scans, got %d", playlistScans)
+	}
+	if got, want := meta.VideoPath, filepath.Join(bdmvPath, "STREAM", "00003.m2ts"); got != want {
+		t.Fatalf("expected main file %q, got %q", want, got)
+	}
+	wantFiles := []string{
+		filepath.Join(bdmvPath, "STREAM", "00001.m2ts"),
+		filepath.Join(bdmvPath, "STREAM", "00002.m2ts"),
+		filepath.Join(bdmvPath, "STREAM", "00003.m2ts"),
+	}
+	if !reflect.DeepEqual(sortedStrings(meta.FileList), sortedStrings(wantFiles)) {
+		t.Fatalf("unexpected file list: %#v", meta.FileList)
+	}
+	if len(meta.SelectedBDMVPlaylists) != 2 || meta.SelectedBDMVPlaylists[0].File != "00002.MPLS" || meta.SelectedBDMVPlaylists[1].File != "00001.MPLS" {
+		t.Fatalf("unexpected selected playlists: %#v", meta.SelectedBDMVPlaylists)
+	}
+
+	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, sourcePath)
+	if err != nil {
+		t.Fatalf("tmp dir: %v", err)
+	}
+
+	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00002.MPLS"), "Playlist: 00002.MPLS")
+	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), "Playlist: 00001.MPLS")
+	assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00002.MPLS"), "extended summary two")
+	assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00001.MPLS"), "extended summary one")
+	assertFileContains(t, filepath.Join(tmpDir, "BD_FULL.txt"), "PLAYLIST: 00002.MPLS")
+}
+
+func TestLoadSelectedBDMVPlaylistsErrorsWhenRequestedPlaylistMissing(t *testing.T) {
+	originalDiscover := discoverBDMVPlaylists
+	t.Cleanup(func() {
+		discoverBDMVPlaylists = originalDiscover
+	})
+
+	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{
+			{File: "00001.MPLS", Duration: 5400},
+		}, nil
+	}
+
+	_, err := loadSelectedBDMVPlaylists(context.Background(), `D:\Disc\BDMV`, []string{"00001.MPLS", "00002.MPLS"})
+	if err == nil || !strings.Contains(err.Error(), "00002.MPLS") {
+		t.Fatalf("expected missing playlist error for 00002.MPLS, got %v", err)
+	}
+}
+
+func TestDiscoverBDMVSummaryCache(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeBDMVSummaryFixture(t, tmpDir, "00002.MPLS", "extended summary two")
+	writeBDMVSummaryFixture(t, tmpDir, "00001.MPLS", "extended summary one")
+
+	cache, err := discoverBDMVSummaryCache(tmpDir)
+	if err != nil {
+		t.Fatalf("discover cache: %v", err)
+	}
+	if len(cache.Entries) != 2 {
+		t.Fatalf("expected 2 cache entries, got %d", len(cache.Entries))
+	}
+	if got := cache.Entries["00002.MPLS"].ExtPath; got != paths.BDMVExtSummaryPath(tmpDir, "00002.MPLS") {
+		t.Fatalf("expected playlist ext path, got %q", got)
+	}
+	if got := strings.TrimSpace(cache.Entries["00001.MPLS"].ExtSummary); got != "extended summary one" {
+		t.Fatalf("unexpected ext summary: %q", got)
+	}
+}
+
+func TestDiscoverBDMVSummaryCacheIgnoresMalformedSummary(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), []byte("Disc Label: BROKEN\n"), 0o600); err != nil {
+		t.Fatalf("write malformed summary: %v", err)
+	}
+
+	cache, err := discoverBDMVSummaryCache(tmpDir)
+	if err != nil {
+		t.Fatalf("discover cache: %v", err)
+	}
+	if len(cache.Entries) != 0 {
+		t.Fatalf("expected malformed summary to be ignored, got %#v", cache.Entries)
+	}
+}
+
+func TestDiscoverBDMVSummaryCacheErrorsOnDuplicatePlaylist(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeBDMVSummaryFixture(t, tmpDir, "00002.MPLS", "extended summary two")
+	if err := os.WriteFile(filepath.Join(tmpDir, "BD_SUMMARY_00002.txt"), []byte(strings.Join([]string{
+		"Disc Title: Example",
+		"Disc Label: BDMV",
+		"Playlist: 00002.MPLS",
+		"Length: 01:30:00.000",
+	}, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write duplicate summary fixture: %v", err)
+	}
+
+	_, err := discoverBDMVSummaryCache(tmpDir)
+	if err == nil || !strings.Contains(err.Error(), "duplicate cached playlist summary for 00002.MPLS") {
+		t.Fatalf("expected duplicate cache error, got %v", err)
+	}
+}
+
+func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "disc")
+	bdmvPath := filepath.Join(sourcePath, "BDMV")
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "PLAYLIST"), 0o755); err != nil {
+		t.Fatalf("mkdir playlist failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
+		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	repo := &stubRepo{
+		playlistSelection: db.PlaylistSelection{
+			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
+		},
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+
+	originalDiscover := discoverBDMVPlaylists
+	originalParse := parseBDMVPlaylist
+	originalFullScan := executeFullBDInfoScan
+	originalPlaylistScan := executePlaylistBDInfo
+	originalParseOutput := parseBDInfoOutput
+	t.Cleanup(func() {
+		discoverBDMVPlaylists = originalDiscover
+		parseBDMVPlaylist = originalParse
+		executeFullBDInfoScan = originalFullScan
+		executePlaylistBDInfo = originalPlaylistScan
+		parseBDInfoOutput = originalParseOutput
+	})
+
+	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{
+			{File: "00001.MPLS", Duration: 5400},
+			{File: "00002.MPLS", Duration: 6000},
+		}, nil
+	}
+	parseBDMVPlaylist = func(mplsPath string) (float64, []filesystem.PlaylistItem, error) {
+		switch filepath.Base(strings.ToUpper(mplsPath)) {
+		case "00001.MPLS":
+			return 5400, []filesystem.PlaylistItem{
+				{File: "00001.m2ts", Size: 100},
+				{File: "00002.m2ts", Size: 150},
+			}, nil
+		case "00002.MPLS":
+			return 6000, []filesystem.PlaylistItem{
+				{File: "00002.m2ts", Size: 150},
+				{File: "00003.m2ts", Size: 200},
+			}, nil
+		default:
+			return 0, nil, errors.New("unexpected playlist")
+		}
+	}
+	fullScans := 0
+	playlistScans := 0
+	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+		fullScans++
+		return bdinfo.ScanResult{}, errors.New("unexpected full scan")
+	}
+	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string) (string, error) {
+		playlistScans++
+		return "", errors.New("unexpected playlist scan")
+	}
+	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+		payload, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"summary": string(payload)}, nil
+	}
+
+	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
+	if err != nil {
+		t.Fatalf("tmp dir: %v", err)
+	}
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatalf("mkdir tmp dir: %v", err)
+	}
+	writeBDMVSummaryFixture(t, tmpDir, "00001.MPLS", "extended summary one")
+	writeBDMVSummaryFixture(t, tmpDir, "00002.MPLS", "extended summary two")
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+
+	if fullScans != 0 {
+		t.Fatalf("expected no full scan, got %d", fullScans)
+	}
+	if playlistScans != 0 {
+		t.Fatalf("expected no playlist scan, got %d", playlistScans)
+	}
+	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00002.MPLS"), "Playlist: 00002.MPLS")
+	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), "Playlist: 00001.MPLS")
+	assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00002.MPLS"), "extended summary two")
+	if got := meta.BDInfo["summary"]; !strings.Contains(got.(string), "Playlist: 00002.MPLS") {
+		t.Fatalf("expected cached canonical summary for first selected playlist, got %#v", meta.BDInfo)
+	}
+}
+
+func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "disc")
+	bdmvPath := filepath.Join(sourcePath, "BDMV")
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "PLAYLIST"), 0o755); err != nil {
+		t.Fatalf("mkdir playlist failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
+		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	repo := &stubRepo{
+		playlistSelection: db.PlaylistSelection{
+			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
+		},
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+
+	originalDiscover := discoverBDMVPlaylists
+	t.Cleanup(func() {
+		discoverBDMVPlaylists = originalDiscover
+	})
+	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{
+			{File: "00001.MPLS", Duration: 5400},
+			{File: "00002.MPLS", Duration: 6000},
+		}, nil
+	}
+
+	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
+	if err != nil {
+		t.Fatalf("tmp dir: %v", err)
+	}
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatalf("mkdir tmp dir: %v", err)
+	}
+	writeBDMVSummaryFixture(t, tmpDir, "00001.MPLS", "extended summary one")
+
+	_, err = service.Prepare(context.Background(), api.Request{
+		Paths:   []string{sourcePath},
+		Mode:    api.ModeCLI,
+		Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
+	})
+	var rescanErr *api.BDMVRescanRequiredError
+	if !errors.As(err, &rescanErr) {
+		t.Fatalf("expected rescan confirmation error, got %v", err)
+	}
+	if !reflect.DeepEqual(rescanErr.MissingPlaylists, []string{"00002.MPLS"}) {
+		t.Fatalf("unexpected missing playlists: %#v", rescanErr.MissingPlaylists)
+	}
+}
+
+func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "disc")
+	bdmvPath := filepath.Join(sourcePath, "BDMV")
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "PLAYLIST"), 0o755); err != nil {
+		t.Fatalf("mkdir playlist failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
+		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	repo := &stubRepo{
+		playlistSelection: db.PlaylistSelection{
+			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
+		},
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+
+	originalDiscover := discoverBDMVPlaylists
+	originalParse := parseBDMVPlaylist
+	originalFullScan := executeFullBDInfoScan
+	originalParseOutput := parseBDInfoOutput
+	t.Cleanup(func() {
+		discoverBDMVPlaylists = originalDiscover
+		parseBDMVPlaylist = originalParse
+		executeFullBDInfoScan = originalFullScan
+		parseBDInfoOutput = originalParseOutput
+	})
+	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{
+			{File: "00001.MPLS", Duration: 5400},
+			{File: "00002.MPLS", Duration: 6000},
+		}, nil
+	}
+	parseBDMVPlaylist = func(mplsPath string) (float64, []filesystem.PlaylistItem, error) {
+		return 6000, []filesystem.PlaylistItem{{File: "00003.m2ts", Size: 200}}, nil
+	}
+	fullReport := strings.Join([]string{
+		"********************",
+		"PLAYLIST: 00002.MPLS",
+		"********************",
+		"[code]",
+		"table two",
+		"[/code]",
+		"[code]",
+		"DISC INFO:",
+		"extended summary two",
+		"FILES:",
+		"-------------",
+		"00003.m2ts        01:40:00     2,000,000,000",
+		"CHAPTERS:",
+		"QUICK SUMMARY:",
+		"Playlist: 00002.MPLS",
+		"Disc Label: DISC-TWO",
+		"********************",
+		"FILES:",
+		"[/code]",
+		"********************",
+		"PLAYLIST: 00001.MPLS",
+		"********************",
+		"[code]",
+		"table one",
+		"[/code]",
+		"[code]",
+		"DISC INFO:",
+		"extended summary one",
+		"FILES:",
+		"-------------",
+		"00001.m2ts        01:30:00     1,000,000,000",
+		"CHAPTERS:",
+		"QUICK SUMMARY:",
+		"Playlist: 00001.MPLS",
+		"Disc Label: DISC-ONE",
+		"********************",
+		"FILES:",
+		"[/code]",
+	}, "\n")
+	fullScans := 0
+	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+		fullScans++
+		return bdinfo.ScanResult{
+			ReportPath: filepath.Join(outputDir, "BD_FULL.txt"),
+			ReportText: fullReport,
+		}, nil
+	}
+	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+		payload, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"summary": string(payload)}, nil
+	}
+
+	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
+	if err != nil {
+		t.Fatalf("tmp dir: %v", err)
+	}
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatalf("mkdir tmp dir: %v", err)
+	}
+	writeBDMVSummaryFixture(t, tmpDir, "00001.MPLS", "extended summary one")
+
+	_, err = service.Prepare(context.Background(), api.Request{
+		Paths:             []string{sourcePath},
+		Mode:              api.ModeCLI,
+		ConfirmBDMVRescan: true,
+		Options:           api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	if fullScans != 1 {
+		t.Fatalf("expected 1 full scan after confirmation, got %d", fullScans)
+	}
+	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00002.MPLS"), "Playlist: 00002.MPLS")
+}
+
 type stubRepo struct {
-	saved    db.FileMetadata
-	existing db.FileMetadata
+	saved                 db.FileMetadata
+	existing              db.FileMetadata
+	playlistSelection     db.PlaylistSelection
+	playlistSelectionPath string
 }
 
 type stubMediaInfo struct{}
@@ -302,7 +837,10 @@ func (s *stubRepo) DeleteUploadedImage(context.Context, string, string, string) 
 	return internalerrors.ErrNotImplemented
 }
 
-func (s *stubRepo) GetPlaylistSelection(context.Context, string) (db.PlaylistSelection, error) {
+func (s *stubRepo) GetPlaylistSelection(_ context.Context, path string) (db.PlaylistSelection, error) {
+	if len(s.playlistSelection.SelectedPlaylists) > 0 && (s.playlistSelectionPath == "" || s.playlistSelectionPath == path) {
+		return s.playlistSelection, nil
+	}
 	return db.PlaylistSelection{}, internalerrors.ErrNotImplemented
 }
 
@@ -320,4 +858,39 @@ func (s *stubRepo) ListStoredReleasePaths(context.Context) ([]string, error) {
 
 func (s *stubRepo) PurgeContentData(context.Context, string) error {
 	return internalerrors.ErrNotImplemented
+}
+
+func sortedStrings(values []string) []string {
+	cloned := append([]string(nil), values...)
+	slices.Sort(cloned)
+	return cloned
+}
+
+func assertFileContains(t *testing.T, path string, want string) {
+	t.Helper()
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if !strings.Contains(string(payload), want) {
+		t.Fatalf("expected %s to contain %q, got %q", path, want, string(payload))
+	}
+}
+
+func writeBDMVSummaryFixture(t *testing.T, tmpDir string, playlist string, extSummary string) {
+	t.Helper()
+	summaryPath := paths.BDMVSummaryPath(tmpDir, playlist)
+	summary := strings.Join([]string{
+		"Disc Title: Example",
+		"Disc Label: BDMV",
+		"Playlist: " + playlist,
+		"Length: 01:30:00.000",
+	}, "\n") + "\n"
+	if err := os.WriteFile(summaryPath, []byte(summary), 0o600); err != nil {
+		t.Fatalf("write summary fixture: %v", err)
+	}
+	extPath := paths.BDMVExtSummaryPath(tmpDir, playlist)
+	if err := os.WriteFile(extPath, []byte(extSummary+"\n"), 0o600); err != nil {
+		t.Fatalf("write ext fixture: %v", err)
+	}
 }
