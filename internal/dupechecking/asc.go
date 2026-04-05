@@ -6,11 +6,11 @@ package dupechecking
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/net/html"
 
@@ -56,10 +56,55 @@ func (h ascHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("ASC search returned non-success status")}, nil
 	}
 
-	entries, err := parseASCSearchResults(resp.Body)
+	doc, err := html.Parse(resp.Body)
 	if err != nil {
 		return nil, []string{noteSkip("ASC response parse failed")}, nil
 	}
+
+	var entries []api.DupeEntry
+	var tasks []ascDetailTask
+	walkASCNodes(doc, &entries, &tasks, resolveASCTitle(meta))
+
+	if len(tasks) > 0 {
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for _, t := range tasks {
+			t := t
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				name := "N/A"
+				reqFile, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://cliente.amigos-share.club/torrents-arquivos.php?id="+t.ID, nil)
+				if err == nil {
+					reqFile.Header.Set("User-Agent", "upbrr")
+					for _, cookie := range cookies {
+						reqFile.AddCookie(cookie)
+					}
+					if fileResp, err := h.http.Do(reqFile); err == nil {
+						defer fileResp.Body.Close()
+						if fileResp.StatusCode >= 200 && fileResp.StatusCode < 300 {
+							if fileDoc, err := html.Parse(fileResp.Body); err == nil {
+								if parsedName := getASCFilenameFromFiles(fileDoc); parsedName != "" {
+									name = parsedName
+								}
+							}
+						}
+					}
+				}
+
+				mu.Lock()
+				entries = append(entries, api.DupeEntry{
+					Name:     name,
+					ID:       t.ID,
+					Link:     t.Link,
+					SizeText: t.Size,
+				})
+				mu.Unlock()
+			}()
+		}
+		wg.Wait()
+	}
+
 	return entries, nil, nil
 }
 
@@ -74,67 +119,209 @@ func buildASCSearchURL(meta api.PreparedMetadata) string {
 	return base + "/busca-filmes.php?search=&imdb=" + url.QueryEscape(resolveASCIMDb(meta))
 }
 
-func parseASCSearchResults(body io.Reader) ([]api.DupeEntry, error) {
-	tokenizer := html.NewTokenizer(body)
-	entries := make([]api.DupeEntry, 0)
-	seen := map[string]struct{}{}
+type ascDetailTask struct {
+	ID   string
+	Link string
+	Size string
+}
 
-	for {
-		//nolint:exhaustive // We only care about tokens relevant to ASC result links.
-		switch tokenizer.Next() {
-		case html.ErrorToken:
-			return entries, nil
-		case html.StartTagToken:
-			token := tokenizer.Token()
-			if !strings.EqualFold(token.Data, "a") {
-				continue
-			}
-			href := ""
-			for _, attr := range token.Attr {
-				if strings.EqualFold(attr.Key, "href") {
-					href = strings.TrimSpace(attr.Val)
-					break
-				}
-			}
-			if !strings.Contains(href, "torrents-details.php?id=") {
-				continue
-			}
-			name := strings.TrimSpace(readASCAnchorText(tokenizer))
-			id := parseASCTorrentID(href)
-			key := firstNonEmpty(id, href, name)
-			if key == "" {
-				continue
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			entries = append(entries, api.DupeEntry{
-				Name: name,
-				ID:   id,
-				Link: absolutizeASCLink(href),
-			})
+func walkASCNodes(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDetailTask, baseTitle string) {
+	if n.Type == html.ElementNode && strings.EqualFold(n.Data, "li") {
+		if ascHasClass(n, "list-group-item") && ascHasClass(n, "dark-gray") {
+			processASCListItem(n, entries, tasks, baseTitle)
+			return
 		}
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		walkASCNodes(c, entries, tasks, baseTitle)
 	}
 }
 
-func readASCAnchorText(tokenizer *html.Tokenizer) string {
-	var builder strings.Builder
-	depth := 1
-	for depth > 0 {
-		//nolint:exhaustive // Only text and anchor boundaries matter for ASC titles.
-		switch tokenizer.Next() {
-		case html.ErrorToken:
-			return builder.String()
-		case html.StartTagToken:
-			depth++
-		case html.EndTagToken:
-			depth--
-		case html.TextToken:
-			_, _ = builder.Write(tokenizer.Text())
+func processASCListItem(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDetailTask, baseTitle string) {
+	var detailsHref string
+	var sizeText string
+	var badges []string
+
+	var walk func(*html.Node)
+	walk = func(child *html.Node) {
+		if child.Type == html.ElementNode && strings.EqualFold(child.Data, "a") {
+			href := ascGetAttr(child, "href")
+			if strings.Contains(href, "torrents-details.php?id=") {
+				detailsHref = href
+			}
+		}
+		if child.Type == html.ElementNode && strings.EqualFold(child.Data, "span") {
+			if ascHasClass(child, "badge-info") {
+				txt := strings.ToUpper(ascGetText(child))
+				if strings.Contains(txt, "GB") || strings.Contains(txt, "MB") {
+					sizeText = strings.TrimSpace(ascGetText(child))
+				}
+			} else if ascHasClass(child, "badge") {
+				badges = append(badges, strings.TrimSpace(ascGetText(child)))
+			}
+		}
+		for c := child.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
 		}
 	}
-	return builder.String()
+	walk(n)
+
+	if detailsHref == "" {
+		return
+	}
+
+	id := parseASCTorrentID(detailsHref)
+	link := absolutizeASCLink(detailsHref)
+
+	discTypes := []string{"BD25", "BD50", "BD66", "BD100", "DVD5", "DVD9"}
+	isDisc := false
+	for _, b := range badges {
+		bUp := strings.ToUpper(b)
+		if ascContainsAny(bUp, discTypes) {
+			isDisc = true
+			break
+		}
+	}
+
+	if isDisc {
+		year := "N/A"
+		resolution := "N/A"
+		diskType := "N/A"
+		videoCodec := "N/A"
+		audioCodec := "N/A"
+
+		codecTerms := []string{"MPEG-4", "AV1", "AVC", "H264", "H265", "HEVC", "MPEG-1", "MPEG-2", "VC-1", "VP6", "VP9"}
+		audioTerms := []string{"DTS", "AC3", "DDP", "E-AC-3", "TRUEHD", "ATMOS", "LPCM", "AAC", "FLAC"}
+		resTypes := []string{"4K", "2160P", "1080P", "720P", "480P"}
+
+		for _, b := range badges {
+			bUp := strings.ToUpper(b)
+			if len(bUp) == 4 && ascIsDigit(bUp) {
+				year = bUp
+			} else if ascContainsAnyStrict(bUp, resTypes) {
+				if bUp == "4K" {
+					resolution = "2160p"
+				} else {
+					resolution = bUp
+				}
+			} else if ascContainsAny(bUp, codecTerms) {
+				videoCodec = strings.TrimSpace(b)
+			} else if ascContainsAny(bUp, audioTerms) {
+				audioCodec = strings.TrimSpace(b)
+			} else if ascContainsAny(bUp, discTypes) {
+				diskType = strings.TrimSpace(b)
+			}
+		}
+
+		name := fmt.Sprintf("%s %s %s %s %s %s", baseTitle, year, resolution, diskType, strings.ToUpper(videoCodec), strings.ToUpper(audioCodec))
+		*entries = append(*entries, api.DupeEntry{
+			Name:     strings.TrimSpace(name),
+			ID:       id,
+			Link:     link,
+			SizeText: sizeText,
+		})
+	} else {
+		*tasks = append(*tasks, ascDetailTask{
+			ID:   id,
+			Link: link,
+			Size: sizeText,
+		})
+	}
+}
+
+func ascContainsAnyStrict(s string, terms []string) bool {
+	for _, t := range terms {
+		if s == t {
+			return true
+		}
+	}
+	return false
+}
+
+func ascContainsAny(s string, terms []string) bool {
+	for _, t := range terms {
+		if strings.Contains(s, t) {
+			return true
+		}
+	}
+	return false
+}
+
+func ascIsDigit(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func ascHasClass(n *html.Node, class string) bool {
+	for _, attr := range n.Attr {
+		if strings.EqualFold(attr.Key, "class") {
+			classes := strings.Fields(attr.Val)
+			for _, c := range classes {
+				if strings.EqualFold(c, class) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return false
+}
+
+func ascGetAttr(n *html.Node, key string) string {
+	for _, attr := range n.Attr {
+		if strings.EqualFold(attr.Key, key) {
+			return strings.TrimSpace(attr.Val)
+		}
+	}
+	return ""
+}
+
+func ascGetText(n *html.Node) string {
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(child *html.Node) {
+		if child.Type == html.TextNode {
+			b.WriteString(child.Data)
+		}
+		for c := child.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return b.String()
+}
+
+func getASCFilenameFromFiles(n *html.Node) string {
+	var walk func(*html.Node) string
+	walk = func(child *html.Node) string {
+		if child.Type == html.ElementNode && strings.EqualFold(child.Data, "li") && ascHasClass(child, "list-group-item") {
+			for c := child.FirstChild; c != nil; c = c.NextSibling {
+				switch c.Type {
+				case html.TextNode:
+					txt := strings.TrimSpace(c.Data)
+					if txt != "" {
+						return txt
+					}
+				case html.ElementNode:
+					txt := strings.TrimSpace(ascGetText(c))
+					if txt != "" {
+						return txt
+					}
+				}
+			}
+		}
+		for c := child.FirstChild; c != nil; c = c.NextSibling {
+			if txt := walk(c); txt != "" {
+				return txt
+			}
+		}
+		return ""
+	}
+	return walk(n)
 }
 
 func parseASCTorrentID(href string) string {
