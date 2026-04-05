@@ -15,6 +15,8 @@ echo "Syncing embedded GUI assets..."
 rm -rf internal/guiapp/assets
 mkdir -p internal/guiapp/assets
 cp -R gui/frontend/dist/* internal/guiapp/assets/
+# Keep placeholder tracked so git does not report it as deleted after builds.
+: > internal/guiapp/assets/.keep
 
 echo "Building CLI binary..."
 mkdir -p dist
