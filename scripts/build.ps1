@@ -11,13 +11,11 @@ Pop-Location
 
 Write-Host "Syncing embedded GUI assets..."
 $assetsPath = Join-Path $root "internal/guiapp/assets"
-if (Test-Path $assetsPath) {
-  Remove-Item $assetsPath -Recurse -Force
-}
 New-Item -ItemType Directory -Force -Path $assetsPath | Out-Null
+Get-ChildItem -Path $assetsPath -Force -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -ne ".keep" } |
+  Remove-Item -Recurse -Force
 Copy-Item "gui/frontend/dist/*" $assetsPath -Recurse -Force
-# Keep placeholder tracked so git does not report it as deleted after builds.
-New-Item -ItemType File -Force -Path (Join-Path $assetsPath ".keep") | Out-Null
 
 Write-Host "Building CLI binary..."
 $distPath = Join-Path $root "dist"
