@@ -5,10 +5,7 @@ package additional
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -267,67 +264,4 @@ func containsAny(values []string, targets []string) bool {
 		}
 	}
 	return false
-}
-
-type mediaInfoDoc struct {
-	Media struct {
-		Tracks []map[string]any `json:"track"`
-	} `json:"media"`
-}
-
-func loadMediaInfoJSON(path string) (mediaInfoDoc, error) {
-	if strings.TrimSpace(path) == "" {
-		return mediaInfoDoc{}, errors.New("mediainfo json path empty")
-	}
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		return mediaInfoDoc{}, err
-	}
-	var doc mediaInfoDoc
-	if err := json.Unmarshal(payload, &doc); err != nil {
-		return mediaInfoDoc{}, err
-	}
-	return doc, nil
-}
-
-func firstMediaInfoTrack(doc mediaInfoDoc, trackType string) map[string]any {
-	for _, track := range doc.Media.Tracks {
-		if strings.EqualFold(trackString(track, "@type"), trackType) {
-			return track
-		}
-	}
-	return nil
-}
-
-func trackString(track map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := track[key]; ok {
-			if s, ok := value.(string); ok {
-				if strings.TrimSpace(s) != "" {
-					return s
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func parseFloat(value string) float64 {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0
-	}
-	var parsed float64
-	_, _ = fmt.Sscanf(value, "%f", &parsed)
-	return parsed
-}
-
-func parseInt(value string) int64 {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0
-	}
-	var parsed int64
-	_, _ = fmt.Sscanf(value, "%d", &parsed)
-	return parsed
 }

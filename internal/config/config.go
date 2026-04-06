@@ -647,16 +647,16 @@ type TorrentClientConfig struct {
 }
 
 var trackerImageRehostValidationHosts = map[string][]string{
-	"A4K":  {"ptpimg", "onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg"},
-	"BHD":  {"ptpimg", "imgbox", "imgbb", "pixhost", "bhd", "bam"},
-	"DC":   {"imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex"},
-	"GPW":  {"kshare", "pixhost", "ptpimg", "pterclub", "ilikeshots", "imgbox"},
-	"HDB":  {"hdb"},
-	"MTV":  {"ptpimg", "imgbox", "imgbb"},
-	"OE":   {"ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
-	"PTP":  {"ptpimg", "pixhost"},
-	"STC":  {"imgbox", "imgbb"},
-	"TVC":  {"imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage"},
+	"A4K": {"ptpimg", "onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg"},
+	"BHD": {"ptpimg", "imgbox", "imgbb", "pixhost", "bhd", "bam"},
+	"DC":  {"imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex"},
+	"GPW": {"kshare", "pixhost", "ptpimg", "pterclub", "ilikeshots", "imgbox"},
+	"HDB": {"hdb"},
+	"MTV": {"ptpimg", "imgbox", "imgbb"},
+	"OE":  {"ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
+	"PTP": {"ptpimg", "pixhost"},
+	"STC": {"imgbox", "imgbb"},
+	"TVC": {"imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage"},
 }
 
 func (c Config) Validate() error {
