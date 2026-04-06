@@ -41,14 +41,21 @@ func (h btHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 	searchStr := imdbID
 	if meta.Anime {
 		switch {
+		// English
 		case strings.TrimSpace(meta.ExternalMetadata.TVDB.NameEnglish) != "":
 			searchStr = strings.TrimSpace(meta.ExternalMetadata.TVDB.NameEnglish)
-		case strings.TrimSpace(meta.ExternalMetadata.TVDB.Name) != "":
-			searchStr = strings.TrimSpace(meta.ExternalMetadata.TVDB.Name)
 		case strings.TrimSpace(meta.ExternalMetadata.TMDB.Title) != "":
 			searchStr = strings.TrimSpace(meta.ExternalMetadata.TMDB.Title)
 		case strings.TrimSpace(meta.ExternalMetadata.IMDB.Title) != "":
 			searchStr = strings.TrimSpace(meta.ExternalMetadata.IMDB.Title)
+
+		// Original
+		case strings.TrimSpace(meta.ExternalMetadata.TVDB.Name) != "":
+			searchStr = strings.TrimSpace(meta.ExternalMetadata.TVDB.Name)
+		case strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalTitle) != "":
+			searchStr = strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalTitle)
+
+		// Release Name
 		case strings.TrimSpace(meta.ReleaseName) != "":
 			searchStr = strings.TrimSpace(meta.ReleaseName)
 		}
