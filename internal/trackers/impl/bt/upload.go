@@ -327,23 +327,222 @@ func resolveAudio(meta api.PreparedMetadata) string {
 	return "Legendado"
 }
 
+var targetSiteIDs = map[string]string{
+	"arabic":            "22",
+	"bulgarian":         "29",
+	"chinese":           "14",
+	"croatian":          "23",
+	"czech":             "30",
+	"danish":            "10",
+	"dutch":             "9",
+	"english - forçada": "50",
+	"english":           "3",
+	"estonian":          "38",
+	"finnish":           "15",
+	"french":            "5",
+	"german":            "6",
+	"greek":             "26",
+	"hebrew":            "40",
+	"hindi":             "41",
+	"hungarian":         "24",
+	"icelandic":         "28",
+	"indonesian":        "47",
+	"italian":           "16",
+	"japanese":          "8",
+	"korean":            "19",
+	"latvian":           "37",
+	"lithuanian":        "39",
+	"norwegian":         "12",
+	"persian":           "52",
+	"polish":            "17",
+	"português":         "49",
+	"romanian":          "13",
+	"russian":           "7",
+	"serbian":           "31",
+	"slovak":            "42",
+	"slovenian":         "43",
+	"spanish":           "4",
+	"swedish":           "11",
+	"thai":              "20",
+	"turkish":           "18",
+	"ukrainian":         "34",
+	"vietnamese":        "25",
+}
+
+var sourceAliasMap = map[string]string{
+	"arabic":                "arabic",
+	"ara":                   "arabic",
+	"ar":                    "arabic",
+	"brazilian portuguese":  "português",
+	"brazilian":             "português",
+	"portuguese-br":         "português",
+	"pt-br":                 "português",
+	"portuguese":            "português",
+	"por":                   "português",
+	"pt":                    "português",
+	"pt-pt":                 "português",
+	"português brasileiro":  "português",
+	"português":             "português",
+	"bulgarian":             "bulgarian",
+	"bul":                   "bulgarian",
+	"bg":                    "bulgarian",
+	"chinese":               "chinese",
+	"chi":                   "chinese",
+	"zh":                    "chinese",
+	"chinese (simplified)":  "chinese",
+	"chinese (traditional)": "chinese",
+	"cmn-hant":              "chinese",
+	"cmn-hans":              "chinese",
+	"yue-hant":              "chinese",
+	"yue-hans":              "chinese",
+	"croatian":              "croatian",
+	"hrv":                   "croatian",
+	"hr":                    "croatian",
+	"scr":                   "croatian",
+	"czech":                 "czech",
+	"cze":                   "czech",
+	"cz":                    "czech",
+	"cs":                    "czech",
+	"danish":                "danish",
+	"dan":                   "danish",
+	"da":                    "danish",
+	"dutch":                 "dutch",
+	"dut":                   "dutch",
+	"nl":                    "dutch",
+	"english - forced":      "english - forçada",
+	"english (forced)":      "english - forçada",
+	"en (forced)":           "english - forçada",
+	"en-us (forced)":        "english - forçada",
+	"english":               "english",
+	"eng":                   "english",
+	"en":                    "english",
+	"en-us":                 "english",
+	"en-gb":                 "english",
+	"english (cc)":          "english",
+	"english - sdh":         "english",
+	"estonian":              "estonian",
+	"est":                   "estonian",
+	"et":                    "estonian",
+	"finnish":               "finnish",
+	"fin":                   "finnish",
+	"fi":                    "finnish",
+	"french":                "french",
+	"fre":                   "french",
+	"fr":                    "french",
+	"fr-fr":                 "french",
+	"fr-ca":                 "french",
+	"german":                "german",
+	"ger":                   "german",
+	"de":                    "german",
+	"greek":                 "greek",
+	"gre":                   "greek",
+	"el":                    "greek",
+	"hebrew":                "hebrew",
+	"heb":                   "hebrew",
+	"he":                    "hebrew",
+	"hindi":                 "hindi",
+	"hin":                   "hindi",
+	"hi":                    "hindi",
+	"hungarian":             "hungarian",
+	"hun":                   "hungarian",
+	"hu":                    "hungarian",
+	"icelandic":             "icelandic",
+	"ice":                   "icelandic",
+	"is":                    "icelandic",
+	"indonesian":            "indonesian",
+	"ind":                   "indonesian",
+	"id":                    "indonesian",
+	"italian":               "italian",
+	"ita":                   "italian",
+	"it":                    "italian",
+	"japanese":              "japanese",
+	"jpn":                   "japanese",
+	"ja":                    "japanese",
+	"korean":                "korean",
+	"kor":                   "korean",
+	"ko":                    "korean",
+	"latvian":               "latvian",
+	"lav":                   "latvian",
+	"lv":                    "latvian",
+	"lithuanian":            "lithuanian",
+	"lit":                   "lithuanian",
+	"lt":                    "lithuanian",
+	"norwegian":             "norwegian",
+	"nor":                   "norwegian",
+	"no":                    "norwegian",
+	"persian":               "persian",
+	"fa":                    "persian",
+	"far":                   "persian",
+	"polish":                "polish",
+	"pol":                   "polish",
+	"pl":                    "polish",
+	"romanian":              "romanian",
+	"rum":                   "romanian",
+	"ro":                    "romanian",
+	"russian":               "russian",
+	"rus":                   "russian",
+	"ru":                    "russian",
+	"serbian":               "serbian",
+	"srp":                   "serbian",
+	"sr":                    "serbian",
+	"scc":                   "serbian",
+	"slovak":                "slovak",
+	"slo":                   "slovak",
+	"sk":                    "slovak",
+	"slovenian":             "slovenian",
+	"slv":                   "slovenian",
+	"sl":                    "slovenian",
+	"spanish":               "spanish",
+	"spa":                   "spanish",
+	"es":                    "spanish",
+	"es-es":                 "spanish",
+	"es-419":                "spanish",
+	"swedish":               "swedish",
+	"swe":                   "swedish",
+	"sv":                    "swedish",
+	"thai":                  "thai",
+	"tha":                   "thai",
+	"th":                    "thai",
+	"turkish":               "turkish",
+	"tur":                   "turkish",
+	"tr":                    "turkish",
+	"ukrainian":             "ukrainian",
+	"ukr":                   "ukrainian",
+	"uk":                    "ukrainian",
+	"vietnamese":            "vietnamese",
+	"vie":                   "vietnamese",
+	"vi":                    "vietnamese",
+}
+
 func resolveSubtitle(meta api.PreparedMetadata) (string, []string) {
 	hasPT := "Nao"
-	var ids []string
+	ids := make([]string, 0)
+	seen := make(map[string]struct{})
+
 	for _, lang := range meta.SubtitleLanguages {
-		switch strings.ToLower(strings.TrimSpace(lang)) {
-		case "portuguese", "português", "pt":
-			hasPT = "Sim"
-			ids = append(ids, "49")
-		case "english", "en":
-			ids = append(ids, "3")
-		case "spanish", "es":
-			ids = append(ids, "4")
+		cleanLang := strings.ToLower(strings.TrimSpace(lang))
+
+		targetKey, ok := sourceAliasMap[cleanLang]
+		if !ok {
+			targetKey = cleanLang
+		}
+
+		if id, exists := targetSiteIDs[targetKey]; exists {
+			if _, alreadySeen := seen[id]; !alreadySeen {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+
+				if id == "49" {
+					hasPT = "Sim"
+				}
+			}
 		}
 	}
+
 	if len(ids) == 0 {
-		ids = append(ids, "44")
+		return "Nao", []string{"44"}
 	}
+
 	return hasPT, ids
 }
 
@@ -580,10 +779,70 @@ func resolveLocalizedTitle(meta api.PreparedMetadata) string {
 }
 
 func resolveLanguage(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
+	if meta.ExternalMetadata.TMDB == nil || strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage) == "" {
+		return ""
 	}
-	return ""
+	lang := strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
+	switch lang {
+	case "en":
+		return "Inglês"
+	case "pt":
+		return "Português"
+	case "es":
+		return "Espanhol"
+	case "fr":
+		return "Francês"
+	case "de":
+		return "Alemão"
+	case "it":
+		return "Italiano"
+	case "ja":
+		return "Japonês"
+	case "ko":
+		return "Coreano"
+	case "zh":
+		return "Chinês"
+	case "ru":
+		return "Russo"
+	case "hi":
+		return "Hindi"
+	case "tr":
+		return "Turco"
+	case "nl":
+		return "Holandês"
+	case "pl":
+		return "Polonês"
+	case "sv":
+		return "Sueco"
+	case "da":
+		return "Dinamarquês"
+	case "no":
+		return "Norueguês"
+	case "fi":
+		return "Finlandês"
+	case "hu":
+		return "Húngaro"
+	case "cs":
+		return "Tcheco"
+	case "th":
+		return "Tailandês"
+	case "vi":
+		return "Vietnamita"
+	case "id":
+		return "Indonésio"
+	case "el":
+		return "Grego"
+	case "he":
+		return "Hebraico"
+	case "ar":
+		return "Árabe"
+	case "ro":
+		return "Romeno"
+	case "uk":
+		return "Ucraniano"
+	default:
+		return lang
+	}
 }
 
 func resolveBackdrop(meta api.PreparedMetadata) string {
