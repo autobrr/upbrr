@@ -9,12 +9,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
+
+	"github.com/autobrr/upbrr/internal/config"
 )
 
 func (c *Client) lookupBTN(ctx context.Context, trackerID string) (Result, error) {
-	apiToken := strings.TrimSpace(c.cfg.Metadata.BTNAPI)
-	if len(apiToken) < minTokenLength || strings.TrimSpace(trackerID) == "" {
+	apiToken := config.ResolveBTNAPIToken(c.cfg)
+	if len(apiToken) < minTokenLength || trackerID == "" {
 		return Result{}, nil
 	}
 

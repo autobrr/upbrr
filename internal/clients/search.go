@@ -61,7 +61,7 @@ var trackerURLPatterns = map[string][]string{
 	"bjs":    {"tracker.bj-share.info"},
 	"blu":    {"https://blutopia.cc"},
 	"bt":     {"t.brasiltracker.org"},
-	"btn":    {"https://broadcasthe.net"},
+	"btn":    {"https://broadcasthe.net", "https://backup.landof.tv", "https://landof.tv", "landof.tv/"},
 	"cbr":    {"capybarabr.com"},
 	"cz":     {"tracker.cinemaz.to"},
 	"dc":     {"tracker.digitalcore.club", "trackerprxy.digitalcore.club"},
@@ -106,6 +106,27 @@ var trackerURLPatterns = map[string][]string{
 	"tvc":    {"https://tvchaosuk.com"},
 	"ulcx":   {"https://upload.cx"},
 	"yus":    {"https://yu-scene.net"},
+}
+
+var lowerTrackerURLPatterns = buildLowerTrackerURLPatterns(trackerURLPatterns)
+
+func buildLowerTrackerURLPatterns(source map[string][]string) map[string][]string {
+	if len(source) == 0 {
+		return nil
+	}
+	lowered := make(map[string][]string, len(source))
+	for id, patterns := range source {
+		normalized := make([]string, 0, len(patterns))
+		for _, pattern := range patterns {
+			trimmed := strings.ToLower(strings.TrimSpace(pattern))
+			if trimmed == "" {
+				continue
+			}
+			normalized = append(normalized, trimmed)
+		}
+		lowered[id] = normalized
+	}
+	return lowered
 }
 
 func buildTrackerIDPatterns() map[string]trackerPattern {
@@ -467,6 +488,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 	s.logger.Debugf("clients: %s selected hash %s (preferred=%q)", name, bestMatch.Hash, foundPreferred)
 
 	trackerIDs := collectTrackerIDs(matches, priorityOrder)
+	matchedTrackers = ensureMatchedTrackersForKnownIDs(matchedTrackers, trackerIDs)
 
 	result := api.ClientSearchResult{
 		InfoHash:            "",
@@ -699,9 +721,13 @@ func extractTrackerMatches(comment string, trackerURLs []string, hasWorkingTrack
 func matchTrackerURLs(trackerURLs []string) []string {
 	found := make(map[string]struct{})
 	for _, trackerURL := range trackerURLs {
-		for id, patterns := range trackerURLPatterns {
+		lowerURL := strings.ToLower(strings.TrimSpace(trackerURL))
+		if lowerURL == "" {
+			continue
+		}
+		for id, patterns := range lowerTrackerURLPatterns {
 			for _, pattern := range patterns {
-				if strings.Contains(trackerURL, pattern) {
+				if strings.Contains(lowerURL, pattern) {
 					found[strings.ToUpper(id)] = struct{}{}
 				}
 			}
@@ -789,6 +815,31 @@ func collectTrackerIDs(matches []api.TorrentMatch, priority []string) map[string
 	}
 
 	return trackerIDs
+}
+
+func ensureMatchedTrackersForKnownIDs(matchedTrackers []string, trackerIDs map[string]string) []string {
+	if len(trackerIDs) == 0 {
+		return matchedTrackers
+	}
+	resolved := append([]string{}, matchedTrackers...)
+	for tracker, id := range trackerIDs {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(tracker), "btn") && !hasMatchedTracker(resolved, "BTN") {
+			resolved = append(resolved, "BTN")
+		}
+	}
+	return resolved
+}
+
+func hasMatchedTracker(trackers []string, target string) bool {
+	for _, tracker := range trackers {
+		if strings.EqualFold(strings.TrimSpace(tracker), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
 }
 
 func effectiveTrackerPriority(cfg config.Config) []string {

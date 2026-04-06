@@ -19,6 +19,7 @@ var knownTrackers = map[string]struct{}{
 	"BHDTV":  {},
 	"BJS":    {},
 	"BT":     {},
+	"BTN":    {},
 	"CZ":     {},
 	"DC":     {},
 	"FF":     {},

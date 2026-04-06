@@ -24,7 +24,7 @@ func EmbeddedExampleYAML() []byte {
 	return copied
 }
 
-func LoadEmbeddedDefaultConfig() (*Config, error) {
+func loadEmbeddedDefaultConfigRaw() (*Config, error) {
 	if len(embeddedExampleYAML) == 0 {
 		return nil, errors.New("embedded default config is empty")
 	}
@@ -33,4 +33,15 @@ func LoadEmbeddedDefaultConfig() (*Config, error) {
 		return nil, fmt.Errorf("parse embedded default config: %w", err)
 	}
 	return &cfg, nil
+}
+
+func LoadEmbeddedDefaultConfig() (*Config, error) {
+	cfg, err := loadEmbeddedDefaultConfigRaw()
+	if err != nil {
+		return nil, err
+	}
+	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }

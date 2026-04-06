@@ -23,6 +23,15 @@ import (
 )
 
 const trackerClaimsCacheTTL = 24 * time.Hour
+const trackerClaimRuleActive = "claim_active"
+
+type trackerClaimProvider interface {
+	cachePath(dbPath string, tracker string) (string, error)
+	cacheTTL() time.Duration
+	hasClaim(ctx context.Context, s *Service, tracker string, meta api.PreparedMetadata) (bool, error)
+}
+
+type apiTrackerClaimProvider struct{}
 
 type trackerClaimsCache struct {
 	LastUpdated string              `json:"last_updated"`
@@ -63,7 +72,13 @@ type trackerClaimsAttributes struct {
 func (s *Service) applyTrackerClaims(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	resolved := uniqueUpperTrackers(trackersWithClaimChecks(meta))
 	if len(resolved) == 0 {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: tracker claims skipped (no eligible trackers)")
+		}
 		return meta, nil
+	}
+	if s.logger != nil {
+		s.logger.Debugf("metadata: tracker claims evaluating trackers=%v", resolved)
 	}
 
 	for _, tracker := range resolved {
@@ -82,6 +97,10 @@ func (s *Service) applyTrackerClaims(ctx context.Context, meta api.PreparedMetad
 		}
 
 		meta.BlockedTrackers = addMetadataTrackerBlockReason(meta.BlockedTrackers, tracker, api.TrackerBlockReasonClaim)
+		meta.TrackerRuleFailures = addMetadataTrackerRuleFailure(meta.TrackerRuleFailures, tracker, api.RuleFailure{
+			Rule:   trackerClaimRuleActive,
+			Reason: trackerClaimFailureReason(tracker, meta, s),
+		})
 		if s.logger != nil {
 			s.logger.Warnf("metadata: tracker claim match found for %s", tracker)
 		}
@@ -91,16 +110,39 @@ func (s *Service) applyTrackerClaims(ctx context.Context, meta api.PreparedMetad
 }
 
 func (s *Service) hasTrackerClaim(ctx context.Context, tracker string, meta api.PreparedMetadata) (bool, error) {
-	if strings.EqualFold(strings.TrimSpace(tracker), "BTN") {
-		return s.hasBTNClaim(ctx, meta)
+	provider, ok := resolveTrackerClaimProvider(tracker)
+	if !ok {
+		return false, nil
 	}
+	return provider.hasClaim(ctx, s, tracker, meta)
+}
 
-	cachePath, err := trackerClaimsPath(s.cfg.MainSettings.DBPath, tracker)
+func resolveTrackerClaimProvider(tracker string) (trackerClaimProvider, bool) {
+	switch strings.ToUpper(strings.TrimSpace(tracker)) {
+	case "BTN":
+		return btnTrackerClaimProvider{}, true
+	case "AITHER":
+		return apiTrackerClaimProvider{}, true
+	default:
+		return nil, false
+	}
+}
+
+func (apiTrackerClaimProvider) cachePath(dbPath string, tracker string) (string, error) {
+	return trackerClaimsPath(dbPath, tracker)
+}
+
+func (apiTrackerClaimProvider) cacheTTL() time.Duration {
+	return trackerClaimsCacheTTL
+}
+
+func (p apiTrackerClaimProvider) hasClaim(ctx context.Context, s *Service, tracker string, meta api.PreparedMetadata) (bool, error) {
+	cachePath, err := p.cachePath(s.cfg.MainSettings.DBPath, tracker)
 	if err != nil {
 		return false, fmt.Errorf("metadata: tracker claims path %s: %w", tracker, err)
 	}
 
-	claims, err := s.loadTrackerClaims(ctx, tracker, cachePath)
+	claims, err := s.loadTrackerClaims(ctx, tracker, cachePath, p.cacheTTL())
 	if err != nil {
 		return false, err
 	}
@@ -132,8 +174,8 @@ func (s *Service) hasTrackerClaim(ctx context.Context, tracker string, meta api.
 	return false, nil
 }
 
-func (s *Service) loadTrackerClaims(ctx context.Context, tracker string, cachePath string) ([]trackerClaimEntry, error) {
-	if payload, ok := loadFreshTrackerClaimsCache(cachePath); ok {
+func (s *Service) loadTrackerClaims(ctx context.Context, tracker string, cachePath string, cacheTTL time.Duration) ([]trackerClaimEntry, error) {
+	if payload, ok := loadFreshTrackerClaimsCache(cachePath, cacheTTL); ok {
 		return payload.Claims, nil
 	}
 
@@ -147,9 +189,9 @@ func (s *Service) loadTrackerClaims(ctx context.Context, tracker string, cachePa
 	return claims, nil
 }
 
-func loadFreshTrackerClaimsCache(path string) (trackerClaimsCache, bool) {
+func loadFreshTrackerClaimsCache(path string, cacheTTL time.Duration) (trackerClaimsCache, bool) {
 	info, err := os.Stat(path)
-	if err != nil || time.Since(info.ModTime()) >= trackerClaimsCacheTTL {
+	if err != nil || time.Since(info.ModTime()) >= cacheTTL {
 		return trackerClaimsCache{}, false
 	}
 
@@ -374,7 +416,7 @@ func announceBaseURL(value string) string {
 }
 
 func trackersWithClaimChecks(meta api.PreparedMetadata) []string {
-	resolved := resolveTrackerCandidates(meta)
+	resolved := resolveClaimTrackerCandidates(meta)
 	if len(resolved) == 0 {
 		return nil
 	}
@@ -388,6 +430,16 @@ func trackersWithClaimChecks(meta api.PreparedMetadata) []string {
 		}
 	}
 	return selected
+}
+
+func resolveClaimTrackerCandidates(meta api.PreparedMetadata) []string {
+	values := make([]string, 0, len(meta.Trackers)+len(meta.MatchedTrackers)+len(meta.TrackerIDs))
+	values = append(values, meta.Trackers...)
+	values = append(values, meta.MatchedTrackers...)
+	for key := range meta.TrackerIDs {
+		values = append(values, key)
+	}
+	return uniqueUpperTrackers(values)
 }
 
 func uniqueUpperTrackers(values []string) []string {
@@ -425,6 +477,35 @@ func addMetadataTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, 
 	}
 	blocked[name] = append(blocked[name], reason)
 	return blocked
+}
+
+func addMetadataTrackerRuleFailure(failures map[string][]api.RuleFailure, tracker string, failure api.RuleFailure) map[string][]api.RuleFailure {
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	rule := strings.TrimSpace(failure.Rule)
+	reason := strings.TrimSpace(failure.Reason)
+	if name == "" || (rule == "" && reason == "") {
+		return failures
+	}
+	if failures == nil {
+		failures = make(map[string][]api.RuleFailure)
+	}
+	for _, existing := range failures[name] {
+		if strings.EqualFold(strings.TrimSpace(existing.Rule), rule) && strings.EqualFold(strings.TrimSpace(existing.Reason), reason) {
+			return failures
+		}
+	}
+	failures[name] = append(failures[name], api.RuleFailure{Rule: rule, Reason: reason})
+	return failures
+}
+
+func trackerClaimFailureReason(tracker string, meta api.PreparedMetadata, s *Service) string {
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	switch name {
+	case "BTN":
+		return btnClaimFailureReason(meta, s.btnClaimWindowGraceHours())
+	default:
+		return name + " has an active claim for this release"
+	}
 }
 
 func containsTrackerClaimValue(values []string, target string) bool {

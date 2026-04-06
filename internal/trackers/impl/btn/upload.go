@@ -205,7 +205,7 @@ func newUploadContext(req trackers.UploadRequest) (uploadContext, error) {
 	ctx := uploadContext{
 		baseURL:   baseURL,
 		uploadURL: baseURL + btnUploadPath,
-		apiToken:  strings.TrimSpace(req.AppConfig.Metadata.BTNAPI),
+		apiToken:  config.ResolveBTNAPIToken(req.AppConfig),
 		apiURL:    resolveBTNAPIURL(req.TrackerConfig),
 		client:    client,
 	}

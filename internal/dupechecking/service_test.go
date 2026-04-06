@@ -86,6 +86,38 @@ func TestCheckSkipsRuleFailures(t *testing.T) {
 	}
 }
 
+func TestCheckSkipsClaimRuleFailures(t *testing.T) {
+	t.Parallel()
+	svc := NewService(config.Config{}, api.NopLogger{})
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/example",
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"BTN": {{Rule: "claim_active", Reason: "BTN has an active claim for this release; approximately 11 hours remain in the 48-hour claim window"}},
+		},
+	}
+
+	summary, err := svc.Check(context.Background(), meta, []string{"BTN"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summary.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(summary.Results))
+	}
+	result := summary.Results[0]
+	if !result.Skipped {
+		t.Fatalf("expected skipped result")
+	}
+	if !strings.Contains(result.SkipReason, "active claim") {
+		t.Fatalf("expected claim skip reason, got %q", result.SkipReason)
+	}
+	if !strings.Contains(result.SkipReason, "11 hours remain") {
+		t.Fatalf("expected hours remaining in skip reason, got %q", result.SkipReason)
+	}
+	if len(result.SkipRules) != 1 || result.SkipRules[0] != "claim_active" {
+		t.Fatalf("expected claim_active skip rule, got %#v", result.SkipRules)
+	}
+}
+
 func TestCheckUnsupportedTrackerMarkedSkipped(t *testing.T) {
 	t.Parallel()
 	svc := NewService(config.Config{}, api.NopLogger{})

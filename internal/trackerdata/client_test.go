@@ -48,7 +48,9 @@ func TestLookupBTN(t *testing.T) {
 	defer server.Close()
 
 	cfg := config.Config{
-		Metadata: config.MetadataConfig{BTNAPI: strings.Repeat("a", 30)},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {APIKey: strings.Repeat("a", 30)},
+		}},
 	}
 	client := NewClient(cfg, api.NopLogger{}, server.Client())
 	client.btnURL = server.URL + "/btn"

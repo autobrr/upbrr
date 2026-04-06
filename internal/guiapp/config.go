@@ -141,6 +141,9 @@ func loadConfigFromDatabase(ctx context.Context, dbPath string) (config.Config, 
 	if err != nil {
 		return config.Config{}, err
 	}
+	if err := config.MergeMissingTrackerDefaults(loaded); err != nil {
+		return config.Config{}, err
+	}
 	if len(config.DisableUnsupportedTrackerImageRehosts(loaded)) > 0 {
 		if err := config.SaveToDatabase(ctx, loaded, repo); err != nil {
 			return config.Config{}, err

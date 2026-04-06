@@ -5,8 +5,12 @@ package metadata
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -398,6 +402,235 @@ func TestApplyTrackerClaimsDoesNotBlockOnSemanticMismatch(t *testing.T) {
 	}
 }
 
+func TestApplyTrackerClaimsUsesRequestedBTNWhenTrackerIDsContainDifferentTracker(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
+	}
+
+	svc := NewService(&fakeRepo{}, WithConfig(cfg))
+
+	cachePath := filepath.Join(tempDir, "cache", "banned", "BTN_claimed_releases.json")
+	if err := writeBTNClaimedCacheFixture(cachePath, time.Now().Unix(), map[string]struct{}{
+		normalizeBTNTitle("Australian Survivor"): {},
+	}); err != nil {
+		t.Fatalf("write btn claims cache: %v", err)
+	}
+
+	meta := api.PreparedMetadata{
+		SourcePath:       `D:\TV\Australian.Survivor.S14E19.1080p.WEB-DL.AAC2.0.H.264-WH.mkv`,
+		Trackers:         []string{"BTN"},
+		TrackerIDs:       map[string]string{"tvv": "12345"},
+		TVDBAiredDate:    time.Now().Add(-12 * time.Hour).UTC().Format("2006-01-02"),
+		TVDBAirsTime:     "20:00",
+		TVDBAirsTimezone: "UTC",
+		SeasonInt:        14,
+		EpisodeInt:       19,
+		ReleaseName:      "Australian Survivor S14E19 Sold the Dream 1080p WEB-DL AAC 2.0-WH",
+		Filename:         "Australian.Survivor.S14E19.1080p.WEB-DL.AAC2.0.H.264-WH.mkv",
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{Name: "Australian Survivor"},
+		},
+	}
+
+	result, err := svc.applyTrackerClaims(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("apply tracker claims: %v", err)
+	}
+	if got := result.BlockedTrackers["BTN"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
+		t.Fatalf("expected BTN claim block, got %#v", result.BlockedTrackers)
+	}
+	failures := result.TrackerRuleFailures["BTN"]
+	if len(failures) != 1 {
+		t.Fatalf("expected BTN claim rule failure, got %#v", result.TrackerRuleFailures)
+	}
+	if failures[0].Rule != trackerClaimRuleActive {
+		t.Fatalf("expected BTN claim rule %q, got %#v", trackerClaimRuleActive, failures)
+	}
+	if !strings.Contains(strings.ToLower(failures[0].Reason), "hours remain") {
+		t.Fatalf("expected BTN claim failure reason to include hours remaining, got %#v", failures)
+	}
+}
+
+func TestResolveTrackerClaimProviderSupportsKnownTrackers(t *testing.T) {
+	t.Parallel()
+
+	btnProvider, ok := resolveTrackerClaimProvider("btn")
+	if !ok {
+		t.Fatalf("expected BTN provider")
+	}
+	if _, ok := btnProvider.(btnTrackerClaimProvider); !ok {
+		t.Fatalf("expected BTN provider type, got %T", btnProvider)
+	}
+
+	aitherProvider, ok := resolveTrackerClaimProvider("AITHER")
+	if !ok {
+		t.Fatalf("expected AITHER provider")
+	}
+	if _, ok := aitherProvider.(apiTrackerClaimProvider); !ok {
+		t.Fatalf("expected API provider type, got %T", aitherProvider)
+	}
+
+	if _, ok := resolveTrackerClaimProvider("PTP"); ok {
+		t.Fatalf("did not expect provider for unsupported tracker")
+	}
+}
+
+func TestBTNTrackerClaimProviderUsesSharedCachePathAnd48HourTTL(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	provider := btnTrackerClaimProvider{}
+
+	cachePath, err := provider.cachePath(filepath.Join(tempDir, "db.sqlite"), "BTN")
+	if err != nil {
+		t.Fatalf("cache path: %v", err)
+	}
+
+	expected := filepath.Join(tempDir, "cache", "banned", "BTN_claimed_releases.json")
+	if cachePath != expected {
+		t.Fatalf("expected cache path %q, got %q", expected, cachePath)
+	}
+	if provider.cacheTTL() != 48*time.Hour {
+		t.Fatalf("expected BTN cache ttl 48h, got %s", provider.cacheTTL())
+	}
+}
+
+func TestLoadBTNClaimedTitlesUsesFreshCacheWithin48Hours(t *testing.T) {
+	tempDir := t.TempDir()
+	cachePath := filepath.Join(tempDir, "cache", "banned", "BTN_claimed_releases.json")
+	cached := map[string]struct{}{normalizeBTNTitle("Cached Show"): {}}
+	if err := writeBTNClaimedCacheFixture(cachePath, time.Now().Add(-47*time.Hour).Unix(), cached); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	clientCalls := 0
+	restore := swapDefaultTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		clientCalls++
+		return nil, context.Canceled
+	}))
+	defer restore()
+
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	claimed, err := svc.loadBTNClaimedTitles(context.Background(), cachePath, 48*time.Hour)
+	if err != nil {
+		t.Fatalf("load btn claimed titles: %v", err)
+	}
+	if clientCalls != 0 {
+		t.Fatalf("expected fresh cache to avoid fetch, got %d requests", clientCalls)
+	}
+	if _, ok := claimed[normalizeBTNTitle("Cached Show")]; !ok {
+		t.Fatalf("expected cached title, got %#v", claimed)
+	}
+}
+
+func TestLoadBTNClaimedTitlesRefetchesAfter48Hours(t *testing.T) {
+	tempDir := t.TempDir()
+	cachePath := filepath.Join(tempDir, "cache", "banned", "BTN_claimed_releases.json")
+	cached := map[string]struct{}{normalizeBTNTitle("Cached Show"): {}}
+	if err := writeBTNClaimedCacheFixture(cachePath, time.Now().Add(-49*time.Hour).Unix(), cached); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	clientCalls := 0
+	restore := swapDefaultTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		clientCalls++
+		body := io.NopCloser(strings.NewReader(`
+			<table id="post1405482">
+			  <tr><td><div id="content1405482" class="postcontent">
+			    <strong>Current Shows:</strong><br>
+			    Fresh Show -- BTN<br>
+			  </div></td></tr>
+			</table>`))
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	}))
+	defer restore()
+
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	claimed, err := svc.loadBTNClaimedTitles(context.Background(), cachePath, 48*time.Hour)
+	if err != nil {
+		t.Fatalf("load btn claimed titles: %v", err)
+	}
+	if clientCalls != 2 {
+		t.Fatalf("expected stale cache to trigger session validation and fetch, got %d requests", clientCalls)
+	}
+	if _, ok := claimed[normalizeBTNTitle("Fresh Show")]; !ok {
+		t.Fatalf("expected refetched title, got %#v", claimed)
+	}
+
+	cacheData, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if !strings.Contains(string(cacheData), "fresh show") {
+		t.Fatalf("expected refreshed cache data, got %s", string(cacheData))
+	}
+}
+
+func TestFetchBTNClaimedTitlesStopsAfterLoginFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"BTN": {
+					Username: "user",
+					Password: "pass",
+				},
+			},
+		},
+	}
+
+	requests := make([]string, 0, 3)
+	restore := swapDefaultTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req.URL.String())
+		switch {
+		case strings.Contains(req.URL.String(), "/user.php"):
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("login required")),
+				Header:     make(http.Header),
+				Request: &http.Request{
+					URL: mustParseURL(t, "https://broadcasthe.net/login.php"),
+				},
+			}, nil
+		case strings.Contains(req.URL.String(), "/login.php"):
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Body:       io.NopCloser(strings.NewReader("forbidden")),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		default:
+			t.Fatalf("unexpected request to %s", req.URL.String())
+			return nil, nil
+		}
+	}))
+	defer restore()
+
+	svc := NewService(&fakeRepo{}, WithConfig(cfg))
+	claimed, err := svc.fetchBTNClaimedTitles(context.Background())
+	if err == nil {
+		t.Fatalf("expected login failure")
+	}
+	if len(claimed) != 0 {
+		t.Fatalf("expected no claimed titles, got %#v", claimed)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("expected session validation and login request only, got %d requests: %v", len(requests), requests)
+	}
+	if strings.Contains(strings.Join(requests, " "), "forums.php") {
+		t.Fatalf("did not expect claimed-thread fetch after login failure, got %v", requests)
+	}
+}
+
 func TestEnrichTrackerDataSkipsLookupWhenStoredFresh(t *testing.T) {
 	repo := &fakeRepo{}
 	lookup := &stubTrackerLookup{}
@@ -442,9 +675,9 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{
-		Metadata: config.MetadataConfig{BTNAPI: strings.Repeat("b", minTrackerTokenLen)},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
+				"BTN": {APIKey: strings.Repeat("b", minTrackerTokenLen)},
 				"BHD": {APIKey: longToken, BhdRSSKey: longToken},
 			},
 		},
@@ -488,9 +721,9 @@ func TestEnrichTrackerDataKeepsBTNAsFallbackWhenKeepingImages(t *testing.T) {
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{
-		Metadata: config.MetadataConfig{BTNAPI: strings.Repeat("b", minTrackerTokenLen)},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
+				"BTN": {APIKey: strings.Repeat("b", minTrackerTokenLen)},
 				"BHD": {APIKey: longToken, BhdRSSKey: longToken},
 			},
 		},
@@ -648,6 +881,165 @@ func TestExtractBTNClaimedShowsParsesCurrentSection(t *testing.T) {
 	}
 }
 
+func TestExtractBTNClaimedShowsScopesToClaimedPost(t *testing.T) {
+	t.Parallel()
+
+	html := `
+	<div>
+	  <strong>Current Shows:</strong><br>
+	  Wrong Show -- BTN<br>
+	</div>
+	<table id="post1405482">
+	  <tr>
+	    <td>
+	      <div id="content1405482" class="postcontent">
+	        <strong>Current Shows:</strong><br>
+	        Example Show -- BTN<br>
+	        Another Show (aka: Alt Name) -- BTN<br>
+	        Upcoming Shows:<br>
+	        Ignored Show -- BTN
+	      </div>
+	    </td>
+	  </tr>
+	</table>`
+
+	claimed := extractBTNClaimedShows(html)
+	if _, ok := claimed[normalizeBTNTitle("Example Show")]; !ok {
+		t.Fatalf("expected scoped example show to be extracted, got %#v", claimed)
+	}
+	if _, ok := claimed[normalizeBTNTitle("Alt Name")]; !ok {
+		t.Fatalf("expected scoped AKA alias to be extracted, got %#v", claimed)
+	}
+	if _, ok := claimed[normalizeBTNTitle("Wrong Show")]; ok {
+		t.Fatalf("did not expect out-of-post show to be extracted, got %#v", claimed)
+	}
+}
+
+func TestExtractBTNClaimedShowsParsesNestedClaimedPostContent(t *testing.T) {
+	t.Parallel()
+
+	html := `
+	<div>
+	  <table id="post1405482">
+	    <tr>
+	      <td>
+	        <div id="content1405482" class="postcontent">
+	          <div>
+	            <strong>Current Shows:</strong><br>
+	            Example Show (aka: Alt Name) -- BTN<br>
+	            <div class="note">Some nested wrapper</div>
+	            Another Show -- BTN<br>
+	          </div>
+	          <div>
+	            <strong>Upcoming Shows:</strong><br>
+	            Future Show -- BTN<br>
+	          </div>
+	        </div>
+	      </td>
+	    </tr>
+	  </table>
+	</div>`
+
+	claimed := extractBTNClaimedShows(html)
+	if _, ok := claimed[normalizeBTNTitle("Example Show")]; !ok {
+		t.Fatalf("expected example show to be extracted, got %#v", claimed)
+	}
+	if _, ok := claimed[normalizeBTNTitle("Alt Name")]; !ok {
+		t.Fatalf("expected alias to be extracted, got %#v", claimed)
+	}
+	if _, ok := claimed[normalizeBTNTitle("Another Show")]; !ok {
+		t.Fatalf("expected nested-row show to be extracted, got %#v", claimed)
+	}
+	if _, ok := claimed[normalizeBTNTitle("Future Show")]; ok {
+		t.Fatalf("did not expect upcoming show to be extracted, got %#v", claimed)
+	}
+}
+
+func TestMirrorBTNCookiesForClaimedThreadCopiesBackupDomainSession(t *testing.T) {
+	t.Parallel()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+
+	backupURL := mustParseURL(t, "https://backup.landof.tv/")
+	broadcastURL := mustParseURL(t, "https://broadcasthe.net/")
+	client.Jar.SetCookies(backupURL, []*http.Cookie{{
+		Name:   "session",
+		Value:  "abc123",
+		Domain: "backup.landof.tv",
+		Path:   "/",
+	}})
+
+	mirrorBTNCookiesForClaimedThread(client)
+
+	broadcastCookies := client.Jar.Cookies(broadcastURL)
+	if len(broadcastCookies) == 0 {
+		t.Fatalf("expected mirrored cookies for broadcasthe.net")
+	}
+	found := false
+	for _, cookie := range broadcastCookies {
+		if cookie.Name == "session" && cookie.Value == "abc123" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected mirrored session cookie, got %#v", broadcastCookies)
+	}
+}
+
+func TestMirrorBTNCookiesForClaimedThreadKeepsDistinctCookies(t *testing.T) {
+	t.Parallel()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+
+	backupURL := mustParseURL(t, "https://backup.landof.tv/")
+	broadcastURL := mustParseURL(t, "https://broadcasthe.net/")
+	client.Jar.SetCookies(backupURL, []*http.Cookie{
+		{
+			Name:   "session",
+			Value:  "abc123",
+			Domain: "backup.landof.tv",
+			Path:   "/",
+		},
+		{
+			Name:   "authkey",
+			Value:  "xyz789",
+			Domain: "backup.landof.tv",
+			Path:   "/",
+		},
+	})
+
+	mirrorBTNCookiesForClaimedThread(client)
+
+	broadcastCookies := client.Jar.Cookies(broadcastURL)
+	if len(broadcastCookies) < 2 {
+		t.Fatalf("expected mirrored cookies for broadcasthe.net, got %#v", broadcastCookies)
+	}
+
+	valuesByName := make(map[string]string, len(broadcastCookies))
+	for _, cookie := range broadcastCookies {
+		valuesByName[cookie.Name] = cookie.Value
+	}
+
+	if valuesByName["session"] != "abc123" {
+		t.Fatalf("expected mirrored session cookie, got %#v", valuesByName)
+	}
+	if valuesByName["authkey"] != "xyz789" {
+		t.Fatalf("expected mirrored authkey cookie, got %#v", valuesByName)
+	}
+	if len(valuesByName) < 2 {
+		t.Fatalf("expected distinct mirrored cookies, got %#v", valuesByName)
+	}
+}
+
 func TestBTNClaimWindowExpiredUsesAiredDateAndTimezone(t *testing.T) {
 	t.Parallel()
 
@@ -673,4 +1065,51 @@ func TestBTNClaimWindowExpiredUsesAiredDateAndTimezone(t *testing.T) {
 	if threshold != 48 {
 		t.Fatalf("expected threshold 48h when explicit air time is present, got %d", threshold)
 	}
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse url %q: %v", raw, err)
+	}
+	return parsed
+}
+
+type roundTripperFunc func(req *http.Request) (*http.Response, error)
+
+func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func swapDefaultTransport(transport http.RoundTripper) func() {
+	original := http.DefaultTransport
+	http.DefaultTransport = transport
+	return func() {
+		http.DefaultTransport = original
+	}
+}
+
+func writeBTNClaimedCacheFixture(path string, fetchedAt int64, titles map[string]struct{}) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+
+	serializedTitles := make([]string, 0, len(titles))
+	for title := range titles {
+		serializedTitles = append(serializedTitles, title)
+	}
+
+	payload, err := json.MarshalIndent(btnClaimedShowsCache{
+		FetchedAt: fetchedAt,
+		SourceURL: btnClaimedShowsURL,
+		PostID:    btnClaimedShowsPostID,
+		Titles:    serializedTitles,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, payload, 0o600)
 }
