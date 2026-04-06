@@ -242,6 +242,12 @@ The Dockerfile builds both `upbrr` and `upbrr-gui` binaries and places them in t
 - Tracker-specific code lives primarily under `internal/trackers/impl`
 - The repo currently includes generated and built assets in a few locations, so review changes carefully before committing
 
+## AI agent instructions
+
+This project uses [AGENTS.md](https://agents.md/) — an open standard for guiding AI coding agents. The root `AGENTS.md` file contains build commands, code style rules, testing instructions, and project conventions.
+
+Most modern AI coding tools support `AGENTS.md` natively or via simple configuration. Check your tool's official documentation to verify `AGENTS.md` support is active in your environment.
+
 ## License
 
 This project is licensed under `GPL-2.0-or-later`. See [LICENSE](./LICENSE).
