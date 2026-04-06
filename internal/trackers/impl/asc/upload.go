@@ -323,8 +323,16 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 }
 
 func maybeAutoApprove(ctx context.Context, client *http.Client, cookies []*http.Cookie, cfg config.TrackerConfig, torrentID string, logger api.Logger) {
-	if client == nil || !cfg.UploaderStatus || strings.TrimSpace(torrentID) == "" {
-		logger.Warnf("trackers: ASC auto approval failed: %v", "client is nil or uploader status is false or torrentID is empty")
+	if client == nil {
+		logger.Warnf("trackers: ASC auto approval skipped: client is nil")
+		return
+	}
+	if !cfg.UploaderStatus {
+		logger.Debugf("trackers: ASC auto approval skipped: uploader status disabled")
+		return
+	}
+	if strings.TrimSpace(torrentID) == "" {
+		logger.Warnf("trackers: ASC auto approval skipped: empty torrentID")
 		return
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/uploader_app.php?id="+url.QueryEscape(torrentID), nil)
@@ -347,12 +355,12 @@ func maybeAutoApprove(ctx context.Context, client *http.Client, cookies []*http.
 
 func maybeSetInternal(ctx context.Context, client *http.Client, cookies []*http.Cookie, cfg config.TrackerConfig, meta api.PreparedMetadata, torrentID string, logger api.Logger) {
 	if client == nil || !cfg.Internal || strings.TrimSpace(torrentID) == "" {
-		logger.Warnf("trackers: ASC internal flag failed: %v", "client is nil or internal is false or torrentID is empty")
+		logger.Debugf("trackers: ASC internal flag skipped: %v", "client is nil or internal is false or torrentID is empty")
 		return
 	}
 	group := strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-")
 	if group == "" || !containsFold(cfg.InternalGroups, group) {
-		logger.Warnf("trackers: ASC internal flag failed: %v", "group is empty or not in internal groups")
+		logger.Debugf("trackers: ASC internal flag skipped: %v", "group is empty or not in internal groups")
 		return
 	}
 	values := url.Values{"id": {torrentID}, "internal": {"yes"}}
