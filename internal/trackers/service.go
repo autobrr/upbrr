@@ -744,7 +744,7 @@ func filterKnownTrackers(trackers []string, logger api.Logger) []string {
 		if upper == "" {
 			continue
 		}
-		if _, ok := knownTrackers[upper]; !ok {
+		if !IsKnownTracker(upper) {
 			if logger != nil {
 				logger.Infof("trackers: unknown tracker %q, skipping", tracker)
 			}

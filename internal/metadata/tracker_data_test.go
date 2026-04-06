@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackerdata"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -116,15 +117,15 @@ func TestEnrichTrackerDataStopsAfterFirstPriorityIDWinner(t *testing.T) {
 	if len(calls) == 0 {
 		t.Fatalf("expected at least one lookup call")
 	}
-	winner, found := trackerRecordFor(result.TrackerData, "ANT")
+	winner, found := trackerRecordFor(result.TrackerData, "HDB")
 	if !found {
-		t.Fatalf("expected ANT tracker winner record, got %v", result.TrackerData)
+		t.Fatalf("expected HDB tracker winner record, got %v", result.TrackerData)
 	}
 	if winner.TMDBID == 0 && winner.IMDBID == 0 && winner.TVDBID == 0 {
 		t.Fatalf("expected metadata ids on winner record")
 	}
-	if len(calls) != 1 || !strings.EqualFold(calls[0], "ANT") {
-		t.Fatalf("expected strict priority stop after ANT, calls=%v", calls)
+	if len(calls) != 1 || !strings.EqualFold(calls[0], "HDB") {
+		t.Fatalf("expected strict priority stop after HDB, calls=%v", calls)
 	}
 	if len(repo.trackerMetadata) == 0 {
 		t.Fatalf("expected persisted tracker records")
@@ -798,27 +799,44 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 	if len(descriptionTrackers) != 1 {
 		t.Fatalf("expected exactly one tracker with description/images, got %d (%v)", len(descriptionTrackers), descriptionTrackers)
 	}
-	if descriptionTrackers[0] != "ANT" {
-		t.Fatalf("expected first completed tracker to keep description/images, got %v", descriptionTrackers)
+	if descriptionTrackers[0] != "HDB" {
+		t.Fatalf("expected highest-priority tracker to keep description/images, got %v", descriptionTrackers)
 	}
 }
 
-func TestMetadataTrackerPriorityInsertsMissingUnit3DBeforeBTN(t *testing.T) {
-	result := trackerPriority
-	oeIdx := indexOfTracker(result, "oe")
-	btnIdx := indexOfTracker(result, "btn")
-	if oeIdx < 0 || btnIdx < 0 || oeIdx >= btnIdx {
-		t.Fatalf("invalid OE/BTN ordering: oe=%d btn=%d list=%v", oeIdx, btnIdx, result)
-	}
+func TestMetadataTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.T) {
+	result := trackers.TrackerPriority()
+	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "huno", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
 
-	inserted := []string{"a4k", "cbr", "emuw", "fnp", "friki", "hhd", "ihd", "itt", "lcd", "ldu", "lt", "pt", "ptt", "r4e", "ras", "sam", "shri", "stc", "tik", "tlz", "tos", "ttr", "utp"}
-	for _, tracker := range inserted {
+	prevIdx := -1
+	for _, tracker := range expectedPrefix {
 		idx := indexOfTracker(result, tracker)
 		if idx < 0 {
-			t.Fatalf("expected inserted tracker %s in %v", tracker, result)
+			t.Fatalf("expected preferred tracker %s in %v", tracker, result)
 		}
-		if idx <= oeIdx || idx >= btnIdx {
-			t.Fatalf("expected %s between OE and BTN, got idx=%d oe=%d btn=%d", tracker, idx, oeIdx, btnIdx)
+		if idx <= prevIdx {
+			t.Fatalf("expected preferred trackers in order %v, got %v", expectedPrefix, result)
+		}
+		prevIdx = idx
+	}
+
+	remaining := make([]string, 0)
+	for _, tracker := range trackers.Unit3DTrackers() {
+		lower := strings.ToLower(tracker)
+		if hasTracker(expectedPrefix, lower) {
+			continue
+		}
+		remaining = append(remaining, lower)
+	}
+
+	if len(result) != len(expectedPrefix)+len(remaining) {
+		t.Fatalf("expected preferred + remaining unit3d trackers only, got %v", result)
+	}
+
+	for idx, tracker := range remaining {
+		gotIdx := len(expectedPrefix) + idx
+		if result[gotIdx] != tracker {
+			t.Fatalf("expected remaining unit3d trackers appended at end in sorted order %v, got %v", remaining, result)
 		}
 	}
 }
@@ -852,6 +870,15 @@ func indexOfTracker(values []string, target string) int {
 		}
 	}
 	return -1
+}
+
+func hasTracker(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestExtractBTNClaimedShowsParsesCurrentSection(t *testing.T) {

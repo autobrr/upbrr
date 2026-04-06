@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/torrent"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 
@@ -47,7 +48,6 @@ type trackerPattern struct {
 var (
 	unit3dTrackerIDPattern = regexp.MustCompile(`/(\d+)`)
 	trackerIDPatterns      = buildTrackerIDPatterns()
-	trackerPriority        = []string{"aither", "acm", "ulcx", "lst", "blu", "rf", "lume", "otw", "yus", "dp", "oe", "a4k", "cbr", "emuw", "fnp", "friki", "hhd", "ihd", "itt", "lcd", "ldu", "lt", "pt", "ptt", "r4e", "ras", "sam", "shri", "stc", "tik", "tlz", "tos", "ttr", "utp", "btn", "bhd", "huno", "hdb", "sp", "ptp"}
 )
 
 var trackerURLPatterns = map[string][]string{
@@ -137,7 +137,7 @@ func buildTrackerIDPatterns() map[string]trackerPattern {
 		"ptp": {url: "passthepopcorn.me", pattern: regexp.MustCompile(`torrentid=(\d+)`)},
 	}
 
-	for _, tracker := range unit3dmeta.Trackers() {
+	for _, tracker := range trackers.Unit3DTrackers() {
 		baseURL, ok := unit3dmeta.BaseURL(tracker)
 		if !ok || strings.TrimSpace(baseURL) == "" {
 			continue
@@ -843,7 +843,7 @@ func hasMatchedTracker(trackers []string, target string) bool {
 }
 
 func effectiveTrackerPriority(cfg config.Config) []string {
-	return applyPreferredTrackerPriority(trackerPriority, cfg.Trackers.PreferredTracker)
+	return applyPreferredTrackerPriority(trackers.TrackerPriority(), cfg.Trackers.PreferredTracker)
 }
 
 func applyPreferredTrackerPriority(priority []string, preferred string) []string {

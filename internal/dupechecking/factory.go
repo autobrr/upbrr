@@ -5,14 +5,14 @@ package dupechecking
 
 import (
 	"github.com/autobrr/upbrr/internal/trackerdata"
-	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
+	"github.com/autobrr/upbrr/internal/trackers"
 )
 
 func buildHandlers(deps handlerDeps) map[string]searchHandler {
 	handlers := map[string]searchHandler{}
 
 	unit := unit3dHandler{cfg: deps.cfg, tracker: deps.tracker}
-	for _, tracker := range unit3dmeta.Trackers() {
+	for _, tracker := range trackers.Unit3DTrackers() {
 		handlers[tracker] = unit
 	}
 

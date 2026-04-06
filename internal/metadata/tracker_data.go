@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackerdata"
+	trackerscatalog "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -26,10 +27,6 @@ const (
 	defaultTrackerCooldown = 15 * time.Second
 	ptpTrackerCooldown     = 60 * time.Second
 	trackerLookupWorkers   = 4
-)
-
-var (
-	trackerPriority = []string{"aither", "acm", "ulcx", "lst", "blu", "rf", "otw", "lume", "yus", "dp", "oe", "ant", "a4k", "cbr", "emuw", "fnp", "friki", "hhd", "ihd", "itt", "lcd", "ldu", "lt", "pt", "ptt", "r4e", "ras", "sam", "shri", "stc", "tik", "tlz", "tos", "ttr", "utp", "btn", "bhd", "huno", "hdb", "sp", "ptp"}
 )
 
 func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
@@ -517,6 +514,7 @@ func orderTrackersByPriority(trackers []string) []string {
 	if len(trackers) == 0 {
 		return trackers
 	}
+	trackerPriority := trackerscatalog.TrackerPriority()
 	priority := make(map[string]int, len(trackerPriority))
 	for idx, value := range trackerPriority {
 		priority[strings.ToUpper(value)] = idx

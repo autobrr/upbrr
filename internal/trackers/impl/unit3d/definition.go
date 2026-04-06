@@ -92,7 +92,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 }
 
 func DefaultTrackers() []string {
-	return unit3dmeta.Trackers()
+	return trackers.Unit3DTrackers()
 }
 
 func Register(registry *trackers.Registry, trackersList []string) error {

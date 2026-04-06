@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 
@@ -189,7 +190,7 @@ func TestResolveSearchClientsUsesClientOverride(t *testing.T) {
 }
 
 func TestBuildTrackerIDPatternsIncludesUnit3DBaseURLs(t *testing.T) {
-	for _, tracker := range unit3dmeta.Trackers() {
+	for _, tracker := range trackers.Unit3DTrackers() {
 		baseURL, ok := unit3dmeta.BaseURL(tracker)
 		if !ok {
 			t.Fatalf("expected base URL for %s", tracker)
@@ -209,28 +210,45 @@ func TestBuildTrackerIDPatternsIncludesUnit3DBaseURLs(t *testing.T) {
 	}
 }
 
-func TestTrackerPriorityInsertsMissingUnit3DBeforeBTN(t *testing.T) {
-	result := trackerPriority
-	oeIdx := indexOfValue(result, "oe")
-	btnIdx := indexOfValue(result, "btn")
-	if oeIdx < 0 || btnIdx < 0 || oeIdx >= btnIdx {
-		t.Fatalf("invalid OE/BTN ordering: oe=%d btn=%d list=%v", oeIdx, btnIdx, result)
-	}
+func TestTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.T) {
+	result := trackers.TrackerPriority()
+	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "huno", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
 
-	inserted := []string{"a4k", "cbr", "emuw", "fnp", "friki", "hhd", "ihd", "itt", "lcd", "ldu", "lt", "pt", "ptt", "r4e", "ras", "sam", "shri", "stc", "tik", "tlz", "tos", "ttr", "utp"}
-	for _, tracker := range inserted {
+	prevIdx := -1
+	for _, tracker := range expectedPrefix {
 		idx := indexOfValue(result, tracker)
 		if idx < 0 {
-			t.Fatalf("expected inserted tracker %s in %v", tracker, result)
+			t.Fatalf("expected preferred tracker %s in %v", tracker, result)
 		}
-		if idx <= oeIdx || idx >= btnIdx {
-			t.Fatalf("expected %s between OE and BTN, got idx=%d oe=%d btn=%d", tracker, idx, oeIdx, btnIdx)
+		if idx <= prevIdx {
+			t.Fatalf("expected preferred trackers in order %v, got %v", expectedPrefix, result)
+		}
+		prevIdx = idx
+	}
+
+	remaining := make([]string, 0)
+	for _, tracker := range trackers.Unit3DTrackers() {
+		lower := strings.ToLower(tracker)
+		if hasValue(expectedPrefix, lower) {
+			continue
+		}
+		remaining = append(remaining, lower)
+	}
+
+	if len(result) != len(expectedPrefix)+len(remaining) {
+		t.Fatalf("expected preferred + remaining unit3d trackers only, got %v", result)
+	}
+
+	for idx, tracker := range remaining {
+		gotIdx := len(expectedPrefix) + idx
+		if result[gotIdx] != tracker {
+			t.Fatalf("expected remaining unit3d trackers appended at end in sorted order %v, got %v", remaining, result)
 		}
 	}
 }
 
 func TestApplyPreferredTrackerPriorityMovesToFront(t *testing.T) {
-	result := applyPreferredTrackerPriority(trackerPriority, "PTP")
+	result := applyPreferredTrackerPriority(trackers.TrackerPriority(), "PTP")
 	if len(result) == 0 {
 		t.Fatalf("expected non-empty priority list")
 	}
@@ -240,12 +258,13 @@ func TestApplyPreferredTrackerPriorityMovesToFront(t *testing.T) {
 }
 
 func TestApplyPreferredTrackerPriorityNoopForUnknown(t *testing.T) {
-	result := applyPreferredTrackerPriority(trackerPriority, "UNKNOWN")
-	if len(result) != len(trackerPriority) {
+	priority := trackers.TrackerPriority()
+	result := applyPreferredTrackerPriority(priority, "UNKNOWN")
+	if len(result) != len(priority) {
 		t.Fatalf("expected unchanged list length")
 	}
-	for idx := range trackerPriority {
-		if result[idx] != trackerPriority[idx] {
+	for idx := range priority {
+		if result[idx] != priority[idx] {
 			t.Fatalf("expected no ordering changes for unknown preferred tracker")
 		}
 	}
@@ -261,6 +280,15 @@ func indexOfValue(values []string, target string) int {
 }
 
 func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasValue(values []string, target string) bool {
 	for _, value := range values {
 		if strings.EqualFold(value, target) {
 			return true

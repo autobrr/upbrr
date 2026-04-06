@@ -24,16 +24,10 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-var knownNonUnit3DTrackers = map[string]struct{}{
-	"ANT": {}, "AR": {}, "ASC": {}, "AZ": {}, "BHD": {}, "BHDTV": {}, "BJS": {}, "BT": {},
-	"CZ": {}, "DC": {}, "FF": {}, "FL": {}, "GPW": {}, "HDB": {}, "HDS": {}, "HDT": {}, "IS": {},
-	"MTV": {}, "NBL": {}, "PHD": {}, "PTP": {}, "PTS": {}, "RTF": {}, "SPD": {}, "THR": {}, "TL": {},
-	"TVC": {}, "MANUAL": {},
-}
 
 const (
 	imageTimeout     = 15 * time.Second
@@ -69,8 +63,7 @@ var unit3DResolutionNamesByID = map[string][]string{
 }
 
 func IsUnit3DTracker(tracker string) bool {
-	_, ok := baseURLForTracker(tracker)
-	return ok
+	return trackers.IsUnit3DTracker(tracker)
 }
 
 func IsUnit3DTrackerWithConfig(cfg config.Config, tracker string) bool {
@@ -81,7 +74,7 @@ func IsUnit3DTrackerWithConfig(cfg config.Config, tracker string) bool {
 	if IsUnit3DTracker(key) {
 		return true
 	}
-	if _, exists := knownNonUnit3DTrackers[key]; exists {
+	if trackers.IsKnownTracker(key) {
 		return false
 	}
 	entry, ok := cfg.Trackers.Trackers[key]
