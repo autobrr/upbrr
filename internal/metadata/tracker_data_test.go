@@ -806,7 +806,7 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 
 func TestMetadataTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.T) {
 	result := trackers.TrackerPriority()
-	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "huno", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
+	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
 
 	prevIdx := -1
 	for _, tracker := range expectedPrefix {

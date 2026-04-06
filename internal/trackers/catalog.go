@@ -85,7 +85,7 @@ func TrackerPriority() []string {
 
 func buildTrackerPriority() []string {
 	preferred := []string{
-		"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "huno",
+		"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd",
 		"hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp",
 	}
 

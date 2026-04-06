@@ -113,7 +113,7 @@ go run ./cmd/upbrr "D:\releases\Some.Release.2026.1080p.BluRay"
 Useful variants:
 
 ```bash
-go run ./cmd/upbrr --site-check --trackers BLU,HUNO "D:\releases\Some.Release"
+go run ./cmd/upbrr --site-check --trackers BLU,OE "D:\releases\Some.Release"
 go run ./cmd/upbrr --dry-run --trackers PTP,HDB "D:\releases\Some.Release"
 go run ./cmd/upbrr --upload-only "D:\releases\Some.Release"
 go run ./cmd/upbrr --queue "D:\upload-queue" --limit-queue 5

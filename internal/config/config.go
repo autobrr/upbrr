@@ -652,7 +652,6 @@ var trackerImageRehostValidationHosts = map[string][]string{
 	"DC":   {"imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex"},
 	"GPW":  {"kshare", "pixhost", "ptpimg", "pterclub", "ilikeshots", "imgbox"},
 	"HDB":  {"hdb"},
-	"HUNO": {"ptpimg", "imgbox", "imgbb", "pixhost", "bam"},
 	"MTV":  {"ptpimg", "imgbox", "imgbb"},
 	"OE":   {"ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
 	"PTP":  {"ptpimg", "pixhost"},

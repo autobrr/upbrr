@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -27,60 +26,6 @@ var resolutionOrder = map[string]int{
 	"2160p": 9,
 	"4320p": 10,
 	"8640p": 11,
-}
-
-var crfPattern = regexp.MustCompile(`(?i)crf[ =:]+([\d.]+)`) // best-effort parse
-
-func checkHUNOEncoding(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
-	select {
-	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
-	default:
-	}
-
-	if isDiscType(meta.DiscType) {
-		return Pass()
-	}
-
-	typeValue := resolveType(meta)
-	if typeValue != "ENCODE" && typeValue != "WEBRIP" && typeValue != "DVDRIP" && typeValue != "HDTV" {
-		return Pass()
-	}
-
-	payload, err := loadMediaInfoJSON(meta.MediaInfoJSONPath)
-	if err != nil {
-		if logger != nil {
-			logger.Debugf("unit3d: huno mediainfo read failed: %v", err)
-		}
-		return Pass()
-	}
-
-	videoTrack := firstMediaInfoTrack(payload, "Video")
-	if videoTrack == nil {
-		return Pass()
-	}
-
-	encoding := trackString(videoTrack, "Encoded_Library_Settings")
-	if strings.TrimSpace(encoding) != "" {
-		match := crfPattern.FindStringSubmatch(encoding)
-		if len(match) > 1 {
-			if crfValue := parseFloat(match[1]); crfValue > 22 {
-				return Fail(fmt.Sprintf("CRF value too high: %.2f for HUNO", crfValue))
-			}
-		}
-		return Pass()
-	}
-
-	bitRateRaw := trackString(videoTrack, "BitRate", "BitRate_String")
-	bitRate := parseInt(bitRateRaw)
-	if bitRate == 0 {
-		return Pass()
-	}
-	bitRateKbps := float64(bitRate) / 1000.0
-	if bitRateKbps < 3000 && !isAnimation(meta) {
-		return Fail(fmt.Sprintf("Video bitrate too low: %.0f kbps for HUNO", bitRateKbps))
-	}
-	return Pass()
 }
 
 func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {

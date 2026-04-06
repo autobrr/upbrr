@@ -19,7 +19,6 @@ var trackerBaseURLs = map[string]string{
 	"FNP":    "https://fearnopeer.com",
 	"FRIKI":  "https://frikibar.com",
 	"HHD":    "https://homiehelpdesk.net",
-	"HUNO":   "https://hawke.uno",
 	"IHD":    "https://infinityhd.net",
 	"ITT":    "https://itatorrents.xyz",
 	"LCD":    "https://locadora.cc",

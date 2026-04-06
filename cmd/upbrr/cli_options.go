@@ -89,7 +89,6 @@ type cliOptions struct {
 	HDB               string
 	BTN               string
 	BHD               string
-	HUNO              string
 	ULCX              string
 	DescriptionFile   string
 	DescriptionLink   string
@@ -198,7 +197,6 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.HDB, "hdb", "", "HDB torrent id or URL")
 	fs.StringVar(&opts.BTN, "btn", "", "BTN torrent id or URL")
 	fs.StringVar(&opts.BHD, "bhd", "", "BHD torrent id or URL")
-	fs.StringVar(&opts.HUNO, "huno", "", "HUNO torrent id or URL")
 	fs.StringVar(&opts.ULCX, "ulcx", "", "ULCX torrent id or URL")
 	fs.StringVar(&opts.DescriptionFile, "descfile", "", "Custom description file path")
 	fs.StringVar(&opts.DescriptionFile, "df", "", "Custom description file path")
@@ -682,7 +680,6 @@ func buildTrackerIDOverrides(opts cliOptions, visited map[string]bool) (map[stri
 		{visitedName: "hdb", tracker: "hdb", value: opts.HDB},
 		{visitedName: "btn", tracker: "btn", value: opts.BTN},
 		{visitedName: "bhd", tracker: "bhd", value: opts.BHD},
-		{visitedName: "huno", tracker: "huno", value: opts.HUNO},
 		{visitedName: "ulcx", tracker: "ulcx", value: opts.ULCX},
 	}
 

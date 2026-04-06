@@ -33,7 +33,6 @@ var trackerRuleFactories = map[string]func() RuleSet{
 	"A4K":    rulesA4K,
 	"DP":     rulesDP,
 	"HHD":    rulesHHD,
-	"HUNO":   rulesHUNO,
 	"LST":    rulesLST,
 	"LUME":   rulesLUME,
 	"OE":     rulesOE,
@@ -117,15 +116,6 @@ func rulesDP() RuleSet {
 			RequireAudio: true,
 			RequireSubs:  true,
 		},
-	}
-}
-
-func rulesHUNO() RuleSet {
-	return RuleSet{
-		RequireValidMISetting: true,
-		RequireAudioLanguages: true,
-		RequireHEVCForTypes:   []string{"ENCODE", "WEBRIP", "DVDRIP", "HDTV"},
-		ExtraCheck:            checkHUNOEncoding,
 	}
 }
 

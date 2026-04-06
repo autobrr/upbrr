@@ -589,7 +589,7 @@ func TestEnsureDescriptionImageHostReusesAllowedHost(t *testing.T) {
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "HUNO", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHost(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -655,7 +655,7 @@ func TestEnsureDescriptionImageHostUsesPreferredOverrideWhenAllowed(t *testing.T
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "HUNO", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHost(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -679,7 +679,7 @@ func TestEnsureDescriptionImageHostReusesGlobalUploadsInsteadOfOtherTrackerScope
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "HUNO", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHost(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -31,8 +31,6 @@ func policyForTracker(tracker string, trackerCfg config.TrackerConfig) imageHost
 			return newImageHostPolicy(true, "hdb")
 		}
 		return imageHostPolicy{}
-	case "HUNO":
-		return newImageHostPolicy(true, "ptpimg", "imgbox", "imgbb", "pixhost", "bam")
 	case "MTV":
 		return newImageHostPolicy(true, "ptpimg", "imgbox", "imgbb")
 	case "OE":

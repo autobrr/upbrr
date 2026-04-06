@@ -212,7 +212,7 @@ func TestBuildTrackerIDPatternsIncludesUnit3DBaseURLs(t *testing.T) {
 
 func TestTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.T) {
 	result := trackers.TrackerPriority()
-	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "huno", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
+	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
 
 	prevIdx := -1
 	for _, tracker := range expectedPrefix {

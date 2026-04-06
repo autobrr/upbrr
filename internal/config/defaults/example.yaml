@@ -265,10 +265,6 @@ trackers:
     link_dir_name: ""
     api_key: ""
     anon: false
-  HUNO:
-    link_dir_name: ""
-    api_key: ""
-    anon: false
   IHD:
     link_dir_name: ""
     api_key: ""

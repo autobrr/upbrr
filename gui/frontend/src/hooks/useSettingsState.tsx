@@ -191,7 +191,6 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
   HDS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.FullMediainfo],
   HDT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.URL, trackerFieldMeta.Anon, trackerFieldMeta.AnnounceURL, trackerFieldMeta.FullMediainfo],
   HHD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  HUNO: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   IHD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   IS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
   ITT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],

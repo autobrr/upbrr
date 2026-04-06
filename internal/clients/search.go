@@ -74,7 +74,6 @@ var trackerURLPatterns = map[string][]string{
 	"hds":    {"hd-space.pw"},
 	"hdt":    {"https://hdts-announce.ru"},
 	"hhd":    {"https://homiehelpdesk.net"},
-	"huno":   {"https://hawke.uno"},
 	"ihd":    {"https://infinityhd.net"},
 	"is":     {"https://immortalseed.me"},
 	"itt":    {"https://itatorrents.xyz"},
@@ -699,14 +698,6 @@ func extractTrackerMatches(comment string, trackerURLs []string, hasWorkingTrack
 
 	for _, url := range trackerURLs {
 		lowerURL := strings.ToLower(url)
-		if strings.Contains(lowerURL, "hawke.uno") && hasWorkingTracker {
-			re := regexp.MustCompile(`/torrents/(\d+)`)
-			match := re.FindStringSubmatch(comment)
-			if len(match) > 1 {
-				matches = append(matches, api.TrackerMatch{ID: "huno", TrackerID: match[1]})
-				trackerFound = true
-			}
-		}
 		if strings.Contains(lowerURL, "tracker.anthelion.me") {
 			if hasWorkingTracker {
 				matches = append(matches, api.TrackerMatch{ID: "ant", TrackerID: "1"})
