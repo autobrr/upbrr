@@ -4,8 +4,12 @@
 
 - Match the repository's existing style and keep changes narrow. Prefer fixing root causes over adding special cases.
 - Format Go code with gofmt and goimports. Keep the local import prefix set to github.com/autobrr/upbrr.
-- Treat .golangci.yml as the Go standard of record. New code should satisfy these enabled linters: copyloopvar, errname, errorlint, exhaustive, fatcontext, gocritic, gosec, loggercheck, mirror, misspell, perfsprint, prealloc, rowserrcheck, spancheck, testifylint, unconvert, unused, and whitespace.
-- The disabled linters are intentional policy, not missed cleanup. Do not reshape code just to satisfy containedctx, noctx, or revive unless there is a functional reason or the surrounding code already follows that pattern.
+- Treat .golangci.yml as the Go standard of record. New code should satisfy all linters, including ones currently disabled in repository-wide enforcement.
+- The disabled linters are intentional policy for existing code, not missed cleanup. Do not reshape existing code just to satisfy containedctx, noctx, revive, or other currently disabled linters unless there is a functional reason or the surrounding code already follows that pattern.
+- Do not silently swallow errors. Handle them explicitly by returning, wrapping, logging with intentional context, or making the ignore path obvious and justified in code.
+- Add logging to new functions where it helps explain meaningful state, decisions, failures, retries, or user-visible outcomes. When touching existing functions that lack appropriate logging, bring them up to the same standard when it is practical and relevant to the change.
+- Always redact private, secret, or user-sensitive information from logs using the repository's redaction handling in `internal/redaction/redaction.go`. Never log credentials, tokens, API keys, passkeys, cookies, full payloads containing secrets, or other sensitive user data without applying that standard.
+- Keep log levels purposeful. `INFO` should provide concise, relevant progress or outcome details for end users during uploads. `DEBUG` should include richer decision-making context useful for developer troubleshooting. `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
 - Respect the current golangci-lint exclusions and formatter settings instead of reintroducing churn in files already covered by scoped exceptions.
 - For frontend changes, keep TypeScript and ESLint clean without weakening existing rules or bypassing type errors.
 
