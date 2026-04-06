@@ -184,6 +184,9 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 	result.Match = match
 	result.HasDupes = len(filtered) > 0
 	s.logger.Infof("dupechecking: %s checked for %s raw=%d filtered=%d dupes=%t", tracker, meta.SourcePath, len(result.Raw), len(filtered), result.HasDupes)
+	for _, dupe := range result.Raw {
+		s.logger.Debugf("dupechecking: %s returned dupe: %s", tracker, dupe.Name)
+	}
 	return result
 }
 

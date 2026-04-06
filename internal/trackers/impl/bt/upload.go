@@ -152,7 +152,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	if err != nil {
 		return uploadState{}, nil, err
 	}
-	fields := buildFields(req.Meta, description, auth, req.TrackerConfig)
+	fields := buildFields(req.Meta, description, auth, req.TrackerConfig, assets)
 	state := uploadState{
 		torrentPath: torrentPath,
 		description: description,
@@ -165,7 +165,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	return state, cookies, nil
 }
 
-func buildFields(meta api.PreparedMetadata, description string, auth string, trackerCfg config.TrackerConfig) map[string]string {
+func buildFields(meta api.PreparedMetadata, description string, auth string, trackerCfg config.TrackerConfig, assets trackers.DescriptionAssets) map[string]string {
 	hasPT, subtitleIDs := resolveSubtitle(meta)
 	width, height := resolveResolution(meta)
 	fields := map[string]string{
@@ -196,9 +196,9 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, tra
 	for _, id := range subtitleIDs {
 		fields["subtitles[]"] = appendCSV(fields["subtitles[]"], id)
 	}
-	screens := resolveScreens(meta)
+	screens := resolveScreens(assets)
 	if len(screens) > 0 {
-		fields["screen[]"] = strings.Join(screens, ",")
+		fields["screen[]"] = strings.Join(screens, "\n")
 	}
 	category := strings.ToUpper(strings.TrimSpace(categoryOf(meta)))
 	if !meta.Anime && (category == "MOVIE" || category == "TV") {
@@ -528,8 +528,14 @@ func resolvePoster(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveScreens(meta api.PreparedMetadata) []string {
-	return nil
+func resolveScreens(assets trackers.DescriptionAssets) []string {
+	var screens []string
+	for _, image := range assets.Screenshots {
+		if u := strings.TrimSpace(image.RawURL); u != "" {
+			screens = append(screens, u)
+		}
+	}
+	return screens
 }
 
 func resolveOverview(meta api.PreparedMetadata) string {
