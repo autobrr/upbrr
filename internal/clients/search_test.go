@@ -146,6 +146,24 @@ func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 	}
 }
 
+func TestMatchTrackerURLsMatchesBTNLandOfTVAnnounce(t *testing.T) {
+	t.Parallel()
+
+	matched := matchTrackerURLs([]string{"https://landof.tv/redacted/announce"})
+	if !containsString(matched, "BTN") {
+		t.Fatalf("expected BTN in matched trackers, got %v", matched)
+	}
+}
+
+func TestEnsureMatchedTrackersForKnownIDsAddsBTN(t *testing.T) {
+	t.Parallel()
+
+	matched := ensureMatchedTrackersForKnownIDs(nil, map[string]string{"btn": "2202392"})
+	if !containsString(matched, "BTN") {
+		t.Fatalf("expected BTN in matched trackers, got %v", matched)
+	}
+}
+
 func TestResolveSearchClientsUsesClientOverride(t *testing.T) {
 	t.Parallel()
 

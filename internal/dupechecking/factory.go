@@ -19,6 +19,7 @@ func buildHandlers(deps handlerDeps) map[string]searchHandler {
 	// Functional non-Unit3D handlers (first pass parity)
 	handlers["ANT"] = antHandler{cfg: deps.cfg, http: deps.http, logger: deps.logger}
 	handlers["BHD"] = bhdHandler{cfg: deps.cfg, http: deps.http, logger: deps.logger}
+	handlers["BTN"] = btnHandler{cfg: deps.cfg, http: deps.http}
 	handlers["HDB"] = hdbHandler{cfg: deps.cfg, http: deps.http, logger: deps.logger}
 	handlers["PTP"] = ptpHandler{cfg: deps.cfg, http: deps.http, logger: deps.logger}
 	handlers["BHDTV"] = bhdtvHandler{}

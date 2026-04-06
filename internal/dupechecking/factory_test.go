@@ -14,7 +14,7 @@ func TestBuildHandlersCoversKnownTrackers(t *testing.T) {
 	handlers := buildHandlers(handlerDeps{cfg: config.Config{}})
 
 	known := []string{
-		"A4K", "ACM", "AITHER", "ANT", "AR", "ASC", "AZ", "BHD", "BHDTV", "BJS", "BLU", "BT", "CBR", "CZ", "DC", "DP", "EMUW", "FF", "FL", "FNP", "FRIKI", "GPW", "HDB", "HDS", "HDT", "HHD", "HUNO", "IHD", "IS", "ITT", "LCD", "LDU", "LST", "LT", "LUME", "MTV", "NBL", "OE", "OTW", "PHD", "PT", "PTP", "PTS", "PTT", "R4E", "RAS", "RF", "RTF", "SAM", "SHRI", "SP", "SPD", "STC", "THR", "TIK", "TL", "TLZ", "TOS", "TTR", "TVC", "ULCX", "UTP", "YUS",
+		"A4K", "ACM", "AITHER", "ANT", "AR", "ASC", "AZ", "BHD", "BHDTV", "BJS", "BLU", "BT", "BTN", "CBR", "CZ", "DC", "DP", "EMUW", "FF", "FL", "FNP", "FRIKI", "GPW", "HDB", "HDS", "HDT", "HHD", "HUNO", "IHD", "IS", "ITT", "LCD", "LDU", "LST", "LT", "LUME", "MTV", "NBL", "OE", "OTW", "PHD", "PT", "PTP", "PTS", "PTT", "R4E", "RAS", "RF", "RTF", "SAM", "SHRI", "SP", "SPD", "STC", "THR", "TIK", "TL", "TLZ", "TOS", "TTR", "TVC", "ULCX", "UTP", "YUS",
 	}
 	for _, tracker := range known {
 		if _, ok := handlers[tracker]; !ok {
