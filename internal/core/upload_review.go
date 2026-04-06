@@ -195,6 +195,7 @@ func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request) api.
 	meta.Mode = req.Mode
 	meta.Options = req.Options
 	meta.Paths = append([]string{}, req.Paths...)
+	meta.DescriptionGroups = cloneDescriptionBuilderGroups(req.DescriptionGroups)
 	meta.Trackers = append([]string{}, req.Trackers...)
 	meta.TrackersRemove = append([]string{}, req.TrackersRemove...)
 	meta.TrackerIDs = cloneStringMap(req.TrackerIDOverrides)
@@ -335,6 +336,19 @@ func cloneStringMap(values map[string]string) map[string]string {
 	cloned := make(map[string]string, len(values))
 	for key, value := range values {
 		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneDescriptionBuilderGroups(groups []api.DescriptionBuilderGroup) []api.DescriptionBuilderGroup {
+	if len(groups) == 0 {
+		return nil
+	}
+	cloned := make([]api.DescriptionBuilderGroup, len(groups))
+	for idx, group := range groups {
+		cloned[idx] = group
+		cloned[idx].Trackers = append([]string(nil), group.Trackers...)
+		cloned[idx].ImageHost.AllowedHosts = append([]string(nil), group.ImageHost.AllowedHosts...)
 	}
 	return cloned
 }

@@ -1705,15 +1705,18 @@ func (stubRepo) DeleteReleaseNameOverrides(context.Context, string) error {
 	return internalerrors.ErrNotImplemented
 }
 
-func (stubRepo) GetDescriptionOverride(context.Context, string) (db.DescriptionOverride, error) {
+func (stubRepo) GetDescriptionOverride(context.Context, string, string) (db.DescriptionOverride, error) {
 	return db.DescriptionOverride{}, internalerrors.ErrNotImplemented
+}
+func (stubRepo) ListDescriptionOverridesByPath(context.Context, string) ([]db.DescriptionOverride, error) {
+	return nil, internalerrors.ErrNotImplemented
 }
 
 func (stubRepo) SaveDescriptionOverride(context.Context, db.DescriptionOverride) error {
 	return internalerrors.ErrNotImplemented
 }
 
-func (stubRepo) DeleteDescriptionOverride(context.Context, string) error {
+func (stubRepo) DeleteDescriptionOverride(context.Context, string, string) error {
 	return internalerrors.ErrNotImplemented
 }
 
@@ -1889,15 +1892,18 @@ func (r *recordingRepo) DeleteReleaseNameOverrides(context.Context, string) erro
 	return internalerrors.ErrNotImplemented
 }
 
-func (r *recordingRepo) GetDescriptionOverride(context.Context, string) (db.DescriptionOverride, error) {
+func (r *recordingRepo) GetDescriptionOverride(context.Context, string, string) (db.DescriptionOverride, error) {
 	return db.DescriptionOverride{}, internalerrors.ErrNotImplemented
+}
+func (r *recordingRepo) ListDescriptionOverridesByPath(context.Context, string) ([]db.DescriptionOverride, error) {
+	return nil, internalerrors.ErrNotImplemented
 }
 
 func (r *recordingRepo) SaveDescriptionOverride(context.Context, db.DescriptionOverride) error {
 	return internalerrors.ErrNotImplemented
 }
 
-func (r *recordingRepo) DeleteDescriptionOverride(context.Context, string) error {
+func (r *recordingRepo) DeleteDescriptionOverride(context.Context, string, string) error {
 	return internalerrors.ErrNotImplemented
 }
 

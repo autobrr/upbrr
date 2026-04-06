@@ -174,13 +174,16 @@ func (a azRepoStub) SaveReleaseNameOverrides(context.Context, string, api.Releas
 	return nil
 }
 func (a azRepoStub) DeleteReleaseNameOverrides(context.Context, string) error { return nil }
-func (a azRepoStub) GetDescriptionOverride(context.Context, string) (api.DescriptionOverride, error) {
+func (a azRepoStub) GetDescriptionOverride(context.Context, string, string) (api.DescriptionOverride, error) {
 	return api.DescriptionOverride{}, nil
+}
+func (a azRepoStub) ListDescriptionOverridesByPath(context.Context, string) ([]api.DescriptionOverride, error) {
+	return nil, nil
 }
 func (a azRepoStub) SaveDescriptionOverride(context.Context, api.DescriptionOverride) error {
 	return nil
 }
-func (a azRepoStub) DeleteDescriptionOverride(context.Context, string) error { return nil }
+func (a azRepoStub) DeleteDescriptionOverride(context.Context, string, string) error { return nil }
 func (a azRepoStub) GetPlaylistSelection(context.Context, string) (api.PlaylistSelection, error) {
 	return api.PlaylistSelection{}, nil
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -364,7 +365,7 @@ func TestSQLiteDescriptionOverrides(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, err = repo.GetDescriptionOverride(ctx, "/missing")
+	_, err = repo.GetDescriptionOverride(ctx, "/missing", "")
 	if !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected not found, got %v", err)
 	}
@@ -374,7 +375,7 @@ func TestSQLiteDescriptionOverrides(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	got, err := repo.GetDescriptionOverride(ctx, "/media/file.mkv")
+	got, err := repo.GetDescriptionOverride(ctx, "/media/file.mkv", "")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -385,12 +386,85 @@ func TestSQLiteDescriptionOverrides(t *testing.T) {
 		t.Fatalf("expected updated_at to be set")
 	}
 
-	if err := repo.DeleteDescriptionOverride(ctx, "/media/file.mkv"); err != nil {
+	if err := repo.DeleteDescriptionOverride(ctx, "/media/file.mkv", ""); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	_, err = repo.GetDescriptionOverride(ctx, "/media/file.mkv")
+	_, err = repo.GetDescriptionOverride(ctx, "/media/file.mkv", "")
 	if !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected not found after delete, got %v", err)
+	}
+}
+
+func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	dbConn := repo.db
+
+	statements := []string{
+		`PRAGMA user_version = 6`,
+		`CREATE TABLE description_overrides (source_path TEXT, description TEXT, updated_at TEXT)`,
+		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES (NULL, 'broken', NULL)`,
+		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES ('   ', 'blank path', '')`,
+		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES ('/tmp/source', NULL, NULL)`,
+		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES ('/tmp/source', 'latest desc', '')`,
+	}
+	for _, statement := range statements {
+		if _, err := dbConn.Exec(statement); err != nil {
+			t.Fatalf("seed legacy schema: %v", err)
+		}
+	}
+
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	override, err := repo.GetDescriptionOverride(ctx, "/tmp/source", "")
+	if err != nil {
+		t.Fatalf("expected migrated override, got %v", err)
+	}
+	if override.Description != "latest desc" {
+		t.Fatalf("expected duplicate legacy rows to collapse to latest description, got %q", override.Description)
+	}
+	if override.UpdatedAt.IsZero() {
+		t.Fatalf("expected missing updated_at to be backfilled")
+	}
+
+	overrides, err := repo.ListDescriptionOverridesByPath(ctx, "/tmp/source")
+	if err != nil {
+		t.Fatalf("list overrides: %v", err)
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("expected one migrated override, got %d", len(overrides))
+	}
+
+	if _, err := repo.GetDescriptionOverride(ctx, "", ""); !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("expected invalid input for blank path lookup, got %v", err)
+	}
+
+	row := dbConn.QueryRow(`SELECT COUNT(*) FROM description_overrides`)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("count migrated overrides: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected only valid legacy rows to migrate, got %d", count)
+	}
+
+	var updatedAt string
+	if err := dbConn.QueryRow(`SELECT updated_at FROM description_overrides WHERE source_path = ? AND group_key = ?`, "/tmp/source", "").Scan(&updatedAt); err != nil {
+		t.Fatalf("read migrated updated_at: %v", err)
+	}
+	if strings.TrimSpace(updatedAt) == "" {
+		t.Fatalf("expected non-empty updated_at after migration")
 	}
 }
 
@@ -504,7 +578,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if _, err := repo.GetReleaseNameOverrides(ctx, targetPath); !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected release overrides removed, got %v", err)
 	}
-	if _, err := repo.GetDescriptionOverride(ctx, targetPath); !errors.Is(err, internalerrors.ErrNotFound) {
+	if _, err := repo.GetDescriptionOverride(ctx, targetPath, ""); !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected description override removed, got %v", err)
 	}
 	if _, err := repo.GetPlaylistSelection(ctx, targetPath); !errors.Is(err, internalerrors.ErrNotFound) {

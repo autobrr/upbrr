@@ -36,9 +36,17 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 	default:
 	}
 
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
+	var (
+		err    error
+		assets trackers.DescriptionAssets
+	)
+	if req.Assets != nil {
+		assets = *req.Assets
+	} else {
+		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		if err != nil {
+			assets = trackers.DescriptionAssets{}
+		}
 	}
 
 	description, err := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
