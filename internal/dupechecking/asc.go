@@ -68,23 +68,45 @@ func (h ascHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	if len(tasks) > 0 {
 		var mu sync.Mutex
 		var wg sync.WaitGroup
+		sem := make(chan struct{}, 5)
+	taskLoop:
 		for _, t := range tasks {
+			select {
+			case <-ctx.Done():
+				break taskLoop
+			case sem <- struct{}{}:
+			}
+
 			wg.Add(1)
-			go func() {
+			go func(t ascDetailTask) {
 				defer wg.Done()
+				defer func() { <-sem }()
+
 				name := "N/A"
 				reqFile, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://cliente.amigos-share.club/torrents-arquivos.php?id="+t.ID, nil)
-				if err == nil {
+				if err != nil {
+					h.logger.Debugf("ASC filename request creation failed for ID %s: %v", t.ID, err)
+				} else {
 					reqFile.Header.Set("User-Agent", "upbrr")
 					for _, cookie := range cookies {
 						reqFile.AddCookie(cookie)
 					}
-					if fileResp, err := h.http.Do(reqFile); err == nil {
+					fileResp, err := h.http.Do(reqFile)
+					if err != nil {
+						h.logger.Debugf("ASC filename request failed for ID %s: %v", t.ID, err)
+					} else {
 						defer fileResp.Body.Close()
-						if fileResp.StatusCode >= 200 && fileResp.StatusCode < 300 {
-							if fileDoc, err := html.Parse(fileResp.Body); err == nil {
+						if fileResp.StatusCode < 200 || fileResp.StatusCode >= 300 {
+							h.logger.Debugf("ASC filename request returned non-success status %d for ID %s", fileResp.StatusCode, t.ID)
+						} else {
+							fileDoc, err := html.Parse(fileResp.Body)
+							if err != nil {
+								h.logger.Debugf("ASC filename parse failed for ID %s: %v", t.ID, err)
+							} else {
 								if parsedName := getASCFilenameFromFiles(fileDoc); parsedName != "" {
 									name = parsedName
+								} else {
+									h.logger.Debugf("ASC filename not found in response for ID %s", t.ID)
 								}
 							}
 						}
@@ -99,7 +121,7 @@ func (h ascHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 					SizeText: t.Size,
 				})
 				mu.Unlock()
-			}()
+			}(t)
 		}
 		wg.Wait()
 	}
