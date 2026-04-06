@@ -38,7 +38,7 @@ type uploadState struct {
 	torrentPath   string
 	description   string
 	releaseName   string
-	fields        map[string]string
+	fields        map[string][]string
 	blockedReason string
 }
 
@@ -50,11 +50,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if state.blockedReason != "" {
 		return api.UploadSummary{}, fmt.Errorf("trackers: BT %s", state.blockedReason)
 	}
-	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, []commonhttp.FileField{{
+	body, contentType, err := commonhttp.BuildMultipartPayloadMulti(state.fields, []commonhttp.FileField{{
 		FieldName: "file_input",
 		FileName:  filepath.Base(state.torrentPath),
 		Path:      state.torrentPath,
 	}})
+
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -123,7 +124,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		DescriptionGroup: "bt",
 		Description:      state.description,
 		Endpoint:         uploadURL,
-		Payload:          cloneFields(state.fields),
+		Payload:          flattenFields(state.fields),
 		Files:            []api.TrackerDryRunFile{{Field: "file_input", Path: state.torrentPath, Present: strings.TrimSpace(state.torrentPath) != ""}},
 	}, nil
 }
@@ -159,82 +160,82 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		releaseName: firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
 		fields:      fields,
 	}
-	if strings.TrimSpace(fields["image"]) == "" {
+	if len(fields["image"]) == 0 || strings.TrimSpace(fields["image"][0]) == "" {
 		state.blockedReason = "missing poster URL"
 	}
+
 	return state, cookies, nil
 }
 
-func buildFields(meta api.PreparedMetadata, description string, auth string, trackerCfg config.TrackerConfig, assets trackers.DescriptionAssets) map[string]string {
+func buildFields(meta api.PreparedMetadata, description string, auth string, trackerCfg config.TrackerConfig, assets trackers.DescriptionAssets) map[string][]string {
 	hasPT, subtitleIDs := resolveSubtitle(meta)
 	width, height := resolveResolution(meta)
-	fields := map[string]string{
-		"audio_c":     resolveAudioCodec(meta),
-		"audio":       resolveAudio(meta),
-		"auth":        auth,
-		"bitrate":     resolveBitrate(meta),
-		"desc":        "",
-		"diretor":     resolveDirectors(meta),
-		"duracao":     fmt.Sprintf("%d min", resolveRuntime(meta)),
-		"especificas": description,
-		"format":      resolveContainer(meta),
-		"idioma_ori":  resolveLanguage(meta),
-		"image":       resolvePoster(meta),
-		"legenda":     hasPT,
-		"mediainfo":   resolveMedia(meta),
-		"resolucao_1": width,
-		"resolucao_2": height,
-		"sinopse":     resolveOverview(meta),
-		"submit":      "true",
-		"tags":        resolveTags(meta),
-		"title":       firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.Release.Title),
-		"type":        resolveType(meta),
-		"video_c":     resolveVideoCodec(meta),
-		"year":        strconv.Itoa(resolveYear(meta)),
-		"youtube":     resolveYouTube(meta),
+	fields := map[string][]string{
+		"audio_c":     {resolveAudioCodec(meta)},
+		"audio":       {resolveAudio(meta)},
+		"auth":        {auth},
+		"bitrate":     {resolveBitrate(meta)},
+		"desc":        {""},
+		"diretor":     {resolveDirectors(meta)},
+		"duracao":     {fmt.Sprintf("%d min", resolveRuntime(meta))},
+		"especificas": {description},
+		"format":      {resolveContainer(meta)},
+		"idioma_ori":  {resolveLanguage(meta)},
+		"image":       {resolvePoster(meta)},
+		"legenda":     {hasPT},
+		"mediainfo":   {resolveMedia(meta)},
+		"resolucao_1": {width},
+		"resolucao_2": {height},
+		"sinopse":     {resolveOverview(meta)},
+		"submit":      {"true"},
+		"tags":        {resolveTags(meta)},
+		"title":       {firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.Release.Title)},
+		"type":        {resolveType(meta)},
+		"video_c":     {resolveVideoCodec(meta)},
+		"year":        {strconv.Itoa(resolveYear(meta))},
+		"youtube":     {resolveYouTube(meta)},
 	}
-	for _, id := range subtitleIDs {
-		fields["subtitles[]"] = appendCSV(fields["subtitles[]"], id)
-	}
+
+	fields["subtitles[]"] = append(fields["subtitles[]"], subtitleIDs...)
+
 	screens := resolveScreens(assets)
-	if len(screens) > 0 {
-		fields["screen[]"] = strings.Join(screens, "\n")
-	}
+	fields["screen[]"] = append(fields["screen[]"], screens...)
+
 	category := strings.ToUpper(strings.TrimSpace(categoryOf(meta)))
 	if !meta.Anime && (category == "MOVIE" || category == "TV") {
-		fields["3d"] = yesNo(meta.Is3D != "")
-		fields["adulto"] = "0"
-		fields["imdb_input"] = resolveIMDbText(meta)
-		fields["nota_imdb"] = resolveIMDbRating(meta)
-		fields["title_br"] = resolveLocalizedTitle(meta)
+		fields["3d"] = []string{yesNo(meta.Is3D != "")}
+		fields["adulto"] = []string{"0"}
+		fields["imdb_input"] = []string{resolveIMDbText(meta)}
+		fields["nota_imdb"] = []string{resolveIMDbRating(meta)}
+		fields["title_br"] = []string{resolveLocalizedTitle(meta)}
 	}
 	if meta.Scene {
-		fields["scene"] = "on"
+		fields["scene"] = []string{"on"}
 	}
 	if category == "TV" || meta.Anime {
-		fields["episodio"] = meta.EpisodeStr
-		fields["ntorrent"] = meta.SeasonStr + meta.EpisodeStr
+		fields["episodio"] = []string{meta.EpisodeStr}
+		fields["ntorrent"] = []string{meta.SeasonStr + meta.EpisodeStr}
 		if meta.TVPack {
-			fields["temporada"] = meta.SeasonStr
-			fields["tipo"] = "completa"
+			fields["temporada"] = []string{meta.SeasonStr}
+			fields["tipo"] = []string{"completa"}
 		} else {
-			fields["temporada_e"] = meta.SeasonStr
-			fields["tipo"] = "ep_individual"
+			fields["temporada_e"] = []string{meta.SeasonStr}
+			fields["tipo"] = []string{"ep_individual"}
 		}
 	}
 	if category == "MOVIE" {
-		fields["versao"] = resolveEdition(meta)
+		fields["versao"] = []string{resolveEdition(meta)}
 	}
 	if meta.Anime {
-		fields["fundo_torrent"] = resolveBackdrop(meta)
-		fields["rating"] = resolveIMDbRating(meta)
-		fields["releasedate"] = strconv.Itoa(resolveYear(meta))
+		fields["fundo_torrent"] = []string{resolveBackdrop(meta)}
+		fields["rating"] = []string{resolveIMDbRating(meta)}
+		fields["releasedate"] = []string{strconv.Itoa(resolveYear(meta))}
 	}
 	if trackerCfg.Anon {
-		fields["anonymous"] = "1"
+		fields["anonymous"] = []string{"1"}
 	}
 	if trackers.IsInternalGroup(config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BT": trackerCfg}}}, "BT", meta) {
-		fields["internal"] = "1"
+		fields["internal"] = []string{"1"}
 	}
 	return fields
 }
@@ -873,13 +874,6 @@ func categoryOf(meta api.PreparedMetadata) string {
 	return strings.TrimSpace(meta.MediaInfoCategory)
 }
 
-func appendCSV(current string, value string) string {
-	if strings.TrimSpace(current) == "" {
-		return value
-	}
-	return current + "," + value
-}
-
 func yesNo(value bool) string {
 	if value {
 		return "Sim"
@@ -887,10 +881,12 @@ func yesNo(value bool) string {
 	return "Nao"
 }
 
-func cloneFields(in map[string]string) map[string]string {
+func flattenFields(in map[string][]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
+	for key, values := range in {
+		if len(values) > 0 {
+			out[key] = strings.Join(values, ", ")
+		}
 	}
 	return out
 }

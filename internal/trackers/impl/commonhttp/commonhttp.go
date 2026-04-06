@@ -170,6 +170,51 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
+func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) ([]byte, string, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	for _, key := range keys {
+		values := fields[key]
+		for _, value := range values {
+			if err := writer.WriteField(key, value); err != nil {
+				_ = writer.Close()
+				return nil, "", err
+			}
+		}
+	}
+	for _, file := range files {
+		if strings.TrimSpace(file.FieldName) == "" {
+			continue
+		}
+		name := firstNonEmpty(strings.TrimSpace(file.FileName), filepath.Base(strings.TrimSpace(file.Path)), "upload.bin")
+		part, err := writer.CreateFormFile(file.FieldName, name)
+		if err != nil {
+			_ = writer.Close()
+			return nil, "", err
+		}
+		payload := file.Content
+		if len(payload) == 0 {
+			payload, err = os.ReadFile(strings.TrimSpace(file.Path))
+			if err != nil {
+				_ = writer.Close()
+				return nil, "", err
+			}
+		}
+		if _, err := part.Write(payload); err != nil {
+			_ = writer.Close()
+			return nil, "", err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return body.Bytes(), writer.FormDataContentType(), nil
+}
+
 func ApplyCookies(req *http.Request, cookies []*http.Cookie) {
 	for _, cookie := range cookies {
 		if cookie == nil || strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
