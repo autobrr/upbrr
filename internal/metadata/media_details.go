@@ -38,7 +38,7 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 
 	meta.MediaInfoUniqueID, meta.ValidMediaInfo = validateMediaInfoUniqueID(meta, miDoc)
 	if !meta.ValidMediaInfo && s.logger != nil {
-		s.logger.Infof("metadata: mediainfo validation failed (missing unique id)")
+		s.logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
 	}
 	meta.AudioLanguages, meta.SubtitleLanguages = extractMediaInfoLanguages(miDoc)
 	if s.logger != nil && (len(meta.AudioLanguages) > 0 || len(meta.SubtitleLanguages) > 0) {
@@ -125,7 +125,7 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	if !strings.EqualFold(meta.DiscType, "BDMV") && strings.EqualFold(meta.Type, "ENCODE") && !strings.EqualFold(meta.VideoCodec, "AV1") {
 		meta.ValidMediaInfoSettings = validateMediaInfoSettings(miDoc)
 		if !meta.ValidMediaInfoSettings && s.logger != nil {
-			s.logger.Infof("metadata: mediainfo validation failed (missing encode settings)")
+			s.logger.Warnf("metadata: mediainfo validation failed (missing encode settings)")
 		}
 	}
 
