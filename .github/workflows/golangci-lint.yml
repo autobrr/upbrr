@@ -30,3 +30,6 @@ jobs:
         with:
           version: latest
           args: --timeout=5m
+
+      - name: Run log policy checker
+        run: go run ./cmd/logpolicy
