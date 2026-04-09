@@ -33,7 +33,7 @@ func TestRunPrintsSuccessWhenNoIssuesFound(t *testing.T) {
 	if got := stderr.String(); got != "" {
 		t.Fatalf("unexpected stderr: %q", got)
 	}
-	}
+}
 
 func TestRunPrintsViolationsToStderr(t *testing.T) {
 	t.Parallel()
