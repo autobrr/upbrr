@@ -195,7 +195,7 @@ func TestBuildRunOptionsRejectsInvalidLogLevel(t *testing.T) {
 	}
 }
 
-func TestSharedRepositoryCloseDoesNotCloseUnderlyingRepo(t *testing.T) {
+func TestCoreCloseDoesNotCloseInjectedRepository(t *testing.T) {
 	t.Parallel()
 
 	repoPath := filepath.Join(t.TempDir(), "guiapp.db")
@@ -219,7 +219,7 @@ func TestSharedRepositoryCloseDoesNotCloseUnderlyingRepo(t *testing.T) {
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
-		Repository: sharedRepository{MetadataRepository: repo},
+		Repository: repo,
 	})
 	if err != nil {
 		t.Fatalf("new core: %v", err)

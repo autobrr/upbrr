@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	modernsqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
@@ -22,6 +24,16 @@ type SQLiteRepository struct {
 	db     *sql.DB
 	logger Logger
 }
+
+const sqliteBusyTimeout = 5000
+const sqliteRetryAttempts = 3
+
+const (
+	pragmaForeignKeysOnSQL  = "PRAGMA foreign_keys = ON"
+	pragmaJournalModeSQL    = "PRAGMA journal_mode"
+	pragmaJournalModeWALSQL = "PRAGMA journal_mode = WAL"
+	pragmaBusyTimeoutPrefix = "PRAGMA busy_timeout = "
+)
 
 func Open(path string) (*SQLiteRepository, error) {
 	return OpenWithLogger(path, nopLogger{})
@@ -48,13 +60,33 @@ func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
 		return nil, fmt.Errorf("db ping: %w", err)
 	}
 
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+	if _, err := db.Exec(pragmaForeignKeysOnSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db pragma foreign_keys: %w", err)
 	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+	if _, err := db.Exec(pragmaBusyTimeoutPrefix + strconv.Itoa(sqliteBusyTimeout)); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db pragma busy_timeout: %w", err)
+	}
+	if isMemorySQLitePath(path) {
+		// SQLite cannot use WAL for in-memory databases, so tests that use :memory:
+		// intentionally run with different journaling semantics than on-disk production DBs.
+		journalMode, err := queryCurrentJournalMode(db)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("db pragma journal_mode: %w", err)
+		}
+		logger.Debugf("db: sqlite journal_mode is %s for in-memory database", journalMode)
+	} else {
+		journalMode, err := enableWALJournalMode(db)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("db pragma journal_mode: %w", err)
+		}
+		if !strings.EqualFold(journalMode, "wal") {
+			_ = db.Close()
+			return nil, fmt.Errorf("db pragma journal_mode: expected WAL, got %s", journalMode)
+		}
 	}
 
 	return &SQLiteRepository{db: db, logger: logger}, nil
@@ -71,13 +103,100 @@ func (r *SQLiteRepository) Close() error {
 }
 
 func (r *SQLiteRepository) Migrate() error {
+	return r.MigrateContext(context.Background())
+}
+
+func (r *SQLiteRepository) MigrateContext(ctx context.Context) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
 	if r.logger != nil {
 		r.logger.Debugf("db: running migrations")
 	}
-	return Migrate(r.db)
+	return retryBusyContext(ctx, r.logger, "migration", sqliteRetryAttempts, func() error {
+		return MigrateContext(ctx, r.db)
+	})
+}
+
+func IsBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sqliteErr *modernsqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	switch sqliteErr.Code() & 0xFF {
+	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+		return true
+	default:
+		return false
+	}
+}
+
+func retryBusyContext(ctx context.Context, logger Logger, operation string, attempts int, fn func() error) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !IsBusyError(err) || attempt == attempts {
+			if IsBusyError(err) && logger != nil {
+				logger.Warnf("db: %s busy lock persisted after %d attempts; returning retry exhaustion", operation, attempts)
+			}
+			return err
+		}
+		if logger != nil {
+			logger.Infof("db: %s busy, retrying (%d/%d)", operation, attempt, attempts)
+		}
+		delay := time.Duration(50*attempt) * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return lastErr
+}
+
+func enableWALJournalMode(db *sql.DB) (string, error) {
+	row := db.QueryRow(pragmaJournalModeWALSQL)
+	var got string
+	if err := row.Scan(&got); err != nil {
+		return "", err
+	}
+	return got, nil
+}
+
+func queryCurrentJournalMode(db *sql.DB) (string, error) {
+	row := db.QueryRow(pragmaJournalModeSQL)
+	var got string
+	if err := row.Scan(&got); err != nil {
+		return "", err
+	}
+	return got, nil
+}
+
+func isMemorySQLitePath(path string) bool {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return false
+	}
+	if trimmed == ":memory:" {
+		return true
+	}
+	normalized := strings.ToLower(trimmed)
+	return strings.HasPrefix(normalized, "file:") && strings.Contains(normalized, "mode=memory")
 }
 
 func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMetadata, error) {

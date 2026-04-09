@@ -20,8 +20,10 @@ const (
 	defaultConfigName = "config.yaml"
 )
 
-func loadConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	ctx := context.Background()
+func loadConfigWithContext(ctx context.Context, configPath string, configProvided bool) (config.Config, string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if configProvided {
 		resolved, err := resolveConfigPath(configPath, configProvided)
 		if err != nil {
@@ -133,7 +135,7 @@ func loadConfigFromDatabase(ctx context.Context, dbPath string) (config.Config, 
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return config.Config{}, err
 	}
 
@@ -160,7 +162,7 @@ func saveConfigToDatabase(ctx context.Context, cfg *config.Config, dbPath string
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return err
 	}
 
