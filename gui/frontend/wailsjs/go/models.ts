@@ -20,17 +20,25 @@ export namespace api {
 	        this.Message = source["Message"];
 	    }
 	}
-	export class DescriptionImageHostStatus {
+	export class DescriptionBuilderGroup {
+	    GroupKey: string;
 	    Trackers: string[];
+	    RawDescription: string;
+	    RawDescriptionHTML: string;
+	    HasOverride: boolean;
 	    ImageHost: ImageHostFeedback;
 	
 	    static createFrom(source: any = {}) {
-	        return new DescriptionImageHostStatus(source);
+	        return new DescriptionBuilderGroup(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.GroupKey = source["GroupKey"];
 	        this.Trackers = source["Trackers"];
+	        this.RawDescription = source["RawDescription"];
+	        this.RawDescriptionHTML = source["RawDescriptionHTML"];
+	        this.HasOverride = source["HasOverride"];
 	        this.ImageHost = this.convertValues(source["ImageHost"], ImageHostFeedback);
 	    }
 	
@@ -54,10 +62,7 @@ export namespace api {
 	}
 	export class DescriptionBuilderPreview {
 	    SourcePath: string;
-	    Description: string;
-	    DescriptionHTML: string;
-	    HasOverride: boolean;
-	    ImageHosts: DescriptionImageHostStatus[];
+	    Groups: DescriptionBuilderGroup[];
 	
 	    static createFrom(source: any = {}) {
 	        return new DescriptionBuilderPreview(source);
@@ -66,10 +71,7 @@ export namespace api {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
-	        this.Description = source["Description"];
-	        this.DescriptionHTML = source["DescriptionHTML"];
-	        this.HasOverride = source["HasOverride"];
-	        this.ImageHosts = this.convertValues(source["ImageHosts"], DescriptionImageHostStatus);
+	        this.Groups = this.convertValues(source["Groups"], DescriptionBuilderGroup);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -90,9 +92,9 @@ export namespace api {
 		    return a;
 		}
 	}
-	
 	export class DescriptionOverride {
 	    SourcePath: string;
+	    GroupKey: string;
 	    Description: string;
 	    // Go type: time
 	    UpdatedAt: any;
@@ -104,6 +106,7 @@ export namespace api {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
+	        this.GroupKey = source["GroupKey"];
 	        this.Description = source["Description"];
 	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
 	    }
@@ -1827,9 +1830,13 @@ export namespace api {
 	
 	
 	export class PreparationDescription {
+	    GroupKey: string;
 	    Trackers: string[];
+	    RawDescription: string;
+	    RawDescriptionHTML: string;
 	    Description: string;
 	    DescriptionHTML: string;
+	    HasOverride: boolean;
 	    ImageHost: ImageHostFeedback;
 	
 	    static createFrom(source: any = {}) {
@@ -1838,9 +1845,13 @@ export namespace api {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.GroupKey = source["GroupKey"];
 	        this.Trackers = source["Trackers"];
+	        this.RawDescription = source["RawDescription"];
+	        this.RawDescriptionHTML = source["RawDescriptionHTML"];
 	        this.Description = source["Description"];
 	        this.DescriptionHTML = source["DescriptionHTML"];
+	        this.HasOverride = source["HasOverride"];
 	        this.ImageHost = this.convertValues(source["ImageHost"], ImageHostFeedback);
 	    }
 	

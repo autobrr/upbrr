@@ -8,18 +8,20 @@ import { handleExternalLinkClick } from "../../utils/externalLinks";
 type Props = {
   path: string;
   builderPreview: DescriptionBuilderPreview;
-  builderRaw: string;
-  builderRenderedHTML: string;
+  builderRawByGroup: Record<string, string>;
+  builderRenderedByGroup: Record<string, string>;
+  builderExpandedGroups: Record<string, boolean>;
   builderLoading: boolean;
   builderSaving: boolean;
   builderRenderLoading: boolean;
   builderError: string;
   builderSaved: string;
-  setBuilderRaw: Dispatch<SetStateAction<string>>;
-  setBuilderDirty: Dispatch<SetStateAction<boolean>>;
-  resetBuilderDescription: () => void;
-  renderBuilderDescription: () => void;
-  saveBuilderDescription: () => void;
+  setBuilderRawByGroup: Dispatch<SetStateAction<Record<string, string>>>;
+  setBuilderDirtyByGroup: Dispatch<SetStateAction<Record<string, boolean>>>;
+  setBuilderExpandedGroups: Dispatch<SetStateAction<Record<string, boolean>>>;
+  resetBuilderDescription: (groupKey: string) => void;
+  renderBuilderDescription: (groupKey: string) => void;
+  saveBuilderDescription: (groupKey: string) => void;
 };
 
 const decodeHtmlEntities = (value: string) => {
@@ -32,37 +34,33 @@ const decodeHtmlEntities = (value: string) => {
   return textarea.value;
 };
 
-const renderImageHostSummary = (message: string, trackers: string[], reuploaded: boolean) => {
-  if (!message || !reuploaded) return null;
-  const label = trackers.length > 0 ? trackers.join(", ") : "Trackers";
-  return (
-    <div className="builder-host-status" key={`${label}-${message}`}>
-      <p className="label">{label}</p>
-      <p className="muted">{message}</p>
-    </div>
-  );
+const groupLabel = (groupKey: string, trackers: string[]) => {
+  if (trackers.length > 0) return trackers.join(", ");
+  if (groupKey === "unit3d") return "Unit3D";
+  return groupKey || "Description";
 };
 
 export default function DescriptionBuilderPage(props: Props) {
   const {
     path,
     builderPreview,
-    builderRaw,
-    builderRenderedHTML,
+    builderRawByGroup,
+    builderRenderedByGroup,
+    builderExpandedGroups,
     builderLoading,
     builderSaving,
     builderRenderLoading,
     builderError,
     builderSaved,
-    setBuilderRaw,
-    setBuilderDirty,
+    setBuilderRawByGroup,
+    setBuilderDirtyByGroup,
+    setBuilderExpandedGroups,
     resetBuilderDescription,
     renderBuilderDescription,
     saveBuilderDescription
   } = props;
-  const hasImageHostUploads = (builderPreview.ImageHosts || []).some(
-    (entry) => Boolean(entry.ImageHost?.Reuploaded) && Boolean(entry.ImageHost?.Message)
-  );
+
+  const groups = builderPreview.Groups || [];
 
   return (
     <section className="builder-panel">
@@ -70,7 +68,7 @@ export default function DescriptionBuilderPage(props: Props) {
         <p className="eyebrow">Description Builder</p>
         <h1>Customize Description</h1>
         <p className="subtitle">
-          Review and edit the base description before tracker-specific formatting.
+          Edit tracker-group raw descriptions here. Tracker-specific formatting is applied from this builder.
         </p>
       </header>
 
@@ -78,84 +76,125 @@ export default function DescriptionBuilderPage(props: Props) {
         <div>
           <p className="label">Source path</p>
           <p className="value dupe-path">{path || "No path selected"}</p>
-          {builderPreview.HasOverride ? (
-            <p className="muted">Saved override is active for this path.</p>
-          ) : null}
-        </div>
-        <div className="builder-actions__buttons">
-          <button
-            className="ghost"
-            type="button"
-            onClick={resetBuilderDescription}
-            disabled={builderLoading || builderSaving || !path.trim()}
-          >
-            {builderLoading ? "Resetting..." : "Reset description"}
-          </button>
-          <button
-            className="ghost"
-            type="button"
-            onClick={renderBuilderDescription}
-            disabled={builderRenderLoading || !builderRaw.trim()}
-          >
-            {builderRenderLoading ? "Rendering..." : "Render"}
-          </button>
-          <button
-            className="primary"
-            type="button"
-            onClick={saveBuilderDescription}
-            disabled={builderSaving || !path.trim()}
-          >
-            {builderSaving ? "Saving..." : "Save and continue"}
-          </button>
         </div>
       </section>
 
       {builderError ? <p className="error">{builderError}</p> : null}
       {builderSaved ? <p className="success">{builderSaved}</p> : null}
 
-      {hasImageHostUploads ? (
-        <section className="panel builder-actions">
-          <div>
-            <p className="label">Image host status</p>
-            <div className="builder-host-statuses">
-              {builderPreview.ImageHosts.map((entry) =>
-                renderImageHostSummary(entry.ImageHost?.Message || "", entry.Trackers || [], Boolean(entry.ImageHost?.Reuploaded))
-              )}
-            </div>
+      {builderLoading && groups.length === 0 ? (
+        <section className="panel builder-preview">
+          <div className="builder-preview__header">
+            <h2>Building Descriptions</h2>
           </div>
+          <p className="muted">Preparing tracker-group descriptions and image-host adjustments...</p>
         </section>
-      ) : null}
+      ) : groups.length === 0 ? (
+        <section className="panel builder-preview">
+          <p className="muted">No tracker descriptions generated yet.</p>
+        </section>
+      ) : (
+        groups.map((group) => {
+          const groupKey = group.GroupKey;
+          const reactKey = groupKey || "default";
+          const seededRaw = group.RawDescription || "";
+          const raw = builderRawByGroup[groupKey] ?? seededRaw;
+          const seededRendered = group.RawDescriptionHTML || "";
+          const renderedHTML = builderRenderedByGroup[groupKey] ?? seededRendered;
+          const expanded = builderExpandedGroups[groupKey] ?? false;
+          const label = groupLabel(groupKey, group.Trackers || []);
 
-      <section className="panel builder-editor">
-        <div className="builder-editor__header">
-          <h2>Raw Description</h2>
-          <p className="muted">Edit BBCode or HTML directly. Save to apply across trackers.</p>
-        </div>
-        <textarea
-          className="builder-textarea"
-          value={builderRaw}
-          onChange={(event) => {
-            setBuilderRaw(event.target.value);
-            setBuilderDirty(true);
-          }}
-          placeholder="Reset the description first, then edit it here."
-        />
-      </section>
+          return (
+            <section className="panel builder-preview" key={reactKey}>
+              <div className="builder-editor__header">
+                <div>
+                  <h2>{label}</h2>
+                  <p className="muted">
+                    {group.HasOverride ? "Saved override active for this group." : "Using generated raw description."}
+                  </p>
+                  {group.ImageHost?.Reuploaded && group.ImageHost?.Message ? (
+                    <p className="muted">{group.ImageHost.Message}</p>
+                  ) : null}
+                </div>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() =>
+                    setBuilderExpandedGroups((prev) => ({
+                      ...prev,
+                      [groupKey]: !expanded
+                    }))
+                  }
+                >
+                  {expanded ? "Collapse" : "Expand"}
+                </button>
+              </div>
 
-      <section className="panel builder-preview">
-        <div className="builder-preview__header">
-          <h2>Rendered Preview</h2>
-        </div>
-        {builderRenderedHTML ? (
-          <div
-            className="tracker-description rendered"
-            onClick={handleExternalLinkClick}
-            dangerouslySetInnerHTML={{ __html: decodeHtmlEntities(builderRenderedHTML) }}
-          />
-        ) : (
-          <p className="muted">No rendered preview yet.</p>
-        )}
-      </section>
+              {expanded ? (
+                <>
+                  <div className="builder-actions__buttons">
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={() => resetBuilderDescription(groupKey)}
+                      disabled={builderLoading || builderSaving || !path.trim()}
+                    >
+                      {builderLoading ? "Resetting..." : "Reset group"}
+                    </button>
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={() => renderBuilderDescription(groupKey)}
+                      disabled={builderRenderLoading}
+                    >
+                      {builderRenderLoading ? "Rendering..." : "Render"}
+                    </button>
+                    <button
+                      className="primary"
+                      type="button"
+                      onClick={() => saveBuilderDescription(groupKey)}
+                      disabled={builderSaving || !path.trim()}
+                    >
+                      {builderSaving ? "Saving..." : "Save group"}
+                    </button>
+                  </div>
+
+                  <section className="panel builder-editor">
+                    <div className="builder-editor__header">
+                      <h2>Raw Description</h2>
+                      <p className="muted">This saved raw description is the upload source of truth for {label}.</p>
+                    </div>
+                    <textarea
+                      className="builder-textarea"
+                      value={raw}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: nextValue }));
+                        setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: true }));
+                      }}
+                    />
+                  </section>
+
+                  <section className="panel builder-preview">
+                    <div className="builder-preview__header">
+                      <h2>Rendered Raw Preview</h2>
+                    </div>
+                    {renderedHTML ? (
+                      <div
+                        className="tracker-description rendered"
+                        onClick={handleExternalLinkClick}
+                        dangerouslySetInnerHTML={{ __html: decodeHtmlEntities(renderedHTML) }}
+                      />
+                    ) : (
+                      <p className="muted">No rendered preview yet.</p>
+                    )}
+                  </section>
+                </>
+              ) : null}
+            </section>
+          );
+        })
+      )}
     </section>
   );
 }

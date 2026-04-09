@@ -140,6 +140,20 @@ export default function HistoryPage() {
     [entries, selectedPath]
   );
 
+  const descriptionOverrides = useMemo(() => {
+    if (!overview) {
+      return [];
+    }
+    if (Array.isArray(overview.DescriptionOverrides) && overview.DescriptionOverrides.length > 0) {
+      return overview.DescriptionOverrides;
+    }
+    const fallbackDescription = overview.DescriptionOverride?.Description?.trim();
+    if (!fallbackDescription) {
+      return [];
+    }
+    return [overview.DescriptionOverride];
+  }, [overview]);
+
   const handleDeleteRelease = async () => {
     if (!selectedPath) {
       return;
@@ -286,8 +300,22 @@ export default function HistoryPage() {
                 </article>
 
                 <article className="history-card history-card--wide">
-                  <h3>Description Override</h3>
-                  <pre>{overview.DescriptionOverride?.Description?.trim() || "(none)"}</pre>
+                  <h3>Description Overrides</h3>
+                  {descriptionOverrides.length ? (
+                    <ul className="history-simple-list">
+                      {descriptionOverrides.map((override, index) => {
+                        const groupKey = override.GroupKey?.trim() || "default";
+                        return (
+                          <li key={`${groupKey}-${override.UpdatedAt}-${index}`}>
+                            <strong>{groupKey}</strong>
+                            <pre>{override.Description?.trim() || "(empty)"}</pre>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="muted">(none)</p>
+                  )}
                 </article>
 
                 <article className="history-card history-card--wide">

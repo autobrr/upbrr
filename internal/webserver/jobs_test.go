@@ -125,8 +125,12 @@ func (c *preparedMetaTestCore) RenderDescription(context.Context, string) (strin
 	return "", nil
 }
 
-func (c *preparedMetaTestCore) SaveDescriptionOverride(context.Context, api.Request, string) error {
-	return nil
+func (c *preparedMetaTestCore) FetchDescriptionBuilderGroupPreview(context.Context, api.Request) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
+}
+
+func (c *preparedMetaTestCore) SaveDescriptionOverride(context.Context, api.Request, string) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
 }
 
 func (c *preparedMetaTestCore) Close() error {

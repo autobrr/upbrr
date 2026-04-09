@@ -100,6 +100,7 @@ type trackerUploadJob struct {
 	overrides            api.ExternalIDOverrides
 	nameOverrides        api.ReleaseNameOverrides
 	questionnaireAnswers map[string]map[string]string
+	descriptionGroups    []api.DescriptionBuilderGroup
 	trackers             []string
 	ignoreDupesFor       []string
 	ignoreRuleFailures   bool
@@ -142,6 +143,19 @@ func cloneQuestionnaireAnswers(input map[string]map[string]string) map[string]ma
 			inner[key] = value
 		}
 		cloned[tracker] = inner
+	}
+	return cloned
+}
+
+func cloneDescriptionBuilderGroups(input []api.DescriptionBuilderGroup) []api.DescriptionBuilderGroup {
+	if len(input) == 0 {
+		return nil
+	}
+	cloned := make([]api.DescriptionBuilderGroup, len(input))
+	for idx, group := range input {
+		cloned[idx] = group
+		cloned[idx].Trackers = append([]string(nil), group.Trackers...)
+		cloned[idx].ImageHost.AllowedHosts = append([]string(nil), group.ImageHost.AllowedHosts...)
 	}
 	return cloned
 }
@@ -368,7 +382,7 @@ func (j *trackerUploadJob) closeResources() {
 	})
 }
 
-func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, debug bool, runLogLevel string) (string, error) {
+func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (string, error) {
 	if err := b.requireCore(); err != nil {
 		return "", err
 	}
@@ -391,6 +405,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	seedReq := api.Request{
 		Paths:                []string{trimmedPath},
 		Mode:                 api.ModeGUI,
+		DescriptionGroups:    cloneDescriptionBuilderGroups(descriptionGroups),
 		Trackers:             resolvedTrackers,
 		IgnoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
 		ExternalIDOverrides:  overrides,
@@ -415,6 +430,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 		overrides:            overrides,
 		nameOverrides:        nameOverrides,
 		questionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
+		descriptionGroups:    cloneDescriptionBuilderGroups(descriptionGroups),
 		trackers:             resolvedTrackers,
 		ignoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
 		ignoreRuleFailures:   ignoreRuleFailures,
@@ -462,9 +478,11 @@ func (b *Backend) RetryFailedTrackerUpload(jobID string) (string, error) {
 	job.mu.Lock()
 	failedTrackers := append([]string(nil), job.failedTrackers...)
 	sourcePath := job.sourcePath
+	sessionID := job.sessionID
 	overrides := job.overrides
 	nameOverrides := job.nameOverrides
 	questionnaireAnswers := cloneQuestionnaireAnswers(job.questionnaireAnswers)
+	descriptionGroups := cloneDescriptionBuilderGroups(job.descriptionGroups)
 	ignoreRuleFailures := job.ignoreRuleFailures
 	ignoreDupesFor := append([]string(nil), job.ignoreDupesFor...)
 	runOptions := job.runOptions
@@ -473,7 +491,7 @@ func (b *Backend) RetryFailedTrackerUpload(jobID string) (string, error) {
 	if len(failedTrackers) == 0 {
 		return "", errors.New("no failed trackers to retry")
 	}
-	return b.StartTrackerUpload(job.sessionID, sourcePath, overrides, nameOverrides, failedTrackers, ignoreRuleFailures, ignoreDupesFor, questionnaireAnswers, runOptions.Debug, runOptions.RunLogLevel)
+	return b.StartTrackerUpload(sessionID, sourcePath, overrides, nameOverrides, failedTrackers, ignoreRuleFailures, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.RunLogLevel)
 }
 
 func (b *Backend) GetTrackerUploadSnapshot(jobID string) (TrackerUploadSnapshot, error) {
@@ -558,6 +576,7 @@ func (b *Backend) runSingleTrackerUpload(ctx context.Context, job *trackerUpload
 	req := api.Request{
 		Paths:                       []string{job.sourcePath},
 		Mode:                        api.ModeGUI,
+		DescriptionGroups:           cloneDescriptionBuilderGroups(job.descriptionGroups),
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
 		IgnoreTrackerRuleFailures:   job.ignoreRuleFailures,

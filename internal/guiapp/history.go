@@ -83,7 +83,7 @@ func (a *App) getHistoryOverviewFromRepo(ctx context.Context, sourcePath string)
 		return api.HistoryOverview{}, err
 	}
 
-	descriptionOverride, err := a.repo.GetDescriptionOverride(ctx, trimmed)
+	descriptionOverride, err := a.repo.GetDescriptionOverride(ctx, trimmed, "")
 	if err == nil {
 		overview.DescriptionOverride = descriptionOverride
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {

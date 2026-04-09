@@ -32,6 +32,7 @@ type stubRepo struct {
 	deletedUploads      []string
 	createdUploads      []api.UploadRecord
 	descriptionOverride string
+	overrideGroupKey    string
 	overrideCalls       int
 }
 
@@ -58,17 +59,31 @@ func (s *stubRepo) SaveReleaseNameOverrides(context.Context, string, api.Release
 	return nil
 }
 func (s *stubRepo) DeleteReleaseNameOverrides(context.Context, string) error { return nil }
-func (s *stubRepo) GetDescriptionOverride(context.Context, string) (api.DescriptionOverride, error) {
+func (s *stubRepo) GetDescriptionOverride(_ context.Context, _ string, groupKey string) (api.DescriptionOverride, error) {
 	s.overrideCalls++
 	if s.descriptionOverride == "" {
 		return api.DescriptionOverride{}, internalerrors.ErrNotFound
 	}
-	return api.DescriptionOverride{SourcePath: "/tmp/source", Description: s.descriptionOverride}, nil
+	expectedGroupKey := strings.TrimSpace(s.overrideGroupKey)
+	if expectedGroupKey != "" && !strings.EqualFold(strings.TrimSpace(groupKey), expectedGroupKey) {
+		return api.DescriptionOverride{}, internalerrors.ErrNotFound
+	}
+	if expectedGroupKey == "" && strings.TrimSpace(groupKey) != "" {
+		return api.DescriptionOverride{}, internalerrors.ErrNotFound
+	}
+	return api.DescriptionOverride{SourcePath: "/tmp/source", GroupKey: s.overrideGroupKey, Description: s.descriptionOverride}, nil
+}
+func (s *stubRepo) ListDescriptionOverridesByPath(context.Context, string) ([]api.DescriptionOverride, error) {
+	s.overrideCalls++
+	if s.descriptionOverride == "" {
+		return nil, internalerrors.ErrNotFound
+	}
+	return []api.DescriptionOverride{{SourcePath: "/tmp/source", GroupKey: s.overrideGroupKey, Description: s.descriptionOverride}}, nil
 }
 func (s *stubRepo) SaveDescriptionOverride(context.Context, api.DescriptionOverride) error {
 	return nil
 }
-func (s *stubRepo) DeleteDescriptionOverride(context.Context, string) error { return nil }
+func (s *stubRepo) DeleteDescriptionOverride(context.Context, string, string) error { return nil }
 func (s *stubRepo) ListHistoryEntries(context.Context) ([]api.HistoryEntry, error) {
 	return nil, nil
 }
@@ -209,6 +224,7 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "override desc",
+		overrideGroupKey:    "unit3d",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
@@ -225,9 +241,139 @@ func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsDoesNotFallbackToLegacyDefaultGroupOverride(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "legacy default desc",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "db desc" {
+		t.Fatalf("expected tracker metadata description when no explicit group override exists, got %q", assets.Description)
+	}
+	if assets.Override {
+		t.Fatalf("expected no implicit override from legacy default group")
+	}
+}
+
+func TestResolveDescriptionAssetsPrefersCanonicalGroupDescription(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "hdb",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "hdb",
+			Trackers:       []string{"HDB"},
+			RawDescription: "canonical desc",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "canonical desc" {
+		t.Fatalf("expected canonical description, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected canonical group description to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutRepo(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DescriptionOverride: "legacy override desc",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "hdb",
+			Trackers:       []string{"HDB"},
+			RawDescription: "canonical desc",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, nil, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "canonical desc" {
+		t.Fatalf("expected canonical description without repo, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected canonical group description to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutSourcePath(t *testing.T) {
+	repo := &stubRepo{descriptionOverride: "stored override desc", overrideGroupKey: "hdb"}
+	meta := api.PreparedMetadata{
+		SourcePath:          "",
+		DescriptionOverride: "legacy override desc",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "hdb",
+			Trackers:       []string{"HDB"},
+			RawDescription: "canonical desc",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "canonical desc" {
+		t.Fatalf("expected canonical description without source path, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected canonical group description to be treated as override")
+	}
+	if repo.overrideCalls != 0 {
+		t.Fatalf("expected no repo description override lookup when source path is blank, got %d calls", repo.overrideCalls)
+	}
+}
+
+func TestResolveDescriptionAssetsIgnoresAmbiguousTrackerGroupFallback(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "hdb",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{
+			{
+				GroupKey:       "group-a",
+				Trackers:       []string{"HDB"},
+				RawDescription: "canonical a",
+			},
+			{
+				GroupKey:       "group-b",
+				Trackers:       []string{"HDB"},
+				RawDescription: "canonical b",
+			},
+		},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "override desc" {
+		t.Fatalf("expected ambiguous tracker-group fallback to defer to stored override, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected stored override to be treated as override")
+	}
+}
+
 func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "[center][spoiler=Scene NFO:][code]scene nfo[/code][/spoiler][/center]\n\nCustom body",
+		overrideGroupKey:    "ant",
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 
@@ -542,6 +688,7 @@ func TestResolveDescriptionAssetsBackfillsSlotsFromDescriptionOrder(t *testing.T
 Some text
 [comparison=A,B]https://ptpimg.me/second.png https://ptpimg.me/third.png[/comparison]
 `),
+		overrideGroupKey: "unit3d",
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 

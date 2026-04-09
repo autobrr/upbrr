@@ -45,7 +45,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets track
 	if screenshots := buildScreenshotSection(images, maxInt(1, meta.Options.Screens)); screenshots != "" {
 		parts = append(parts, screenshots)
 	}
-	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`)
+	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/align]`)
 	return strings.TrimSpace(strings.Join(parts, "\n\n")), nil
 }
 
@@ -130,6 +130,7 @@ func stripUASignature(value string) string {
 	signatures := []string{
 		`[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`,
 		`[align=right][url=https://github.com/autobrr/upbrr]upbrr[/url][/align]`,
+		`[align=right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/align]`,
 	}
 	for _, signature := range signatures {
 		trimmed = strings.TrimSpace(strings.ReplaceAll(trimmed, signature, ""))
