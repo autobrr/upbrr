@@ -49,6 +49,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
 
       - name: Build CLI
         shell: bash
@@ -147,6 +148,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v5
@@ -165,10 +167,17 @@ jobs:
         working-directory: gui/frontend
         run: pnpm install --frozen-lockfile
 
-      - name: Build GUI frontend assets
+      - name: Typecheck and build GUI frontend assets
         shell: bash
         working-directory: gui/frontend
-        run: pnpm run build
+        run: |
+          set -euo pipefail
+          pnpm run typecheck &
+          typecheck_pid=$!
+          pnpm run build:bundle &
+          build_pid=$!
+          wait "$typecheck_pid"
+          wait "$build_pid"
 
       - name: Install Linux GUI dependencies
         if: startsWith(matrix.platform, 'linux/')
@@ -263,7 +272,7 @@ jobs:
         id: meta_combined
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository_owner }}/ua
+          images: ghcr.io/${{ github.repository_owner }}/upbrr
           tags: |
             type=sha
             type=ref,event=branch
