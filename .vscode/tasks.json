@@ -18,25 +18,13 @@
       "type": "shell",
       "command": "go",
       "args": [
-        "build",
-        "-tags", "dev",
-        "-gcflags", "all=-N -l",
-        "-o", "gui/build/bin/upbrr-gui",
-        "./gui"
+        "run",
+        "github.com/wailsapp/wails/v2/cmd/wails@v2.10.1",
+        "build"
       ],
-      "windows": {
-        "args": [
-          "build",
-          "-tags", "dev",
-          "-gcflags", "all=-N -l",
-          "-o", "gui/build/bin/upbrr-gui.exe",
-          "./gui"
-        ]
-      },
-      "options": { "cwd": "${workspaceFolder}" },
-      "dependsOn": ["frontend-install", "frontend-build"],
+      "options": { "cwd": "${workspaceFolder}/gui" },
       "group": "build",
-      "problemMatcher": ["$go"]
+      "problemMatcher": []
     },
     {
       "label": "frontend-install",
