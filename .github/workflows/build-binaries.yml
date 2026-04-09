@@ -242,8 +242,8 @@ jobs:
           path: dist/packages/upbrr-gui-${{ matrix.artifact }}${{ startsWith(matrix.platform, 'windows/') && '.zip' || '.tar.gz' }}
           if-no-files-found: error
 
-  build-docker:
-    name: Build Docker Image (cli+gui)
+  build-docker-amd64:
+    name: Build Docker Image (cli+gui linux/amd64)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -253,9 +253,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -281,14 +278,159 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push combined image
+      - name: Derive amd64 image tags
+        id: amd64_tags
+        shell: bash
+        env:
+          META_JSON: ${{ steps.meta_combined.outputs.json }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          data = json.loads(os.environ["META_JSON"])
+          tags = data["tags"]
+          amd64_tags = [f"{tag}-amd64" for tag in tags]
+          print("tags<<EOF")
+          print("\n".join(amd64_tags))
+          print("EOF")
+          PY
+
+      - name: Build and push amd64 combined image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta_combined.outputs.tags }}
+          tags: ${{ steps.amd64_tags.outputs.tags }}
           labels: ${{ steps.meta_combined.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=build-docker-amd64
+          cache-to: type=gha,scope=build-docker-amd64,mode=min
+
+  build-docker-arm64:
+    name: Build Docker Image (cli+gui linux/arm64)
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata (Combined)
+        id: meta_combined
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/upbrr
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Derive arm64 image tags
+        id: arm64_tags
+        shell: bash
+        env:
+          META_JSON: ${{ steps.meta_combined.outputs.json }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          data = json.loads(os.environ["META_JSON"])
+          tags = data["tags"]
+          arm64_tags = [f"{tag}-arm64" for tag in tags]
+          print("tags<<EOF")
+          print("\n".join(arm64_tags))
+          print("EOF")
+          PY
+
+      - name: Build and push arm64 combined image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.arm64_tags.outputs.tags }}
+          labels: ${{ steps.meta_combined.outputs.labels }}
+          cache-from: type=gha,scope=build-docker-arm64
+          cache-to: type=gha,scope=build-docker-arm64,mode=min
+
+  publish-docker-manifest:
+    name: Publish Docker Manifest (cli+gui)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - build-docker-amd64
+      - build-docker-arm64
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata (Combined)
+        id: meta_combined
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/upbrr
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Create and push multi-arch manifests
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          META_JSON: ${{ steps.meta_combined.outputs.json }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > /tmp/upbrr-docker-tags.txt
+          import json
+          import os
+
+          data = json.loads(os.environ["META_JSON"])
+          for tag in data["tags"]:
+              print(tag)
+          PY
+
+          while IFS= read -r tag; do
+            docker buildx imagetools create \
+              --tag "$tag" \
+              "${tag}-amd64" \
+              "${tag}-arm64"
+          done < /tmp/upbrr-docker-tags.txt
