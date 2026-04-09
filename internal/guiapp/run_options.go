@@ -18,15 +18,6 @@ type runOptions struct {
 	RunLogLevel string
 }
 
-type sharedRepository struct {
-	api.MetadataRepository
-}
-
-// Close is a deliberate no-op so per-run cores cannot close the app's shared repository.
-func (sharedRepository) Close() error {
-	return nil
-}
-
 func (a *App) buildRunOptions(debug bool, runLogLevel string) (runOptions, error) {
 	if a == nil {
 		return runOptions{}, errors.New("app not initialized")
@@ -69,7 +60,7 @@ func (a *App) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
-		Repository: sharedRepository{MetadataRepository: a.repo},
+		Repository: a.repo,
 	})
 	if err != nil {
 		_ = logger.Close()

@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -613,13 +614,7 @@ func retrySQLiteBusy(ctx context.Context, attempts int, fn func() error) error {
 }
 
 func isSQLiteBusyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "sqlite_busy") ||
-		strings.Contains(msg, "database is locked") ||
-		strings.Contains(msg, "cannot start a transaction within a transaction")
+	return db.IsBusyError(err)
 }
 
 func pathsEqual(left string, right string) bool {

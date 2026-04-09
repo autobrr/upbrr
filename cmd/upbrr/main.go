@@ -158,9 +158,12 @@ func run() error {
 	if screens < 0 {
 		screens = cfg.ScreenshotHandling.Screens
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
 	coreSvc, err := core.New(api.CoreDependencies{
-		Config: cfg,
-		Logger: logger,
+		Context: ctx,
+		Config:  cfg,
+		Logger:  logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
@@ -173,9 +176,6 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		}
 	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
 
 	if opts.Cleanup {
 		deleted, err := coreSvc.DeleteAllHistoryReleases(ctx)
@@ -277,8 +277,9 @@ func runServe(args []string) error {
 	}
 
 	server, err := webserver.New(webserver.Options{
-		Config:    cfg,
-		CLIConfig: webCfg,
+		StartupContext: context.Background(),
+		Config:         cfg,
+		CLIConfig:      webCfg,
 	})
 	if err != nil {
 		return err
@@ -453,7 +454,7 @@ func loadConfigFromDatabase(ctx context.Context, dbPath string) (config.Config, 
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return config.Config{}, err
 	}
 
@@ -472,7 +473,7 @@ func saveConfigToDatabase(ctx context.Context, cfg *config.Config, dbPath string
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return err
 	}
 
@@ -495,7 +496,7 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return fmt.Errorf("migrate config database: %w", err)
 	}
 

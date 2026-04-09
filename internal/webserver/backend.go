@@ -66,13 +66,14 @@ type runOptions struct {
 	RunLogLevel string
 }
 
-type sharedRepository struct {
-	api.MetadataRepository
+func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
+	return NewBackendWithContext(context.Background(), cfg, hub)
 }
 
-func (sharedRepository) Close() error { return nil }
-
-func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
+func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub) (*Backend, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
 		_ = logger.Close()
 		return nil, err
 	}
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
 		return nil, err
@@ -96,11 +97,13 @@ func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
 		logger.Warnf("web: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
 		coreSvc, err = core.New(api.CoreDependencies{
-			Config: cfg,
-			Logger: logger,
+			Context: ctx,
+			Config:  cfg,
+			Logger:  logger,
 			Services: api.ServiceSet{
 				Filesystem: filesystem.NewValidator(),
 			},
+			Repository: repo,
 		})
 		if err != nil {
 			_ = repo.Close()
@@ -908,7 +911,7 @@ func (b *Backend) buildRunCore(opts runOptions) (api.Core, *logging.Logger, erro
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
-		Repository: sharedRepository{MetadataRepository: b.repo},
+		Repository: b.repo,
 	})
 	if err != nil {
 		_ = logger.Close()
@@ -929,16 +932,19 @@ func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
 }
 
 func (b *Backend) applyConfig(cfg config.Config) error {
+	ctx := context.Background()
 	newLogger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
 		return err
 	}
 	newCore, err := core.New(api.CoreDependencies{
-		Config: cfg,
-		Logger: newLogger,
+		Context: ctx,
+		Config:  cfg,
+		Logger:  newLogger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
+		Repository: b.repo,
 	})
 	if err != nil {
 		_ = newLogger.Close()
