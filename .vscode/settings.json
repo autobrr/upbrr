@@ -1,13 +1,26 @@
 {
   "go.lintTool": "golangci-lint",
   "go.lintFlags": ["--timeout=5m"],
+  "go.lintOnSave": "package",
   "go.testTimeout": "20m",
+  "go.testFlags": ["-v"],
   "go.buildTags": "",
   "gopls": {
     "formatting.local": "github.com/autobrr/upbrr"
   },
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "golang.go"
+  },
   "files.associations": {
     "*.instructions.md": "markdown"
+  },
+  "files.exclude": {
+    "gui/frontend/node_modules": true,
+    "gui/frontend/dist": true,
+    "gui/build/bin": true,
+    "internal/guiapp/assets": true,
+    "dist": true
   },
   "search.exclude": {
     "gui/frontend/node_modules": true,
