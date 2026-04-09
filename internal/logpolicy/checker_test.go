@@ -495,7 +495,7 @@ func check(log logger, path string) {
 	}
 }
 
-func TestCheckRepositoryAllowsInfofSkippedWithReason(t *testing.T) {
+func TestCheckRepositoryDebugfSkippedWithReason(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
 		t.Fatalf("mkdir internal sample: %v", err)
@@ -505,10 +505,10 @@ func TestCheckRepositoryAllowsInfofSkippedWithReason(t *testing.T) {
 
 type logger struct{}
 
-func (logger) Infof(string, ...any) {}
+func (logger) Debugf(string, ...any) {}
 
 func check(log logger, path string) {
-	log.Infof("dupechecking: skipped AZ for %s due to rules: rule check failed: major English-language content belongs on PrivateHD", path)
+	log.Debugf("dupechecking: skipped AZ for %s due to rules: rule check failed: major English-language content belongs on PrivateHD", path)
 }
 `
 
