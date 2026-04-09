@@ -74,6 +74,25 @@
       "problemMatcher": ["$go"]
     },
     {
+      "label": "logpolicy",
+      "type": "shell",
+      "command": "go",
+      "args": ["run", "./cmd/logpolicy"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": {
+        "owner": "go",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        }
+      }
+    },
+    {
       "label": "lint-frontend",
       "type": "shell",
       "command": "pnpm",
