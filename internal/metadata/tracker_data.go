@@ -62,7 +62,7 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 			s.logger.Debugf("metadata: trackers configured %v", configured)
 		}
 		if len(missing) > 0 {
-			s.logger.Debugf("metadata: trackers missing api_key/announce_url %v", missing)
+			s.logger.Tracef("metadata: trackers missing api_key/announce_url %v", missing)
 		}
 	}
 	if s.logger != nil {

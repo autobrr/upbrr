@@ -202,7 +202,7 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 		_ = writeEpisodesCache(cachePath, data)
 	}
 	if c.logger != nil {
-		c.logger.Infof("tvdb: episodes loaded series_id=%d language=%s episodes=%d aliases=%d", seriesID, languageKey, len(episodes), len(aliases))
+		c.logger.Debugf("tvdb: episodes loaded series_id=%d language=%s episodes=%d aliases=%d", seriesID, languageKey, len(episodes), len(aliases))
 	}
 
 	return data, specificYearAlias(aliases, slug), nil
