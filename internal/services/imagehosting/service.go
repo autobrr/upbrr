@@ -182,7 +182,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 		for _, candidate := range unique {
 			paths = append(paths, candidate.Path)
 		}
-		s.logger.Infof("image hosting: starting batch upload to %s", normalizedHost)
+		s.logger.Debugf("image hosting: starting batch upload to %s", normalizedHost)
 		uploadedResults, err := uploadBatch(ctx, batch, meta, paths)
 		if err != nil {
 			s.logger.Errorf("image hosting: batch upload failed: %v", err)

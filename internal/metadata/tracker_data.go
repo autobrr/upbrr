@@ -303,7 +303,7 @@ func (s *Service) lookupTrackerData(
 
 	if trackerdata.IsUnit3DTracker(tracker) {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: unit3d lookup start tracker=%s id=%q file=%q", tracker, record.TrackerID, searchFileName(meta))
+			s.logger.Tracef("metadata: unit3d lookup start tracker=%s id=%q file=%q", tracker, record.TrackerID, searchFileName(meta))
 		}
 		result, err := unit3dClient.TorrentInfo(
 			ctx,

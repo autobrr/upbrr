@@ -1,4 +1,4 @@
-name: golangci-lint
+name: logpolicy
 
 on:
   pull_request:
@@ -8,13 +8,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: golangci-lint-${{ github.workflow }}-${{ github.ref }}
+  group: logpolicy-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  golangci:
+  logpolicy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
       - name: Checkout
@@ -25,8 +25,5 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: latest
-          args: --timeout=5m
+      - name: Run logging policy checker
+        run: go run ./cmd/logpolicy

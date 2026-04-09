@@ -68,6 +68,49 @@ var infoErrorOnlyPatterns = []*regexp.Regexp{
 var infoErrorExemptions = []*regexp.Regexp{
 	regexp.MustCompile(`\b(?:no|without)\s+errors?\b(?:$|[\s,.;:!?])`),
 	regexp.MustCompile(`\berror\s+(?:rate|rates|budget|budgets|count|counts|code|codes)\b`),
+	regexp.MustCompile(`\bskipped\b.*\bdue to\b`),
+}
+
+var debugExecutionFlowPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\bpart=\w+\b`),
+	regexp.MustCompile(`\b(?:loaded|resolved|applied)\b.*\b(?:len|bytes|count|size)=\d+`),
+	regexp.MustCompile(`\bstart\s+(?:tracker|source)=`),
+	regexp.MustCompile(`\b(?:total|filtered|resolved|slots)=\d+`),
+	regexp.MustCompile(`\b(?:tracker|source|desc_len|screenshots|count)=.+\s+(?:tracker|source|desc_len|screenshots|count)=`),
+	regexp.MustCompile(`\bpathed search clients=`),
+	regexp.MustCompile(`\bpathed search running for client\b`),
+	regexp.MustCompile(`\bsearching qbittorrent client\b`),
+	regexp.MustCompile(`\bsearching via qbittorrent\s+(?:proxy|webapi)\b`),
+	regexp.MustCompile(`\bfetched\s+(?:\d+|%d)\s+torrents\b`),
+	regexp.MustCompile(`\bname-matched\s+(?:\d+|%d)\s+of\s+(?:\d+|%d)\s+torrents\b`),
+	regexp.MustCompile(`\bmatched\s+(?:\d+|%d)\s+torrents\b`),
+	regexp.MustCompile(`\bselected hash\b.*\bpreferred=`),
+	regexp.MustCompile(`\bvalidated exported torrent for\b.*\bpiece=`),
+	regexp.MustCompile(`\bpathed search client\b.*\bresults matches=`),
+	regexp.MustCompile(`\bstopping pathed search after\b`),
+}
+
+var infoExecutionFlowPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\b(?:metadata|info|series metadata)\s+loaded\b.*\b(?:id|series_id|title|name)=`),
+	regexp.MustCompile(`\bsearch selected\b.*\b(?:id|imdb|tvdb|candidates)=`),
+	regexp.MustCompile(`\bcache hit\b.*\b(?:id|series_id|episodes)=`),
+	regexp.MustCompile(`\bepisode lookup\b.*\b(?:id|season|episode|series)=`),
+}
+
+var infoShouldBeDebugPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\btrackers:\s+preparation built description for\b`),
+	regexp.MustCompile(`\bimage hosting:\s+starting batch upload to\b`),
+	regexp.MustCompile(`\bmetadata:\s+btn claim window expired\b`),
+	regexp.MustCompile(`\bmediainfo:\s+analyzing\b`),
+	regexp.MustCompile(`\bclients:\s+no default search client set; searching all qbittorrent clients\b`),
+}
+
+var debugErrorOrientedPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\bsearch failed\b.*\bstatus=(?:\d+|%d)\b`),
+}
+
+var infoRoutineCheckPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\bchecked for\b.*\braw=(?:\d+|%[dt])\s+filtered=(?:\d+|%[dt])\s+dupes=`),
 }
 
 var infoVerboseSignals = []string{
@@ -190,6 +233,11 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 		}
 		if selector.Sel.Name == "Infof" {
 			for _, message := range infoLevelHygieneViolations(lowerFormat, trimmed) {
+				violations = append(violations, violationAt(fset, relPath, firstArg.Pos(), message))
+			}
+		}
+		if selector.Sel.Name == "Debugf" {
+			for _, message := range debugLevelHygieneViolations(lowerFormat) {
 				violations = append(violations, violationAt(fset, relPath, firstArg.Pos(), message))
 			}
 		}
@@ -372,7 +420,7 @@ func isSuspiciousBodyName(name string) bool {
 }
 
 func infoLevelHygieneViolations(lowerFormat string, trimmedFormat string) []string {
-	violations := make([]string, 0, 2)
+	violations := make([]string, 0, 5)
 
 	if isErrorOnlyInfoMessage(lowerFormat) {
 		violations = append(violations, "Infof appears error-oriented; use Warnf/Errorf or rephrase for progress/outcome context")
@@ -380,6 +428,18 @@ func infoLevelHygieneViolations(lowerFormat string, trimmedFormat string) []stri
 
 	if isOverlyVerboseInfoMessage(lowerFormat, trimmedFormat) {
 		violations = append(violations, "Infof appears overly verbose; move detailed diagnostics to Debugf/Tracef")
+	}
+
+	if isExecutionFlowInfoMessage(lowerFormat) {
+		violations = append(violations, "Infof appears to be execution flow reporting; use Tracef for granular step-by-step logging")
+	}
+
+	if isRoutineCheckInfoMessage(lowerFormat) {
+		violations = append(violations, "Infof appears to be a routine check result; use Debugf for troubleshooting details")
+	}
+
+	if isInfoTroubleshootingMessage(lowerFormat) {
+		violations = append(violations, "Infof appears to be troubleshooting detail; use Debugf for non-user-facing progress")
 	}
 
 	return violations
@@ -405,6 +465,65 @@ func isOverlyVerboseInfoMessage(lowerFormat string, trimmedFormat string) bool {
 	}
 	for _, signal := range infoVerboseSignals {
 		if strings.Contains(lowerFormat, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func debugLevelHygieneViolations(lowerFormat string) []string {
+	violations := make([]string, 0, 2)
+
+	if isExecutionFlowDebugMessage(lowerFormat) {
+		violations = append(violations, "Debugf appears to be execution flow reporting; use Tracef for granular step-by-step logging")
+	}
+
+	if isErrorOrientedDebugMessage(lowerFormat) {
+		violations = append(violations, "Debugf appears error-oriented; use Warnf/Errorf for failure conditions")
+	}
+
+	return violations
+}
+
+func isExecutionFlowDebugMessage(lowerFormat string) bool {
+	for _, pattern := range debugExecutionFlowPatterns {
+		if pattern.MatchString(lowerFormat) {
+			return true
+		}
+	}
+	return false
+}
+
+func isExecutionFlowInfoMessage(lowerFormat string) bool {
+	for _, pattern := range infoExecutionFlowPatterns {
+		if pattern.MatchString(lowerFormat) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRoutineCheckInfoMessage(lowerFormat string) bool {
+	for _, pattern := range infoRoutineCheckPatterns {
+		if pattern.MatchString(lowerFormat) {
+			return true
+		}
+	}
+	return false
+}
+
+func isInfoTroubleshootingMessage(lowerFormat string) bool {
+	for _, pattern := range infoShouldBeDebugPatterns {
+		if pattern.MatchString(lowerFormat) {
+			return true
+		}
+	}
+	return false
+}
+
+func isErrorOrientedDebugMessage(lowerFormat string) bool {
+	for _, pattern := range debugErrorOrientedPatterns {
+		if pattern.MatchString(lowerFormat) {
 			return true
 		}
 	}

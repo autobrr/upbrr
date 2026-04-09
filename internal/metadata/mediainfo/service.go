@@ -112,7 +112,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	}
 
 	if s.logger != nil {
-		s.logger.Infof("mediainfo: analyzing %s", target.AnalyzePath)
+		s.logger.Debugf("mediainfo: analyzing %s", target.AnalyzePath)
 	}
 
 	textOutput, jsonOutput, err := s.analyzer.Analyze(ctx, target.AnalyzePath)

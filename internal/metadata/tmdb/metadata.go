@@ -230,7 +230,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	}
 
 	if c.logger != nil {
-		c.logger.Infof("tmdb: metadata loaded id=%d title=%q year=%d type=%s", input.TMDBID, result.Title, result.Year, result.TMDBType)
+		c.logger.Tracef("tmdb: metadata loaded id=%d title=%q year=%d type=%s", input.TMDBID, result.Title, result.Year, result.TMDBType)
 	}
 
 	return result, nil
