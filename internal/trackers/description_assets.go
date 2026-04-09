@@ -106,7 +106,7 @@ func resolveTrackerDescription(ctx context.Context, tracker string, meta api.Pre
 	}
 	if canonical := descriptionGroupFromPreparedMeta(meta, tracker); strings.TrimSpace(canonical) != "" {
 		if logger != nil {
-			logger.Debugf("trackers: canonical group description applied source=%s tracker=%s len=%d", meta.SourcePath, strings.TrimSpace(tracker), len(strings.TrimSpace(canonical)))
+			logger.Tracef("trackers: canonical group description applied source=%s tracker=%s len=%d", meta.SourcePath, strings.TrimSpace(tracker), len(strings.TrimSpace(canonical)))
 		}
 		return canonical, true
 	}

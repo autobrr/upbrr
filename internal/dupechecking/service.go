@@ -144,7 +144,7 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 		result.SkipRules = rules
 		result.Status = "skipped"
 		result.Notes = append(result.Notes, reason)
-		s.logger.Infof("dupechecking: skipped %s for %s due to rules: %s", tracker, meta.SourcePath, reason)
+		s.logger.Debugf("dupechecking: skipped %s for %s due to rules: %s", tracker, meta.SourcePath, reason)
 		return result
 	}
 
@@ -175,7 +175,7 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 	result.Notes = append(result.Notes, notes...)
 	result.Raw = trimEntries(raw)
 	if result.Skipped {
-		s.logger.Warnf("dupechecking: handler marked skipped for %s (%s)", tracker, meta.SourcePath)
+		s.logger.Debugf("dupechecking: handler marked skipped for %s (%s)", tracker, meta.SourcePath)
 		return result
 	}
 

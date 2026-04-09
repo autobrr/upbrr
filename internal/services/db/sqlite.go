@@ -65,7 +65,7 @@ func (r *SQLiteRepository) Close() error {
 		return nil
 	}
 	if r.logger != nil {
-		r.logger.Debugf("db: closing sqlite")
+		r.logger.Infof("db: closing sqlite")
 	}
 	return r.db.Close()
 }
