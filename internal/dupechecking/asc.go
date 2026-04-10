@@ -63,7 +63,8 @@ func (h ascHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 
 	var entries []api.DupeEntry
 	var tasks []ascDetailTask
-	walkASCNodes(doc, &entries, &tasks, resolveASCTitle(meta))
+	seen := make(map[string]struct{})
+	walkASCNodes(doc, &entries, &tasks, seen, resolveASCTitle(meta))
 
 	if len(tasks) > 0 {
 		var mu sync.Mutex
@@ -146,19 +147,19 @@ type ascDetailTask struct {
 	Size string
 }
 
-func walkASCNodes(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDetailTask, baseTitle string) {
+func walkASCNodes(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDetailTask, seen map[string]struct{}, baseTitle string) {
 	if n.Type == html.ElementNode && strings.EqualFold(n.Data, "li") {
 		if ascHasClass(n, "list-group-item") && ascHasClass(n, "dark-gray") {
-			processASCListItem(n, entries, tasks, baseTitle)
+			processASCListItem(n, entries, tasks, seen, baseTitle)
 			return
 		}
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		walkASCNodes(c, entries, tasks, baseTitle)
+		walkASCNodes(c, entries, tasks, seen, baseTitle)
 	}
 }
 
-func processASCListItem(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDetailTask, baseTitle string) {
+func processASCListItem(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDetailTask, seen map[string]struct{}, baseTitle string) {
 	var detailsHref string
 	var sizeText string
 	var badges []string
@@ -192,6 +193,14 @@ func processASCListItem(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDeta
 	}
 
 	id := parseASCTorrentID(detailsHref)
+	if id == "" {
+		return
+	}
+	if _, ok := seen[id]; ok {
+		return
+	}
+	seen[id] = struct{}{}
+
 	link := absolutizeASCLink(detailsHref)
 
 	discTypes := []string{"BD25", "BD50", "BD66", "BD100", "DVD5", "DVD9"}
