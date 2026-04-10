@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -36,8 +37,8 @@ type uploadState struct {
 }
 
 type uploadResponse struct {
-	ID      any    `json:"id"`
-	Message string `json:"message"`
+	ID      json.Number `json:"id"`
+	Message string      `json:"message"`
 }
 
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
@@ -74,12 +75,22 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: DC read response body: %w", err)
+	}
+
+	if len(responseBody) == 0 {
+		return api.UploadSummary{}, fmt.Errorf("trackers: DC empty response body (status %d)", resp.StatusCode)
+	}
+
 	var decoded uploadResponse
-	if len(responseBody) > 0 {
-		if err := json.Unmarshal(responseBody, &decoded); err != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: DC decode response: %w", err)
+	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+		snippet := string(responseBody)
+		if len(snippet) > 200 {
+			snippet = snippet[:200] + "..."
 		}
+		return api.UploadSummary{}, fmt.Errorf("trackers: DC decode response: %w | response: %s", err, snippet)
 	}
 	torrentID := strings.TrimSpace(fmt.Sprint(decoded.ID))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && torrentID != "" && torrentID != "<nil>" {
@@ -150,6 +161,16 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if err != nil {
 		return uploadState{}, err
 	}
+
+	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
+	if announceURL != "" {
+		artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "DC")
+		if err == nil {
+			if err := trackers.WritePersonalizedTorrent(torrentPath, artifactPath, announceURL, "Created by upbrr", sourceFlag); err == nil {
+				torrentPath = artifactPath
+			}
+		}
+	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
@@ -165,7 +186,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	releaseName := resolveUploadName(req.Meta)
 	fields := map[string]string{
 		"category":        strconv.Itoa(resolveCategoryID(req.Meta)),
-		"imdbId":          resolveIMDbID(req.Meta),
+		"imdbId":          resolveDCIMDbIDText(req.Meta),
 		"nfo":             description,
 		"mediainfo":       mediaInfo,
 		"reqid":           "0",
@@ -193,8 +214,10 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	if overview := resolveOverview(meta); overview != "" && strings.EqualFold(categoryOf(meta), "TV") && strings.TrimSpace(meta.EpisodeOverview) != "" {
 		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]\n[center]"+overview+"[/center]")
 	}
-	if media := resolveMediaDump(meta); media != "" {
-		parts = append(parts, "[code]"+strings.TrimSpace(media)+"[/code]")
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		if media := resolveMediaDump(meta); media != "" {
+			parts = append(parts, "[code]"+strings.TrimSpace(media)+"[/code]")
+		}
 	}
 	if strings.TrimSpace(assets.Description) != "" {
 		parts = append(parts, strings.TrimSpace(assets.Description))
@@ -202,6 +225,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	if shots := screenshotBlock(assets.Screenshots); shots != "" {
 		parts = append(parts, shots)
 	}
+	parts = append(parts, "[center][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/center]")
 	return bbcode.FinalizeTrackerDescription("DC", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
 }
 
@@ -256,24 +280,9 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
-	name := firstNonEmpty(strings.TrimSpace(meta.SceneName), strings.TrimSpace(meta.ReleaseNameClean), strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.Filename))
-	if name == "" {
-		name = "release"
-	}
-	if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
-		return strings.TrimSpace(meta.SceneName) + " [UNRAR]"
-	}
-	name = strings.NewReplacer("DD+", "DDP", "DTS:", "DTS-", "HDR10+", "HDR10P").Replace(name)
-	out := strings.Builder{}
-	for _, r := range name {
-		if r > 127 {
-			continue
-		}
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ' ' || r == '.' || r == '-' {
-			out.WriteRune(r)
-		}
-	}
-	return strings.TrimSpace(out.String())
+	name := strings.TrimSpace(meta.Filename)
+	ext := filepath.Ext(name)
+	return strings.TrimSuffix(name, ext)
 }
 
 func resolveMediaInfo(meta api.PreparedMetadata) (string, error) {
@@ -294,9 +303,12 @@ func resolveMediaDump(meta api.PreparedMetadata) string {
 	return firstNonEmpty(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
 }
 
-func resolveIMDbID(meta api.PreparedMetadata) string {
+func resolveDCIMDbIDText(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText) != "" {
+		return strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText)
+	}
 	if meta.ExternalIDs.IMDBID > 0 {
-		return "tt" + strconv.Itoa(meta.ExternalIDs.IMDBID)
+		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
 	}
 	return ""
 }

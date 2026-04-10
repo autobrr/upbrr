@@ -209,6 +209,7 @@ trackers:
     link_dir_name: ""
     api_key: ""
     anon: false
+    announce_url: ""
     use_metadata_name: false
   DP:
     link_dir_name: ""
