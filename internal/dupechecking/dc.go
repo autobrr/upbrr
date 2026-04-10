@@ -5,9 +5,10 @@ package dupechecking
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -28,7 +29,14 @@ func (h dcHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 		return nil, []string{noteSkip("missing imdb id for DC dupe search")}, nil
 	}
 	params := url.Values{}
-	params.Set("searchText", "tt"+strconv.Itoa(imdb))
+
+	imdbID := resolveDCIMDbIDText(meta)
+
+	if imdbID == "" && !meta.Anime {
+		return nil, []string{noteSkip("missing IMDb ID for DC dupe search")}, nil
+	}
+
+	params.Set("searchText", imdbID)
 	headers := map[string]string{"X-API-KEY": apiKey}
 	status, payload, err := doJSONGetAny(ctx, h.http, "https://digitalcore.club/api/v1/torrents", params, headers)
 	if err != nil || status < 200 || status >= 300 {
@@ -54,4 +62,14 @@ func (h dcHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 		entries = append(entries, entry)
 	}
 	return entries, nil, nil
+}
+
+func resolveDCIMDbIDText(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText) != "" {
+		return strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText)
+	}
+	if meta.ExternalIDs.IMDBID > 0 {
+		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
+	}
+	return ""
 }

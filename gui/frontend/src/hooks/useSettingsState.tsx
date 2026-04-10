@@ -179,7 +179,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
   BTN: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Username, trackerFieldMeta.Password, trackerFieldMeta.URL, trackerFieldMeta.OTPURI],
   CBR: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ, trackerFieldMeta.TagForCustomRelease],
   CZ: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.CheckForRules],
-  DC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  DC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   DP: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ],
   EMUW: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.UseSpanishTitle],
   FF: [trackerFieldMeta.LinkDirName, trackerFieldMeta.Username, trackerFieldMeta.Password, trackerFieldMeta.AnnounceURL, trackerFieldMeta.CheckRequests, trackerFieldMeta.FullMediainfo],
@@ -721,7 +721,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     const typeHint = meta?.type;
     if (typeHint === "boolean" || typeof value === "boolean") {
       return (
-        <label className="settings-toggle" key={path.join(".")}> 
+        <label className="settings-toggle" key={path.join(".")}>
           <span>{displayLabel}</span>
           <input
             type="checkbox"
@@ -735,7 +735,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (typeHint === "number" || typeof value === "number") {
       const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
       return (
-        <label className="settings-field" key={path.join(".")}> 
+        <label className="settings-field" key={path.join(".")}>
           <span>{displayLabel}</span>
           <input
             type="number"
@@ -747,7 +747,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
     if (Array.isArray(value)) {
       return (
-        <div className="settings-field" key={path.join(".")}> 
+        <div className="settings-field" key={path.join(".")}>
           <span>{displayLabel}</span>
           {renderArrayEditor(value, path)}
         </div>
@@ -755,7 +755,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
     if (value && typeof value === "object") {
       return (
-        <div className="settings-subgroup" key={path.join(".")}> 
+        <div className="settings-subgroup" key={path.join(".")}>
           <div className="settings-subgroup__title">{displayLabel}</div>
           <div className="settings-grid">
             {Object.entries(value).map(([childKey, childValue]) =>
@@ -767,7 +767,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
 
     return (
-      <label className="settings-field" key={path.join(".")}> 
+      <label className="settings-field" key={path.join(".")}>
         <span>{displayLabel}</span>
         <input
           value={value === null ? "" : String(value ?? "")}
@@ -977,7 +977,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         rawEntries && typeof rawEntries === "object" && !Array.isArray(rawEntries)
           ? (rawEntries as ConfigMap)
           : {};
-      
+
       const allEntries = Object.entries(entriesRoot).filter(
         ([, value]) => value && typeof value === "object" && !Array.isArray(value)
       ) as Array<[string, ConfigMap]>;
