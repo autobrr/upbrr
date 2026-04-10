@@ -40,24 +40,45 @@ func (h btHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 
 	searchStr := imdbID
 	if meta.Anime {
+		tvdbNameEnglish := ""
+		tvdbName := ""
+		if meta.ExternalMetadata.TVDB != nil {
+			tvdbNameEnglish = strings.TrimSpace(meta.ExternalMetadata.TVDB.NameEnglish)
+			tvdbName = strings.TrimSpace(meta.ExternalMetadata.TVDB.Name)
+		}
+
+		tmdbTitle := ""
+		tmdbOriginalTitle := ""
+		if meta.ExternalMetadata.TMDB != nil {
+			tmdbTitle = strings.TrimSpace(meta.ExternalMetadata.TMDB.Title)
+			tmdbOriginalTitle = strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalTitle)
+		}
+
+		imdbTitle := ""
+		if meta.ExternalMetadata.IMDB != nil {
+			imdbTitle = strings.TrimSpace(meta.ExternalMetadata.IMDB.Title)
+		}
+
+		releaseName := strings.TrimSpace(meta.ReleaseName)
+
 		switch {
 		// English
-		case strings.TrimSpace(meta.ExternalMetadata.TVDB.NameEnglish) != "":
-			searchStr = strings.TrimSpace(meta.ExternalMetadata.TVDB.NameEnglish)
-		case strings.TrimSpace(meta.ExternalMetadata.TMDB.Title) != "":
-			searchStr = strings.TrimSpace(meta.ExternalMetadata.TMDB.Title)
-		case strings.TrimSpace(meta.ExternalMetadata.IMDB.Title) != "":
-			searchStr = strings.TrimSpace(meta.ExternalMetadata.IMDB.Title)
+		case tvdbNameEnglish != "":
+			searchStr = tvdbNameEnglish
+		case tmdbTitle != "":
+			searchStr = tmdbTitle
+		case imdbTitle != "":
+			searchStr = imdbTitle
 
 		// Original
-		case strings.TrimSpace(meta.ExternalMetadata.TVDB.Name) != "":
-			searchStr = strings.TrimSpace(meta.ExternalMetadata.TVDB.Name)
-		case strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalTitle) != "":
-			searchStr = strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalTitle)
+		case tvdbName != "":
+			searchStr = tvdbName
+		case tmdbOriginalTitle != "":
+			searchStr = tmdbOriginalTitle
 
 		// Release Name
-		case strings.TrimSpace(meta.ReleaseName) != "":
-			searchStr = strings.TrimSpace(meta.ReleaseName)
+		case releaseName != "":
+			searchStr = releaseName
 		}
 	}
 
