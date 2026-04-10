@@ -55,7 +55,7 @@ func New(deps api.CoreDependencies) (*Core, error) {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-	logger.Debugf("core: initializing")
+	logger.Infof("core: initializing")
 
 	if err := deps.Config.Validate(); err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func New(deps api.CoreDependencies) (*Core, error) {
 	if services.Dupes == nil {
 		services.Dupes = dupechecking.NewService(deps.Config, logger)
 	}
-	logger.Debugf("core: initialized services")
+	logger.Infof("core: initialized services")
 
 	return &Core{
 		cfg:       deps.Config,

@@ -91,7 +91,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	candidates := dedupeCandidates(results)
 	selectedID, selectedIMDB, selectedTVDB := selectCandidate(candidates, imdbID, tvdbID, input.ManualDate)
 	if c.logger != nil && selectedID != 0 {
-		c.logger.Infof("tvmaze: search selected id=%d imdb=%d tvdb=%d candidates=%d", selectedID, selectedIMDB, selectedTVDB, len(candidates))
+		c.logger.Tracef("tvmaze: search selected id=%d imdb=%d tvdb=%d candidates=%d", selectedID, selectedIMDB, selectedTVDB, len(candidates))
 	}
 
 	return SearchResult{
@@ -142,7 +142,7 @@ func (c *Client) GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episo
 	}
 	data := c.buildEpisodeData(ctx, episodeResp)
 	if c.logger != nil && data != nil {
-		c.logger.Infof("tvmaze: episode lookup id=%d season=%d episode=%d series=%q", tvmazeID, data.SeasonNumber, data.EpisodeNumber, data.SeriesName)
+		c.logger.Tracef("tvmaze: episode lookup id=%d season=%d episode=%d series=%q", tvmazeID, data.SeasonNumber, data.EpisodeNumber, data.SeriesName)
 	}
 	return data, nil
 }
@@ -164,7 +164,7 @@ func (c *Client) GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate str
 	}
 	data := c.buildEpisodeData(ctx, episodes[0])
 	if c.logger != nil && data != nil {
-		c.logger.Infof("tvmaze: episode lookup id=%d airdate=%s series=%q", tvmazeID, data.AirDate, data.SeriesName)
+		c.logger.Tracef("tvmaze: episode lookup id=%d airdate=%s series=%q", tvmazeID, data.AirDate, data.SeriesName)
 	}
 	return data, nil
 }

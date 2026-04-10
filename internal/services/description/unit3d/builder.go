@@ -67,53 +67,53 @@ func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig 
 	}
 	if template := stripUnit3DSignature(strings.TrimSpace(meta.DescriptionTemplate)); template != "" {
 		appendUniquePart(template, "template")
-		logger.Debugf("trackers: unit3d desc part=template len=%d", len(template))
+		logger.Tracef("trackers: unit3d desc part=template len=%d", len(template))
 	}
 	if kept := stripUnit3DSignature(strings.TrimSpace(keptDescription)); kept != "" {
 		appendUniquePart(kept, "kept")
-		logger.Debugf("trackers: unit3d desc part=kept len=%d imgs=%d", len(kept), countBBCodeImages(kept))
+		logger.Tracef("trackers: unit3d desc part=kept len=%d imgs=%d", len(kept), countBBCodeImages(kept))
 	}
 	if header := strings.TrimSpace(appConfig.Description.CustomDescriptionHeader); header != "" {
 		appendUniquePart(header, "custom_header")
-		logger.Debugf("trackers: unit3d desc part=custom_header len=%d", len(header))
+		logger.Tracef("trackers: unit3d desc part=custom_header len=%d", len(header))
 	}
 
 	logoURL, logoSize := resolveLogo(meta, appConfig)
 	if logoURL != "" {
 		appendUniquePart(fmt.Sprintf("[center][img=%d]%s[/img][/center]", logoSize, logoURL), "logo")
-		logger.Debugf("trackers: unit3d desc part=logo size=%d", logoSize)
+		logger.Tracef("trackers: unit3d desc part=logo size=%d", logoSize)
 	}
 
 	if vobMediaInfo := DVDVOBMediaInfoBlock(meta); vobMediaInfo != "" {
 		appendUniquePart(vobMediaInfo, "dvd_vob_mediainfo")
-		logger.Debugf("trackers: unit3d desc part=dvd_vob_mediainfo")
+		logger.Tracef("trackers: unit3d desc part=dvd_vob_mediainfo")
 	}
 
 	if tonemapHeader := strings.TrimSpace(appConfig.Description.TonemappedHeader); tonemapHeader != "" && shouldIncludeTonemappedHeader(meta, appConfig, screenshots) {
 		appendUniquePart(tonemapHeader, "tonemap_header")
-		logger.Debugf("trackers: unit3d desc part=tonemap_header len=%d", len(tonemapHeader))
+		logger.Tracef("trackers: unit3d desc part=tonemap_header len=%d", len(tonemapHeader))
 	}
 
-	logger.Debugf("trackers: unit3d desc part=mediainfo skipped (sent via API)")
+	logger.Tracef("trackers: unit3d desc part=mediainfo skipped (sent via API)")
 
 	filteredScreenshots := filterScreenshotDuplicates(screenshots, keptDescription)
-	logger.Debugf("trackers: unit3d desc screenshots total=%d filtered=%d", len(screenshots), len(filteredScreenshots))
+	logger.Tracef("trackers: unit3d desc screenshots total=%d filtered=%d", len(screenshots), len(filteredScreenshots))
 	screenshotHeader := strings.TrimSpace(appConfig.Description.ScreenshotHeader)
 	screenshotSection := buildScreenshotSection(filteredScreenshots, appConfig.Description.ThumbnailSize, parseScreensPerRow(appConfig.Description.ScreensPerRow))
 	if screenshotSection != "" && screenshotHeader != "" {
 		appendUniquePart(screenshotHeader, "screenshot_header")
-		logger.Debugf("trackers: unit3d desc part=screenshot_header len=%d", len(screenshotHeader))
+		logger.Tracef("trackers: unit3d desc part=screenshot_header len=%d", len(screenshotHeader))
 	}
 	if screenshotSection != "" {
 		appendUniquePart(screenshotSection, "screenshots")
-		logger.Debugf("trackers: unit3d desc part=screenshots count=%d", countBBCodeImages(screenshotSection))
+		logger.Tracef("trackers: unit3d desc part=screenshots count=%d", countBBCodeImages(screenshotSection))
 	}
 	if customSignature := strings.TrimSpace(appConfig.Description.CustomSignature); customSignature != "" {
 		appendUniquePart(customSignature, "custom_signature")
-		logger.Debugf("trackers: unit3d desc part=custom_signature len=%d", len(customSignature))
+		logger.Tracef("trackers: unit3d desc part=custom_signature len=%d", len(customSignature))
 	} else {
 		appendUniquePart(buildUASignature(), "signature")
-		logger.Debugf("trackers: unit3d desc part=signature")
+		logger.Tracef("trackers: unit3d desc part=signature")
 	}
 
 	description := normalizeDescription(strings.Join(parts, "\n\n"))

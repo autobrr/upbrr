@@ -162,7 +162,7 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 		if cached, ok := readEpisodesCache(cachePath); ok {
 			if episodeIsPresent(cached.Episodes, query) {
 				if c.logger != nil {
-					c.logger.Infof("tvdb: episodes cache hit series_id=%d language=%s episodes=%d", seriesID, languageKey, len(cached.Episodes))
+					c.logger.Tracef("tvdb: episodes cache hit series_id=%d language=%s episodes=%d", seriesID, languageKey, len(cached.Episodes))
 				}
 				return cached, specificYearAlias(cached.Aliases, cached.Slug), nil
 			}
@@ -202,7 +202,7 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 		_ = writeEpisodesCache(cachePath, data)
 	}
 	if c.logger != nil {
-		c.logger.Infof("tvdb: episodes loaded series_id=%d language=%s episodes=%d aliases=%d", seriesID, languageKey, len(episodes), len(aliases))
+		c.logger.Debugf("tvdb: episodes loaded series_id=%d language=%s episodes=%d aliases=%d", seriesID, languageKey, len(episodes), len(aliases))
 	}
 
 	return data, specificYearAlias(aliases, slug), nil
@@ -296,7 +296,7 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 	metadata.HasEnglish = strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.OverviewEnglish) != ""
 
 	if c.logger != nil {
-		c.logger.Infof(
+		c.logger.Tracef(
 			"tvdb: series metadata loaded series_id=%d language=%q name=%q first_aired=%q",
 			seriesID,
 			normalizeLanguageParam(language),

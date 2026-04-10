@@ -5,10 +5,15 @@ package db
 
 type Logger interface {
 	Debugf(format string, args ...any)
+	Infof(format string, args ...any)
 }
 
 type nopLogger struct{}
 
 func (nopLogger) Debugf(string, ...any) {
+	// Intentionally no-op.
+}
+
+func (nopLogger) Infof(string, ...any) {
 	// Intentionally no-op.
 }

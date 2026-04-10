@@ -8,8 +8,10 @@
 - The disabled linters are intentional policy for existing code, not missed cleanup. Do not reshape existing code just to satisfy containedctx, noctx, revive, or other currently disabled linters unless there is a functional reason or the surrounding code already follows that pattern.
 - Do not silently swallow errors. Handle them explicitly by returning, wrapping, logging with intentional context, or making the ignore path obvious and justified in code.
 - Add logging to new functions where it helps explain meaningful state, decisions, failures, retries, or user-visible outcomes. When touching existing functions that lack appropriate logging, bring them up to the same standard when it is practical and relevant to the change.
+- The repository enforces logging hygiene with the `cmd/logpolicy` checker. Treat its rules as part of the logging contract, not as optional cleanup, and write or update logs so they pass without relying on follow-up fixes.
 - Always redact private, secret, or user-sensitive information from logs using the repository's redaction handling in `internal/redaction/redaction.go`. Never log credentials, tokens, API keys, passkeys, cookies, full payloads containing secrets, or other sensitive user data without applying that standard.
 - Keep log levels purposeful. `INFO` should provide concise, relevant progress or outcome details for end users during uploads. `DEBUG` should include richer decision-making context useful for developer troubleshooting. `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
+- When the checker flags a log line, fix the log message or level at the source instead of weakening the checker, bypassing it, or shifting the message to an equally noisy level.
 - Respect the current golangci-lint exclusions and formatter settings instead of reintroducing churn in files already covered by scoped exceptions.
 - For frontend changes, keep TypeScript and ESLint clean without weakening existing rules or bypassing type errors.
 
@@ -18,6 +20,7 @@
 - Run the relevant CI-aligned checks after changes.
 - For Go changes, run the narrowest relevant Go tests first, such as a package-scoped go test invocation for the affected area. When changes touch shared behavior, multiple packages, or cross-surface flows, expand to broader coverage up to: go test -v -timeout 20m ./...
 - For Go changes, run: golangci-lint run --timeout=5m
+- For logging-related Go changes, or any change that adds, removes, or edits log lines under `internal`, also run: go run ./cmd/logpolicy
 - Prefer the smallest relevant frontend validation for the files you changed, but keep lint and typecheck clean for the affected frontend surface. When frontend changes are broad, shared, or configuration-related, run the full gui/frontend checks called out below.
 - For gui/frontend changes, use gui/frontend as the working directory. Run pnpm install --frozen-lockfile whenever frontend dependencies or lockfiles may affect the change; otherwise run pnpm run lint and pnpm run typecheck
 - For gui/frontend build logic, embedded assets, or Vite/TypeScript config changes, also run: pnpm run build
