@@ -189,7 +189,7 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, tra
 		"sinopse":     {resolveOverview(meta)},
 		"submit":      {"true"},
 		"tags":        {resolveTags(meta)},
-		"title":       {firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.Release.Title)},
+		"title":       {resolveTitle(meta)},
 		"type":        {resolveType(meta)},
 		"video_c":     {resolveVideoCodec(meta)},
 		"year":        {strconv.Itoa(resolveYear(meta))},
@@ -770,6 +770,13 @@ func resolveYear(meta api.PreparedMetadata) int {
 		return meta.ExternalMetadata.IMDB.Year
 	}
 	return meta.Release.Year
+}
+
+func resolveTitle(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.TMDB != nil {
+		return firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.Release.Title)
+	}
+	return meta.Release.Title
 }
 
 func resolveLocalizedTitle(meta api.PreparedMetadata) string {
