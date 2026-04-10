@@ -526,7 +526,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		if descriptionText == "" {
 			placeholderCount++
 		} else {
-			s.logger.Infof("trackers: preparation built description for %s", tracker)
+			s.logger.Debugf("trackers: preparation built description for %s", tracker)
 		}
 	}
 
@@ -744,7 +744,7 @@ func filterKnownTrackers(trackers []string, logger api.Logger) []string {
 		if upper == "" {
 			continue
 		}
-		if _, ok := knownTrackers[upper]; !ok {
+		if !IsKnownTracker(upper) {
 			if logger != nil {
 				logger.Infof("trackers: unknown tracker %q, skipping", tracker)
 			}

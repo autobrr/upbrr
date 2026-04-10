@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/torrent"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 
@@ -47,7 +48,6 @@ type trackerPattern struct {
 var (
 	unit3dTrackerIDPattern = regexp.MustCompile(`/(\d+)`)
 	trackerIDPatterns      = buildTrackerIDPatterns()
-	trackerPriority        = []string{"aither", "acm", "ulcx", "lst", "blu", "rf", "lume", "otw", "yus", "dp", "oe", "a4k", "cbr", "emuw", "fnp", "friki", "hhd", "ihd", "itt", "lcd", "ldu", "lt", "pt", "ptt", "r4e", "ras", "sam", "shri", "stc", "tik", "tlz", "tos", "ttr", "utp", "btn", "bhd", "huno", "hdb", "sp", "ptp"}
 )
 
 var trackerURLPatterns = map[string][]string{
@@ -61,7 +61,7 @@ var trackerURLPatterns = map[string][]string{
 	"bjs":    {"tracker.bj-share.info"},
 	"blu":    {"https://blutopia.cc"},
 	"bt":     {"t.brasiltracker.org"},
-	"btn":    {"https://broadcasthe.net"},
+	"btn":    {"https://broadcasthe.net", "https://backup.landof.tv", "https://landof.tv", "landof.tv/"},
 	"cbr":    {"capybarabr.com"},
 	"cz":     {"tracker.cinemaz.to"},
 	"dc":     {"tracker.digitalcore.club", "trackerprxy.digitalcore.club"},
@@ -74,7 +74,6 @@ var trackerURLPatterns = map[string][]string{
 	"hds":    {"hd-space.pw"},
 	"hdt":    {"https://hdts-announce.ru"},
 	"hhd":    {"https://homiehelpdesk.net"},
-	"huno":   {"https://hawke.uno"},
 	"ihd":    {"https://infinityhd.net"},
 	"is":     {"https://immortalseed.me"},
 	"itt":    {"https://itatorrents.xyz"},
@@ -108,6 +107,27 @@ var trackerURLPatterns = map[string][]string{
 	"yus":    {"https://yu-scene.net"},
 }
 
+var lowerTrackerURLPatterns = buildLowerTrackerURLPatterns(trackerURLPatterns)
+
+func buildLowerTrackerURLPatterns(source map[string][]string) map[string][]string {
+	if len(source) == 0 {
+		return nil
+	}
+	lowered := make(map[string][]string, len(source))
+	for id, patterns := range source {
+		normalized := make([]string, 0, len(patterns))
+		for _, pattern := range patterns {
+			trimmed := strings.ToLower(strings.TrimSpace(pattern))
+			if trimmed == "" {
+				continue
+			}
+			normalized = append(normalized, trimmed)
+		}
+		lowered[id] = normalized
+	}
+	return lowered
+}
+
 func buildTrackerIDPatterns() map[string]trackerPattern {
 	patterns := map[string]trackerPattern{
 		"hdb": {url: "https://hdbits.org", pattern: regexp.MustCompile(`id=(\d+)`)},
@@ -116,7 +136,7 @@ func buildTrackerIDPatterns() map[string]trackerPattern {
 		"ptp": {url: "passthepopcorn.me", pattern: regexp.MustCompile(`torrentid=(\d+)`)},
 	}
 
-	for _, tracker := range unit3dmeta.Trackers() {
+	for _, tracker := range trackers.Unit3DTrackers() {
 		baseURL, ok := unit3dmeta.BaseURL(tracker)
 		if !ok || strings.TrimSpace(baseURL) == "" {
 			continue
@@ -148,7 +168,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 
 	constraints := resolvePieceConstraints(s.cfg)
 	result := api.ClientSearchResult{PieceSizeConstraint: constraints.label}
-	s.logger.Debugf("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
+	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
 
 	clients, usedFallback := resolveSearchClients(s.cfg, meta.ClientOverrides)
 	if len(clients) == 0 {
@@ -156,9 +176,9 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 		return result, nil
 	}
 	if usedFallback {
-		s.logger.Infof("clients: no default search client set; searching all qBittorrent clients (%d)", len(clients))
+		s.logger.Debugf("clients: no default search client set; searching all qBittorrent clients (%d)", len(clients))
 	}
-	s.logger.Debugf("clients: pathed search clients=%s", strings.Join(clients, ","))
+	s.logger.Tracef("clients: pathed search clients=%s", strings.Join(clients, ","))
 	if meta.Options.Debug {
 		s.logger.Debugf("clients: pathed search for %s (clients=%d constraints=%q)", meta.SourcePath, len(clients), constraints.label)
 	}
@@ -173,7 +193,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 		default:
 		}
 
-		s.logger.Debugf("clients: pathed search running for client %s", name)
+		s.logger.Tracef("clients: pathed search running for client %s", name)
 
 		clientCfg, ok := s.cfg.TorrentClients[name]
 		if !ok {
@@ -191,7 +211,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 		if err != nil {
 			return api.ClientSearchResult{}, err
 		}
-		s.logger.Debugf("clients: pathed search client %s results matches=%d trackerMatch=%t preferred=%q", name, len(matches), clientResult.FoundTrackerMatch, clientResult.FoundPreferredPiece)
+		s.logger.Tracef("clients: pathed search client %s results matches=%d trackerMatch=%t preferred=%q", name, len(matches), clientResult.FoundTrackerMatch, clientResult.FoundPreferredPiece)
 		if len(matches) == 0 {
 			if meta.Options.Debug {
 				s.logger.Debugf("clients: no torrent matches found in %s", name)
@@ -220,7 +240,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 		}
 
 		if shouldStopSearch(constraints.label, clientResult.FoundPreferredPiece) {
-			s.logger.Debugf("clients: stopping pathed search after %s (preferred=%q)", name, clientResult.FoundPreferredPiece)
+			s.logger.Tracef("clients: stopping pathed search after %s (preferred=%q)", name, clientResult.FoundPreferredPiece)
 			break
 		}
 	}
@@ -316,7 +336,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		return api.ClientSearchResult{}, nil, internalerrors.ErrInvalidInput
 	}
 
-	s.logger.Debugf("clients: searching qBittorrent client %s for %s", name, searchTerm)
+	s.logger.Tracef("clients: searching qBittorrent client %s for %s", name, searchTerm)
 
 	useProxy := clientCfg.UsesQuiProxy()
 	var (
@@ -330,7 +350,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		if proxyBaseURL == "" {
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s proxy url is required", name)
 		}
-		s.logger.Debugf("clients: %s searching via qBittorrent proxy", name)
+		s.logger.Tracef("clients: %s searching via qBittorrent proxy", name)
 		transport := &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: clientCfg.QbitTLSSkipVerify()},
 		}
@@ -340,7 +360,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		if host == "" {
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s qbit host is required", name)
 		}
-		s.logger.Debugf("clients: %s searching via qBittorrent WebAPI host=%s", name, host)
+		s.logger.Tracef("clients: %s searching via qBittorrent WebAPI host=%s", name, host)
 		qbitClient = qbittorrent.NewClient(qbittorrent.Config{
 			Host:          host,
 			Username:      strings.TrimSpace(clientCfg.QbitUsername()),
@@ -370,7 +390,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		}
 		torrents = items
 	}
-	s.logger.Debugf("clients: %s fetched %d torrents", name, len(torrents))
+	s.logger.Tracef("clients: %s fetched %d torrents", name, len(torrents))
 
 	if len(torrents) == 0 {
 		return api.ClientSearchResult{}, nil, nil
@@ -447,13 +467,13 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		matches = append(matches, match)
 	}
 
-	s.logger.Debugf("clients: %s name-matched %d of %d torrents", name, nameMatched, len(torrents))
+	s.logger.Tracef("clients: %s name-matched %d of %d torrents", name, nameMatched, len(torrents))
 
 	if len(matches) == 0 {
 		s.logger.Debugf("clients: %s no matching torrent names (checked %d)", name, len(torrents))
 		return api.ClientSearchResult{}, nil, nil
 	}
-	s.logger.Debugf("clients: %s matched %d torrents", name, len(matches))
+	s.logger.Tracef("clients: %s matched %d torrents", name, len(matches))
 
 	sortMatchingTorrents(matches, priorityOrder)
 
@@ -464,9 +484,10 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 	} else {
 		foundPreferred = "no_constraints"
 	}
-	s.logger.Debugf("clients: %s selected hash %s (preferred=%q)", name, bestMatch.Hash, foundPreferred)
+	s.logger.Tracef("clients: %s selected hash %s (preferred=%q)", name, bestMatch.Hash, foundPreferred)
 
 	trackerIDs := collectTrackerIDs(matches, priorityOrder)
+	matchedTrackers = ensureMatchedTrackersForKnownIDs(matchedTrackers, trackerIDs)
 
 	result := api.ClientSearchResult{
 		InfoHash:            "",
@@ -677,14 +698,6 @@ func extractTrackerMatches(comment string, trackerURLs []string, hasWorkingTrack
 
 	for _, url := range trackerURLs {
 		lowerURL := strings.ToLower(url)
-		if strings.Contains(lowerURL, "hawke.uno") && hasWorkingTracker {
-			re := regexp.MustCompile(`/torrents/(\d+)`)
-			match := re.FindStringSubmatch(comment)
-			if len(match) > 1 {
-				matches = append(matches, api.TrackerMatch{ID: "huno", TrackerID: match[1]})
-				trackerFound = true
-			}
-		}
 		if strings.Contains(lowerURL, "tracker.anthelion.me") {
 			if hasWorkingTracker {
 				matches = append(matches, api.TrackerMatch{ID: "ant", TrackerID: "1"})
@@ -699,9 +712,13 @@ func extractTrackerMatches(comment string, trackerURLs []string, hasWorkingTrack
 func matchTrackerURLs(trackerURLs []string) []string {
 	found := make(map[string]struct{})
 	for _, trackerURL := range trackerURLs {
-		for id, patterns := range trackerURLPatterns {
+		lowerURL := strings.ToLower(strings.TrimSpace(trackerURL))
+		if lowerURL == "" {
+			continue
+		}
+		for id, patterns := range lowerTrackerURLPatterns {
 			for _, pattern := range patterns {
-				if strings.Contains(trackerURL, pattern) {
+				if strings.Contains(lowerURL, pattern) {
 					found[strings.ToUpper(id)] = struct{}{}
 				}
 			}
@@ -791,8 +808,33 @@ func collectTrackerIDs(matches []api.TorrentMatch, priority []string) map[string
 	return trackerIDs
 }
 
+func ensureMatchedTrackersForKnownIDs(matchedTrackers []string, trackerIDs map[string]string) []string {
+	if len(trackerIDs) == 0 {
+		return matchedTrackers
+	}
+	resolved := append([]string{}, matchedTrackers...)
+	for tracker, id := range trackerIDs {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(tracker), "btn") && !hasMatchedTracker(resolved, "BTN") {
+			resolved = append(resolved, "BTN")
+		}
+	}
+	return resolved
+}
+
+func hasMatchedTracker(trackers []string, target string) bool {
+	for _, tracker := range trackers {
+		if strings.EqualFold(strings.TrimSpace(tracker), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
 func effectiveTrackerPriority(cfg config.Config) []string {
-	return applyPreferredTrackerPriority(trackerPriority, cfg.Trackers.PreferredTracker)
+	return applyPreferredTrackerPriority(trackers.TrackerPriority(), cfg.Trackers.PreferredTracker)
 }
 
 func applyPreferredTrackerPriority(priority []string, preferred string) []string {
@@ -1018,7 +1060,7 @@ func (s *Service) selectValidTorrent(
 			s.logger.Debugf("clients: exported torrent infohash mismatch for %s", normalizedHash)
 			continue
 		}
-		s.logger.Debugf("clients: validated exported torrent for %s (piece=%d)", normalizedHash, pieceSize)
+		s.logger.Tracef("clients: validated exported torrent for %s (piece=%d)", normalizedHash, pieceSize)
 
 		if shouldSelectPreferred(pieceSize, bestPiece, constraints) {
 			path, err := writeTorrentFile(outputPath, data)

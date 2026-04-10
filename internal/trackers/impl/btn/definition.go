@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -60,8 +61,8 @@ func validateBTNRequest(req trackers.UploadRequest) error {
 	if !strings.EqualFold(strings.TrimSpace(req.Meta.ExternalIDs.Category), "TV") && !strings.EqualFold(strings.TrimSpace(req.Meta.MediaInfoCategory), "TV") {
 		return errors.New("trackers: BTN only supports TV uploads")
 	}
-	if strings.TrimSpace(req.AppConfig.Metadata.BTNAPI) == "" {
-		return errors.New("trackers: BTN requires metadata.btn_api")
+	if strings.TrimSpace(config.ResolveBTNAPIToken(req.AppConfig)) == "" {
+		return errors.New("trackers: BTN requires trackers.BTN.api_key")
 	}
 	if strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "" {
 		return errors.New("trackers: BTN missing username/password")

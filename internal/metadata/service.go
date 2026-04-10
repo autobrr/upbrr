@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
@@ -588,7 +589,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 			dvdDetails.VOBSet = miResult.VOBSet
 			dvdDetails.MediaInfoJSON = meta.MediaInfoJSONPath
 			dvdDetails.MediaInfoText = meta.MediaInfoTextPath
-			dvdDetails.VOBMediaInfoRaw = firstNonEmpty(strings.TrimSpace(miResult.VOBText), strings.TrimSpace(miResult.VOBJSON))
+			dvdDetails.VOBMediaInfoRaw = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(miResult.VOBText), strings.TrimSpace(miResult.VOBJSON))
 			dvdDetails.UpdatedAt = time.Now().UTC()
 			if err := s.repo.SaveDVDMediaInfo(ctx, dvdDetails); err != nil {
 				return api.PreparedMetadata{}, fmt.Errorf("metadata: persist dvd mediainfo: %w", err)

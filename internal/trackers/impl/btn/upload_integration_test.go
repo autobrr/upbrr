@@ -126,7 +126,9 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 		},
 		AppConfig: config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
-			Metadata:     config.MetadataConfig{BTNAPI: strings.Repeat("x", 30)},
+			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+				"BTN": {APIKey: strings.Repeat("x", 30)},
+			}},
 		},
 	}
 
@@ -324,7 +326,9 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 		},
 		AppConfig: config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
-			Metadata:     config.MetadataConfig{BTNAPI: strings.Repeat("x", 30)},
+			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+				"BTN": {APIKey: strings.Repeat("x", 30)},
+			}},
 		},
 	}
 

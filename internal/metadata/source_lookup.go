@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -166,7 +167,7 @@ func extractTVDBIDFromQuery(host string, query url.Values) (int, bool) {
 }
 
 func extractUnit3DTrackerID(host string, path string) (string, string, bool) {
-	for _, tracker := range unit3dmeta.Trackers() {
+	for _, tracker := range trackers.Unit3DTrackers() {
 		baseURL, ok := unit3dmeta.BaseURL(tracker)
 		if !ok {
 			continue

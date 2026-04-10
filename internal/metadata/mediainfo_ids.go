@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -161,7 +162,7 @@ func parseMediaInfoText(path string) (*mediaInfoIDs, error) {
 				category, tmdbID := parseTMDBValue(value)
 				if tmdbID != 0 {
 					ids.TMDBID = tmdbID
-					ids.Category = firstNonEmpty(ids.Category, category)
+					ids.Category = metautil.FirstNonEmptyTrimmed(ids.Category, category)
 				}
 			}
 		case strings.HasPrefix(lower, "imdb"):
@@ -204,7 +205,7 @@ func parseMediaInfoExtra(extra map[string]interface{}) mediaInfoIDs {
 				category, tmdbID := parseTMDBValue(value)
 				if tmdbID != 0 {
 					ids.TMDBID = tmdbID
-					ids.Category = firstNonEmpty(ids.Category, category)
+					ids.Category = metautil.FirstNonEmptyTrimmed(ids.Category, category)
 				}
 			}
 		case strings.HasPrefix(lower, "imdb"):

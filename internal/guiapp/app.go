@@ -1165,6 +1165,9 @@ func (a *App) GetConfig() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
+		return "", err
+	}
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
 		cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
 	}
@@ -1212,6 +1215,9 @@ func (a *App) SaveConfig(payload string) error {
 
 	cfg, err := config.ImportFromJSON(payload)
 	if err != nil {
+		return err
+	}
+	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {

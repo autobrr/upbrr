@@ -17,7 +17,8 @@ import (
 
 	"github.com/moistari/rls"
 
-	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -41,7 +42,7 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 
 func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (Info, error) {
 	info := Info{}
-	id := normalizeIMDbID(imdbID)
+	id := metautil.NormalizeIMDbID(imdbID)
 	if id == "" {
 		return info, nil
 	}
@@ -190,7 +191,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 			}
 			info.Episodes = append(info.Episodes, Episode{
 				ID:          getStringFromMap(node, "id"),
-				Title:       firstNonEmpty(getStringFromMap(node, "titleText", "text"), "Unknown Title"),
+				Title:       metautil.FirstNonEmpty(getStringFromMap(node, "titleText", "text"), "Unknown Title"),
 				ReleaseYear: releaseYear,
 				ReleaseDate: releaseDate,
 				Season:      season,
@@ -251,7 +252,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 			if ep.ReleaseYear == 0 {
 				continue
 			}
-			if closest == 0 || absInt(ep.ReleaseYear-nowYear) < absInt(closest-nowYear) {
+			if closest == 0 || metautil.AbsInt(ep.ReleaseYear-nowYear) < metautil.AbsInt(closest-nowYear) {
 				closest = ep.ReleaseYear
 			}
 		}
@@ -259,7 +260,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 	}
 
 	if c.logger != nil {
-		c.logger.Infof("imdb: info loaded id=%s title=%q year=%d type=%s", id, info.Title, info.Year, info.Type)
+		c.logger.Tracef("imdb: info loaded id=%s title=%q year=%d type=%s", id, info.Title, info.Year, info.Type)
 	}
 
 	if debug && c.logger != nil {
@@ -318,12 +319,12 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		results = run(parsedTitle, searchYear, true)
 	}
 	if len(results) == 0 {
-		if reduced := reduceTitle(filename, 1); reduced != "" {
+		if reduced := metautil.ReduceTitle(filename, 1); reduced != "" {
 			results = run(reduced, searchYear, true)
 		}
 	}
 	if len(results) == 0 {
-		if reduced := reduceTitle(filename, 2); reduced != "" {
+		if reduced := metautil.ReduceTitle(filename, 2); reduced != "" {
 			results = run(reduced, searchYear, true)
 		}
 	}
@@ -343,7 +344,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 			if searchYear > 0 && year != 0 && year != searchYear {
 				return SearchResult{}, nil
 			}
-			imdbID = parseIMDbNumeric(id)
+			imdbID = metautil.ParseIMDbNumeric(id)
 		}
 		if imdbID != 0 {
 			if c.logger != nil {
@@ -355,7 +356,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	}
 
 	if len(results) == 1 {
-		imdbID = parseIMDbNumeric(getStringFromMap(results[0], "node", "title", "id"))
+		imdbID = metautil.ParseIMDbNumeric(getStringFromMap(results[0], "node", "title", "id"))
 		if imdbID != 0 {
 			if c.logger != nil {
 				c.logger.Infof("imdb: search auto-selected single result id=%d", imdbID)
@@ -402,9 +403,7 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	if base == "" {
 		return input
 	}
-	base = pathutil.Base(base)
-	release := rls.ParseString(base)
-	category := releaseCategory(release.Type.String())
+	release := metautil.ParseRelease(base)
 
 	mainTitle := release.Title
 	secondaryTitle := release.Alt
@@ -424,8 +423,8 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	if secondaryTitle != "" {
 		input.SecondaryTitle = secondaryTitle
 	}
-	if strings.TrimSpace(input.Category) == "" && category != "" {
-		input.Category = category
+	if strings.TrimSpace(input.Category) == "" && release.Category != "" {
+		input.Category = release.Category
 	}
 	if input.SearchYear == 0 && release.Year != 0 {
 		input.SearchYear = release.Year
@@ -436,19 +435,8 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	return input
 }
 
-func releaseCategory(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	switch {
-	case strings.Contains(value, "movie"):
-		return "MOVIE"
-	case value != "":
-		return "TV"
-	}
-	return ""
-}
-
 func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) (EpisodeLookup, error) {
-	id := normalizeIMDbID(imdbID)
+	id := metautil.NormalizeIMDbID(imdbID)
 	if id == "" {
 		return EpisodeLookup{}, nil
 	}
@@ -499,7 +487,7 @@ func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) 
 		c.logger.Debugf("imdb: episode lookup loaded for %s", id)
 	}
 	if c.logger != nil {
-		c.logger.Infof("imdb: episode lookup loaded id=%s series=%q season=%s episode=%s", id, lookup.Series.SeriesTitle, lookup.Series.SeasonText, lookup.Series.EpisodeText)
+		c.logger.Tracef("imdb: episode lookup loaded id=%s series=%q season=%s episode=%s", id, lookup.Series.SeriesTitle, lookup.Series.SeasonText, lookup.Series.EpisodeText)
 	}
 
 	return lookup, nil
@@ -597,10 +585,10 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 		title := getMapFromMap(node, "title")
 		text := getStringFromMap(title, "titleText", "text")
 		year := getIntFromMap(title, "releaseYear", "year")
-		imdbID := parseIMDbNumeric(getStringFromMap(title, "id"))
+		imdbID := metautil.ParseIMDbNumeric(getStringFromMap(title, "id"))
 		plot := getStringFromMap(title, "plot", "plotText", "plainText")
 		posterURL := getStringFromMap(title, "primaryImage", "url")
-		similarity := similarityRatio(filenameNorm, strings.ToLower(strings.TrimSpace(text)))
+		similarity := metautil.SimilarityRatio(filenameNorm, strings.ToLower(strings.TrimSpace(text)))
 		if similarity >= 0.99 && searchYearInt > 0 && year > 0 {
 			switch year {
 			case searchYearInt:
@@ -642,35 +630,6 @@ func typeMatches(category, titleType string) bool {
 	return !strings.Contains(titleType, "tv series")
 }
 
-func normalizeIMDbID(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || trimmed == "0" {
-		return ""
-	}
-	if strings.HasPrefix(trimmed, "tt") {
-		return trimmed
-	}
-	id, err := strconv.Atoi(trimmed)
-	if err != nil {
-		return trimmed
-	}
-	return fmt.Sprintf("tt%07d", id)
-}
-
-func parseIMDbNumeric(value string) int {
-	value = strings.TrimSpace(value)
-	value = strings.TrimPrefix(value, "tt")
-	value = strings.Trim(value, "/")
-	if value == "" {
-		return 0
-	}
-	id, err := strconv.Atoi(value)
-	if err != nil {
-		return 0
-	}
-	return id
-}
-
 func trimLeadingThe(value string) string {
 	fields := strings.Fields(value)
 	if len(fields) == 0 {
@@ -682,25 +641,6 @@ func trimLeadingThe(value string) string {
 	return ""
 }
 
-func reduceTitle(filename string, drop int) string {
-	words := strings.Fields(filename)
-	if len(words) <= drop {
-		return ""
-	}
-	extensions := map[string]struct{}{"mp4": {}, "mkv": {}, "avi": {}, "webm": {}, "mov": {}, "wmv": {}}
-	filtered := make([]string, 0, len(words))
-	for _, word := range words {
-		if _, ok := extensions[strings.ToLower(word)]; ok {
-			continue
-		}
-		filtered = append(filtered, word)
-	}
-	if len(filtered) <= drop {
-		return ""
-	}
-	return strings.Join(filtered[:len(filtered)-drop], " ")
-}
-
 func fallbackParsedTitle(untouched string) string {
 	trimmed := strings.TrimSpace(untouched)
 	if trimmed == "" {
@@ -708,55 +648,6 @@ func fallbackParsedTitle(untouched string) string {
 	}
 	release := rls.ParseString(trimmed)
 	return strings.TrimSpace(release.Title)
-}
-
-func similarityRatio(a, b string) float64 {
-	if a == "" || b == "" {
-		return 0
-	}
-	matches := float64(matchCount([]rune(a), []rune(b)))
-	if matches == 0 {
-		return 0
-	}
-	total := float64(len([]rune(a)) + len([]rune(b)))
-	return (2 * matches) / total
-}
-
-func matchCount(a, b []rune) int {
-	if len(a) == 0 || len(b) == 0 {
-		return 0
-	}
-	la, lb, length := longestCommonSubstring(a, b)
-	if length == 0 {
-		return 0
-	}
-	return length + matchCount(a[:la], b[:lb]) + matchCount(a[la+length:], b[lb+length:])
-}
-
-func longestCommonSubstring(a, b []rune) (int, int, int) {
-	longest := 0
-	endA := 0
-	endB := 0
-
-	matrix := make([][]int, len(a)+1)
-	for i := range matrix {
-		matrix[i] = make([]int, len(b)+1)
-	}
-
-	for i := 1; i <= len(a); i++ {
-		for j := 1; j <= len(b); j++ {
-			if a[i-1] == b[j-1] {
-				matrix[i][j] = matrix[i-1][j-1] + 1
-				if matrix[i][j] > longest {
-					longest = matrix[i][j]
-					endA = i
-					endB = j
-				}
-			}
-		}
-	}
-
-	return endA - longest, endB - longest, longest
 }
 
 func escapeGraphQLString(value string) string {
@@ -940,20 +831,4 @@ func toFloat(value any) float64 {
 		}
 	}
 	return 0
-}
-
-func absInt(value int) int {
-	if value < 0 {
-		return -value
-	}
-	return value
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

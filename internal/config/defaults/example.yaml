@@ -187,6 +187,13 @@ trackers:
     link_dir_name: ""
     announce_url: ""
     anon: false
+  BTN:
+    link_dir_name: ""
+    api_key: ""
+    username: ""
+    password: ""
+    url: "https://backup.landof.tv"
+    otp_uri: ""
   CBR:
     link_dir_name: ""
     api_key: ""
@@ -255,10 +262,6 @@ trackers:
     announce_url: ""
     full_mediainfo: false
   HHD:
-    link_dir_name: ""
-    api_key: ""
-    anon: false
-  HUNO:
     link_dir_name: ""
     api_key: ""
     anon: false

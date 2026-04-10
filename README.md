@@ -113,7 +113,7 @@ go run ./cmd/upbrr "D:\releases\Some.Release.2026.1080p.BluRay"
 Useful variants:
 
 ```bash
-go run ./cmd/upbrr --site-check --trackers BLU,HUNO "D:\releases\Some.Release"
+go run ./cmd/upbrr --site-check --trackers BLU,OE "D:\releases\Some.Release"
 go run ./cmd/upbrr --dry-run --trackers PTP,HDB "D:\releases\Some.Release"
 go run ./cmd/upbrr --upload-only "D:\releases\Some.Release"
 go run ./cmd/upbrr --queue "D:\upload-queue" --limit-queue 5
@@ -241,6 +241,12 @@ The Dockerfile builds both `upbrr` and `upbrr-gui` binaries and places them in t
 - The GUI and CLI share the same core services and config model
 - Tracker-specific code lives primarily under `internal/trackers/impl`
 - The repo currently includes generated and built assets in a few locations, so review changes carefully before committing
+
+## AI agent instructions
+
+This project uses [AGENTS.md](https://agents.md/) — an open standard for guiding AI coding agents. The root `AGENTS.md` file contains build commands, code style rules, testing instructions, and project conventions.
+
+Most modern AI coding tools support `AGENTS.md` natively or via simple configuration. Check your tool's official documentation to verify `AGENTS.md` support is active in your environment.
 
 ## License
 

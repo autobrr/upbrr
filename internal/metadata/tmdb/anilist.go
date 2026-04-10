@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 )
 
 const anilistURL = "https://graphql.anilist.co"
@@ -72,7 +74,7 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 			if clean == "" {
 				continue
 			}
-			score = maxFloat(score, similarityRatio(clean, searchName))
+			score = maxFloat(score, metautil.SimilarityRatio(clean, searchName))
 		}
 		if expectedSeason != 0 && seasonFromTitle == expectedSeason {
 			if score > bestSeasonScore {
@@ -85,8 +87,8 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 		}
 	}
 
-	result.Romaji = firstNonEmpty(best.Title.Romaji, best.Title.English)
-	result.English = firstNonEmpty(best.Title.English, best.Title.Romaji)
+	result.Romaji = metautil.FirstNonEmpty(best.Title.Romaji, best.Title.English)
+	result.English = metautil.FirstNonEmpty(best.Title.English, best.Title.Romaji)
 	result.MALID = best.IDMal
 	result.SeasonYear = best.SeasonYear
 	result.Episodes = best.Episodes

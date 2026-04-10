@@ -4,7 +4,12 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // TOTP interoperability requires SHA-1.
+	"encoding/base32"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,15 +26,22 @@ import (
 	"strings"
 	"time"
 
+	htmlnode "golang.org/x/net/html"
+
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/pathutil"
-	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const (
+	btnSiteBaseURL             = "https://broadcasthe.net"
+	btnBackupBaseURL           = "https://backup.landof.tv"
+	btnUserPath                = "/user.php"
+	btnLoginPath               = "/login.php"
 	btnClaimedShowsURL         = "https://broadcasthe.net/forums.php?action=viewthread&threadid=30793"
 	btnClaimedShowsPostID      = "post1405482"
-	btnClaimedShowsCacheTTL    = 24 * time.Hour
+	btnClaimedShowsCacheTTL    = 48 * time.Hour
 	btnClaimWindowBaseHours    = 48
 	btnClaimWindowDefaultGrace = 24
 )
@@ -54,12 +66,30 @@ type btnClaimedShowsCache struct {
 	Titles    []string `json:"titles"`
 }
 
-func (s *Service) hasBTNClaim(ctx context.Context, meta api.PreparedMetadata) (bool, error) {
+type btnTrackerClaimProvider struct{}
+
+func (btnTrackerClaimProvider) cachePath(dbPath string, tracker string) (string, error) {
+	return trackerClaimsPath(dbPath, tracker)
+}
+
+func (btnTrackerClaimProvider) cacheTTL() time.Duration {
+	return btnClaimedShowsCacheTTL
+}
+
+func (p btnTrackerClaimProvider) hasClaim(ctx context.Context, s *Service, tracker string, meta api.PreparedMetadata) (bool, error) {
 	if !isTVCategory(meta) {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims skipped for non-TV content")
+		}
 		return false, nil
 	}
 
-	claimedTitles, err := s.loadBTNClaimedTitles(ctx)
+	cachePath, err := p.cachePath(s.cfg.MainSettings.DBPath, tracker)
+	if err != nil {
+		return false, fmt.Errorf("metadata: BTN claims cache path: %w", err)
+	}
+
+	claimedTitles, err := s.loadBTNClaimedTitles(ctx, cachePath, p.cacheTTL())
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claim list unavailable: %v", err)
@@ -67,11 +97,20 @@ func (s *Service) hasBTNClaim(ctx context.Context, meta api.PreparedMetadata) (b
 		return false, nil
 	}
 	if len(claimedTitles) == 0 {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims loaded 0 titles")
+		}
 		return false, nil
+	}
+	if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims loaded %d titles", len(claimedTitles))
 	}
 
 	matched, matchedTitle := matchBTNClaimedTitle(meta, claimedTitles)
 	if !matched {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims found no title match for release=%q", meta.ReleaseName)
+		}
 		return false, nil
 	}
 
@@ -79,7 +118,7 @@ func (s *Service) hasBTNClaim(ctx context.Context, meta api.PreparedMetadata) (b
 	expired, thresholdHours, hoursSinceAir := btnClaimWindowExpired(meta, graceHours)
 	if expired {
 		if s.logger != nil {
-			s.logger.Infof("metadata: BTN claim window expired for %q (hours_since_air=%.2f threshold=%d)", matchedTitle, hoursSinceAir, thresholdHours)
+			s.logger.Debugf("metadata: BTN claim window expired for %q (hours_since_air=%.2f threshold=%d)", matchedTitle, hoursSinceAir, thresholdHours)
 		}
 		return false, nil
 	}
@@ -110,28 +149,48 @@ func (s *Service) btnClaimWindowGraceHours() int {
 	return parsed
 }
 
-func (s *Service) loadBTNClaimedTitles(ctx context.Context) (map[string]struct{}, error) {
-	cachePath, err := btnClaimedShowsCachePath(s.cfg.MainSettings.DBPath)
-	if err != nil {
-		return nil, fmt.Errorf("metadata: BTN claims cache path: %w", err)
+func (s *Service) loadBTNClaimedTitles(ctx context.Context, cachePath string, cacheTTL time.Duration) (map[string]struct{}, error) {
+	cached, fetchedAt, cacheErr := readBTNClaimedCache(cachePath)
+	if cacheErr != nil {
+		if s.logger != nil && !errors.Is(cacheErr, os.ErrNotExist) {
+			s.logger.Warnf("metadata: BTN claims cache read failed path=%s err=%v", cachePath, cacheErr)
+		}
+	} else if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims cache loaded path=%s titles=%d fetched_at=%d", cachePath, len(cached), fetchedAt)
 	}
-
-	cached, fetchedAt, _ := readBTNClaimedCache(cachePath)
-	if len(cached) > 0 && time.Since(time.Unix(fetchedAt, 0)) < btnClaimedShowsCacheTTL {
+	if len(cached) > 0 && time.Since(time.Unix(fetchedAt, 0)) < cacheTTL {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims cache hit path=%s age=%s ttl=%s", cachePath, time.Since(time.Unix(fetchedAt, 0)).Round(time.Second), cacheTTL)
+		}
 		return cached, nil
+	}
+	if s.logger != nil {
+		if len(cached) == 0 {
+			s.logger.Debugf("metadata: BTN claims cache miss path=%s", cachePath)
+		} else {
+			s.logger.Debugf("metadata: BTN claims cache stale path=%s age=%s ttl=%s", cachePath, time.Since(time.Unix(fetchedAt, 0)).Round(time.Second), cacheTTL)
+		}
 	}
 
 	fresh, fetchErr := s.fetchBTNClaimedTitles(ctx)
 	if fetchErr == nil && len(fresh) > 0 {
 		if err := writeBTNClaimedCache(cachePath, fresh); err != nil && s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims cache write failed: %v", err)
+		} else if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims cache saved path=%s titles=%d", cachePath, len(fresh))
 		}
 		return fresh, nil
+	}
+	if fetchErr == nil && len(fresh) == 0 && s.logger != nil {
+		s.logger.Warnf("metadata: BTN claims fetch succeeded but returned no titles")
 	}
 	if fetchErr != nil && s.logger != nil {
 		s.logger.Warnf("metadata: BTN claims fetch failed; falling back to cache: %v", fetchErr)
 	}
 	if len(cached) > 0 {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims using cached titles after fetch failure path=%s titles=%d", cachePath, len(cached))
+		}
 		return cached, nil
 	}
 	return nil, fetchErr
@@ -141,68 +200,333 @@ func (s *Service) fetchBTNClaimedTitles(ctx context.Context) (map[string]struct{
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
 
-	_ = s.loginBTNForClaims(ctx, client)
+	if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims fetch starting url=%s", btnClaimedShowsURL)
+	}
+	if err := s.loadBTNCookiesForClaims(client); err != nil {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims cookie load failed: %v", err)
+		}
+	} else if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims cookie load completed")
+	}
+	isLoggedIn, err := s.btnClaimsSessionValid(ctx, client)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims session validation failed: %v", err)
+		}
+	} else if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims session valid=%t", isLoggedIn)
+	}
+	if !isLoggedIn {
+		if err := s.loginBTNForClaims(ctx, client); err != nil {
+			if s.logger != nil {
+				s.logger.Warnf("metadata: BTN claims login failed: %v", err)
+			}
+			return nil, err
+		} else if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims login completed")
+		}
+	} else if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims login skipped; existing session is valid")
+	}
+	if !isLoggedIn && s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims continuing after login attempt")
+	}
+	mirrorBTNCookiesForClaimedThread(client)
+	if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims mirrored cookies for broadcasthe thread")
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, btnClaimedShowsURL, nil)
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims request build failed: %v", err)
+		}
 		return nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims fetch request failed: %v", err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims fetch returned status=%d", resp.StatusCode)
+		}
 		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims fetch returned status=%d", resp.StatusCode)
 	}
 
 	payload, err := ioReadAllLimit(resp, 1<<20)
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims response read failed: %v", err)
+		}
 		return nil, err
 	}
-	return extractBTNClaimedShows(string(payload)), nil
+	titles := extractBTNClaimedShows(string(payload))
+	if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims parsed %d titles from claimed thread", len(titles))
+	}
+	return titles, nil
 }
 
 func (s *Service) loginBTNForClaims(ctx context.Context, client *http.Client) error {
 	entry, ok := trackerConfigFor(s.cfg, "BTN")
 	if !ok {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims login skipped; tracker not configured")
+		}
 		return nil
 	}
-	baseURL := strings.TrimRight(strings.TrimSpace(entry.URL), "/")
-	if baseURL == "" {
-		baseURL = "https://backup.landof.tv"
-	}
+	baseURL := resolveBTNLoginBaseURL(entry)
 	username := strings.TrimSpace(entry.Username)
 	password := strings.TrimSpace(entry.Password)
 	if username == "" || password == "" {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims login skipped; missing username or password")
+		}
 		return nil
+	}
+	if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims login attempting with configured credentials")
 	}
 
 	values := map[string]string{
 		"username":   username,
 		"password":   password,
 		"keeplogged": "1",
+		"login":      "Log In!",
+	}
+	if code, err := resolveBTNClaims2FACode(strings.TrimSpace(entry.OTPURI)); err == nil && code != "" {
+		values["code"] = code
+	} else if err != nil && s.logger != nil {
+		s.logger.Warnf("metadata: BTN claims TOTP generation failed: %v", err)
 	}
 	encoded := encodeForm(values)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/login.php", strings.NewReader(encoded))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+btnLoginPath, strings.NewReader(encoded))
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims login request build failed: %v", err)
+		}
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "upbrr")
 	resp, err := client.Do(req)
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims login request failed: %v", err)
+		}
 		return err
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims login returned status=%d", resp.StatusCode)
+		}
 		return fmt.Errorf("login status %d", resp.StatusCode)
+	}
+	if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims login returned status=%d", resp.StatusCode)
+	}
+	if valid, err := s.btnClaimsSessionValid(ctx, client); err != nil {
+		if s.logger != nil {
+			s.logger.Warnf("metadata: BTN claims post-login validation failed: %v", err)
+		}
+		return err
+	} else if !valid {
+		return errors.New("BTN login failed to establish a valid session")
+	}
+	if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims login established a valid session; leaving cookie file unchanged")
 	}
 	return nil
 }
 
+func resolveBTNLoginBaseURL(entry config.TrackerConfig) string {
+	if baseURL := sanitizeBTNWebBaseURL(entry.URL); baseURL != "" {
+		return baseURL
+	}
+	if baseURL := sanitizeBTNWebBaseURL(entry.AnnounceURL); baseURL != "" {
+		return baseURL
+	}
+	if baseURL := sanitizeBTNWebBaseURL(entry.MyAnnounceURL); baseURL != "" {
+		return baseURL
+	}
+
+	return btnSiteBaseURL
+}
+
+func (s *Service) loadBTNCookiesForClaims(client *http.Client) error {
+	if client == nil || client.Jar == nil {
+		return nil
+	}
+
+	candidates := commonhttp.CookiePathCandidates(s.cfg.MainSettings.DBPath, "BTN", ".txt")
+	if len(candidates) == 0 {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims cookie load skipped; no cookie path candidates")
+		}
+		return nil
+	}
+
+	cookies, err := commonhttp.LoadNetscapeCookies(candidates[0], "")
+	if err != nil {
+		return err
+	}
+
+	if err := setBTNJarCookiesFromNetscape(client, btnSiteBaseURL, cookies); err != nil {
+		return err
+	}
+	if err := setBTNJarCookiesFromNetscape(client, btnBackupBaseURL, cookies); err != nil {
+		return err
+	}
+
+	if s.logger != nil {
+		s.logger.Debugf("metadata: BTN claims loaded %d cookies from file %s", len(cookies), candidates[0])
+	}
+	return nil
+}
+
+func setBTNJarCookiesFromNetscape(client *http.Client, rawURL string, values []*http.Cookie) error {
+	if client == nil || client.Jar == nil || len(values) == 0 {
+		return nil
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+
+	jarCookies := make([]*http.Cookie, 0, len(values))
+	for _, cookie := range values {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
+			continue
+		}
+		copied := *cookie
+		copied.Domain = parsed.Hostname()
+		if strings.TrimSpace(copied.Path) == "" {
+			copied.Path = "/"
+		}
+		jarCookies = append(jarCookies, &copied)
+	}
+	if len(jarCookies) == 0 {
+		return nil
+	}
+
+	client.Jar.SetCookies(parsed, jarCookies)
+	return nil
+}
+
+func (s *Service) btnClaimsSessionValid(ctx context.Context, client *http.Client) (bool, error) {
+	if client == nil {
+		return false, nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, btnSiteBaseURL+btnUserPath, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("User-Agent", "upbrr")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	finalURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	if strings.Contains(strings.ToLower(finalURL), strings.ToLower(btnLoginPath)) {
+		return false, nil
+	}
+	return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
+}
+
+func resolveBTNClaims2FACode(otpURI string) (string, error) {
+	trimmed := strings.TrimSpace(otpURI)
+	if trimmed == "" {
+		return "", errors.New("otp_uri not configured")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", err
+	}
+	secret := strings.TrimSpace(parsed.Query().Get("secret"))
+	if secret == "" {
+		return "", errors.New("otp_uri missing secret")
+	}
+	period := 30
+	if value := strings.TrimSpace(parsed.Query().Get("period")); value != "" {
+		if parsedValue, parseErr := strconv.Atoi(value); parseErr == nil && parsedValue > 0 {
+			period = parsedValue
+		}
+	}
+	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
+	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
+	if err != nil {
+		return "", err
+	}
+	counter := uint64(time.Now().Unix() / int64(period))
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, counter)
+	mac := hmac.New(sha1.New, secretBytes)
+	_, _ = mac.Write(buf)
+	hash := mac.Sum(nil)
+	offset := hash[len(hash)-1] & 0x0f
+	code := (int(hash[offset])&0x7f)<<24 | int(hash[offset+1])<<16 | int(hash[offset+2])<<8 | int(hash[offset+3])
+	return fmt.Sprintf("%06d", code%1000000), nil
+}
+
+func sanitizeBTNWebBaseURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	if parsed.Scheme == "" {
+		parsed.Scheme = "https"
+	}
+
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	switch host {
+	case "", "landof.tv":
+		return ""
+	case "broadcasthe.net", "www.broadcasthe.net":
+		host = "broadcasthe.net"
+	default:
+		return ""
+	}
+
+	lowerPath := strings.ToLower(strings.TrimSpace(parsed.Path))
+	if lowerPath != "" && lowerPath != "/" {
+		return ""
+	}
+
+	parsed.Host = host
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
+}
+
 func extractBTNClaimedShows(rawHTML string) map[string]struct{} {
-	normalized := btnLineBreakPattern.ReplaceAllString(rawHTML, "\n")
+	scopedHTML := extractBTNClaimedPostHTML(rawHTML)
+	normalized := btnLineBreakPattern.ReplaceAllString(scopedHTML, "\n")
 	normalized = btnTagPattern.ReplaceAllString(normalized, "")
 	normalized = html.UnescapeString(normalized)
 
@@ -237,6 +561,99 @@ func extractBTNClaimedShows(rawHTML string) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+func extractBTNClaimedPostHTML(rawHTML string) string {
+	if strings.TrimSpace(rawHTML) == "" {
+		return rawHTML
+	}
+
+	doc, err := htmlnode.Parse(strings.NewReader(rawHTML))
+	if err != nil {
+		return rawHTML
+	}
+
+	scope := findBTNHTMLNode(doc, func(node *htmlnode.Node) bool {
+		return node.Type == htmlnode.ElementNode && node.Data == "table" && btnHTMLNodeID(node) == btnClaimedShowsPostID
+	})
+	if scope == nil {
+		return rawHTML
+	}
+
+	content := findBTNHTMLNode(scope, func(node *htmlnode.Node) bool {
+		if node.Type != htmlnode.ElementNode || node.Data != "div" {
+			return false
+		}
+		if btnHTMLNodeID(node) == "content1405482" {
+			return true
+		}
+		return btnHTMLNodeHasClass(node, "postcontent")
+	})
+	if content != nil {
+		if rendered := renderBTNHTMLChildren(content); rendered != "" {
+			return rendered
+		}
+	}
+
+	if rendered := renderBTNHTMLChildren(scope); rendered != "" {
+		return rendered
+	}
+
+	return rawHTML
+}
+
+func findBTNHTMLNode(root *htmlnode.Node, match func(*htmlnode.Node) bool) *htmlnode.Node {
+	if root == nil {
+		return nil
+	}
+	if match(root) {
+		return root
+	}
+	for child := root.FirstChild; child != nil; child = child.NextSibling {
+		if found := findBTNHTMLNode(child, match); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func btnHTMLNodeID(node *htmlnode.Node) string {
+	return strings.TrimSpace(btnHTMLAttr(node, "id"))
+}
+
+func btnHTMLNodeHasClass(node *htmlnode.Node, className string) bool {
+	classes := strings.Fields(strings.TrimSpace(btnHTMLAttr(node, "class")))
+	for _, candidate := range classes {
+		if strings.EqualFold(candidate, className) {
+			return true
+		}
+	}
+	return false
+}
+
+func btnHTMLAttr(node *htmlnode.Node, key string) string {
+	if node == nil {
+		return ""
+	}
+	for _, attr := range node.Attr {
+		if strings.EqualFold(attr.Key, key) {
+			return attr.Val
+		}
+	}
+	return ""
+}
+
+func renderBTNHTMLChildren(node *htmlnode.Node) string {
+	if node == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if err := htmlnode.Render(&buf, child); err != nil {
+			return ""
+		}
+	}
+	return buf.String()
 }
 
 func matchBTNClaimedTitle(meta api.PreparedMetadata, claimed map[string]struct{}) (bool, string) {
@@ -390,6 +807,24 @@ func btnClaimWindowExpired(meta api.PreparedMetadata, graceHours int) (bool, int
 	return hoursSinceAir > float64(thresholdHours), thresholdHours, hoursSinceAir
 }
 
+func btnClaimFailureReason(meta api.PreparedMetadata, graceHours int) string {
+	expired, thresholdHours, hoursSinceAir := btnClaimWindowExpired(meta, graceHours)
+	if expired {
+		return "BTN claim window has expired"
+	}
+	if thresholdHours <= 0 {
+		return "BTN has an active claim for this release"
+	}
+	if hoursSinceAir <= 0 {
+		return fmt.Sprintf("BTN has an active claim for this release; up to %d hours remain in the claim window", thresholdHours)
+	}
+	hoursRemaining := int(float64(thresholdHours) - hoursSinceAir + 0.999999999)
+	if hoursRemaining < 1 {
+		hoursRemaining = 1
+	}
+	return fmt.Sprintf("BTN has an active claim for this release; approximately %d hours remain in the %d-hour claim window", hoursRemaining, thresholdHours)
+}
+
 func parseBTNTime(value string) (time.Time, bool) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -418,10 +853,6 @@ func parseBTNTime(value string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
-}
-
-func btnClaimedShowsCachePath(dbPath string) (string, error) {
-	return db.FileInSubdir(dbPath, "cache", filepath.Join("banned", "BTN_claimed_shows.json"))
 }
 
 func readBTNClaimedCache(path string) (map[string]struct{}, int64, error) {
@@ -479,6 +910,44 @@ func parseOptionalInt(value any) int {
 		}
 	}
 	return 0
+}
+
+func mirrorBTNCookiesForClaimedThread(client *http.Client) {
+	if client == nil || client.Jar == nil {
+		return
+	}
+
+	backupURL, backupErr := url.Parse("https://backup.landof.tv/")
+	broadcastURL, broadcastErr := url.Parse("https://broadcasthe.net/")
+	if backupErr != nil || broadcastErr != nil {
+		return
+	}
+
+	backupCookies := client.Jar.Cookies(backupURL)
+	if len(backupCookies) == 0 {
+		return
+	}
+
+	mirrored := make([]*http.Cookie, 0, len(backupCookies)*2)
+	for _, cookie := range backupCookies {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
+			continue
+		}
+		copied := *cookie
+		copied.Domain = "broadcasthe.net"
+		if copied.Path == "" {
+			copied.Path = "/"
+		}
+		mirrored = append(mirrored, &copied)
+
+		dotted := copied
+		dotted.Domain = ".broadcasthe.net"
+		mirrored = append(mirrored, &dotted)
+	}
+	if len(mirrored) == 0 {
+		return
+	}
+	client.Jar.SetCookies(broadcastURL, mirrored)
 }
 
 func encodeForm(values map[string]string) string {

@@ -49,3 +49,39 @@ func TestLoadConfigDisablesUnsupportedTrackerImageRehostFromDatabase(t *testing.
 		t.Fatal("expected unsupported TL img_rehost to be disabled during GUI config load")
 	}
 }
+
+func TestLoadConfigFromDatabaseBackfillsMissingTrackerDefaults(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	if err := repo.Migrate(); err != nil {
+		_ = repo.Close()
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		_ = repo.Close()
+		t.Fatalf("load embedded config: %v", err)
+	}
+	cfg.MainSettings.DBPath = dbPath
+	delete(cfg.Trackers.Trackers, "BTN")
+
+	if err := config.SaveToDatabase(context.Background(), cfg, repo); err != nil {
+		_ = repo.Close()
+		t.Fatalf("save config: %v", err)
+	}
+	_ = repo.Close()
+
+	loaded, err := loadConfigFromDatabase(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("load config from database: %v", err)
+	}
+	if _, ok := loaded.Trackers.Trackers["BTN"]; !ok {
+		t.Fatal("expected BTN tracker to be backfilled during GUI config load")
+	}
+}

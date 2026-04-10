@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -105,7 +106,7 @@ func extractDVDMediaInfo(meta api.PreparedMetadata) api.DVDMediaInfo {
 
 	width := trackNumericInt(videoTrack, "Width")
 	height := trackNumericInt(videoTrack, "Height")
-	mediaInfoText := firstNonEmpty(strings.TrimSpace(meta.DVDVOBMediaInfoText), readFileIfExists(meta.MediaInfoTextPath))
+	mediaInfoText := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readFileIfExists(meta.MediaInfoTextPath))
 	if (width == 0 || height == 0) && mediaInfoText != "" {
 		if width == 0 {
 			width = regexInt(widthRegex, mediaInfoText)

@@ -248,7 +248,7 @@ func FilterDupes(dupes []api.DupeEntry, meta api.PreparedMetadata, tracker strin
 			return false
 		}
 
-		if len(dupes) == 1 && !strings.EqualFold(meta.DiscType, "BDMV") && (tracker == "AITHER" || tracker == "BHD" || tracker == "HUNO" || tracker == "OE" || tracker == "ULCX") && fileSize > 0 && strings.Contains(targetResolution, "1080") && strings.Contains(videoEncode, "x264") {
+		if len(dupes) == 1 && !strings.EqualFold(meta.DiscType, "BDMV") && (tracker == "AITHER" || tracker == "BHD" || tracker == "OE" || tracker == "ULCX") && fileSize > 0 && strings.Contains(targetResolution, "1080") && strings.Contains(videoEncode, "x264") {
 			if entry.SizeKnown && entry.SizeBytes > 0 {
 				sizeDiff := float64(fileSize-entry.SizeBytes) / float64(entry.SizeBytes)
 				if sizeDiff >= 0.20 {

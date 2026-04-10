@@ -647,17 +647,16 @@ type TorrentClientConfig struct {
 }
 
 var trackerImageRehostValidationHosts = map[string][]string{
-	"A4K":  {"ptpimg", "onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg"},
-	"BHD":  {"ptpimg", "imgbox", "imgbb", "pixhost", "bhd", "bam"},
-	"DC":   {"imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex"},
-	"GPW":  {"kshare", "pixhost", "ptpimg", "pterclub", "ilikeshots", "imgbox"},
-	"HDB":  {"hdb"},
-	"HUNO": {"ptpimg", "imgbox", "imgbb", "pixhost", "bam"},
-	"MTV":  {"ptpimg", "imgbox", "imgbb"},
-	"OE":   {"ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
-	"PTP":  {"ptpimg", "pixhost"},
-	"STC":  {"imgbox", "imgbb"},
-	"TVC":  {"imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage"},
+	"A4K": {"ptpimg", "onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg"},
+	"BHD": {"ptpimg", "imgbox", "imgbb", "pixhost", "bhd", "bam"},
+	"DC":  {"imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex"},
+	"GPW": {"kshare", "pixhost", "ptpimg", "pterclub", "ilikeshots", "imgbox"},
+	"HDB": {"hdb"},
+	"MTV": {"ptpimg", "imgbox", "imgbb"},
+	"OE":  {"ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
+	"PTP": {"ptpimg", "pixhost"},
+	"STC": {"imgbox", "imgbb"},
+	"TVC": {"imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage"},
 }
 
 func (c Config) Validate() error {
@@ -740,6 +739,52 @@ func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
 		disabled = append(disabled, trackerName)
 	}
 	return disabled
+}
+
+func ResolveBTNAPIToken(cfg Config) string {
+	if trackerCfg, ok := cfg.Trackers.Trackers["BTN"]; ok {
+		token := strings.TrimSpace(trackerCfg.APIKey)
+		if token != "" {
+			return token
+		}
+	}
+	token := strings.TrimSpace(cfg.Metadata.BTNAPI)
+	return token
+}
+
+// MergeMissingTrackerDefaults backfills tracker stubs from the embedded example
+// config so older saved configs can discover newly added trackers in the GUI.
+func MergeMissingTrackerDefaults(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.Trackers.Trackers == nil {
+		cfg.Trackers.Trackers = map[string]TrackerConfig{}
+	}
+	if cfg.Trackers.DefaultTrackers == nil {
+		cfg.Trackers.DefaultTrackers = CSVList{}
+	}
+	defaults, err := loadEmbeddedDefaultConfigRaw()
+	if err != nil || defaults == nil || len(defaults.Trackers.Trackers) == 0 {
+		if err != nil {
+			return fmt.Errorf("load embedded tracker defaults: %w", err)
+		}
+		return errors.New("load embedded tracker defaults: embedded default trackers missing")
+	}
+	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
+		if _, ok := cfg.Trackers.Trackers[trackerName]; ok {
+			continue
+		}
+		cfg.Trackers.Trackers[trackerName] = trackerCfg
+	}
+	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" {
+		btnCfg := cfg.Trackers.Trackers["BTN"]
+		if strings.TrimSpace(btnCfg.APIKey) == "" {
+			btnCfg.APIKey = token
+			cfg.Trackers.Trackers["BTN"] = btnCfg
+		}
+	}
+	return nil
 }
 
 func (c TorrentClientConfig) QbitHost() string {

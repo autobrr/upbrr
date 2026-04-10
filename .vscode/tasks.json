@@ -1,0 +1,117 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-cli",
+      "type": "shell",
+      "command": "go",
+      "args": ["build", "-o", "dist/upbrr", "./cmd/upbrr"],
+      "windows": {
+        "args": ["build", "-o", "dist/upbrr.exe", "./cmd/upbrr"]
+      },
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "build-gui",
+      "type": "shell",
+      "command": "go",
+      "args": [
+        "run",
+        "github.com/wailsapp/wails/v2/cmd/wails@v2.10.1",
+        "build"
+      ],
+      "options": { "cwd": "${workspaceFolder}/gui" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "frontend-install",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["install", "--frozen-lockfile"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "frontend-build",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "build"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "dependsOn": ["frontend-install"],
+      "problemMatcher": []
+    },
+    {
+      "label": "frontend-dev",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "dev"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "lint-go",
+      "type": "shell",
+      "command": "golangci-lint",
+      "args": ["run", "--timeout=5m"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "logpolicy",
+      "type": "shell",
+      "command": "go",
+      "args": ["run", "./cmd/logpolicy"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": {
+        "owner": "go",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        }
+      }
+    },
+    {
+      "label": "lint-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "group": "test",
+      "problemMatcher": ["$eslint-stylish"]
+    },
+    {
+      "label": "typecheck-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "typecheck"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "group": "test",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "test-go",
+      "type": "shell",
+      "command": "go",
+      "args": ["test", "-v", "-timeout", "20m", "./..."],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "build-all",
+      "dependsOn": ["build-cli", "build-gui"],
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}

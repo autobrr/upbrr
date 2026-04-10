@@ -17,9 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moistari/rls"
-
-	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -57,7 +55,7 @@ func NormalizeTitle(title string) string {
 }
 
 func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindResult, error) {
-	imdbID := normalizeIMDbID(input.IMDbID)
+	imdbID := metautil.NormalizeIMDbID(input.IMDbID)
 	filenameSearch := false
 
 	info, _ := c.findByExternal(ctx, imdbID, "imdb_id")
@@ -150,7 +148,7 @@ func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindRes
 
 	secondary := ""
 	if imdbInfo != nil {
-		secondary = firstNonEmpty(imdbInfo.OriginalTitle, imdbInfo.LocalizedTitle)
+		secondary = metautil.FirstNonEmpty(imdbInfo.OriginalTitle, imdbInfo.LocalizedTitle)
 	}
 
 	category := strings.ToUpper(strings.TrimSpace(input.CategoryPreference))
@@ -230,7 +228,7 @@ func (c *Client) SearchID(ctx context.Context, input SearchInput) (SearchOutcome
 		}
 	}
 
-	reduced := reduceTitle(input.Filename, 1)
+	reduced := metautil.ReduceTitle(input.Filename, 1)
 	if reduced != "" && reduced != input.Filename {
 		candidate := input
 		candidate.Filename = reduced
@@ -239,7 +237,7 @@ func (c *Client) SearchID(ctx context.Context, input SearchInput) (SearchOutcome
 		}
 	}
 
-	further := reduceTitle(input.Filename, 2)
+	further := metautil.ReduceTitle(input.Filename, 2)
 	if further != "" && further != input.Filename {
 		candidate := input
 		candidate.Filename = further
@@ -256,9 +254,7 @@ func applyReleaseHints(input FindInput) FindInput {
 	if base == "" {
 		return input
 	}
-	base = pathutil.Base(base)
-	release := rls.ParseString(base)
-	category := releaseCategory(release.Type.String())
+	release := metautil.ParseRelease(base)
 	_ = strings.TrimSpace(input.CategoryPreference)
 
 	mainTitle := release.Title
@@ -276,8 +272,8 @@ func applyReleaseHints(input FindInput) FindInput {
 	if mainTitle != "" {
 		input.Filename = mainTitle
 	}
-	if strings.TrimSpace(input.CategoryPreference) == "" && category != "" {
-		input.CategoryPreference = category
+	if strings.TrimSpace(input.CategoryPreference) == "" && release.Category != "" {
+		input.CategoryPreference = release.Category
 	}
 	if input.SearchYear == 0 && release.Year != 0 {
 		input.SearchYear = release.Year
@@ -299,10 +295,8 @@ func applySearchHints(input SearchInput) SearchInput {
 	if base == "" {
 		return input
 	}
-	base = pathutil.Base(base)
-	release := rls.ParseString(base)
-	category := releaseCategory(release.Type.String())
-	derivedCategory := strings.TrimSpace(input.Category) == "" && category != ""
+	release := metautil.ParseRelease(base)
+	derivedCategory := strings.TrimSpace(input.Category) == "" && release.Category != ""
 
 	mainTitle := release.Title
 	secondaryTitle := release.Alt
@@ -322,27 +316,16 @@ func applySearchHints(input SearchInput) SearchInput {
 	if secondaryTitle != "" {
 		input.SecondaryTitle = secondaryTitle
 	}
-	if strings.TrimSpace(input.Category) == "" && category != "" {
-		input.Category = category
+	if strings.TrimSpace(input.Category) == "" && release.Category != "" {
+		input.Category = release.Category
 	}
-	if derivedCategory && category == "TV" {
+	if derivedCategory && release.Category == "TV" {
 		input.DontSwitch = true
 	}
 	if input.SearchYear == 0 && release.Year != 0 {
 		input.SearchYear = release.Year
 	}
 	return input
-}
-
-func releaseCategory(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	switch {
-	case strings.Contains(value, "movie"):
-		return "MOVIE"
-	case value != "":
-		return "TV"
-	}
-	return ""
 }
 
 func (c *Client) searchTMDb(ctx context.Context, input SearchInput, category string) SearchOutcome {
@@ -378,7 +361,7 @@ func selectCandidates(ctx context.Context, c *Client, items []SearchItem, input 
 	if input.SearchYear > 0 {
 		filtered := make([]SearchItem, 0, len(items))
 		for _, item := range items {
-			if year := resultYear(item); year != 0 && absInt(year-input.SearchYear) <= 2 {
+			if year := resultYear(item); year != 0 && metautil.AbsInt(year-input.SearchYear) <= 2 {
 				filtered = append(filtered, item)
 			}
 		}
@@ -427,8 +410,8 @@ func selectCandidates(ctx context.Context, c *Client, items []SearchItem, input 
 	for _, item := range limited {
 		title := NormalizeTitle(resultTitle(item))
 		orig := NormalizeTitle(resultOriginalTitle(item))
-		mainSimilarity := similarityRatio(filenameNorm, title)
-		origSimilarity := similarityRatio(filenameNorm, orig)
+		mainSimilarity := metautil.SimilarityRatio(filenameNorm, title)
+		origSimilarity := metautil.SimilarityRatio(filenameNorm, orig)
 		translatedTitle := ""
 		translatedSimilarity := 0.0
 		secondaryBest := 0.0
@@ -436,16 +419,16 @@ func selectCandidates(ctx context.Context, c *Client, items []SearchItem, input 
 		if orig != "" && orig != title {
 			if translated, _ := c.GetTranslations(ctx, item.ID, input.Category, "en"); translated != "" {
 				translatedTitle = NormalizeTitle(translated)
-				translatedSimilarity = similarityRatio(filenameNorm, translatedTitle)
+				translatedSimilarity = metautil.SimilarityRatio(filenameNorm, translatedTitle)
 			}
 		}
 
 		if secondaryNorm != "" {
-			secondaryMain := similarityRatio(secondaryNorm, title)
-			secondaryOrig := similarityRatio(secondaryNorm, orig)
+			secondaryMain := metautil.SimilarityRatio(secondaryNorm, title)
+			secondaryOrig := metautil.SimilarityRatio(secondaryNorm, orig)
 			secondaryTrans := 0.0
 			if translatedTitle != "" {
-				secondaryTrans = similarityRatio(secondaryNorm, translatedTitle)
+				secondaryTrans = metautil.SimilarityRatio(secondaryNorm, translatedTitle)
 			}
 			secondaryBest = maxFloat(secondaryMain, secondaryOrig, secondaryTrans)
 		}
@@ -532,7 +515,7 @@ func (c *Client) GetTranslations(ctx context.Context, tmdbID int, category, targ
 	}
 	for _, translation := range resp.Translations {
 		if translation.ISO6391 == targetLanguage {
-			return firstNonEmpty(translation.Data.Title, translation.Data.Name), nil
+			return metautil.FirstNonEmpty(translation.Data.Title, translation.Data.Name), nil
 		}
 	}
 	return "", nil
@@ -623,40 +606,6 @@ func resultYear(item SearchItem) int {
 	return value
 }
 
-func normalizeIMDbID(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || trimmed == "0" {
-		return ""
-	}
-	if strings.HasPrefix(trimmed, "tt") {
-		return trimmed
-	}
-	id, err := strconv.Atoi(trimmed)
-	if err != nil {
-		return trimmed
-	}
-	return fmt.Sprintf("tt%07d", id)
-}
-
-func reduceTitle(filename string, drop int) string {
-	words := strings.Fields(filename)
-	if len(words) <= drop {
-		return ""
-	}
-	extensions := map[string]struct{}{"mp4": {}, "mkv": {}, "avi": {}, "webm": {}, "mov": {}, "wmv": {}}
-	filtered := make([]string, 0, len(words))
-	for _, word := range words {
-		if _, ok := extensions[strings.ToLower(word)]; ok {
-			continue
-		}
-		filtered = append(filtered, word)
-	}
-	if len(filtered) <= drop {
-		return ""
-	}
-	return strings.Join(filtered[:len(filtered)-drop], " ")
-}
-
 func convertRomanNumerals(title string) string {
 	roman := map[string]string{
 		"II": "2", "III": "3", "IV": "4", "V": "5", "VI": "6", "VII": "7", "VIII": "8", "IX": "9", "X": "10",
@@ -689,55 +638,6 @@ func blendSimilarity(main, original, translated, secondary float64) float64 {
 	return (main * 0.5) + (secondary * 0.5)
 }
 
-func similarityRatio(a, b string) float64 {
-	if a == "" || b == "" {
-		return 0
-	}
-	matches := float64(matchCount([]rune(a), []rune(b)))
-	if matches == 0 {
-		return 0
-	}
-	total := float64(len([]rune(a)) + len([]rune(b)))
-	return (2 * matches) / total
-}
-
-func matchCount(a, b []rune) int {
-	if len(a) == 0 || len(b) == 0 {
-		return 0
-	}
-	la, lb, length := longestCommonSubstring(a, b)
-	if length == 0 {
-		return 0
-	}
-	return length + matchCount(a[:la], b[:lb]) + matchCount(a[la+length:], b[lb+length:])
-}
-
-func longestCommonSubstring(a, b []rune) (int, int, int) {
-	longest := 0
-	endA := 0
-	endB := 0
-
-	matrix := make([][]int, len(a)+1)
-	for i := range matrix {
-		matrix[i] = make([]int, len(b)+1)
-	}
-
-	for i := 1; i <= len(a); i++ {
-		for j := 1; j <= len(b); j++ {
-			if a[i-1] == b[j-1] {
-				matrix[i][j] = matrix[i-1][j-1] + 1
-				if matrix[i][j] > longest {
-					longest = matrix[i][j]
-					endA = i
-					endB = j
-				}
-			}
-		}
-	}
-
-	return endA - longest, endB - longest, longest
-}
-
 func candidateFromItem(item SearchItem, similarity float64) Candidate {
 	return Candidate{
 		TMDBID:        item.ID,
@@ -748,13 +648,6 @@ func candidateFromItem(item SearchItem, similarity float64) Candidate {
 		PosterPath:    item.PosterPath,
 		Similarity:    similarity,
 	}
-}
-
-func absInt(value int) int {
-	if value < 0 {
-		return -value
-	}
-	return value
 }
 
 func maxFloat(values ...float64) float64 {
@@ -769,13 +662,4 @@ func maxFloat(values ...float64) float64 {
 
 func floatClose(value, target, tolerance float64) bool {
 	return math.Abs(value-target) <= tolerance
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

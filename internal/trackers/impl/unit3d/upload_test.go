@@ -522,17 +522,6 @@ func TestResolveUnit3DResolutionIDForTrackerBLU(t *testing.T) {
 	}
 }
 
-func TestResolveUnit3DTypeIDForTrackerHUNO(t *testing.T) {
-	meta := api.PreparedMetadata{Type: "WEBDL", VideoEncode: "x265"}
-	got, err := resolveUnit3DTypeIDForTracker("HUNO", meta)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if got != "15" {
-		t.Fatalf("expected HUNO x265 web type_id=15, got %q", got)
-	}
-}
-
 func TestResolveUnit3DTypeIDForTrackerITTFromName(t *testing.T) {
 	meta := api.PreparedMetadata{ReleaseName: "Movie.2025.1080p.DLMux-GRP", Type: "WEBDL"}
 	got, err := resolveUnit3DTypeIDForTracker("ITT", meta)

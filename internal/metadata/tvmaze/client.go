@@ -14,9 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moistari/rls"
-
-	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -46,7 +44,7 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
 	input = applyReleaseHints(input)
-	imdbID := normalizeIMDbID(input.ImdbID)
+	imdbID := metautil.ParseIMDbNumeric(input.ImdbID)
 	tvdbID := normalizeTVDBID(input.TVDBID)
 
 	if input.ManualID != 0 {
@@ -93,7 +91,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 	candidates := dedupeCandidates(results)
 	selectedID, selectedIMDB, selectedTVDB := selectCandidate(candidates, imdbID, tvdbID, input.ManualDate)
 	if c.logger != nil && selectedID != 0 {
-		c.logger.Infof("tvmaze: search selected id=%d imdb=%d tvdb=%d candidates=%d", selectedID, selectedIMDB, selectedTVDB, len(candidates))
+		c.logger.Tracef("tvmaze: search selected id=%d imdb=%d tvdb=%d candidates=%d", selectedID, selectedIMDB, selectedTVDB, len(candidates))
 	}
 
 	return SearchResult{
@@ -110,8 +108,7 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	if base == "" {
 		return input
 	}
-	base = pathutil.Base(base)
-	release := rls.ParseString(base)
+	release := metautil.ParseRelease(base)
 
 	mainTitle := release.Title
 	if mainTitle == "" {
@@ -145,7 +142,7 @@ func (c *Client) GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episo
 	}
 	data := c.buildEpisodeData(ctx, episodeResp)
 	if c.logger != nil && data != nil {
-		c.logger.Infof("tvmaze: episode lookup id=%d season=%d episode=%d series=%q", tvmazeID, data.SeasonNumber, data.EpisodeNumber, data.SeriesName)
+		c.logger.Tracef("tvmaze: episode lookup id=%d season=%d episode=%d series=%q", tvmazeID, data.SeasonNumber, data.EpisodeNumber, data.SeriesName)
 	}
 	return data, nil
 }
@@ -167,7 +164,7 @@ func (c *Client) GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate str
 	}
 	data := c.buildEpisodeData(ctx, episodes[0])
 	if c.logger != nil && data != nil {
-		c.logger.Infof("tvmaze: episode lookup id=%d airdate=%s series=%q", tvmazeID, data.AirDate, data.SeriesName)
+		c.logger.Tracef("tvmaze: episode lookup id=%d airdate=%s series=%q", tvmazeID, data.AirDate, data.SeriesName)
 	}
 	return data, nil
 }
@@ -197,7 +194,7 @@ func (c *Client) buildEpisodeData(ctx context.Context, episode episodeResponse) 
 		}
 	}
 
-	seriesName := firstNonEmpty(show.Name, episode.Links.Show.Name)
+	seriesName := metautil.FirstNonEmpty(show.Name, episode.Links.Show.Name)
 	if seriesName == "" {
 		seriesName = showName
 	}
@@ -329,7 +326,7 @@ func candidateFromShow(show showResponse) Candidate {
 		Logo:      strings.TrimSpace(show.WebChannel.Image.Original),
 		LogoSmall: strings.TrimSpace(show.WebChannel.Image.Medium),
 	}
-	country := firstNonEmpty(network.Country, webChannel.Country)
+	country := metautil.FirstNonEmpty(network.Country, webChannel.Country)
 	return Candidate{
 		ID:             show.ID,
 		Name:           strings.TrimSpace(show.Name),
@@ -363,19 +360,6 @@ func candidateFromShow(show showResponse) Candidate {
 	}
 }
 
-func normalizeIMDbID(value string) int {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || trimmed == "0" {
-		return 0
-	}
-	trimmed = strings.TrimPrefix(trimmed, "tt")
-	id, err := strconv.Atoi(trimmed)
-	if err != nil {
-		return 0
-	}
-	return id
-}
-
 func normalizeTVDBID(value string) int {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || trimmed == "0" {
@@ -401,15 +385,6 @@ func cleanSummary(value string) string {
 	trimmed = strings.ReplaceAll(trimmed, "<p>", "")
 	trimmed = strings.ReplaceAll(trimmed, "</p>", "")
 	return strings.TrimSpace(trimmed)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 type searchResponse struct {
