@@ -223,7 +223,6 @@ The app can:
 - load defaults from the embedded example config
 - apply environment overrides at runtime without persisting them to the database
 - export the current database-backed config back to YAML
-- disable unsupported tracker image rehosts on import and surface warnings for anything that was sanitized
 
 ## Packaging and distribution
 

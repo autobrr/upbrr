@@ -4,6 +4,7 @@
 package legacy
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -285,5 +286,34 @@ func TestParseEmptyList(t *testing.T) {
 	list := val.([]any)
 	if len(list) != 0 {
 		t.Errorf("expected empty list, got %v", list)
+	}
+}
+
+func TestParseDepthLimit(t *testing.T) {
+	// Build a deeply nested list that exceeds maxParseDepth.
+	var sb strings.Builder
+	for i := 0; i <= maxParseDepth; i++ {
+		sb.WriteByte('[')
+	}
+	sb.WriteString("1")
+	for i := 0; i <= maxParseDepth; i++ {
+		sb.WriteByte(']')
+	}
+	p := newParser(sb.String())
+	_, err := p.parseValue()
+	if err == nil {
+		t.Fatal("expected depth-limit error")
+	}
+	if !strings.Contains(err.Error(), "nesting depth") {
+		t.Fatalf("expected nesting depth error, got %v", err)
+	}
+}
+
+func TestExtractConfigDictIgnoresStringLiteral(t *testing.T) {
+	// `config = {` appears mid-line inside a string assignment — should be ignored.
+	input := "data = 'config = {\"DEFAULT\": {}}'\nconfig = {\"DEFAULT\": {}}"
+	_, err := extractConfigDict(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

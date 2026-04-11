@@ -68,7 +68,9 @@ func ParseLegacyConfig(data []byte) (*LegacyConfig, error) {
 }
 
 // extractConfigDict finds the `config = { ... }` assignment in the source and
-// returns the dict literal portion starting from `{`.
+// returns the dict literal portion starting from `{`. The match requires
+// `config` to appear at the start of a line (after optional whitespace) to
+// avoid false positives inside string literals or comments.
 func extractConfigDict(src string) (string, error) {
 	idx := 0
 	for idx < len(src) {
@@ -78,14 +80,17 @@ func extractConfigDict(src string) (string, error) {
 		}
 		pos += idx
 
-		// Ensure `config` is not part of a larger identifier.
+		// Require that `config` is at line start (after optional whitespace).
 		if pos > 0 {
-			r, _ := utf8.DecodeLastRuneInString(src[:pos])
-			if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
+			lineStart := strings.LastIndex(src[:pos], "\n")
+			prefix := src[lineStart+1 : pos]
+			if strings.TrimLeft(prefix, " \t") != "" {
 				idx = pos + len("config")
 				continue
 			}
 		}
+
+		// Ensure `config` is not part of a larger identifier.
 		after := pos + len("config")
 		if after < len(src) {
 			r, _ := utf8.DecodeRuneInString(src[after:])
@@ -134,11 +139,16 @@ func skipWhitespaceAndComments(src string) string {
 	return src[i:]
 }
 
+// maxParseDepth limits how deeply nested structures may be to guard against
+// stack exhaustion from crafted inputs.
+const maxParseDepth = 64
+
 // parser is a minimal recursive-descent parser for Python dict/list/scalar
 // literals.
 type parser struct {
-	src string
-	pos int
+	src   string
+	pos   int
+	depth int
 }
 
 func newParser(src string) *parser {
@@ -183,6 +193,12 @@ func (p *parser) expect(ch byte) error {
 }
 
 func (p *parser) parseValue() (any, error) {
+	p.depth++
+	defer func() { p.depth-- }()
+	if p.depth > maxParseDepth {
+		return nil, fmt.Errorf("nesting depth exceeds %d", maxParseDepth)
+	}
+
 	ch, ok := p.peek()
 	if !ok {
 		return nil, errors.New("unexpected end of input")

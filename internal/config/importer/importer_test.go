@@ -32,7 +32,9 @@ func TestImportFromContentYAMLOverlaysDefaults(t *testing.T) {
 }
 
 func TestImportFromContentJSONOverlaysDefaults(t *testing.T) {
-	// JSON marshals use Go field names (no json tags are set on Config).
+	// The export path (ExportToJSON) uses json.MarshalIndent which emits
+	// Go field names because the config structs carry no json tags. The
+	// import side now uses json.Unmarshal so the round-trip is symmetric.
 	json := []byte(`{"MainSettings":{"TMDBAPI":"json-key"}}`)
 
 	cfg, _, err := ImportFromContent("config.json", json)

@@ -493,7 +493,9 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, configImportMaxBytes)
+		// Allow extra headroom for JSON wrapping (FileName, escaping)
+		// beyond the raw file-content limit enforced by the importer.
+		r.Body = http.MaxBytesReader(w, r.Body, configImportMaxBytes+1024*1024)
 		var req struct {
 			FileName    string
 			FileContent string

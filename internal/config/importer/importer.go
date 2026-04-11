@@ -95,6 +95,12 @@ func parseNative(filename string, data []byte) (*config.Config, []string, error)
 			return nil, nil, fmt.Errorf("import config: unmarshal yaml: %w", err)
 		}
 	case ".json":
+		// The export path (ExportToJSON) uses json.MarshalIndent, which
+		// uses Go field names because the config structs have no json
+		// tags. We must use json.Unmarshal here so the round-trip is
+		// symmetric — yaml.Unmarshal would look for yaml tag names
+		// (e.g. "tmdb_api") which do not match the exported keys
+		// (e.g. "TMDBAPI").
 		if err := json.Unmarshal(data, cfg); err != nil {
 			return nil, nil, fmt.Errorf("import config: unmarshal json: %w", err)
 		}
