@@ -12,6 +12,7 @@ dist/
 /config/*.yml
 /config.converted.yaml
 /config.converted.yml
+/config-export.yaml
 .claude/settings.local.json
 .claude/CLAUDE.local.md
 CLAUDE.local.md
