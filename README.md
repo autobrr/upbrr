@@ -20,7 +20,8 @@ The project handles the full preparation pipeline around an upload candidate: me
 
 ## Key capabilities
 
-- Import configuration from YAML and persist it to SQLite
+- Import configuration from YAML, JSON, or a legacy Upload Assistant `config.py` and persist it to SQLite
+- Export the current SQLite-backed config back to YAML
 - Launch a desktop GUI with `--gui` or `./gui`
 - Run uploads from the CLI against one or more paths
 - Process queue roots instead of single paths
@@ -84,9 +85,10 @@ Typical first-run options:
 - start the program once and let it create a new blank/default config state automatically
 - if a `config.yaml` already exists in the same directory as the database, the app will automatically import it into the SQLite config store on startup
 - use the embedded defaults and save changes through the GUI
-- pass `--config path/to/config.yaml` to import a YAML file
+- pass `--config path/to/config.yaml` to load a YAML file as the active config at startup
+- import a config file into the SQLite store without starting the app: `--import-config path/to/config.{yaml,yml,json,py}` (legacy Upload Assistant `config.py` files are parsed natively)
+- import the same formats through the GUI or web UI from the Settings page
 - export the current SQLite-backed config with `--export-config path/to/config.yaml`
-- convert an older Upload Assistant `config.py` with `python scripts/convert_ua_config.py path/to/config.py -o config.yaml` and then import or use that YAML
 
 Important: `main_settings.tmdb_api` must be set before the core can run normally.
 
@@ -217,10 +219,11 @@ Configuration is centered around `internal/config.Config` and includes:
 
 The app can:
 
-- import YAML into the SQLite-backed config store
+- import YAML, JSON, or a legacy Upload Assistant `config.py` into the SQLite-backed config store (via `--import-config` or the Settings page in the GUI and web UI)
 - load defaults from the embedded example config
-- apply environment overrides
+- apply environment overrides at runtime without persisting them to the database
 - export the current database-backed config back to YAML
+- disable unsupported tracker image rehosts on import and surface warnings for anything that was sanitized
 
 ## Packaging and distribution
 
