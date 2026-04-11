@@ -73,8 +73,8 @@ func TestCoerceToIntTruncation(t *testing.T) {
 	t.Parallel()
 
 	cases := map[float64]int{
-		1.9:  1,
-		-1.9: -1,
+		1.9:   1,
+		-1.9:  -1,
 		0.999: 0,
 	}
 	for in, want := range cases {

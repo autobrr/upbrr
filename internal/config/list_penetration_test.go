@@ -23,14 +23,14 @@ func TestCSVListFromScalar(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string][]string{
-		"items: A, B, C":               {"A", "B", "C"},
-		"items: \" A , B , C \"":       {"A", "B", "C"},
-		"items: single":                {"single"},
-		"items: \"\"":                  {},
-		"items: ' , , '":               {},
-		"items: A,,B":                  {"A", "B"},
-		"items: 'A,B'":                 {"A", "B"},
-		"items: |\n  A,\n  B":          {"A", "B"}, // literal block scalar
+		"items: A, B, C":                {"A", "B", "C"},
+		"items: \" A , B , C \"":        {"A", "B", "C"},
+		"items: single":                 {"single"},
+		"items: \"\"":                   {},
+		"items: ' , , '":                {},
+		"items: A,,B":                   {"A", "B"},
+		"items: 'A,B'":                  {"A", "B"},
+		"items: |\n  A,\n  B":           {"A", "B"}, // literal block scalar
 		"items: \"日本, Deutsch, ASCII\"": {"日本", "Deutsch", "ASCII"},
 	}
 	for input, want := range cases {

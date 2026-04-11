@@ -129,13 +129,13 @@ func TestParserScalarNumericBoundaries(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]any{
-		`0`:         0,
-		`-1`:        -1,
+		`0`:          0,
+		`-1`:         -1,
 		`2147483647`: 2147483647, // max int32
-		`0.0`:       0.0,
-		`-3.14`:     -3.14,
-		`1e10`:      1e10,
-		`.5`:        0.5,
+		`0.0`:        0.0,
+		`-3.14`:      -3.14,
+		`1e10`:       1e10,
+		`.5`:         0.5,
 	}
 	for src, want := range cases {
 		p := newParser(src)
