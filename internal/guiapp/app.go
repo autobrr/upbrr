@@ -1243,6 +1243,17 @@ func (a *App) SaveConfig(payload string) error {
 	return a.applyConfig(*cfg)
 }
 
+// isDialogCancelledErr reports whether err is the result of the user closing a
+// native Wails file dialog. On Windows, cancelling SaveFileDialog/OpenFileDialog
+// surfaces as a non-nil error containing "shellItem is nil" rather than an
+// empty path; treat that case the same as a normal cancel.
+func isDialogCancelledErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "shellItem is nil")
+}
+
 func (a *App) ExportConfig() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
@@ -1261,6 +1272,9 @@ func (a *App) ExportConfig() (string, error) {
 			{DisplayName: "YAML files", Pattern: "*.yaml;*.yml"},
 		},
 	})
+	if isDialogCancelledErr(err) {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -1308,6 +1322,9 @@ func (a *App) ImportConfig() (ImportResult, error) {
 			{DisplayName: "All files", Pattern: "*.*"},
 		},
 	})
+	if isDialogCancelledErr(err) {
+		return ImportResult{}, nil
+	}
 	if err != nil {
 		return ImportResult{}, err
 	}

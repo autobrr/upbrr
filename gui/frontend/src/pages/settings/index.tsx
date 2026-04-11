@@ -33,6 +33,9 @@ type Props = {
   loadSettings: () => void;
   handleExportSettings: () => void;
   handleImportConfig: () => void;
+  importConfirmOpen: boolean;
+  handleImportConfigConfirm: () => void;
+  handleImportConfigCancel: () => void;
   handleSaveSettings: () => void;
   renderImageHostingSection: () => JSX.Element | null;
   renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
@@ -65,6 +68,9 @@ export default function SettingsPage(props: Props) {
     loadSettings,
     handleExportSettings,
     handleImportConfig,
+    importConfirmOpen,
+    handleImportConfigConfirm,
+    handleImportConfigCancel,
     handleSaveSettings,
     renderImageHostingSection,
     renderTrackerSection,
@@ -234,6 +240,68 @@ export default function SettingsPage(props: Props) {
         {settingsSaved ? <p className="settings-saved">{settingsSaved}</p> : null}
         {settingsError ? <p className="error">{settingsError}</p> : null}
       </section>
+
+      {importConfirmOpen ? (
+        <div
+          className="import-confirm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="import-confirm-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) handleImportConfigCancel();
+          }}
+        >
+          <div className="import-confirm-dialog">
+            <div className="import-confirm-dialog__icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <path d="M12 3 1.5 21h21L12 3Z" fill="currentColor" opacity=".12" />
+                <path d="M12 3 1.5 21h21L12 3Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                <path d="M12 10v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <circle cx="12" cy="18" r="1" fill="currentColor" />
+              </svg>
+            </div>
+            <div className="import-confirm-dialog__body">
+              <h2 id="import-confirm-title" className="import-confirm-dialog__title">
+                Replace current configuration?
+              </h2>
+              <p className="import-confirm-dialog__message">
+                Importing a configuration file will overwrite your current settings in the database.
+                This action cannot be undone.
+              </p>
+              <p className="import-confirm-dialog__hint">
+                We strongly recommend exporting your current configuration first so you can restore it
+                if the imported file isn&apos;t what you expected.
+              </p>
+            </div>
+            <div className="import-confirm-dialog__actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={handleImportConfigCancel}
+                disabled={settingsImporting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={handleExportSettings}
+                disabled={settingsExporting || settingsImporting}
+              >
+                {settingsExporting ? "Exporting..." : "Export current config"}
+              </button>
+              <button
+                type="button"
+                className="primary import-confirm-dialog__confirm"
+                onClick={handleImportConfigConfirm}
+                disabled={settingsImporting}
+              >
+                {settingsImporting ? "Importing..." : "Choose file & import"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

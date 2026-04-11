@@ -403,6 +403,7 @@ export default function App() {
   const [finalDragIndex, setFinalDragIndex] = useState<number | null>(null);
   const [settingsExporting, setSettingsExporting] = useState(false);
   const [settingsImporting, setSettingsImporting] = useState(false);
+  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
   const [configOpStatus, setConfigOpStatus] = useState<{
     type: "success" | "error" | "warning";
     title: string;
@@ -2652,11 +2653,21 @@ export default function App() {
     }
   };
 
-  const handleImportConfig = async () => {
+  const handleImportConfigRequest = () => {
     clearSettingsStatus();
     dismissConfigOpStatus();
+    setImportConfirmOpen(true);
+  };
+
+  const handleImportConfigCancel = () => {
+    if (settingsImporting) return;
+    setImportConfirmOpen(false);
+  };
+
+  const handleImportConfigConfirm = async () => {
     const importConfig = globalThis.go?.guiapp?.App?.ImportConfig;
     if (!importConfig) {
+      setImportConfirmOpen(false);
       showConfigOpStatus({ type: "error", title: "Import Failed", message: "Config import is unavailable in this build." });
       return;
     }
@@ -2679,6 +2690,7 @@ export default function App() {
       showConfigOpStatus({ type: "error", title: "Import Failed", message: String(err) });
     } finally {
       setSettingsImporting(false);
+      setImportConfirmOpen(false);
     }
   };
 
@@ -2827,7 +2839,10 @@ export default function App() {
               setSettingsAdvanced={setSettingsAdvanced}
               loadSettings={loadSettings}
               handleExportSettings={handleExportSettings}
-              handleImportConfig={handleImportConfig}
+              handleImportConfig={handleImportConfigRequest}
+              importConfirmOpen={importConfirmOpen}
+              handleImportConfigConfirm={handleImportConfigConfirm}
+              handleImportConfigCancel={handleImportConfigCancel}
               handleSaveSettings={handleSaveSettings}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}
