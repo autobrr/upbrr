@@ -706,6 +706,10 @@ func importConfig(ctx context.Context, importPath, configPath string, configProv
 		return fmt.Errorf("save imported config: %w", err)
 	}
 
-	fmt.Printf("imported config from %s (%d warnings)\n", importPath, len(warnings))
+	if len(warnings) > 0 {
+		fmt.Printf("imported config from %s (%d warnings)\n", importPath, len(warnings))
+	} else {
+		fmt.Printf("imported config from %s\n", importPath)
+	}
 	return nil
 }

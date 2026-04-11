@@ -2624,6 +2624,12 @@ export default function App() {
     setConfigOpStatus(null);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (configOpTimerRef.current) clearTimeout(configOpTimerRef.current);
+    };
+  }, []);
+
   const handleExportSettings = async () => {
     clearSettingsStatus();
     dismissConfigOpStatus();

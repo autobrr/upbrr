@@ -161,7 +161,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             input.addEventListener("cancel", () => resolve({ name: "", content: "" }));
             input.click();
           });
-          if (!fileData.content) return { message: "", warnings: [] };
+          if (!fileData.name) return { message: "", warnings: [] };
           const resp = await call<{ result: string; warnings: string[] }>("ImportConfig", { FileName: fileData.name, FileContent: fileData.content });
           return { message: resp.result, warnings: resp.warnings ?? [] };
         },
