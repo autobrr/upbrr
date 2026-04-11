@@ -1,10 +1,18 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ConfigMap, ConfigValue, FieldMeta } from "../../types";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
+
+type ConfigOpStatus = {
+  type: "success" | "error" | "warning";
+  title: string;
+  message: string;
+  warnings?: string[];
+} | null;
 
 type Props = {
   configData: ConfigMap | null;
@@ -14,6 +22,8 @@ type Props = {
   settingsDirty: boolean;
   settingsSaved: string;
   settingsError: string;
+  configOpStatus: ConfigOpStatus;
+  dismissConfigOpStatus: () => void;
   settingsSection: string;
   settingsSections: SettingsSection[];
   showAdvancedToggle: boolean;
@@ -44,6 +54,8 @@ export default function SettingsPage(props: Props) {
     settingsDirty,
     settingsSaved,
     settingsError,
+    configOpStatus,
+    dismissConfigOpStatus,
     settingsSection,
     settingsSections,
     showAdvancedToggle,
@@ -60,6 +72,8 @@ export default function SettingsPage(props: Props) {
     renderField,
     sectionFieldMeta
   } = props;
+
+  const [warningsExpanded, setWarningsExpanded] = useState(false);
 
   return (
     <div className="content-stack">
@@ -109,6 +123,45 @@ export default function SettingsPage(props: Props) {
             </button>
           </div>
         </div>
+
+        {configOpStatus ? (
+          <div className={`config-status-banner config-status-banner--${configOpStatus.type}`}>
+            <div className="config-status-banner__icon">
+              {configOpStatus.type === "success" ? (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="currentColor" opacity=".15"/><path d="M6.5 10.5 8.5 12.5 13.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5"/></svg>
+              ) : configOpStatus.type === "warning" ? (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="currentColor" opacity=".15"/><path d="M10 7v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="10" cy="13.5" r=".75" fill="currentColor"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5"/></svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="currentColor" opacity=".15"/><path d="M12.5 7.5 7.5 12.5M7.5 7.5l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5"/></svg>
+              )}
+            </div>
+            <div className="config-status-banner__body">
+              <p className="config-status-banner__title">{configOpStatus.title}</p>
+              <p className="config-status-banner__message">{configOpStatus.message}</p>
+              {configOpStatus.warnings && configOpStatus.warnings.length > 0 ? (
+                <div className="config-status-banner__warnings">
+                  <button
+                    type="button"
+                    className="config-status-banner__toggle"
+                    onClick={() => setWarningsExpanded((prev) => !prev)}
+                  >
+                    {warningsExpanded ? "Hide" : "Show"} {configOpStatus.warnings.length} warning{configOpStatus.warnings.length !== 1 ? "s" : ""}
+                  </button>
+                  {warningsExpanded ? (
+                    <ul className="config-status-banner__warning-list">
+                      {configOpStatus.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            <button type="button" className="config-status-banner__dismiss" onClick={dismissConfigOpStatus} aria-label="Dismiss">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10.5 3.5 3.5 10.5M3.5 3.5l7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            </button>
+          </div>
+        ) : null}
 
         <div className="settings-shell">
           <div className="settings-tags">

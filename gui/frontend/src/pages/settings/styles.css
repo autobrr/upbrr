@@ -361,6 +361,142 @@
   color: var(--success);
 }
 
+/* Config operation status banner */
+
+.config-status-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 12px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid;
+  animation: configBannerIn 0.25s ease-out;
+}
+
+@keyframes configBannerIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.config-status-banner--success {
+  border-color: rgba(52, 211, 153, 0.3);
+  background: rgba(52, 211, 153, 0.08);
+  color: var(--success);
+}
+
+.config-status-banner--error {
+  border-color: rgba(255, 107, 107, 0.3);
+  background: rgba(255, 107, 107, 0.08);
+  color: var(--danger);
+}
+
+.config-status-banner--warning {
+  border-color: rgba(245, 185, 66, 0.3);
+  background: rgba(245, 185, 66, 0.08);
+  color: var(--accent);
+}
+
+:root.light .config-status-banner--success {
+  border-color: rgba(5, 150, 105, 0.25);
+  background: rgba(5, 150, 105, 0.06);
+}
+
+:root.light .config-status-banner--error {
+  border-color: rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+:root.light .config-status-banner--warning {
+  border-color: rgba(217, 119, 6, 0.25);
+  background: rgba(217, 119, 6, 0.06);
+}
+
+.config-status-banner__icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.config-status-banner__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-status-banner__title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.config-status-banner__message {
+  font-size: 0.88rem;
+  color: var(--text);
+  margin: 0;
+  opacity: 0.85;
+  word-break: break-word;
+}
+
+.config-status-banner__warnings {
+  margin-top: 4px;
+}
+
+.config-status-banner__toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  opacity: 0.8;
+}
+
+.config-status-banner__toggle:hover {
+  opacity: 1;
+}
+
+.config-status-banner__warning-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.84rem;
+  color: var(--text);
+  opacity: 0.8;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.config-status-banner__warning-list li {
+  word-break: break-word;
+}
+
+.config-status-banner__dismiss {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.5;
+  border-radius: 6px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.config-status-banner__dismiss:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:root.light .config-status-banner__dismiss:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
 @media (max-width: 960px) {
   .settings-shell {
     grid-template-columns: 1fr;
