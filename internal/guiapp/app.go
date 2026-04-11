@@ -20,6 +20,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/config/importer"
+	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guishared"
@@ -51,7 +52,7 @@ type App struct {
 }
 
 func NewApp(configPath string, configProvided bool) (*App, error) {
-	cfg, dbPath, err := loadConfig(configPath, configProvided)
+	cfg, dbPath, err := configstore.Bootstrap(context.Background(), configPath, configProvided, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1316,7 +1317,7 @@ func (a *App) ImportConfig() (ImportResult, error) {
 
 	cfg, warnings, err := importer.ImportFromFile(path)
 	if err != nil {
-		return ImportResult{}, fmt.Errorf("import config: %w", err)
+		return ImportResult{}, err
 	}
 
 	cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
@@ -1333,6 +1334,7 @@ func (a *App) ImportConfig() (ImportResult, error) {
 		return ImportResult{}, err
 	}
 
+	config.ApplyEnvOverrides(cfg)
 	if err := a.applyConfig(*cfg); err != nil {
 		return ImportResult{}, err
 	}
@@ -1345,31 +1347,19 @@ func (a *App) ImportConfig() (ImportResult, error) {
 }
 
 func (a *App) applyConfig(cfg config.Config) error {
-	newLogger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
+	rt, err := guishared.BuildRuntime(cfg)
 	if err != nil {
-		return err
-	}
-
-	newCore, err := core.New(api.CoreDependencies{
-		Config: cfg,
-		Logger: newLogger,
-		Services: api.ServiceSet{
-			Filesystem: filesystem.NewValidator(),
-		},
-	})
-	if err != nil {
-		_ = newLogger.Close()
 		return err
 	}
 
 	oldCore := a.core
 	oldLogger := a.logger
 
-	a.core = newCore
+	a.core = rt.Core
 	a.coreInitErr = nil
-	a.logger = newLogger
+	a.logger = rt.Logger
 	a.cfg = cfg
-	a.rebindLogStreams(oldLogger, newLogger)
+	a.rebindLogStreams(oldLogger, rt.Logger)
 
 	if oldCore != nil {
 		_ = oldCore.Close()

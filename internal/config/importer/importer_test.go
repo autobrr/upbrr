@@ -125,12 +125,34 @@ func TestImportFromFileRejectsOversize(t *testing.T) {
 	}
 }
 
+func TestImportFromContentDisablesUnsupportedImageRehost(t *testing.T) {
+	yaml := []byte("trackers:\n  trackers:\n    TL:\n      img_rehost: true\n")
+
+	cfg, warnings, err := ImportFromContent("config.yaml", yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Trackers.Trackers["TL"].ImgRehost {
+		t.Fatal("expected TL img_rehost to be disabled during import")
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "TL") && strings.Contains(w, "img_rehost") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning about TL img_rehost, got %v", warnings)
+	}
+}
+
 func TestIsPythonFile(t *testing.T) {
 	cases := map[string]bool{
-		"config.py":  true,
-		"config.PY":  true,
-		"config.yaml": false,
-		"config":     false,
+		"config.py":     true,
+		"config.PY":     true,
+		"config.yaml":   false,
+		"config":        false,
 		"config.py.bak": false,
 	}
 	for name, want := range cases {

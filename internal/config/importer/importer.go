@@ -37,7 +37,7 @@ func ImportFromFile(path string) (*config.Config, []string, error) {
 	}
 
 	if isPythonFile(path) {
-		return legacy.ImportFromFile(path)
+		return finalize(legacy.ImportFromFile(path))
 	}
 
 	data, err := os.ReadFile(path)
@@ -45,7 +45,7 @@ func ImportFromFile(path string) (*config.Config, []string, error) {
 		return nil, nil, fmt.Errorf("import config: read file: %w", err)
 	}
 
-	return parseNative(filepath.Base(path), data)
+	return finalize(parseNative(filepath.Base(path), data))
 }
 
 // ImportFromContent parses raw file content. The filename is used only to
@@ -56,10 +56,26 @@ func ImportFromContent(filename string, data []byte) (*config.Config, []string, 
 	}
 
 	if isPythonFile(filename) {
-		return legacy.ImportFromContent(data)
+		return finalize(legacy.ImportFromContent(data))
 	}
 
-	return parseNative(filename, data)
+	return finalize(parseNative(filename, data))
+}
+
+// finalize applies sanitization that should happen on every import regardless
+// of source format: disabling image rehosts for trackers that do not support
+// them. Disabled trackers are appended to the warning list so users see why
+// their setting changed.
+func finalize(cfg *config.Config, warnings []string, err error) (*config.Config, []string, error) {
+	if err != nil {
+		return nil, nil, err
+	}
+	if disabled := config.DisableUnsupportedTrackerImageRehosts(cfg); len(disabled) > 0 {
+		for _, name := range disabled {
+			warnings = append(warnings, "disabled unsupported img_rehost for tracker: "+name)
+		}
+	}
+	return cfg, warnings, nil
 }
 
 // parseNative handles .yaml/.yml/.json exports by overlaying the user's data

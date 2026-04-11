@@ -748,7 +748,7 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 
 	cfg, warnings, err := importer.ImportFromContent(fileName, []byte(fileContent))
 	if err != nil {
-		return "", nil, fmt.Errorf("import config: %w", err)
+		return "", nil, err
 	}
 
 	cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
@@ -761,6 +761,7 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 		return "", nil, err
 	}
 
+	config.ApplyEnvOverrides(cfg)
 	if err := b.applyConfig(*cfg); err != nil {
 		return "", nil, err
 	}
@@ -969,26 +970,15 @@ func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
 }
 
 func (b *Backend) applyConfig(cfg config.Config) error {
-	newLogger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
+	rt, err := guishared.BuildRuntime(cfg)
 	if err != nil {
-		return err
-	}
-	newCore, err := core.New(api.CoreDependencies{
-		Config: cfg,
-		Logger: newLogger,
-		Services: api.ServiceSet{
-			Filesystem: filesystem.NewValidator(),
-		},
-	})
-	if err != nil {
-		_ = newLogger.Close()
 		return err
 	}
 	oldCore := b.core
 	oldLogger := b.logger
-	b.core = newCore
+	b.core = rt.Core
 	b.coreInitErr = nil
-	b.logger = newLogger
+	b.logger = rt.Logger
 	b.cfg = cfg
 	if oldCore != nil {
 		_ = oldCore.Close()
