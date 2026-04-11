@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/config/legacy"
+	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -119,9 +119,9 @@ func run() error {
 		return nil
 	}
 
-	if strings.TrimSpace(opts.ImportLegacyPath) != "" {
+	if strings.TrimSpace(opts.ImportConfigPath) != "" {
 		ctx := context.Background()
-		if err := importLegacyConfig(ctx, opts.ImportLegacyPath, opts.ConfigPath, configFlagProvided); err != nil {
+		if err := importConfig(ctx, opts.ImportConfigPath, opts.ConfigPath, configFlagProvided); err != nil {
 			return exitError(1, err)
 		}
 		return nil
@@ -894,10 +894,10 @@ func formatDuration(seconds float64) string {
 	return fmt.Sprintf("%ds", s)
 }
 
-func importLegacyConfig(ctx context.Context, legacyPath, configPath string, configProvided bool) error {
-	cfg, warnings, err := legacy.ImportFromFile(legacyPath)
+func importConfig(ctx context.Context, importPath, configPath string, configProvided bool) error {
+	cfg, warnings, err := importer.ImportFromFile(importPath)
 	if err != nil {
-		return fmt.Errorf("import legacy config: %w", err)
+		return fmt.Errorf("import config: %w", err)
 	}
 
 	for _, w := range warnings {
@@ -920,6 +920,6 @@ func importLegacyConfig(ctx context.Context, legacyPath, configPath string, conf
 		return fmt.Errorf("save imported config: %w", err)
 	}
 
-	fmt.Printf("imported legacy config from %s (%d warnings)\n", legacyPath, len(warnings))
+	fmt.Printf("imported config from %s (%d warnings)\n", importPath, len(warnings))
 	return nil
 }

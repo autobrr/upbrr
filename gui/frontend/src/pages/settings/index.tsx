@@ -10,6 +10,7 @@ type Props = {
   configData: ConfigMap | null;
   settingsLoading: boolean;
   settingsExporting: boolean;
+  settingsImporting: boolean;
   settingsDirty: boolean;
   settingsSaved: string;
   settingsError: string;
@@ -21,7 +22,7 @@ type Props = {
   setSettingsAdvanced: Dispatch<SetStateAction<Record<string, boolean>>>;
   loadSettings: () => void;
   handleExportSettings: () => void;
-  handleImportLegacy: () => void;
+  handleImportConfig: () => void;
   handleSaveSettings: () => void;
   renderImageHostingSection: () => JSX.Element | null;
   renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
@@ -39,6 +40,7 @@ export default function SettingsPage(props: Props) {
     configData,
     settingsLoading,
     settingsExporting,
+    settingsImporting,
     settingsDirty,
     settingsSaved,
     settingsError,
@@ -50,7 +52,7 @@ export default function SettingsPage(props: Props) {
     setSettingsAdvanced,
     loadSettings,
     handleExportSettings,
-    handleImportLegacy,
+    handleImportConfig,
     handleSaveSettings,
     renderImageHostingSection,
     renderTrackerSection,
@@ -85,23 +87,23 @@ export default function SettingsPage(props: Props) {
               className="ghost"
               type="button"
               onClick={handleExportSettings}
-              disabled={settingsLoading || settingsExporting}
+              disabled={settingsLoading || settingsExporting || settingsImporting}
             >
               {settingsExporting ? "Exporting..." : "Export"}
             </button>
             <button
               className="ghost"
               type="button"
-              onClick={handleImportLegacy}
-              disabled={settingsLoading || settingsExporting}
+              onClick={handleImportConfig}
+              disabled={settingsLoading || settingsExporting || settingsImporting}
             >
-              Import Legacy
+              {settingsImporting ? "Importing..." : "Import"}
             </button>
             <button
               className="primary"
               type="button"
               onClick={handleSaveSettings}
-              disabled={settingsLoading || settingsExporting || !settingsDirty}
+              disabled={settingsLoading || settingsExporting || settingsImporting || !settingsDirty}
             >
               Save
             </button>

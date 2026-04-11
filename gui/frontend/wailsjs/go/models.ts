@@ -2264,21 +2264,7 @@ export namespace api {
 }
 
 export namespace guiapp {
-
-	export class LegacyImportResult {
-	    message: string;
-	    warnings: string[];
-
-	    static createFrom(source: any = {}) {
-	        return new LegacyImportResult(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.message = source["message"];
-	        this.warnings = source["warnings"];
-	    }
-	}
+	
 	export class DupeCheckTrackerState {
 	    tracker: string;
 	    status: string;
@@ -2368,6 +2354,20 @@ export namespace guiapp {
 		}
 	}
 	
+	export class ImportResult {
+	    message: string;
+	    warnings: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.message = source["message"];
+	        this.warnings = source["warnings"];
+	    }
+	}
 	export class TrackerUploadTrackerState {
 	    tracker: string;
 	    status: string;

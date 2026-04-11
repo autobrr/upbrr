@@ -213,7 +213,7 @@ declare global {
             GetDefaultConfig: () => Promise<string>;
             SaveConfig: (payload: string) => Promise<void>;
             ExportConfig: () => Promise<string>;
-            ImportLegacyConfig: () => Promise<{ message: string; warnings: string[] }>;
+            ImportConfig: () => Promise<{ message: string; warnings: string[] }>;
             GetLogPath: () => Promise<string>;
             GetRecentLogs: (limit: number) => Promise<any[]>;
             StartLogStream: () => Promise<string>;
@@ -402,6 +402,7 @@ export default function App() {
   const [liveCaptureLoading, setLiveCaptureLoading] = useState(false);
   const [finalDragIndex, setFinalDragIndex] = useState<number | null>(null);
   const [settingsExporting, setSettingsExporting] = useState(false);
+  const [settingsImporting, setSettingsImporting] = useState(false);
 
   const {
     configData,
@@ -2624,17 +2625,17 @@ export default function App() {
     }
   };
 
-  const handleImportLegacy = async () => {
+  const handleImportConfig = async () => {
     clearSettingsStatus();
-    const importLegacy = globalThis.go?.guiapp?.App?.ImportLegacyConfig;
-    if (!importLegacy) {
-      setSettingsErrorMessage("Legacy config import is unavailable in this build.");
+    const importConfig = globalThis.go?.guiapp?.App?.ImportConfig;
+    if (!importConfig) {
+      setSettingsErrorMessage("Config import is unavailable in this build.");
       return;
     }
 
-    setSettingsExporting(true);
+    setSettingsImporting(true);
     try {
-      const result = await importLegacy();
+      const result = await importConfig();
       const message = (result?.message ?? "").trim();
       if (!message) {
         return;
@@ -2647,7 +2648,7 @@ export default function App() {
     } catch (err) {
       setSettingsErrorMessage(String(err));
     } finally {
-      setSettingsExporting(false);
+      setSettingsImporting(false);
     }
   };
 
@@ -2782,6 +2783,7 @@ export default function App() {
               configData={configData}
               settingsLoading={settingsLoading}
               settingsExporting={settingsExporting}
+              settingsImporting={settingsImporting}
               settingsDirty={settingsDirty}
               settingsSaved={settingsSaved}
               settingsError={settingsError}
@@ -2793,7 +2795,7 @@ export default function App() {
               setSettingsAdvanced={setSettingsAdvanced}
               loadSettings={loadSettings}
               handleExportSettings={handleExportSettings}
-              handleImportLegacy={handleImportLegacy}
+              handleImportConfig={handleImportConfig}
               handleSaveSettings={handleSaveSettings}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}

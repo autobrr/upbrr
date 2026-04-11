@@ -488,18 +488,21 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
-	mux.HandleFunc("/api/app/ImportLegacyConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/ImportConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, legacyImportMaxBytes)
-		var req struct{ FileContent string }
+		r.Body = http.MaxBytesReader(w, r.Body, configImportMaxBytes)
+		var req struct {
+			FileName    string
+			FileContent string
+		}
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		result, warnings, err := s.backend.ImportLegacyConfig(req.FileContent)
+		result, warnings, err := s.backend.ImportConfig(req.FileName, req.FileContent)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

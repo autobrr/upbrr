@@ -142,27 +142,27 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           URL.revokeObjectURL(url);
           return anchor.download;
         },
-        ImportLegacyConfig: async () => {
-          const fileContent = await new Promise<string>((resolve, reject) => {
+        ImportConfig: async () => {
+          const fileData = await new Promise<{ name: string; content: string }>((resolve, reject) => {
             const input = document.createElement("input");
             input.type = "file";
-            input.accept = ".py,text/x-python";
+            input.accept = ".py,.yaml,.yml,.json";
             input.onchange = () => {
               const file = input.files?.[0];
               if (!file) {
-                resolve("");
+                resolve({ name: "", content: "" });
                 return;
               }
               const reader = new FileReader();
-              reader.onload = () => resolve(reader.result as string);
+              reader.onload = () => resolve({ name: file.name, content: reader.result as string });
               reader.onerror = () => reject(reader.error);
               reader.readAsText(file);
             };
-            input.addEventListener("cancel", () => resolve(""));
+            input.addEventListener("cancel", () => resolve({ name: "", content: "" }));
             input.click();
           });
-          if (!fileContent) return { message: "", warnings: [] };
-          const resp = await call<{ result: string; warnings: string[] }>("ImportLegacyConfig", { FileContent: fileContent });
+          if (!fileData.content) return { message: "", warnings: [] };
+          const resp = await call<{ result: string; warnings: string[] }>("ImportConfig", { FileName: fileData.name, FileContent: fileData.content });
           return { message: resp.result, warnings: resp.warnings ?? [] };
         },
         GetLogPath: () => call("GetLogPath"),

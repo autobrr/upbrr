@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/config/legacy"
+	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -733,22 +733,22 @@ func (b *Backend) SaveConfig(payload string) error {
 	return b.applyConfig(*cfg)
 }
 
-const legacyImportMaxBytes = 2 * 1024 * 1024
+const configImportMaxBytes = importer.MaxFileBytes
 
-func (b *Backend) ImportLegacyConfig(fileContent string) (string, []string, error) {
+func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, error) {
 	if b.repo == nil {
 		return "", nil, errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(fileName) == "" {
+		return "", nil, errors.New("file name is required")
 	}
 	if strings.TrimSpace(fileContent) == "" {
 		return "", nil, errors.New("file content is required")
 	}
-	if len(fileContent) > legacyImportMaxBytes {
-		return "", nil, fmt.Errorf("legacy config file is too large (%d bytes, limit %d)", len(fileContent), legacyImportMaxBytes)
-	}
 
-	cfg, warnings, err := legacy.ImportFromContent([]byte(fileContent))
+	cfg, warnings, err := importer.ImportFromContent(fileName, []byte(fileContent))
 	if err != nil {
-		return "", nil, fmt.Errorf("import legacy config: %w", err)
+		return "", nil, fmt.Errorf("import config: %w", err)
 	}
 
 	cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
@@ -765,7 +765,7 @@ func (b *Backend) ImportLegacyConfig(fileContent string) (string, []string, erro
 		return "", nil, err
 	}
 
-	result := "imported legacy config"
+	result := "imported config"
 	if len(warnings) > 0 {
 		result += fmt.Sprintf(" (%d warnings)", len(warnings))
 	}
