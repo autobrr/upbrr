@@ -21,6 +21,7 @@ type Props = {
   setSettingsAdvanced: Dispatch<SetStateAction<Record<string, boolean>>>;
   loadSettings: () => void;
   handleExportSettings: () => void;
+  handleImportLegacy: () => void;
   handleSaveSettings: () => void;
   renderImageHostingSection: () => JSX.Element | null;
   renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
@@ -49,6 +50,7 @@ export default function SettingsPage(props: Props) {
     setSettingsAdvanced,
     loadSettings,
     handleExportSettings,
+    handleImportLegacy,
     handleSaveSettings,
     renderImageHostingSection,
     renderTrackerSection,
@@ -86,6 +88,14 @@ export default function SettingsPage(props: Props) {
               disabled={settingsLoading || settingsExporting}
             >
               {settingsExporting ? "Exporting..." : "Export"}
+            </button>
+            <button
+              className="ghost"
+              type="button"
+              onClick={handleImportLegacy}
+              disabled={settingsLoading || settingsExporting}
+            >
+              Import Legacy
             </button>
             <button
               className="primary"

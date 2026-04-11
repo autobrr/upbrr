@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/config/legacy"
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -730,6 +731,45 @@ func (b *Backend) SaveConfig(payload string) error {
 		return err
 	}
 	return b.applyConfig(*cfg)
+}
+
+const legacyImportMaxBytes = 2 * 1024 * 1024
+
+func (b *Backend) ImportLegacyConfig(fileContent string) (string, []string, error) {
+	if b.repo == nil {
+		return "", nil, errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(fileContent) == "" {
+		return "", nil, errors.New("file content is required")
+	}
+	if len(fileContent) > legacyImportMaxBytes {
+		return "", nil, fmt.Errorf("legacy config file is too large (%d bytes, limit %d)", len(fileContent), legacyImportMaxBytes)
+	}
+
+	cfg, warnings, err := legacy.ImportFromContent([]byte(fileContent))
+	if err != nil {
+		return "", nil, fmt.Errorf("import legacy config: %w", err)
+	}
+
+	cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
+
+	if err := cfg.Validate(); err != nil {
+		return "", nil, fmt.Errorf("validate imported config: %w", err)
+	}
+
+	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
+		return "", nil, err
+	}
+
+	if err := b.applyConfig(*cfg); err != nil {
+		return "", nil, err
+	}
+
+	result := "imported legacy config"
+	if len(warnings) > 0 {
+		result += fmt.Sprintf(" (%d warnings)", len(warnings))
+	}
+	return result, warnings, nil
 }
 
 func (b *Backend) ListKnownTrackers() ([]string, error) {

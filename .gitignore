@@ -8,3 +8,10 @@ dist/
 .trunk/
 *.exe
 /scripts/__pycache__/
+/config/*.yaml
+/config/*.yml
+/config.converted.yaml
+/config.converted.yml
+.claude/settings.local.json
+.claude/CLAUDE.local.md
+CLAUDE.local.md

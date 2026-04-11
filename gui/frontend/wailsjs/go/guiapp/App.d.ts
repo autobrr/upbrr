@@ -58,6 +58,8 @@ export function GetRecentLogs(arg1:number):Promise<Array<logging.Entry>>;
 
 export function GetTrackerUploadSnapshot(arg1:string):Promise<guiapp.TrackerUploadSnapshot>;
 
+export function ImportLegacyConfig():Promise<guiapp.LegacyImportResult>;
+
 export function ListHistory():Promise<Array<api.HistoryEntry>>;
 
 export function ListKnownTrackers():Promise<Array<string>>;

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/config/legacy"
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -115,6 +116,14 @@ func run() error {
 			return exitError(1, err)
 		}
 		fmt.Printf("exported config to %s\n", opts.ExportConfigPath)
+		return nil
+	}
+
+	if strings.TrimSpace(opts.ImportLegacyPath) != "" {
+		ctx := context.Background()
+		if err := importLegacyConfig(ctx, opts.ImportLegacyPath, opts.ConfigPath, configFlagProvided); err != nil {
+			return exitError(1, err)
+		}
 		return nil
 	}
 
@@ -883,4 +892,34 @@ func formatDuration(seconds float64) string {
 		return fmt.Sprintf("%dm %ds", m, s)
 	}
 	return fmt.Sprintf("%ds", s)
+}
+
+func importLegacyConfig(ctx context.Context, legacyPath, configPath string, configProvided bool) error {
+	cfg, warnings, err := legacy.ImportFromFile(legacyPath)
+	if err != nil {
+		return fmt.Errorf("import legacy config: %w", err)
+	}
+
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
+
+	dbPath, err := resolveExportDBPath(configPath, configProvided)
+	if err != nil {
+		return fmt.Errorf("resolve database path: %w", err)
+	}
+
+	cfg.MainSettings.DBPath = dbPath
+	config.ApplyEnvOverrides(cfg)
+
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("validate imported config: %w", err)
+	}
+
+	if err := saveConfigToDatabase(ctx, cfg, dbPath); err != nil {
+		return fmt.Errorf("save imported config: %w", err)
+	}
+
+	fmt.Printf("imported legacy config from %s (%d warnings)\n", legacyPath, len(warnings))
+	return nil
 }

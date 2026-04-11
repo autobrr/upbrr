@@ -19,6 +19,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/config/legacy"
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guishared"
@@ -1281,6 +1282,66 @@ func (a *App) ExportConfig() (string, error) {
 	}
 
 	return trimmedPath, nil
+}
+
+type LegacyImportResult struct {
+	Message  string   `json:"message"`
+	Warnings []string `json:"warnings"`
+}
+
+func (a *App) ImportLegacyConfig() (LegacyImportResult, error) {
+	if a == nil {
+		return LegacyImportResult{}, errors.New("app not initialized")
+	}
+	if a.repo == nil {
+		return LegacyImportResult{}, errors.New("config repository not initialized")
+	}
+	if a.ctx == nil {
+		return LegacyImportResult{}, errors.New("app context not ready")
+	}
+
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select legacy Upload Assistant config.py",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Python files", Pattern: "*.py"},
+			{DisplayName: "All files", Pattern: "*.*"},
+		},
+	})
+	if err != nil {
+		return LegacyImportResult{}, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return LegacyImportResult{}, nil
+	}
+
+	cfg, warnings, err := legacy.ImportFromFile(path)
+	if err != nil {
+		return LegacyImportResult{}, fmt.Errorf("import legacy config: %w", err)
+	}
+
+	cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
+
+	if err := cfg.Validate(); err != nil {
+		return LegacyImportResult{}, fmt.Errorf("validate imported config: %w", err)
+	}
+
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
+		return LegacyImportResult{}, err
+	}
+
+	if err := a.applyConfig(*cfg); err != nil {
+		return LegacyImportResult{}, err
+	}
+
+	message := "imported legacy config from " + filepath.Base(path)
+	if len(warnings) > 0 {
+		message += fmt.Sprintf(" (%d warnings)", len(warnings))
+	}
+	return LegacyImportResult{Message: message, Warnings: warnings}, nil
 }
 
 func (a *App) applyConfig(cfg config.Config) error {

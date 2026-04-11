@@ -213,6 +213,7 @@ declare global {
             GetDefaultConfig: () => Promise<string>;
             SaveConfig: (payload: string) => Promise<void>;
             ExportConfig: () => Promise<string>;
+            ImportLegacyConfig: () => Promise<{ message: string; warnings: string[] }>;
             GetLogPath: () => Promise<string>;
             GetRecentLogs: (limit: number) => Promise<any[]>;
             StartLogStream: () => Promise<string>;
@@ -2623,6 +2624,33 @@ export default function App() {
     }
   };
 
+  const handleImportLegacy = async () => {
+    clearSettingsStatus();
+    const importLegacy = globalThis.go?.guiapp?.App?.ImportLegacyConfig;
+    if (!importLegacy) {
+      setSettingsErrorMessage("Legacy config import is unavailable in this build.");
+      return;
+    }
+
+    setSettingsExporting(true);
+    try {
+      const result = await importLegacy();
+      const message = (result?.message ?? "").trim();
+      if (!message) {
+        return;
+      }
+      const warnings = result?.warnings ?? [];
+      const preview = warnings.slice(0, 5).join("\n");
+      const extra = warnings.length > 5 ? `\n…and ${warnings.length - 5} more` : "";
+      setSettingsSavedMessage(preview ? `${message}\n${preview}${extra}` : message);
+      loadSettings();
+    } catch (err) {
+      setSettingsErrorMessage(String(err));
+    } finally {
+      setSettingsExporting(false);
+    }
+  };
+
   const dupeProgressStatus = String(dupeCheckSnapshot?.status || "").toLowerCase();
   const dupeCompletedCount = Number(dupeCheckSnapshot?.completedCount || 0);
   const dupeTotalCount = Number(dupeCheckSnapshot?.totalCount || 0);
@@ -2765,6 +2793,7 @@ export default function App() {
               setSettingsAdvanced={setSettingsAdvanced}
               loadSettings={loadSettings}
               handleExportSettings={handleExportSettings}
+              handleImportLegacy={handleImportLegacy}
               handleSaveSettings={handleSaveSettings}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}
