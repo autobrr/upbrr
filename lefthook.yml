@@ -8,7 +8,7 @@ pre-commit:
 
     frontend-lint:
       root: "gui/frontend/"
-      glob: "**/*.{ts,tsx}"
+      glob: "src/**/*.{ts,tsx}"
       run: pnpm exec eslint {staged_files}
 
     frontend-typecheck:
@@ -17,12 +17,12 @@ pre-commit:
       run: pnpm run typecheck
 
     go-format:
-      glob: "*.go"
+      glob: "**/*.go"
       run: golangci-lint fmt {staged_files}
       stage_fixed: true
 
     go-lint:
-      glob: "*.go"
+      glob: "**/*.go"
       run: golangci-lint run --timeout=5m ./...
 
     go-logpolicy:
