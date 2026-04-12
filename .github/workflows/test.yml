@@ -62,3 +62,7 @@ jobs:
       - name: Run frontend typecheck
         working-directory: gui/frontend
         run: pnpm run typecheck
+
+      - name: Check frontend formatting
+        working-directory: gui/frontend
+        run: pnpm run format:check

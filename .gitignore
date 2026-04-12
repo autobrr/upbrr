@@ -8,3 +8,7 @@ dist/
 .trunk/
 *.exe
 /scripts/__pycache__/
+
+# Lefthook
+.lefthook-local.yml
+.lefthook/

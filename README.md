@@ -242,6 +242,11 @@ The Dockerfile builds both `upbrr` and `upbrr-gui` binaries and places them in t
 - Tracker-specific code lives primarily under `internal/trackers/impl`
 - The repo currently includes generated and built assets in a few locations, so review changes carefully before committing
 
+## Developer Setup
+
+- Install [Lefthook](https://github.com/evilmartians/lefthook) and run `lefthook install` from the repo root to activate pre-commit and commit-msg hooks. The hooks mirror CI checks locally: Go lint/format, logpolicy, frontend lint/typecheck/format, and conventional commit enforcement.
+- Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/) format (e.g. `feat:`, `fix:`, `docs:`, `chore:`).
+
 ## AI agent instructions
 
 This project uses [AGENTS.md](https://agents.md/) — an open standard for guiding AI coding agents. The root `AGENTS.md` file contains build commands, code style rules, testing instructions, and project conventions.

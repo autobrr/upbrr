@@ -1,0 +1,36 @@
+pre-commit:
+  commands:
+    frontend-format:
+      root: "gui/frontend/"
+      glob: "**/*.{ts,tsx,css,json,md}"
+      run: pnpm exec prettier --write {staged_files}
+      stage_fixed: true
+
+    frontend-lint:
+      root: "gui/frontend/"
+      glob: "**/*.{ts,tsx}"
+      run: pnpm exec eslint {staged_files}
+
+    frontend-typecheck:
+      root: "gui/frontend/"
+      glob: "**/*.{ts,tsx}"
+      run: pnpm run typecheck
+
+    go-format:
+      glob: "*.go"
+      run: golangci-lint fmt {staged_files}
+      stage_fixed: true
+
+    go-lint:
+      glob: "*.go"
+      run: golangci-lint run --timeout=5m ./...
+
+    go-logpolicy:
+      glob: "internal/**/*.go"
+      run: go run ./cmd/logpolicy
+
+commit-msg:
+  commands:
+    commitlint:
+      root: "gui/frontend/"
+      run: pnpm exec commitlint --edit {1}

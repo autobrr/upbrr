@@ -1,0 +1,4 @@
+dist/
+node_modules/
+wailsjs/
+pnpm-lock.yaml

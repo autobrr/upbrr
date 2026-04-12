@@ -53,6 +53,14 @@
       "problemMatcher": []
     },
     {
+      "label": "format-go",
+      "type": "shell",
+      "command": "golangci-lint",
+      "args": ["fmt", "./..."],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
       "label": "lint-go",
       "type": "shell",
       "command": "golangci-lint",
@@ -79,6 +87,23 @@
           "message": 4
         }
       }
+    },
+    {
+      "label": "format-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "format"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "format-check-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "format:check"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "group": "test",
+      "problemMatcher": []
     },
     {
       "label": "lint-frontend",
@@ -111,6 +136,26 @@
       "label": "build-all",
       "dependsOn": ["build-cli", "build-gui"],
       "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "lint-all",
+      "dependsOn": [
+        "lint-go",
+        "lint-frontend",
+        "typecheck-frontend",
+        "format-check-frontend",
+        "logpolicy"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "setup-hooks",
+      "type": "shell",
+      "command": "lefthook",
+      "args": ["install"],
+      "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     }
   ]

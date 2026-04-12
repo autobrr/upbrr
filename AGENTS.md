@@ -22,7 +22,7 @@
 - For Go changes, run: golangci-lint run --timeout=5m
 - For logging-related Go changes, or any change that adds, removes, or edits log lines under `internal`, also run: go run ./cmd/logpolicy
 - Prefer the smallest relevant frontend validation for the files you changed, but keep lint and typecheck clean for the affected frontend surface. When frontend changes are broad, shared, or configuration-related, run the full gui/frontend checks called out below.
-- For gui/frontend changes, use gui/frontend as the working directory. Run pnpm install --frozen-lockfile whenever frontend dependencies or lockfiles may affect the change; otherwise run pnpm run lint and pnpm run typecheck
+- For gui/frontend changes, use gui/frontend as the working directory. Run pnpm install --frozen-lockfile whenever frontend dependencies or lockfiles may affect the change; otherwise run pnpm run lint, pnpm run typecheck, and pnpm run format:check
 - For gui/frontend build logic, embedded assets, or Vite/TypeScript config changes, also run: pnpm run build
 - For Wails runtime/backend changes, validate with go run ./gui when practical. For GUI packaging, embedded assets, Wails config, or desktop integration changes, run pnpm run build in gui/frontend and the nearest relevant wails build validation
 - For packaging, release, Dockerfile, build-script, or cross-platform changes, review .github/workflows/build-binaries.yml and validate the directly affected local path you can exercise, such as scripts/build.sh, scripts/build.ps1, a CLI build, a GUI build, or a Docker build
