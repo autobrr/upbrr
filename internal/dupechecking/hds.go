@@ -27,7 +27,11 @@ func (h hdsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	if resolution != "2160p" && resolution != "1080p" && resolution != "1080i" && resolution != "720p" {
 		return nil, []string{noteSkip("resolution below HDS dupe-check minimum")}, nil
 	}
-	imdb := imdbForLookup(meta)
+	imdb := ""
+	if meta.ExternalMetadata.IMDB.IMDbIDText != "" {
+		// leading zeros are required
+		imdb = strings.TrimPrefix(meta.ExternalMetadata.IMDB.IMDbIDText, "tt")
+	}
 	if imdb == "" {
 		return nil, []string{noteSkip("missing IMDb ID for HDS dupe search")}, nil
 	}

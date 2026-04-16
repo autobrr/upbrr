@@ -16,6 +16,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
+
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
@@ -34,12 +37,14 @@ const (
 var idPattern = regexp.MustCompile(`download\.php\?id=([a-zA-Z0-9]+)`)
 
 type uploadState struct {
-	torrentPath   string
-	description   string
-	releaseName   string
-	fields        map[string]string
-	nfo           *commonhttp.FileField
-	blockedReason string
+	torrentPath     string
+	origTorrentPath string
+	artifactPath    string
+	description     string
+	releaseName     string
+	fields          map[string]string
+	nfo             *commonhttp.FileField
+	blockedReason   string
 }
 
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
@@ -87,16 +92,6 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && len(match) >= 2 {
 		id := strings.TrimSpace(match[1])
 		tURL := torrentURL + id
-		artifactPath := ""
-		if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
-			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "HDS")
-			if err != nil {
-				return api.UploadSummary{}, err
-			}
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
-			}
-		}
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
@@ -104,7 +99,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 				TorrentID:   id,
 				TorrentURL:  tURL,
 				DownloadURL: baseURL + "/download.php?id=" + id,
-				TorrentPath: artifactPath,
+				TorrentPath: state.artifactPath,
 			}},
 		}, nil
 	}
@@ -138,9 +133,23 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 }
 
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, []*http.Cookie, error) {
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	origTorrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, nil, err
+	}
+
+	torrentPath := origTorrentPath
+	artifactPath := ""
+	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
+	if announceURL != "" {
+		if ap, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "HDS"); err == nil {
+			// HDS doesn't have a native 'source' field for .torrents,
+			// so we add one to prevent hash collisions with other trackers that also lack a source identifier.
+			if err := writePersonalizedTorrentWithHashLink(origTorrentPath, ap, announceURL, sourceFlag); err == nil {
+				torrentPath = ap
+				artifactPath = ap
+			}
+		}
 	}
 	cookies, err := loadCookies(req.AppConfig.MainSettings.DBPath)
 	if err != nil {
@@ -158,7 +167,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		"category":      strconv.Itoa(resolveCategoryID(req.Meta)),
 		"filename":      firstNonEmpty(req.Meta.ReleaseName, req.Meta.Filename, pathutil.Base(req.Meta.SourcePath)),
 		"genre":         resolveGenres(req.Meta),
-		"imdb":          resolveIMDbURL(req.Meta),
+		"imdb":          resolveHDSIMDb(req.Meta),
 		"info":          description,
 		"nuk_rea":       "",
 		"nuk":           "false",
@@ -169,11 +178,18 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		"youtube_video": resolveYouTube(req.Meta),
 		"anonymous":     boolString(req.TrackerConfig.Anon),
 	}
-	state := uploadState{torrentPath: torrentPath, description: description, releaseName: fields["filename"], fields: fields}
+	state := uploadState{
+		torrentPath:     torrentPath,
+		origTorrentPath: origTorrentPath,
+		artifactPath:    artifactPath,
+		description:     description,
+		releaseName:     fields["filename"],
+		fields:          fields,
+	}
 	if !supportsHDSResolution(req.Meta.Release.Resolution) {
 		state.blockedReason = "resolution must be at least 720p"
 	}
-	if id := resolveIMDbURL(req.Meta); strings.TrimSpace(id) == "" {
+	if id := resolveHDSIMDb(req.Meta); strings.TrimSpace(id) == "" {
 		state.blockedReason = "missing IMDb ID"
 	}
 	if file, ok := resolveNFO(req.Meta); ok {
@@ -289,12 +305,10 @@ func resolveKeywords(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveIMDbURL(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbURL) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbURL)
-	}
-	if meta.ExternalIDs.IMDBID > 0 {
-		return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.ExternalIDs.IMDBID)
+func resolveHDSIMDb(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.IMDB.IMDbIDText != "" {
+		// leading zeros are required
+		return strings.TrimPrefix(meta.ExternalMetadata.IMDB.IMDbIDText, "tt")
 	}
 	return ""
 }
@@ -358,6 +372,47 @@ func cloneFields(in map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
+}
+
+func writePersonalizedTorrentWithHashLink(sourcePath string, outputPath string, announceURL string, source string) error {
+	mi, err := metainfo.LoadFromFile(sourcePath)
+	if err != nil {
+		return err
+	}
+
+	info, err := mi.UnmarshalInfo()
+	if err != nil {
+		return err
+	}
+	info.Source = source
+	infoBytes, err := bencode.Marshal(info)
+	if err != nil {
+		return err
+	}
+	mi.InfoBytes = infoBytes
+
+	// Calculate hash after setting source flag.
+	// Hash is derived from InfoBytes.
+	hash := mi.HashInfoBytes().HexString()
+	tURL := "https://hd-space.org/index.php?page=torrent-details&id=" + hash
+
+	mi.Comment = tURL
+
+	if trimmedAnnounce := strings.TrimSpace(announceURL); trimmedAnnounce != "" {
+		mi.Announce = trimmedAnnounce
+		mi.AnnounceList = metainfo.AnnounceList{{trimmedAnnounce}}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
+		return err
+	}
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	return mi.Write(file)
 }
 
 func firstNonEmpty(values ...string) string {
