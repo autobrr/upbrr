@@ -5,6 +5,7 @@ package dupechecking
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -34,6 +35,9 @@ func (h hdsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.IMDbIDText != "" {
 		// leading zeros are required
 		imdb = strings.TrimPrefix(meta.ExternalMetadata.IMDB.IMDbIDText, "tt")
+	}
+	if imdb == "" && meta.ExternalIDs.IMDBID > 0 {
+		imdb = fmt.Sprintf("%07d", meta.ExternalIDs.IMDBID)
 	}
 	if imdb == "" {
 		return nil, []string{noteSkip("missing IMDb ID for HDS dupe search")}, nil

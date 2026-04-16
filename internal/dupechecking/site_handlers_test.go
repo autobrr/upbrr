@@ -86,7 +86,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 		{
 			name:    "HDS",
 			tracker: "HDS",
-			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, Release: api.ReleaseInfo{Resolution: "1080p"}, SourcePath: "x"},
+			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 1234567}, Release: api.ReleaseInfo{Resolution: "1080p"}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
 				writeTextCookie(t, dbPath, "HDS", "session", "cookie", hostFromBaseURL(t, baseURL))
 			},
