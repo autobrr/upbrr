@@ -16,6 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -57,9 +60,7 @@ func TestUploadSuccess(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
-	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
-		t.Fatalf("write torrent: %v", err)
-	}
+	createFakeTorrent(t, torrentPath)
 	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
 		t.Fatalf("write mediainfo: %v", err)
 	}
@@ -239,3 +240,27 @@ func (a azRepoStub) ListUploadedImagesByPath(context.Context, string) ([]api.Upl
 func (a azRepoStub) DeleteUploadedImage(context.Context, string, string, string) error { return nil }
 func (a azRepoStub) ListStoredReleasePaths(context.Context) ([]string, error)          { return nil, nil }
 func (a azRepoStub) PurgeContentData(context.Context, string) error                    { return nil }
+func createFakeTorrent(t *testing.T, path string) {
+	mi := &metainfo.MetaInfo{
+		Announce: "http://tracker/announce",
+	}
+	info := metainfo.Info{
+		PieceLength: 256,
+		Pieces:      make([]byte, 20),
+		Name:        "test",
+		Length:      1024,
+	}
+	infoBytes, err := bencode.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal info: %v", err)
+	}
+	mi.InfoBytes = infoBytes
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create torrent file: %v", err)
+	}
+	defer f.Close()
+	if err := mi.Write(f); err != nil {
+		t.Fatalf("write torrent file: %v", err)
+	}
+}

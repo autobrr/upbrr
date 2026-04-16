@@ -16,6 +16,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
+
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -164,16 +167,15 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 			return taskInfo{}, err
 		}
 	}
-	file, err := os.Open(torrentPath)
+	torrentBytes, infoHash, err := prepareTorrent(torrentPath, site.DefaultAnnounceURL, site.SourceFlag)
 	if err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s prepare torrent: %w", site.Name, err)
 	}
-	defer file.Close()
 	part, err := writer.CreateFormFile("torrent_file", filepath.Base(torrentPath))
 	if err != nil {
 		return taskInfo{}, err
 	}
-	if _, err := io.Copy(part, file); err != nil {
+	if _, err := io.Copy(part, bytes.NewReader(torrentBytes)); err != nil {
 		return taskInfo{}, err
 	}
 	if err := writer.Close(); err != nil {
@@ -200,11 +202,12 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 	location := strings.TrimSpace(resp.Header.Get("Location"))
 	taskID := extractPatternGroup(azTaskIDPattern, absoluteURL(site.BaseURL, location))
 	if taskID == "" {
-		return taskInfo{}, fmt.Errorf("trackers: %s task creation missing task id", site.Name)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return taskInfo{}, fmt.Errorf("trackers: %s task creation missing task id status=%d body=%s", site.Name, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return taskInfo{
 		TaskID:      taskID,
-		InfoHash:    strings.TrimSpace(req.Meta.InfoHash),
+		InfoHash:    infoHash,
 		RedirectURL: absoluteURL(site.BaseURL, location),
 	}, nil
 }
@@ -302,4 +305,32 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, downloadUR
 		return err
 	}
 	return os.WriteFile(targetPath, body, 0o600)
+}
+
+func prepareTorrent(torrentPath string, announceURL string, source string) ([]byte, string, error) {
+	mi, err := metainfo.LoadFromFile(torrentPath)
+	if err != nil {
+		return nil, "", err
+	}
+	info, err := mi.UnmarshalInfo()
+	if err != nil {
+		return nil, "", err
+	}
+	if source != "" {
+		info.Source = source
+		infoBytes, err := bencode.Marshal(info)
+		if err != nil {
+			return nil, "", err
+		}
+		mi.InfoBytes = infoBytes
+	}
+	if announceURL != "" {
+		mi.Announce = announceURL
+		mi.AnnounceList = metainfo.AnnounceList{{announceURL}}
+	}
+	var buf bytes.Buffer
+	if err := mi.Write(&buf); err != nil {
+		return nil, "", err
+	}
+	return buf.Bytes(), mi.HashInfoBytes().HexString(), nil
 }

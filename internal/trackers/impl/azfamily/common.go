@@ -166,9 +166,8 @@ func videoQualityID(site siteDefinition, meta api.PreparedMetadata) string {
 
 func ripTypeName(meta api.PreparedMetadata) string {
 	typeValue := strings.ToLower(strings.TrimSpace(meta.Type))
-	source := strings.ToLower(strings.TrimSpace(meta.Source))
-	discType := strings.ToLower(strings.TrimSpace(meta.DiscType))
 	if typeValue == "disc" {
+		discType := strings.ToLower(strings.TrimSpace(meta.DiscType))
 		switch discType {
 		case "bdmv":
 			return "BluRay Raw"
@@ -176,85 +175,110 @@ func ripTypeName(meta api.PreparedMetadata) string {
 			return "DVD"
 		}
 	}
-	if typeValue == "remux" {
-		if strings.Contains(source, "dvd") {
+
+	name := strings.ToLower(meta.ReleaseName)
+
+	if strings.Contains(name, "remux") {
+		if strings.Contains(name, "dvd") {
 			return "DVD Remux"
 		}
-		if strings.Contains(source, "blu") {
-			return "BluRay REMUX"
+		return "BluRay REMUX"
+	}
+
+	rules := []struct {
+		substring string
+		result    string
+	}{
+		{"bdrip", "BDRip"},
+		{"encode", "BluRay"},
+		{"brrip", "BRRip"},
+		{"dvdrip", "DVDRip"},
+		{"vcdrip", "VCDRip"},
+		{"vcd", "VCD"},
+		{"hdrip", "HDRip"},
+		{"hdtv", "HDTV"},
+		{"sdtv", "SDTV"},
+		{"vhsrip", "VHSRip"},
+		{"vodrip", "VODRip"},
+		{"web-dl", "WEB-DL"},
+		{"web-rip", "WEBRip"},
+	}
+
+	for _, rule := range rules {
+		if strings.Contains(name, rule.substring) {
+			return rule.result
 		}
 	}
-	switch typeValue {
-	case "bdrip":
-		return "BDRip"
-	case "encode":
-		return "BluRay"
-	case "brrip":
-		return "BRRip"
-	case "dvdrip":
-		return "DVDRip"
-	case "hdrip":
-		return "HDRip"
-	case "hdtv":
-		return "HDTV"
-	case "sdtv":
-		return "SDTV"
-	case "vcd":
-		return "VCD"
-	case "vcdrip":
-		return "VCDRip"
-	case "vhsrip":
-		return "VHSRip"
-	case "vodrip":
-		return "VODRip"
-	case "webdl":
-		return "WEB-DL"
-	case "webrip":
-		return "WEBRip"
-	default:
-		return ""
-	}
+
+	return ""
 }
 
-func ripTypeID(meta api.PreparedMetadata) string {
-	switch ripTypeName(meta) {
-	case "BDRip":
-		return "1"
-	case "BluRay":
-		return "2"
-	case "BRRip":
-		return "3"
-	case "DVD":
-		return "4"
-	case "DVDRip":
-		return "5"
-	case "HDRip":
-		return "6"
-	case "HDTV":
-		return "7"
-	case "VCD":
-		return "8"
-	case "VCDRip":
-		return "9"
-	case "VHSRip":
-		return "10"
-	case "VODRip":
-		return "11"
-	case "WEB-DL":
-		return "12"
-	case "WEBRip":
-		return "13"
-	case "BluRay REMUX":
-		return "14"
-	case "BluRay Raw":
-		return "15"
-	case "SDTV":
-		return "16"
-	case "DVD Remux":
-		return "17"
-	default:
-		return "0"
+// Avistaz and CinemaZ: BDRip, BluRay, BluRay Raw, BluRay REMUX, BRRip, DVD, DVD Remux, DVDRip, HDRip, HDTV, SDTV, VCD, VCDRip, VHSRip, VODRip, WEB-DL, WEBRip
+// PrivateHD: BDRip, BluRay, BluRay Raw, HDRip, HDTV, REMUX, WEB-DL, WEBRip
+func ripTypeID(site siteDefinition, meta api.PreparedMetadata) string {
+	name := ripTypeName(meta)
+
+	if site.Name == "AZ" || site.Name == "CZ" {
+		switch name {
+		case "BDRip":
+			return "1"
+		case "BluRay":
+			return "2"
+		case "BRRip":
+			return "3"
+		case "DVD":
+			return "4"
+		case "DVDRip":
+			return "5"
+		case "HDRip":
+			return "6"
+		case "HDTV":
+			return "7"
+		case "VCD":
+			return "8"
+		case "VCDRip":
+			return "9"
+		case "VHSRip":
+			return "10"
+		case "VODRip":
+			return "11"
+		case "WEB-DL":
+			return "12"
+		case "WEBRip":
+			return "13"
+		case "BluRay REMUX":
+			return "14"
+		case "BluRay Raw":
+			return "15"
+		case "SDTV":
+			return "16"
+		case "DVD Remux":
+			return "17"
+		}
 	}
+
+	if site.Name == "PHD" {
+		switch name {
+		case "BDRip":
+			return "1"
+		case "BluRay":
+			return "2"
+		case "BluRay Raw":
+			return "15"
+		case "HDRip":
+			return "6"
+		case "HDTV":
+			return "7"
+		case "REMUX":
+			return "14"
+		case "WEB-DL":
+			return "12"
+		case "WEBRip":
+			return "13"
+		}
+	}
+
+	return "0"
 }
 
 func anonEnabled(req trackers.UploadRequest) bool {

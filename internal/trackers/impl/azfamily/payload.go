@@ -24,7 +24,7 @@ import (
 )
 
 func buildFinalPayload(ctx context.Context, site siteDefinition, state sessionState, req trackers.UploadRequest, mediaCode string, task taskInfo, fileInfo string, screenshotIDs []string) (url.Values, error) {
-	langs := languageValues(req.Meta)
+	langs := languageValues(site.Name, req.Meta)
 	tags, err := resolveTags(ctx, site, state, req)
 	if err != nil {
 		return nil, err
@@ -36,7 +36,7 @@ func buildFinalPayload(ctx context.Context, site siteDefinition, state sessionSt
 	values.Set("file_name", editName(site, req.Meta))
 	values.Set("description", buildDescriptionFromAssets(ctx, req))
 	values.Set("qqfile", "")
-	values.Set("rip_type_id", ripTypeID(req.Meta))
+	values.Set("rip_type_id", ripTypeID(site, req.Meta))
 	values.Set("video_quality_id", videoQualityID(site, req.Meta))
 	values.Set("video_resolution", resolutionValue(req.Meta))
 	values.Set("movie_id", mediaCode)
@@ -146,10 +146,16 @@ func uploadScreenshots(ctx context.Context, site siteDefinition, state sessionSt
 		}
 		imageBytes, filename, err := screenshotBytes(ctx, state.client, shot)
 		if err != nil {
+			if req.Logger != nil {
+				req.Logger.Warnf("trackers: %s failed to get screenshot bytes: %v", site.Name, err)
+			}
 			continue
 		}
 		id, err := uploadScreenshot(ctx, site, state, imageBytes, filename)
 		if err != nil {
+			if req.Logger != nil {
+				req.Logger.Warnf("trackers: %s failed to upload screenshot: %v", site.Name, err)
+			}
 			continue
 		}
 		if id != "" {
@@ -195,15 +201,15 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 		return "", fmt.Errorf("status %d", resp.StatusCode)
 	}
 	var payload struct {
-		Success bool   `json:"success"`
-		ImageID any    `json:"imageId"`
-		Error   string `json:"error"`
+		Success bool `json:"success"`
+		ImageID any  `json:"imageId"`
+		Error   any  `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return "", err
 	}
 	if !payload.Success {
-		return "", fmt.Errorf("%s", strings.TrimSpace(payload.Error))
+		return "", fmt.Errorf("%s", stringValue(payload.Error))
 	}
 	return stringValue(payload.ImageID), nil
 }
