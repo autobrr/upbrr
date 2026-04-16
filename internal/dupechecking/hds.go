@@ -23,12 +23,15 @@ type hdsHandler struct {
 }
 
 func (h hdsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ string) ([]api.DupeEntry, []string, error) {
+	if h.http == nil {
+		return nil, []string{noteSkip("missing HTTP client for HDS dupe-check")}, nil
+	}
 	resolution := strings.TrimSpace(meta.Release.Resolution)
 	if resolution != "2160p" && resolution != "1080p" && resolution != "1080i" && resolution != "720p" {
 		return nil, []string{noteSkip("resolution below HDS dupe-check minimum")}, nil
 	}
 	imdb := ""
-	if meta.ExternalMetadata.IMDB.IMDbIDText != "" {
+	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.IMDbIDText != "" {
 		// leading zeros are required
 		imdb = strings.TrimPrefix(meta.ExternalMetadata.IMDB.IMDbIDText, "tt")
 	}
