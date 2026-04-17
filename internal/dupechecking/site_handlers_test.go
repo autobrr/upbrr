@@ -94,7 +94,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			setup: func(t *testing.T, baseURL string, dbPath string) {
 				writeTextCookie(t, dbPath, "HDS", "session", "cookie", hostFromBaseURL(t, baseURL))
 			},
-			handler:        func(cfg config.Config, client *http.Client) searchHandler { return hdsHandler{cfg: cfg, http: client} },
+			handler: func(cfg config.Config, client *http.Client) searchHandler { return hdsHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
 				if len(entries) != 1 || !entries[0].SizeKnown {
 					t.Fatalf("unexpected HDS entries: %#v", entries)
