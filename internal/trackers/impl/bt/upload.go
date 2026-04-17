@@ -612,34 +612,71 @@ func resolveAudioCodec(meta api.PreparedMetadata) string {
 }
 
 func resolveBitrate(meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.Type), "DISC") {
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-			if meta.SourceSize > 66<<30 {
-				return "BD100"
-			}
-			if meta.SourceSize > 50<<30 {
-				return "BD66"
-			}
-			if meta.SourceSize > 25<<30 {
-				return "BD50"
-			}
+	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
+	if discType == "BDMV" {
+		size := meta.SourceSize
+		switch {
+		case size > 66000000000:
+			return "BD100"
+		case size > 50000000000:
+			return "BD66"
+		case size > 25000000000:
+			return "BD50"
+		default:
 			return "BD25"
 		}
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-			return "DVD9"
+	}
+	if discType == "HDDVD" {
+		return "HD-DVD"
+	}
+
+	dvdSize := strings.ToUpper(strings.TrimSpace(meta.Release.Size))
+	if dvdSize == "DVD9" || dvdSize == "DVD5" {
+		return dvdSize
+	}
+
+	for _, other := range meta.Release.Other {
+		if strings.EqualFold(other, "remux") {
+			return "Remux"
 		}
 	}
-	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
-	case "REMUX":
-		return "Remux"
-	case "WEBDL":
-		return "WEB-DL"
-	case "WEBRIP":
-		return "WEBRip"
-	case "HDTV":
-		return "HDTV"
-	case "ENCODE":
+
+	source := strings.ToLower(strings.TrimSpace(meta.Release.Source))
+	switch source {
+	case "bdrip":
+		return "BDRip"
+	case "bluray", "blu-ray":
 		return "Blu-ray"
+	case "brrip":
+		return "BRRip"
+	case "mhd":
+		return "mHD"
+	case "web-dl":
+		return "WEB-DL"
+	case "webrip":
+		return "WEBRip"
+	case "web":
+		return "WEB"
+	case "dvdrip":
+		return "DVDRip"
+	case "dvdscr":
+		return "DVDScr"
+	case "hdrip":
+		return "HDRip"
+	case "hdtc":
+		return "HDTC"
+	case "hdtv":
+		return "HDTV"
+	case "pdtv":
+		return "PDTV"
+	case "sdtv":
+		return "SDTV"
+	case "tc":
+		return "TC"
+	case "tvrip":
+		return "TVRip"
+	case "vhsrip":
+		return "VHSRip"
 	default:
 		return "Outro"
 	}
