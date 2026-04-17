@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -66,13 +67,14 @@ type runOptions struct {
 	RunLogLevel string
 }
 
-type sharedRepository struct {
-	api.MetadataRepository
+func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
+	return NewBackendWithContext(context.Background(), cfg, hub)
 }
 
-func (sharedRepository) Close() error { return nil }
-
-func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
+func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub) (*Backend, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
 		return nil, err
@@ -83,7 +85,7 @@ func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
 		_ = logger.Close()
 		return nil, err
 	}
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
 		return nil, err
@@ -96,11 +98,13 @@ func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
 		logger.Warnf("web: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
 		coreSvc, err = core.New(api.CoreDependencies{
-			Config: cfg,
-			Logger: logger,
+			Context: ctx,
+			Config:  cfg,
+			Logger:  logger,
 			Services: api.ServiceSet{
 				Filesystem: filesystem.NewValidator(),
 			},
+			Repository: repo,
 		})
 		if err != nil {
 			_ = repo.Close()
@@ -361,7 +365,7 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 	return b.core.FetchPreparationPreview(progressCtx, req)
 }
 
-func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -382,6 +386,7 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 	req := api.Request{
 		Paths:                       []string{strings.TrimSpace(path)},
 		Mode:                        api.ModeGUI,
+		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
 		Trackers:                    trackersList,
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   ignoreRuleFailures,
@@ -437,15 +442,19 @@ func (b *Backend) RenderDescription(raw string) (string, error) {
 	return b.core.RenderDescription(ctx, raw)
 }
 
-func (b *Backend) SaveDescriptionOverride(path string, raw string) error {
+func (b *Backend) SaveDescriptionOverride(path string, groupKey string, raw string, trackers []string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.DescriptionBuilderGroup, error) {
 	if err := b.requireCore(); err != nil {
-		return err
+		return api.DescriptionBuilderGroup{}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	return b.core.SaveDescriptionOverride(ctx, api.Request{
-		Paths: []string{strings.TrimSpace(path)},
-		Mode:  api.ModeGUI,
+		Paths:                    []string{strings.TrimSpace(path)},
+		Mode:                     api.ModeGUI,
+		DescriptionOverrideGroup: strings.TrimSpace(groupKey),
+		Trackers:                 append([]string{}, trackers...),
+		ExternalIDOverrides:      overrides,
+		ReleaseNameOverrides:     nameOverrides,
 	}, raw)
 }
 
@@ -732,6 +741,46 @@ func (b *Backend) SaveConfig(payload string) error {
 	return b.applyConfig(*cfg)
 }
 
+const configImportMaxBytes = importer.MaxFileBytes
+
+func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, error) {
+	if b.repo == nil {
+		return "", nil, errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(fileName) == "" {
+		return "", nil, errors.New("file name is required")
+	}
+	if strings.TrimSpace(fileContent) == "" {
+		return "", nil, errors.New("file content is required")
+	}
+
+	cfg, warnings, err := importer.ImportFromContent(fileName, []byte(fileContent))
+	if err != nil {
+		return "", nil, err
+	}
+
+	cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
+
+	if err := cfg.Validate(); err != nil {
+		return "", nil, fmt.Errorf("validate imported config: %w", err)
+	}
+
+	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
+		return "", nil, err
+	}
+
+	config.ApplyEnvOverrides(cfg)
+	if err := b.applyConfig(*cfg); err != nil {
+		return "", nil, err
+	}
+
+	result := "imported config"
+	if len(warnings) > 0 {
+		result += fmt.Sprintf(" (%d warnings)", len(warnings))
+	}
+	return result, warnings, nil
+}
+
 func (b *Backend) ListKnownTrackers() ([]string, error) {
 	return trackers.KnownTrackers(), nil
 }
@@ -908,7 +957,7 @@ func (b *Backend) buildRunCore(opts runOptions) (api.Core, *logging.Logger, erro
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
-		Repository: sharedRepository{MetadataRepository: b.repo},
+		Repository: b.repo,
 	})
 	if err != nil {
 		_ = logger.Close()
@@ -929,26 +978,15 @@ func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
 }
 
 func (b *Backend) applyConfig(cfg config.Config) error {
-	newLogger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
+	rt, err := guishared.BuildRuntime(context.Background(), cfg, b.repo)
 	if err != nil {
-		return err
-	}
-	newCore, err := core.New(api.CoreDependencies{
-		Config: cfg,
-		Logger: newLogger,
-		Services: api.ServiceSet{
-			Filesystem: filesystem.NewValidator(),
-		},
-	})
-	if err != nil {
-		_ = newLogger.Close()
 		return err
 	}
 	oldCore := b.core
 	oldLogger := b.logger
-	b.core = newCore
+	b.core = rt.Core
 	b.coreInitErr = nil
-	b.logger = newLogger
+	b.logger = rt.Logger
 	b.cfg = cfg
 	if oldCore != nil {
 		_ = oldCore.Close()
@@ -1050,6 +1088,23 @@ func errorsIsNotFound(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
 }
 
+func preferredHistoryDescriptionOverride(overrides []api.DescriptionOverride) api.DescriptionOverride {
+	if len(overrides) == 0 {
+		return api.DescriptionOverride{}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.GroupKey) == "" {
+			return override
+		}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.Description) != "" {
+			return override
+		}
+	}
+	return overrides[0]
+}
+
 func historyOverviewFromRepo(repo *db.SQLiteRepository, sourcePath string) (api.HistoryOverview, error) {
 	if repo == nil {
 		return api.HistoryOverview{}, errors.New("history repository not initialized")
@@ -1080,8 +1135,9 @@ func historyOverviewFromRepo(repo *db.SQLiteRepository, sourcePath string) (api.
 	if releaseOverrides, err := repo.GetReleaseNameOverrides(ctx, trimmed); err == nil {
 		overview.ReleaseNameOverrides = releaseOverrides
 	}
-	if descriptionOverride, err := repo.GetDescriptionOverride(ctx, trimmed); err == nil {
-		overview.DescriptionOverride = descriptionOverride
+	if descriptionOverrides, err := repo.ListDescriptionOverridesByPath(ctx, trimmed); err == nil {
+		overview.DescriptionOverrides = append([]api.DescriptionOverride(nil), descriptionOverrides...)
+		overview.DescriptionOverride = preferredHistoryDescriptionOverride(descriptionOverrides)
 	}
 	if playlistSelection, err := repo.GetPlaylistSelection(ctx, trimmed); err == nil {
 		overview.PlaylistSelection = playlistSelection

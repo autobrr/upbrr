@@ -30,6 +30,7 @@ type HistoryOverview struct {
 	ExternalMetadata     ExternalMetadata
 	ReleaseNameOverrides ReleaseNameOverrides
 	DescriptionOverride  DescriptionOverride
+	DescriptionOverrides []DescriptionOverride
 	PlaylistSelection    PlaylistSelection
 	TrackerMetadata      []TrackerMetadata
 	TrackerRuleFailures  []TrackerRuleFailure

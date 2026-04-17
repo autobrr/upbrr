@@ -107,13 +107,16 @@ func (r *recordingRepo) ListUploadedImagesByPath(context.Context, string) ([]api
 func (r *recordingRepo) DeleteUploadedImage(context.Context, string, string, string) error {
 	return nil
 }
-func (r *recordingRepo) GetDescriptionOverride(context.Context, string) (api.DescriptionOverride, error) {
+func (r *recordingRepo) GetDescriptionOverride(context.Context, string, string) (api.DescriptionOverride, error) {
 	return api.DescriptionOverride{}, nil
+}
+func (r *recordingRepo) ListDescriptionOverridesByPath(context.Context, string) ([]api.DescriptionOverride, error) {
+	return nil, nil
 }
 func (r *recordingRepo) SaveDescriptionOverride(context.Context, api.DescriptionOverride) error {
 	return nil
 }
-func (r *recordingRepo) DeleteDescriptionOverride(context.Context, string) error { return nil }
+func (r *recordingRepo) DeleteDescriptionOverride(context.Context, string, string) error { return nil }
 func (r *recordingRepo) GetPlaylistSelection(context.Context, string) (api.PlaylistSelection, error) {
 	return api.PlaylistSelection{}, nil
 }

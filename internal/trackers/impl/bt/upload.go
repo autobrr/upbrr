@@ -38,7 +38,7 @@ type uploadState struct {
 	torrentPath   string
 	description   string
 	releaseName   string
-	fields        map[string]string
+	fields        map[string][]string
 	blockedReason string
 }
 
@@ -50,11 +50,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if state.blockedReason != "" {
 		return api.UploadSummary{}, fmt.Errorf("trackers: BT %s", state.blockedReason)
 	}
-	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, []commonhttp.FileField{{
+	body, contentType, err := commonhttp.BuildMultipartPayloadMulti(state.fields, []commonhttp.FileField{{
 		FieldName: "file_input",
 		FileName:  filepath.Base(state.torrentPath),
 		Path:      state.torrentPath,
 	}})
+
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -123,7 +124,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		DescriptionGroup: "bt",
 		Description:      state.description,
 		Endpoint:         uploadURL,
-		Payload:          cloneFields(state.fields),
+		Payload:          flattenFields(state.fields),
 		Files:            []api.TrackerDryRunFile{{Field: "file_input", Path: state.torrentPath, Present: strings.TrimSpace(state.torrentPath) != ""}},
 	}, nil
 }
@@ -146,95 +147,96 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
+		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
 	description, err := buildDescription(req.Meta, assets)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
-	fields := buildFields(req.Meta, description, auth, req.TrackerConfig)
+	fields := buildFields(req.Meta, description, auth, req.TrackerConfig, assets)
 	state := uploadState{
 		torrentPath: torrentPath,
 		description: description,
 		releaseName: firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
 		fields:      fields,
 	}
-	if strings.TrimSpace(fields["image"]) == "" {
+	if len(fields["image"]) == 0 || strings.TrimSpace(fields["image"][0]) == "" {
 		state.blockedReason = "missing poster URL"
 	}
+
 	return state, cookies, nil
 }
 
-func buildFields(meta api.PreparedMetadata, description string, auth string, trackerCfg config.TrackerConfig) map[string]string {
+func buildFields(meta api.PreparedMetadata, description string, auth string, trackerCfg config.TrackerConfig, assets trackers.DescriptionAssets) map[string][]string {
 	hasPT, subtitleIDs := resolveSubtitle(meta)
 	width, height := resolveResolution(meta)
-	fields := map[string]string{
-		"audio_c":     resolveAudioCodec(meta),
-		"audio":       resolveAudio(meta),
-		"auth":        auth,
-		"bitrate":     resolveBitrate(meta),
-		"desc":        "",
-		"diretor":     resolveDirectors(meta),
-		"duracao":     fmt.Sprintf("%d min", resolveRuntime(meta)),
-		"especificas": description,
-		"format":      resolveContainer(meta),
-		"idioma_ori":  resolveLanguage(meta),
-		"image":       resolvePoster(meta),
-		"legenda":     hasPT,
-		"mediainfo":   resolveMedia(meta),
-		"resolucao_1": width,
-		"resolucao_2": height,
-		"sinopse":     resolveOverview(meta),
-		"submit":      "true",
-		"tags":        resolveTags(meta),
-		"title":       firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.Release.Title),
-		"type":        resolveType(meta),
-		"video_c":     resolveVideoCodec(meta),
-		"year":        strconv.Itoa(resolveYear(meta)),
-		"youtube":     resolveYouTube(meta),
+	fields := map[string][]string{
+		"audio_c":     {resolveAudioCodec(meta)},
+		"audio":       {resolveAudio(meta)},
+		"auth":        {auth},
+		"bitrate":     {resolveBitrate(meta)},
+		"desc":        {""},
+		"diretor":     {resolveDirectors(meta)},
+		"duracao":     {fmt.Sprintf("%d min", resolveRuntime(meta))},
+		"especificas": {description},
+		"format":      {resolveContainer(meta)},
+		"idioma_ori":  {resolveLanguage(meta)},
+		"image":       {resolvePoster(meta)},
+		"legenda":     {hasPT},
+		"mediainfo":   {resolveMedia(meta)},
+		"resolucao_1": {width},
+		"resolucao_2": {height},
+		"sinopse":     {resolveOverview(meta)},
+		"submit":      {"true"},
+		"tags":        {resolveTags(meta)},
+		"title":       {resolveTitle(meta)},
+		"type":        {resolveType(meta)},
+		"video_c":     {resolveVideoCodec(meta)},
+		"year":        {strconv.Itoa(resolveYear(meta))},
+		"youtube":     {resolveYouTube(meta)},
 	}
-	for _, id := range subtitleIDs {
-		fields["subtitles[]"] = appendCSV(fields["subtitles[]"], id)
-	}
-	screens := resolveScreens(meta)
-	if len(screens) > 0 {
-		fields["screen[]"] = strings.Join(screens, ",")
-	}
+
+	fields["subtitles[]"] = append(fields["subtitles[]"], subtitleIDs...)
+
+	screens := resolveScreens(assets)
+	fields["screen[]"] = append(fields["screen[]"], screens...)
+
 	category := strings.ToUpper(strings.TrimSpace(categoryOf(meta)))
 	if !meta.Anime && (category == "MOVIE" || category == "TV") {
-		fields["3d"] = yesNo(meta.Is3D != "")
-		fields["adulto"] = "0"
-		fields["imdb_input"] = resolveIMDbText(meta)
-		fields["nota_imdb"] = resolveIMDbRating(meta)
-		fields["title_br"] = resolveLocalizedTitle(meta)
+		fields["3d"] = []string{yesNo(meta.Is3D != "")}
+		fields["adulto"] = []string{"0"}
+		fields["imdb_input"] = []string{resolveIMDbText(meta)}
+		fields["nota_imdb"] = []string{resolveIMDbRating(meta)}
+		fields["title_br"] = []string{resolveLocalizedTitle(meta)}
 	}
 	if meta.Scene {
-		fields["scene"] = "on"
+		fields["scene"] = []string{"on"}
 	}
 	if category == "TV" || meta.Anime {
-		fields["episodio"] = meta.EpisodeStr
-		fields["ntorrent"] = meta.SeasonStr + meta.EpisodeStr
+		fields["episodio"] = []string{meta.EpisodeStr}
+		fields["ntorrent"] = []string{meta.SeasonStr + meta.EpisodeStr}
 		if meta.TVPack {
-			fields["temporada"] = meta.SeasonStr
-			fields["tipo"] = "completa"
+			fields["temporada"] = []string{meta.SeasonStr}
+			fields["tipo"] = []string{"completa"}
 		} else {
-			fields["temporada_e"] = meta.SeasonStr
-			fields["tipo"] = "ep_individual"
+			fields["temporada_e"] = []string{meta.SeasonStr}
+			fields["tipo"] = []string{"ep_individual"}
 		}
 	}
 	if category == "MOVIE" {
-		fields["versao"] = resolveEdition(meta)
+		fields["versao"] = []string{resolveEdition(meta)}
 	}
 	if meta.Anime {
-		fields["fundo_torrent"] = resolveBackdrop(meta)
-		fields["rating"] = resolveIMDbRating(meta)
-		fields["releasedate"] = strconv.Itoa(resolveYear(meta))
+		fields["fundo_torrent"] = []string{resolveBackdrop(meta)}
+		fields["rating"] = []string{resolveIMDbRating(meta)}
+		fields["releasedate"] = []string{strconv.Itoa(resolveYear(meta))}
 	}
 	if trackerCfg.Anon {
-		fields["anonymous"] = "1"
+		fields["anonymous"] = []string{"1"}
 	}
 	if trackers.IsInternalGroup(config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BT": trackerCfg}}}, "BT", meta) {
-		fields["internal"] = "1"
+		fields["internal"] = []string{"1"}
 	}
 	return fields
 }
@@ -327,23 +329,222 @@ func resolveAudio(meta api.PreparedMetadata) string {
 	return "Legendado"
 }
 
+var targetSiteIDs = map[string]string{
+	"arabic":            "22",
+	"bulgarian":         "29",
+	"chinese":           "14",
+	"croatian":          "23",
+	"czech":             "30",
+	"danish":            "10",
+	"dutch":             "9",
+	"english - forçada": "50",
+	"english":           "3",
+	"estonian":          "38",
+	"finnish":           "15",
+	"french":            "5",
+	"german":            "6",
+	"greek":             "26",
+	"hebrew":            "40",
+	"hindi":             "41",
+	"hungarian":         "24",
+	"icelandic":         "28",
+	"indonesian":        "47",
+	"italian":           "16",
+	"japanese":          "8",
+	"korean":            "19",
+	"latvian":           "37",
+	"lithuanian":        "39",
+	"norwegian":         "12",
+	"persian":           "52",
+	"polish":            "17",
+	"português":         "49",
+	"romanian":          "13",
+	"russian":           "7",
+	"serbian":           "31",
+	"slovak":            "42",
+	"slovenian":         "43",
+	"spanish":           "4",
+	"swedish":           "11",
+	"thai":              "20",
+	"turkish":           "18",
+	"ukrainian":         "34",
+	"vietnamese":        "25",
+}
+
+var sourceAliasMap = map[string]string{
+	"arabic":                "arabic",
+	"ara":                   "arabic",
+	"ar":                    "arabic",
+	"brazilian portuguese":  "português",
+	"brazilian":             "português",
+	"portuguese-br":         "português",
+	"pt-br":                 "português",
+	"portuguese":            "português",
+	"por":                   "português",
+	"pt":                    "português",
+	"pt-pt":                 "português",
+	"português brasileiro":  "português",
+	"português":             "português",
+	"bulgarian":             "bulgarian",
+	"bul":                   "bulgarian",
+	"bg":                    "bulgarian",
+	"chinese":               "chinese",
+	"chi":                   "chinese",
+	"zh":                    "chinese",
+	"chinese (simplified)":  "chinese",
+	"chinese (traditional)": "chinese",
+	"cmn-hant":              "chinese",
+	"cmn-hans":              "chinese",
+	"yue-hant":              "chinese",
+	"yue-hans":              "chinese",
+	"croatian":              "croatian",
+	"hrv":                   "croatian",
+	"hr":                    "croatian",
+	"scr":                   "croatian",
+	"czech":                 "czech",
+	"cze":                   "czech",
+	"cz":                    "czech",
+	"cs":                    "czech",
+	"danish":                "danish",
+	"dan":                   "danish",
+	"da":                    "danish",
+	"dutch":                 "dutch",
+	"dut":                   "dutch",
+	"nl":                    "dutch",
+	"english - forced":      "english - forçada",
+	"english (forced)":      "english - forçada",
+	"en (forced)":           "english - forçada",
+	"en-us (forced)":        "english - forçada",
+	"english":               "english",
+	"eng":                   "english",
+	"en":                    "english",
+	"en-us":                 "english",
+	"en-gb":                 "english",
+	"english (cc)":          "english",
+	"english - sdh":         "english",
+	"estonian":              "estonian",
+	"est":                   "estonian",
+	"et":                    "estonian",
+	"finnish":               "finnish",
+	"fin":                   "finnish",
+	"fi":                    "finnish",
+	"french":                "french",
+	"fre":                   "french",
+	"fr":                    "french",
+	"fr-fr":                 "french",
+	"fr-ca":                 "french",
+	"german":                "german",
+	"ger":                   "german",
+	"de":                    "german",
+	"greek":                 "greek",
+	"gre":                   "greek",
+	"el":                    "greek",
+	"hebrew":                "hebrew",
+	"heb":                   "hebrew",
+	"he":                    "hebrew",
+	"hindi":                 "hindi",
+	"hin":                   "hindi",
+	"hi":                    "hindi",
+	"hungarian":             "hungarian",
+	"hun":                   "hungarian",
+	"hu":                    "hungarian",
+	"icelandic":             "icelandic",
+	"ice":                   "icelandic",
+	"is":                    "icelandic",
+	"indonesian":            "indonesian",
+	"ind":                   "indonesian",
+	"id":                    "indonesian",
+	"italian":               "italian",
+	"ita":                   "italian",
+	"it":                    "italian",
+	"japanese":              "japanese",
+	"jpn":                   "japanese",
+	"ja":                    "japanese",
+	"korean":                "korean",
+	"kor":                   "korean",
+	"ko":                    "korean",
+	"latvian":               "latvian",
+	"lav":                   "latvian",
+	"lv":                    "latvian",
+	"lithuanian":            "lithuanian",
+	"lit":                   "lithuanian",
+	"lt":                    "lithuanian",
+	"norwegian":             "norwegian",
+	"nor":                   "norwegian",
+	"no":                    "norwegian",
+	"persian":               "persian",
+	"fa":                    "persian",
+	"far":                   "persian",
+	"polish":                "polish",
+	"pol":                   "polish",
+	"pl":                    "polish",
+	"romanian":              "romanian",
+	"rum":                   "romanian",
+	"ro":                    "romanian",
+	"russian":               "russian",
+	"rus":                   "russian",
+	"ru":                    "russian",
+	"serbian":               "serbian",
+	"srp":                   "serbian",
+	"sr":                    "serbian",
+	"scc":                   "serbian",
+	"slovak":                "slovak",
+	"slo":                   "slovak",
+	"sk":                    "slovak",
+	"slovenian":             "slovenian",
+	"slv":                   "slovenian",
+	"sl":                    "slovenian",
+	"spanish":               "spanish",
+	"spa":                   "spanish",
+	"es":                    "spanish",
+	"es-es":                 "spanish",
+	"es-419":                "spanish",
+	"swedish":               "swedish",
+	"swe":                   "swedish",
+	"sv":                    "swedish",
+	"thai":                  "thai",
+	"tha":                   "thai",
+	"th":                    "thai",
+	"turkish":               "turkish",
+	"tur":                   "turkish",
+	"tr":                    "turkish",
+	"ukrainian":             "ukrainian",
+	"ukr":                   "ukrainian",
+	"uk":                    "ukrainian",
+	"vietnamese":            "vietnamese",
+	"vie":                   "vietnamese",
+	"vi":                    "vietnamese",
+}
+
 func resolveSubtitle(meta api.PreparedMetadata) (string, []string) {
 	hasPT := "Nao"
-	var ids []string
+	ids := make([]string, 0)
+	seen := make(map[string]struct{})
+
 	for _, lang := range meta.SubtitleLanguages {
-		switch strings.ToLower(strings.TrimSpace(lang)) {
-		case "portuguese", "português", "pt":
-			hasPT = "Sim"
-			ids = append(ids, "49")
-		case "english", "en":
-			ids = append(ids, "3")
-		case "spanish", "es":
-			ids = append(ids, "4")
+		cleanLang := strings.ToLower(strings.TrimSpace(lang))
+
+		targetKey, ok := sourceAliasMap[cleanLang]
+		if !ok {
+			targetKey = cleanLang
+		}
+
+		if id, exists := targetSiteIDs[targetKey]; exists {
+			if _, alreadySeen := seen[id]; !alreadySeen {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+
+				if id == "49" {
+					hasPT = "Sim"
+				}
+			}
 		}
 	}
+
 	if len(ids) == 0 {
-		ids = append(ids, "44")
+		return "Nao", []string{"44"}
 	}
+
 	return hasPT, ids
 }
 
@@ -412,34 +613,71 @@ func resolveAudioCodec(meta api.PreparedMetadata) string {
 }
 
 func resolveBitrate(meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.Type), "DISC") {
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-			if meta.SourceSize > 66<<30 {
-				return "BD100"
-			}
-			if meta.SourceSize > 50<<30 {
-				return "BD66"
-			}
-			if meta.SourceSize > 25<<30 {
-				return "BD50"
-			}
+	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
+	if discType == "BDMV" {
+		size := meta.SourceSize
+		switch {
+		case size > 66000000000:
+			return "BD100"
+		case size > 50000000000:
+			return "BD66"
+		case size > 25000000000:
+			return "BD50"
+		default:
 			return "BD25"
 		}
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-			return "DVD9"
+	}
+	if discType == "HDDVD" {
+		return "HD-DVD"
+	}
+
+	dvdSize := strings.ToUpper(strings.TrimSpace(meta.Release.Size))
+	if dvdSize == "DVD9" || dvdSize == "DVD5" {
+		return dvdSize
+	}
+
+	for _, other := range meta.Release.Other {
+		if strings.EqualFold(other, "remux") {
+			return "Remux"
 		}
 	}
-	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
-	case "REMUX":
-		return "Remux"
-	case "WEBDL":
-		return "WEB-DL"
-	case "WEBRIP":
-		return "WEBRip"
-	case "HDTV":
-		return "HDTV"
-	case "ENCODE":
+
+	source := strings.ToLower(strings.TrimSpace(meta.Release.Source))
+	switch source {
+	case "bdrip":
+		return "BDRip"
+	case "bluray", "blu-ray":
 		return "Blu-ray"
+	case "brrip":
+		return "BRRip"
+	case "mhd":
+		return "mHD"
+	case "web-dl":
+		return "WEB-DL"
+	case "webrip":
+		return "WEBRip"
+	case "web":
+		return "WEB"
+	case "dvdrip":
+		return "DVDRip"
+	case "dvdscr":
+		return "DVDScr"
+	case "hdrip":
+		return "HDRip"
+	case "hdtc":
+		return "HDTC"
+	case "hdtv":
+		return "HDTV"
+	case "pdtv":
+		return "PDTV"
+	case "sdtv":
+		return "SDTV"
+	case "tc":
+		return "TC"
+	case "tvrip":
+		return "TVRip"
+	case "vhsrip":
+		return "VHSRip"
 	default:
 		return "Outro"
 	}
@@ -528,8 +766,14 @@ func resolvePoster(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveScreens(meta api.PreparedMetadata) []string {
-	return nil
+func resolveScreens(assets trackers.DescriptionAssets) []string {
+	var screens []string
+	for _, image := range assets.Screenshots {
+		if u := strings.TrimSpace(image.RawURL); u != "" {
+			screens = append(screens, u)
+		}
+	}
+	return screens
 }
 
 func resolveOverview(meta api.PreparedMetadata) string {
@@ -566,6 +810,13 @@ func resolveYear(meta api.PreparedMetadata) int {
 	return meta.Release.Year
 }
 
+func resolveTitle(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.TMDB != nil {
+		return firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.Release.Title)
+	}
+	return meta.Release.Title
+}
+
 func resolveLocalizedTitle(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil {
 		return firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.ExternalMetadata.TMDB.OriginalTitle)
@@ -574,10 +825,70 @@ func resolveLocalizedTitle(meta api.PreparedMetadata) string {
 }
 
 func resolveLanguage(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
+	if meta.ExternalMetadata.TMDB == nil || strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage) == "" {
+		return ""
 	}
-	return ""
+	lang := strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
+	switch lang {
+	case "en":
+		return "Inglês"
+	case "pt":
+		return "Português"
+	case "es":
+		return "Espanhol"
+	case "fr":
+		return "Francês"
+	case "de":
+		return "Alemão"
+	case "it":
+		return "Italiano"
+	case "ja":
+		return "Japonês"
+	case "ko":
+		return "Coreano"
+	case "zh":
+		return "Chinês"
+	case "ru":
+		return "Russo"
+	case "hi":
+		return "Hindi"
+	case "tr":
+		return "Turco"
+	case "nl":
+		return "Holandês"
+	case "pl":
+		return "Polonês"
+	case "sv":
+		return "Sueco"
+	case "da":
+		return "Dinamarquês"
+	case "no":
+		return "Norueguês"
+	case "fi":
+		return "Finlandês"
+	case "hu":
+		return "Húngaro"
+	case "cs":
+		return "Tcheco"
+	case "th":
+		return "Tailandês"
+	case "vi":
+		return "Vietnamita"
+	case "id":
+		return "Indonésio"
+	case "el":
+		return "Grego"
+	case "he":
+		return "Hebraico"
+	case "ar":
+		return "Árabe"
+	case "ro":
+		return "Romeno"
+	case "uk":
+		return "Ucraniano"
+	default:
+		return lang
+	}
 }
 
 func resolveBackdrop(meta api.PreparedMetadata) string {
@@ -608,13 +919,6 @@ func categoryOf(meta api.PreparedMetadata) string {
 	return strings.TrimSpace(meta.MediaInfoCategory)
 }
 
-func appendCSV(current string, value string) string {
-	if strings.TrimSpace(current) == "" {
-		return value
-	}
-	return current + "," + value
-}
-
 func yesNo(value bool) string {
 	if value {
 		return "Sim"
@@ -622,10 +926,12 @@ func yesNo(value bool) string {
 	return "Nao"
 }
 
-func cloneFields(in map[string]string) map[string]string {
+func flattenFields(in map[string][]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
+	for key, values := range in {
+		if len(values) > 0 {
+			out[key] = strings.Join(values, ", ")
+		}
 	}
 	return out
 }

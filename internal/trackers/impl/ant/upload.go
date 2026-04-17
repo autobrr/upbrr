@@ -162,6 +162,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	descriptionAssets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
+		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		descriptionAssets = trackers.DescriptionAssets{}
 	}
 	description, err := buildDescription(req.Meta, descriptionAssets)

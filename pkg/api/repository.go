@@ -85,6 +85,7 @@ type TrackerRuleFailure struct {
 
 type DescriptionOverride struct {
 	SourcePath  string
+	GroupKey    string
 	Description string
 	UpdatedAt   time.Time
 }
@@ -136,9 +137,10 @@ type MetadataRepository interface {
 	GetReleaseNameOverrides(ctx context.Context, path string) (ReleaseNameOverrides, error)
 	SaveReleaseNameOverrides(ctx context.Context, path string, overrides ReleaseNameOverrides) error
 	DeleteReleaseNameOverrides(ctx context.Context, path string) error
-	GetDescriptionOverride(ctx context.Context, path string) (DescriptionOverride, error)
+	GetDescriptionOverride(ctx context.Context, path string, groupKey string) (DescriptionOverride, error)
+	ListDescriptionOverridesByPath(ctx context.Context, path string) ([]DescriptionOverride, error)
 	SaveDescriptionOverride(ctx context.Context, override DescriptionOverride) error
-	DeleteDescriptionOverride(ctx context.Context, path string) error
+	DeleteDescriptionOverride(ctx context.Context, path string, groupKey string) error
 	GetPlaylistSelection(ctx context.Context, sourcePath string) (PlaylistSelection, error)
 	SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error
 	DeletePlaylistSelection(ctx context.Context, sourcePath string) error

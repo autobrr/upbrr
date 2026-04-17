@@ -25,11 +25,17 @@ type MetadataPreview struct {
 }
 
 type DescriptionBuilderPreview struct {
-	SourcePath      string
-	Description     string
-	DescriptionHTML string
-	HasOverride     bool
-	ImageHosts      []DescriptionImageHostStatus
+	SourcePath string
+	Groups     []DescriptionBuilderGroup
+}
+
+type DescriptionBuilderGroup struct {
+	GroupKey           string
+	Trackers           []string
+	RawDescription     string
+	RawDescriptionHTML string
+	HasOverride        bool
+	ImageHost          ImageHostFeedback
 }
 
 type PreparationPreview struct {
@@ -78,10 +84,14 @@ type TrackerDryRunFile struct {
 }
 
 type PreparationDescription struct {
-	Trackers        []string
-	Description     string
-	DescriptionHTML string
-	ImageHost       ImageHostFeedback
+	GroupKey           string
+	Trackers           []string
+	RawDescription     string
+	RawDescriptionHTML string
+	Description        string
+	DescriptionHTML    string
+	HasOverride        bool
+	ImageHost          ImageHostFeedback
 }
 
 type ImageHostFeedback struct {
