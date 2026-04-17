@@ -124,17 +124,10 @@ func detectResolution(value string) string {
 }
 
 func resolutionValue(meta api.PreparedMetadata) string {
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	if resolution == "" {
-		resolution = detectResolution(meta.ReleaseName)
+	if meta.VideoWidth > 0 && meta.VideoHeight > 0 {
+		return fmt.Sprintf("%dx%d", meta.VideoWidth, meta.VideoHeight)
 	}
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") && resolution != "" {
-		height := strings.ToLower(strings.TrimSuffix(strings.TrimSuffix(resolution, "p"), "i"))
-		if value, err := strconv.Atoi(height); err == nil && value > 0 {
-			return fmt.Sprintf("%dx%d", int(float64(value)*16.0/9.0+0.5), value)
-		}
-	}
-	return resolution
+	return strings.TrimSpace(meta.Release.Resolution)
 }
 
 func videoQualityID(site siteDefinition, meta api.PreparedMetadata) string {

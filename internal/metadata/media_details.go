@@ -112,8 +112,9 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	} else {
 		meta.VideoEncode, meta.VideoCodec, meta.HasEncodeSettings, meta.BitDepth = videoEncodeFromMedia(miDoc, meta.Type)
 	}
+	meta.VideoWidth, meta.VideoHeight = videoPixelDimensions(miDoc)
 	if s.logger != nil {
-		s.logger.Debugf("metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q", meta.Region, meta.VideoEncode, meta.VideoCodec, meta.BitDepth)
+		s.logger.Debugf("metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q video_width=%d video_height=%d", meta.Region, meta.VideoEncode, meta.VideoCodec, meta.BitDepth, meta.VideoWidth, meta.VideoHeight)
 	}
 
 	meta.Edition, meta.Repack, meta.WebDV = editionFromMeta(meta)
@@ -946,6 +947,15 @@ func videoEncodeFromMedia(doc mediaInfoDoc, typeValue string) (string, string, b
 		}
 	}
 	return videoEncode, videoCodec, encodedSettings != "", bitDepth
+}
+
+func videoPixelDimensions(doc mediaInfoDoc) (width, height int) {
+	_, videoTracks, _ := splitMediaInfoTracks(doc)
+	if len(videoTracks) == 0 {
+		return 0, 0
+	}
+	track := videoTracks[0]
+	return trackNumericInt(track, "Width"), trackNumericInt(track, "Height")
 }
 
 func editionFromMeta(meta api.PreparedMetadata) (string, string, bool) {
