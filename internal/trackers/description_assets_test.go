@@ -710,6 +710,125 @@ Some text
 	}
 }
 
+func TestApplyUploadedVariantsToSlotsUsesOrderedFallbackForURLOnlySlots(t *testing.T) {
+	slots := []api.ScreenshotSlot{
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           0,
+			OriginalURL:         "https://ptpimg.me/first.png",
+			OriginalHost:        "ptpimg",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           1,
+			OriginalURL:         "https://ptpimg.me/second.png",
+			OriginalHost:        "ptpimg",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+	}
+	uploads := []api.UploadedImageLink{
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/first.jpg", RawURL: "https://img.hdbits.org/first.jpg", WebURL: "https://img.hdbits.org/first"},
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/second.jpg", RawURL: "https://img.hdbits.org/second.jpg", WebURL: "https://img.hdbits.org/second"},
+	}
+
+	summary := ApplyUploadedVariantsToSlots(slots, uploads)
+
+	if summary.FallbackMatched != 2 {
+		t.Fatalf("expected 2 fallback matches, got %#v", summary)
+	}
+	if slots[0].ImagePath != "/tmp/first-local.png" || slots[1].ImagePath != "/tmp/second-local.png" {
+		t.Fatalf("expected fallback to backfill image paths, got %#v", slots)
+	}
+	if len(slots[0].Variants) != 1 || slots[0].Variants[0].RawURL != "https://img.hdbits.org/first.jpg" {
+		t.Fatalf("expected first slot to receive first uploaded variant, got %#v", slots[0].Variants)
+	}
+	if len(slots[1].Variants) != 1 || slots[1].Variants[0].RawURL != "https://img.hdbits.org/second.jpg" {
+		t.Fatalf("expected second slot to receive second uploaded variant, got %#v", slots[1].Variants)
+	}
+}
+
+func TestApplyUploadedVariantsToSlotsPrefersDirectPathMatches(t *testing.T) {
+	slots := []api.ScreenshotSlot{
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           0,
+			ImagePath:           "/tmp/first-local.png",
+			OriginalKey:         "/tmp/first-local.png",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           1,
+			ImagePath:           "/tmp/second-local.png",
+			OriginalKey:         "/tmp/second-local.png",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+	}
+	uploads := []api.UploadedImageLink{
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/first.jpg", RawURL: "https://img.hdbits.org/first.jpg", WebURL: "https://img.hdbits.org/first"},
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/second.jpg", RawURL: "https://img.hdbits.org/second.jpg", WebURL: "https://img.hdbits.org/second"},
+	}
+
+	summary := ApplyUploadedVariantsToSlots(slots, uploads)
+
+	if summary.FallbackMatched != 0 {
+		t.Fatalf("expected direct path matches only, got %#v", summary)
+	}
+	if slots[0].ImagePath != "/tmp/first-local.png" || slots[1].ImagePath != "/tmp/second-local.png" {
+		t.Fatalf("expected existing image paths to be preserved, got %#v", slots)
+	}
+}
+
+func TestApplyUploadedVariantsToSlotsSkipsNonRenderableSlotsDuringFallback(t *testing.T) {
+	slots := []api.ScreenshotSlot{
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           0,
+			OriginalURL:         "https://image.tmdb.org/poster.jpg",
+			OriginalHost:        "image.tmdb.org",
+			SectionKind:         screenshotSectionInline,
+			RenderInScreenshots: false,
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           1,
+			OriginalURL:         "https://ptpimg.me/first.png",
+			OriginalHost:        "ptpimg",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           2,
+			OriginalURL:         "https://ptpimg.me/second.png",
+			OriginalHost:        "ptpimg",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+	}
+	uploads := []api.UploadedImageLink{
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/first.jpg", RawURL: "https://img.hdbits.org/first.jpg", WebURL: "https://img.hdbits.org/first"},
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/second.jpg", RawURL: "https://img.hdbits.org/second.jpg", WebURL: "https://img.hdbits.org/second"},
+	}
+
+	summary := ApplyUploadedVariantsToSlots(slots, uploads)
+
+	if summary.FallbackMatched != 2 {
+		t.Fatalf("expected fallback to match renderable slots only, got %#v", summary)
+	}
+	if len(slots[0].Variants) != 0 {
+		t.Fatalf("expected non-renderable slot to remain untouched, got %#v", slots[0].Variants)
+	}
+	if slots[1].ImagePath != "/tmp/first-local.png" || slots[2].ImagePath != "/tmp/second-local.png" {
+		t.Fatalf("expected uploads assigned by renderable order, got %#v", slots)
+	}
+}
+
 func TestResolveTrackerScreenshotsReturnsNilWhenHostsAreInvalid(t *testing.T) {
 	screenshots := resolveTrackerScreenshots([]string{
 		"not a url",

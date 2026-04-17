@@ -1625,6 +1625,7 @@ export namespace api {
 	    ExternalMetadata: ExternalMetadata;
 	    ReleaseNameOverrides: ReleaseNameOverrides;
 	    DescriptionOverride: DescriptionOverride;
+	    DescriptionOverrides: DescriptionOverride[];
 	    PlaylistSelection: PlaylistSelection;
 	    TrackerMetadata: TrackerMetadata[];
 	    TrackerRuleFailures: TrackerRuleFailure[];
@@ -1652,6 +1653,7 @@ export namespace api {
 	        this.ExternalMetadata = this.convertValues(source["ExternalMetadata"], ExternalMetadata);
 	        this.ReleaseNameOverrides = this.convertValues(source["ReleaseNameOverrides"], ReleaseNameOverrides);
 	        this.DescriptionOverride = this.convertValues(source["DescriptionOverride"], DescriptionOverride);
+	        this.DescriptionOverrides = this.convertValues(source["DescriptionOverrides"], DescriptionOverride);
 	        this.PlaylistSelection = this.convertValues(source["PlaylistSelection"], PlaylistSelection);
 	        this.TrackerMetadata = this.convertValues(source["TrackerMetadata"], TrackerMetadata);
 	        this.TrackerRuleFailures = this.convertValues(source["TrackerRuleFailures"], TrackerRuleFailure);

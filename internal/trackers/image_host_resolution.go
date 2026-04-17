@@ -133,7 +133,10 @@ func ensureDescriptionImageHostWithData(
 			continue
 		}
 		candidateSlots := cloneScreenshotSlots(slots)
-		applyUploadedVariantsToSlots(candidateSlots, uploaded)
+		summary := applyUploadedVariantsToSlots(candidateSlots, uploaded)
+		if summary.FallbackMatched > 0 && logger != nil {
+			logger.Debugf("trackers: image host resolution applied ordered slot fallback tracker=%s host=%s matched=%d", tracker, host, summary.FallbackMatched)
+		}
 		screenshots, _, _, err := selectScreenshotsFromSlots(tracker, candidateSlots, policy)
 		if err != nil {
 			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)

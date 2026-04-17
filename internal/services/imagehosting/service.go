@@ -19,6 +19,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -222,8 +223,11 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 				s.logger.Errorf("image hosting: failed to save upload records: %v", err)
 				return nil, err
 			}
-			if err := syncScreenshotSlotVariants(ctx, s.repo, meta.SourcePath, results); err != nil {
+			summary, err := syncScreenshotSlotVariants(ctx, s.repo, meta.SourcePath, results)
+			if err != nil {
 				s.logger.Warnf("image hosting: failed to sync screenshot slot variants: %v", err)
+			} else if summary.FallbackMatched > 0 {
+				s.logger.Debugf("image hosting: applied ordered screenshot slot fallback host=%s matched=%d", normalizedHost, summary.FallbackMatched)
 			}
 		}
 		return results, nil
@@ -353,8 +357,11 @@ dispatchLoop:
 			s.logger.Errorf("image hosting: failed to save upload records: %v", err)
 			return nil, err
 		}
-		if err := syncScreenshotSlotVariants(ctx, s.repo, meta.SourcePath, orderedResults); err != nil {
+		summary, err := syncScreenshotSlotVariants(ctx, s.repo, meta.SourcePath, orderedResults)
+		if err != nil {
 			s.logger.Warnf("image hosting: failed to sync screenshot slot variants: %v", err)
+		} else if summary.FallbackMatched > 0 {
+			s.logger.Debugf("image hosting: applied ordered screenshot slot fallback host=%s matched=%d", normalizedHost, summary.FallbackMatched)
 		}
 		s.logger.Debugf("image hosting: upload records persisted successfully")
 	}
@@ -420,13 +427,19 @@ func isAllowedImageExt(path string) bool {
 	}
 }
 
-func syncScreenshotSlotVariants(ctx context.Context, repo api.MetadataRepository, sourcePath string, uploaded []api.UploadedImageLink) error {
+func syncScreenshotSlotVariants(ctx context.Context, repo api.MetadataRepository, sourcePath string, uploaded []api.UploadedImageLink) (trackers.SlotUploadAttachmentResult, error) {
 	if repo == nil || len(uploaded) == 0 || strings.TrimSpace(sourcePath) == "" {
-		return nil
+		return trackers.SlotUploadAttachmentResult{}, nil
 	}
 	slots, err := repo.ListScreenshotSlotsByPath(ctx, sourcePath)
 	if err != nil || len(slots) == 0 {
-		return err
+		return trackers.SlotUploadAttachmentResult{}, err
+	}
+	summary := trackers.ApplyUploadedVariantsToSlots(slots, uploaded)
+	if summary.FallbackMatched > 0 {
+		if err := repo.ReplaceScreenshotSlots(ctx, sourcePath, slots); err != nil {
+			return summary, err
+		}
 	}
 	slotByPath := make(map[string]int, len(slots))
 	for _, slot := range slots {
@@ -452,5 +465,5 @@ func syncScreenshotSlotVariants(ctx context.Context, repo api.MetadataRepository
 			UploadedAt: image.UploadedAt,
 		})
 	}
-	return repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants)
+	return summary, repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants)
 }
