@@ -165,49 +165,56 @@ func videoQualityID(site siteDefinition, meta api.PreparedMetadata) string {
 }
 
 func ripTypeName(meta api.PreparedMetadata) string {
-	typeValue := strings.ToLower(strings.TrimSpace(meta.Type))
-	if typeValue == "disc" {
-		discType := strings.ToLower(strings.TrimSpace(meta.DiscType))
-		switch discType {
-		case "bdmv":
-			return "BluRay Raw"
-		case "dvd", "hddvd":
-			return "DVD"
+	discType := strings.ToLower(strings.TrimSpace(meta.DiscType))
+	if discType == "dvd" {
+		return "DVD"
+	}
+	if discType == "bdmv" {
+		return "BluRay Raw"
+	}
+
+	releaseOther := meta.Release.Other
+	releaseSource := strings.ToLower(strings.TrimSpace(meta.Release.Source))
+	for _, other := range releaseOther {
+		if strings.ToLower(other) == "remux" {
+			if releaseSource == "bluray" {
+				return "BluRay REMUX"
+			}
+			if releaseSource == "dvd" {
+				return "DVD Remux"
+			}
 		}
 	}
 
-	name := strings.ToLower(meta.ReleaseName)
-
-	if strings.Contains(name, "remux") {
-		if strings.Contains(name, "dvd") {
-			return "DVD Remux"
-		}
-		return "BluRay REMUX"
-	}
-
-	rules := []struct {
-		substring string
-		result    string
-	}{
-		{"bdrip", "BDRip"},
-		{"encode", "BluRay"},
-		{"brrip", "BRRip"},
-		{"dvdrip", "DVDRip"},
-		{"vcdrip", "VCDRip"},
-		{"vcd", "VCD"},
-		{"hdrip", "HDRip"},
-		{"hdtv", "HDTV"},
-		{"sdtv", "SDTV"},
-		{"vhsrip", "VHSRip"},
-		{"vodrip", "VODRip"},
-		{"web-dl", "WEB-DL"},
-		{"web-rip", "WEBRip"},
-	}
-
-	for _, rule := range rules {
-		if strings.Contains(name, rule.substring) {
-			return rule.result
-		}
+	switch strings.ToLower(strings.TrimSpace(meta.Release.Source)) {
+	case "bdrip":
+		return "BDRip"
+	case "bluray":
+		return "BluRay"
+	case "brrip":
+		return "BRRip"
+	case "dvd":
+		return "DVD"
+	case "dvdrip":
+		return "DVDRip"
+	case "hdrip":
+		return "HDRip"
+	case "hdtv":
+		return "HDTV"
+	case "sdtv":
+		return "SDTV"
+	case "vcd":
+		return "VCD"
+	case "vcdr":
+		return "VCDRip"
+	case "vhsrc":
+		return "VHSRip"
+	case "vodrip":
+		return "VODRip"
+	case "web-dl":
+		return "WEB-DL"
+	case "webrip":
+		return "WEBRip"
 	}
 
 	return ""
