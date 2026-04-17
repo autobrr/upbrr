@@ -106,13 +106,13 @@ func resolveTrackerDescription(ctx context.Context, tracker string, meta api.Pre
 	}
 	if canonical := descriptionGroupFromPreparedMeta(meta, tracker); strings.TrimSpace(canonical) != "" {
 		if logger != nil {
-			logger.Debugf("trackers: canonical group description applied source=%s tracker=%s len=%d", meta.SourcePath, strings.TrimSpace(tracker), len(strings.TrimSpace(canonical)))
+			logger.Tracef("trackers: canonical group description applied source=%s tracker=%s len=%d", meta.SourcePath, strings.TrimSpace(tracker), len(strings.TrimSpace(canonical)))
 		}
 		return canonical, true
 	}
 	if trimmed := strings.TrimSpace(meta.DescriptionOverride); trimmed != "" {
 		if logger != nil {
-			logger.Debugf("trackers: request description override applied source=%s len=%d", meta.SourcePath, len(trimmed))
+			logger.Tracef("trackers: request description override applied source=%s len=%d", meta.SourcePath, len(trimmed))
 		}
 		return meta.DescriptionOverride, true
 	}
@@ -123,7 +123,7 @@ func resolveTrackerDescription(ctx context.Context, tracker string, meta api.Pre
 			trimmed := strings.TrimSpace(override.Description)
 			if trimmed != "" {
 				if logger != nil {
-					logger.Debugf("trackers: description override applied source=%s len=%d", meta.SourcePath, len(trimmed))
+					logger.Tracef("trackers: description override applied source=%s len=%d", meta.SourcePath, len(trimmed))
 				}
 				return override.Description, true
 			}
@@ -146,7 +146,7 @@ func resolveTrackerDescription(ctx context.Context, tracker string, meta api.Pre
 	}
 	result := combineDescriptions(combined)
 	if logger != nil {
-		logger.Debugf("trackers: description assets description sources db=%d meta=%d combined=%d desc_len=%d", len(records), len(meta.TrackerData), len(combined), len(strings.TrimSpace(result)))
+		logger.Tracef("trackers: description assets description sources db=%d meta=%d combined=%d desc_len=%d", len(records), len(meta.TrackerData), len(combined), len(strings.TrimSpace(result)))
 	}
 	return result, false
 }
