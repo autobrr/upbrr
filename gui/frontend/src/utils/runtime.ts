@@ -117,6 +117,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         PreviewScreenshotFrame: (path: string, overrides: unknown, nameOverrides: unknown, timestampSeconds: number) => call("PreviewScreenshotFrame", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, TimestampSeconds: timestampSeconds }),
         DeleteScreenshot: (path: string, overrides: unknown, nameOverrides: unknown, imagePath: string) => call("DeleteScreenshot", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, ImagePath: imagePath }),
         SaveFinalScreenshotSelections: (path: string, overrides: unknown, nameOverrides: unknown, images: unknown) => call("SaveFinalScreenshotSelections", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Images: images }),
+        ImportMenuImages: (path: string, overrides: unknown, nameOverrides: unknown, paths: string[]) => call("ImportMenuImages", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Paths: paths }),
         ReadScreenshotImage: (path: string) => call("ReadScreenshotImage", { Path: path }),
         ListUploadCandidates: (path: string, overrides: unknown, nameOverrides: unknown) => call("ListUploadCandidates", { Path: path, Overrides: overrides, NameOverrides: nameOverrides }),
         ListUploadedImages: (path: string, overrides: unknown, nameOverrides: unknown) => call("ListUploadedImages", { Path: path, Overrides: overrides, NameOverrides: nameOverrides }),

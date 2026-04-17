@@ -77,6 +77,10 @@ func (c *preparedMetaTestCore) SaveFinalScreenshotSelections(context.Context, ap
 	return nil
 }
 
+func (c *preparedMetaTestCore) ImportMenuImages(context.Context, api.Request, []string) error {
+	return nil
+}
+
 func (c *preparedMetaTestCore) ListUploadCandidates(context.Context, api.Request) ([]api.ScreenshotImage, error) {
 	return nil, nil
 }

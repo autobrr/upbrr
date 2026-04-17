@@ -115,6 +115,7 @@ type Core interface {
 	ListUploadedImages(ctx context.Context, req Request) ([]UploadedImageLink, error)
 	UploadImages(ctx context.Context, req Request, host string, images []ScreenshotImage) ([]UploadedImageLink, error)
 	DeleteUploadedImage(ctx context.Context, req Request, imagePath string, host string) error
+	ImportMenuImages(ctx context.Context, req Request, paths []string) error
 	DiscoverPlaylists(ctx context.Context, sourcePath string) ([]PlaylistInfo, error)
 	SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error
 	LoadPlaylistSelection(ctx context.Context, sourcePath string) (PlaylistSelection, error)

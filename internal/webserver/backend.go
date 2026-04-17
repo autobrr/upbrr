@@ -606,6 +606,25 @@ func (b *Backend) SaveFinalScreenshotSelections(path string, overrides api.Exter
 	}, images)
 }
 
+func (b *Backend) ImportMenuImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, paths []string) error {
+	if err := b.requireCore(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return b.core.ImportMenuImages(ctx, api.Request{
+		Paths: []string{path},
+		Mode:  api.ModeGUI,
+		Options: api.UploadOptions{
+			Screens:    b.cfg.ScreenshotHandling.Screens,
+			OnlyID:     b.cfg.Metadata.OnlyID,
+			KeepImages: b.cfg.Metadata.KeepImages,
+		},
+		ExternalIDOverrides:  overrides,
+		ReleaseNameOverrides: nameOverrides,
+	}, paths)
+}
+
 func (b *Backend) ReadScreenshotImage(path string) (string, error) {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {

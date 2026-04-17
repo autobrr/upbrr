@@ -376,6 +376,24 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
+	mux.HandleFunc("/api/app/ImportMenuImages", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		var req struct {
+			Path          string
+			Overrides     api.ExternalIDOverrides
+			NameOverrides api.ReleaseNameOverrides
+			Paths         []string
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.backend.ImportMenuImages(req.Path, req.Overrides, req.NameOverrides, req.Paths); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}))
+
 	mux.HandleFunc("/api/app/ReadScreenshotImage", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		var req struct{ Path string }
 		if err := decodeJSON(r, &req); err != nil {

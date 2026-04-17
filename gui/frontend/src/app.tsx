@@ -10,6 +10,7 @@ import HistoryPage from "./pages/history/index";
 import LoggingPage from "./pages/logging";
 import PlaylistSelectionPage from "./pages/playlist_selection";
 import ScreenshotsPage from "./pages/screenshots";
+import MenuImagesPage from "./pages/menu_images";
 import SettingsPage from "./pages/settings";
 import TrackerDataPage from "./pages/tracker_data";
 import TrackerUploadPage from "./pages/tracker_upload";
@@ -196,6 +197,7 @@ declare global {
           App?: {
             BrowsePath: () => Promise<string>;
             BrowseFile: () => Promise<string>;
+            BrowseFiles: () => Promise<string[]>;
             BrowseFolder: () => Promise<string>;
             DetectDiscType: (path: string) => Promise<string>;
             FetchMetadata: (path: string, sourceLookupURL: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<MetadataPreview>;
@@ -212,6 +214,7 @@ declare global {
             PreviewScreenshotFrame: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, timestampSeconds: number) => Promise<string>;
             DeleteScreenshot: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, imagePath: string) => Promise<void>;
             SaveFinalScreenshotSelections: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, images: ScreenshotImage[]) => Promise<void>;
+            ImportMenuImages: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, paths: string[]) => Promise<void>;
             ReadScreenshotImage: (path: string) => Promise<string>;
             ListUploadCandidates: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<ScreenshotImage[]>;
             ListUploadedImages: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<UploadedImageLink[]>;
@@ -351,6 +354,7 @@ type ThemeMode = "light" | "dark" | "auto";
 export default function App() {
   const browserNativeBrowseAvailable = !isBrowserMode() || isBrowserNativeBrowseAvailable();
   const [path, setPath] = useState("");
+  const [currentDiscType, setCurrentDiscType] = useState("");
   const [sourceLookupURL, setSourceLookupURL] = useState("");
   const [loading, setLoading] = useState(false);
   const [metadataResetting, setMetadataResetting] = useState(false);
@@ -1446,6 +1450,8 @@ export default function App() {
   // Auto-detect BDMV and show playlist selection
   const handlePathSelected = async (selectedPath: string, mode: "file" | "folder" = "folder") => {
     setPath(selectedPath);
+    const discType = await detectDiscType(selectedPath);
+    setCurrentDiscType(discType);
     setShowExternalIDInputUI(true);
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
@@ -1458,7 +1464,6 @@ export default function App() {
       return;
     }
 
-    const discType = await detectDiscType(selectedPath);
     if (discType !== "BDMV") {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
@@ -2829,6 +2834,15 @@ export default function App() {
                 Screenshots
               </button>
             ) : null}
+            {dupeChecked && ["BDMV", "DVD", "HDDVD"].includes(currentDiscType) ? (
+              <button
+                className={`subtab-button ${activeTab === "menu_images" ? "active" : ""}`}
+                type="button"
+                onClick={() => setActiveTab("menu_images")}
+              >
+                Menu Images
+              </button>
+            ) : null}
             {dupeChecked ? (
               <button
                 className={`subtab-button ${activeTab === "upload_images" ? "active" : ""}`}
@@ -3018,6 +3032,16 @@ export default function App() {
               reorderFinalSelections={screenshots.reorderFinalSelections}
               finalResult={screenshots.finalResult}
               handleDeleteAllFinalImages={screenshots.handleDeleteAllFinalImages}
+            />
+          ) : activeTab === "menu_images" ? (
+            <MenuImagesPage
+              path={path}
+              overrides={idOverrideState?.overrides || {}}
+              nameOverrides={releaseOverrideState?.overrides || {}}
+              browseAvailable={browserNativeBrowseAvailable}
+              onImportComplete={() => {
+                setActiveTab("upload_images");
+              }}
             />
           ) : activeTab === "upload_images" ? (
             <UploadImagesPage

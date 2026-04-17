@@ -10,6 +10,7 @@ type ScreenshotPurpose string
 const (
 	ScreenshotPurposePreview ScreenshotPurpose = "preview"
 	ScreenshotPurposeFinal   ScreenshotPurpose = "final"
+	ScreenshotPurposeMenu    ScreenshotPurpose = "menu"
 )
 
 type ScreenshotSelection struct {
@@ -23,6 +24,7 @@ type ScreenshotOverrides struct {
 	ManualFrames           []int
 	ComparisonPaths        []string
 	ComparisonPrimaryIndex *int
+	MenuPaths              []string
 }
 
 type ScreenshotFinalSelection struct {

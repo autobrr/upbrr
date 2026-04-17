@@ -106,6 +106,7 @@ type cliOptions struct {
 	ManualFrames      string
 	Comparison        string
 	ComparisonIndex   int
+	MenuImages        string
 	InfoHash          string
 	MaxPieceSize      int
 	NoHash            bool
@@ -225,6 +226,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.Comparison, "comps", "", "Comparison folder path or comma-separated paths")
 	fs.IntVar(&opts.ComparisonIndex, "comparison_index", 0, "Primary comparison index")
 	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
+	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
 	fs.StringVar(&opts.InfoHash, "torrenthash", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "th", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "infohash", "", "Override v1 info hash")
@@ -638,6 +640,12 @@ func buildScreenshotOverrides(opts cliOptions, visited map[string]bool) api.Scre
 		paths, err := parseComparisonPaths(opts.Comparison)
 		if err == nil {
 			overrides.ComparisonPaths = paths
+		}
+	}
+	if visited["menu-images"] {
+		paths, err := parseComparisonPaths(opts.MenuImages)
+		if err == nil {
+			overrides.MenuPaths = paths
 		}
 	}
 	if visited["comparison_index"] {

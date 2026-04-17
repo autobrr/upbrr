@@ -6,6 +6,8 @@ import {logging} from '../models';
 
 export function BrowseFile():Promise<string>;
 
+export function BrowseFiles():Promise<Array<string>>;
+
 export function BrowseFolder():Promise<string>;
 
 export function BrowsePath():Promise<string>;
@@ -59,6 +61,8 @@ export function GetRecentLogs(arg1:number):Promise<Array<logging.Entry>>;
 export function GetTrackerUploadSnapshot(arg1:string):Promise<guiapp.TrackerUploadSnapshot>;
 
 export function ImportConfig():Promise<guiapp.ImportResult>;
+
+export function ImportMenuImages(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>):Promise<void>;
 
 export function ListHistory():Promise<Array<api.HistoryEntry>>;
 
