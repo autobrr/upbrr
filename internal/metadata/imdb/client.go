@@ -260,7 +260,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 	}
 
 	if c.logger != nil {
-		c.logger.Infof("imdb: info loaded id=%s title=%q year=%d type=%s", id, info.Title, info.Year, info.Type)
+		c.logger.Tracef("imdb: info loaded id=%s title=%q year=%d type=%s", id, info.Title, info.Year, info.Type)
 	}
 
 	if debug && c.logger != nil {
@@ -487,7 +487,7 @@ func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) 
 		c.logger.Debugf("imdb: episode lookup loaded for %s", id)
 	}
 	if c.logger != nil {
-		c.logger.Infof("imdb: episode lookup loaded id=%s series=%q season=%s episode=%s", id, lookup.Series.SeriesTitle, lookup.Series.SeasonText, lookup.Series.EpisodeText)
+		c.logger.Tracef("imdb: episode lookup loaded id=%s series=%q season=%s episode=%s", id, lookup.Series.SeriesTitle, lookup.Series.SeasonText, lookup.Series.EpisodeText)
 	}
 
 	return lookup, nil

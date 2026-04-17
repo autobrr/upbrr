@@ -168,7 +168,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 
 	constraints := resolvePieceConstraints(s.cfg)
 	result := api.ClientSearchResult{PieceSizeConstraint: constraints.label}
-	s.logger.Debugf("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
+	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
 
 	clients, usedFallback := resolveSearchClients(s.cfg, meta.ClientOverrides)
 	if len(clients) == 0 {
@@ -176,9 +176,9 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 		return result, nil
 	}
 	if usedFallback {
-		s.logger.Infof("clients: no default search client set; searching all qBittorrent clients (%d)", len(clients))
+		s.logger.Debugf("clients: no default search client set; searching all qBittorrent clients (%d)", len(clients))
 	}
-	s.logger.Debugf("clients: pathed search clients=%s", strings.Join(clients, ","))
+	s.logger.Tracef("clients: pathed search clients=%s", strings.Join(clients, ","))
 	if meta.Options.Debug {
 		s.logger.Debugf("clients: pathed search for %s (clients=%d constraints=%q)", meta.SourcePath, len(clients), constraints.label)
 	}
@@ -193,7 +193,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 		default:
 		}
 
-		s.logger.Debugf("clients: pathed search running for client %s", name)
+		s.logger.Tracef("clients: pathed search running for client %s", name)
 
 		clientCfg, ok := s.cfg.TorrentClients[name]
 		if !ok {
@@ -211,7 +211,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 		if err != nil {
 			return api.ClientSearchResult{}, err
 		}
-		s.logger.Debugf("clients: pathed search client %s results matches=%d trackerMatch=%t preferred=%q", name, len(matches), clientResult.FoundTrackerMatch, clientResult.FoundPreferredPiece)
+		s.logger.Tracef("clients: pathed search client %s results matches=%d trackerMatch=%t preferred=%q", name, len(matches), clientResult.FoundTrackerMatch, clientResult.FoundPreferredPiece)
 		if len(matches) == 0 {
 			if meta.Options.Debug {
 				s.logger.Debugf("clients: no torrent matches found in %s", name)
@@ -240,7 +240,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 		}
 
 		if shouldStopSearch(constraints.label, clientResult.FoundPreferredPiece) {
-			s.logger.Debugf("clients: stopping pathed search after %s (preferred=%q)", name, clientResult.FoundPreferredPiece)
+			s.logger.Tracef("clients: stopping pathed search after %s (preferred=%q)", name, clientResult.FoundPreferredPiece)
 			break
 		}
 	}
@@ -336,7 +336,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		return api.ClientSearchResult{}, nil, internalerrors.ErrInvalidInput
 	}
 
-	s.logger.Debugf("clients: searching qBittorrent client %s for %s", name, searchTerm)
+	s.logger.Tracef("clients: searching qBittorrent client %s for %s", name, searchTerm)
 
 	useProxy := clientCfg.UsesQuiProxy()
 	var (
@@ -350,7 +350,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		if proxyBaseURL == "" {
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s proxy url is required", name)
 		}
-		s.logger.Debugf("clients: %s searching via qBittorrent proxy", name)
+		s.logger.Tracef("clients: %s searching via qBittorrent proxy", name)
 		transport := &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: clientCfg.QbitTLSSkipVerify()},
 		}
@@ -360,7 +360,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		if host == "" {
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s qbit host is required", name)
 		}
-		s.logger.Debugf("clients: %s searching via qBittorrent WebAPI host=%s", name, host)
+		s.logger.Tracef("clients: %s searching via qBittorrent WebAPI host=%s", name, host)
 		qbitClient = qbittorrent.NewClient(qbittorrent.Config{
 			Host:          host,
 			Username:      strings.TrimSpace(clientCfg.QbitUsername()),
@@ -390,7 +390,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		}
 		torrents = items
 	}
-	s.logger.Debugf("clients: %s fetched %d torrents", name, len(torrents))
+	s.logger.Tracef("clients: %s fetched %d torrents", name, len(torrents))
 
 	if len(torrents) == 0 {
 		return api.ClientSearchResult{}, nil, nil
@@ -467,13 +467,13 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		matches = append(matches, match)
 	}
 
-	s.logger.Debugf("clients: %s name-matched %d of %d torrents", name, nameMatched, len(torrents))
+	s.logger.Tracef("clients: %s name-matched %d of %d torrents", name, nameMatched, len(torrents))
 
 	if len(matches) == 0 {
 		s.logger.Debugf("clients: %s no matching torrent names (checked %d)", name, len(torrents))
 		return api.ClientSearchResult{}, nil, nil
 	}
-	s.logger.Debugf("clients: %s matched %d torrents", name, len(matches))
+	s.logger.Tracef("clients: %s matched %d torrents", name, len(matches))
 
 	sortMatchingTorrents(matches, priorityOrder)
 
@@ -484,7 +484,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 	} else {
 		foundPreferred = "no_constraints"
 	}
-	s.logger.Debugf("clients: %s selected hash %s (preferred=%q)", name, bestMatch.Hash, foundPreferred)
+	s.logger.Tracef("clients: %s selected hash %s (preferred=%q)", name, bestMatch.Hash, foundPreferred)
 
 	trackerIDs := collectTrackerIDs(matches, priorityOrder)
 	matchedTrackers = ensureMatchedTrackersForKnownIDs(matchedTrackers, trackerIDs)
@@ -1060,7 +1060,7 @@ func (s *Service) selectValidTorrent(
 			s.logger.Debugf("clients: exported torrent infohash mismatch for %s", normalizedHash)
 			continue
 		}
-		s.logger.Debugf("clients: validated exported torrent for %s (piece=%d)", normalizedHash, pieceSize)
+		s.logger.Tracef("clients: validated exported torrent for %s (piece=%d)", normalizedHash, pieceSize)
 
 		if shouldSelectPreferred(pieceSize, bestPiece, constraints) {
 			path, err := writeTorrentFile(outputPath, data)

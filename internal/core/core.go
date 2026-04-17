@@ -40,6 +40,7 @@ type Core struct {
 	logger    api.Logger
 	services  api.ServiceSet
 	repo      db.MetadataRepository
+	ownsRepo  bool
 	dupeMu    sync.RWMutex
 	dupeCache map[string]dupeCacheEntry
 }
@@ -51,28 +52,34 @@ type dupeCacheEntry struct {
 }
 
 func New(deps api.CoreDependencies) (*Core, error) {
+	ctx := deps.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	logger := deps.Logger
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-	logger.Debugf("core: initializing")
+	logger.Infof("core: initializing")
 
 	if err := deps.Config.Validate(); err != nil {
 		return nil, err
 	}
 
 	repo := deps.Repository
+	ownsRepo := false
 	if repo == nil {
 		logger.Debugf("core: opening repository")
 		sqliteRepo, err := db.OpenWithLogger(deps.Config.MainSettings.DBPath, logger)
 		if err != nil {
 			return nil, err
 		}
-		if err := sqliteRepo.Migrate(); err != nil {
+		if err := sqliteRepo.MigrateContext(ctx); err != nil {
 			_ = sqliteRepo.Close()
 			return nil, err
 		}
 		repo = sqliteRepo
+		ownsRepo = true
 	}
 
 	services := deps.Services
@@ -121,13 +128,14 @@ func New(deps api.CoreDependencies) (*Core, error) {
 	if services.Dupes == nil {
 		services.Dupes = dupechecking.NewService(deps.Config, logger)
 	}
-	logger.Debugf("core: initialized services")
+	logger.Infof("core: initialized services")
 
 	return &Core{
 		cfg:       deps.Config,
 		logger:    logger,
 		services:  services,
 		repo:      repo,
+		ownsRepo:  ownsRepo,
 		dupeCache: make(map[string]dupeCacheEntry),
 	}, nil
 }
@@ -2375,7 +2383,7 @@ func (c *Core) DeleteHistoryRelease(ctx context.Context, sourcePath string) erro
 }
 
 func (c *Core) Close() error {
-	if c == nil || c.repo == nil {
+	if c == nil || c.repo == nil || !c.ownsRepo {
 		return nil
 	}
 	closer, ok := c.repo.(interface{ Close() error })

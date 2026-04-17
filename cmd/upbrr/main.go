@@ -158,9 +158,12 @@ func run() error {
 	if screens < 0 {
 		screens = cfg.ScreenshotHandling.Screens
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
 	coreSvc, err := core.New(api.CoreDependencies{
-		Config: cfg,
-		Logger: logger,
+		Context: ctx,
+		Config:  cfg,
+		Logger:  logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
@@ -173,9 +176,6 @@ func run() error {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		}
 	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
 
 	if opts.Cleanup {
 		deleted, err := coreSvc.DeleteAllHistoryReleases(ctx)
@@ -263,13 +263,9 @@ func runServe(args []string) error {
 		return err
 	}
 
-	cfg, _, err := loadCLIConfig(resolvedConfigPath, configFlagProvided)
+	cfg, dbPath, err := loadServeConfig(resolvedConfigPath, configFlagProvided)
 	if err != nil {
 		return err
-	}
-	dbPath := strings.TrimSpace(cfg.MainSettings.DBPath)
-	if dbPath == "" {
-		return errors.New("web server requires a configured database path")
 	}
 
 	webCfg, err := webserver.LoadCLIConfig(dbPath)
@@ -281,8 +277,9 @@ func runServe(args []string) error {
 	}
 
 	server, err := webserver.New(webserver.Options{
-		Config:    cfg,
-		CLIConfig: webCfg,
+		StartupContext: context.Background(),
+		Config:         cfg,
+		CLIConfig:      webCfg,
 	})
 	if err != nil {
 		return err
@@ -383,6 +380,73 @@ func loadCLIConfig(configPath string, configProvided bool) (config.Config, strin
 	return cfg, fallbackDBPath, nil
 }
 
+// loadServeConfig loads config for the web server without requiring a fully
+// valid config (e.g. tmdb_api). The web UI handles initial setup, so the
+// server must be able to start even on a fresh install with no config yet.
+func loadServeConfig(configPath string, configProvided bool) (config.Config, string, error) {
+	ctx := context.Background()
+	if configProvided {
+		resolved, err := resolveConfigPath(configPath, configProvided)
+		if err != nil {
+			return config.Config{}, "", err
+		}
+		loaded, err := config.ImportFromYAML(resolved)
+		if err != nil {
+			return config.Config{}, "", err
+		}
+		config.ApplyEnvOverrides(loaded)
+		cfg := *loaded
+		dbPath := strings.TrimSpace(cfg.MainSettings.DBPath)
+		if dbPath == "" {
+			dbPath, err = db.DefaultPath()
+			if err != nil {
+				return config.Config{}, "", fmt.Errorf("default db path: %w", err)
+			}
+			cfg.MainSettings.DBPath = dbPath
+		}
+		// Do not persist the imported YAML to the database. Writing it back would
+		// overwrite previously valid database-backed config with zero values for
+		// any fields omitted from the YAML file. Use it for this process only.
+		return cfg, dbPath, nil
+	}
+
+	defaultDBPath, err := db.DefaultPath()
+	if err != nil {
+		return config.Config{}, "", fmt.Errorf("default db path: %w", err)
+	}
+
+	cfg, err := loadConfigFromDatabase(ctx, defaultDBPath)
+	if err == nil {
+		if strings.TrimSpace(cfg.MainSettings.DBPath) == "" || cfg.MainSettings.DBPath != defaultDBPath {
+			cfg.MainSettings.DBPath = defaultDBPath
+			if err := saveConfigToDatabase(ctx, &cfg, defaultDBPath); err != nil {
+				return config.Config{}, "", err
+			}
+		}
+		return cfg, defaultDBPath, nil
+	}
+	if !errors.Is(err, internalerrors.ErrNotFound) {
+		return config.Config{}, "", err
+	}
+
+	// No database yet — use embedded defaults. The server will start with an
+	// empty/default config and wait for the user to configure via the UI.
+	loaded, err := loadConfigFromPathOrEmbedded(configPath)
+	if err != nil {
+		return config.Config{}, "", err
+	}
+	config.ApplyEnvOverrides(loaded)
+	cfg = *loaded
+
+	fallbackDBPath := strings.TrimSpace(cfg.MainSettings.DBPath)
+	if fallbackDBPath == "" {
+		fallbackDBPath = defaultDBPath
+	}
+
+	cfg.MainSettings.DBPath = fallbackDBPath
+	return cfg, fallbackDBPath, nil
+}
+
 func loadConfigFromDatabase(ctx context.Context, dbPath string) (config.Config, error) {
 	repo, err := db.Open(dbPath)
 	if err != nil {
@@ -390,7 +454,7 @@ func loadConfigFromDatabase(ctx context.Context, dbPath string) (config.Config, 
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return config.Config{}, err
 	}
 
@@ -409,7 +473,7 @@ func saveConfigToDatabase(ctx context.Context, cfg *config.Config, dbPath string
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return err
 	}
 
@@ -432,7 +496,7 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return fmt.Errorf("migrate config database: %w", err)
 	}
 

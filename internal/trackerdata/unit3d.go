@@ -397,7 +397,7 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if c.logger != nil {
-			c.logger.Debugf("unit3d: %s search failed (status=%d)", tracker, resp.StatusCode)
+			c.logger.Warnf("unit3d: %s search failed (status=%d)", tracker, resp.StatusCode)
 		}
 		return nil, fmt.Sprintf("%s search failed (status=%d)", strings.ToUpper(strings.TrimSpace(tracker)), resp.StatusCode), nil
 	}

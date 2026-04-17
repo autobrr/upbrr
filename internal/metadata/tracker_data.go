@@ -62,7 +62,7 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 			s.logger.Debugf("metadata: trackers configured %v", configured)
 		}
 		if len(missing) > 0 {
-			s.logger.Debugf("metadata: trackers missing api_key/announce_url %v", missing)
+			s.logger.Tracef("metadata: trackers missing api_key/announce_url %v", missing)
 		}
 	}
 	if s.logger != nil {
@@ -303,7 +303,7 @@ func (s *Service) lookupTrackerData(
 
 	if trackerdata.IsUnit3DTracker(tracker) {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: unit3d lookup start tracker=%s id=%q file=%q", tracker, record.TrackerID, searchFileName(meta))
+			s.logger.Tracef("metadata: unit3d lookup start tracker=%s id=%q file=%q", tracker, record.TrackerID, searchFileName(meta))
 		}
 		result, err := unit3dClient.TorrentInfo(
 			ctx,

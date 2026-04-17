@@ -118,7 +118,7 @@ func (p btnTrackerClaimProvider) hasClaim(ctx context.Context, s *Service, track
 	expired, thresholdHours, hoursSinceAir := btnClaimWindowExpired(meta, graceHours)
 	if expired {
 		if s.logger != nil {
-			s.logger.Infof("metadata: BTN claim window expired for %q (hours_since_air=%.2f threshold=%d)", matchedTitle, hoursSinceAir, thresholdHours)
+			s.logger.Debugf("metadata: BTN claim window expired for %q (hours_since_air=%.2f threshold=%d)", matchedTitle, hoursSinceAir, thresholdHours)
 		}
 		return false, nil
 	}

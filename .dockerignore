@@ -4,5 +4,17 @@ dist
 gui/build
 gui/frontend/node_modules
 gui/frontend/dist
+scripts
+documentation
+**/*_test.go
+**/*.md
+!go.md
 **/*.log
 **/.DS_Store
+**/Thumbs.db
+**/*.tmp
+**/*.swp
+**/*.swo
+*.code-workspace
+CLAUDE.md
+AGENTS.md

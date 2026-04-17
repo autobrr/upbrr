@@ -86,8 +86,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 				return api.UploadSummary{}, err
 			}
 		}
-		maybeAutoApprove(ctx, client, req.TrackerConfig, torrentID, req.Logger)
-		maybeSetInternal(ctx, client, req.TrackerConfig, req.Meta, torrentID, req.Logger)
+		maybeAutoApprove(ctx, client, cookies, req.TrackerConfig, torrentID, req.Logger)
+		maybeSetInternal(ctx, client, cookies, req.TrackerConfig, req.Meta, torrentID, req.Logger)
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
@@ -207,11 +207,21 @@ func buildPayload(meta api.PreparedMetadata, trackerCfg config.TrackerConfig, as
 	fields["largura"] = resolution["width"]
 	fields["altura"] = resolution["height"]
 	fields["lang"] = resolveLanguage(meta)
-	for idx, image := range assets.Screenshots {
-		if idx >= 4 || strings.TrimSpace(image.RawURL) == "" {
+	count := 1
+	for _, image := range assets.Screenshots {
+		if count > 4 {
 			break
 		}
-		fields[fmt.Sprintf("screens%d", idx+1)] = strings.TrimSpace(image.RawURL)
+		raw := strings.TrimSpace(image.RawURL)
+		if raw == "" {
+			continue
+		}
+		lower := strings.ToLower(raw)
+		if strings.Contains(lower, "amigos-share.club") || strings.Contains(lower, "tmdb.org") || strings.Contains(lower, "imdb.com") || strings.Contains(lower, "themoviedb.org") {
+			continue
+		}
+		fields[fmt.Sprintf("screens%d", count)] = raw
+		count++
 	}
 	if meta.Anime {
 		fields["type"] = resolveAnimeType(meta)
@@ -313,15 +323,28 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func maybeAutoApprove(ctx context.Context, client *http.Client, cfg config.TrackerConfig, torrentID string, logger api.Logger) {
-	if client == nil || !cfg.UploaderStatus || strings.TrimSpace(torrentID) == "" {
+func maybeAutoApprove(ctx context.Context, client *http.Client, cookies []*http.Cookie, cfg config.TrackerConfig, torrentID string, logger api.Logger) {
+	if client == nil {
+		logger.Warnf("trackers: ASC auto approval skipped: client is nil")
+		return
+	}
+	if !cfg.UploaderStatus {
+		logger.Debugf("trackers: ASC auto approval skipped: uploader status disabled")
+		return
+	}
+	if strings.TrimSpace(torrentID) == "" {
+		logger.Warnf("trackers: ASC auto approval skipped: empty torrentID")
 		return
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/uploader_app.php?id="+url.QueryEscape(torrentID), nil)
 	if err != nil {
+		logger.Warnf("trackers: ASC auto approval failed: %v", err)
 		return
 	}
 	req.Header.Set("User-Agent", userAgent)
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
 	resp, err := client.Do(req)
 	if err != nil && logger != nil {
 		logger.Warnf("trackers: ASC auto approval failed: %v", err)
@@ -331,12 +354,14 @@ func maybeAutoApprove(ctx context.Context, client *http.Client, cfg config.Track
 	}
 }
 
-func maybeSetInternal(ctx context.Context, client *http.Client, cfg config.TrackerConfig, meta api.PreparedMetadata, torrentID string, logger api.Logger) {
+func maybeSetInternal(ctx context.Context, client *http.Client, cookies []*http.Cookie, cfg config.TrackerConfig, meta api.PreparedMetadata, torrentID string, logger api.Logger) {
 	if client == nil || !cfg.Internal || strings.TrimSpace(torrentID) == "" {
+		logger.Debugf("trackers: ASC internal flag skipped: %v", "client is nil or internal is false or torrentID is empty")
 		return
 	}
 	group := strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-")
 	if group == "" || !containsFold(cfg.InternalGroups, group) {
+		logger.Debugf("trackers: ASC internal flag skipped: %v", "group is empty or not in internal groups")
 		return
 	}
 	values := url.Values{"id": {torrentID}, "internal": {"yes"}}
@@ -346,6 +371,9 @@ func maybeSetInternal(ctx context.Context, client *http.Client, cfg config.Track
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", userAgent)
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
 	resp, err := client.Do(req)
 	if err != nil && logger != nil {
 		logger.Warnf("trackers: ASC internal flag failed: %v", err)

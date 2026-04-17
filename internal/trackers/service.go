@@ -536,7 +536,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		if descriptionText == "" {
 			placeholderCount++
 		} else {
-			s.logger.Infof("trackers: preparation built description for %s", tracker)
+			s.logger.Debugf("trackers: preparation built description for %s", tracker)
 		}
 	}
 

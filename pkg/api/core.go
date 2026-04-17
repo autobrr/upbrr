@@ -128,6 +128,7 @@ type Core interface {
 }
 
 type CoreDependencies struct {
+	Context    context.Context
 	Config     Config
 	Logger     Logger
 	Services   ServiceSet

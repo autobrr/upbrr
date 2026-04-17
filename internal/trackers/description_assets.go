@@ -82,7 +82,7 @@ func resolveDescriptionAssets(ctx context.Context, tracker string, meta api.Prep
 		return DescriptionAssets{Description: description, Override: strings.TrimSpace(description) != ""}, nil
 	}
 	if logger != nil {
-		logger.Debugf("trackers: description assets start tracker=%s source=%s", strings.TrimSpace(tracker), meta.SourcePath)
+		logger.Tracef("trackers: description assets start tracker=%s source=%s", strings.TrimSpace(tracker), meta.SourcePath)
 	}
 
 	description, overridden := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded)
@@ -95,7 +95,7 @@ func resolveDescriptionAssets(ctx context.Context, tracker string, meta api.Prep
 		screenshots = nil
 	}
 	if logger != nil {
-		logger.Debugf("trackers: description assets resolved desc_len=%d screenshots=%d", len(strings.TrimSpace(description)), len(screenshots))
+		logger.Tracef("trackers: description assets resolved desc_len=%d screenshots=%d", len(strings.TrimSpace(description)), len(screenshots))
 	}
 	return DescriptionAssets{Description: sanitizeTrackerDescription(tracker, description), Screenshots: screenshots, Slots: slots, Override: overridden}, nil
 }
@@ -231,14 +231,14 @@ func resolveDescriptionScreenshots(ctx context.Context, tracker string, meta api
 	}
 	if len(images) > 0 {
 		if logger != nil {
-			logger.Debugf("trackers: description assets screenshots source=slots slots=%d resolved=%d", len(slots), len(images))
+			logger.Tracef("trackers: description assets screenshots source=slots slots=%d resolved=%d", len(slots), len(images))
 		}
 		return slots, images, nil
 	}
 
 	urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded)
 	if logger != nil {
-		logger.Debugf("trackers: description assets screenshots source=tracker_urls tracker=%s urls=%d", strings.TrimSpace(tracker), len(urls))
+		logger.Tracef("trackers: description assets screenshots source=tracker_urls tracker=%s urls=%d", strings.TrimSpace(tracker), len(urls))
 	}
 	return nil, resolveTrackerScreenshots(urls), nil
 }
@@ -353,13 +353,13 @@ func resolveTrackerImageURLs(ctx context.Context, tracker string, meta api.Prepa
 				filtered := filterTrackerMetadataByName(records, trackerKey)
 				if len(filtered) > 0 {
 					if logger != nil {
-						logger.Debugf("trackers: description assets tracker urls source=db tracker=%s records=%d filtered=%d", trackerKey, len(records), len(filtered))
+						logger.Tracef("trackers: description assets tracker urls source=db tracker=%s records=%d filtered=%d", trackerKey, len(records), len(filtered))
 					}
 					return collectImageURLs(filtered)
 				}
 			}
 			if logger != nil {
-				logger.Debugf("trackers: description assets tracker urls source=db tracker=%s records=%d", trackerKey, len(records))
+				logger.Tracef("trackers: description assets tracker urls source=db tracker=%s records=%d", trackerKey, len(records))
 			}
 			return collectImageURLs(records)
 		}
@@ -370,13 +370,13 @@ func resolveTrackerImageURLs(ctx context.Context, tracker string, meta api.Prepa
 		filtered := filterTrackerMetadataByName(meta.TrackerData, trackerKey)
 		if len(filtered) > 0 {
 			if logger != nil {
-				logger.Debugf("trackers: description assets tracker urls source=meta tracker=%s records=%d filtered=%d", trackerKey, len(meta.TrackerData), len(filtered))
+				logger.Tracef("trackers: description assets tracker urls source=meta tracker=%s records=%d filtered=%d", trackerKey, len(meta.TrackerData), len(filtered))
 			}
 			return collectImageURLs(filtered)
 		}
 	}
 	if logger != nil {
-		logger.Debugf("trackers: description assets tracker urls source=meta tracker=%s records=%d", trackerKey, len(meta.TrackerData))
+		logger.Tracef("trackers: description assets tracker urls source=meta tracker=%s records=%d", trackerKey, len(meta.TrackerData))
 	}
 	return collectImageURLs(meta.TrackerData)
 }

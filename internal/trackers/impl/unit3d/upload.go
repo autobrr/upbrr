@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackerdata"
@@ -46,12 +47,12 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
 	if apiKey == "" {
 		err := fmt.Errorf("trackers: %s missing api_key", trackerName)
-		logger.Errorf("%v", err)
+		logger.Errorf("trackers: %s upload aborted: %v", trackerName, err)
 		return api.UploadSummary{}, err
 	}
 	if !req.Meta.ValidMediaInfoSettings {
 		err := fmt.Errorf("trackers: %s mediainfo missing required fields", trackerName)
-		logger.Errorf("%v", err)
+		logger.Errorf("trackers: %s upload aborted: %v", trackerName, err)
 		return api.UploadSummary{}, err
 	}
 
@@ -179,9 +180,9 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		err := fmt.Errorf("trackers: %s upload failed: status %d", trackerName, resp.StatusCode)
-		logger.Errorf("%v", err)
+		logger.Errorf("trackers: %s upload request failed: %v", trackerName, err)
 		if len(body) > 0 {
-			logger.Tracef("trackers: %s response body: %s", trackerName, string(body))
+			logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(body), nil))
 		}
 		return api.UploadSummary{}, err
 	}
@@ -189,7 +190,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	var result unit3dUploadResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		logger.Errorf("trackers: %s failed to parse response JSON: %v", trackerName, err)
-		logger.Tracef("trackers: %s response body: %s", trackerName, string(body))
+		logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(body), nil))
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s response json: %w", trackerName, err)
 	}
 	if !result.Success {
@@ -198,7 +199,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 			message = "unknown error"
 		}
 		err := fmt.Errorf("trackers: %s api error: %s", trackerName, message)
-		logger.Errorf("%v", err)
+		logger.Errorf("trackers: %s upload rejected: %v", trackerName, err)
 		return api.UploadSummary{}, err
 	}
 
@@ -517,7 +518,7 @@ func loadUnit3DMedia(meta api.PreparedMetadata, dbPath string, logger api.Logger
 		}
 		if text == "" {
 			err := errors.New("trackers: MediaInfo is empty")
-			logger.Errorf("%v", err)
+			logger.Errorf("trackers: unit3d mediainfo load failed: %v", err)
 			return "", "", err
 		}
 		logger.Tracef("trackers: loaded MediaInfo (%d bytes)", len(text))
@@ -594,7 +595,7 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string, logger api.Log
 	}
 
 	err := errors.New("trackers: unit3d torrent file not found")
-	logger.Errorf("%v", err)
+	logger.Errorf("trackers: unit3d torrent resolution failed: %v", err)
 	return "", err
 }
 
