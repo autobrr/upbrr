@@ -58,6 +58,9 @@ func EncryptConfigSecrets(cfg *Config) (*Config, error) {
 	helper, err := resolveSecretHelper(cfg)
 	if err != nil {
 		if errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
+			if hasDetailedHelperUnavailableContext(err) {
+				return nil, err
+			}
 			hasPlaintextSecrets, scanErr := hasPersistedPlaintextSecrets(cfg)
 			if scanErr != nil {
 				return nil, scanErr
@@ -384,7 +387,10 @@ func resolveSecretHelper(cfg *Config) (string, error) {
 	record, err := authmaterial.LoadFromDBPath(dbPath)
 	if err != nil {
 		if errors.Is(err, authmaterial.ErrUnavailable) {
-			return "", ErrSecretEncryptionHelperUnavailable
+			if isBareAuthmaterialUnavailable(err) {
+				return "", ErrSecretEncryptionHelperUnavailable
+			}
+			return "", fmt.Errorf("%w: %s", ErrSecretEncryptionHelperUnavailable, err.Error())
 		}
 		return "", fmt.Errorf("config secret helper: %w", err)
 	}
@@ -398,6 +404,14 @@ func resolveSecretHelper(cfg *Config) (string, error) {
 	}
 
 	return helper, nil
+}
+
+func hasDetailedHelperUnavailableContext(err error) bool {
+	return err != nil && err.Error() != ErrSecretEncryptionHelperUnavailable.Error()
+}
+
+func isBareAuthmaterialUnavailable(err error) bool {
+	return err != nil && err.Error() == authmaterial.ErrUnavailable.Error()
 }
 
 func encryptSecretString(plaintext string, helper string) (string, error) {
