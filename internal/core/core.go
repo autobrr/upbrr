@@ -212,6 +212,11 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 
 func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta api.PreparedMetadata) (int, error) {
 	meta = applyRequestToPreparedMeta(meta, req)
+	descriptionGroups, err := c.resolveCanonicalDescriptionGroups(ctx, meta, req)
+	if err != nil {
+		return 0, err
+	}
+	meta.DescriptionGroups = descriptionGroups
 
 	torrent, err := c.services.Torrents.Create(ctx, meta)
 	if err != nil {
@@ -1265,6 +1270,11 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 
 	meta.Mode = singleReq.Mode
 	meta = applyRequestToPreparedMeta(meta, singleReq)
+	descriptionGroups, err := c.resolveCanonicalDescriptionGroups(ctx, meta, singleReq)
+	if err != nil {
+		return api.TrackerDryRunPreview{}, err
+	}
+	meta.DescriptionGroups = descriptionGroups
 
 	torrent, err := c.services.Torrents.Create(ctx, meta)
 	if err != nil {
@@ -1325,23 +1335,13 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 		return api.DescriptionBuilderPreview{}, internalerrors.ErrInvalidInput
 	}
 
-	hasOverride := false
-	overrideDescription := ""
-	if trimmed := strings.TrimSpace(req.DescriptionOverrideRaw); trimmed != "" {
-		c.logger.Infof("core: description builder using request override source=%s len=%d", uniquePaths[0], len(trimmed))
-		hasOverride = true
-		overrideDescription = req.DescriptionOverrideRaw
-	} else {
-		override, err := c.repo.GetDescriptionOverride(ctx, uniquePaths[0])
-		if err == nil {
-			if trimmed := strings.TrimSpace(override.Description); trimmed != "" {
-				c.logger.Infof("core: description builder using override source=%s len=%d", uniquePaths[0], len(trimmed))
-				hasOverride = true
-				overrideDescription = override.Description
-			}
-		} else if !errors.Is(err, internalerrors.ErrNotFound) {
-			return api.DescriptionBuilderPreview{}, fmt.Errorf("core: description override: %w", err)
-		}
+	storedOverrides, err := c.repo.ListDescriptionOverridesByPath(ctx, uniquePaths[0])
+	if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
+		return api.DescriptionBuilderPreview{}, fmt.Errorf("core: description override: %w", err)
+	}
+	overrideByGroup := make(map[string]api.DescriptionOverride, len(storedOverrides))
+	for _, override := range storedOverrides {
+		overrideByGroup[normalizeDescriptionBuilderGroupKey(override.GroupKey, nil)] = override
 	}
 
 	var meta api.PreparedMetadata
@@ -1355,13 +1355,27 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		if c.services.Metadata == nil {
 			c.logger.Warnf("core: description builder missing metadata service for source=%s", uniquePaths[0])
-			if hasOverride {
-				return api.DescriptionBuilderPreview{
-					SourcePath:      uniquePaths[0],
-					Description:     overrideDescription,
-					DescriptionHTML: description.Render(overrideDescription),
-					HasOverride:     true,
-				}, nil
+			if len(overrideByGroup) > 0 {
+				groupKeys := make([]string, 0, len(overrideByGroup))
+				for groupKey := range overrideByGroup {
+					groupKeys = append(groupKeys, groupKey)
+				}
+				sort.Strings(groupKeys)
+				preview := api.DescriptionBuilderPreview{
+					SourcePath: uniquePaths[0],
+					Groups:     make([]api.DescriptionBuilderGroup, 0, len(groupKeys)),
+				}
+				for _, groupKey := range groupKeys {
+					override := overrideByGroup[groupKey]
+					preview.Groups = append(preview.Groups, api.DescriptionBuilderGroup{
+						GroupKey:           groupKey,
+						Trackers:           nil,
+						RawDescription:     override.Description,
+						RawDescriptionHTML: description.Render(override.Description),
+						HasOverride:        true,
+					})
+				}
+				return preview, nil
 			}
 			return api.DescriptionBuilderPreview{}, errors.New("core: metadata service not configured")
 		}
@@ -1391,33 +1405,159 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 	}
 
 	preview := api.DescriptionBuilderPreview{SourcePath: meta.SourcePath}
-	if hasOverride {
-		preview.Description = overrideDescription
-		preview.DescriptionHTML = description.Render(overrideDescription)
-		preview.HasOverride = true
-	}
 	if len(prep.Descriptions) > 0 {
-		selected := prep.Descriptions[0]
+		preview.Groups = make([]api.DescriptionBuilderGroup, 0, len(prep.Descriptions))
 		for _, entry := range prep.Descriptions {
-			if strings.TrimSpace(entry.Description) != "" || strings.TrimSpace(entry.DescriptionHTML) != "" {
-				selected = entry
-				break
-			}
-		}
-		if !hasOverride {
-			preview.Description = selected.Description
-			preview.DescriptionHTML = selected.DescriptionHTML
-		}
-		preview.ImageHosts = make([]api.DescriptionImageHostStatus, 0, len(prep.Descriptions))
-		for _, entry := range prep.Descriptions {
-			preview.ImageHosts = append(preview.ImageHosts, api.DescriptionImageHostStatus{
-				Trackers:  append([]string{}, entry.Trackers...),
-				ImageHost: entry.ImageHost,
-			})
+			preview.Groups = append(preview.Groups, buildDescriptionBuilderGroup(entry, overrideByGroup))
 		}
 	}
-	c.logger.Infof("core: description builder prepared source=%s has_description=%t", preview.SourcePath, strings.TrimSpace(preview.Description) != "")
+	c.logger.Infof("core: description builder prepared source=%s groups=%d", preview.SourcePath, len(preview.Groups))
 	return preview, nil
+}
+
+func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGroup map[string]api.DescriptionOverride) api.DescriptionBuilderGroup {
+	groupKey := normalizeDescriptionBuilderGroupKey(entry.GroupKey, entry.Trackers)
+	rawDescription := entry.RawDescription
+	if strings.TrimSpace(rawDescription) == "" {
+		rawDescription = entry.Description
+	}
+	hasOverride := entry.HasOverride
+	if override, ok := overrideByGroup[groupKey]; ok && strings.TrimSpace(override.Description) != "" {
+		rawDescription = override.Description
+		hasOverride = true
+	}
+	return api.DescriptionBuilderGroup{
+		GroupKey:           groupKey,
+		Trackers:           append([]string{}, entry.Trackers...),
+		RawDescription:     rawDescription,
+		RawDescriptionHTML: description.Render(rawDescription),
+		HasOverride:        hasOverride,
+		ImageHost:          entry.ImageHost,
+	}
+}
+
+func normalizeDescriptionBuilderGroupKey(groupKey string, trackersList []string) string {
+	normalized := strings.ToLower(strings.TrimSpace(groupKey))
+	if normalized == "" && len(trackersList) > 0 {
+		normalized = strings.ToLower(strings.TrimSpace(trackersList[0]))
+	}
+	return normalized
+}
+
+func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.Request) (api.DescriptionBuilderGroup, error) {
+	targetGroup := strings.TrimSpace(req.DescriptionOverrideGroup)
+	if targetGroup == "" && len(req.Trackers) > 0 {
+		targetGroup = trackers.DescriptionOverrideGroupForTracker(req.Trackers[0])
+	}
+	targetGroup = normalizeDescriptionBuilderGroupKey(targetGroup, req.Trackers)
+	if targetGroup == "" {
+		return api.DescriptionBuilderGroup{}, internalerrors.ErrInvalidInput
+	}
+
+	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
+	if err != nil {
+		return api.DescriptionBuilderGroup{}, err
+	}
+	req = resolvedReq
+
+	if len(req.Paths) == 0 {
+		return api.DescriptionBuilderGroup{}, internalerrors.ErrInvalidInput
+	}
+	if c.services.Filesystem == nil {
+		return api.DescriptionBuilderGroup{}, errors.New("core: filesystem service not configured")
+	}
+	if c.services.Trackers == nil {
+		return api.DescriptionBuilderGroup{}, errors.New("core: tracker service not configured")
+	}
+	if c.repo == nil {
+		return api.DescriptionBuilderGroup{}, errors.New("core: repository not configured")
+	}
+	if req.Mode != api.ModeGUI && c.services.Metadata == nil {
+		return api.DescriptionBuilderGroup{}, errors.New("core: metadata service not configured")
+	}
+
+	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
+	if err != nil {
+		return api.DescriptionBuilderGroup{}, err
+	}
+	uniquePaths := make([]string, 0, len(normalizedPaths))
+	seenPaths := make(map[string]struct{}, len(normalizedPaths))
+	for _, candidate := range normalizedPaths {
+		if _, exists := seenPaths[candidate]; exists {
+			continue
+		}
+		seenPaths[candidate] = struct{}{}
+		uniquePaths = append(uniquePaths, candidate)
+	}
+	if len(uniquePaths) != 1 {
+		return api.DescriptionBuilderGroup{}, internalerrors.ErrInvalidInput
+	}
+
+	storedOverrides, err := c.repo.ListDescriptionOverridesByPath(ctx, uniquePaths[0])
+	if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
+		return api.DescriptionBuilderGroup{}, fmt.Errorf("core: description override: %w", err)
+	}
+	overrideByGroup := make(map[string]api.DescriptionOverride, len(storedOverrides))
+	for _, override := range storedOverrides {
+		overrideByGroup[normalizeDescriptionBuilderGroupKey(override.GroupKey, nil)] = override
+	}
+
+	var meta api.PreparedMetadata
+	signature := overrideSignature(req.ExternalIDOverrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
+	if req.Mode == api.ModeGUI {
+		if cached, ok := c.getGUICachedMeta(uniquePaths[0], signature, req.ExternalIDOverrides); ok {
+			meta = applyRequestToPreparedMeta(cached, req)
+		}
+	}
+	if strings.TrimSpace(meta.SourcePath) == "" {
+		if c.services.Metadata == nil {
+			if override, ok := overrideByGroup[targetGroup]; ok && strings.TrimSpace(override.Description) != "" {
+				return api.DescriptionBuilderGroup{
+					GroupKey:           targetGroup,
+					Trackers:           append([]string{}, req.Trackers...),
+					RawDescription:     override.Description,
+					RawDescriptionHTML: description.Render(override.Description),
+					HasOverride:        true,
+				}, nil
+			}
+			return api.DescriptionBuilderGroup{}, errors.New("core: metadata service not configured")
+		}
+		options, err := c.applyDefaultOptions(req.Options)
+		if err != nil {
+			return api.DescriptionBuilderGroup{}, err
+		}
+		singleReq := req
+		singleReq.Paths = []string{uniquePaths[0]}
+		singleReq.Options = options
+		meta, err = c.services.Metadata.Prepare(ctx, singleReq)
+		if err != nil {
+			return api.DescriptionBuilderGroup{}, err
+		}
+		meta = applyRequestToPreparedMeta(meta, singleReq)
+		if req.Mode == api.ModeGUI {
+			c.storeDupeCache(meta.SourcePath, signature, meta)
+		}
+	}
+
+	resolvedTrackers := req.Trackers
+	if len(resolvedTrackers) == 0 {
+		resolvedTrackers = trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	}
+	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
+	if err != nil {
+		return api.DescriptionBuilderGroup{}, err
+	}
+	for _, entry := range prep.Descriptions {
+		normalizedGroupKey := normalizeDescriptionBuilderGroupKey(entry.GroupKey, entry.Trackers)
+		if strings.EqualFold(normalizedGroupKey, targetGroup) {
+			group := buildDescriptionBuilderGroup(entry, overrideByGroup)
+			if len(group.Trackers) == 0 && len(req.Trackers) > 0 {
+				group.Trackers = append([]string{}, req.Trackers...)
+			}
+			return group, nil
+		}
+	}
+	return api.DescriptionBuilderGroup{}, internalerrors.ErrNotFound
 }
 
 func (c *Core) storeDupeCache(path string, signature string, meta api.PreparedMetadata) {
@@ -1642,6 +1782,7 @@ func deepCopyPreparedMetadata(meta api.PreparedMetadata) api.PreparedMetadata {
 	copyMeta.LookupWarnings = append([]string(nil), meta.LookupWarnings...)
 	copyMeta.Paths = append([]string(nil), meta.Paths...)
 	copyMeta.FileList = append([]string(nil), meta.FileList...)
+	copyMeta.DescriptionGroups = api.CloneDescriptionBuilderGroups(meta.DescriptionGroups)
 	copyMeta.Trackers = append([]string(nil), meta.Trackers...)
 	copyMeta.TrackersRemove = append([]string(nil), meta.TrackersRemove...)
 	copyMeta.MatchedTrackers = append([]string(nil), meta.MatchedTrackers...)
@@ -2168,9 +2309,10 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 		return api.HistoryOverview{}, err
 	}
 
-	descriptionOverride, err := c.repo.GetDescriptionOverride(ctx, trimmed)
+	descriptionOverrides, err := c.repo.ListDescriptionOverridesByPath(ctx, trimmed)
 	if err == nil {
-		overview.DescriptionOverride = descriptionOverride
+		overview.DescriptionOverrides = append([]api.DescriptionOverride(nil), descriptionOverrides...)
+		overview.DescriptionOverride = preferredHistoryDescriptionOverride(descriptionOverrides)
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
 		return api.HistoryOverview{}, err
 	}
@@ -2226,6 +2368,23 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 	return overview, nil
 }
 
+func preferredHistoryDescriptionOverride(overrides []api.DescriptionOverride) api.DescriptionOverride {
+	if len(overrides) == 0 {
+		return api.DescriptionOverride{}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.GroupKey) == "" {
+			return override
+		}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.Description) != "" {
+			return override
+		}
+	}
+	return overrides[0]
+}
+
 func (c *Core) DeleteHistoryRelease(ctx context.Context, sourcePath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -2259,20 +2418,20 @@ func (c *Core) RenderDescription(ctx context.Context, raw string) (string, error
 	return description.Render(raw), nil
 }
 
-func (c *Core) SaveDescriptionOverride(ctx context.Context, req api.Request, raw string) error {
+func (c *Core) SaveDescriptionOverride(ctx context.Context, req api.Request, raw string) (api.DescriptionBuilderGroup, error) {
 	if len(req.Paths) == 0 {
-		return internalerrors.ErrInvalidInput
+		return api.DescriptionBuilderGroup{}, internalerrors.ErrInvalidInput
 	}
 	if c.services.Filesystem == nil {
-		return errors.New("core: filesystem service not configured")
+		return api.DescriptionBuilderGroup{}, errors.New("core: filesystem service not configured")
 	}
 	if c.repo == nil {
-		return errors.New("core: repository not configured")
+		return api.DescriptionBuilderGroup{}, errors.New("core: repository not configured")
 	}
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return err
+		return api.DescriptionBuilderGroup{}, err
 	}
 
 	uniquePaths := make([]string, 0, len(normalizedPaths))
@@ -2285,19 +2444,46 @@ func (c *Core) SaveDescriptionOverride(ctx context.Context, req api.Request, raw
 		uniquePaths = append(uniquePaths, path)
 	}
 	if len(uniquePaths) != 1 {
-		return internalerrors.ErrInvalidInput
+		return api.DescriptionBuilderGroup{}, internalerrors.ErrInvalidInput
 	}
 
 	trimmed := strings.TrimSpace(raw)
+	groupKey := strings.TrimSpace(req.DescriptionOverrideGroup)
 	if trimmed == "" {
-		return c.repo.DeleteDescriptionOverride(ctx, uniquePaths[0])
+		if err := c.repo.DeleteDescriptionOverride(ctx, uniquePaths[0], groupKey); err != nil {
+			return api.DescriptionBuilderGroup{}, err
+		}
+		req.Paths = []string{uniquePaths[0]}
+		group, err := c.FetchDescriptionBuilderGroupPreview(ctx, req)
+		if err == nil {
+			return group, nil
+		}
+		if errors.Is(err, internalerrors.ErrNotFound) {
+			return api.DescriptionBuilderGroup{
+				GroupKey:    normalizeDescriptionBuilderGroupKey(groupKey, req.Trackers),
+				Trackers:    append([]string{}, req.Trackers...),
+				HasOverride: false,
+			}, nil
+		}
+		return api.DescriptionBuilderGroup{}, err
 	}
 
-	return c.repo.SaveDescriptionOverride(ctx, api.DescriptionOverride{
+	if err := c.repo.SaveDescriptionOverride(ctx, api.DescriptionOverride{
 		SourcePath:  uniquePaths[0],
+		GroupKey:    groupKey,
 		Description: trimmed,
 		UpdatedAt:   time.Now().UTC(),
-	})
+	}); err != nil {
+		return api.DescriptionBuilderGroup{}, err
+	}
+
+	return api.DescriptionBuilderGroup{
+		GroupKey:           normalizeDescriptionBuilderGroupKey(groupKey, req.Trackers),
+		Trackers:           append([]string{}, req.Trackers...),
+		RawDescription:     trimmed,
+		RawDescriptionHTML: description.Render(trimmed),
+		HasOverride:        true,
+	}, nil
 }
 
 func historyStatusLabel(rawStatus string, ruleFailureCount int) string {
@@ -2930,6 +3116,44 @@ func normalizeExecutionRequest(req api.Request) api.Request {
 		req.Trackers = []string{strings.ToUpper(strings.TrimSpace(req.Execution.SiteUploadTracker))}
 	}
 	return req
+}
+
+func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.PreparedMetadata, req api.Request) ([]api.DescriptionBuilderGroup, error) {
+	if len(req.DescriptionGroups) > 0 {
+		return api.CloneDescriptionBuilderGroups(req.DescriptionGroups), nil
+	}
+	if len(meta.DescriptionGroups) > 0 {
+		return api.CloneDescriptionBuilderGroups(meta.DescriptionGroups), nil
+	}
+	if c.services.Trackers == nil {
+		return nil, errors.New("core: tracker service not configured")
+	}
+
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
+	if err != nil {
+		return nil, err
+	}
+	if len(prep.Descriptions) == 0 {
+		return nil, nil
+	}
+
+	overrideByGroup := make(map[string]api.DescriptionOverride)
+	if c.repo != nil && strings.TrimSpace(meta.SourcePath) != "" {
+		overrides, err := c.repo.ListDescriptionOverridesByPath(ctx, meta.SourcePath)
+		if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
+			return nil, fmt.Errorf("core: description override: %w", err)
+		}
+		for _, override := range overrides {
+			overrideByGroup[normalizeDescriptionBuilderGroupKey(override.GroupKey, nil)] = override
+		}
+	}
+
+	groups := make([]api.DescriptionBuilderGroup, 0, len(prep.Descriptions))
+	for _, entry := range prep.Descriptions {
+		groups = append(groups, buildDescriptionBuilderGroup(entry, overrideByGroup))
+	}
+	return groups, nil
 }
 
 func appendPathedDupeResults(summary api.DupeCheckSummary, matchedTrackers []string) api.DupeCheckSummary {

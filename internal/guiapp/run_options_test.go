@@ -139,8 +139,12 @@ func (c *closeCounterCore) RenderDescription(context.Context, string) (string, e
 	return "", nil
 }
 
-func (c *closeCounterCore) SaveDescriptionOverride(context.Context, api.Request, string) error {
-	return nil
+func (c *closeCounterCore) FetchDescriptionBuilderGroupPreview(context.Context, api.Request) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
+}
+
+func (c *closeCounterCore) SaveDescriptionOverride(context.Context, api.Request, string) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
 }
 
 func (c *closeCounterCore) ExportGUICachedPreparedMeta(context.Context, api.Request) (api.PreparedMetadata, bool, error) {

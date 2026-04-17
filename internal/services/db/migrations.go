@@ -33,6 +33,7 @@ var futureMigrations = []migrationStep{
 	{version: 4, apply: migrateV4},
 	{version: 5, apply: migrateV5},
 	{version: 6, apply: migrateV6},
+	{version: 7, apply: migrateV7},
 }
 
 func migrateV2(ctx context.Context, exec migrationExecutor) error {
@@ -168,6 +169,67 @@ func migrateV6(ctx context.Context, exec migrationExecutor) error {
 	return nil
 }
 
+func migrateV7(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "description_overrides")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := exec.ExecContext(ctx, `
+			CREATE TABLE IF NOT EXISTS description_overrides (
+				source_path TEXT NOT NULL,
+				group_key TEXT NOT NULL DEFAULT "",
+				description TEXT NOT NULL DEFAULT "",
+				updated_at TEXT NOT NULL,
+				PRIMARY KEY (source_path, group_key)
+			)
+		`); err != nil {
+			return err
+		}
+		if _, err := exec.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	statements := []string{
+		`ALTER TABLE description_overrides RENAME TO description_overrides_legacy`,
+		`
+		CREATE TABLE description_overrides (
+			source_path TEXT NOT NULL,
+			group_key TEXT NOT NULL DEFAULT "",
+			description TEXT NOT NULL DEFAULT "",
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (source_path, group_key)
+		)
+		`,
+		`
+		INSERT OR REPLACE INTO description_overrides (source_path, group_key, description, updated_at)
+		SELECT
+			TRIM(COALESCE(source_path, "")),
+			"",
+			COALESCE(description, ""),
+			CASE
+				WHEN TRIM(COALESCE(updated_at, "")) = "" THEN STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')
+				ELSE updated_at
+			END
+		FROM description_overrides_legacy
+		WHERE TRIM(COALESCE(source_path, "")) <> ""
+		ORDER BY rowid
+		`,
+		`DROP TABLE description_overrides_legacy`,
+		`CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`,
+	}
+
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName string, columnName string) (bool, error) {
 	rows, err := exec.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {
@@ -193,6 +255,14 @@ func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName st
 		return false, err
 	}
 	return false, nil
+}
+
+func tableExists(ctx context.Context, exec migrationExecutor, tableName string) (bool, error) {
+	var count int
+	if err := exec.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=?`, tableName).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func Migrate(db *sql.DB) error {
@@ -485,11 +555,14 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_uploaded_images_unique ON uploaded_images (source_path, usage_scope, host, image_path)`,
 		`
 		CREATE TABLE IF NOT EXISTS description_overrides (
-			source_path TEXT PRIMARY KEY,
+			source_path TEXT NOT NULL,
+			group_key TEXT NOT NULL DEFAULT "",
 			description TEXT NOT NULL DEFAULT "",
-			updated_at TEXT NOT NULL
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (source_path, group_key)
 		)
 		`,
+		`CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`,
 		`
 		CREATE TABLE IF NOT EXISTS tracker_rule_failures (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

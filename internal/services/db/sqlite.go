@@ -1020,7 +1020,7 @@ func (r *SQLiteRepository) DeletePlaylistSelection(ctx context.Context, sourcePa
 	return nil
 }
 
-func (r *SQLiteRepository) GetDescriptionOverride(ctx context.Context, path string) (DescriptionOverride, error) {
+func (r *SQLiteRepository) GetDescriptionOverride(ctx context.Context, path string, groupKey string) (DescriptionOverride, error) {
 	if r == nil || r.db == nil {
 		return DescriptionOverride{}, errors.New("db: repository not initialized")
 	}
@@ -1028,23 +1028,25 @@ func (r *SQLiteRepository) GetDescriptionOverride(ctx context.Context, path stri
 	if trimmed == "" {
 		return DescriptionOverride{}, internalerrors.ErrInvalidInput
 	}
+	trimmedGroup := normalizeDescriptionOverrideGroupKey(groupKey)
 
 	row := r.db.QueryRowContext(ctx, `
-		SELECT description, updated_at
+		SELECT group_key, description, updated_at
 		FROM description_overrides
-		WHERE source_path = ?
-	`, trimmed)
+		WHERE source_path = ? AND group_key = ?
+	`, trimmed, trimmedGroup)
 
+	var storedGroupKey string
 	var description string
 	var updatedAt string
-	if err := row.Scan(&description, &updatedAt); err != nil {
+	if err := row.Scan(&storedGroupKey, &description, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return DescriptionOverride{}, internalerrors.ErrNotFound
 		}
 		return DescriptionOverride{}, fmt.Errorf("db get description override: %w", err)
 	}
 
-	override := DescriptionOverride{SourcePath: trimmed, Description: description}
+	override := DescriptionOverride{SourcePath: trimmed, GroupKey: normalizeDescriptionOverrideGroupKey(storedGroupKey), Description: description}
 	if updatedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
 			override.UpdatedAt = parsed
@@ -1052,6 +1054,48 @@ func (r *SQLiteRepository) GetDescriptionOverride(ctx context.Context, path stri
 	}
 
 	return override, nil
+}
+
+func (r *SQLiteRepository) ListDescriptionOverridesByPath(ctx context.Context, path string) ([]DescriptionOverride, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("db: repository not initialized")
+	}
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return nil, internalerrors.ErrInvalidInput
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT group_key, description, updated_at
+		FROM description_overrides
+		WHERE source_path = ?
+		ORDER BY group_key ASC
+	`, trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("db list description overrides: %w", err)
+	}
+	defer rows.Close()
+
+	overrides := make([]DescriptionOverride, 0)
+	for rows.Next() {
+		var override DescriptionOverride
+		var updatedAt string
+		override.SourcePath = trimmed
+		if err := rows.Scan(&override.GroupKey, &override.Description, &updatedAt); err != nil {
+			return nil, fmt.Errorf("db list description overrides: %w", err)
+		}
+		override.GroupKey = normalizeDescriptionOverrideGroupKey(override.GroupKey)
+		if updatedAt != "" {
+			if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
+				override.UpdatedAt = parsed
+			}
+		}
+		overrides = append(overrides, override)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db list description overrides: %w", err)
+	}
+	return overrides, nil
 }
 
 func (r *SQLiteRepository) SaveDescriptionOverride(ctx context.Context, override DescriptionOverride) error {
@@ -1062,6 +1106,7 @@ func (r *SQLiteRepository) SaveDescriptionOverride(ctx context.Context, override
 	if trimmedPath == "" {
 		return internalerrors.ErrInvalidInput
 	}
+	trimmedGroup := normalizeDescriptionOverrideGroupKey(override.GroupKey)
 	trimmedDescription := strings.TrimSpace(override.Description)
 	if trimmedDescription == "" {
 		return internalerrors.ErrInvalidInput
@@ -1073,19 +1118,19 @@ func (r *SQLiteRepository) SaveDescriptionOverride(ctx context.Context, override
 	}
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO description_overrides (source_path, description, updated_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(source_path) DO UPDATE SET
+		INSERT INTO description_overrides (source_path, group_key, description, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(source_path, group_key) DO UPDATE SET
 			description = excluded.description,
 			updated_at = excluded.updated_at
-	`, trimmedPath, trimmedDescription, updatedAt.Format(time.RFC3339Nano))
+	`, trimmedPath, trimmedGroup, trimmedDescription, updatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("db save description override: %w", err)
 	}
 	return nil
 }
 
-func (r *SQLiteRepository) DeleteDescriptionOverride(ctx context.Context, path string) error {
+func (r *SQLiteRepository) DeleteDescriptionOverride(ctx context.Context, path string, groupKey string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -1093,10 +1138,15 @@ func (r *SQLiteRepository) DeleteDescriptionOverride(ctx context.Context, path s
 	if trimmed == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM description_overrides WHERE source_path = ?`, trimmed); err != nil {
+	trimmedGroup := normalizeDescriptionOverrideGroupKey(groupKey)
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM description_overrides WHERE source_path = ? AND group_key = ?`, trimmed, trimmedGroup); err != nil {
 		return fmt.Errorf("db delete description override: %w", err)
 	}
 	return nil
+}
+
+func normalizeDescriptionOverrideGroupKey(groupKey string) string {
+	return strings.ToLower(strings.TrimSpace(groupKey))
 }
 
 func nullString(value *string) interface{} {

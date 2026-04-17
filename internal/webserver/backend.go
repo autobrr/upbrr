@@ -365,7 +365,7 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 	return b.core.FetchPreparationPreview(progressCtx, req)
 }
 
-func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -386,6 +386,7 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 	req := api.Request{
 		Paths:                       []string{strings.TrimSpace(path)},
 		Mode:                        api.ModeGUI,
+		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
 		Trackers:                    trackersList,
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   ignoreRuleFailures,
@@ -441,15 +442,19 @@ func (b *Backend) RenderDescription(raw string) (string, error) {
 	return b.core.RenderDescription(ctx, raw)
 }
 
-func (b *Backend) SaveDescriptionOverride(path string, raw string) error {
+func (b *Backend) SaveDescriptionOverride(path string, groupKey string, raw string, trackers []string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.DescriptionBuilderGroup, error) {
 	if err := b.requireCore(); err != nil {
-		return err
+		return api.DescriptionBuilderGroup{}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	return b.core.SaveDescriptionOverride(ctx, api.Request{
-		Paths: []string{strings.TrimSpace(path)},
-		Mode:  api.ModeGUI,
+		Paths:                    []string{strings.TrimSpace(path)},
+		Mode:                     api.ModeGUI,
+		DescriptionOverrideGroup: strings.TrimSpace(groupKey),
+		Trackers:                 append([]string{}, trackers...),
+		ExternalIDOverrides:      overrides,
+		ReleaseNameOverrides:     nameOverrides,
 	}, raw)
 }
 
@@ -1083,6 +1088,23 @@ func errorsIsNotFound(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
 }
 
+func preferredHistoryDescriptionOverride(overrides []api.DescriptionOverride) api.DescriptionOverride {
+	if len(overrides) == 0 {
+		return api.DescriptionOverride{}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.GroupKey) == "" {
+			return override
+		}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.Description) != "" {
+			return override
+		}
+	}
+	return overrides[0]
+}
+
 func historyOverviewFromRepo(repo *db.SQLiteRepository, sourcePath string) (api.HistoryOverview, error) {
 	if repo == nil {
 		return api.HistoryOverview{}, errors.New("history repository not initialized")
@@ -1113,8 +1135,9 @@ func historyOverviewFromRepo(repo *db.SQLiteRepository, sourcePath string) (api.
 	if releaseOverrides, err := repo.GetReleaseNameOverrides(ctx, trimmed); err == nil {
 		overview.ReleaseNameOverrides = releaseOverrides
 	}
-	if descriptionOverride, err := repo.GetDescriptionOverride(ctx, trimmed); err == nil {
-		overview.DescriptionOverride = descriptionOverride
+	if descriptionOverrides, err := repo.ListDescriptionOverridesByPath(ctx, trimmed); err == nil {
+		overview.DescriptionOverrides = append([]api.DescriptionOverride(nil), descriptionOverrides...)
+		overview.DescriptionOverride = preferredHistoryDescriptionOverride(descriptionOverrides)
 	}
 	if playlistSelection, err := repo.GetPlaylistSelection(ctx, trimmed); err == nil {
 		overview.PlaylistSelection = playlistSelection

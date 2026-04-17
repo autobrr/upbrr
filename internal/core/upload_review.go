@@ -195,6 +195,9 @@ func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request) api.
 	meta.Mode = req.Mode
 	meta.Options = req.Options
 	meta.Paths = append([]string{}, req.Paths...)
+	if req.DescriptionGroups != nil {
+		meta.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
+	}
 	meta.Trackers = append([]string{}, req.Trackers...)
 	meta.TrackersRemove = append([]string{}, req.TrackersRemove...)
 	meta.TrackerIDs = cloneStringMap(req.TrackerIDOverrides)
