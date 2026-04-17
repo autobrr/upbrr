@@ -249,6 +249,58 @@ func TestSaveDescriptionOverrideDeletesOnEmpty(t *testing.T) {
 	}
 }
 
+func TestSaveDescriptionOverrideDeleteReturnsEmptyGroupWhenPreviewGroupMissing(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{
+		preview: api.PreparationPreview{
+			SourcePath:   "/tmp/source",
+			Descriptions: []api.PreparationDescription{},
+		},
+	}
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	group, err := core.SaveDescriptionOverride(context.Background(), api.Request{
+		Paths:                    []string{"/tmp/source"},
+		Mode:                     api.ModeGUI,
+		DescriptionOverrideGroup: "blu",
+		Trackers:                 []string{"BLU"},
+	}, "  ")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(repo.deleted) != 1 {
+		t.Fatalf("expected delete to be called, got %d", len(repo.deleted))
+	}
+	if group.GroupKey != "blu" {
+		t.Fatalf("expected reset group key, got %q", group.GroupKey)
+	}
+	if len(group.Trackers) != 1 || group.Trackers[0] != "BLU" {
+		t.Fatalf("expected trackers to be preserved, got %v", group.Trackers)
+	}
+	if group.HasOverride {
+		t.Fatalf("expected override flag to be false")
+	}
+	if group.RawDescription != "" {
+		t.Fatalf("expected empty raw description when preview group missing, got %q", group.RawDescription)
+	}
+	if group.RawDescriptionHTML != "" {
+		t.Fatalf("expected empty rendered description when preview group missing, got %q", group.RawDescriptionHTML)
+	}
+}
+
 func TestRenderDescriptionReturnsHTML(t *testing.T) {
 	t.Parallel()
 

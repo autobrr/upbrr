@@ -119,6 +119,32 @@ func TestApplyRequestToPreparedMetaClearsDupeBlocksForIgnoredTrackers(t *testing
 	}
 }
 
+func TestApplyRequestToPreparedMetaPreservesCachedDescriptionGroupsWhenRequestOmitted(t *testing.T) {
+	t.Parallel()
+
+	meta := applyRequestToPreparedMeta(api.PreparedMetadata{
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"BLU"},
+			RawDescription: "cached body",
+			HasOverride:    true,
+		}},
+	}, api.Request{})
+
+	if len(meta.DescriptionGroups) != 1 {
+		t.Fatalf("expected cached description groups to be preserved, got %d", len(meta.DescriptionGroups))
+	}
+	if meta.DescriptionGroups[0].GroupKey != "unit3d" {
+		t.Fatalf("expected cached group key to be preserved, got %q", meta.DescriptionGroups[0].GroupKey)
+	}
+	if meta.DescriptionGroups[0].RawDescription != "cached body" {
+		t.Fatalf("expected cached group body to be preserved, got %q", meta.DescriptionGroups[0].RawDescription)
+	}
+	if !meta.DescriptionGroups[0].HasOverride {
+		t.Fatalf("expected cached override flag to be preserved")
+	}
+}
+
 func TestApplyRequestToPreparedMetaAppliesMetadataOverrides(t *testing.T) {
 	t.Parallel()
 

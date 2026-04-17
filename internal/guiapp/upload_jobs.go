@@ -119,7 +119,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	seedReq := api.Request{
 		Paths:                []string{trimmedPath},
 		Mode:                 api.ModeGUI,
-		DescriptionGroups:    cloneDescriptionBuilderGroups(descriptionGroups),
+		DescriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
 		Trackers:             resolvedTrackers,
 		IgnoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
 		ExternalIDOverrides:  overrides,
@@ -141,7 +141,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 		overrides:            overrides,
 		nameOverrides:        nameOverrides,
 		questionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
-		descriptionGroups:    cloneDescriptionBuilderGroups(descriptionGroups),
+		descriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
 		trackers:             resolvedTrackers,
 		ignoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
 		ignoreRuleFailures:   ignoreRuleFailures,
@@ -211,7 +211,7 @@ func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 	overrides := job.overrides
 	nameOverrides := job.nameOverrides
 	questionnaireAnswers := cloneQuestionnaireAnswers(job.questionnaireAnswers)
-	descriptionGroups := cloneDescriptionBuilderGroups(job.descriptionGroups)
+	descriptionGroups := api.CloneDescriptionBuilderGroups(job.descriptionGroups)
 	ignoreRuleFailures := job.ignoreRuleFailures
 	ignoreDupesFor := append([]string(nil), job.ignoreDupesFor...)
 	runOptions := job.runOptions
@@ -330,7 +330,7 @@ func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob,
 	req := api.Request{
 		Paths:                       []string{job.sourcePath},
 		Mode:                        api.ModeGUI,
-		DescriptionGroups:           cloneDescriptionBuilderGroups(job.descriptionGroups),
+		DescriptionGroups:           api.CloneDescriptionBuilderGroups(job.descriptionGroups),
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
 		IgnoreTrackerRuleFailures:   job.ignoreRuleFailures,
@@ -458,19 +458,6 @@ func cloneQuestionnaireAnswers(input map[string]map[string]string) map[string]ma
 			inner[key] = value
 		}
 		cloned[tracker] = inner
-	}
-	return cloned
-}
-
-func cloneDescriptionBuilderGroups(input []api.DescriptionBuilderGroup) []api.DescriptionBuilderGroup {
-	if len(input) == 0 {
-		return nil
-	}
-	cloned := make([]api.DescriptionBuilderGroup, len(input))
-	for idx, group := range input {
-		cloned[idx] = group
-		cloned[idx].Trackers = append([]string(nil), group.Trackers...)
-		cloned[idx].ImageHost.AllowedHosts = append([]string(nil), group.ImageHost.AllowedHosts...)
 	}
 	return cloned
 }

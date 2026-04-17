@@ -618,7 +618,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 	req := api.Request{
 		Paths:                       []string{trimmedPath},
 		Mode:                        api.ModeGUI,
-		DescriptionGroups:           cloneDescriptionBuilderGroups(descriptionGroups),
+		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
 		Trackers:                    trackers,
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   ignoreRuleFailures,

@@ -385,7 +385,7 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 	req := api.Request{
 		Paths:                       []string{strings.TrimSpace(path)},
 		Mode:                        api.ModeGUI,
-		DescriptionGroups:           cloneDescriptionBuilderGroups(descriptionGroups),
+		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
 		Trackers:                    trackersList,
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   ignoreRuleFailures,

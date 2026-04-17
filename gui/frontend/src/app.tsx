@@ -1778,14 +1778,26 @@ export default function App() {
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
       );
-        setBuilderPreview((prev) => upsertBuilderGroup(prev, updatedGroup));
-        setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
-        setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescriptionHTML || "" }));
-        setBuilderSaved("Description saved.");
-        setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: false }));
-      } catch (err) {
-        setBuilderError(String(err));
-      } finally {
+      const nextPreview = upsertBuilderGroup(builderPreview, updatedGroup);
+      const shouldRefreshDryRun = path.trim() === String(trackerDryRunPreview.SourcePath || "").trim() && (trackerDryRunPreview.Trackers || []).length > 0;
+
+      setBuilderPreview(nextPreview);
+      setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
+      setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescriptionHTML || "" }));
+      setBuilderSaved("Description saved.");
+      setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: false }));
+
+      if (shouldRefreshDryRun) {
+        try {
+          await runTrackerDryRun(nextPreview.Groups || [], false);
+          setBuilderSaved("Description saved. Dry run refreshed.");
+        } catch (err) {
+          setTrackerDryRunError(`Description saved, but dry run refresh failed: ${String(err)}`);
+        }
+      }
+    } catch (err) {
+      setBuilderError(String(err));
+    } finally {
       setBuilderSaving(false);
     }
   };
@@ -2497,41 +2509,59 @@ export default function App() {
     }
     }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerDryRunPreview, trackerQuestionnaireAnswers, builderPreview, runDebug, runLogLevel]);
 
-  const handleRunTrackerDryRun = useCallback(async () => {
-    setTrackerDryRunError("");
+  const runTrackerDryRun = useCallback(async (descriptionGroups: DescriptionBuilderPreview["Groups"], surfaceError = true) => {
+    if (surfaceError) {
+      setTrackerDryRunError("");
+    }
     const fetcher = globalThis.go?.guiapp?.App?.FetchTrackerDryRun;
     if (!fetcher) {
-      setTrackerDryRunError("Tracker dry run is unavailable in this build.");
-      return;
+      const message = "Tracker dry run is unavailable in this build.";
+      if (surfaceError) {
+        setTrackerDryRunError(message);
+        return null;
+      }
+      throw new Error(message);
     }
     if (!path.trim()) {
-      setTrackerDryRunError("Please select a file or folder.");
-      return;
+      const message = "Please select a file or folder.";
+      if (surfaceError) {
+        setTrackerDryRunError(message);
+        return null;
+      }
+      throw new Error(message);
     }
     if (idOverrideState?.invalid || releaseOverrideState?.invalid) {
-      setTrackerDryRunError("Fix invalid overrides before running dry run.");
-      return;
+      const message = "Fix invalid overrides before running dry run.";
+      if (surfaceError) {
+        setTrackerDryRunError(message);
+        return null;
+      }
+      throw new Error(message);
     }
     const selectedTrackers = getSelectedUploadTrackers();
     if (selectedTrackers.length === 0) {
-      setTrackerDryRunError("Enable at least one tracker in Upload Targets.");
-      return;
+      const message = "Enable at least one tracker in Upload Targets.";
+      if (surfaceError) {
+        setTrackerDryRunError(message);
+        return null;
+      }
+      throw new Error(message);
     }
 
     setTrackerDryRunLoading(true);
     try {
-        const result = await fetcher(
-          path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          selectedTrackers,
-          overrideRuleBlocks,
-          ignoredDupeTrackers,
-          cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
-          builderPreview.Groups || [],
-          runDebug,
-          runLogLevel
-        );
+      const result = await fetcher(
+        path.trim(),
+        normalizeOverrides(idOverrideState?.overrides || {}),
+        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        selectedTrackers,
+        overrideRuleBlocks,
+        ignoredDupeTrackers,
+        cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
+        descriptionGroups,
+        runDebug,
+        runLogLevel
+      );
       setTrackerDryRunPreview(result || emptyTrackerDryRun);
       setTrackerQuestionnaireAnswers((prev) => {
         const next = cloneQuestionnaireAnswers(prev);
@@ -2544,12 +2574,21 @@ export default function App() {
         });
         return next;
       });
+      return result || emptyTrackerDryRun;
     } catch (err) {
-      setTrackerDryRunError(String(err));
+      if (surfaceError) {
+        setTrackerDryRunError(String(err));
+        return null;
+      }
+      throw err;
     } finally {
       setTrackerDryRunLoading(false);
     }
-    }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerQuestionnaireAnswers, builderPreview, runDebug, runLogLevel]);
+  }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerQuestionnaireAnswers, runDebug, runLogLevel]);
+
+  const handleRunTrackerDryRun = useCallback(async () => {
+    await runTrackerDryRun(builderPreview.Groups || []);
+  }, [builderPreview, runTrackerDryRun]);
 
   const handleCancelTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");

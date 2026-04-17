@@ -1782,7 +1782,7 @@ func deepCopyPreparedMetadata(meta api.PreparedMetadata) api.PreparedMetadata {
 	copyMeta.LookupWarnings = append([]string(nil), meta.LookupWarnings...)
 	copyMeta.Paths = append([]string(nil), meta.Paths...)
 	copyMeta.FileList = append([]string(nil), meta.FileList...)
-	copyMeta.DescriptionGroups = cloneDescriptionBuilderGroups(meta.DescriptionGroups)
+	copyMeta.DescriptionGroups = api.CloneDescriptionBuilderGroups(meta.DescriptionGroups)
 	copyMeta.Trackers = append([]string(nil), meta.Trackers...)
 	copyMeta.TrackersRemove = append([]string(nil), meta.TrackersRemove...)
 	copyMeta.MatchedTrackers = append([]string(nil), meta.MatchedTrackers...)
@@ -2309,9 +2309,10 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 		return api.HistoryOverview{}, err
 	}
 
-	descriptionOverride, err := c.repo.GetDescriptionOverride(ctx, trimmed, "")
+	descriptionOverrides, err := c.repo.ListDescriptionOverridesByPath(ctx, trimmed)
 	if err == nil {
-		overview.DescriptionOverride = descriptionOverride
+		overview.DescriptionOverrides = append([]api.DescriptionOverride(nil), descriptionOverrides...)
+		overview.DescriptionOverride = preferredHistoryDescriptionOverride(descriptionOverrides)
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
 		return api.HistoryOverview{}, err
 	}
@@ -2365,6 +2366,23 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 	overview.StatusLabel = historyStatusLabel(overview.LatestUploadStatus, len(ruleFailures))
 
 	return overview, nil
+}
+
+func preferredHistoryDescriptionOverride(overrides []api.DescriptionOverride) api.DescriptionOverride {
+	if len(overrides) == 0 {
+		return api.DescriptionOverride{}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.GroupKey) == "" {
+			return override
+		}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.Description) != "" {
+			return override
+		}
+	}
+	return overrides[0]
 }
 
 func (c *Core) DeleteHistoryRelease(ctx context.Context, sourcePath string) error {
@@ -2436,7 +2454,18 @@ func (c *Core) SaveDescriptionOverride(ctx context.Context, req api.Request, raw
 			return api.DescriptionBuilderGroup{}, err
 		}
 		req.Paths = []string{uniquePaths[0]}
-		return c.FetchDescriptionBuilderGroupPreview(ctx, req)
+		group, err := c.FetchDescriptionBuilderGroupPreview(ctx, req)
+		if err == nil {
+			return group, nil
+		}
+		if errors.Is(err, internalerrors.ErrNotFound) {
+			return api.DescriptionBuilderGroup{
+				GroupKey:    normalizeDescriptionBuilderGroupKey(groupKey, req.Trackers),
+				Trackers:    append([]string{}, req.Trackers...),
+				HasOverride: false,
+			}, nil
+		}
+		return api.DescriptionBuilderGroup{}, err
 	}
 
 	if err := c.repo.SaveDescriptionOverride(ctx, api.DescriptionOverride{
@@ -3091,10 +3120,10 @@ func normalizeExecutionRequest(req api.Request) api.Request {
 
 func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.PreparedMetadata, req api.Request) ([]api.DescriptionBuilderGroup, error) {
 	if len(req.DescriptionGroups) > 0 {
-		return cloneDescriptionBuilderGroups(req.DescriptionGroups), nil
+		return api.CloneDescriptionBuilderGroups(req.DescriptionGroups), nil
 	}
 	if len(meta.DescriptionGroups) > 0 {
-		return cloneDescriptionBuilderGroups(meta.DescriptionGroups), nil
+		return api.CloneDescriptionBuilderGroups(meta.DescriptionGroups), nil
 	}
 	if c.services.Trackers == nil {
 		return nil, errors.New("core: tracker service not configured")

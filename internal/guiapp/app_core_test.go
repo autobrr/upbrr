@@ -106,6 +106,14 @@ func TestGetHistoryOverviewUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create upload record: %v", err)
 	}
+	if err := repo.SaveDescriptionOverride(ctx, db.DescriptionOverride{
+		SourcePath:  sourcePath,
+		GroupKey:    "unit3d",
+		Description: "grouped override",
+		UpdatedAt:   time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("save description override: %v", err)
+	}
 
 	app := &App{
 		repo:        repo,
@@ -124,6 +132,15 @@ func TestGetHistoryOverviewUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	}
 	if overview.StatusLabel != "Failed" {
 		t.Fatalf("expected failed status label, got %q", overview.StatusLabel)
+	}
+	if len(overview.DescriptionOverrides) != 1 {
+		t.Fatalf("expected 1 grouped description override, got %d", len(overview.DescriptionOverrides))
+	}
+	if overview.DescriptionOverrides[0].GroupKey != "unit3d" {
+		t.Fatalf("expected grouped override key to be preserved, got %q", overview.DescriptionOverrides[0].GroupKey)
+	}
+	if overview.DescriptionOverride.GroupKey != "unit3d" {
+		t.Fatalf("expected preferred description override key to be unit3d, got %q", overview.DescriptionOverride.GroupKey)
 	}
 }
 

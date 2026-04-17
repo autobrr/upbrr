@@ -144,14 +144,7 @@ export default function HistoryPage() {
     if (!overview) {
       return [];
     }
-    if (Array.isArray(overview.DescriptionOverrides) && overview.DescriptionOverrides.length > 0) {
-      return overview.DescriptionOverrides;
-    }
-    const fallbackDescription = overview.DescriptionOverride?.Description?.trim();
-    if (!fallbackDescription) {
-      return [];
-    }
-    return [overview.DescriptionOverride];
+    return Array.isArray(overview.DescriptionOverrides) ? overview.DescriptionOverrides : [];
   }, [overview]);
 
   const handleDeleteRelease = async () => {
