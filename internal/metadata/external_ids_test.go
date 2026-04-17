@@ -166,7 +166,7 @@ func (f *fakeRepo) GetDescriptionOverride(ctx context.Context, path string, grou
 	return api.DescriptionOverride{}, internalerrors.ErrNotFound
 }
 func (f *fakeRepo) ListDescriptionOverridesByPath(ctx context.Context, path string) ([]api.DescriptionOverride, error) {
-	return nil, internalerrors.ErrNotFound
+	return nil, nil
 }
 
 func (f *fakeRepo) SaveDescriptionOverride(ctx context.Context, override api.DescriptionOverride) error {

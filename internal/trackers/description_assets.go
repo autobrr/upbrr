@@ -57,6 +57,10 @@ func DescriptionOverrideGroupForTracker(tracker string) string {
 	}
 }
 
+func normalizeDescriptionOverrideGroupKey(groupKey string) string {
+	return strings.ToLower(strings.TrimSpace(groupKey))
+}
+
 func ResolveDescriptionAssets(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger) (DescriptionAssets, error) {
 	return resolveDescriptionAssets(ctx, tracker, meta, repo, logger, nil)
 }
@@ -282,7 +286,11 @@ func preloadDescriptionAssetData(ctx context.Context, meta api.PreparedMetadata,
 	switch {
 	case err == nil:
 		for _, override := range overrides {
-			preloaded.descriptionOverrides[strings.TrimSpace(override.GroupKey)] = override
+			normalizedGroupKey := normalizeDescriptionOverrideGroupKey(override.GroupKey)
+			if normalizedGroupKey == "" {
+				continue
+			}
+			preloaded.descriptionOverrides[normalizedGroupKey] = override
 		}
 	case errors.Is(err, internalerrors.ErrNotFound):
 	default:
@@ -321,13 +329,14 @@ func descriptionOverrideFromSource(ctx context.Context, meta api.PreparedMetadat
 	if err := ctx.Err(); err != nil {
 		return api.DescriptionOverride{}, err
 	}
+	normalizedGroupKey := normalizeDescriptionOverrideGroupKey(groupKey)
 	if preloaded != nil {
-		if override, ok := preloaded.descriptionOverrides[groupKey]; ok {
+		if override, ok := preloaded.descriptionOverrides[normalizedGroupKey]; ok {
 			return override, nil
 		}
 		return api.DescriptionOverride{}, internalerrors.ErrNotFound
 	}
-	override, err := repo.GetDescriptionOverride(ctx, meta.SourcePath, groupKey)
+	override, err := repo.GetDescriptionOverride(ctx, meta.SourcePath, normalizedGroupKey)
 	if err == nil {
 		return override, nil
 	}

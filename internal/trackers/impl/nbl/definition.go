@@ -43,6 +43,14 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 	} else {
 		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 		if err != nil {
+			if req.Logger != nil {
+				req.Logger.Errorf(
+					"trackers: %s description assets resolution failed source=%s: %v",
+					strings.ToUpper(strings.TrimSpace(req.Tracker)),
+					strings.TrimSpace(req.Meta.SourcePath),
+					err,
+				)
+			}
 			assets = trackers.DescriptionAssets{}
 		}
 	}

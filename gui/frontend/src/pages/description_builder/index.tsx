@@ -94,9 +94,9 @@ export default function DescriptionBuilderPage(props: Props) {
           <p className="muted">No tracker descriptions generated yet.</p>
         </section>
       ) : (
-        groups.map((group) => {
+        groups.map((group, i) => {
           const groupKey = group.GroupKey;
-          const reactKey = groupKey || "default";
+          const reactKey = groupKey || `default-${i}`;
           const seededRaw = group.RawDescription || "";
           const raw = builderRawByGroup[groupKey] ?? seededRaw;
           const seededRendered = group.RawDescriptionHTML || "";
