@@ -21,12 +21,13 @@ func TestSiteHandlersSearch(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		tracker  string
-		meta     api.PreparedMetadata
-		setup    func(t *testing.T, baseURL string, dbPath string)
-		handler  func(cfg config.Config, client *http.Client) searchHandler
-		validate func(t *testing.T, entries []api.DupeEntry)
+		name           string
+		tracker        string
+		meta           api.PreparedMetadata
+		setup          func(t *testing.T, baseURL string, dbPath string)
+		handler        func(cfg config.Config, client *http.Client) searchHandler
+		validate       func(t *testing.T, entries []api.DupeEntry)
+		expectedSearch string
 	}{
 		{
 			name:    "BT",
@@ -89,16 +90,17 @@ func TestSiteHandlersSearch(t *testing.T) {
 		{
 			name:    "HDS",
 			tracker: "HDS",
-			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 1234567}, Release: api.ReleaseInfo{Resolution: "1080p"}, SourcePath: "x"},
+			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, Release: api.ReleaseInfo{Resolution: "1080p"}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
 				writeTextCookie(t, dbPath, "HDS", "session", "cookie", hostFromBaseURL(t, baseURL))
 			},
-			handler: func(cfg config.Config, client *http.Client) searchHandler { return hdsHandler{cfg: cfg, http: client} },
+			handler:        func(cfg config.Config, client *http.Client) searchHandler { return hdsHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
 				if len(entries) != 1 || !entries[0].SizeKnown {
 					t.Fatalf("unexpected HDS entries: %#v", entries)
 				}
 			},
+			expectedSearch: "0000123",
 		},
 		{
 			name:    "HDT",
