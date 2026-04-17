@@ -7,6 +7,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -293,6 +297,360 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	}
 	if _, err := repo.GetReleaseNameOverrides(ctx, "/media/file.mkv"); !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected release overrides not found, got %v", err)
+	}
+}
+
+func TestOpenWithLoggerConfiguresConcurrentSQLiteSettings(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "shared.db")
+	repo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	var journalMode string
+	if err := repo.db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Fatalf("expected WAL journal mode, got %q", journalMode)
+	}
+
+	var busyTimeout int
+	if err := repo.db.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if busyTimeout != sqliteBusyTimeout {
+		t.Fatalf("expected busy timeout %d, got %d", sqliteBusyTimeout, busyTimeout)
+	}
+}
+
+func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "shared.db")
+	repos := make([]*SQLiteRepository, 0, 3)
+	for i := 0; i < 3; i++ {
+		repo, err := OpenWithLogger(repoPath, nopLogger{})
+		if err != nil {
+			t.Fatalf("open repo %d: %v", i, err)
+		}
+		repos = append(repos, repo)
+	}
+	for _, repo := range repos {
+		t.Cleanup(func() {
+			_ = repo.Close()
+		})
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 32)
+	start := make(chan struct{})
+	for idx, repo := range repos {
+		wg.Add(1)
+		go func(idx int, repo *SQLiteRepository) {
+			defer wg.Done()
+			<-start
+			for attempt := 0; attempt < 3; attempt++ {
+				if err := repo.Migrate(); err != nil {
+					errCh <- fmt.Errorf("repo %d migrate attempt %d: %w", idx, attempt, err)
+					return
+				}
+			}
+			ctx := context.Background()
+			for item := 0; item < 10; item++ {
+				sourcePath := filepath.Join("C:\\shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
+				if err := repo.Save(ctx, FileMetadata{
+					Path:      sourcePath,
+					Title:     fmt.Sprintf("Title %d-%d", idx, item),
+					UpdatedAt: time.Now().UTC().Truncate(time.Second),
+				}); err != nil {
+					errCh <- fmt.Errorf("repo %d save %d: %w", idx, item, err)
+					return
+				}
+				if _, err := repo.ListHistoryEntries(ctx); err != nil {
+					errCh <- fmt.Errorf("repo %d list history %d: %w", idx, item, err)
+					return
+				}
+			}
+		}(idx, repo)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx := context.Background()
+	for idx := range repos {
+		for item := 0; item < 10; item++ {
+			sourcePath := filepath.Join("C:\\shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
+			if _, err := repos[0].GetByPath(ctx, sourcePath); err != nil {
+				t.Fatalf("get %s: %v", sourcePath, err)
+			}
+		}
+	}
+}
+
+func TestSQLiteRepositoryConcurrentReadsOnDisk(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "readers.db")
+	writerRepo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open writer repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = writerRepo.Close()
+	})
+
+	if err := writerRepo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	for i := 0; i < 25; i++ {
+		sourcePath := filepath.Join("C:\\reads", fmt.Sprintf("release-%d.mkv", i))
+		if err := writerRepo.Save(ctx, FileMetadata{
+			Path:      sourcePath,
+			Title:     fmt.Sprintf("Title %d", i),
+			UpdatedAt: time.Now().UTC().Truncate(time.Second),
+		}); err != nil {
+			t.Fatalf("seed row %d: %v", i, err)
+		}
+	}
+
+	repos := make([]*SQLiteRepository, 0, 4)
+	for i := 0; i < 4; i++ {
+		repo, err := OpenWithLogger(repoPath, nopLogger{})
+		if err != nil {
+			t.Fatalf("open reader repo %d: %v", i, err)
+		}
+		repos = append(repos, repo)
+	}
+	for _, repo := range repos {
+		t.Cleanup(func() {
+			_ = repo.Close()
+		})
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, len(repos))
+	var wg sync.WaitGroup
+	for idx, repo := range repos {
+		wg.Add(1)
+		go func(idx int, repo *SQLiteRepository) {
+			defer wg.Done()
+			<-start
+			for item := 0; item < 25; item++ {
+				sourcePath := filepath.Join("C:\\reads", fmt.Sprintf("release-%d.mkv", item))
+				got, err := repo.GetByPath(ctx, sourcePath)
+				if err != nil {
+					errCh <- fmt.Errorf("reader %d get %d: %w", idx, item, err)
+					return
+				}
+				if got.Path != sourcePath {
+					errCh <- fmt.Errorf("reader %d get %d: unexpected path %q", idx, item, got.Path)
+					return
+				}
+			}
+		}(idx, repo)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSQLiteRepositoryReadsOverlapWithWriteTransaction(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "reader-writer.db")
+	writerRepo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open writer repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = writerRepo.Close()
+	})
+
+	readerRepoA, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open reader repo A: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = readerRepoA.Close()
+	})
+
+	readerRepoB, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open reader repo B: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = readerRepoB.Close()
+	})
+
+	if err := writerRepo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	sourcePath := filepath.Join("C:\\overlap", "release.mkv")
+	if err := writerRepo.Save(ctx, FileMetadata{
+		Path:      sourcePath,
+		Title:     "Before",
+		UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}); err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+
+	conn, err := writerRepo.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("acquire writer conn: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("begin immediate: %v", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+	}()
+
+	if _, err := conn.ExecContext(ctx, `
+		UPDATE file_metadata
+		SET release_title = ?, updated_at = ?
+		WHERE path = ?
+	`, "DuringWrite", time.Now().UTC().Format(time.RFC3339Nano), sourcePath); err != nil {
+		t.Fatalf("update within transaction: %v", err)
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, 2)
+	var wg sync.WaitGroup
+	readers := []*SQLiteRepository{readerRepoA, readerRepoB}
+	for idx, repo := range readers {
+		wg.Add(1)
+		go func(idx int, repo *SQLiteRepository) {
+			defer wg.Done()
+			<-start
+			for attempt := 0; attempt < 20; attempt++ {
+				got, err := repo.GetByPath(ctx, sourcePath)
+				if err != nil {
+					errCh <- fmt.Errorf("reader %d get attempt %d: %w", idx, attempt, err)
+					return
+				}
+				if got.Title != "Before" {
+					errCh <- fmt.Errorf("reader %d get attempt %d: expected committed title Before, got %q", idx, attempt, got.Title)
+					return
+				}
+			}
+		}(idx, repo)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRetryBusyContextStopsOnCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	attempts := 0
+	err := retryBusyContext(ctx, nil, "test", 3, func() error {
+		attempts++
+		return errors.New("database is locked")
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled, got %v", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("expected no attempts after cancellation, got %d", attempts)
+	}
+}
+
+func TestIsBusyErrorUnwrapsSQLiteErrors(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "busy.db")
+
+	lockingRepo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open locking repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = lockingRepo.Close()
+	})
+
+	contendingRepo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open contending repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = contendingRepo.Close()
+	})
+
+	if err := lockingRepo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := contendingRepo.db.Exec(`PRAGMA busy_timeout = 1`); err != nil {
+		t.Fatalf("set contending busy_timeout: %v", err)
+	}
+
+	ctx := context.Background()
+	conn, err := lockingRepo.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("acquire locking conn: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("begin immediate: %v", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+	}()
+
+	err = contendingRepo.Save(ctx, FileMetadata{
+		Path:      filepath.Join("C:\\locked", "file.mkv"),
+		Title:     "Locked",
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err == nil {
+		t.Fatal("expected busy error, got nil")
+	}
+
+	wrappedErr := fmt.Errorf("wrapped save: %w", err)
+	if !IsBusyError(wrappedErr) {
+		t.Fatalf("expected wrapped busy error, got %v", wrappedErr)
 	}
 }
 

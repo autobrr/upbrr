@@ -52,7 +52,14 @@ type App struct {
 }
 
 func NewApp(configPath string, configProvided bool) (*App, error) {
-	cfg, dbPath, err := configstore.Bootstrap(context.Background(), configPath, configProvided, true)
+	return NewAppWithContext(context.Background(), configPath, configProvided)
+}
+
+func NewAppWithContext(ctx context.Context, configPath string, configProvided bool) (*App, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cfg, dbPath, err := configstore.Bootstrap(ctx, configPath, configProvided, true)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +74,7 @@ func NewApp(configPath string, configProvided bool) (*App, error) {
 		_ = logger.Close()
 		return nil, err
 	}
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
 		return nil, err
@@ -80,11 +87,13 @@ func NewApp(configPath string, configProvided bool) (*App, error) {
 		logger.Warnf("gui: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
 		coreSvc, err = core.New(api.CoreDependencies{
-			Config: cfg,
-			Logger: logger,
+			Context: ctx,
+			Config:  cfg,
+			Logger:  logger,
 			Services: api.ServiceSet{
 				Filesystem: filesystem.NewValidator(),
 			},
+			Repository: repo,
 		})
 		if err != nil {
 			_ = repo.Close()
