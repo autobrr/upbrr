@@ -124,19 +124,23 @@ func resolveTrackerDescription(ctx context.Context, tracker string, meta api.Pre
 		return meta.DescriptionOverride, true
 	}
 	if repo != nil && strings.TrimSpace(meta.SourcePath) != "" {
-		groupKey := DescriptionOverrideGroupForTracker(tracker)
-		override, err := descriptionOverrideFromSource(ctx, meta, repo, groupKey, preloaded)
-		if err == nil {
-			trimmed := strings.TrimSpace(override.Description)
-			if trimmed != "" {
-				if logger != nil {
-					logger.Tracef("trackers: description override applied source=%s len=%d", meta.SourcePath, len(trimmed))
+		for _, groupKey := range descriptionOverrideLookupKeys(meta.DescriptionGroups, tracker) {
+			override, err := descriptionOverrideFromSource(ctx, meta, repo, groupKey, preloaded)
+			if err == nil {
+				trimmed := strings.TrimSpace(override.Description)
+				if trimmed != "" {
+					if logger != nil {
+						logger.Tracef("trackers: description override applied source=%s group=%s len=%d", meta.SourcePath, strings.TrimSpace(groupKey), len(trimmed))
+					}
+					return override.Description, true
 				}
-				return override.Description, true
+				continue
 			}
-		} else if !errors.Is(err, internalerrors.ErrNotFound) {
-			if logger != nil {
-				logger.Debugf("trackers: description override lookup failed: %v", err)
+			if !errors.Is(err, internalerrors.ErrNotFound) {
+				if logger != nil {
+					logger.Debugf("trackers: description override lookup failed group=%s: %v", strings.TrimSpace(groupKey), err)
+				}
+				break
 			}
 		}
 	}
@@ -168,9 +172,8 @@ func descriptionGroupFromPreparedMeta(meta api.PreparedMetadata, tracker string,
 		return ""
 	}
 
-	groupKey := strings.ToUpper(strings.TrimSpace(DescriptionOverrideGroupForTracker(tracker)))
-	if groupKey != "" {
-		if description, ok := groupDescriptions[groupKey]; ok {
+	for _, groupKey := range descriptionOverrideLookupKeys(meta.DescriptionGroups, tracker) {
+		if description, ok := groupDescriptions[strings.ToUpper(strings.TrimSpace(groupKey))]; ok {
 			return description
 		}
 	}
@@ -186,6 +189,108 @@ func descriptionGroupFromPreparedMeta(meta api.PreparedMetadata, tracker string,
 		return description
 	}
 	return ""
+}
+
+func descriptionOverrideLookupKeys(groups []api.DescriptionBuilderGroup, tracker string) []string {
+	keys := matchingPreparationDescriptionGroupKeys(groups, tracker)
+	canonical := strings.TrimSpace(DescriptionOverrideGroupForTracker(tracker))
+	if canonical == "" {
+		return keys
+	}
+	return appendUniqueDescriptionGroupKey(keys, canonical)
+}
+
+func matchingPreparationDescriptionGroupKeys(groups []api.DescriptionBuilderGroup, tracker string) []string {
+	if len(groups) == 0 {
+		return nil
+	}
+
+	normalizedTracker := strings.ToUpper(strings.TrimSpace(tracker))
+	if normalizedTracker == "" {
+		return nil
+	}
+
+	canonicalGroup := strings.ToLower(strings.TrimSpace(DescriptionOverrideGroupForTracker(tracker)))
+	if canonicalGroup == "" {
+		return nil
+	}
+
+	type candidate struct {
+		key   string
+		score int
+		order int
+	}
+
+	candidates := make([]candidate, 0, len(groups))
+	for idx, group := range groups {
+		key := strings.TrimSpace(group.GroupKey)
+		if key == "" {
+			continue
+		}
+		if !descriptionGroupMatchesTracker(group, canonicalGroup, normalizedTracker) {
+			continue
+		}
+		_, host, usageScope := parsePreparationDescriptionGroupKey(key)
+		score := 0
+		if usageScope == trackerImageUsageScope(normalizedTracker) {
+			score += 4
+		} else if usageScope == globalImageUsageScope {
+			score += 2
+		}
+		if host == strings.ToLower(normalizedTracker) {
+			score++
+		}
+		candidates = append(candidates, candidate{key: key, score: score, order: idx})
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		return candidates[i].order < candidates[j].order
+	})
+
+	keys := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		keys = appendUniqueDescriptionGroupKey(keys, candidate.key)
+	}
+	return keys
+}
+
+func descriptionGroupMatchesTracker(group api.DescriptionBuilderGroup, canonicalGroup string, normalizedTracker string) bool {
+	baseGroup, _, _ := parsePreparationDescriptionGroupKey(group.GroupKey)
+	return strings.EqualFold(strings.TrimSpace(baseGroup), canonicalGroup)
+}
+
+func parsePreparationDescriptionGroupKey(groupKey string) (string, string, string) {
+	trimmed := strings.TrimSpace(groupKey)
+	if trimmed == "" {
+		return "", "", globalImageUsageScope
+	}
+	parts := strings.SplitN(trimmed, "|", 3)
+	baseGroup := strings.ToLower(strings.TrimSpace(parts[0]))
+	if len(parts) == 1 {
+		return baseGroup, "", globalImageUsageScope
+	}
+	host := strings.ToLower(strings.TrimSpace(parts[1]))
+	usageScope := globalImageUsageScope
+	if len(parts) == 3 {
+		usageScope = normalizeUsageScope(parts[2])
+	}
+	return baseGroup, host, usageScope
+}
+
+func appendUniqueDescriptionGroupKey(keys []string, groupKey string) []string {
+	trimmed := strings.TrimSpace(groupKey)
+	if trimmed == "" {
+		return keys
+	}
+	for _, existing := range keys {
+		if strings.EqualFold(strings.TrimSpace(existing), trimmed) {
+			return keys
+		}
+	}
+	return append(keys, trimmed)
 }
 
 func preparedDescriptionGroupLookups(groups []api.DescriptionBuilderGroup, preloaded *preloadedDescriptionAssetData) (map[string]string, map[string]string, map[string]struct{}) {

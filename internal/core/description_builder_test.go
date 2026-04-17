@@ -407,6 +407,117 @@ func TestFetchDescriptionBuilderPreviewSeedsRawDescriptionFromBuiltGroupText(t *
 	}
 }
 
+func TestFetchDescriptionBuilderPreviewAppliesOverrideCaseInsensitively(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{
+		override: db.DescriptionOverride{
+			SourcePath:  "/tmp/source",
+			GroupKey:    "HDB|HDB|TRACKER:HDB",
+			Description: "override body",
+		},
+	}
+	trackerSvc := &stubDescriptionBuilderTrackers{
+		preview: api.PreparationPreview{
+			SourcePath: "/tmp/source",
+			Descriptions: []api.PreparationDescription{
+				{
+					GroupKey:       "hdb|hdb|tracker:hdb",
+					Trackers:       []string{"HDB"},
+					RawDescription: "generated body",
+				},
+			},
+		},
+	}
+	metaSvc := &stubMeta{}
+	core := &Core{
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	preview, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+		Paths:   []string{"/tmp/source"},
+		Mode:    api.ModeGUI,
+		Options: api.UploadOptions{Screens: 1},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(preview.Groups) != 1 {
+		t.Fatalf("expected one description group, got %d", len(preview.Groups))
+	}
+	if preview.Groups[0].GroupKey != "hdb|hdb|tracker:hdb" {
+		t.Fatalf("expected normalized group key, got %q", preview.Groups[0].GroupKey)
+	}
+	if preview.Groups[0].RawDescription != "override body" {
+		t.Fatalf("expected override body, got %q", preview.Groups[0].RawDescription)
+	}
+	if !preview.Groups[0].HasOverride {
+		t.Fatalf("expected override flag to be true")
+	}
+}
+
+func TestFetchDescriptionBuilderGroupPreviewFindsOverrideCaseInsensitively(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{
+		override: db.DescriptionOverride{
+			SourcePath:  "/tmp/source",
+			GroupKey:    "HDB|HDB|TRACKER:HDB",
+			Description: "override body",
+		},
+	}
+	trackerSvc := &stubDescriptionBuilderTrackers{
+		preview: api.PreparationPreview{
+			SourcePath: "/tmp/source",
+			Descriptions: []api.PreparationDescription{
+				{
+					GroupKey:       "hdb|hdb|tracker:hdb",
+					Trackers:       []string{"HDB"},
+					RawDescription: "generated body",
+				},
+			},
+		},
+	}
+	metaSvc := &stubMeta{}
+	core := &Core{
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	group, err := core.FetchDescriptionBuilderGroupPreview(context.Background(), api.Request{
+		Paths:                    []string{"/tmp/source"},
+		Mode:                     api.ModeGUI,
+		Trackers:                 []string{"HDB"},
+		DescriptionOverrideGroup: "HDB|HDB|TRACKER:HDB",
+		Options:                  api.UploadOptions{Screens: 1},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if group.GroupKey != "hdb|hdb|tracker:hdb" {
+		t.Fatalf("expected normalized group key, got %q", group.GroupKey)
+	}
+	if group.RawDescription != "override body" {
+		t.Fatalf("expected override body, got %q", group.RawDescription)
+	}
+	if !group.HasOverride {
+		t.Fatalf("expected override flag to be true")
+	}
+}
+
 func TestSaveDescriptionOverrideReturnsSavedGroup(t *testing.T) {
 	t.Parallel()
 

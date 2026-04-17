@@ -825,6 +825,61 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 	}
 }
 
+func TestSQLiteDescriptionOverrideGroupKeysAreCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	override := DescriptionOverride{
+		SourcePath:  "/media/file.mkv",
+		GroupKey:    " HDB|HDB|TRACKER:HDB ",
+		Description: "Example desc",
+	}
+	if err := repo.SaveDescriptionOverride(ctx, override); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	got, err := repo.GetDescriptionOverride(ctx, "/media/file.mkv", "hdb|hdb|tracker:hdb")
+	if err != nil {
+		t.Fatalf("get lowercase: %v", err)
+	}
+	if got.GroupKey != "hdb|hdb|tracker:hdb" {
+		t.Fatalf("expected normalized group key, got %q", got.GroupKey)
+	}
+	if got.Description != "Example desc" {
+		t.Fatalf("unexpected description: %q", got.Description)
+	}
+
+	overrides, err := repo.ListDescriptionOverridesByPath(ctx, "/media/file.mkv")
+	if err != nil {
+		t.Fatalf("list overrides: %v", err)
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("expected one override, got %d", len(overrides))
+	}
+	if overrides[0].GroupKey != "hdb|hdb|tracker:hdb" {
+		t.Fatalf("expected listed group key normalized, got %q", overrides[0].GroupKey)
+	}
+
+	if err := repo.DeleteDescriptionOverride(ctx, "/media/file.mkv", "HDB|HDB|TRACKER:HDB"); err != nil {
+		t.Fatalf("delete uppercase: %v", err)
+	}
+	if _, err := repo.GetDescriptionOverride(ctx, "/media/file.mkv", "hdb|hdb|tracker:hdb"); !errors.Is(err, internalerrors.ErrNotFound) {
+		t.Fatalf("expected not found after delete, got %v", err)
+	}
+}
+
 func TestSQLitePurgeContentData(t *testing.T) {
 	t.Parallel()
 

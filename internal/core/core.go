@@ -1341,7 +1341,7 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 	}
 	overrideByGroup := make(map[string]api.DescriptionOverride, len(storedOverrides))
 	for _, override := range storedOverrides {
-		overrideByGroup[strings.TrimSpace(override.GroupKey)] = override
+		overrideByGroup[normalizeDescriptionBuilderGroupKey(override.GroupKey, nil)] = override
 	}
 
 	var meta api.PreparedMetadata
@@ -1437,7 +1437,7 @@ func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGr
 }
 
 func normalizeDescriptionBuilderGroupKey(groupKey string, trackersList []string) string {
-	normalized := strings.TrimSpace(groupKey)
+	normalized := strings.ToLower(strings.TrimSpace(groupKey))
 	if normalized == "" && len(trackersList) > 0 {
 		normalized = strings.ToLower(strings.TrimSpace(trackersList[0]))
 	}
@@ -1499,7 +1499,7 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 	}
 	overrideByGroup := make(map[string]api.DescriptionOverride, len(storedOverrides))
 	for _, override := range storedOverrides {
-		overrideByGroup[strings.TrimSpace(override.GroupKey)] = override
+		overrideByGroup[normalizeDescriptionBuilderGroupKey(override.GroupKey, nil)] = override
 	}
 
 	var meta api.PreparedMetadata
@@ -3145,7 +3145,7 @@ func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.P
 			return nil, fmt.Errorf("core: description override: %w", err)
 		}
 		for _, override := range overrides {
-			overrideByGroup[strings.TrimSpace(override.GroupKey)] = override
+			overrideByGroup[normalizeDescriptionBuilderGroupKey(override.GroupKey, nil)] = override
 		}
 	}
 

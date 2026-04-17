@@ -1028,7 +1028,7 @@ func (r *SQLiteRepository) GetDescriptionOverride(ctx context.Context, path stri
 	if trimmed == "" {
 		return DescriptionOverride{}, internalerrors.ErrInvalidInput
 	}
-	trimmedGroup := strings.TrimSpace(groupKey)
+	trimmedGroup := normalizeDescriptionOverrideGroupKey(groupKey)
 
 	row := r.db.QueryRowContext(ctx, `
 		SELECT group_key, description, updated_at
@@ -1046,7 +1046,7 @@ func (r *SQLiteRepository) GetDescriptionOverride(ctx context.Context, path stri
 		return DescriptionOverride{}, fmt.Errorf("db get description override: %w", err)
 	}
 
-	override := DescriptionOverride{SourcePath: trimmed, GroupKey: storedGroupKey, Description: description}
+	override := DescriptionOverride{SourcePath: trimmed, GroupKey: normalizeDescriptionOverrideGroupKey(storedGroupKey), Description: description}
 	if updatedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
 			override.UpdatedAt = parsed
@@ -1084,6 +1084,7 @@ func (r *SQLiteRepository) ListDescriptionOverridesByPath(ctx context.Context, p
 		if err := rows.Scan(&override.GroupKey, &override.Description, &updatedAt); err != nil {
 			return nil, fmt.Errorf("db list description overrides: %w", err)
 		}
+		override.GroupKey = normalizeDescriptionOverrideGroupKey(override.GroupKey)
 		if updatedAt != "" {
 			if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
 				override.UpdatedAt = parsed
@@ -1105,7 +1106,7 @@ func (r *SQLiteRepository) SaveDescriptionOverride(ctx context.Context, override
 	if trimmedPath == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	trimmedGroup := strings.TrimSpace(override.GroupKey)
+	trimmedGroup := normalizeDescriptionOverrideGroupKey(override.GroupKey)
 	trimmedDescription := strings.TrimSpace(override.Description)
 	if trimmedDescription == "" {
 		return internalerrors.ErrInvalidInput
@@ -1137,11 +1138,15 @@ func (r *SQLiteRepository) DeleteDescriptionOverride(ctx context.Context, path s
 	if trimmed == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	trimmedGroup := strings.TrimSpace(groupKey)
+	trimmedGroup := normalizeDescriptionOverrideGroupKey(groupKey)
 	if _, err := r.db.ExecContext(ctx, `DELETE FROM description_overrides WHERE source_path = ? AND group_key = ?`, trimmed, trimmedGroup); err != nil {
 		return fmt.Errorf("db delete description override: %w", err)
 	}
 	return nil
+}
+
+func normalizeDescriptionOverrideGroupKey(groupKey string) string {
+	return strings.ToLower(strings.TrimSpace(groupKey))
 }
 
 func nullString(value *string) interface{} {

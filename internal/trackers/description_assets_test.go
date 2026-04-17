@@ -241,6 +241,60 @@ func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "unit3d|ptpimg|global",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d|ptpimg|global",
+			Trackers:       []string{"AITHER", "BLU"},
+			RawDescription: "builder desc",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "builder desc" {
+		t.Fatalf("expected prepared composite group description, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected composite group description to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsLoadsStoredCompositeGroupOverride(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "unit3d|ptpimg|global",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d|ptpimg|global",
+			Trackers:       []string{"AITHER", "BLU"},
+			RawDescription: "",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "override desc" {
+		t.Fatalf("expected stored composite override, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected stored composite override to be treated as override")
+	}
+}
+
 func TestResolveDescriptionAssetsDoesNotFallbackToLegacyDefaultGroupOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "legacy default desc",
@@ -284,6 +338,40 @@ func TestResolveDescriptionAssetsPrefersCanonicalGroupDescription(t *testing.T) 
 	}
 	if !assets.Override {
 		t.Fatalf("expected canonical group description to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsPrefersTrackerScopedCompositeGroupDescription(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "hdb|hdb|tracker:HDB",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{
+			{
+				GroupKey:       "hdb|ptpimg|global",
+				Trackers:       []string{"HDB"},
+				RawDescription: "global desc",
+			},
+			{
+				GroupKey:       "hdb|hdb|tracker:HDB",
+				Trackers:       []string{"HDB"},
+				RawDescription: "tracker desc",
+			},
+		},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "tracker desc" {
+		t.Fatalf("expected tracker-scoped composite group description, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected tracker-scoped composite group description to be treated as override")
 	}
 }
 
