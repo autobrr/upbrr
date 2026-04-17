@@ -978,7 +978,7 @@ func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
 }
 
 func (b *Backend) applyConfig(cfg config.Config) error {
-	rt, err := guishared.BuildRuntime(cfg)
+	rt, err := guishared.BuildRuntime(context.Background(), cfg, b.repo)
 	if err != nil {
 		return err
 	}

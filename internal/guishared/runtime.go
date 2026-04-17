@@ -4,10 +4,13 @@
 package guishared
 
 import (
+	"context"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -19,19 +22,26 @@ type Runtime struct {
 	Logger *logging.Logger
 }
 
-// BuildRuntime constructs a fresh logger and core service for cfg. On failure
-// any partially initialized resources are cleaned up before returning.
-func BuildRuntime(cfg config.Config) (Runtime, error) {
+// BuildRuntime constructs a fresh logger and core service for cfg using the
+// existing app/backend context and shared repository. On failure any partially
+// initialized resources are cleaned up before returning.
+func BuildRuntime(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (Runtime, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
 		return Runtime{}, err
 	}
 	svc, err := core.New(api.CoreDependencies{
-		Config: cfg,
-		Logger: logger,
+		Context: ctx,
+		Config:  cfg,
+		Logger:  logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
+		Repository: repo,
 	})
 	if err != nil {
 		_ = logger.Close()

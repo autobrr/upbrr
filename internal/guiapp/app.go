@@ -1379,7 +1379,7 @@ func (a *App) ImportConfig() (ImportResult, error) {
 }
 
 func (a *App) applyConfig(cfg config.Config) error {
-	rt, err := guishared.BuildRuntime(cfg)
+	rt, err := guishared.BuildRuntime(a.ctx, cfg, a.repo)
 	if err != nil {
 		return err
 	}
