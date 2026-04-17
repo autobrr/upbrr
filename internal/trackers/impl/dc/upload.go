@@ -197,12 +197,12 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 	categoryID := resolveCategoryID(req.Meta)
 	if categoryID == 0 && state.blockedReason == "" {
-		state.blockedReason = "missing category"
+		state.blockedReason = "unable to determine category"
 	}
 
 	releaseName := resolveUploadName(req.Meta)
 	if releaseName == "" && state.blockedReason == "" {
-		state.blockedReason = "missing release name"
+		state.blockedReason = "unable to determine release name"
 	}
 
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -280,53 +280,69 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 }
 
 func resolveCategoryID(meta api.PreparedMetadata) int {
-	resolution := strings.ToLower(strings.TrimSpace(firstNonEmpty(meta.Release.Resolution, meta.ReleaseNameNoTag, meta.ReleaseName)))
+	res := strings.TrimSpace(strings.ToLower(meta.Release.Resolution))
+	discType := strings.ToLower(meta.DiscType)
 	category := categoryOf(meta)
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		if category == "TV" {
-			return 14
+
+	if discType != "" {
+		switch discType {
+		case "bdmv":
+			if category == "TV" {
+				return 14
+			}
+			if category == "MOVIE" {
+				if res == "2160p" {
+					return 38
+				}
+				if res == "1080p" {
+					return 3
+				}
+			}
+		case "dvd", "hddvd":
+			if category == "TV" {
+				return 11
+			}
+			if category == "MOVIE" {
+				return 1
+			}
 		}
-		if strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "2160p") {
-			return 38
-		}
-		return 3
 	}
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		if category == "TV" {
-			return 11
-		}
-		return 1
-	}
+
 	if category == "TV" && meta.TVPack {
 		return 12
 	}
+
 	if isSD(meta) {
 		if category == "TV" {
 			return 10
 		}
-		return 2
+		if category == "MOVIE" {
+			return 2
+		}
 	}
+
 	switch category {
 	case "TV":
-		switch strings.TrimSpace(meta.Release.Resolution) {
+		switch res {
 		case "2160p":
 			return 13
 		case "1080p", "1080i":
 			return 9
-		default:
+		case "720p", "720i":
 			return 8
 		}
-	default:
-		switch strings.TrimSpace(meta.Release.Resolution) {
+	case "MOVIE":
+		switch res {
 		case "2160p":
 			return 4
 		case "1080p", "1080i":
 			return 6
-		default:
-			_ = resolution
+		case "720p", "720i":
 			return 5
 		}
 	}
+
+	return 0
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
