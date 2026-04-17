@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -30,13 +31,15 @@ func TestSiteHandlersSearch(t *testing.T) {
 		{
 			name:    "BT",
 			tracker: "BT",
-			meta:    api.PreparedMetadata{Release: api.ReleaseInfo{Title: "Movie"}, SourcePath: "x"},
+			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, Release: api.ReleaseInfo{Title: "Movie"}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
 				writeTextCookie(t, dbPath, "BT", "session", "cookie", hostFromBaseURL(t, baseURL))
 			},
-			handler: func(cfg config.Config, client *http.Client) searchHandler { return btHandler{cfg: cfg, http: client} },
+			handler: func(cfg config.Config, client *http.Client) searchHandler {
+				return btHandler{cfg: cfg, http: client, logger: api.NopLogger{}}
+			},
 			validate: func(t *testing.T, entries []api.DupeEntry) {
-				if len(entries) != 2 || entries[0].Name != "Movie.2024.1080p.WEB-DL-GRP" {
+				if len(entries) != 1 || entries[0].Name != "Movie.2024.1080p.WEB-DL-GRP" {
 					t.Fatalf("unexpected BT entries: %#v", entries)
 				}
 			},
@@ -161,9 +164,15 @@ func TestSiteHandlersSearch(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch tc.tracker {
 				case "BT":
-					if r.URL.Path == "/suggest.php" {
-						_, _ = w.Write([]byte("Movie.2024.1080p.WEB-DL-GRP\nMovie.2024.2160p.WEB-DL-GRP\n"))
-						return
+					if r.URL.Path == "/torrents.php" {
+						if r.URL.RawQuery == "id=99" {
+							_, _ = w.Write([]byte(`<html><body><div id="files_99"><div class="filelist_path">Movie.2024.1080p.WEB-DL-GRP</div></div><table id="torrent_table"><tr id="torrent99"><td><a onclick="gtoggle()">m2ts</a></td></tr></table></body></html>`))
+							return
+						}
+						if strings.Contains(r.URL.RawQuery, "searchstr=") {
+							_, _ = w.Write([]byte(`<html><body><table id="torrent_table"><tr><td><a href="torrents.php?id=99">group</a></td></tr></table></body></html>`))
+							return
+						}
 					}
 				case "FL":
 					if r.URL.Path == "/browse.php" {

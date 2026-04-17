@@ -736,15 +736,18 @@ func (s *stubRepo) DeleteReleaseNameOverrides(context.Context, string) error {
 	return internalerrors.ErrNotImplemented
 }
 
-func (s *stubRepo) GetDescriptionOverride(context.Context, string) (db.DescriptionOverride, error) {
+func (s *stubRepo) GetDescriptionOverride(context.Context, string, string) (db.DescriptionOverride, error) {
 	return db.DescriptionOverride{}, internalerrors.ErrNotFound
+}
+func (s *stubRepo) ListDescriptionOverridesByPath(context.Context, string) ([]db.DescriptionOverride, error) {
+	return nil, internalerrors.ErrNotFound
 }
 
 func (s *stubRepo) SaveDescriptionOverride(context.Context, db.DescriptionOverride) error {
 	return internalerrors.ErrNotImplemented
 }
 
-func (s *stubRepo) DeleteDescriptionOverride(context.Context, string) error {
+func (s *stubRepo) DeleteDescriptionOverride(context.Context, string, string) error {
 	return internalerrors.ErrNotImplemented
 }
 

@@ -37,7 +37,7 @@ func buildHandlers(deps handlerDeps) map[string]searchHandler {
 	handlers["ASC"] = ascHandler{cfg: deps.cfg, http: deps.http, logger: deps.logger}
 	handlers["AZ"] = azHandler{cfg: deps.cfg, http: deps.http, logger: deps.logger}
 	handlers["BJS"] = bjsHandler{cfg: deps.cfg, http: deps.http}
-	handlers["BT"] = btHandler{cfg: deps.cfg, http: deps.http}
+	handlers["BT"] = btHandler{cfg: deps.cfg, http: deps.http, logger: deps.logger}
 	handlers["CZ"] = czHandler{cfg: deps.cfg, http: deps.http, logger: deps.logger}
 	handlers["FF"] = ffHandler{cfg: deps.cfg, http: deps.http}
 	handlers["FL"] = flHandler{cfg: deps.cfg, http: deps.http}

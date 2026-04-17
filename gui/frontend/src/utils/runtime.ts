@@ -107,7 +107,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         ResetMetadata: (path: string, sourceLookupURL: string, overrides: unknown, nameOverrides: unknown, trackers: string[]) => call("ResetMetadata", { Path: path, SourceLookupURL: sourceLookupURL, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers }),
         FetchDescriptionBuilder: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreDupesFor: string[]) => call("FetchDescriptionBuilder", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreDupesFor: ignoreDupesFor }),
         FetchPreparation: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreDupesFor: string[]) => call("FetchPreparation", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreDupesFor: ignoreDupesFor }),
-        FetchTrackerDryRun: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, debug: boolean, runLogLevel: string) => call("FetchTrackerDryRun", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreRuleFailures: ignoreRuleFailures, IgnoreDupesFor: ignoreDupesFor, QuestionnaireAnswers: questionnaireAnswers, Debug: debug, RunLogLevel: runLogLevel }),
+        FetchTrackerDryRun: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: unknown, debug: boolean, runLogLevel: string) => call("FetchTrackerDryRun", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreRuleFailures: ignoreRuleFailures, IgnoreDupesFor: ignoreDupesFor, QuestionnaireAnswers: questionnaireAnswers, DescriptionGroups: descriptionGroups, Debug: debug, RunLogLevel: runLogLevel }),
         CheckDupes: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[]) => call("CheckDupes", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers }),
         StartDupeCheck: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[]) => call("StartDupeCheck", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers }),
         CancelDupeCheck: (jobID: string) => call("CancelDupeCheck", { JobID: jobID }),
@@ -124,7 +124,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         DeleteUploadedImage: (path: string, imagePath: string, host: string) => call("DeleteUploadedImage", { Path: path, ImagePath: imagePath, Host: host }),
         DeleteTrackerImageURL: (path: string, overrides: unknown, nameOverrides: unknown, url: string) => call("DeleteTrackerImageURL", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, URL: url }),
         RenderDescription: (raw: string) => call("RenderDescription", { Raw: raw }),
-        SaveDescriptionOverride: (path: string, raw: string) => call("SaveDescriptionOverride", { Path: path, Raw: raw }),
+        SaveDescriptionOverride: (path: string, groupKey: string, raw: string, trackers: string[], overrides: unknown, nameOverrides: unknown) => call("SaveDescriptionOverride", { Path: path, GroupKey: groupKey, Raw: raw, Trackers: trackers, Overrides: overrides, NameOverrides: nameOverrides }),
         DiscoverPlaylists: (path: string) => call("DiscoverPlaylists", { Path: path }),
         SavePlaylistSelection: (path: string, playlists: string[], useAll: boolean) => call("SavePlaylistSelection", { Path: path, Playlists: playlists, UseAll: useAll }),
         LoadPlaylistSelection: (path: string) => call("LoadPlaylistSelection", { Path: path }),
@@ -142,6 +142,29 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           URL.revokeObjectURL(url);
           return anchor.download;
         },
+        ImportConfig: async () => {
+          const fileData = await new Promise<{ name: string; content: string }>((resolve, reject) => {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = ".py,.yaml,.yml,.json";
+            input.onchange = () => {
+              const file = input.files?.[0];
+              if (!file) {
+                resolve({ name: "", content: "" });
+                return;
+              }
+              const reader = new FileReader();
+              reader.onload = () => resolve({ name: file.name, content: reader.result as string });
+              reader.onerror = () => reject(reader.error);
+              reader.readAsText(file);
+            };
+            input.addEventListener("cancel", () => resolve({ name: "", content: "" }));
+            input.click();
+          });
+          if (!fileData.name) return { message: "", warnings: [] };
+          const resp = await call<{ result: string; warnings: string[] }>("ImportConfig", { FileName: fileData.name, FileContent: fileData.content });
+          return { message: resp.result, warnings: resp.warnings ?? [] };
+        },
         GetLogPath: () => call("GetLogPath"),
         GetRecentLogs: (limit: number) => call("GetRecentLogs", { Limit: limit }),
         StartLogStream: () => call("StartLogStream"),
@@ -152,7 +175,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         ListHistory: () => call("ListHistory"),
         GetHistoryOverview: (sourcePath: string) => call("GetHistoryOverview", { SourcePath: sourcePath }),
         DeleteHistoryRelease: (sourcePath: string) => call("DeleteHistoryRelease", { SourcePath: sourcePath }),
-        StartTrackerUpload: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, debug: boolean, runLogLevel: string) => call("StartTrackerUpload", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreRuleFailures: ignoreRuleFailures, IgnoreDupesFor: ignoreDupesFor, QuestionnaireAnswers: questionnaireAnswers, Debug: debug, RunLogLevel: runLogLevel }),
+        StartTrackerUpload: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: unknown, debug: boolean, runLogLevel: string) => call("StartTrackerUpload", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreRuleFailures: ignoreRuleFailures, IgnoreDupesFor: ignoreDupesFor, QuestionnaireAnswers: questionnaireAnswers, DescriptionGroups: descriptionGroups, Debug: debug, RunLogLevel: runLogLevel }),
         CancelTrackerUpload: (jobID: string) => call("CancelTrackerUpload", { JobID: jobID }),
         RetryFailedTrackerUpload: (jobID: string) => call("RetryFailedTrackerUpload", { JobID: jobID }),
         GetTrackerUploadSnapshot: (jobID: string) => call("GetTrackerUploadSnapshot", { JobID: jobID })

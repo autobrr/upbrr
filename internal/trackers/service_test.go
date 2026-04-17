@@ -6,11 +6,17 @@ package trackers
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/paths"
+	dbsvc "github.com/autobrr/upbrr/internal/services/db"
+	descriptionhdb "github.com/autobrr/upbrr/internal/services/description/hdb"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -124,6 +130,8 @@ type blockingUploadDefinition struct {
 	uploadErr error
 }
 
+type testHDBPreparationDefinition struct{}
+
 func (b blockingUploadDefinition) Name() string {
 	return b.name
 }
@@ -169,6 +177,26 @@ func (s stubPreparationDefinition) Upload(context.Context, UploadRequest) (api.U
 
 func (s stubPreparationDefinition) BuildDescription(context.Context, DescriptionRequest) (DescriptionResult, error) {
 	return DescriptionResult{Group: s.group, Description: s.description}, nil
+}
+
+func (testHDBPreparationDefinition) Name() string {
+	return "HDB"
+}
+
+func (testHDBPreparationDefinition) Upload(context.Context, UploadRequest) (api.UploadSummary, error) {
+	return api.UploadSummary{Uploaded: 1}, nil
+}
+
+func (testHDBPreparationDefinition) BuildDescription(ctx context.Context, req DescriptionRequest) (DescriptionResult, error) {
+	assets := DescriptionAssets{}
+	if req.Assets != nil {
+		assets = *req.Assets
+	}
+	description, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+	if err != nil {
+		return DescriptionResult{}, err
+	}
+	return DescriptionResult{Group: "hdb", Description: description}, nil
 }
 
 func (t trackingUploadDefinition) Name() string {
@@ -514,6 +542,91 @@ func TestBuildPreparationSeparatesScopedImageHostGroups(t *testing.T) {
 	}
 	if len(preview.Descriptions) != 2 {
 		t.Fatalf("expected 2 grouped descriptions, got %d", len(preview.Descriptions))
+	}
+}
+
+func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(testHDBPreparationDefinition{}); err != nil {
+		t.Fatalf("register HDB definition: %v", err)
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"HDB": {ImgRehost: true},
+			},
+		},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: `D:\TV\The.Pitt.S02E15.1080p.WEB-DL.mkv`,
+		TrackerData: []api.TrackerMetadata{{
+			Tracker:   "AITHER",
+			ImageURLs: []string{"https://ptpimg.me/4m092k.png", "https://ptpimg.me/7oj122.png"},
+		}},
+	}
+	tmpRoot, err := dbsvc.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	trackerDir := filepath.Join(tmpDir, "aither")
+	if err := os.MkdirAll(trackerDir, 0o700); err != nil {
+		t.Fatalf("tracker dir: %v", err)
+	}
+	firstPath := filepath.Join(trackerDir, "4m092k_01.png")
+	secondPath := filepath.Join(trackerDir, "7oj122_02.png")
+	for _, pathValue := range []string{firstPath, secondPath} {
+		if err := os.WriteFile(pathValue, []byte("png"), 0o600); err != nil {
+			t.Fatalf("write tracker artifact %s: %v", pathValue, err)
+		}
+	}
+
+	repo := &stubRepo{
+		descriptionOverride: strings.TrimSpace(`
+[center]
+[url=https://ptpimg.me/4m092k.png][img]https://ptpimg.me/4m092k.png[/img][/url]
+[url=https://ptpimg.me/7oj122.png][img]https://ptpimg.me/7oj122.png[/img][/url]
+[/center]`),
+		overrideGroupKey: "hdb",
+		trackerRecords: []api.TrackerMetadata{{
+			Tracker:   "AITHER",
+			ImageURLs: []string{"https://ptpimg.me/4m092k.png", "https://ptpimg.me/7oj122.png"},
+		}},
+	}
+	images := &stubImageService{
+		uploads: map[string][]api.UploadedImageLink{
+			"hdb": {
+				{SourcePath: meta.SourcePath, ImagePath: firstPath, Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/51q8jo2.jpg", RawURL: "https://img.hdbits.org/51q8jo2.jpg", WebURL: "https://img.hdbits.org/51q8jo2"},
+				{SourcePath: meta.SourcePath, ImagePath: secondPath, Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/w0S7ltI.jpg", RawURL: "https://img.hdbits.org/w0S7ltI.jpg", WebURL: "https://img.hdbits.org/w0S7ltI"},
+			},
+		},
+	}
+
+	svc := NewServiceWithRegistryAndImages(cfg, api.NopLogger{}, repo, registry, images)
+	preview, err := svc.BuildPreparation(context.Background(), meta, []string{"HDB"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected 1 description group, got %d", len(preview.Descriptions))
+	}
+	description := preview.Descriptions[0].Description
+	if strings.TrimSpace(description) == "" {
+		t.Fatal("expected HDB description to be built")
+	}
+	if strings.Contains(description, "ptpimg.me/4m092k.png") || strings.Contains(description, "ptpimg.me/7oj122.png") {
+		t.Fatalf("expected HDB screenshots to replace original tracker urls, got %q", description)
+	}
+	if !strings.Contains(description, "img.hdbits.org/51q8jo2") || !strings.Contains(description, "img.hdbits.org/w0S7ltI") {
+		t.Fatalf("expected HDB screenshot urls in description, got %q", description)
 	}
 }
 

@@ -98,6 +98,7 @@ type PreparedMetadata struct {
 	SceneNFOPath                string
 	SceneNFONew                 bool
 	Mode                        Mode
+	DescriptionGroups           []DescriptionBuilderGroup
 	Trackers                    []string
 	Options                     UploadOptions
 	TrackersRemove              []string

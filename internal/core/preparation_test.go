@@ -42,7 +42,7 @@ func (s *stubPreparationTrackers) BuildPreparation(_ context.Context, meta api.P
 	return api.PreparationPreview{
 		SourcePath: meta.SourcePath,
 		Descriptions: []api.PreparationDescription{
-			{Trackers: trackers, Description: meta.DescriptionTemplate, DescriptionHTML: "<p>ok</p>"},
+			{Trackers: trackers, RawDescription: meta.DescriptionTemplate, RawDescriptionHTML: "<p>ok</p>"},
 		},
 	}, nil
 }

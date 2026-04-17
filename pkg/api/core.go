@@ -17,6 +17,7 @@ type Request struct {
 	Mode                         Mode
 	Options                      UploadOptions
 	Execution                    ExecutionOptions
+	DescriptionGroups            []DescriptionBuilderGroup
 	Trackers                     []string
 	TrackersRemove               []string
 	IgnoreTrackerRuleFailures    bool
@@ -28,6 +29,7 @@ type Request struct {
 	SourceLookupURL              string
 	DescriptionOverrideRaw       string
 	DescriptionOverrideURL       string
+	DescriptionOverrideGroup     string
 	MetadataOverrides            MetadataOverrides
 	TrackerConfigOverrides       TrackerConfigOverrides
 	TrackerSiteOverrides         TrackerSiteOverrides
@@ -98,6 +100,7 @@ type Core interface {
 	RunUploadPrepared(ctx context.Context, req Request) (Result, error)
 	FetchMetadataPreview(ctx context.Context, req Request) (MetadataPreview, error)
 	FetchDescriptionBuilderPreview(ctx context.Context, req Request) (DescriptionBuilderPreview, error)
+	FetchDescriptionBuilderGroupPreview(ctx context.Context, req Request) (DescriptionBuilderGroup, error)
 	FetchPreparationPreview(ctx context.Context, req Request) (PreparationPreview, error)
 	FetchTrackerDryRunPreview(ctx context.Context, req Request) (TrackerDryRunPreview, error)
 	CheckDupes(ctx context.Context, req Request) (DupeCheckSummary, error)
@@ -120,11 +123,12 @@ type Core interface {
 	DeleteHistoryRelease(ctx context.Context, sourcePath string) error
 	DeleteAllHistoryReleases(ctx context.Context) (int, error)
 	RenderDescription(ctx context.Context, raw string) (string, error)
-	SaveDescriptionOverride(ctx context.Context, req Request, raw string) error
+	SaveDescriptionOverride(ctx context.Context, req Request, raw string) (DescriptionBuilderGroup, error)
 	Close() error
 }
 
 type CoreDependencies struct {
+	Context    context.Context
 	Config     Config
 	Logger     Logger
 	Services   ServiceSet

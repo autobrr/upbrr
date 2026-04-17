@@ -108,6 +108,31 @@
       "problemMatcher": ["$go"]
     },
     {
+      "label": "serve-backend",
+      "type": "shell",
+      "command": "go",
+      "args": ["run", "./cmd/upbrr", "serve"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "go",
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "listening on"
+        },
+        "pattern": {
+          "regexp": "^$"
+        }
+      }
+    },
+    {
+      "label": "dev",
+      "dependsOn": ["serve-backend", "frontend-dev"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
       "label": "build-all",
       "dependsOn": ["build-cli", "build-gui"],
       "group": "build",

@@ -59,6 +59,7 @@ type cliOptions struct {
 	Region            string
 	GUI               bool
 	ExportConfigPath  string
+	ImportConfigPath  string
 	DeleteTmp         bool
 	Cleanup           bool
 	TMDB              string
@@ -179,6 +180,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.BoolVar(&opts.DualAudio, "dual-audio", false, "Add dual-audio tag to audio name")
 	fs.BoolVar(&opts.GUI, "gui", false, "Launch the GUI")
 	fs.StringVar(&opts.ExportConfigPath, "export-config", "", "Export SQLite config to YAML file and exit")
+	fs.StringVar(&opts.ImportConfigPath, "import-config", "", "Import config file (.py, .yaml, .yml, .json) and exit")
 	fs.BoolVar(&opts.DeleteTmp, "dtmp", false, "Delete stored database content for each input path before upload")
 	fs.BoolVar(&opts.DeleteTmp, "delete-tmp", false, "Delete stored database content for each input path before upload")
 	fs.BoolVar(&opts.Cleanup, "cleanup", false, "Delete all stored database content for all releases and exit")

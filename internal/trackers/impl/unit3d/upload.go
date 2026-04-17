@@ -377,6 +377,7 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return api.TrackerDryRunEntry{}, err
 			}
+			trackers.LogDescriptionAssetResolutionFailure(logger, req.Tracker, err)
 			assets = trackers.DescriptionAssets{}
 		}
 	}

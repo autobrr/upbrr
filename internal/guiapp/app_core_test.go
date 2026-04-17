@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -105,6 +106,14 @@ func TestGetHistoryOverviewUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create upload record: %v", err)
 	}
+	if err := repo.SaveDescriptionOverride(ctx, db.DescriptionOverride{
+		SourcePath:  sourcePath,
+		GroupKey:    "unit3d",
+		Description: "grouped override",
+		UpdatedAt:   time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("save description override: %v", err)
+	}
 
 	app := &App{
 		repo:        repo,
@@ -124,6 +133,15 @@ func TestGetHistoryOverviewUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	if overview.StatusLabel != "Failed" {
 		t.Fatalf("expected failed status label, got %q", overview.StatusLabel)
 	}
+	if len(overview.DescriptionOverrides) != 1 {
+		t.Fatalf("expected 1 grouped description override, got %d", len(overview.DescriptionOverrides))
+	}
+	if overview.DescriptionOverrides[0].GroupKey != "unit3d" {
+		t.Fatalf("expected grouped override key to be preserved, got %q", overview.DescriptionOverrides[0].GroupKey)
+	}
+	if overview.DescriptionOverride.GroupKey != "unit3d" {
+		t.Fatalf("expected preferred description override key to be unit3d, got %q", overview.DescriptionOverride.GroupKey)
+	}
 }
 
 func openGUIAppTestRepo(t *testing.T) *db.SQLiteRepository {
@@ -141,4 +159,98 @@ func openGUIAppTestRepo(t *testing.T) *db.SQLiteRepository {
 		t.Fatalf("migrate repo: %v", err)
 	}
 	return repo
+}
+
+func TestApplyConfigKeepsSharedRepositoryUsable(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "apply.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+	cfg := config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+
+	app := &App{
+		cfg:  cfg,
+		repo: repo,
+	}
+	t.Cleanup(func() {
+		if app.core != nil {
+			_ = app.core.Close()
+		}
+		if app.logger != nil {
+			_ = app.logger.Close()
+		}
+	})
+
+	if err := app.applyConfig(cfg); err != nil {
+		t.Fatalf("apply config: %v", err)
+	}
+	if app.core == nil {
+		t.Fatal("expected core to be initialized")
+	}
+	if err := app.core.Close(); err != nil {
+		t.Fatalf("close core: %v", err)
+	}
+
+	if err := repo.Save(context.Background(), db.FileMetadata{
+		Path:      filepath.Join(t.TempDir(), "after-apply.mkv"),
+		Title:     "After Apply",
+		UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}); err != nil {
+		t.Fatalf("expected shared repo to remain usable after core close: %v", err)
+	}
+}
+
+func TestNewAppKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "newapp.db")
+	cfg := &config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := config.ExportToYAML(cfg, configPath); err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	app, err := NewApp(configPath, true)
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	t.Cleanup(func() {
+		app.shutdown(context.Background())
+	})
+
+	if app.core == nil {
+		t.Fatal("expected startup core to be initialized")
+	}
+	if err := app.core.Close(); err != nil {
+		t.Fatalf("close core: %v", err)
+	}
+	if app.repo == nil {
+		t.Fatal("expected shared repo to be initialized")
+	}
+
+	if err := app.repo.Save(context.Background(), db.FileMetadata{
+		Path:      filepath.Join(t.TempDir(), "after-startup.mkv"),
+		Title:     "After Startup",
+		UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}); err != nil {
+		t.Fatalf("expected startup repo to remain usable after core close: %v", err)
+	}
 }
