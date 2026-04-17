@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,10 @@ const (
 	baseURL    = "https://digitalcore.club"
 	apiBaseURL = baseURL + "/api/v1/torrents"
 	sourceFlag = "DigitalCore.club"
+)
+
+var (
+	reUnsafeChars = regexp.MustCompile(`[<>:"/\\|?*]`)
 )
 
 type uploadState struct {
@@ -84,6 +89,25 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: DC empty response body (status %d)", resp.StatusCode)
 	}
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if _, artifactErr := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "DC", "upload_failure", responseBody, ".json"); artifactErr != nil && req.Logger != nil {
+			req.Logger.Warnf("trackers: DC failure artifact write failed: %v", artifactErr)
+		}
+
+		var decoded uploadResponse
+		if err := json.Unmarshal(responseBody, &decoded); err == nil {
+			if msg := strings.TrimSpace(decoded.Message); msg != "" {
+				return api.UploadSummary{}, fmt.Errorf("trackers: DC %s", msg)
+			}
+		}
+
+		snippet := strings.TrimSpace(string(responseBody))
+		if len(snippet) > 200 {
+			snippet = snippet[:200] + "..."
+		}
+		return api.UploadSummary{}, fmt.Errorf("trackers: DC upload failed with status %d: %s", resp.StatusCode, snippet)
+	}
+
 	var decoded uploadResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
 		snippet := string(responseBody)
@@ -92,8 +116,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}
 		return api.UploadSummary{}, fmt.Errorf("trackers: DC decode response: %w | response: %s", err, snippet)
 	}
+
 	torrentID := strings.TrimSpace(fmt.Sprint(decoded.ID))
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 && torrentID != "" && torrentID != "<nil>" {
+	if torrentID != "" && torrentID != "<nil>" {
 		torrentURL := baseURL + "/torrent/" + torrentID + "/"
 		downloadURL := apiBaseURL + "/download/" + torrentID
 		artifactPath := ""
@@ -121,7 +146,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if _, artifactErr := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "DC", "upload_failure", responseBody, ".json"); artifactErr != nil && req.Logger != nil {
 		req.Logger.Warnf("trackers: DC failure artifact write failed: %v", artifactErr)
 	}
-	message := firstNonEmpty(strings.TrimSpace(decoded.Message), strings.TrimSpace(string(responseBody)), "upload failed")
+	snippet := strings.TrimSpace(string(responseBody))
+	if len(snippet) > 200 {
+		snippet = snippet[:200] + "..."
+	}
+	message := firstNonEmpty(strings.TrimSpace(decoded.Message), snippet, "upload failed")
 	return api.UploadSummary{}, fmt.Errorf("trackers: DC %s", message)
 }
 
@@ -154,60 +183,78 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 }
 
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
-	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" {
+	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
+	if apiKey == "" {
 		return uploadState{}, errors.New("trackers: DC missing api_key")
 	}
+
+	imdbID := strings.TrimSpace(trackers.ResolveIMDbIDText(req.Meta))
+	if imdbID == "" {
+		return uploadState{}, errors.New("trackers: DC missing imdb id")
+	}
+
+	categoryID := resolveCategoryID(req.Meta)
+	if categoryID == 0 {
+		return uploadState{}, errors.New("trackers: DC missing category")
+	}
+
+	releaseName := resolveUploadName(req.Meta)
+	if releaseName == "" {
+		return uploadState{}, errors.New("trackers: DC missing release name")
+	}
+
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: DC missing torrent path: %w", err)
 	}
 
 	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
 	if announceURL != "" {
 		artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "DC")
-		if err == nil {
-			if err := trackers.WritePersonalizedTorrent(torrentPath, artifactPath, announceURL, "Created by upbrr", sourceFlag); err == nil {
-				torrentPath = artifactPath
-			}
+		if err != nil {
+			return uploadState{}, fmt.Errorf("resolve DC personalized torrent path: %w", err)
 		}
+
+		if err := trackers.WritePersonalizedTorrent(torrentPath, artifactPath, announceURL, "Created by upbrr", sourceFlag); err != nil {
+			return uploadState{}, fmt.Errorf("write DC personalized torrent: %w", err)
+		}
+		torrentPath = artifactPath
 	}
+
+	mediaInfo, err := resolveMediaInfo(req.Meta)
+	if err != nil {
+		return uploadState{}, fmt.Errorf("trackers: DC missing media info: %w", err)
+	}
+
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
+
 	description, err := buildDescription(req.Meta, assets)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: DC missing description: %w", err)
 	}
-	mediaInfo, err := resolveMediaInfo(req.Meta)
-	if err != nil {
-		return uploadState{}, err
-	}
-	releaseName := resolveUploadName(req.Meta)
-	fields := map[string]string{
-		"category":        strconv.Itoa(resolveCategoryID(req.Meta)),
-		"imdbId":          resolveDCIMDbIDText(req.Meta),
-		"nfo":             description,
-		"mediainfo":       mediaInfo,
-		"reqid":           "0",
-		"section":         "new",
-		"frileech":        "1",
-		"anonymousUpload": resolveAnon(req),
-		"p2p":             "0",
-		"unrar":           "1",
-	}
-	state := uploadState{
+
+	return uploadState{
 		torrentPath: torrentPath,
 		releaseName: releaseName,
 		description: description,
 		mediaInfo:   mediaInfo,
-		fields:      fields,
-	}
-	if strings.TrimSpace(fields["imdbId"]) == "" {
-		state.blockedReason = "missing IMDb ID"
-	}
-	return state, nil
+		fields: map[string]string{
+			"category":        strconv.Itoa(categoryID),
+			"imdbId":          imdbID,
+			"nfo":             description,
+			"mediainfo":       mediaInfo,
+			"reqid":           "0",
+			"section":         "new",
+			"frileech":        "1",
+			"anonymousUpload": resolveAnon(req),
+			"p2p":             "0",
+			"unrar":           "1",
+		},
+	}, nil
 }
 
 func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
@@ -281,9 +328,26 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
-	name := strings.TrimSpace(meta.Filename)
-	ext := filepath.Ext(name)
-	return strings.TrimSuffix(name, ext)
+	nameFilename := strings.TrimSpace(meta.Filename)
+	if nameFilename != "" {
+		ext := filepath.Ext(nameFilename)
+		name := strings.TrimSuffix(nameFilename, ext)
+		if name != "" {
+			return name
+		}
+	}
+
+	nameClean := strings.TrimSpace(firstNonEmpty(
+		meta.ReleaseNameClean,
+		meta.ReleaseName,
+	))
+
+	return sanitizeFilename(nameClean)
+}
+
+func sanitizeFilename(name string) string {
+	name = reUnsafeChars.ReplaceAllString(name, ".")
+	return name
 }
 
 func resolveMediaInfo(meta api.PreparedMetadata) (string, error) {
@@ -302,16 +366,6 @@ func resolveMediaDump(meta api.PreparedMetadata) string {
 		}
 	}
 	return firstNonEmpty(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
-}
-
-func resolveDCIMDbIDText(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText)
-	}
-	if meta.ExternalIDs.IMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
-	}
-	return ""
 }
 
 func resolveAnon(req trackers.UploadRequest) string {
