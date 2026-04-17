@@ -48,23 +48,6 @@ export default function MenuImagesPage(props: Props) {
     }
   };
 
-  const handleBrowseFolder = async () => {
-    try {
-      const browseFn = globalThis.go?.guiapp?.App?.BrowseFolder;
-      if (!browseFn) return;
-      const selected = await browseFn();
-      // Notice: If it's a folder, we might need a backend feature to expand the folder.
-      // But typically, adding the folder path and letting the backend read all images in it is ideal.
-      // Wait, let's just add the exact path they selected.
-      if (selected && selected.trim() !== "") {
-        setMenuPaths((prev) => Array.from(new Set([...prev, selected.trim()])));
-        setSuccess(false);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   const handleRemoveItem = (itemToRemove: string) => {
     setMenuPaths((prev) => prev.filter((p) => p !== itemToRemove));
   };

@@ -30,9 +30,8 @@ func CopyFile(src, dst string) error {
 
 	sourceInfo, err := os.Stat(src)
 	if err == nil {
-		if err := os.Chmod(dst, sourceInfo.Mode()); err != nil {
-			// Non-critical error, just log it if we had a logger here
-		}
+		// Best-effort: try to preserve permissions, but ignore failures
+		_ = os.Chmod(dst, sourceInfo.Mode())
 	}
 
 	return nil
