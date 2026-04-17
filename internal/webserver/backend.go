@@ -966,7 +966,7 @@ func (b *Backend) buildRunCore(opts runOptions) (api.Core, *logging.Logger, erro
 	return coreSvc, logger, nil
 }
 
-func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
+func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions {
 	return api.UploadOptions{
 		Debug:       opts.Debug,
 		DryRun:      opts.Debug,

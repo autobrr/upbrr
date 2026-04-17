@@ -26,7 +26,7 @@ type sessionState struct {
 }
 
 func newSession(ctx context.Context, site siteDefinition, dbPath string) (sessionState, error) {
-	cookies, err := resolveCookies(dbPath, site)
+	cookies, err := resolveCookies(ctx, dbPath, site)
 	if err != nil {
 		return sessionState{}, err
 	}

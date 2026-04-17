@@ -30,6 +30,7 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
@@ -424,13 +425,13 @@ func buildUploadFields(meta api.PreparedMetadata, description string, groupID st
 }
 
 func resolveSession(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string) (*http.Client, string, error) {
-	cookies, cookiePath, err := loadCookies(dbPath)
+	cookies, _, err := loadCookies(ctx, dbPath)
 	if err == nil && len(cookies) > 0 {
 		client, token, tokenErr := fetchAntiCsrfToken(ctx, baseURL, cookies)
 		if tokenErr == nil {
 			return client, token, nil
 		}
-		_ = os.Remove(cookiePath)
+		_ = cookiepkg.DeleteTrackerCookies(ctx, dbPath, "PTP")
 	}
 	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL)
 }
@@ -530,9 +531,7 @@ func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.Tracke
 		return nil, "", errors.New("trackers: PTP login failed")
 	}
 
-	if err := saveCookies(resolveCookiePath(dbPath), client, baseURL); err != nil {
-		return nil, "", err
-	}
+	_ = saveCookies(ctx, dbPath, client, baseURL)
 	token := strings.TrimSpace(stringFromAny(payload["AntiCsrfToken"]))
 	if token == "" {
 		return nil, "", errors.New("trackers: PTP login missing anti csrf token")
@@ -708,24 +707,14 @@ func writeTrackerTorrent(sourcePath string, outputPath string, announceURL strin
 	return torrentMeta.Write(file)
 }
 
-func loadCookies(dbPath string) (map[string]string, string, error) {
+func loadCookies(ctx context.Context, dbPath string) (map[string]string, string, error) {
 	path := resolveCookiePath(dbPath)
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, path, err
-	}
-	var cookies map[string]string
-	if err := json.Unmarshal(raw, &cookies); err != nil {
-		return nil, path, err
-	}
-	if len(cookies) == 0 {
-		return nil, path, errors.New("empty cookie file")
-	}
-	return cookies, path, nil
+	values, err := cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "PTP")
+	return values, path, err
 }
 
-func saveCookies(path string, client *http.Client, baseURL string) error {
-	if strings.TrimSpace(path) == "" || client == nil || client.Jar == nil {
+func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseURL string) error {
+	if client == nil || client.Jar == nil {
 		return nil
 	}
 	parsed, err := url.Parse(baseURL)
@@ -742,14 +731,7 @@ func saveCookies(path string, client *http.Client, baseURL string) error {
 	if len(cookies) == 0 {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	payload, err := json.Marshal(cookies)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, payload, 0o600)
+	return cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", cookies)
 }
 
 func resolveCookiePath(dbPath string) string {

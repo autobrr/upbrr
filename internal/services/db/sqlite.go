@@ -102,6 +102,13 @@ func (r *SQLiteRepository) Close() error {
 	return r.db.Close()
 }
 
+func (r *SQLiteRepository) RawDB() *sql.DB {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
 func (r *SQLiteRepository) Migrate() error {
 	return r.MigrateContext(context.Background())
 }

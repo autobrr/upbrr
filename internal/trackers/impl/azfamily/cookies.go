@@ -4,14 +4,13 @@
 package azfamily
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/services/db"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 )
 
 type simpleCookieJar struct {
@@ -42,65 +41,18 @@ func (j simpleCookieJar) Cookies(_ *url.URL) []*http.Cookie {
 	return out
 }
 
-func resolveCookies(dbPath string, site siteDefinition) ([]*http.Cookie, error) {
-	path := resolveCookiePath(dbPath, site.Name)
-	if strings.TrimSpace(path) == "" {
-		return nil, fmt.Errorf("trackers: %s cookie file not found", site.Name)
-	}
-	return loadNetscapeCookies(path, mustParseURL(site.BaseURL).Hostname())
-}
-
-func resolveCookiePath(dbPath string, tracker string) string {
-	candidates := make([]string, 0, 1)
-	if strings.TrimSpace(dbPath) != "" {
-		if path, err := db.CookiePath(dbPath, tracker+".txt"); err == nil {
-			candidates = append(candidates, path)
-		}
-	}
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func loadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, error) {
-	raw, err := os.ReadFile(path)
+func resolveCookies(ctx context.Context, dbPath string, site siteDefinition) ([]*http.Cookie, error) {
+	baseURL, err := url.Parse(site.BaseURL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %s invalid base URL %q: %w", site.Name, site.BaseURL, err)
 	}
-	lines := strings.Split(string(raw), "\n")
-	target := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(expectedDomain)), ".")
-	out := make([]*http.Cookie, 0)
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "#\t") {
-			continue
-		}
-		if strings.HasPrefix(line, "#HttpOnly_") {
-			line = strings.TrimPrefix(line, "#HttpOnly_")
-		} else if strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Split(line, "\t")
-		if len(fields) < 7 {
-			continue
-		}
-		domain := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(fields[0])), ".")
-		if target != "" && !strings.Contains(domain, target) {
-			continue
-		}
-		out = append(out, &http.Cookie{
-			Domain: strings.TrimSpace(fields[0]),
-			Path:   strings.TrimSpace(fields[2]),
-			Secure: strings.EqualFold(strings.TrimSpace(fields[3]), "TRUE"),
-			Name:   strings.TrimSpace(fields[5]),
-			Value:  strings.TrimSpace(fields[6]),
-		})
+	hostname := strings.TrimSpace(baseURL.Hostname())
+	if hostname == "" {
+		return nil, fmt.Errorf("trackers: %s invalid base URL %q: missing hostname", site.Name, site.BaseURL)
 	}
-	if len(out) == 0 {
-		return nil, errors.New("no valid cookies found")
+	loaded, err := cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, site.Name, hostname)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: %s cookies unavailable: %w", site.Name, err)
 	}
-	return out, nil
+	return loaded, nil
 }

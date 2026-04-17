@@ -58,6 +58,7 @@ type cliOptions struct {
 	DualAudio         bool
 	Region            string
 	GUI               bool
+	CreateAuth        bool
 	ExportConfigPath  string
 	ImportConfigPath  string
 	DeleteTmp         bool
@@ -179,6 +180,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.BoolVar(&opts.NoDual, "no-dual", false, "Remove dual-audio tag from audio name")
 	fs.BoolVar(&opts.DualAudio, "dual-audio", false, "Add dual-audio tag to audio name")
 	fs.BoolVar(&opts.GUI, "gui", false, "Launch the GUI")
+	fs.BoolVar(&opts.CreateAuth, "create-auth", false, "Create web-auth.json beside the active database and exit")
 	fs.StringVar(&opts.ExportConfigPath, "export-config", "", "Export SQLite config to YAML file and exit")
 	fs.StringVar(&opts.ImportConfigPath, "import-config", "", "Import config file (.py, .yaml, .yml, .json) and exit")
 	fs.BoolVar(&opts.DeleteTmp, "dtmp", false, "Delete stored database content for each input path before upload")

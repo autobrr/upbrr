@@ -4,21 +4,18 @@
 package dupechecking
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -36,7 +33,7 @@ func (h azNetworkHandler) Search(ctx context.Context, meta api.PreparedMetadata,
 	if cfg, ok := trackerCfg(h.cfg, tracker); ok && strings.TrimSpace(cfg.URL) != "" {
 		site.baseURL = strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	}
-	cookies, err := loadAZFamilyCookies(h.cfg, tracker, site.baseURL)
+	cookies, err := loadAZFamilyCookies(ctx, h.cfg, tracker, site.baseURL)
 	if err != nil {
 		return nil, []string{noteSkip(fmt.Sprintf("missing valid %s cookies", strings.ToUpper(strings.TrimSpace(tracker))))}, nil
 	}
@@ -167,73 +164,13 @@ func azDupeSite(tracker string) azDupeSiteDef {
 	}
 }
 
-func loadAZFamilyCookies(cfg config.Config, tracker string, baseURL string) ([]*http.Cookie, error) {
-	cookiePath := resolveAZCookiePath(cfg, tracker)
-	if strings.TrimSpace(cookiePath) == "" {
-		return nil, errors.New("cookie file not found")
-	}
+func loadAZFamilyCookies(ctx context.Context, cfg config.Config, tracker string, baseURL string) ([]*http.Cookie, error) {
 	parsed, _ := url.Parse(baseURL)
 	host := ""
 	if parsed != nil {
 		host = parsed.Hostname()
 	}
-	return loadAZNetscapeCookies(cookiePath, host)
-}
-
-func resolveAZCookiePath(cfg config.Config, tracker string) string {
-	candidates := make([]string, 0, 1)
-	if dbPath := strings.TrimSpace(cfg.MainSettings.DBPath); dbPath != "" {
-		if path, err := db.CookiePath(dbPath, strings.ToUpper(strings.TrimSpace(tracker))+".txt"); err == nil {
-			candidates = append(candidates, path)
-		}
-	}
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func loadAZNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	target := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(expectedDomain)), ".")
-	var cookies []*http.Cookie
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "#HttpOnly_") {
-			line = strings.TrimPrefix(line, "#HttpOnly_")
-		} else if strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Split(line, "\t")
-		if len(fields) < 7 {
-			continue
-		}
-		domain := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(fields[0])), ".")
-		if target != "" && !strings.Contains(domain, target) {
-			continue
-		}
-		cookies = append(cookies, &http.Cookie{
-			Domain: strings.TrimSpace(fields[0]),
-			Path:   strings.TrimSpace(fields[2]),
-			Secure: strings.EqualFold(strings.TrimSpace(fields[3]), "TRUE"),
-			Name:   strings.TrimSpace(fields[5]),
-			Value:  strings.TrimSpace(fields[6]),
-		})
-	}
-	if len(cookies) == 0 {
-		return nil, errors.New("no valid cookies found")
-	}
-	return cookies, nil
+	return cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, strings.ToUpper(strings.TrimSpace(tracker)), host)
 }
 
 func lookupAZDupeTitle(meta api.PreparedMetadata) string {

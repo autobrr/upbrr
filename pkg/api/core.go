@@ -3,7 +3,11 @@
 
 package api
 
-import "context"
+import (
+	"context"
+
+	"github.com/autobrr/upbrr/internal/config"
+)
 
 type Mode string
 
@@ -129,7 +133,7 @@ type Core interface {
 
 type CoreDependencies struct {
 	Context    context.Context
-	Config     Config
+	Config     config.Config
 	Logger     Logger
 	Services   ServiceSet
 	Repository MetadataRepository

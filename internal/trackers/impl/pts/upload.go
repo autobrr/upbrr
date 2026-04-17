@@ -6,7 +6,6 @@ package pts
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -150,7 +150,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		questionnaire: buildQuestionnaire(req.Meta),
 		blockedReason: validateUpload(req.Meta),
 	}
-	cookies, err := loadCookies(req.AppConfig.MainSettings.DBPath)
+	cookies, err := loadCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: PTS load cookies: %w", err)
 	}
@@ -222,14 +222,8 @@ func hasMandarin(meta api.PreparedMetadata) bool {
 	return false
 }
 
-func loadCookies(dbPath string) ([]*http.Cookie, error) {
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "PTS", ".txt") {
-		cookies, err := commonhttp.LoadNetscapeCookies(candidate, "ptskit.org")
-		if err == nil {
-			return cookies, nil
-		}
-	}
-	return nil, errors.New("PTS cookies not found")
+func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
+	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "PTS", "ptskit.org")
 }
 
 func resolveType(meta api.PreparedMetadata) string {

@@ -10,7 +10,6 @@ import (
 	"crypto/sha1" //nolint:gosec // TOTP interoperability requires SHA-1.
 	"encoding/base32"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +25,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -38,7 +38,6 @@ const (
 	mtvBaseURL      = "https://www.morethantv.me"
 	mtvUploadPath   = "/upload.php"
 	mtvIndexPath    = "/index.php"
-	mtvCookieFile   = "MTV.json"
 	mtvUserAgentWeb = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 )
 
@@ -58,12 +57,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	uploadURL := baseURL + mtvUploadPath
 
-	cookies, _, err := loadMTVCookies(req.AppConfig.MainSettings.DBPath)
+	cookies, err := loadMTVCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		cookies = nil
 	}
-	cookiePath := ""
-
 	auth, client, err := resolveAuthKey(ctx, baseURL, cookies)
 	if err != nil {
 		if strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "" {
@@ -72,11 +69,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 			}
 			return api.UploadSummary{}, err
 		}
-		auth, client, cookies, cookiePath, err = loginAndResolveAuthKey(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, baseURL)
+		auth, client, cookies, err = loginAndResolveAuthKey(ctx, req.TrackerConfig, baseURL)
 		if err != nil {
 			return api.UploadSummary{}, err
 		}
-		if persistErr := saveMTVCookies(cookiePath, cookies); persistErr != nil && req.Logger != nil {
+		if persistErr := saveMTVCookies(ctx, req.AppConfig.MainSettings.DBPath, cookies); persistErr != nil && req.Logger != nil {
 			req.Logger.Warnf("trackers: MTV failed to persist cookies: %v", persistErr)
 		}
 	}
@@ -239,95 +236,40 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 	return strings.TrimSpace(match[1]), client, nil
 }
 
-func loadMTVCookies(dbPath string) (map[string]string, string, error) {
-	path := resolveMTVCookiePath(dbPath)
-	if path == "" {
-		return nil, "", errors.New("trackers: MTV cookie file not found")
-	}
-
-	raw, err := os.ReadFile(path)
+func loadMTVCookies(ctx context.Context, dbPath string) (map[string]string, error) {
+	values, err := cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "MTV")
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	parsed := map[string]any{}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, "", fmt.Errorf("trackers: MTV cookie decode: %w", err)
-	}
-	cookies := make(map[string]string, len(parsed))
-	for key, value := range parsed {
-		name := strings.TrimSpace(key)
-		if name == "" {
-			continue
-		}
-		cookies[name] = strings.TrimSpace(fmt.Sprint(value))
-	}
-	if len(cookies) == 0 {
-		return nil, "", errors.New("trackers: MTV cookie file has no entries")
-	}
-	return cookies, path, nil
+	return values, nil
 }
 
-func mtvCookiePathCandidates(dbPath string) []string {
-	candidates := make([]string, 0, 1)
-	if strings.TrimSpace(dbPath) != "" {
-		if path, err := db.CookiePath(dbPath, "MTV.json"); err == nil {
-			candidates = append(candidates, path)
-		}
-	}
-	return candidates
+func saveMTVCookies(ctx context.Context, dbPath string, values map[string]string) error {
+	return cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "MTV", values)
 }
 
-func resolveMTVCookiePath(dbPath string) string {
-	for _, candidate := range mtvCookiePathCandidates(dbPath) {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate
-		}
-	}
-	if strings.TrimSpace(dbPath) != "" {
-		path, err := db.CookiePath(dbPath, mtvCookieFile)
-		if err == nil {
-			return path
-		}
-	}
-	return ""
-}
-
-func saveMTVCookies(path string, cookies map[string]string) error {
-	if strings.TrimSpace(path) == "" {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(cookies)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, encoded, 0o600)
-}
-
-func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, dbPath string, baseURL string) (string, *http.Client, map[string]string, string, error) {
+func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string) (string, *http.Client, map[string]string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return "", nil, nil, "", err
+		return "", nil, nil, err
 	}
 	client := &http.Client{Timeout: 25 * time.Second, Jar: jar}
 
 	loginURL := strings.TrimRight(baseURL, "/") + "/login"
 	loginReq, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
 	if err != nil {
-		return "", nil, nil, "", err
+		return "", nil, nil, err
 	}
 	loginReq.Header.Set("User-Agent", mtvUserAgentWeb)
 	loginResp, err := client.Do(loginReq)
 	if err != nil {
-		return "", nil, nil, "", fmt.Errorf("trackers: MTV login page request: %w", err)
+		return "", nil, nil, fmt.Errorf("trackers: MTV login page request: %w", err)
 	}
 	loginBody, _ := io.ReadAll(loginResp.Body)
 	_ = loginResp.Body.Close()
 	match := mtvTokenPattern.FindStringSubmatch(string(loginBody))
 	if len(match) < 2 {
-		return "", nil, nil, "", errors.New("trackers: MTV login token not found")
+		return "", nil, nil, errors.New("trackers: MTV login token not found")
 	}
 	token := strings.TrimSpace(match[1])
 
@@ -342,13 +284,13 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, dbPat
 
 	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", nil, nil, "", err
+		return "", nil, nil, err
 	}
 	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	postReq.Header.Set("User-Agent", mtvUserAgentWeb)
 	postResp, err := client.Do(postReq)
 	if err != nil {
-		return "", nil, nil, "", fmt.Errorf("trackers: MTV login request: %w", err)
+		return "", nil, nil, fmt.Errorf("trackers: MTV login request: %w", err)
 	}
 	body, _ := io.ReadAll(postResp.Body)
 	_ = postResp.Body.Close()
@@ -356,11 +298,11 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, dbPat
 	if postResp.Request != nil && postResp.Request.URL != nil && strings.Contains(postResp.Request.URL.Path, "/twofactor/login") {
 		twoFactorTokenMatch := mtvTokenPattern.FindStringSubmatch(string(body))
 		if len(twoFactorTokenMatch) < 2 {
-			return "", nil, nil, "", errors.New("trackers: MTV 2FA token not found")
+			return "", nil, nil, errors.New("trackers: MTV 2FA token not found")
 		}
 		code, err := totpFromOTPURI(strings.TrimSpace(cfg.OTPURI), time.Now())
 		if err != nil {
-			return "", nil, nil, "", fmt.Errorf("trackers: MTV 2FA required but otp_uri invalid: %w", err)
+			return "", nil, nil, fmt.Errorf("trackers: MTV 2FA required but otp_uri invalid: %w", err)
 		}
 		twoFactorForm := url.Values{}
 		twoFactorForm.Set("token", twoFactorTokenMatch[1])
@@ -368,13 +310,13 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, dbPat
 		twoFactorForm.Set("submit", "login")
 		twoReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/twofactor/login", strings.NewReader(twoFactorForm.Encode()))
 		if err != nil {
-			return "", nil, nil, "", err
+			return "", nil, nil, err
 		}
 		twoReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		twoReq.Header.Set("User-Agent", mtvUserAgentWeb)
 		twoResp, err := client.Do(twoReq)
 		if err != nil {
-			return "", nil, nil, "", fmt.Errorf("trackers: MTV 2FA login request: %w", err)
+			return "", nil, nil, fmt.Errorf("trackers: MTV 2FA login request: %w", err)
 		}
 		_, _ = io.ReadAll(twoResp.Body)
 		_ = twoResp.Body.Close()
@@ -382,10 +324,10 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, dbPat
 
 	auth, authedClient, err := resolveAuthKeyFromClient(ctx, baseURL, client)
 	if err != nil {
-		return "", nil, nil, "", err
+		return "", nil, nil, err
 	}
 	cookieMap := cookiesFromJar(baseURL, authedClient.Jar)
-	return auth, authedClient, cookieMap, resolveMTVCookiePath(dbPath), nil
+	return auth, authedClient, cookieMap, nil
 }
 
 func resolveAuthKeyFromClient(ctx context.Context, baseURL string, client *http.Client) (string, *http.Client, error) {

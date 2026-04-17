@@ -203,6 +203,7 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 			},
 		},
 	}
+	configureConfigSecretEncryption(t, cfg)
 
 	payload, err := ExportToJSON(cfg)
 	if err != nil {
@@ -264,6 +265,7 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 			},
 		},
 	}
+	configureConfigSecretEncryption(t, cfg)
 
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "config.yaml")
@@ -280,8 +282,8 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	if strings.Contains(text, "announce_url: https://should-not-be-here") {
 		t.Fatalf("A4K should not include announce_url in yaml export")
 	}
-	if !strings.Contains(text, "api_key: abc") {
-		t.Fatalf("A4K should include api_key in yaml export")
+	if !regexp.MustCompile(`(?m)^\s*api_key:\s*\S+\s*$`).MatchString(text) {
+		t.Fatalf("A4K should include api_key with non-empty value in yaml export")
 	}
 	if !strings.Contains(text, "custom_yaml: keep") {
 		t.Fatalf("unknown custom key should be preserved in yaml export")
@@ -303,6 +305,7 @@ func TestTrackersConfigPreferredTrackerRoundTripJSON(t *testing.T) {
 			},
 		},
 	}
+	configureConfigSecretEncryption(t, cfg)
 
 	payload, err := ExportToJSON(cfg)
 	if err != nil {
@@ -334,6 +337,7 @@ func TestTrackersConfigPreferredTrackerRoundTripYAML(t *testing.T) {
 			},
 		},
 	}
+	configureConfigSecretEncryption(t, cfg)
 
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "config.yaml")

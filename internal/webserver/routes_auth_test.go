@@ -4,6 +4,8 @@
 package webserver
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 )
 
 func newAuthTestServer(t *testing.T, dbPath string) *Server {
@@ -65,6 +69,64 @@ func TestBootstrapRetainedSessionSetsPersistentCookie(t *testing.T) {
 	}
 	if cookie.Expires.IsZero() {
 		t.Fatal("expected persistent cookie expiry to be set")
+	}
+}
+
+func TestLoginUpgradesLegacyPasswordHash(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+
+	password := "very-secure-password"
+	salt := "legacy-salt-value"
+	sum := argon2.IDKey(
+		[]byte(password),
+		[]byte(salt),
+		legacyAuthArgon2Time,
+		legacyAuthArgon2MemoryKB,
+		legacyAuthArgon2Parallelism,
+		legacyAuthArgon2KeyLen,
+	)
+	record := authRecord{
+		Username:     "admin",
+		PasswordHash: "argon2id$" + salt + "$" + base64.RawStdEncoding.EncodeToString(sum),
+		CreatedAt:    time.Now().UTC(),
+	}
+	raw, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent: %v", err)
+	}
+	if err := os.WriteFile(server.auth.path, raw, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	body := `{"username":"admin","password":"very-secure-password","retainLogin":false}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5000"
+
+	recorder := httptest.NewRecorder()
+	server.handleLogin(recorder, req, session{})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleLogin returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	updated, err := server.auth.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if updated.PasswordHash == record.PasswordHash {
+		t.Fatal("expected legacy password hash to be upgraded after login")
+	}
+	if !strings.HasPrefix(updated.PasswordHash, "argon2id$v=19$m=19456,t=2,p=1$") {
+		t.Fatalf("expected upgraded hash format, got %q", updated.PasswordHash)
+	}
+	if strings.TrimSpace(updated.EncryptionKeySeed) == "" {
+		t.Fatal("expected upgraded auth record to persist an encryption key seed")
+	}
+	if !verifyPassword(password, updated.PasswordHash) {
+		t.Fatal("expected upgraded hash to verify")
 	}
 }
 

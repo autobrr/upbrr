@@ -32,8 +32,13 @@ func ExportToYAML(cfg *Config, path string) error {
 		return fmt.Errorf("config export: mkdir: %w", err)
 	}
 
+	encryptedCfg, err := EncryptConfigSecrets(cfg)
+	if err != nil {
+		return fmt.Errorf("config export: encrypt secrets: %w", err)
+	}
+
 	// Marshal to YAML.
-	data, err := yaml.Marshal(cfg)
+	data, err := yaml.Marshal(encryptedCfg)
 	if err != nil {
 		return fmt.Errorf("config export: marshal yaml: %w", err)
 	}
@@ -65,7 +70,12 @@ func ImportFromYAML(path string) (*Config, error) {
 		return nil, fmt.Errorf("config import: unmarshal yaml: %w", err)
 	}
 
-	return &cfg, nil
+	decryptedCfg, err := DecryptConfigSecrets(&cfg)
+	if err != nil {
+		return nil, fmt.Errorf("config import: decrypt secrets: %w", err)
+	}
+
+	return decryptedCfg, nil
 }
 
 // ExportToJSON serializes the config to a JSON string.
@@ -74,7 +84,12 @@ func ExportToJSON(cfg *Config) (string, error) {
 		return "", internalerrors.ErrInvalidInput
 	}
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	encryptedCfg, err := EncryptConfigSecrets(cfg)
+	if err != nil {
+		return "", fmt.Errorf("config export: encrypt secrets: %w", err)
+	}
+
+	data, err := json.MarshalIndent(encryptedCfg, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("config export: marshal json: %w", err)
 	}
@@ -93,7 +108,12 @@ func ImportFromJSON(payload string) (*Config, error) {
 		return nil, fmt.Errorf("config import: unmarshal json: %w", err)
 	}
 
-	return &cfg, nil
+	decryptedCfg, err := DecryptConfigSecrets(&cfg)
+	if err != nil {
+		return nil, fmt.Errorf("config import: decrypt secrets: %w", err)
+	}
+
+	return decryptedCfg, nil
 }
 
 // BackupToYAML creates a timestamped YAML backup of the current config.
@@ -137,7 +157,12 @@ func LoadFromDatabase(ctx context.Context, repo interface {
 		return nil, fmt.Errorf("config load from database: %w", err)
 	}
 
-	return &cfg, nil
+	decryptedCfg, err := DecryptConfigSecrets(&cfg)
+	if err != nil {
+		return nil, fmt.Errorf("config load from database: decrypt secrets: %w", err)
+	}
+
+	return decryptedCfg, nil
 }
 
 // SaveToDatabase persists the config to the repository.
@@ -151,7 +176,12 @@ func SaveToDatabase(ctx context.Context, cfg *Config, repo interface {
 		return errors.New("config save: nil repository")
 	}
 
-	if err := repo.SaveFullConfig(ctx, cfg); err != nil {
+	encryptedCfg, err := EncryptConfigSecrets(cfg)
+	if err != nil {
+		return fmt.Errorf("config save to database: encrypt secrets: %w", err)
+	}
+
+	if err := repo.SaveFullConfig(ctx, encryptedCfg); err != nil {
 		return fmt.Errorf("config save to database: %w", err)
 	}
 

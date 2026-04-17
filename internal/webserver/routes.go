@@ -125,9 +125,50 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	if record.Username != strings.TrimSpace(req.Username) || !verifyPassword(req.Password, record.PasswordHash) {
+	if strings.TrimSpace(record.Username) != strings.TrimSpace(req.Username) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
+	}
+	valid, needsUpgrade := verifyPasswordWithUpgrade(req.Password, record.PasswordHash)
+	if !valid {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	if needsUpgrade {
+		upgradedHash, err := hashPassword(req.Password)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
+		upgradedRecord := record
+		upgradedRecord.PasswordHash = upgradedHash
+		if strings.TrimSpace(upgradedRecord.EncryptionKeySeed) == "" {
+			seed, err := generateStableEncryptionSeed()
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+				return
+			}
+			upgradedRecord.EncryptionKeySeed = seed
+		}
+		if err := s.rewrapProtectedDataForAuthChange(r, record, upgradedRecord); err != nil {
+			if s.backend != nil && s.backend.logger != nil {
+				s.backend.logger.Errorf("web: failed to rewrap protected data for %s during auth upgrade: %v", record.Username, err)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
+		if err := s.auth.UpdateRecord(upgradedRecord); err != nil {
+			if rollbackErr := s.rollbackProtectedDataForAuthChange(r, upgradedRecord, record); rollbackErr != nil {
+				if s.backend != nil && s.backend.logger != nil {
+					s.backend.logger.Errorf("web: failed to rollback protected data for %s after auth upgrade failure: %v", record.Username, rollbackErr)
+				}
+			}
+			if s.backend != nil && s.backend.logger != nil {
+				s.backend.logger.Errorf("web: failed to upgrade legacy auth hash for %s: %v", record.Username, err)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
 	}
 	current, err := s.sessions.Create(record.Username, req.RetainLogin)
 	if err != nil {

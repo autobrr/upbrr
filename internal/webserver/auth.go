@@ -13,23 +13,38 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/argon2"
+
+	"github.com/autobrr/upbrr/internal/authmaterial"
 )
 
 const (
 	sessionCookieName = "ua_web_session"
 	authFileName      = "web-auth.json"
 	sessionFileName   = "web-sessions.json"
+	// OWASP Password Storage Cheat Sheet Argon2id baseline.
+	authArgon2Time        = 2
+	authArgon2MemoryKB    = 19 * 1024
+	authArgon2Parallelism = 1
+	authArgon2KeyLen      = 32
+	authArgon2Version     = argon2.Version
+
+	legacyAuthArgon2Time        = 1
+	legacyAuthArgon2MemoryKB    = 64 * 1024
+	legacyAuthArgon2Parallelism = 4
+	legacyAuthArgon2KeyLen      = 32
 )
 
 type authRecord struct {
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"password_hash"`
-	CreatedAt    time.Time `json:"created_at"`
+	Username          string    `json:"username"`
+	PasswordHash      string    `json:"password_hash"`
+	EncryptionKeySeed string    `json:"encryption_key_seed,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type authStore struct {
@@ -37,12 +52,29 @@ type authStore struct {
 	mu   sync.Mutex
 }
 
+// AuthFileName is the canonical web auth file name stored beside the database.
+const AuthFileName = authFileName
+
 func newAuthStore(dbPath string) (*authStore, error) {
 	dir := filepath.Dir(strings.TrimSpace(dbPath))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("web auth: create config dir: %w", err)
 	}
 	return &authStore{path: filepath.Join(dir, authFileName)}, nil
+}
+
+// AuthFilePath returns the auth file path colocated with dbPath.
+func AuthFilePath(dbPath string) string {
+	return filepath.Join(filepath.Dir(strings.TrimSpace(dbPath)), authFileName)
+}
+
+// BootstrapAuthFile creates the canonical auth file beside dbPath.
+func BootstrapAuthFile(dbPath string, username string, password string) error {
+	store, err := newAuthStore(dbPath)
+	if err != nil {
+		return err
+	}
+	return store.Bootstrap(username, password)
 }
 
 func (s *authStore) Exists() (bool, error) {
@@ -86,17 +118,71 @@ func (s *authStore) Bootstrap(username string, password string) error {
 	if err != nil {
 		return err
 	}
+	seed, err := authmaterial.GenerateSeed()
+	if err != nil {
+		return err
+	}
 
 	record := authRecord{
-		Username:     strings.TrimSpace(username),
-		PasswordHash: hash,
-		CreatedAt:    time.Now().UTC(),
+		Username:          strings.TrimSpace(username),
+		PasswordHash:      hash,
+		EncryptionKeySeed: seed,
+		CreatedAt:         time.Now().UTC(),
 	}
+	return s.saveLocked(record)
+}
+
+func (s *authStore) UpdatePasswordHash(username string, passwordHash string) error {
+	record, err := s.Load()
+	if err != nil {
+		return err
+	}
+	record.PasswordHash = passwordHash
+	return s.UpdateRecord(record)
+}
+
+func (s *authStore) UpdateRecord(updated authRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		return err
+	}
+
+	var record authRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return err
+	}
+	if record.Username != strings.TrimSpace(updated.Username) {
+		return errors.New("web auth: user mismatch")
+	}
+
+	record.PasswordHash = strings.TrimSpace(updated.PasswordHash)
+	record.EncryptionKeySeed = strings.TrimSpace(updated.EncryptionKeySeed)
+	return s.saveLocked(record)
+}
+
+func (r authRecord) authMaterial() authmaterial.Material {
+	return authmaterial.Material{
+		Username:          strings.TrimSpace(r.Username),
+		PasswordHash:      strings.TrimSpace(r.PasswordHash),
+		EncryptionKeySeed: strings.TrimSpace(r.EncryptionKeySeed),
+	}
+}
+
+func (s *authStore) saveLocked(record authRecord) error {
 	raw, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, raw, 0o600)
+	if err := os.WriteFile(s.path, raw, 0o600); err != nil {
+		return err
+	}
+	if err := os.Chmod(s.path, 0o600); err != nil {
+		return err
+	}
+	return nil
 }
 
 func hashPassword(password string) (string, error) {
@@ -108,21 +194,146 @@ func hashPassword(password string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := argon2.IDKey([]byte(password), []byte(salt), 1, 64*1024, 4, 32)
-	return fmt.Sprintf("argon2id$%s$%s", salt, base64.RawStdEncoding.EncodeToString(sum)), nil
+	sum := argon2.IDKey(
+		[]byte(password),
+		[]byte(salt),
+		authArgon2Time,
+		authArgon2MemoryKB,
+		authArgon2Parallelism,
+		authArgon2KeyLen,
+	)
+	return fmt.Sprintf(
+		"argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		authArgon2Version,
+		authArgon2MemoryKB,
+		authArgon2Time,
+		authArgon2Parallelism,
+		salt,
+		base64.RawStdEncoding.EncodeToString(sum),
+	), nil
 }
 
 func verifyPassword(password string, encoded string) bool {
+	ok, _ := verifyPasswordWithUpgrade(password, encoded)
+	return ok
+}
+
+func verifyPasswordWithUpgrade(password string, encoded string) (bool, bool) {
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 3 || parts[0] != "argon2id" {
-		return false
+	if len(parts) < 3 || parts[0] != "argon2id" {
+		return false, false
 	}
-	sum := argon2.IDKey([]byte(password), []byte(parts[1]), 1, 64*1024, 4, 32)
-	expected, err := base64.RawStdEncoding.DecodeString(parts[2])
+
+	salt, hashPart, params, legacy, ok := parseAuthHash(parts)
+	if !ok {
+		return false, false
+	}
+
+	sum := argon2.IDKey(
+		[]byte(password),
+		[]byte(salt),
+		params.time,
+		params.memoryKB,
+		params.parallelism,
+		params.keyLen,
+	)
+	expected, err := base64.RawStdEncoding.DecodeString(hashPart)
 	if err != nil {
-		return false
+		return false, false
 	}
-	return subtle.ConstantTimeCompare(sum, expected) == 1
+	return subtle.ConstantTimeCompare(sum, expected) == 1, legacy
+}
+
+type authHashParams struct {
+	time        uint32
+	memoryKB    uint32
+	parallelism uint8
+	keyLen      uint32
+}
+
+func parseAuthHash(parts []string) (string, string, authHashParams, bool, bool) {
+	if len(parts) == 3 {
+		return parts[1], parts[2], authHashParams{
+			time:        legacyAuthArgon2Time,
+			memoryKB:    legacyAuthArgon2MemoryKB,
+			parallelism: legacyAuthArgon2Parallelism,
+			keyLen:      legacyAuthArgon2KeyLen,
+		}, true, true
+	}
+
+	if len(parts) != 5 {
+		return "", "", authHashParams{}, false, false
+	}
+
+	version, ok := parseAuthHashVersion(parts[1])
+	if !ok || version != authArgon2Version {
+		return "", "", authHashParams{}, false, false
+	}
+
+	params, ok := parseAuthHashConfig(parts[2])
+	if !ok {
+		return "", "", authHashParams{}, false, false
+	}
+
+	return parts[3], parts[4], params, false, true
+}
+
+func parseAuthHashVersion(part string) (int, bool) {
+	if !strings.HasPrefix(part, "v=") {
+		return 0, false
+	}
+
+	version, err := strconv.Atoi(strings.TrimPrefix(part, "v="))
+	if err != nil {
+		return 0, false
+	}
+
+	return version, true
+}
+
+func parseAuthHashConfig(part string) (authHashParams, bool) {
+	fields := strings.Split(part, ",")
+	if len(fields) != 3 {
+		return authHashParams{}, false
+	}
+
+	var params authHashParams
+	for _, field := range fields {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || value == "" {
+			return authHashParams{}, false
+		}
+
+		switch key {
+		case "m":
+			parsed, err := strconv.ParseUint(value, 10, 32)
+			if err != nil || parsed == 0 {
+				return authHashParams{}, false
+			}
+			params.memoryKB = uint32(parsed)
+		case "t":
+			parsed, err := strconv.ParseUint(value, 10, 32)
+			if err != nil || parsed == 0 {
+				return authHashParams{}, false
+			}
+			params.time = uint32(parsed)
+		case "p":
+			parsed, err := strconv.ParseUint(value, 10, 8)
+			if err != nil || parsed == 0 {
+				return authHashParams{}, false
+			}
+			params.parallelism = uint8(parsed)
+		default:
+			return authHashParams{}, false
+		}
+	}
+
+	if params.memoryKB == 0 || params.time == 0 || params.parallelism == 0 {
+		return authHashParams{}, false
+	}
+
+	params.keyLen = authArgon2KeyLen
+	return params, true
 }
 
 type session struct {

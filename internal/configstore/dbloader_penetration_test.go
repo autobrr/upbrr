@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/configstore"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -21,6 +22,15 @@ import (
 // uses to materialize config at startup. These tests drive the Bootstrap,
 // ResolveYAMLPath, LoadFromPathOrEmbedded, and SaveToDBPath contracts through
 // edge cases each surface relies on.
+
+func writeWebAuthFixture(t *testing.T, dbPath string) {
+	t.Helper()
+	authPath := filepath.Join(filepath.Dir(dbPath), authmaterial.WebAuthFileName)
+	payload := `{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":"stable-seed-for-tests"}`
+	if err := os.WriteFile(authPath, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write web auth fixture: %v", err)
+	}
+}
 
 // ResolveYAMLPath must reject empty strings when configProvided is true.
 func TestResolveYAMLPathProvidedEmpty(t *testing.T) {
@@ -143,6 +153,7 @@ func TestSaveLoadDBRoundTrip(t *testing.T) {
 	cfg.MainSettings.TMDBAPI = "roundtrip-key"
 	cfg.MainSettings.DBPath = path
 	cfg.ScreenshotHandling.Screens = 9
+	writeWebAuthFixture(t, path)
 
 	if err := configstore.SaveToDBPath(ctx, cfg, path); err != nil {
 		t.Fatalf("save: %v", err)
@@ -173,6 +184,7 @@ func TestLoadFromDBPathEnvOverrideNotPersisted(t *testing.T) {
 	cfg.MainSettings.TMDBAPI = "persisted"
 	cfg.MainSettings.DBPath = path
 	cfg.ScreenshotHandling.Screens = 3
+	writeWebAuthFixture(t, path)
 	if err := configstore.SaveToDBPath(ctx, cfg, path); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -210,6 +222,7 @@ func TestBootstrapProvidedYAMLPersistsToDB(t *testing.T) {
 	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
 		t.Fatalf("write yaml: %v", err)
 	}
+	writeWebAuthFixture(t, dbPath)
 
 	t.Setenv("UA_DEFAULT_SCREENS", "8")
 	runtime, resolvedDB, err := configstore.Bootstrap(ctx, yamlPath, true, true)
@@ -307,6 +320,7 @@ func TestBootstrapDBPathInvariant(t *testing.T) {
 	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+	writeWebAuthFixture(t, dbPath)
 
 	runtime, returned, err := configstore.Bootstrap(ctx, yamlPath, true, true)
 	if err != nil {

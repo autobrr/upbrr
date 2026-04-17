@@ -34,6 +34,7 @@ var futureMigrations = []migrationStep{
 	{version: 5, apply: migrateV5},
 	{version: 6, apply: migrateV6},
 	{version: 7, apply: migrateV7},
+	{version: 8, apply: migrateV8},
 }
 
 func migrateV2(ctx context.Context, exec migrationExecutor) error {
@@ -263,6 +264,34 @@ func tableExists(ctx context.Context, exec migrationExecutor, tableName string) 
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func migrateV8(ctx context.Context, exec migrationExecutor) error {
+	statements := []string{
+		`
+		CREATE TABLE IF NOT EXISTS tracker_cookies (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tracker_id TEXT NOT NULL,
+			cookie_name TEXT NOT NULL,
+			encrypted_value TEXT NOT NULL,
+			nonce TEXT NOT NULL,
+			auth_tag TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(tracker_id, cookie_name)
+		)
+		`,
+		`CREATE INDEX IF NOT EXISTS idx_tracker_cookies_tracker_id ON tracker_cookies (tracker_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tracker_cookies_created_at ON tracker_cookies (created_at)`,
+	}
+
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func Migrate(db *sql.DB) error {

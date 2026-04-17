@@ -29,8 +29,8 @@ import (
 	htmlnode "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/pathutil"
-	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -369,28 +369,23 @@ func (s *Service) loadBTNCookiesForClaims(client *http.Client) error {
 		return nil
 	}
 
-	candidates := commonhttp.CookiePathCandidates(s.cfg.MainSettings.DBPath, "BTN", ".txt")
-	if len(candidates) == 0 {
+	trackerCookies, err := cookies.LoadTrackerHTTPCookies(context.Background(), s.cfg.MainSettings.DBPath, "BTN", "")
+	if err != nil {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims cookie load skipped; no cookie path candidates")
+			s.logger.Debugf("metadata: BTN claims cookie load skipped: %v", err)
 		}
 		return nil
 	}
 
-	cookies, err := commonhttp.LoadNetscapeCookies(candidates[0], "")
-	if err != nil {
+	if err := setBTNJarCookiesFromNetscape(client, btnSiteBaseURL, trackerCookies); err != nil {
 		return err
 	}
-
-	if err := setBTNJarCookiesFromNetscape(client, btnSiteBaseURL, cookies); err != nil {
-		return err
-	}
-	if err := setBTNJarCookiesFromNetscape(client, btnBackupBaseURL, cookies); err != nil {
+	if err := setBTNJarCookiesFromNetscape(client, btnBackupBaseURL, trackerCookies); err != nil {
 		return err
 	}
 
 	if s.logger != nil {
-		s.logger.Debugf("metadata: BTN claims loaded %d cookies from file %s", len(cookies), candidates[0])
+		s.logger.Debugf("metadata: BTN claims loaded %d cookies from shared store", len(trackerCookies))
 	}
 	return nil
 }

@@ -11,7 +11,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -45,38 +45,11 @@ func trackerHost(baseURL string, fallback string) string {
 }
 
 func loadTrackerTextCookies(cfg config.Config, tracker string, domain string) ([]*http.Cookie, error) {
-	for _, candidate := range commonhttp.CookiePathCandidates(cfg.MainSettings.DBPath, tracker, ".txt") {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return commonhttp.LoadNetscapeCookies(candidate, domain)
-		}
-	}
-	return nil, errors.New("cookie file not found")
+	return cookies.LoadTrackerHTTPCookies(context.Background(), cfg.MainSettings.DBPath, tracker, domain)
 }
 
 func loadTrackerJSONCookies(cfg config.Config, tracker string, domain string) ([]*http.Cookie, error) {
-	for _, candidate := range commonhttp.CookiePathCandidates(cfg.MainSettings.DBPath, tracker, ".json") {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			values, err := commonhttp.LoadJSONCookieMap(candidate)
-			if err != nil {
-				return nil, err
-			}
-			return cookieMapToSlice(values, domain), nil
-		}
-	}
-	return nil, errors.New("cookie file not found")
-}
-
-func cookieMapToSlice(values map[string]string, domain string) []*http.Cookie {
-	cookies := make([]*http.Cookie, 0, len(values))
-	for key, value := range values {
-		name := strings.TrimSpace(key)
-		val := strings.TrimSpace(value)
-		if name == "" || val == "" {
-			continue
-		}
-		cookies = append(cookies, &http.Cookie{Name: name, Value: val, Domain: domain, Path: "/"})
-	}
-	return cookies
+	return cookies.LoadTrackerHTTPCookies(context.Background(), cfg.MainSettings.DBPath, tracker, domain)
 }
 
 func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, headers map[string]string, cookies []*http.Cookie) (*http.Response, *xhtml.Node, error) {

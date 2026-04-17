@@ -6,6 +6,7 @@ package commonhttp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +44,51 @@ func CookiePathCandidates(dbPath string, name string, exts ...string) []string {
 		candidates = append(candidates, filepath.Clean(path))
 	}
 	return candidates
+}
+
+// CookieStore interface for dependency injection of cookie storage (database or file-based).
+// This allows tests and different implementations to be plugged in.
+type CookieStore interface {
+	GetAllTrackerCookies(ctx context.Context, trackerID string, key []byte) (map[string]string, error)
+}
+
+// LoadCookiesForTracker loads cookies for a tracker from either the database (if available)
+// or falls back to file-based loading. If cookieStore and encryptionKey are provided,
+// it will try to load from the database first; otherwise it loads from files.
+func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string, cookieStore CookieStore, encryptionKey []byte) (map[string]string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Try database first if store and key are available
+	if cookieStore != nil && len(encryptionKey) > 0 {
+		cookies, err := cookieStore.GetAllTrackerCookies(ctx, trackerID, encryptionKey)
+		if err == nil && len(cookies) > 0 {
+			return cookies, nil
+		}
+		// If database has no cookies, fall through to file-based loading
+	}
+
+	// Fall back to file-based cookie loading
+	candidates := CookiePathCandidates(dbPath, trackerID, ".txt", ".json")
+	for _, path := range candidates {
+		switch filepath.Ext(path) {
+		case ".txt":
+			if cookies, err := LoadNetscapeCookies(path, trackerID); err == nil && len(cookies) > 0 {
+				result := make(map[string]string)
+				for _, c := range cookies {
+					result[c.Name] = c.Value
+				}
+				return result, nil
+			}
+		case ".json":
+			if cookies, err := LoadJSONCookieMap(path); err == nil && len(cookies) > 0 {
+				return cookies, nil
+			}
+		}
+	}
+
+	return nil, errors.New("no cookies found for tracker: " + trackerID)
 }
 
 func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, error) {

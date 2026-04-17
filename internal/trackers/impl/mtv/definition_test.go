@@ -176,7 +176,7 @@ func TestDefinitionUploadLoginBootstrapSuccess(t *testing.T) {
 	if result.Uploaded != 1 {
 		t.Fatalf("expected uploaded=1, got %d", result.Uploaded)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, "cookies", "MTV.json")); err != nil {
-		t.Fatalf("expected MTV cookie file to be saved: %v", err)
+	if _, err := os.Stat(filepath.Join(tmp, "cookies", "MTV.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no legacy MTV cookie file after login bootstrap, got err=%v", err)
 	}
 }

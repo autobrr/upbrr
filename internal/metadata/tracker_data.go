@@ -592,7 +592,7 @@ func applyPreferredTracker(trackers []string, preferred string) []string {
 	return trackers
 }
 
-func configuredTrackers(cfg api.Config) ([]string, []string) {
+func configuredTrackers(cfg config.Config) ([]string, []string) {
 	configured := make([]string, 0)
 	missing := make([]string, 0)
 	for name, entry := range cfg.Trackers.Trackers {
@@ -615,7 +615,7 @@ func configuredTrackers(cfg api.Config) ([]string, []string) {
 	return configured, missing
 }
 
-func filterConfiguredTrackers(cfg api.Config, trackers []string, logger api.Logger) []string {
+func filterConfiguredTrackers(cfg config.Config, trackers []string, logger api.Logger) []string {
 	if len(trackers) == 0 {
 		return trackers
 	}
@@ -688,7 +688,7 @@ func applyTrackerDataResult(record *api.TrackerMetadata, result trackerdata.Resu
 	record.Matched = result.HasData()
 }
 
-func trackerConfigFor(cfg api.Config, tracker string) (config.TrackerConfig, bool) {
+func trackerConfigFor(cfg config.Config, tracker string) (config.TrackerConfig, bool) {
 	if cfg.Trackers.Trackers == nil {
 		return config.TrackerConfig{}, false
 	}

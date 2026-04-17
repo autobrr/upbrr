@@ -24,7 +24,7 @@ import (
 
 func validMinimalConfig() *Config {
 	return &Config{
-		MainSettings:       MainSettingsConfig{TMDBAPI: "penetration-key"},
+		MainSettings:       MainSettingsConfig{},
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 3},
 	}
 }
@@ -184,6 +184,7 @@ func TestExportImportYAMLUnicodeAndSpecialChars(t *testing.T) {
 			TonemapAlgorithm: "\"quoted\" algorithm",
 		},
 	}
+	configureConfigSecretEncryption(t, cfg)
 	path := filepath.Join(t.TempDir(), "unicode.yaml")
 	if err := ExportToYAML(cfg, path); err != nil {
 		t.Fatalf("export: %v", err)
@@ -390,8 +391,10 @@ func TestBackupToYAMLOverwrites(t *testing.T) {
 
 	dir := t.TempDir()
 	first := validMinimalConfig()
+	configureConfigSecretEncryption(t, first)
 	first.MainSettings.TMDBAPI = "first"
 	second := validMinimalConfig()
+	second.MainSettings.DBPath = first.MainSettings.DBPath
 	second.MainSettings.TMDBAPI = "second"
 
 	pathA, err := BackupToYAML(first, dir)
@@ -515,6 +518,7 @@ func TestExportFromDatabaseToYAMLAppliesEnv(t *testing.T) {
 		MainSettings:       MainSettingsConfig{TMDBAPI: "from-db"},
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 	}}
+	configureConfigSecretEncryption(t, &repo.cfg)
 	if err := ExportFromDatabaseToYAML(context.Background(), out, repo); err != nil {
 		t.Fatalf("export: %v", err)
 	}
