@@ -188,19 +188,21 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		return uploadState{}, errors.New("trackers: DC missing api_key")
 	}
 
+	state := uploadState{}
+
 	imdbID := strings.TrimSpace(trackers.ResolveIMDbIDText(req.Meta))
 	if imdbID == "" {
-		return uploadState{}, errors.New("trackers: DC missing imdb id")
+		state.blockedReason = "missing imdb id"
 	}
 
 	categoryID := resolveCategoryID(req.Meta)
-	if categoryID == 0 {
-		return uploadState{}, errors.New("trackers: DC missing category")
+	if categoryID == 0 && state.blockedReason == "" {
+		state.blockedReason = "missing category"
 	}
 
 	releaseName := resolveUploadName(req.Meta)
-	if releaseName == "" {
-		return uploadState{}, errors.New("trackers: DC missing release name")
+	if releaseName == "" && state.blockedReason == "" {
+		state.blockedReason = "missing release name"
 	}
 
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -222,8 +224,8 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 
 	mediaInfo, err := resolveMediaInfo(req.Meta)
-	if err != nil {
-		return uploadState{}, fmt.Errorf("trackers: DC missing media info: %w", err)
+	if err != nil && state.blockedReason == "" {
+		state.blockedReason = "missing media info"
 	}
 
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
@@ -233,28 +235,28 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 
 	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, fmt.Errorf("trackers: DC missing description: %w", err)
+	if err != nil && state.blockedReason == "" {
+		state.blockedReason = "missing description"
 	}
 
-	return uploadState{
-		torrentPath: torrentPath,
-		releaseName: releaseName,
-		description: description,
-		mediaInfo:   mediaInfo,
-		fields: map[string]string{
-			"category":        strconv.Itoa(categoryID),
-			"imdbId":          imdbID,
-			"nfo":             description,
-			"mediainfo":       mediaInfo,
-			"reqid":           "0",
-			"section":         "new",
-			"frileech":        "1",
-			"anonymousUpload": resolveAnon(req),
-			"p2p":             "0",
-			"unrar":           "1",
-		},
-	}, nil
+	state.torrentPath = torrentPath
+	state.releaseName = releaseName
+	state.description = description
+	state.mediaInfo = mediaInfo
+	state.fields = map[string]string{
+		"category":        strconv.Itoa(categoryID),
+		"imdbId":          imdbID,
+		"nfo":             description,
+		"mediainfo":       mediaInfo,
+		"reqid":           "0",
+		"section":         "new",
+		"frileech":        "1",
+		"anonymousUpload": resolveAnon(req),
+		"p2p":             "0",
+		"unrar":           "1",
+	}
+
+	return state, nil
 }
 
 func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
