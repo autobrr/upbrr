@@ -30,6 +30,9 @@ func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
+	if blocked := validateMetadata(site, req.Meta); blocked != "" {
+		return api.UploadSummary{}, errors.New(blocked)
+	}
 	media, err := lookupMediaCode(ctx, site, state, req.Meta)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -108,11 +111,23 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Up
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
+	torrentPath, _ := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	if blocked := validateMetadata(site, req.Meta); blocked != "" {
+		return api.TrackerDryRunEntry{
+			Tracker: site.Name,
+			Status:  "blocked",
+			Message: blocked,
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent_file",
+				Path:    torrentPath,
+				Present: strings.TrimSpace(torrentPath) != "",
+			}},
+		}, nil
+	}
 	media, err := lookupMediaCode(ctx, site, state, req.Meta)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
-	torrentPath, _ := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
 		return api.TrackerDryRunEntry{
 			Tracker: site.Name,

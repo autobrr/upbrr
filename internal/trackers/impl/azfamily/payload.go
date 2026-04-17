@@ -29,16 +29,27 @@ func buildFinalPayload(ctx context.Context, site siteDefinition, state sessionSt
 	if err != nil {
 		return nil, err
 	}
+
+	if reason := validateMetadata(site, req.Meta); reason != "" {
+		return nil, errors.New(reason)
+	}
+
+	categoryID := categoryID(req.Meta)
+	fileName := editName(site, req.Meta)
+	ripTypeID := ripTypeID(site, req.Meta)
+	videoQualityID := videoQualityID(site, req.Meta)
+	videoResolution := resolutionValue(req.Meta)
+
 	values := url.Values{}
 	values.Set("_token", state.token)
 	values.Set("torrent_id", "")
-	values.Set("type_id", categoryID(req.Meta))
-	values.Set("file_name", editName(site, req.Meta))
+	values.Set("type_id", categoryID)
+	values.Set("file_name", fileName)
 	values.Set("description", buildDescriptionFromAssets(ctx, req))
 	values.Set("qqfile", "")
-	values.Set("rip_type_id", ripTypeID(site, req.Meta))
-	values.Set("video_quality_id", videoQualityID(site, req.Meta))
-	values.Set("video_resolution", resolutionValue(req.Meta))
+	values.Set("rip_type_id", ripTypeID)
+	values.Set("video_quality_id", videoQualityID)
+	values.Set("video_resolution", videoResolution)
 	values.Set("movie_id", mediaCode)
 	values.Set("media_info", fileInfo)
 	values.Set("info_hash", task.InfoHash)
@@ -276,4 +287,23 @@ func splitKeywords(raw string) []string {
 		out = append(out, trimmed)
 	}
 	return out
+}
+
+func validateMetadata(site siteDefinition, meta api.PreparedMetadata) string {
+	if categoryID(meta) == "" {
+		return "failed to determine category"
+	}
+	if editName(site, meta) == "" {
+		return "failed to determine file name (e.g., 'Movie Title 2025 1080p BluRay REMUX-GROUP')"
+	}
+	if rtID := ripTypeID(site, meta); rtID == "" || rtID == "0" {
+		return "failed to determine rip type (e.g., BluRay, WEB-DL)"
+	}
+	if vqID := videoQualityID(site, meta); vqID == "" || vqID == "0" {
+		return "failed to determine video quality (e.g., 1080p, 2160p)"
+	}
+	if resolutionValue(meta) == "" {
+		return "failed to determine video resolution (e.g., 1920x1080)"
+	}
+	return ""
 }
