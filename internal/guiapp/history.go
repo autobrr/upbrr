@@ -83,9 +83,10 @@ func (a *App) getHistoryOverviewFromRepo(ctx context.Context, sourcePath string)
 		return api.HistoryOverview{}, err
 	}
 
-	descriptionOverride, err := a.repo.GetDescriptionOverride(ctx, trimmed)
+	descriptionOverrides, err := a.repo.ListDescriptionOverridesByPath(ctx, trimmed)
 	if err == nil {
-		overview.DescriptionOverride = descriptionOverride
+		overview.DescriptionOverrides = append([]api.DescriptionOverride(nil), descriptionOverrides...)
+		overview.DescriptionOverride = preferredHistoryDescriptionOverride(descriptionOverrides)
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
 		return api.HistoryOverview{}, err
 	}
@@ -169,4 +170,21 @@ func historyStatusLabel(rawStatus string, ruleFailureCount int) string {
 		return "Rule Issues"
 	}
 	return "Stored"
+}
+
+func preferredHistoryDescriptionOverride(overrides []api.DescriptionOverride) api.DescriptionOverride {
+	if len(overrides) == 0 {
+		return api.DescriptionOverride{}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.GroupKey) == "" {
+			return override
+		}
+	}
+	for _, override := range overrides {
+		if strings.TrimSpace(override.Description) != "" {
+			return override
+		}
+	}
+	return overrides[0]
 }

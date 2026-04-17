@@ -139,8 +139,12 @@ func (c *closeCounterCore) RenderDescription(context.Context, string) (string, e
 	return "", nil
 }
 
-func (c *closeCounterCore) SaveDescriptionOverride(context.Context, api.Request, string) error {
-	return nil
+func (c *closeCounterCore) FetchDescriptionBuilderGroupPreview(context.Context, api.Request) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
+}
+
+func (c *closeCounterCore) SaveDescriptionOverride(context.Context, api.Request, string) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
 }
 
 func (c *closeCounterCore) ExportGUICachedPreparedMeta(context.Context, api.Request) (api.PreparedMetadata, bool, error) {
@@ -191,7 +195,7 @@ func TestBuildRunOptionsRejectsInvalidLogLevel(t *testing.T) {
 	}
 }
 
-func TestSharedRepositoryCloseDoesNotCloseUnderlyingRepo(t *testing.T) {
+func TestCoreCloseDoesNotCloseInjectedRepository(t *testing.T) {
 	t.Parallel()
 
 	repoPath := filepath.Join(t.TempDir(), "guiapp.db")
@@ -215,7 +219,7 @@ func TestSharedRepositoryCloseDoesNotCloseUnderlyingRepo(t *testing.T) {
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
-		Repository: sharedRepository{MetadataRepository: repo},
+		Repository: repo,
 	})
 	if err != nil {
 		t.Fatalf("new core: %v", err)

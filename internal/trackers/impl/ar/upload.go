@@ -162,9 +162,15 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	if err != nil {
 		return uploadState{}, nil, err
 	}
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
+	var assets trackers.DescriptionAssets
+	if req.Assets != nil {
+		assets = *req.Assets
+	} else {
+		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		if err != nil {
+			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
+			assets = trackers.DescriptionAssets{}
+		}
 	}
 	description, err := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
 	if err != nil {
@@ -298,6 +304,8 @@ func cleanNotes(value string) string {
 	sceneBlocks := []*regexp.Regexp{
 		regexp.MustCompile(`(?is)\[center\]\[spoiler=Scene NFO:\].*?\[/center\]`),
 		regexp.MustCompile(`(?is)\[center\]\[spoiler=FraMeSToR NFO:\].*?\[/center\]`),
+		regexp.MustCompile(`(?is)\[color=red\]\[size=4\]Screenshots\[/size\]\[/color\]\s*\[align=center\].*?\[/align\]`),
+		regexp.MustCompile(`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/(?:Audionut|autobrr)/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`),
 	}
 	for _, pattern := range sceneBlocks {
 		trimmed = pattern.ReplaceAllString(trimmed, "")

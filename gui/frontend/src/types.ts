@@ -422,9 +422,13 @@ export type MetadataProgressUpdate = {
 };
 
 export type PreparationDescription = {
+  GroupKey: string;
   Trackers: string[];
+  RawDescription: string;
+  RawDescriptionHTML: string;
   Description: string;
   DescriptionHTML: string;
+  HasOverride: boolean;
   ImageHost: ImageHostFeedback;
 };
 
@@ -441,17 +445,18 @@ export type ImageHostFeedback = {
   Message: string;
 };
 
-export type DescriptionImageHostStatus = {
+export type DescriptionBuilderGroup = {
+  GroupKey: string;
   Trackers: string[];
+  RawDescription: string;
+  RawDescriptionHTML: string;
+  HasOverride: boolean;
   ImageHost: ImageHostFeedback;
 };
 
 export type DescriptionBuilderPreview = {
   SourcePath: string;
-  Description: string;
-  DescriptionHTML: string;
-  HasOverride: boolean;
-  ImageHosts: DescriptionImageHostStatus[];
+  Groups: DescriptionBuilderGroup[];
 };
 
 export type ScreenshotPurpose = "preview" | "final";
@@ -580,7 +585,8 @@ export type HistoryOverview = {
   ExternalIDs: ExternalIDs;
   ExternalMetadata: Record<string, unknown>;
   ReleaseNameOverrides: ReleaseNameOverrides;
-  DescriptionOverride: { SourcePath: string; Description: string; UpdatedAt: string };
+  DescriptionOverride: { SourcePath: string; GroupKey: string; Description: string; UpdatedAt: string };
+  DescriptionOverrides: Array<{ SourcePath: string; GroupKey: string; Description: string; UpdatedAt: string }>;
   PlaylistSelection: { SourcePath: string; SelectedPlaylists: string[]; UseAll: boolean; UpdatedAt: string };
   TrackerMetadata: HistoryTrackerMetadata[];
   TrackerRuleFailures: HistoryRuleFailure[];

@@ -81,9 +81,15 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}
 	}
 
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
+	assets := trackers.DescriptionAssets{}
+	if req.Assets != nil {
+		assets = *req.Assets
+	} else {
+		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		if err != nil {
+			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
+			assets = trackers.DescriptionAssets{}
+		}
 	}
 	descText, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
@@ -141,9 +147,16 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	default:
 	}
 
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
+	var err error
+	assets := trackers.DescriptionAssets{}
+	if req.Assets != nil {
+		assets = *req.Assets
+	} else {
+		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		if err != nil {
+			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
+			assets = trackers.DescriptionAssets{}
+		}
 	}
 	descText, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {

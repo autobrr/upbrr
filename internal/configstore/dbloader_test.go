@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package guiapp
+package configstore_test
 
 import (
 	"context"
@@ -9,10 +9,11 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/services/db"
 )
 
-func TestLoadConfigDisablesUnsupportedTrackerImageRehostFromDatabase(t *testing.T) {
+func TestLoadFromDBPathDisablesUnsupportedTrackerImageRehost(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
@@ -41,16 +42,16 @@ func TestLoadConfigDisablesUnsupportedTrackerImageRehostFromDatabase(t *testing.
 	}
 	_ = repo.Close()
 
-	loaded, err := loadConfigFromDatabase(context.Background(), dbPath)
+	loaded, err := configstore.LoadFromDBPath(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("load config from database: %v", err)
 	}
 	if loaded.Trackers.Trackers["TL"].ImgRehost {
-		t.Fatal("expected unsupported TL img_rehost to be disabled during GUI config load")
+		t.Fatal("expected unsupported TL img_rehost to be disabled on load")
 	}
 }
 
-func TestLoadConfigFromDatabaseBackfillsMissingTrackerDefaults(t *testing.T) {
+func TestLoadFromDBPathBackfillsMissingTrackerDefaults(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
@@ -77,11 +78,11 @@ func TestLoadConfigFromDatabaseBackfillsMissingTrackerDefaults(t *testing.T) {
 	}
 	_ = repo.Close()
 
-	loaded, err := loadConfigFromDatabase(context.Background(), dbPath)
+	loaded, err := configstore.LoadFromDBPath(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("load config from database: %v", err)
 	}
 	if _, ok := loaded.Trackers.Trackers["BTN"]; !ok {
-		t.Fatal("expected BTN tracker to be backfilled during GUI config load")
+		t.Fatal("expected BTN tracker to be backfilled on load")
 	}
 }

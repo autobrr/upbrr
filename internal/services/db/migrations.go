@@ -4,6 +4,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -14,7 +15,13 @@ const baselineSchemaVersion = 1
 
 type migrationStep struct {
 	version int
-	apply   func(*sql.Tx) error
+	apply   func(context.Context, migrationExecutor) error
+}
+
+type migrationExecutor interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // Add new forward-only migrations here.
@@ -26,9 +33,10 @@ var futureMigrations = []migrationStep{
 	{version: 4, apply: migrateV4},
 	{version: 5, apply: migrateV5},
 	{version: 6, apply: migrateV6},
+	{version: 7, apply: migrateV7},
 }
 
-func migrateV2(tx *sql.Tx) error {
+func migrateV2(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`
 		CREATE TABLE IF NOT EXISTS dvd_mediainfo (
@@ -52,7 +60,7 @@ func migrateV2(tx *sql.Tx) error {
 	}
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -60,13 +68,13 @@ func migrateV2(tx *sql.Tx) error {
 	return nil
 }
 
-func migrateV3(tx *sql.Tx) error {
+func migrateV3(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`,
 	}
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -74,14 +82,14 @@ func migrateV3(tx *sql.Tx) error {
 	return nil
 }
 
-func migrateV4(tx *sql.Tx) error {
+func migrateV4(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`CREATE INDEX IF NOT EXISTS idx_file_metadata_updated_at ON file_metadata(updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_upload_records_source_created ON upload_records(source_path, created_at DESC)`,
 	}
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -89,9 +97,9 @@ func migrateV4(tx *sql.Tx) error {
 	return nil
 }
 
-func migrateV5(tx *sql.Tx) error {
+func migrateV5(ctx context.Context, exec migrationExecutor) error {
 	statements := make([]string, 0, 5)
-	exists, err := tableColumnExists(tx, "uploaded_images", "usage_scope")
+	exists, err := tableColumnExists(ctx, exec, "uploaded_images", "usage_scope")
 	if err != nil {
 		return err
 	}
@@ -106,7 +114,7 @@ func migrateV5(tx *sql.Tx) error {
 	)
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -114,7 +122,7 @@ func migrateV5(tx *sql.Tx) error {
 	return nil
 }
 
-func migrateV6(tx *sql.Tx) error {
+func migrateV6(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`
 		CREATE TABLE IF NOT EXISTS screenshot_slots (
@@ -153,7 +161,7 @@ func migrateV6(tx *sql.Tx) error {
 	}
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -161,8 +169,69 @@ func migrateV6(tx *sql.Tx) error {
 	return nil
 }
 
-func tableColumnExists(tx *sql.Tx, tableName string, columnName string) (bool, error) {
-	rows, err := tx.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
+func migrateV7(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "description_overrides")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := exec.ExecContext(ctx, `
+			CREATE TABLE IF NOT EXISTS description_overrides (
+				source_path TEXT NOT NULL,
+				group_key TEXT NOT NULL DEFAULT "",
+				description TEXT NOT NULL DEFAULT "",
+				updated_at TEXT NOT NULL,
+				PRIMARY KEY (source_path, group_key)
+			)
+		`); err != nil {
+			return err
+		}
+		if _, err := exec.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	statements := []string{
+		`ALTER TABLE description_overrides RENAME TO description_overrides_legacy`,
+		`
+		CREATE TABLE description_overrides (
+			source_path TEXT NOT NULL,
+			group_key TEXT NOT NULL DEFAULT "",
+			description TEXT NOT NULL DEFAULT "",
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (source_path, group_key)
+		)
+		`,
+		`
+		INSERT OR REPLACE INTO description_overrides (source_path, group_key, description, updated_at)
+		SELECT
+			TRIM(COALESCE(source_path, "")),
+			"",
+			COALESCE(description, ""),
+			CASE
+				WHEN TRIM(COALESCE(updated_at, "")) = "" THEN STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')
+				ELSE updated_at
+			END
+		FROM description_overrides_legacy
+		WHERE TRIM(COALESCE(source_path, "")) <> ""
+		ORDER BY rowid
+		`,
+		`DROP TABLE description_overrides_legacy`,
+		`CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`,
+	}
+
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName string, columnName string) (bool, error) {
+	rows, err := exec.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {
 		return false, err
 	}
@@ -188,17 +257,37 @@ func tableColumnExists(tx *sql.Tx, tableName string, columnName string) (bool, e
 	return false, nil
 }
 
+func tableExists(ctx context.Context, exec migrationExecutor, tableName string) (bool, error) {
+	var count int
+	if err := exec.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=?`, tableName).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func Migrate(db *sql.DB) error {
+	return MigrateContext(context.Background(), db)
+}
+
+func MigrateContext(ctx context.Context, db *sql.DB) error {
 	if db == nil {
 		return errors.New("db: nil connection")
 	}
-
-	tx, err := db.Begin()
+	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("db migrate begin: %w", err)
+		return fmt.Errorf("db migrate conn: %w", err)
 	}
 	defer func() {
-		_ = tx.Rollback()
+		_ = conn.Close()
+	}()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return fmt.Errorf("db migrate begin immediate: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		}
 	}()
 
 	latestVersion, err := latestSchemaVersion()
@@ -206,17 +295,17 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 
-	currentVersion, err := readUserVersion(tx)
+	currentVersion, err := readUserVersion(ctx, conn)
 	if err != nil {
 		return err
 	}
 
 	switch {
 	case currentVersion == 0:
-		if err := createBaselineSchema(tx); err != nil {
+		if err := createBaselineSchema(ctx, conn); err != nil {
 			return fmt.Errorf("db bootstrap baseline: %w", err)
 		}
-		if err := writeUserVersion(tx, baselineSchemaVersion); err != nil {
+		if err := writeUserVersion(ctx, conn, baselineSchemaVersion); err != nil {
 			return err
 		}
 		currentVersion = baselineSchemaVersion
@@ -224,13 +313,14 @@ func Migrate(db *sql.DB) error {
 		return fmt.Errorf("db migrate: database schema version %d is newer than application version %d", currentVersion, latestVersion)
 	}
 
-	if err := applyFutureMigrations(tx, currentVersion); err != nil {
+	if err := applyFutureMigrations(ctx, conn, currentVersion); err != nil {
 		return err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
 		return fmt.Errorf("db migrate commit: %w", err)
 	}
+	committed = true
 
 	return nil
 }
@@ -249,15 +339,15 @@ func latestSchemaVersion() (int, error) {
 	return expected - 1, nil
 }
 
-func applyFutureMigrations(tx *sql.Tx, currentVersion int) error {
+func applyFutureMigrations(ctx context.Context, exec migrationExecutor, currentVersion int) error {
 	for _, step := range futureMigrations {
 		if step.version <= currentVersion {
 			continue
 		}
-		if err := step.apply(tx); err != nil {
+		if err := step.apply(ctx, exec); err != nil {
 			return fmt.Errorf("db migrate v%d: %w", step.version, err)
 		}
-		if err := writeUserVersion(tx, step.version); err != nil {
+		if err := writeUserVersion(ctx, exec, step.version); err != nil {
 			return err
 		}
 		currentVersion = step.version
@@ -265,22 +355,22 @@ func applyFutureMigrations(tx *sql.Tx, currentVersion int) error {
 	return nil
 }
 
-func readUserVersion(tx *sql.Tx) (int, error) {
+func readUserVersion(ctx context.Context, exec migrationExecutor) (int, error) {
 	var version int
-	if err := tx.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+	if err := exec.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return 0, fmt.Errorf("db migrate: read user_version: %w", err)
 	}
 	return version, nil
 }
 
-func writeUserVersion(tx *sql.Tx, version int) error {
-	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, version)); err != nil {
+func writeUserVersion(ctx context.Context, exec migrationExecutor, version int) error {
+	if _, err := exec.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, version)); err != nil {
 		return fmt.Errorf("db migrate: write user_version: %w", err)
 	}
 	return nil
 }
 
-func createBaselineSchema(tx *sql.Tx) error {
+func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`
 		CREATE TABLE IF NOT EXISTS file_metadata (
@@ -465,11 +555,14 @@ func createBaselineSchema(tx *sql.Tx) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_uploaded_images_unique ON uploaded_images (source_path, usage_scope, host, image_path)`,
 		`
 		CREATE TABLE IF NOT EXISTS description_overrides (
-			source_path TEXT PRIMARY KEY,
+			source_path TEXT NOT NULL,
+			group_key TEXT NOT NULL DEFAULT "",
 			description TEXT NOT NULL DEFAULT "",
-			updated_at TEXT NOT NULL
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (source_path, group_key)
 		)
 		`,
+		`CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`,
 		`
 		CREATE TABLE IF NOT EXISTS tracker_rule_failures (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -494,7 +587,7 @@ func createBaselineSchema(tx *sql.Tx) error {
 	}
 
 	for idx, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("db bootstrap statement %d: %w", idx+1, err)
 		}
 	}

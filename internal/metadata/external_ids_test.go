@@ -162,15 +162,18 @@ func (f *fakeRepo) DeleteUploadedImage(ctx context.Context, path string, imagePa
 	return nil
 }
 
-func (f *fakeRepo) GetDescriptionOverride(ctx context.Context, path string) (api.DescriptionOverride, error) {
+func (f *fakeRepo) GetDescriptionOverride(ctx context.Context, path string, groupKey string) (api.DescriptionOverride, error) {
 	return api.DescriptionOverride{}, internalerrors.ErrNotFound
+}
+func (f *fakeRepo) ListDescriptionOverridesByPath(ctx context.Context, path string) ([]api.DescriptionOverride, error) {
+	return nil, nil
 }
 
 func (f *fakeRepo) SaveDescriptionOverride(ctx context.Context, override api.DescriptionOverride) error {
 	return nil
 }
 
-func (f *fakeRepo) DeleteDescriptionOverride(ctx context.Context, path string) error {
+func (f *fakeRepo) DeleteDescriptionOverride(ctx context.Context, path string, groupKey string) error {
 	return nil
 }
 

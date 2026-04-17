@@ -433,9 +433,12 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		entry, exists := grouped[key]
 		if !exists {
 			entry = &api.PreparationDescription{
-				Trackers:        []string{},
-				Description:     "",
-				DescriptionHTML: "",
+				GroupKey:           key,
+				Trackers:           []string{},
+				RawDescription:     "",
+				RawDescriptionHTML: "",
+				Description:        "",
+				DescriptionHTML:    "",
 			}
 			grouped[key] = entry
 			order = append(order, key)
@@ -506,17 +509,24 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		groupKey = preparationGroupKey(groupKey, resolution.feedback.SelectedHost, resolution.usageScope)
 
 		entry, exists := grouped[groupKey]
-		if !exists {
+		switch {
+		case !exists:
 			entry = &api.PreparationDescription{
-				Trackers:        []string{},
-				Description:     descriptionText,
-				DescriptionHTML: description.Render(descriptionText),
-				ImageHost:       resolution.feedback,
+				GroupKey:           groupKey,
+				Trackers:           []string{},
+				RawDescription:     strings.TrimSpace(assets.Description),
+				RawDescriptionHTML: description.Render(strings.TrimSpace(assets.Description)),
+				Description:        descriptionText,
+				DescriptionHTML:    description.Render(descriptionText),
+				HasOverride:        assets.Override,
+				ImageHost:          resolution.feedback,
 			}
 			grouped[groupKey] = entry
 			order = append(order, groupKey)
-		} else if entry.Description != descriptionText {
+		case entry.Description != descriptionText:
 			s.logger.Warnf("trackers: preparation group %s description mismatch (tracker=%s)", groupKey, tracker)
+		case entry.RawDescription != strings.TrimSpace(assets.Description):
+			s.logger.Warnf("trackers: preparation group %s raw description mismatch (tracker=%s)", groupKey, tracker)
 		}
 
 		entry.Trackers = append(entry.Trackers, tracker)
