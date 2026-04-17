@@ -127,7 +127,7 @@ func resolutionValue(meta api.PreparedMetadata) string {
 	if meta.VideoWidth > 0 && meta.VideoHeight > 0 {
 		return fmt.Sprintf("%dx%d", meta.VideoWidth, meta.VideoHeight)
 	}
-	return strings.TrimSpace(meta.Release.Resolution)
+	return ""
 }
 
 func videoQualityID(site siteDefinition, meta api.PreparedMetadata) string {
@@ -269,7 +269,7 @@ func ripTypeID(site siteDefinition, meta api.PreparedMetadata) string {
 			return "6"
 		case "HDTV":
 			return "7"
-		case "REMUX":
+		case "BluRay REMUX":
 			return "14"
 		case "WEB-DL":
 			return "12"

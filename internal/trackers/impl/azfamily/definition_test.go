@@ -244,11 +244,14 @@ func createFakeTorrent(t *testing.T, path string) {
 	mi := &metainfo.MetaInfo{
 		Announce: "http://tracker/announce",
 	}
+	pieceLength := int64(256)
+	length := int64(1024)
+	numPieces := (length + pieceLength - 1) / pieceLength
 	info := metainfo.Info{
-		PieceLength: 256,
-		Pieces:      make([]byte, 20),
+		PieceLength: pieceLength,
+		Pieces:      make([]byte, 20*numPieces),
 		Name:        "test",
-		Length:      1024,
+		Length:      length,
 	}
 	infoBytes, err := bencode.Marshal(info)
 	if err != nil {
