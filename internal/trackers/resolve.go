@@ -4,6 +4,7 @@
 package trackers
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -26,4 +27,16 @@ func ResolveTrackersWithDefaults(cfg config.Config, override []string, remove []
 		resolved[i] = strings.ToUpper(strings.TrimSpace(tracker))
 	}
 	return resolved
+}
+
+// ResolveIMDbIDText returns the IMDb ID in "tt1234567" format from the metadata,
+// preferring the canonical text form over a numeric fallback.
+func ResolveIMDbIDText(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText) != "" {
+		return strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText)
+	}
+	if meta.ExternalIDs.IMDBID > 0 {
+		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
+	}
+	return ""
 }

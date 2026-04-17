@@ -133,6 +133,32 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 }
 
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, []*http.Cookie, error) {
+	imdbID := trackers.ResolveIMDbIDText(req.Meta)
+	imdbID = strings.TrimPrefix(imdbID, "tt")
+
+	categoryID := resolveCategoryID(req.Meta)
+	filename := firstNonEmpty(req.Meta.ReleaseName, req.Meta.Filename, pathutil.Base(req.Meta.SourcePath))
+	genre := resolveGenres(req.Meta)
+
+	var blockedReason string
+	switch {
+	case strings.TrimSpace(imdbID) == "":
+		blockedReason = "requires IMDb ID"
+	case categoryID == 0:
+		blockedReason = "unsupported category"
+	case filename == "":
+		blockedReason = "missing filename"
+	case genre == "":
+		blockedReason = "missing genre"
+	}
+
+	if blockedReason != "" {
+		return uploadState{
+			blockedReason: blockedReason,
+			releaseName:   filename,
+		}, nil, nil
+	}
+
 	origTorrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, nil, err
@@ -164,11 +190,12 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if err != nil {
 		return uploadState{}, nil, err
 	}
+
 	fields := map[string]string{
-		"category":      strconv.Itoa(resolveCategoryID(req.Meta)),
-		"filename":      firstNonEmpty(req.Meta.ReleaseName, req.Meta.Filename, pathutil.Base(req.Meta.SourcePath)),
-		"genre":         resolveGenres(req.Meta),
-		"imdb":          resolveHDSIMDb(req.Meta),
+		"category":      strconv.Itoa(categoryID),
+		"filename":      filename,
+		"genre":         genre,
+		"imdb":          imdbID,
 		"info":          description,
 		"nuk_rea":       "",
 		"nuk":           "false",
@@ -186,13 +213,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		description:     description,
 		releaseName:     fields["filename"],
 		fields:          fields,
+		blockedReason:   blockedReason,
 	}
-	if !supportsHDSResolution(req.Meta.Release.Resolution) {
-		state.blockedReason = "resolution must be at least 720p"
-	}
-	if id := resolveHDSIMDb(req.Meta); strings.TrimSpace(id) == "" {
-		state.blockedReason = "missing IMDb ID"
-	}
+
 	if file, ok := resolveNFO(req.Meta); ok {
 		state.nfo = &file
 	}
@@ -212,9 +235,14 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		return 15
 	}
-	if strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX") {
-		return 40
+
+	releaseOther := meta.Release.Other
+	for _, other := range releaseOther {
+		if strings.ToLower(other) == "remux" {
+			return 40
+		}
 	}
+
 	category := strings.ToUpper(strings.TrimSpace(categoryOf(meta)))
 	if strings.Contains(strings.ToLower(resolveGenres(meta)+" "+resolveKeywords(meta)), "documentary") {
 		if strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "2160p") {
@@ -225,6 +253,7 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 		}
 		return 24
 	}
+
 	if meta.Anime {
 		switch strings.TrimSpace(meta.Release.Resolution) {
 		case "2160p":
@@ -232,7 +261,7 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 		case "1080p", "1080i":
 			return 28
 		default:
-			return 27
+			return 0
 		}
 	}
 	if category == "TV" {
@@ -242,17 +271,20 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 		case "1080p", "1080i":
 			return 22
 		default:
-			return 21
+			return 0
 		}
 	}
-	switch strings.TrimSpace(meta.Release.Resolution) {
-	case "2160p":
-		return 46
-	case "1080p", "1080i":
-		return 19
-	default:
-		return 18
+	if category == "MOVIE" {
+		switch strings.TrimSpace(meta.Release.Resolution) {
+		case "2160p":
+			return 46
+		case "1080p", "1080i":
+			return 19
+		default:
+			return 0
+		}
 	}
+	return 0
 }
 
 func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
@@ -302,14 +334,6 @@ func resolveGenres(meta api.PreparedMetadata) string {
 func resolveKeywords(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Keywords)
-	}
-	return ""
-}
-
-func resolveHDSIMDb(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.IMDB.IMDbIDText != "" {
-		// leading zeros are required
-		return strings.TrimPrefix(meta.ExternalMetadata.IMDB.IMDbIDText, "tt")
 	}
 	return ""
 }
