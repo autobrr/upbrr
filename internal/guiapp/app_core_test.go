@@ -6,11 +6,13 @@ package guiapp
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -224,6 +226,10 @@ func TestNewAppKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	}
 
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	authPath := filepath.Join(filepath.Dir(repoPath), authmaterial.WebAuthFileName)
+	if err := os.WriteFile(authPath, []byte(`{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":"stable-seed-for-tests"}`), 0o600); err != nil {
+		t.Fatalf("write web auth fixture: %v", err)
+	}
 	if err := config.ExportToYAML(cfg, configPath); err != nil {
 		t.Fatalf("export config: %v", err)
 	}
