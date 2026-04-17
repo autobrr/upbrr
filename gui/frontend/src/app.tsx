@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
 import DupeCheckPage from "./pages/dupe_check";
@@ -226,6 +226,7 @@ declare global {
             GetDefaultConfig: () => Promise<string>;
             SaveConfig: (payload: string) => Promise<void>;
             ExportConfig: () => Promise<string>;
+            ImportConfig: () => Promise<{ message: string; warnings: string[] }>;
             GetLogPath: () => Promise<string>;
             GetRecentLogs: (limit: number) => Promise<any[]>;
             StartLogStream: () => Promise<string>;
@@ -413,6 +414,15 @@ export default function App() {
   const [liveCaptureLoading, setLiveCaptureLoading] = useState(false);
   const [finalDragIndex, setFinalDragIndex] = useState<number | null>(null);
   const [settingsExporting, setSettingsExporting] = useState(false);
+  const [settingsImporting, setSettingsImporting] = useState(false);
+  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
+  const [configOpStatus, setConfigOpStatus] = useState<{
+    type: "success" | "error" | "warning";
+    title: string;
+    message: string;
+    warnings?: string[];
+  } | null>(null);
+  const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const builderDirty = useMemo(
     () => Object.values(builderDirtyByGroup).some(Boolean),
@@ -2691,11 +2701,31 @@ export default function App() {
     }
   };
 
+  const showConfigOpStatus = useCallback((status: NonNullable<typeof configOpStatus>) => {
+    if (configOpTimerRef.current) clearTimeout(configOpTimerRef.current);
+    setConfigOpStatus(status);
+    if (status.type === "success") {
+      configOpTimerRef.current = setTimeout(() => setConfigOpStatus(null), 8000);
+    }
+  }, []);
+
+  const dismissConfigOpStatus = useCallback(() => {
+    if (configOpTimerRef.current) clearTimeout(configOpTimerRef.current);
+    setConfigOpStatus(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (configOpTimerRef.current) clearTimeout(configOpTimerRef.current);
+    };
+  }, []);
+
   const handleExportSettings = async () => {
     clearSettingsStatus();
+    dismissConfigOpStatus();
     const exportConfig = globalThis.go?.guiapp?.App?.ExportConfig;
     if (!exportConfig) {
-      setSettingsErrorMessage("Settings export is unavailable in this build.");
+      showConfigOpStatus({ type: "error", title: "Export Failed", message: "Settings export is unavailable in this build." });
       return;
     }
 
@@ -2703,12 +2733,53 @@ export default function App() {
     try {
       const exportedPath = await exportConfig();
       if (exportedPath?.trim()) {
-        setSettingsSavedMessage(`Settings exported to ${exportedPath}.`);
+        showConfigOpStatus({ type: "success", title: "Configuration Exported", message: `Saved to ${exportedPath}` });
       }
     } catch (err) {
-      setSettingsErrorMessage(String(err));
+      showConfigOpStatus({ type: "error", title: "Export Failed", message: String(err) });
     } finally {
       setSettingsExporting(false);
+    }
+  };
+
+  const handleImportConfigRequest = () => {
+    clearSettingsStatus();
+    dismissConfigOpStatus();
+    setImportConfirmOpen(true);
+  };
+
+  const handleImportConfigCancel = () => {
+    if (settingsImporting) return;
+    setImportConfirmOpen(false);
+  };
+
+  const handleImportConfigConfirm = async () => {
+    const importConfig = globalThis.go?.guiapp?.App?.ImportConfig;
+    if (!importConfig) {
+      setImportConfirmOpen(false);
+      showConfigOpStatus({ type: "error", title: "Import Failed", message: "Config import is unavailable in this build." });
+      return;
+    }
+
+    setSettingsImporting(true);
+    try {
+      const result = await importConfig();
+      const message = (result?.message ?? "").trim();
+      if (!message) {
+        return;
+      }
+      const warnings = result?.warnings ?? [];
+      if (warnings.length > 0) {
+        showConfigOpStatus({ type: "warning", title: "Imported with Warnings", message, warnings });
+      } else {
+        showConfigOpStatus({ type: "success", title: "Configuration Imported", message });
+      }
+      loadSettings();
+    } catch (err) {
+      showConfigOpStatus({ type: "error", title: "Import Failed", message: String(err) });
+    } finally {
+      setSettingsImporting(false);
+      setImportConfirmOpen(false);
     }
   };
 
@@ -2834,9 +2905,12 @@ export default function App() {
               configData={configData}
               settingsLoading={settingsLoading}
               settingsExporting={settingsExporting}
+              settingsImporting={settingsImporting}
               settingsDirty={settingsDirty}
               settingsSaved={settingsSaved}
               settingsError={settingsError}
+              configOpStatus={configOpStatus}
+              dismissConfigOpStatus={dismissConfigOpStatus}
               settingsSection={settingsSection}
               settingsSections={settingsSections}
               showAdvancedToggle={showAdvancedToggle}
@@ -2845,6 +2919,10 @@ export default function App() {
               setSettingsAdvanced={setSettingsAdvanced}
               loadSettings={loadSettings}
               handleExportSettings={handleExportSettings}
+              handleImportConfig={handleImportConfigRequest}
+              importConfirmOpen={importConfirmOpen}
+              handleImportConfigConfirm={handleImportConfigConfirm}
+              handleImportConfigCancel={handleImportConfigCancel}
               handleSaveSettings={handleSaveSettings}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}

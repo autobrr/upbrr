@@ -110,6 +110,10 @@ export function GetTrackerUploadSnapshot(arg1) {
   return window['go']['guiapp']['App']['GetTrackerUploadSnapshot'](arg1);
 }
 
+export function ImportConfig() {
+  return window['go']['guiapp']['App']['ImportConfig']();
+}
+
 export function ListHistory() {
   return window['go']['guiapp']['App']['ListHistory']();
 }

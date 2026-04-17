@@ -19,6 +19,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/config/importer"
+	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guishared"
@@ -57,7 +59,7 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cfg, dbPath, err := loadConfigWithContext(ctx, configPath, configProvided)
+	cfg, dbPath, err := configstore.Bootstrap(ctx, configPath, configProvided, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1256,6 +1258,17 @@ func (a *App) SaveConfig(payload string) error {
 	return a.applyConfig(*cfg)
 }
 
+// isDialogCancelledErr reports whether err is the result of the user closing a
+// native Wails file dialog. On Windows, cancelling SaveFileDialog/OpenFileDialog
+// surfaces as a non-nil error containing "shellItem is nil" rather than an
+// empty path; treat that case the same as a normal cancel.
+func isDialogCancelledErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "shellItem is nil")
+}
+
 func (a *App) ExportConfig() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
@@ -1274,6 +1287,9 @@ func (a *App) ExportConfig() (string, error) {
 			{DisplayName: "YAML files", Pattern: "*.yaml;*.yml"},
 		},
 	})
+	if isDialogCancelledErr(err) {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -1298,34 +1314,84 @@ func (a *App) ExportConfig() (string, error) {
 	return trimmedPath, nil
 }
 
-func (a *App) applyConfig(cfg config.Config) error {
-	newLogger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
-	if err != nil {
-		return err
+type ImportResult struct {
+	Message  string   `json:"message"`
+	Warnings []string `json:"warnings"`
+}
+
+func (a *App) ImportConfig() (ImportResult, error) {
+	if a == nil {
+		return ImportResult{}, errors.New("app not initialized")
+	}
+	if a.repo == nil {
+		return ImportResult{}, errors.New("config repository not initialized")
+	}
+	if a.ctx == nil {
+		return ImportResult{}, errors.New("app context not ready")
 	}
 
-	newCore, err := core.New(api.CoreDependencies{
-		Context: a.ctx,
-		Config:  cfg,
-		Logger:  newLogger,
-		Services: api.ServiceSet{
-			Filesystem: filesystem.NewValidator(),
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Import configuration",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Config files", Pattern: "*.py;*.yaml;*.yml;*.json"},
+			{DisplayName: "All files", Pattern: "*.*"},
 		},
-		Repository: a.repo,
 	})
+	if isDialogCancelledErr(err) {
+		return ImportResult{}, nil
+	}
 	if err != nil {
-		_ = newLogger.Close()
+		return ImportResult{}, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return ImportResult{}, nil
+	}
+
+	cfg, warnings, err := importer.ImportFromFile(path)
+	if err != nil {
+		return ImportResult{}, err
+	}
+
+	cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
+
+	if err := cfg.Validate(); err != nil {
+		return ImportResult{}, fmt.Errorf("validate imported config: %w", err)
+	}
+
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
+		return ImportResult{}, err
+	}
+
+	config.ApplyEnvOverrides(cfg)
+	if err := a.applyConfig(*cfg); err != nil {
+		return ImportResult{}, err
+	}
+
+	message := "imported config from " + filepath.Base(path)
+	if len(warnings) > 0 {
+		message += fmt.Sprintf(" (%d warnings)", len(warnings))
+	}
+	return ImportResult{Message: message, Warnings: warnings}, nil
+}
+
+func (a *App) applyConfig(cfg config.Config) error {
+	rt, err := guishared.BuildRuntime(a.ctx, cfg, a.repo)
+	if err != nil {
 		return err
 	}
 
 	oldCore := a.core
 	oldLogger := a.logger
 
-	a.core = newCore
+	a.core = rt.Core
 	a.coreInitErr = nil
-	a.logger = newLogger
+	a.logger = rt.Logger
 	a.cfg = cfg
-	a.rebindLogStreams(oldLogger, newLogger)
+	a.rebindLogStreams(oldLogger, rt.Logger)
 
 	if oldCore != nil {
 		_ = oldCore.Close()

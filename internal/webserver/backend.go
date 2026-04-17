@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -740,6 +741,46 @@ func (b *Backend) SaveConfig(payload string) error {
 	return b.applyConfig(*cfg)
 }
 
+const configImportMaxBytes = importer.MaxFileBytes
+
+func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, error) {
+	if b.repo == nil {
+		return "", nil, errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(fileName) == "" {
+		return "", nil, errors.New("file name is required")
+	}
+	if strings.TrimSpace(fileContent) == "" {
+		return "", nil, errors.New("file content is required")
+	}
+
+	cfg, warnings, err := importer.ImportFromContent(fileName, []byte(fileContent))
+	if err != nil {
+		return "", nil, err
+	}
+
+	cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
+
+	if err := cfg.Validate(); err != nil {
+		return "", nil, fmt.Errorf("validate imported config: %w", err)
+	}
+
+	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
+		return "", nil, err
+	}
+
+	config.ApplyEnvOverrides(cfg)
+	if err := b.applyConfig(*cfg); err != nil {
+		return "", nil, err
+	}
+
+	result := "imported config"
+	if len(warnings) > 0 {
+		result += fmt.Sprintf(" (%d warnings)", len(warnings))
+	}
+	return result, warnings, nil
+}
+
 func (b *Backend) ListKnownTrackers() ([]string, error) {
 	return trackers.KnownTrackers(), nil
 }
@@ -937,29 +978,15 @@ func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
 }
 
 func (b *Backend) applyConfig(cfg config.Config) error {
-	ctx := context.Background()
-	newLogger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
+	rt, err := guishared.BuildRuntime(context.Background(), cfg, b.repo)
 	if err != nil {
-		return err
-	}
-	newCore, err := core.New(api.CoreDependencies{
-		Context: ctx,
-		Config:  cfg,
-		Logger:  newLogger,
-		Services: api.ServiceSet{
-			Filesystem: filesystem.NewValidator(),
-		},
-		Repository: b.repo,
-	})
-	if err != nil {
-		_ = newLogger.Close()
 		return err
 	}
 	oldCore := b.core
 	oldLogger := b.logger
-	b.core = newCore
+	b.core = rt.Core
 	b.coreInitErr = nil
-	b.logger = newLogger
+	b.logger = rt.Logger
 	b.cfg = cfg
 	if oldCore != nil {
 		_ = oldCore.Close()

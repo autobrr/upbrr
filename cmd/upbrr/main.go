@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/config/importer"
+	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -24,10 +26,6 @@ import (
 )
 
 var version = "dev"
-
-const (
-	defaultConfigName = "config.yaml"
-)
 
 func main() {
 	exitCode := 0
@@ -94,11 +92,17 @@ func run() error {
 	if opts.GUI && strings.TrimSpace(opts.ExportConfigPath) != "" {
 		return exitError(2, errors.New("--gui and --export-config cannot be used together"))
 	}
+	if opts.GUI && strings.TrimSpace(opts.ImportConfigPath) != "" {
+		return exitError(2, errors.New("--gui and --import-config cannot be used together"))
+	}
+	if strings.TrimSpace(opts.ExportConfigPath) != "" && strings.TrimSpace(opts.ImportConfigPath) != "" {
+		return exitError(2, errors.New("--export-config and --import-config cannot be used together"))
+	}
 
 	if opts.GUI {
 		resolvedConfigPath := ""
 		if configFlagProvided {
-			resolvedConfigPath, err = resolveConfigPath(opts.ConfigPath, configFlagProvided)
+			resolvedConfigPath, err = configstore.ResolveYAMLPath(opts.ConfigPath, configFlagProvided)
 			if err != nil {
 				return exitError(1, err)
 			}
@@ -118,7 +122,15 @@ func run() error {
 		return nil
 	}
 
-	resolvedConfigPath, err := resolveConfigPath(opts.ConfigPath, configFlagProvided)
+	if strings.TrimSpace(opts.ImportConfigPath) != "" {
+		ctx := context.Background()
+		if err := importConfig(ctx, opts.ImportConfigPath, opts.ConfigPath, configFlagProvided); err != nil {
+			return exitError(1, err)
+		}
+		return nil
+	}
+
+	resolvedConfigPath, err := configstore.ResolveYAMLPath(opts.ConfigPath, configFlagProvided)
 	if err != nil {
 		return exitError(1, err)
 	}
@@ -258,7 +270,7 @@ func runServe(args []string) error {
 	}
 
 	configFlagProvided := visitedFlags["config"]
-	resolvedConfigPath, err := resolveConfigPath(opts.ConfigPath, configFlagProvided)
+	resolvedConfigPath, err := configstore.ResolveYAMLPath(opts.ConfigPath, configFlagProvided)
 	if err != nil {
 		return err
 	}
@@ -290,198 +302,21 @@ func runServe(args []string) error {
 }
 
 func loadCLIConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	ctx := context.Background()
-	if configProvided {
-		resolved, err := resolveConfigPath(configPath, configProvided)
-		if err != nil {
-			return config.Config{}, "", err
-		}
-		loaded, err := config.ImportFromYAML(resolved)
-		if err != nil {
-			return config.Config{}, "", err
-		}
-		config.ApplyEnvOverrides(loaded)
-		cfg := *loaded
-		dbPath := strings.TrimSpace(cfg.MainSettings.DBPath)
-		if dbPath == "" {
-			dbPath, err = db.DefaultPath()
-			if err != nil {
-				return config.Config{}, "", fmt.Errorf("default db path: %w", err)
-			}
-			cfg.MainSettings.DBPath = dbPath
-		}
-		if err := cfg.Validate(); err != nil {
-			return config.Config{}, "", err
-		}
-		if err := saveConfigToDatabase(ctx, &cfg, dbPath); err != nil {
-			return config.Config{}, "", err
-		}
-		return cfg, dbPath, nil
-	}
-
-	defaultDBPath, err := db.DefaultPath()
-	if err != nil {
-		return config.Config{}, "", fmt.Errorf("default db path: %w", err)
-	}
-
-	cfg, err := loadConfigFromDatabase(ctx, defaultDBPath)
-	if err == nil {
-		if strings.TrimSpace(cfg.MainSettings.DBPath) == "" || cfg.MainSettings.DBPath != defaultDBPath {
-			cfg.MainSettings.DBPath = defaultDBPath
-			if err := saveConfigToDatabase(ctx, &cfg, defaultDBPath); err != nil {
-				return config.Config{}, "", err
-			}
-		}
-		if err := cfg.Validate(); err != nil {
-			return config.Config{}, "", err
-		}
-		return cfg, defaultDBPath, nil
-	}
-	if !errors.Is(err, internalerrors.ErrNotFound) {
-		return config.Config{}, "", err
-	}
-
-	resolved, err := resolveConfigPath(configPath, configProvided)
+	cfg, dbPath, err := configstore.Bootstrap(context.Background(), configPath, configProvided, true)
 	if err != nil {
 		return config.Config{}, "", err
 	}
-	loaded, err := loadConfigFromPathOrEmbedded(resolved)
-	if err != nil {
-		return config.Config{}, "", err
-	}
-	config.ApplyEnvOverrides(loaded)
-	cfg = *loaded
-
-	fallbackDBPath := strings.TrimSpace(cfg.MainSettings.DBPath)
-	if fallbackDBPath == "" {
-		fallbackDBPath = defaultDBPath
-	}
-
-	if fallbackDBPath != defaultDBPath {
-		fallbackCfg, err := loadConfigFromDatabase(ctx, fallbackDBPath)
-		if err == nil {
-			if err := fallbackCfg.Validate(); err != nil {
-				return config.Config{}, "", err
-			}
-			return fallbackCfg, fallbackDBPath, nil
-		}
-		if !errors.Is(err, internalerrors.ErrNotFound) {
-			return config.Config{}, "", err
-		}
-	}
-
-	cfg.MainSettings.DBPath = fallbackDBPath
 	if err := cfg.Validate(); err != nil {
 		return config.Config{}, "", err
 	}
-	if err := saveConfigToDatabase(ctx, &cfg, fallbackDBPath); err != nil {
-		return config.Config{}, "", err
-	}
-	return cfg, fallbackDBPath, nil
+	return cfg, dbPath, nil
 }
 
 // loadServeConfig loads config for the web server without requiring a fully
 // valid config (e.g. tmdb_api). The web UI handles initial setup, so the
 // server must be able to start even on a fresh install with no config yet.
 func loadServeConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	ctx := context.Background()
-	if configProvided {
-		resolved, err := resolveConfigPath(configPath, configProvided)
-		if err != nil {
-			return config.Config{}, "", err
-		}
-		loaded, err := config.ImportFromYAML(resolved)
-		if err != nil {
-			return config.Config{}, "", err
-		}
-		config.ApplyEnvOverrides(loaded)
-		cfg := *loaded
-		dbPath := strings.TrimSpace(cfg.MainSettings.DBPath)
-		if dbPath == "" {
-			dbPath, err = db.DefaultPath()
-			if err != nil {
-				return config.Config{}, "", fmt.Errorf("default db path: %w", err)
-			}
-			cfg.MainSettings.DBPath = dbPath
-		}
-		// Do not persist the imported YAML to the database. Writing it back would
-		// overwrite previously valid database-backed config with zero values for
-		// any fields omitted from the YAML file. Use it for this process only.
-		return cfg, dbPath, nil
-	}
-
-	defaultDBPath, err := db.DefaultPath()
-	if err != nil {
-		return config.Config{}, "", fmt.Errorf("default db path: %w", err)
-	}
-
-	cfg, err := loadConfigFromDatabase(ctx, defaultDBPath)
-	if err == nil {
-		if strings.TrimSpace(cfg.MainSettings.DBPath) == "" || cfg.MainSettings.DBPath != defaultDBPath {
-			cfg.MainSettings.DBPath = defaultDBPath
-			if err := saveConfigToDatabase(ctx, &cfg, defaultDBPath); err != nil {
-				return config.Config{}, "", err
-			}
-		}
-		return cfg, defaultDBPath, nil
-	}
-	if !errors.Is(err, internalerrors.ErrNotFound) {
-		return config.Config{}, "", err
-	}
-
-	// No database yet — use embedded defaults. The server will start with an
-	// empty/default config and wait for the user to configure via the UI.
-	loaded, err := loadConfigFromPathOrEmbedded(configPath)
-	if err != nil {
-		return config.Config{}, "", err
-	}
-	config.ApplyEnvOverrides(loaded)
-	cfg = *loaded
-
-	fallbackDBPath := strings.TrimSpace(cfg.MainSettings.DBPath)
-	if fallbackDBPath == "" {
-		fallbackDBPath = defaultDBPath
-	}
-
-	cfg.MainSettings.DBPath = fallbackDBPath
-	return cfg, fallbackDBPath, nil
-}
-
-func loadConfigFromDatabase(ctx context.Context, dbPath string) (config.Config, error) {
-	repo, err := db.Open(dbPath)
-	if err != nil {
-		return config.Config{}, err
-	}
-	defer repo.Close()
-
-	if err := repo.MigrateContext(ctx); err != nil {
-		return config.Config{}, err
-	}
-
-	loaded, err := config.LoadFromDatabase(ctx, repo)
-	if err != nil {
-		return config.Config{}, err
-	}
-	config.ApplyEnvOverrides(loaded)
-	return *loaded, nil
-}
-
-func saveConfigToDatabase(ctx context.Context, cfg *config.Config, dbPath string) error {
-	repo, err := db.Open(dbPath)
-	if err != nil {
-		return err
-	}
-	defer repo.Close()
-
-	if err := repo.MigrateContext(ctx); err != nil {
-		return err
-	}
-
-	if err := config.SaveToDatabase(ctx, cfg, repo); err != nil {
-		return err
-	}
-
-	return nil
+	return configstore.Bootstrap(context.Background(), configPath, configProvided, false)
 }
 
 func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string) error {
@@ -509,7 +344,7 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 
 func resolveExportDBPath(configPath string, configProvided bool) (string, error) {
 	if configProvided {
-		resolvedConfigPath, err := resolveConfigPath(configPath, configProvided)
+		resolvedConfigPath, err := configstore.ResolveYAMLPath(configPath, configProvided)
 		if err != nil {
 			return "", err
 		}
@@ -638,45 +473,6 @@ func intPtr(value int) *int {
 func boolPtr(value bool) *bool {
 	copy := value
 	return &copy
-}
-
-func resolveConfigPath(configPath string, configFlagProvided bool) (string, error) {
-	if configFlagProvided {
-		if strings.TrimSpace(configPath) == "" {
-			return "", errors.New("config path is required when --config is provided")
-		}
-		return configPath, nil
-	}
-
-	defaultPath, err := defaultConfigPath()
-	if err != nil {
-		return "", err
-	}
-	return defaultPath, nil
-}
-
-func loadConfigFromPathOrEmbedded(path string) (*config.Config, error) {
-	if strings.TrimSpace(path) != "" {
-		if _, err := os.Stat(path); err == nil {
-			return config.ImportFromYAML(path)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("check config: %w", err)
-		}
-	}
-
-	loaded, err := config.LoadEmbeddedDefaultConfig()
-	if err != nil {
-		return nil, fmt.Errorf("load embedded config: %w", err)
-	}
-	return loaded, nil
-}
-
-func defaultConfigPath() (string, error) {
-	defaultDBPath, err := db.DefaultPath()
-	if err != nil {
-		return "", fmt.Errorf("default db path: %w", err)
-	}
-	return filepath.Join(filepath.Dir(defaultDBPath), defaultConfigName), nil
 }
 
 func splitCSV(value string) []string {
@@ -884,4 +680,37 @@ func formatDuration(seconds float64) string {
 		return fmt.Sprintf("%dm %ds", m, s)
 	}
 	return fmt.Sprintf("%ds", s)
+}
+
+func importConfig(ctx context.Context, importPath, configPath string, configProvided bool) error {
+	cfg, warnings, err := importer.ImportFromFile(importPath)
+	if err != nil {
+		return err
+	}
+
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
+
+	dbPath, err := resolveExportDBPath(configPath, configProvided)
+	if err != nil {
+		return fmt.Errorf("resolve database path: %w", err)
+	}
+
+	cfg.MainSettings.DBPath = dbPath
+
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("validate imported config: %w", err)
+	}
+
+	if err := configstore.SaveToDBPath(ctx, cfg, dbPath); err != nil {
+		return fmt.Errorf("save imported config: %w", err)
+	}
+
+	if len(warnings) > 0 {
+		fmt.Printf("imported config from %s (%d warnings)\n", importPath, len(warnings))
+	} else {
+		fmt.Printf("imported config from %s\n", importPath)
+	}
+	return nil
 }
