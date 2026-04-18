@@ -50,8 +50,8 @@ func (cs *CookieStore) saveCookie(ctx context.Context, execer cookieStoreExecer,
 		return errors.New("SaveCookie: context is required")
 	}
 
-	if trackerID == "" || cookieName == "" {
-		return errors.New("SaveCookie: trackerID and cookieName must be non-empty")
+	if err := validateTrackerCookieInputs("SaveCookie", trackerID, cookieName); err != nil {
+		return err
 	}
 	if len(key) != 32 {
 		return errors.New("SaveCookie: invalid encryption key")
@@ -85,8 +85,8 @@ func (cs *CookieStore) saveCookie(ctx context.Context, execer cookieStoreExecer,
 
 // GetCookie retrieves and decrypts a single cookie from the database.
 func (cs *CookieStore) GetCookie(ctx context.Context, trackerID, cookieName string, key []byte) (string, error) {
-	if trackerID == "" || cookieName == "" {
-		return "", errors.New("SaveCookie: trackerID and cookieName must be non-empty")
+	if err := validateTrackerCookieInputs("GetCookie", trackerID, cookieName); err != nil {
+		return "", err
 	}
 
 	if ctx == nil {
@@ -173,8 +173,8 @@ func (cs *CookieStore) GetAllTrackerCookies(ctx context.Context, trackerID strin
 
 // DeleteCookie removes a specific cookie from the database.
 func (cs *CookieStore) DeleteCookie(ctx context.Context, trackerID, cookieName string) error {
-	if trackerID == "" || cookieName == "" {
-		return errors.New("SaveCookie: trackerID and cookieName must be non-empty")
+	if err := validateTrackerCookieInputs("DeleteCookie", trackerID, cookieName); err != nil {
+		return err
 	}
 
 	if ctx == nil {
@@ -266,4 +266,12 @@ func (cs *CookieStore) HasCookies(ctx context.Context, trackerID string) (bool, 
 	}
 
 	return count > 0, nil
+}
+
+func validateTrackerCookieInputs(operation, trackerID, cookieName string) error {
+	if trackerID == "" || cookieName == "" {
+		return fmt.Errorf("%s: trackerID and cookieName must be non-empty", operation)
+	}
+
+	return nil
 }

@@ -24,7 +24,7 @@ func (s stubCookieStore) GetAllTrackerCookies(context.Context, string, []byte) (
 	return s.cookies, nil
 }
 
-func TestLoadCookiesForTrackerPrefersCookieStore(t *testing.T) {
+func TestLoadCookiesForTrackerUsesCookieStoreWhenNoStartupCookieExists(t *testing.T) {
 	t.Parallel()
 
 	got, err := LoadCookiesForTracker(
@@ -39,6 +39,50 @@ func TestLoadCookiesForTrackerPrefersCookieStore(t *testing.T) {
 	}
 	if got["session"] != "from-db" {
 		t.Fatalf("expected cookie from store, got %#v", got)
+	}
+}
+
+func TestLoadCookiesForTrackerStartupCookieOverridesCookieStore(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state", "upbrr.db")
+	candidates := CookiePathCandidates(dbPath, "blu", ".txt", ".json")
+
+	jsonPath := ""
+	for _, candidate := range candidates {
+		if strings.HasSuffix(candidate, ".json") {
+			jsonPath = candidate
+			break
+		}
+	}
+	if jsonPath == "" {
+		t.Fatalf("expected json cookie candidate, got %#v", candidates)
+	}
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(jsonPath, []byte(`{"session":"from-startup","extra":"from-file"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := LoadCookiesForTracker(
+		context.Background(),
+		dbPath,
+		"blu",
+		stubCookieStore{cookies: map[string]string{"session": "from-db", "persisted": "keep-me"}},
+		[]byte("01234567890123456789012345678901"),
+	)
+	if err != nil {
+		t.Fatalf("LoadCookiesForTracker: %v", err)
+	}
+	if got["session"] != "from-startup" {
+		t.Fatalf("expected startup cookie to override store value, got %#v", got)
+	}
+	if got["persisted"] != "keep-me" {
+		t.Fatalf("expected db-only cookie to be preserved, got %#v", got)
+	}
+	if got["extra"] != "from-file" {
+		t.Fatalf("expected startup-only cookie to be returned, got %#v", got)
 	}
 }
 
@@ -80,6 +124,49 @@ func TestLoadCookiesForTrackerFallsBackToJSONFileWhenStoreHasNoCookies(t *testin
 	}
 	if got["session"] != "from-json" {
 		t.Fatalf("expected JSON fallback cookie, got %#v", got)
+	}
+}
+
+func TestLoadCookiesForTrackerFallsBackToNetscapeFileWithoutDomainFilter(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state", "upbrr.db")
+	candidates := CookiePathCandidates(dbPath, "blu", ".txt", ".json")
+	if len(candidates) != 2 {
+		t.Fatalf("expected txt and json cookie candidates, got %#v", candidates)
+	}
+
+	txtPath := ""
+	for _, candidate := range candidates {
+		if strings.HasSuffix(candidate, ".txt") {
+			txtPath = candidate
+			break
+		}
+	}
+	if txtPath == "" {
+		t.Fatalf("expected txt cookie candidate, got %#v", candidates)
+	}
+	if err := os.MkdirAll(filepath.Dir(txtPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	netscape := ".example.org\tTRUE\t/\tFALSE\t0\tsession\tfrom-txt\n"
+	if err := os.WriteFile(txtPath, []byte(netscape), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := LoadCookiesForTracker(
+		context.Background(),
+		dbPath,
+		"blu",
+		stubCookieStore{cookies: map[string]string{}},
+		[]byte("01234567890123456789012345678901"),
+	)
+	if err != nil {
+		t.Fatalf("LoadCookiesForTracker: %v", err)
+	}
+	if got["session"] != "from-txt" {
+		t.Fatalf("expected Netscape fallback cookie, got %#v", got)
 	}
 }
 

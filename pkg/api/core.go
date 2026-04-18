@@ -5,8 +5,6 @@ package api
 
 import (
 	"context"
-
-	"github.com/autobrr/upbrr/internal/config"
 )
 
 type Mode string
@@ -131,9 +129,15 @@ type Core interface {
 	Close() error
 }
 
+// Config defines the minimum application configuration contract required by core wiring.
+// Keeping this in pkg/api avoids leaking internal package types into exported APIs.
+type Config interface {
+	Validate() error
+}
+
 type CoreDependencies struct {
 	Context    context.Context
-	Config     config.Config
+	Config     Config
 	Logger     Logger
 	Services   ServiceSet
 	Repository MetadataRepository

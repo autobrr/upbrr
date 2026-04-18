@@ -72,7 +72,7 @@ func TestCookieStoreGetCookieRejectsEmptyTrackerOrName(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected input validation error")
 			}
-			if err.Error() != "SaveCookie: trackerID and cookieName must be non-empty" {
+			if err.Error() != "GetCookie: trackerID and cookieName must be non-empty" {
 				t.Fatalf("unexpected validation error: %v", err)
 			}
 		})
@@ -101,7 +101,7 @@ func TestCookieStoreDeleteCookieRejectsEmptyTrackerOrName(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected input validation error")
 			}
-			if err.Error() != "SaveCookie: trackerID and cookieName must be non-empty" {
+			if err.Error() != "DeleteCookie: trackerID and cookieName must be non-empty" {
 				t.Fatalf("unexpected validation error: %v", err)
 			}
 		})

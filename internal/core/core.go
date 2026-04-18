@@ -64,11 +64,24 @@ func New(deps api.CoreDependencies) (*Core, error) {
 	}
 	logger.Infof("core: initializing")
 
-	if err := deps.Config.Validate(); err != nil {
-		return nil, err
+	var cfg config.Config
+	switch typed := deps.Config.(type) {
+	case nil:
+		return nil, errors.New("core: config is required")
+	case config.Config:
+		cfg = typed
+	case *config.Config:
+		if typed == nil {
+			return nil, errors.New("core: config is required")
+		}
+		cfg = *typed
+	default:
+		return nil, fmt.Errorf("core: unsupported config type %T", deps.Config)
 	}
 
-	cfg := deps.Config
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 
 	repo := deps.Repository
 	ownsRepo := false

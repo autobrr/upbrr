@@ -31,6 +31,8 @@ func LoadTrackerCookieMap(ctx context.Context, dbPath string, trackerID string) 
 		return nil, errors.New("cookies: tracker id is required")
 	}
 
+	var storedValues map[string]string
+
 	if store, key, repo, err := openTrackerCookieStore(ctx, dbPath); err == nil {
 		defer func() {
 			_ = repo.Close()
@@ -41,13 +43,21 @@ func LoadTrackerCookieMap(ctx context.Context, dbPath string, trackerID string) 
 			return nil, fmt.Errorf("cookies: load tracker %s from db: %w", normalizedTrackerID, err)
 		}
 		if len(values) > 0 {
-			return values, nil
+			storedValues = values
 		}
 	} else if !errors.Is(err, ErrAuthHelperUnavailable) {
 		return nil, err
 	}
 
-	return loadTrackerCookieMapFromFiles(dbPath, normalizedTrackerID)
+	fileValues, err := loadTrackerCookieMapFromFiles(dbPath, normalizedTrackerID)
+	if err == nil {
+		return mergeCookieMaps(storedValues, fileValues), nil
+	}
+	if len(storedValues) > 0 {
+		return storedValues, nil
+	}
+
+	return nil, err
 }
 
 func LoadTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string, domain string) ([]*http.Cookie, error) {
@@ -60,6 +70,8 @@ func LoadTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string
 		return nil, errors.New("cookies: tracker id is required")
 	}
 
+	var storedValues map[string]string
+
 	if store, key, repo, err := openTrackerCookieStore(ctx, dbPath); err == nil {
 		defer func() {
 			_ = repo.Close()
@@ -70,13 +82,21 @@ func LoadTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string
 			return nil, fmt.Errorf("cookies: load tracker %s from db: %w", normalizedTrackerID, err)
 		}
 		if len(values) > 0 {
-			return CookieMapToHTTPCookies(values, domain), nil
+			storedValues = values
 		}
 	} else if !errors.Is(err, ErrAuthHelperUnavailable) {
 		return nil, err
 	}
 
-	return loadTrackerHTTPCookiesFromFiles(dbPath, normalizedTrackerID, domain)
+	fileCookies, err := loadTrackerHTTPCookiesFromFiles(dbPath, normalizedTrackerID, domain)
+	if err == nil {
+		return CookieMapToHTTPCookies(mergeCookieMaps(storedValues, httpCookiesToMap(fileCookies)), domain), nil
+	}
+	if len(storedValues) > 0 {
+		return CookieMapToHTTPCookies(storedValues, domain), nil
+	}
+
+	return nil, err
 }
 
 func SaveTrackerCookieMap(ctx context.Context, dbPath string, trackerID string, values map[string]string) error {
@@ -264,6 +284,25 @@ func httpCookiesToMap(values []*http.Cookie) map[string]string {
 		result[name] = cookieValue
 	}
 	return result
+}
+
+func mergeCookieMaps(base map[string]string, override map[string]string) map[string]string {
+	if len(base) == 0 {
+		return override
+	}
+	if len(override) == 0 {
+		return base
+	}
+
+	merged := make(map[string]string, len(base)+len(override))
+	for name, value := range base {
+		merged[name] = value
+	}
+	for name, value := range override {
+		merged[name] = value
+	}
+
+	return merged
 }
 
 func isMissingCookieSchemaError(err error) bool {

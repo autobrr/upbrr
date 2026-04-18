@@ -52,9 +52,10 @@ type CookieStore interface {
 	GetAllTrackerCookies(ctx context.Context, trackerID string, key []byte) (map[string]string, error)
 }
 
-// LoadCookiesForTracker loads cookies for a tracker from either the database (if available)
-// or falls back to file-based loading. If cookieStore and encryptionKey are provided,
-// it will try to load from the database first; otherwise it loads from files.
+// LoadCookiesForTracker loads cookies for a tracker from startup cookie files and the
+// database. When both sources are available, startup file cookies win on conflicts so
+// a fresh startup bootstrap can override stale persisted values while still preserving
+// DB-only cookies.
 // A nil ctx is accepted and treated as context.Background(); callers should pass
 // an explicit request-scoped context whenever possible.
 func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string, cookieStore CookieStore, encryptionKey []byte) (map[string]string, error) {
@@ -62,25 +63,29 @@ func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string,
 		ctx = context.Background()
 	}
 
-	// Try database first if store and key are available
+	var storeCookies map[string]string
+
+	// Load database cookies first so startup cookie files can overwrite stale entries.
 	if cookieStore != nil && len(encryptionKey) > 0 {
 		cookies, err := cookieStore.GetAllTrackerCookies(ctx, trackerID, encryptionKey)
 		if err != nil {
 			return nil, fmt.Errorf("load tracker %s cookies from cookie store: %w", trackerID, err)
 		}
 		if len(cookies) > 0 {
-			return cookies, nil
+			storeCookies = cookies
 		}
-		// If database has no cookies, fall through to file-based loading
 	}
 
-	// Fall back to file-based cookie loading
+	// Load startup file cookies and let them override any persisted DB values.
 	candidates := CookiePathCandidates(dbPath, trackerID, ".txt", ".json")
 	for _, path := range candidates {
 		switch filepath.Ext(path) {
 		case ".txt":
-			if cookies, err := LoadNetscapeCookies(path, trackerID); err == nil && len(cookies) > 0 {
-				result := make(map[string]string)
+			if cookies, err := LoadNetscapeCookies(path, ""); err == nil && len(cookies) > 0 {
+				result := make(map[string]string, len(storeCookies)+len(cookies))
+				for name, value := range storeCookies {
+					result[name] = value
+				}
 				for _, c := range cookies {
 					result[c.Name] = c.Value
 				}
@@ -88,9 +93,24 @@ func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string,
 			}
 		case ".json":
 			if cookies, err := LoadJSONCookieMap(path); err == nil && len(cookies) > 0 {
-				return cookies, nil
+				if len(storeCookies) == 0 {
+					return cookies, nil
+				}
+
+				result := make(map[string]string, len(storeCookies)+len(cookies))
+				for name, value := range storeCookies {
+					result[name] = value
+				}
+				for name, value := range cookies {
+					result[name] = value
+				}
+				return result, nil
 			}
 		}
+	}
+
+	if len(storeCookies) > 0 {
+		return storeCookies, nil
 	}
 
 	return nil, errors.New("no cookies found for tracker: " + trackerID)
