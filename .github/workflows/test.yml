@@ -12,6 +12,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  commitlint:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: gui/frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: gui/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate commits in PR range
+        if: github.event_name == 'pull_request'
+        working-directory: gui/frontend
+        run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
   test-go:
     name: Go tests
     runs-on: ubuntu-latest

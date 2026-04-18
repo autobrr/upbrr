@@ -9,10 +9,10 @@
     "build": "tsc -b && vite build",
     "build:bundle": "vite build",
     "preview": "vite preview",
-    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "lint": "eslint --cache \"src/**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format": "prettier --write --cache .",
+    "format:check": "prettier --check --cache ."
   },
   "dependencies": {
     "react": "^18.3.1",

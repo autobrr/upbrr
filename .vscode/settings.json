@@ -28,5 +28,54 @@
     "gui/build/bin": true,
     "internal/guiapp/assets": true,
     "dist": true
-  }
+  },
+
+  // Source Control input-box validation — warns in the UI before the commit-msg hook
+  // rejects. Limits mirror gui/frontend/commitlint.config.js (header-max-length: 115).
+  "git.inputValidation": "warn",
+  "git.inputValidationLength": 115,
+  "git.inputValidationSubjectLength": 115,
+
+  // Guide Copilot's "Generate commit message" to produce messages that pass commitlint.
+  // Mirrors the rules in gui/frontend/commitlint.config.js — keep both in sync.
+  "github.copilot.chat.commitMessageGeneration.instructions": [
+    {
+      "text": "Write commits in Conventional Commits v1.0.0 format: `<type>(<scope>)!?: <subject>`. The scope and the `!` breaking-change marker are optional."
+    },
+    {
+      "text": "Allowed types (use exactly these, lower-case): feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert. Pick the single best fit; do not invent new types."
+    },
+    {
+      "text": "Subject rules: imperative mood (`add X`, not `added X` or `adds X`), lower-case first letter, no trailing period, concrete and specific. Describe the change, not the file touched."
+    },
+    {
+      "text": "Hard limit: the subject line (type + scope + subject) must be 115 characters or fewer. Aim for under 72 when the change is simple; use the extra headroom only when it genuinely helps."
+    },
+    {
+      "text": "Scope is optional. If used, keep it short (one word, an area like `config`, `ci`, `gui`, `cli`, or a tracker acronym like `bt`, `asc`). Uppercase tracker acronyms are acceptable."
+    },
+    {
+      "text": "Body (optional, separated from subject by a blank line): explain *why* the change was made and any non-obvious context. Wrap body lines at ~115 characters. Do not restate what the diff already shows."
+    },
+    {
+      "text": "Footer (optional, separated from body by a blank line): use for `BREAKING CHANGE: <desc>`, `Closes: #123`, `Refs: #456`, `Co-authored-by: Name <email>`. Wrap footer lines at ~115 characters."
+    },
+    {
+      "text": "Breaking changes: either append `!` after the type/scope (e.g. `feat(api)!: drop v1 endpoints`) or add a `BREAKING CHANGE:` footer explaining the impact. Both is fine."
+    },
+    {
+      "text": "Examples that pass the repo's commitlint rules: `feat(config): add YAML importer`, `fix(bt): correct duplicate search payload`, `chore(ci): switch to pnpm action v5`, `feat!: drop Go 1.19 support`, `revert: undo e3f2a1b`."
+    }
+  ],
+
+  // Same style applied to Copilot-generated PR titles & descriptions, since PR titles
+  // become the squashed commit message and must also pass commitlint.
+  "github.copilot.chat.pullRequestDescriptionGeneration.instructions": [
+    {
+      "text": "PR title must be a valid Conventional Commit (same rules as commit messages: type + optional scope + imperative subject, 115 chars max). The PR title becomes the squashed commit message."
+    },
+    {
+      "text": "PR description: start with a short Summary (1–3 bullets of *what* and *why*), then a Test plan checklist, then any screenshots or links. Wrap prose at ~115 characters."
+    }
+  ]
 }
