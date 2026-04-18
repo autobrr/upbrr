@@ -54,6 +54,16 @@ func TestHashPasswordEncodesArgon2Parameters(t *testing.T) {
 	}
 }
 
+func TestHashPasswordRejectsTooShortPassword(t *testing.T) {
+	_, err := hashPassword("short-pass")
+	if err == nil {
+		t.Fatal("expected short password validation error")
+	}
+	if !strings.Contains(err.Error(), "password must be at least 12 characters") {
+		t.Fatalf("unexpected short password error: %v", err)
+	}
+}
+
 func TestVerifyPasswordSupportsLegacyImplicitParameters(t *testing.T) {
 	password := "very-secure-password"
 	salt := "legacy-salt-value"
@@ -93,6 +103,30 @@ func TestVerifyPasswordWithUpgradeFlagsLegacyHashes(t *testing.T) {
 	}
 }
 
+func TestVerifyPasswordAcceptsHashWithDifferentStoredVersion(t *testing.T) {
+	password := "very-secure-password"
+	hash, err := hashPassword(password)
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+
+	parts := strings.Split(hash, "$")
+	if len(parts) != 5 {
+		t.Fatalf("expected parameterized hash format, got %q", hash)
+	}
+
+	parts[1] = "v=42"
+	mutated := strings.Join(parts, "$")
+
+	ok, needsUpgrade := verifyPasswordWithUpgrade(password, mutated)
+	if !ok {
+		t.Fatal("expected hash with a different stored version to verify")
+	}
+	if needsUpgrade {
+		t.Fatal("expected parameterized hash with parsed params to not require upgrade")
+	}
+}
+
 func TestAuthStoreUpdatePasswordHashReappliesSecurePermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission bits are ACL-backed on Windows")
@@ -124,6 +158,35 @@ func TestAuthStoreUpdatePasswordHashReappliesSecurePermissions(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("expected auth file permissions 0600 after update, got %o", got)
+	}
+}
+
+func TestAuthStoreUpdateRecordPersistsAllowUnencryptedExport(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	store, err := newAuthStore(dbPath)
+	if err != nil {
+		t.Fatalf("newAuthStore: %v", err)
+	}
+	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	record, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load before update: %v", err)
+	}
+
+	record.AllowUnencryptedExport = true
+	if err := store.UpdateRecord(record); err != nil {
+		t.Fatalf("UpdateRecord: %v", err)
+	}
+
+	updated, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load after update: %v", err)
+	}
+	if !updated.AllowUnencryptedExport {
+		t.Fatal("expected AllowUnencryptedExport to be persisted")
 	}
 }
 

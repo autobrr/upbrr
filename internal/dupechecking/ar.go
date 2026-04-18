@@ -125,6 +125,9 @@ func (h arHandler) resolveCookies(ctx context.Context) ([]*http.Cookie, string, 
 		}
 	}
 	if len(merged) > 0 {
+		if h.logger != nil {
+			h.logger.Debugf("dupechecking: AR using %d cookies from HTTP client jar", len(merged))
+		}
 		return mapCookiesToSlice(merged), "", nil
 	}
 

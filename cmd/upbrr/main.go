@@ -312,6 +312,9 @@ func createCLIAuthFile(stdin io.Reader, stdout io.Writer, dbPath string) error {
 	if password != confirm {
 		return errors.New("create auth: passwords do not match")
 	}
+	if len(password) < webserver.AuthPasswordMinLength {
+		return fmt.Errorf("create auth: password too short (minimum %d characters)", webserver.AuthPasswordMinLength)
+	}
 	if err := webserver.BootstrapAuthFile(dbPath, username, password); err != nil {
 		return err
 	}

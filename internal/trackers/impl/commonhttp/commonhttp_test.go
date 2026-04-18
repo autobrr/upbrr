@@ -42,7 +42,7 @@ func TestLoadCookiesForTrackerPrefersCookieStore(t *testing.T) {
 	}
 }
 
-func TestLoadCookiesForTrackerFallsBackToJSONFile(t *testing.T) {
+func TestLoadCookiesForTrackerFallsBackToJSONFileWhenStoreHasNoCookies(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "state", "upbrr.db")
@@ -72,7 +72,7 @@ func TestLoadCookiesForTrackerFallsBackToJSONFile(t *testing.T) {
 		context.Background(),
 		dbPath,
 		"blu",
-		stubCookieStore{err: errors.New("database unavailable")},
+		stubCookieStore{cookies: map[string]string{}},
 		[]byte("01234567890123456789012345678901"),
 	)
 	if err != nil {
@@ -80,6 +80,24 @@ func TestLoadCookiesForTrackerFallsBackToJSONFile(t *testing.T) {
 	}
 	if got["session"] != "from-json" {
 		t.Fatalf("expected JSON fallback cookie, got %#v", got)
+	}
+}
+
+func TestLoadCookiesForTrackerReturnsStoreError(t *testing.T) {
+	t.Parallel()
+
+	_, err := LoadCookiesForTracker(
+		context.Background(),
+		filepath.Join(t.TempDir(), "state", "upbrr.db"),
+		"blu",
+		stubCookieStore{err: errors.New("database unavailable")},
+		[]byte("01234567890123456789012345678901"),
+	)
+	if err == nil {
+		t.Fatal("expected cookie store error to be returned")
+	}
+	if !strings.Contains(err.Error(), "database unavailable") {
+		t.Fatalf("expected wrapped cookie store error, got %v", err)
 	}
 }
 

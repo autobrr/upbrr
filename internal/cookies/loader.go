@@ -5,6 +5,7 @@ package cookies
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -96,18 +97,24 @@ func SaveTrackerCookieMap(ctx context.Context, dbPath string, trackerID string, 
 		_ = repo.Close()
 	}()
 
-	if err := store.DeleteAllTrackerCookies(ctx, normalizedTrackerID); err != nil {
-		return fmt.Errorf("cookies: reset tracker %s in db: %w", normalizedTrackerID, err)
-	}
+	if err := store.RunInTransaction(ctx, func(tx *sql.Tx) error {
+		if err := store.DeleteAllTrackerCookiesTx(ctx, tx, normalizedTrackerID); err != nil {
+			return fmt.Errorf("cookies: reset tracker %s in db: %w", normalizedTrackerID, err)
+		}
 
-	for name, value := range values {
-		trimmedName := strings.TrimSpace(name)
-		if trimmedName == "" {
-			continue
+		for name, value := range values {
+			trimmedName := strings.TrimSpace(name)
+			if trimmedName == "" {
+				continue
+			}
+			if err := store.SaveCookieTx(ctx, tx, normalizedTrackerID, trimmedName, value, key); err != nil {
+				return fmt.Errorf("cookies: save tracker %s cookie %s: %w", normalizedTrackerID, trimmedName, err)
+			}
 		}
-		if err := store.SaveCookie(ctx, normalizedTrackerID, trimmedName, value, key); err != nil {
-			return fmt.Errorf("cookies: save tracker %s cookie %s: %w", normalizedTrackerID, trimmedName, err)
-		}
+
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	return nil
@@ -264,5 +271,9 @@ func isMissingCookieSchemaError(err error) bool {
 		return false
 	}
 	var sqliteErr *sqlite.Error
-	return errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3lib.SQLITE_ERROR
+	if !errors.As(err, &sqliteErr) || sqliteErr.Code() != sqlite3lib.SQLITE_ERROR {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(sqliteErr.Error()), "no such table")
 }

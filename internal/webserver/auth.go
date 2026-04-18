@@ -27,6 +27,8 @@ const (
 	sessionCookieName = "ua_web_session"
 	authFileName      = "web-auth.json"
 	sessionFileName   = "web-sessions.json"
+	// AuthPasswordMinLength defines the minimum web auth password length.
+	AuthPasswordMinLength = 12
 	// OWASP Password Storage Cheat Sheet Argon2id baseline.
 	authArgon2Time        = 2
 	authArgon2MemoryKB    = 19 * 1024
@@ -134,15 +136,29 @@ func (s *authStore) Bootstrap(username string, password string) error {
 }
 
 func (s *authStore) UpdatePasswordHash(username string, passwordHash string) error {
-	record, err := s.Load()
-	if err != nil {
-		return err
-	}
-	record.PasswordHash = passwordHash
-	return s.UpdateRecord(record)
+	return s.updateRecordLocked(func(record *authRecord) error {
+		if record.Username != strings.TrimSpace(username) {
+			return errors.New("web auth: user mismatch")
+		}
+		record.PasswordHash = strings.TrimSpace(passwordHash)
+		return nil
+	})
 }
 
 func (s *authStore) UpdateRecord(updated authRecord) error {
+	return s.updateRecordLocked(func(record *authRecord) error {
+		if record.Username != strings.TrimSpace(updated.Username) {
+			return errors.New("web auth: user mismatch")
+		}
+
+		record.PasswordHash = strings.TrimSpace(updated.PasswordHash)
+		record.EncryptionKeySeed = strings.TrimSpace(updated.EncryptionKeySeed)
+		record.AllowUnencryptedExport = updated.AllowUnencryptedExport
+		return nil
+	})
+}
+
+func (s *authStore) updateRecordLocked(apply func(record *authRecord) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -155,12 +171,10 @@ func (s *authStore) UpdateRecord(updated authRecord) error {
 	if err := json.Unmarshal(raw, &record); err != nil {
 		return err
 	}
-	if record.Username != strings.TrimSpace(updated.Username) {
-		return errors.New("web auth: user mismatch")
+	if err := apply(&record); err != nil {
+		return err
 	}
 
-	record.PasswordHash = strings.TrimSpace(updated.PasswordHash)
-	record.EncryptionKeySeed = strings.TrimSpace(updated.EncryptionKeySeed)
 	return s.saveLocked(record)
 }
 
@@ -178,10 +192,34 @@ func (s *authStore) saveLocked(record authRecord) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.path, raw, 0o600); err != nil {
+
+	dir := filepath.Dir(s.path)
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(s.path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(s.path, 0o600); err != nil {
+	tmpPath := tmpFile.Name()
+
+	if _, err := tmpFile.Write(raw); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, s.path); err != nil {
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return nil
@@ -189,8 +227,8 @@ func (s *authStore) saveLocked(record authRecord) error {
 
 func hashPassword(password string) (string, error) {
 	password = strings.TrimSpace(password)
-	if len(password) < 10 {
-		return "", errors.New("password must be at least 10 characters")
+	if len(password) < AuthPasswordMinLength {
+		return "", fmt.Errorf("password must be at least %d characters", AuthPasswordMinLength)
 	}
 	salt, err := randomString(16)
 	if err != nil {
@@ -268,7 +306,7 @@ func parseAuthHash(parts []string) (string, string, authHashParams, bool, bool) 
 	}
 
 	version, ok := parseAuthHashVersion(parts[1])
-	if !ok || version != authArgon2Version {
+	if !ok || version <= 0 {
 		return "", "", authHashParams{}, false, false
 	}
 

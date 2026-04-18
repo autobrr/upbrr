@@ -759,7 +759,7 @@ func (b *Backend) SaveConfig(payload string) error {
 	if b.repo == nil {
 		return errors.New("config repository not initialized")
 	}
-	cfg, err := config.ImportFromJSON(payload)
+	cfg, err := config.ImportFromJSONEncrypted(payload)
 	if err != nil {
 		return err
 	}

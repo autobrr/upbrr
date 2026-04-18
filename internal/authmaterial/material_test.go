@@ -42,10 +42,10 @@ func TestLoadFromDBPathRejectsInsecurePermissions(t *testing.T) {
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("expected ErrUnavailable, got %v", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "insecure permissions") {
+	if !strings.Contains(err.Error(), "insecure permissions") {
 		t.Fatalf("expected insecure permissions error, got %v", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), authPath) {
+	if !strings.Contains(err.Error(), authPath) {
 		t.Fatalf("expected error to reference %q, got %v", authPath, err)
 	}
 }

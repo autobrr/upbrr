@@ -126,6 +126,8 @@ func TestMigrateBridgesLegacyV8TrackerCookiesSchema(t *testing.T) {
 
 	assertSQLiteObjectExists(t, rawDB, "table", "tracker_cookies")
 	assertSQLiteObjectExists(t, rawDB, "table", "schema_migrations")
+	assertSQLiteObjectExists(t, rawDB, "index", "idx_tracker_cookies_tracker_id")
+	assertSQLiteObjectExists(t, rawDB, "index", "idx_tracker_cookies_created_at")
 }
 
 func assertSQLiteObjectExists(t *testing.T, db *sql.DB, objectType, name string) {

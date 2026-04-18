@@ -60,6 +60,8 @@ func exportToFile(cfg *Config, path string, format exportFormat, encryptSecrets 
 		if err != nil {
 			return fmt.Errorf("config export: marshal yaml: %w", err)
 		}
+		// TODO: exportFormatJSON is currently unused by public callers (they route through exportToJSON);
+		// keep this branch so file-based JSON export can be re-enabled without duplicating marshal logic.
 	case exportFormatJSON:
 		data, err = json.MarshalIndent(exportCfg, "", "  ")
 		if err != nil {
@@ -132,8 +134,19 @@ func exportToJSON(cfg *Config, encryptSecrets bool) (string, error) {
 	return string(data), nil
 }
 
-// ImportFromJSON deserializes the config from a JSON string.
+// ImportFromJSON deserializes plaintext JSON config (for example,
+// ExportToPlaintextJSON output) without attempting secret decryption.
 func ImportFromJSON(payload string) (*Config, error) {
+	return importFromJSON(payload, false)
+}
+
+// ImportFromJSONEncrypted deserializes JSON config that contains encrypted
+// secret envelopes (for example, ExportToJSON output) and decrypts secrets.
+func ImportFromJSONEncrypted(payload string) (*Config, error) {
+	return importFromJSON(payload, true)
+}
+
+func importFromJSON(payload string, decryptSecrets bool) (*Config, error) {
 	if payload == "" {
 		return nil, errors.New("config import: empty json")
 	}
@@ -141,6 +154,9 @@ func ImportFromJSON(payload string) (*Config, error) {
 	var cfg Config
 	if err := json.Unmarshal([]byte(payload), &cfg); err != nil {
 		return nil, fmt.Errorf("config import: unmarshal json: %w", err)
+	}
+	if !decryptSecrets {
+		return &cfg, nil
 	}
 
 	decryptedCfg, err := DecryptConfigSecrets(&cfg)

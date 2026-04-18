@@ -21,17 +21,19 @@ const (
 	cookieArgon2MemoryKB    = 19 * 1024
 	cookieArgon2Parallelism = 1
 	cookieArgon2KeyLen      = 32
+	MinPasswordLen          = 12
+	MinSaltLen              = 16
 )
 
 // DeriveEncryptionKey derives a 256-bit encryption key from a password and salt using Argon2id.
 // This follows the same pattern as password hashing in the auth package.
 func DeriveEncryptionKey(password string, salt string) ([]byte, error) {
 	password = strings.TrimSpace(password)
-	if len(password) < 8 {
-		return nil, errors.New("password must be at least 8 characters")
+	if len(password) < MinPasswordLen {
+		return nil, fmt.Errorf("password must be at least %d characters", MinPasswordLen)
 	}
-	if len(salt) == 0 {
-		return nil, errors.New("salt cannot be empty")
+	if len(salt) < MinSaltLen {
+		return nil, fmt.Errorf("salt must be at least %d bytes", MinSaltLen)
 	}
 
 	// Argon2id parameters follow OWASP guidance.
@@ -48,6 +50,10 @@ func DeriveEncryptionKey(password string, salt string) ([]byte, error) {
 
 // GenerateRandomBytes generates cryptographically secure random bytes.
 func GenerateRandomBytes(length int) ([]byte, error) {
+	if length <= 0 {
+		return nil, fmt.Errorf("invalid length %d", length)
+	}
+
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
 		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
@@ -84,23 +90,24 @@ func EncryptCookieValue(plaintext string, key []byte) (*EncryptedCookie, error) 
 
 	// Generate a unique nonce (IV) for this encryption
 	// GCM typically uses 12-byte (96-bit) nonces
-	nonce, err := GenerateRandomBytes(12)
+	nonce, err := GenerateRandomBytes(gcm.NonceSize())
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
 	// Encrypt and authenticate
 	ciphertext := gcm.Seal(nil, nonce, []byte(plaintext), nil)
+	overhead := gcm.Overhead()
 
 	// GCM.Seal appends the authentication tag to the ciphertext
 	// We need to extract it for separate storage
-	if len(ciphertext) < 16 {
+	if len(ciphertext) < overhead {
 		return nil, errors.New("invalid ciphertext length")
 	}
 
-	// The last 16 bytes are the auth tag
-	authTag := ciphertext[len(ciphertext)-16:]
-	actualCiphertext := ciphertext[:len(ciphertext)-16]
+	// The trailing bytes are the AEAD authentication tag.
+	authTag := ciphertext[len(ciphertext)-overhead:]
+	actualCiphertext := ciphertext[:len(ciphertext)-overhead]
 
 	return &EncryptedCookie{
 		Ciphertext: actualCiphertext,
@@ -162,6 +169,10 @@ type EncodedEncryptedCookie struct {
 
 // EncodeForStorage encodes the encrypted cookie data to base64 strings for database storage.
 func (ec *EncryptedCookie) EncodeForStorage() EncodedEncryptedCookie {
+	if ec == nil {
+		return EncodedEncryptedCookie{}
+	}
+
 	return EncodedEncryptedCookie{
 		CiphertextB64: base64.StdEncoding.EncodeToString(ec.Ciphertext),
 		NonceB64:      base64.StdEncoding.EncodeToString(ec.Nonce),

@@ -408,6 +408,9 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	if opts.ExportConfigPlaintext && !visited["export-config"] {
 		return cliOptions{}, nil, nil, errors.New("--export-config-plaintext requires --export-config")
 	}
+	if opts.ExportConfigPlaintext && strings.TrimSpace(opts.ExportConfigPath) == "" {
+		return cliOptions{}, nil, nil, errors.New("--export-config must have a non-empty value when --export-config-plaintext is used")
+	}
 	if _, err := buildTrackerIDOverrides(opts, visited); err != nil {
 		return cliOptions{}, nil, nil, err
 	}

@@ -74,7 +74,7 @@ func validateWebAuthPermissions(authPath string, info os.FileInfo) error {
 	}
 
 	perm := info.Mode().Perm()
-	if perm == 0o600 || perm == 0o640 {
+	if perm == 0o600 || perm == 0o640 || perm == 0o400 || perm == 0o440 {
 		return nil
 	}
 

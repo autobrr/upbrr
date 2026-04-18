@@ -143,8 +143,15 @@ func TestSaveToDBPathSyncsCookieEncryptionStateWhenWebAuthExists(t *testing.T) {
 	).Scan(&saltJSON); err != nil {
 		t.Fatalf("query encryption salt: %v", err)
 	}
-	if saltJSON == "" {
-		t.Fatal("expected persisted cookie encryption salt")
+
+	var persistedSalt struct {
+		Salt string `json:"salt"`
+	}
+	if err := json.Unmarshal([]byte(saltJSON), &persistedSalt); err != nil {
+		t.Fatalf("unmarshal encryption salt: %v", err)
+	}
+	if len(persistedSalt.Salt) == 0 {
+		t.Fatalf("expected persisted cookie encryption salt, got %s", saltJSON)
 	}
 
 	authPath := webserver.AuthFilePath(dbPath)

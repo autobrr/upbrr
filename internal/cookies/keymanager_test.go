@@ -62,6 +62,22 @@ func TestGetAuthStateFromDBToleratesLegacyHelper(t *testing.T) {
 	}
 }
 
+func TestNewKeyManagerPanicsOnNilDB(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("expected panic for nil db")
+		}
+		if recovered != "nil db passed to NewKeyManager" {
+			t.Fatalf("unexpected panic value: %v", recovered)
+		}
+	}()
+
+	_ = NewKeyManager(nil)
+}
+
 func TestInitializeEncryptionKeyStoresFingerprintOnly(t *testing.T) {
 	t.Parallel()
 
@@ -93,10 +109,15 @@ func TestInitializeEncryptionKeyUnchangedFingerprintNormalizesLegacyState(t *tes
 	ctx := context.Background()
 	db := newTestCookieDB(t)
 	dbPath := writeWebAuthFile(t, "same-user", "same-password-hash")
-	helper, fingerprint, err := loadWebAuthHelper(dbPath)
+	helpers, err := loadAuthHelpers(dbPath)
 	if err != nil {
-		t.Fatalf("load web auth helper: %v", err)
+		t.Fatalf("load auth helpers: %v", err)
 	}
+	if len(helpers) == 0 {
+		t.Fatal("expected at least one auth helper candidate")
+	}
+	helper := helpers[0].Helper
+	fingerprint := helpers[0].Fingerprint
 	authStateJSON, err := json.Marshal(map[string]string{
 		"helper":      helper,
 		"fingerprint": fingerprint,

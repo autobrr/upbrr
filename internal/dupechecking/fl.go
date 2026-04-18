@@ -22,7 +22,7 @@ type flHandler struct {
 }
 
 func (h flHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ string) ([]api.DupeEntry, []string, error) {
-	cookies, err := loadTrackerJSONCookies(h.cfg, "FL", ".filelist.io")
+	cookies, err := loadTrackerCookies(ctx, h.cfg, "FL", ".filelist.io")
 	if err != nil {
 		return nil, []string{noteSkip("missing valid FL cookies")}, nil
 	}

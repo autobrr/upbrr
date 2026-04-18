@@ -44,12 +44,8 @@ func trackerHost(baseURL string, fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
-func loadTrackerTextCookies(cfg config.Config, tracker string, domain string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(context.Background(), cfg.MainSettings.DBPath, tracker, domain)
-}
-
-func loadTrackerJSONCookies(cfg config.Config, tracker string, domain string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(context.Background(), cfg.MainSettings.DBPath, tracker, domain)
+func loadTrackerCookies(ctx context.Context, cfg config.Config, tracker string, domain string) ([]*http.Cookie, error) {
+	return cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, tracker, domain)
 }
 
 func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, headers map[string]string, cookies []*http.Cookie) (*http.Response, *xhtml.Node, error) {

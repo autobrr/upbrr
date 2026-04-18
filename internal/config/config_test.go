@@ -312,7 +312,7 @@ func TestTrackersConfigPreferredTrackerRoundTripJSON(t *testing.T) {
 		t.Fatalf("export json: %v", err)
 	}
 
-	imported, err := ImportFromJSON(payload)
+	imported, err := ImportFromJSONEncrypted(payload)
 	if err != nil {
 		t.Fatalf("import json: %v", err)
 	}

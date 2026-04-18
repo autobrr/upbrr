@@ -102,6 +102,13 @@ func (r *SQLiteRepository) Close() error {
 	return r.db.Close()
 }
 
+// RawDB returns the underlying *sql.DB handle.
+//
+// Callers using RawDB bypass repository safeguards such as validation,
+// busy-retry behavior, and repository-level error wrapping. Restrict usage to
+// approved low-level paths (for example migrations, tests, or advanced
+// operations that are not exposed through repository methods), and avoid
+// casual direct query/exec calls in application code.
 func (r *SQLiteRepository) RawDB() *sql.DB {
 	if r == nil {
 		return nil

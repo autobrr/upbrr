@@ -195,7 +195,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 
 	if dryRun {
-		if authProblem := dryRunAuthProblem(req.TrackerConfig, req.AppConfig.MainSettings.DBPath); authProblem != "" && state.blockedReason == "" {
+		if authProblem := dryRunAuthProblem(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath); authProblem != "" && state.blockedReason == "" {
 			state.blockedReason = authProblem
 		}
 		fields["auth"] = "dry-run-auth"
@@ -473,11 +473,11 @@ func resolveIMDbURL(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func dryRunAuthProblem(cfg config.TrackerConfig, dbPath string) string {
+func dryRunAuthProblem(ctx context.Context, cfg config.TrackerConfig, dbPath string) string {
 	if _, err := os.Stat(authPath(dbPath)); err == nil {
 		return ""
 	}
-	if cookies, err := loadCookies(context.Background(), dbPath); err == nil && len(cookies) > 0 {
+	if cookies, err := loadCookies(ctx, dbPath); err == nil && len(cookies) > 0 {
 		return ""
 	}
 	if strings.TrimSpace(cfg.Username) != "" && strings.TrimSpace(cfg.Password) != "" {

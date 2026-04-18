@@ -1231,7 +1231,7 @@ func (a *App) SaveConfig(payload string) error {
 		return errors.New("config payload is required")
 	}
 
-	cfg, err := config.ImportFromJSON(payload)
+	cfg, err := config.ImportFromJSONEncrypted(payload)
 	if err != nil {
 		return err
 	}
@@ -1332,7 +1332,12 @@ func (a *App) allowUnencryptedExport() (bool, error) {
 		return false, errors.New("app not initialized")
 	}
 
-	material, err := authmaterial.LoadFromDBPath(a.cfg.MainSettings.DBPath)
+	dbPath := strings.TrimSpace(a.cfg.MainSettings.DBPath)
+	if dbPath == "" {
+		return false, nil
+	}
+
+	material, err := authmaterial.LoadFromDBPath(dbPath)
 	if err == nil {
 		return material.AllowUnencryptedExport, nil
 	}

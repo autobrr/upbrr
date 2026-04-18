@@ -5,6 +5,7 @@ package cookies
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,10 +16,17 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// FailedCookie identifies a tracker/cookie pair that could not be migrated.
+type FailedCookie struct {
+	TrackerID  string
+	CookieName string
+}
+
 // MigrateFromFilesToDB imports cookies from file-based storage into the encrypted database.
 // It scans the cookiesDir for .txt and .json files, parses them, encrypts the values,
-// and stores them in the database.
-func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieStore, key []byte, logger api.Logger) (int, error) {
+// and stores them in the database. It returns the number of successfully migrated
+// cookies plus any tracker/cookie pairs that failed during storage.
+func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieStore, key []byte, logger api.Logger) (int, []FailedCookie, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -30,22 +38,23 @@ func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieS
 	info, err := os.Stat(cookiesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil // No cookies directory, nothing to migrate
+			return 0, nil, nil // No cookies directory, nothing to migrate
 		}
-		return 0, fmt.Errorf("failed to stat cookies directory: %w", err)
+		return 0, nil, fmt.Errorf("failed to stat cookies directory: %w", err)
 	}
 
 	if !info.IsDir() {
-		return 0, fmt.Errorf("cookie path is not a directory: %s", cookiesDir)
+		return 0, nil, fmt.Errorf("cookie path is not a directory: %s", cookiesDir)
 	}
 
 	// List files in the cookies directory
 	entries, err := os.ReadDir(cookiesDir)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read cookies directory: %w", err)
+		return 0, nil, fmt.Errorf("failed to read cookies directory: %w", err)
 	}
 
 	migratedCount := 0
+	failedCookies := make([]FailedCookie, 0)
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -74,7 +83,7 @@ func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieS
 		switch ext {
 		case ".txt":
 			// Parse Netscape format cookies
-			// Extract domain from filename if possible
+			// No expected domain is supplied; parse all valid entries from the file.
 			parsedCookies, err := commonhttp.LoadNetscapeCookies(filePath, "")
 			if err != nil {
 				parseErr = fmt.Errorf("failed to parse Netscape cookies from %s: %w", filename, err)
@@ -107,6 +116,7 @@ func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieS
 		// Store each cookie in the database
 		for cookieName, cookieValue := range cookies {
 			if err := store.SaveCookie(ctx, trackerID, cookieName, cookieValue, key); err != nil {
+				failedCookies = append(failedCookies, FailedCookie{TrackerID: trackerID, CookieName: cookieName})
 				redactedValue := redaction.RedactValue(cookieValue, nil)
 				logger.Warnf("cookies: failed to migrate cookie tracker=%s cookie=%s value=%v: %v", trackerID, cookieName, redactedValue, err)
 				continue
@@ -116,13 +126,13 @@ func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieS
 		}
 	}
 
-	return migratedCount, nil
+	return migratedCount, failedCookies, nil
 }
 
 // DeleteMigratedCookieFiles removes all .txt and .json files from the cookies directory
 // after successful migration.
-func DeleteMigratedCookieFiles(cookiesDir string) error {
-	return deleteMigratedCookieFiles(cookiesDir, api.NopLogger{})
+func DeleteMigratedCookieFiles(cookiesDir string, logger api.Logger) error {
+	return deleteMigratedCookieFiles(cookiesDir, logger)
 }
 
 func deleteMigratedCookieFiles(cookiesDir string, logger api.Logger) error {
@@ -149,6 +159,8 @@ func deleteMigratedCookieFiles(cookiesDir string, logger api.Logger) error {
 		return fmt.Errorf("failed to read cookies directory: %w", err)
 	}
 
+	deleteErrs := make([]error, 0)
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -165,8 +177,13 @@ func deleteMigratedCookieFiles(cookiesDir string, logger api.Logger) error {
 		filePath := filepath.Join(cookiesDir, filename)
 		if err := os.Remove(filePath); err != nil {
 			logger.Warnf("cookies: failed to delete migrated cookie file path=%s: %v", filePath, err)
+			deleteErrs = append(deleteErrs, fmt.Errorf("remove %s: %w", filePath, err))
 			continue
 		}
+	}
+
+	if len(deleteErrs) > 0 {
+		return fmt.Errorf("failed to delete one or more migrated cookie files: %w", errors.Join(deleteErrs...))
 	}
 
 	return nil

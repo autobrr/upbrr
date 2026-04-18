@@ -55,6 +55,8 @@ type CookieStore interface {
 // LoadCookiesForTracker loads cookies for a tracker from either the database (if available)
 // or falls back to file-based loading. If cookieStore and encryptionKey are provided,
 // it will try to load from the database first; otherwise it loads from files.
+// A nil ctx is accepted and treated as context.Background(); callers should pass
+// an explicit request-scoped context whenever possible.
 func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string, cookieStore CookieStore, encryptionKey []byte) (map[string]string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -63,7 +65,10 @@ func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string,
 	// Try database first if store and key are available
 	if cookieStore != nil && len(encryptionKey) > 0 {
 		cookies, err := cookieStore.GetAllTrackerCookies(ctx, trackerID, encryptionKey)
-		if err == nil && len(cookies) > 0 {
+		if err != nil {
+			return nil, fmt.Errorf("load tracker %s cookies from cookie store: %w", trackerID, err)
+		}
+		if len(cookies) > 0 {
 			return cookies, nil
 		}
 		// If database has no cookies, fall through to file-based loading

@@ -150,7 +150,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 			}
 			upgradedRecord.EncryptionKeySeed = seed
 		}
-		if err := s.rewrapProtectedDataForAuthChange(r, record, upgradedRecord); err != nil {
+		if err := s.rewrapProtectedDataForAuthChange(r.Context(), record, upgradedRecord); err != nil {
 			if s.backend != nil && s.backend.logger != nil {
 				s.backend.logger.Errorf("web: failed to rewrap protected data for %s during auth upgrade: %v", record.Username, err)
 			}
@@ -159,9 +159,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		}
 		if err := s.auth.UpdateRecord(upgradedRecord); err != nil {
 			if rollbackErr := s.rollbackProtectedDataForAuthChange(r, upgradedRecord, record); rollbackErr != nil {
-				if s.backend != nil && s.backend.logger != nil {
-					s.backend.logger.Errorf("web: failed to rollback protected data for %s after auth upgrade failure: %v", record.Username, rollbackErr)
-				}
+				s.handleAuthUpgradeRollbackFailure(r, record.Username, err, rollbackErr)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":                        "failed to refresh credentials; operator intervention required",
+					"code":                         "auth_upgrade_rollback_failed",
+					"requiresOperatorIntervention": true,
+				})
+				return
 			}
 			if s.backend != nil && s.backend.logger != nil {
 				s.backend.logger.Errorf("web: failed to upgrade legacy auth hash for %s: %v", record.Username, err)
@@ -395,6 +399,39 @@ func (s *Server) isTrustedProxy(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+func (s *Server) handleAuthUpgradeRollbackFailure(r *http.Request, username string, updateErr error, rollbackErr error) {
+	if s == nil {
+		return
+	}
+
+	incidentCount := s.authUpgradeRollbackFailures.Add(1)
+	payload := map[string]any{
+		"incident":      "auth_upgrade_rollback_failed",
+		"username":      strings.TrimSpace(username),
+		"updateError":   updateErr.Error(),
+		"rollbackError": rollbackErr.Error(),
+		"count":         incidentCount,
+		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if s.hub != nil {
+		if current, ok := s.currentSession(r); ok {
+			s.hub.Emit(current.ID, "auth:incident", payload)
+		}
+	}
+
+	if s.backend != nil && s.backend.logger != nil {
+		s.backend.logger.Errorf(
+			"web: auth upgrade rollback failed username=%q incident=%q count=%d update_error=%v rollback_error=%v",
+			strings.TrimSpace(username),
+			"auth_upgrade_rollback_failed",
+			incidentCount,
+			updateErr,
+			rollbackErr,
+		)
+	}
 }
 
 func decodeJSON(r *http.Request, dest any) error {

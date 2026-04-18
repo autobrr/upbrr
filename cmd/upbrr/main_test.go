@@ -79,6 +79,23 @@ func TestCreateCLIAuthFileRefusesOverwrite(t *testing.T) {
 	}
 }
 
+func TestCreateCLIAuthFileRejectsShortPassword(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state", "upbrr.db")
+	input := strings.NewReader("tester\nshortpass\nshortpass\n")
+
+	var output strings.Builder
+	err := createCLIAuthFile(input, &output, dbPath)
+	if err == nil {
+		t.Fatal("expected short password validation error")
+	}
+	if !strings.Contains(err.Error(), "create auth: password too short") {
+		t.Fatalf("unexpected error for short password: %v", err)
+	}
+}
+
 func TestRunCreateAuthUsesConfiguredDBPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")

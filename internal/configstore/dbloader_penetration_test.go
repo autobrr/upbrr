@@ -311,6 +311,8 @@ func TestBootstrapProvidedEmptyPath(t *testing.T) {
 // return value. Drift here silently breaks every feature that computes
 // subpaths from cfg.MainSettings.DBPath.
 func TestBootstrapDBPathInvariant(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "invariant.db")

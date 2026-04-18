@@ -97,6 +97,12 @@ func TestParseCLIOptionsRejectsExportConfigPlaintextWithoutExportConfig(t *testi
 	}
 }
 
+func TestParseCLIOptionsRejectsExportConfigPlaintextWithEmptyExportConfig(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"--export-config", "", "--export-config-plaintext"}); err == nil {
+		t.Fatal("expected --export-config-plaintext with empty --export-config value to fail")
+	}
+}
+
 func TestParseCLIOptionsPythonAliases(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{
 		"-s", "6",

@@ -14,11 +14,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/services/db"
+
 	"golang.org/x/crypto/argon2"
 )
 
 func newAuthTestServer(t *testing.T, dbPath string) *Server {
 	t.Helper()
+
+	repo, err := db.OpenWithLogger(dbPath, nil)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
 
 	auth, err := newAuthStore(dbPath)
 	if err != nil {
@@ -33,6 +46,7 @@ func newAuthTestServer(t *testing.T, dbPath string) *Server {
 	})
 
 	return &Server{
+		backend:        &Backend{repo: repo, hub: newEventHub()},
 		auth:           auth,
 		sessions:       sessions,
 		authLimiter:    newFixedWindowLimiter(100, time.Minute),

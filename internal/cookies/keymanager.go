@@ -24,6 +24,8 @@ const (
 var (
 	// ErrAuthHelperUnavailable indicates no existing web auth record can be used for key derivation.
 	ErrAuthHelperUnavailable = errors.New("cookie encryption auth helper unavailable")
+	// ErrNilContext indicates a nil context was passed to a key manager API that requires one.
+	ErrNilContext = errors.New("cookies: nil context provided")
 )
 
 type authState struct {
@@ -43,16 +45,21 @@ type KeyManager struct {
 
 // NewKeyManager creates a new KeyManager instance.
 func NewKeyManager(db *sql.DB) *KeyManager {
+	if db == nil {
+		panic("nil db passed to NewKeyManager")
+	}
+
 	return &KeyManager{
 		db: db,
 	}
 }
 
-// InitializeEncryptionKey derives the cookie encryption key from existing web auth details
+// InitializeEncryptionKey derives the cookie encryption key from existing web auth details.
+// ctx must be non-nil.
 // and transparently rotates encrypted cookie rows when the source auth changes.
 func (km *KeyManager) InitializeEncryptionKey(ctx context.Context, dbPath string) ([]byte, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, ErrNilContext
 	}
 
 	salt, err := ensureSalt(ctx, km.db)
@@ -180,29 +187,9 @@ func loadAuthHelpers(dbPath string) ([]authHelperCandidate, error) {
 	return candidates, nil
 }
 
-func loadWebAuthHelper(dbPath string) (string, string, error) {
-	material, err := authmaterial.LoadFromDBPath(dbPath)
-	if err != nil {
-		if errors.Is(err, authmaterial.ErrUnavailable) {
-			return "", "", ErrAuthHelperUnavailable
-		}
-		return "", "", err
-	}
-
-	helper, fingerprint, err := material.PrimaryHelper()
-	if err != nil {
-		if errors.Is(err, authmaterial.ErrUnavailable) {
-			return "", "", ErrAuthHelperUnavailable
-		}
-		return "", "", err
-	}
-
-	return helper, fingerprint, nil
-}
-
 func RewrapCookiesWithAuthChange(ctx context.Context, db *sql.DB, oldMaterial, newMaterial authmaterial.Material) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return ErrNilContext
 	}
 	if db == nil {
 		return errors.New("cookies: database connection is required")
@@ -246,7 +233,7 @@ func RewrapCookiesWithAuthChange(ctx context.Context, db *sql.DB, oldMaterial, n
 
 func (km *KeyManager) reencryptCookies(ctx context.Context, oldKey, newKey []byte) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return ErrNilContext
 	}
 
 	tx, err := km.db.BeginTx(ctx, nil)
@@ -323,7 +310,7 @@ func (km *KeyManager) reencryptCookies(ctx context.Context, oldKey, newKey []byt
 
 func getAuthStateFromDB(ctx context.Context, db *sql.DB) (authState, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return authState{}, ErrNilContext
 	}
 
 	var jsonData string
@@ -351,7 +338,7 @@ func getAuthStateFromDB(ctx context.Context, db *sql.DB) (authState, error) {
 
 func storeAuthStateInDB(ctx context.Context, db *sql.DB, state authState) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return ErrNilContext
 	}
 
 	payload, err := json.Marshal(state)
@@ -385,7 +372,7 @@ func findAuthHelperByFingerprint(helpers []authHelperCandidate, fingerprint stri
 // getSaltFromDB retrieves the encryption salt from the database.
 func getSaltFromDB(ctx context.Context, db *sql.DB) (string, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return "", ErrNilContext
 	}
 
 	var jsonData string
@@ -398,13 +385,15 @@ func getSaltFromDB(ctx context.Context, db *sql.DB) (string, error) {
 		return "", fmt.Errorf("failed to query database: %w", err)
 	}
 
-	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonData), &data); err != nil {
+	var raw struct {
+		Salt string `json:"salt"`
+	}
+	if err := json.Unmarshal([]byte(jsonData), &raw); err != nil {
 		return "", fmt.Errorf("failed to parse JSON from database: %w", err)
 	}
 
-	if saltValue, ok := data["salt"].(string); ok {
-		return saltValue, nil
+	if strings.TrimSpace(raw.Salt) != "" {
+		return strings.TrimSpace(raw.Salt), nil
 	}
 
 	return "", nil // No salt in the data
@@ -413,7 +402,7 @@ func getSaltFromDB(ctx context.Context, db *sql.DB) (string, error) {
 // storeSaltInDB stores the encryption salt in the database.
 func storeSaltInDB(ctx context.Context, db *sql.DB, salt string) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return ErrNilContext
 	}
 
 	data := map[string]interface{}{

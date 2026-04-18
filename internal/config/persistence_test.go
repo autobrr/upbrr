@@ -107,9 +107,9 @@ func TestExportImportJSON(t *testing.T) {
 	}
 
 	// Import from JSON.
-	loaded, err := ImportFromJSON(json)
+	loaded, err := ImportFromJSONEncrypted(json)
 	if err != nil {
-		t.Fatalf("ImportFromJSON failed: %v", err)
+		t.Fatalf("ImportFromJSONEncrypted failed: %v", err)
 	}
 
 	// Verify fields match.
@@ -626,9 +626,9 @@ func TestExportImportJSONEncryptsSecrets(t *testing.T) {
 		t.Fatalf("exported JSON did not contain encrypted secret envelopes")
 	}
 
-	imported, err := ImportFromJSON(exported)
+	imported, err := ImportFromJSONEncrypted(exported)
 	if err != nil {
-		t.Fatalf("ImportFromJSON failed: %v", err)
+		t.Fatalf("ImportFromJSONEncrypted failed: %v", err)
 	}
 
 	if imported.MainSettings.TMDBAPI != "plain-tmdb-token" {

@@ -10,10 +10,9 @@ import (
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 )
 
+// LoadCookies loads ASC cookies from shared storage.
+// Callers must pass a valid non-nil context.
 func LoadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, string, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	loaded, err := cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, sourceFlag, "cliente.amigos-share.club")
 	if err != nil {
 		return nil, "", err

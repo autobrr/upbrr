@@ -4,6 +4,7 @@
 package webserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,12 +18,11 @@ func generateStableEncryptionSeed() (string, error) {
 	return authmaterial.GenerateSeed()
 }
 
-func (s *Server) rewrapProtectedDataForAuthChange(r *http.Request, oldRecord, newRecord authRecord) error {
+func (s *Server) rewrapProtectedDataForAuthChange(ctx context.Context, oldRecord, newRecord authRecord) error {
 	if s == nil || s.backend == nil || s.backend.repo == nil {
-		return nil
+		return errors.New("auth_rewrap: missing server/backend/repo configuration (s.backend.repo unavailable)")
 	}
 
-	ctx := r.Context()
 	oldMaterial := oldRecord.authMaterial()
 	newMaterial := newRecord.authMaterial()
 
@@ -40,7 +40,7 @@ func (s *Server) rewrapProtectedDataForAuthChange(r *http.Request, oldRecord, ne
 			}
 		}
 		if rollbackErr != nil {
-			return fmt.Errorf("protected data rewrap upgrade failed: %w", errors.Join(err, fmt.Errorf("cookie rollback failed: %w", rollbackErr)))
+			return fmt.Errorf("protected data rewrap upgrade failed: %w", errors.Join(err, rollbackErr))
 		}
 		return err
 	}
@@ -71,7 +71,10 @@ func (s *Server) rollbackProtectedDataForAuthChange(r *http.Request, currentReco
 			}
 		}
 		if rollbackErr != nil {
-			return fmt.Errorf("protected data rewrap rollback failed: %w", errors.Join(err, fmt.Errorf("cookie rollback failed: %w", rollbackErr)))
+			return errors.Join(
+				fmt.Errorf("protected data rewrap rollback failed: %w", err),
+				fmt.Errorf("cookie rollback failed: %w", rollbackErr),
+			)
 		}
 		return err
 	}

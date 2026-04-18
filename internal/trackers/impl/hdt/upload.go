@@ -26,6 +26,7 @@ import (
 
 var tokenPattern = regexp.MustCompile(`name="csrfToken"\s+value="([^"]+)"`)
 var successPattern = regexp.MustCompile(`details\.php\?id=([a-zA-Z0-9]+)|Upload successful!`)
+var detailsPattern = regexp.MustCompile(`details\.php\?id=([a-zA-Z0-9]+)`)
 
 type uploadState struct {
 	baseURL       string
@@ -73,7 +74,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	responseBody, _ := io.ReadAll(resp.Body)
 	combined := finalURL + "\n" + string(responseBody)
 	id := ""
-	if match := regexp.MustCompile(`details\.php\?id=([a-zA-Z0-9]+)`).FindStringSubmatch(combined); len(match) >= 2 {
+	if match := detailsPattern.FindStringSubmatch(combined); len(match) >= 2 {
 		id = match[1]
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && successPattern.MatchString(combined) {

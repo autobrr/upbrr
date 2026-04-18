@@ -33,11 +33,11 @@ func (h azNetworkHandler) Search(ctx context.Context, meta api.PreparedMetadata,
 	if cfg, ok := trackerCfg(h.cfg, tracker); ok && strings.TrimSpace(cfg.URL) != "" {
 		site.baseURL = strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	}
-	cookies, err := loadAZFamilyCookies(ctx, h.cfg, tracker, site.baseURL)
+	loadedCookies, err := loadAZFamilyCookies(ctx, h.cfg, tracker, site.baseURL)
 	if err != nil {
 		return nil, []string{noteSkip(fmt.Sprintf("missing valid %s cookies", strings.ToUpper(strings.TrimSpace(tracker))))}, nil
 	}
-	mediaCode, err := h.lookupMediaCode(ctx, site, cookies, meta)
+	mediaCode, err := h.lookupMediaCode(ctx, site, loadedCookies, meta)
 	if err != nil {
 		return nil, []string{noteSkip(strings.ToUpper(strings.TrimSpace(tracker)) + " request failed")}, nil
 	}
@@ -45,7 +45,7 @@ func (h azNetworkHandler) Search(ctx context.Context, meta api.PreparedMetadata,
 		return nil, []string{noteSkip(strings.ToUpper(strings.TrimSpace(tracker)) + " media missing from tracker database")}, nil
 	}
 	pageURL := site.baseURL + "/movies/torrents/" + mediaCode + "?quality=" + url.QueryEscape(azDupeResolution(meta))
-	return h.fetchTorrentList(ctx, site, cookies, pageURL, meta)
+	return h.fetchTorrentList(ctx, site, loadedCookies, pageURL, meta)
 }
 
 func (h azNetworkHandler) lookupMediaCode(ctx context.Context, site azDupeSiteDef, cookies []*http.Cookie, meta api.PreparedMetadata) (string, error) {
@@ -165,11 +165,11 @@ func azDupeSite(tracker string) azDupeSiteDef {
 }
 
 func loadAZFamilyCookies(ctx context.Context, cfg config.Config, tracker string, baseURL string) ([]*http.Cookie, error) {
-	parsed, _ := url.Parse(baseURL)
-	host := ""
-	if parsed != nil {
-		host = parsed.Hostname()
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse baseURL %q: %w", baseURL, err)
 	}
+	host := parsed.Hostname()
 	return cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, strings.ToUpper(strings.TrimSpace(tracker)), host)
 }
 

@@ -103,7 +103,7 @@ func DecryptConfigSecrets(cfg *Config) (*Config, error) {
 		return nil, err
 	}
 
-	return decryptConfigSecretsWithHelper(cfg, helper)
+	return decryptConfigSecretsWithHelperFrom(cloned, helper, true)
 }
 
 func encryptConfigSecretsWithHelper(cfg *Config, helper string) (*Config, error) {
@@ -134,9 +134,17 @@ func encryptConfigSecretsWithHelper(cfg *Config, helper string) (*Config, error)
 }
 
 func decryptConfigSecretsWithHelper(cfg *Config, helper string) (*Config, error) {
-	cloned, err := cloneConfig(cfg)
-	if err != nil {
-		return nil, err
+	return decryptConfigSecretsWithHelperFrom(cfg, helper, false)
+}
+
+func decryptConfigSecretsWithHelperFrom(cfg *Config, helper string, assumeCloned bool) (*Config, error) {
+	cloned := cfg
+	if !assumeCloned {
+		var err error
+		cloned, err = cloneConfig(cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	needsHelper := false
@@ -390,7 +398,7 @@ func resolveSecretHelper(cfg *Config) (string, error) {
 			if isBareAuthmaterialUnavailable(err) {
 				return "", ErrSecretEncryptionHelperUnavailable
 			}
-			return "", fmt.Errorf("%w: %s", ErrSecretEncryptionHelperUnavailable, err.Error())
+			return "", fmt.Errorf("%w: %w", ErrSecretEncryptionHelperUnavailable, err)
 		}
 		return "", fmt.Errorf("config secret helper: %w", err)
 	}
@@ -407,11 +415,11 @@ func resolveSecretHelper(cfg *Config) (string, error) {
 }
 
 func hasDetailedHelperUnavailableContext(err error) bool {
-	return err != nil && err.Error() != ErrSecretEncryptionHelperUnavailable.Error()
+	return err != nil && errors.Is(err, ErrSecretEncryptionHelperUnavailable) && errors.Unwrap(err) != nil
 }
 
 func isBareAuthmaterialUnavailable(err error) bool {
-	return err != nil && err.Error() == authmaterial.ErrUnavailable.Error()
+	return err != nil && errors.Is(err, authmaterial.ErrUnavailable) && errors.Unwrap(err) == nil
 }
 
 func encryptSecretString(plaintext string, helper string) (string, error) {
@@ -494,6 +502,21 @@ func parseSecretEnvelope(value string) (secretEnvelope, error) {
 	var envelope secretEnvelope
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return secretEnvelope{}, fmt.Errorf("unmarshal secret envelope: %w", err)
+	}
+	if envelope.V == 0 {
+		return secretEnvelope{}, errors.New("invalid secret envelope: missing V")
+	}
+	if strings.TrimSpace(envelope.S) == "" {
+		return secretEnvelope{}, errors.New("invalid secret envelope: missing S")
+	}
+	if strings.TrimSpace(envelope.C) == "" {
+		return secretEnvelope{}, errors.New("invalid secret envelope: missing C")
+	}
+	if strings.TrimSpace(envelope.N) == "" {
+		return secretEnvelope{}, errors.New("invalid secret envelope: missing N")
+	}
+	if strings.TrimSpace(envelope.T) == "" {
+		return secretEnvelope{}, errors.New("invalid secret envelope: missing T")
 	}
 
 	return envelope, nil

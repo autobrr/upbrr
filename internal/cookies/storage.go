@@ -10,6 +10,13 @@ import (
 	"fmt"
 )
 
+type cookieStoreExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// ErrCookieNotFound indicates that a requested cookie does not exist in storage.
+var ErrCookieNotFound = errors.New("cookie not found")
+
 // CookieStore provides database access for encrypted cookies.
 type CookieStore struct {
 	db *sql.DB
@@ -26,12 +33,28 @@ func NewCookieStore(db *sql.DB) (*CookieStore, error) {
 
 // SaveCookie saves or updates an encrypted cookie in the database.
 func (cs *CookieStore) SaveCookie(ctx context.Context, trackerID, cookieName, cookieValue string, key []byte) error {
+	return cs.saveCookie(ctx, cs.db, trackerID, cookieName, cookieValue, key)
+}
+
+// SaveCookieTx saves or updates an encrypted cookie inside an existing transaction.
+func (cs *CookieStore) SaveCookieTx(ctx context.Context, tx *sql.Tx, trackerID, cookieName, cookieValue string, key []byte) error {
+	if tx == nil {
+		return errors.New("SaveCookieTx: transaction is required")
+	}
+
+	return cs.saveCookie(ctx, tx, trackerID, cookieName, cookieValue, key)
+}
+
+func (cs *CookieStore) saveCookie(ctx context.Context, execer cookieStoreExecer, trackerID, cookieName, cookieValue string, key []byte) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("SaveCookie: context is required")
 	}
 
 	if trackerID == "" || cookieName == "" {
 		return errors.New("SaveCookie: trackerID and cookieName must be non-empty")
+	}
+	if len(key) != 32 {
+		return errors.New("SaveCookie: invalid encryption key")
 	}
 
 	// Encrypt the cookie value
@@ -52,7 +75,7 @@ func (cs *CookieStore) SaveCookie(ctx context.Context, trackerID, cookieName, co
 			updated_at = CURRENT_TIMESTAMP
 	`
 
-	_, err = cs.db.ExecContext(ctx, query, trackerID, cookieName, encoded.CiphertextB64, encoded.NonceB64, encoded.AuthTagB64)
+	_, err = execer.ExecContext(ctx, query, trackerID, cookieName, encoded.CiphertextB64, encoded.NonceB64, encoded.AuthTagB64)
 	if err != nil {
 		return fmt.Errorf("failed to save cookie: %w", err)
 	}
@@ -62,6 +85,10 @@ func (cs *CookieStore) SaveCookie(ctx context.Context, trackerID, cookieName, co
 
 // GetCookie retrieves and decrypts a single cookie from the database.
 func (cs *CookieStore) GetCookie(ctx context.Context, trackerID, cookieName string, key []byte) (string, error) {
+	if trackerID == "" || cookieName == "" {
+		return "", errors.New("SaveCookie: trackerID and cookieName must be non-empty")
+	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -71,7 +98,7 @@ func (cs *CookieStore) GetCookie(ctx context.Context, trackerID, cookieName stri
 	var ciphertextB64, nonceB64, authTagB64 string
 	err := cs.db.QueryRowContext(ctx, query, trackerID, cookieName).Scan(&ciphertextB64, &nonceB64, &authTagB64)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil // Cookie not found
+		return "", ErrCookieNotFound
 	}
 	if err != nil {
 		return "", fmt.Errorf("database query failed: %w", err)
@@ -146,6 +173,10 @@ func (cs *CookieStore) GetAllTrackerCookies(ctx context.Context, trackerID strin
 
 // DeleteCookie removes a specific cookie from the database.
 func (cs *CookieStore) DeleteCookie(ctx context.Context, trackerID, cookieName string) error {
+	if trackerID == "" || cookieName == "" {
+		return errors.New("SaveCookie: trackerID and cookieName must be non-empty")
+	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -161,14 +192,62 @@ func (cs *CookieStore) DeleteCookie(ctx context.Context, trackerID, cookieName s
 
 // DeleteAllTrackerCookies removes all cookies for a tracker.
 func (cs *CookieStore) DeleteAllTrackerCookies(ctx context.Context, trackerID string) error {
+	return cs.deleteAllTrackerCookies(ctx, cs.db, trackerID)
+}
+
+// DeleteAllTrackerCookiesTx removes all cookies for a tracker inside an existing transaction.
+func (cs *CookieStore) DeleteAllTrackerCookiesTx(ctx context.Context, tx *sql.Tx, trackerID string) error {
+	if tx == nil {
+		return errors.New("DeleteAllTrackerCookiesTx: transaction is required")
+	}
+
+	return cs.deleteAllTrackerCookies(ctx, tx, trackerID)
+}
+
+func (cs *CookieStore) deleteAllTrackerCookies(ctx context.Context, execer cookieStoreExecer, trackerID string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	query := `DELETE FROM tracker_cookies WHERE tracker_id = ?`
-	_, err := cs.db.ExecContext(ctx, query, trackerID)
+	_, err := execer.ExecContext(ctx, query, trackerID)
 	if err != nil {
 		return fmt.Errorf("failed to delete cookies for tracker: %w", err)
+	}
+
+	return nil
+}
+
+// RunInTransaction runs cookie store operations inside a single database transaction.
+func (cs *CookieStore) RunInTransaction(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if fn == nil {
+		return errors.New("RunInTransaction: callback is required")
+	}
+
+	tx, err := cs.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin cookie transaction: %w", err)
+	}
+
+	defer func() {
+		if err == nil {
+			return
+		}
+
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, fmt.Errorf("rollback failed: %w", rollbackErr))
+		}
+	}()
+
+	if err = fn(tx); err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit cookie transaction: %w", err)
 	}
 
 	return nil

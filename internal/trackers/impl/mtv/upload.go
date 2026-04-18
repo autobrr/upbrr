@@ -237,11 +237,7 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 }
 
 func loadMTVCookies(ctx context.Context, dbPath string) (map[string]string, error) {
-	values, err := cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "MTV")
-	if err != nil {
-		return nil, err
-	}
-	return values, nil
+	return cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "MTV")
 }
 
 func saveMTVCookies(ctx context.Context, dbPath string, values map[string]string) error {

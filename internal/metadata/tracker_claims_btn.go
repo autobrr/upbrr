@@ -203,7 +203,7 @@ func (s *Service) fetchBTNClaimedTitles(ctx context.Context) (map[string]struct{
 	if s.logger != nil {
 		s.logger.Debugf("metadata: BTN claims fetch starting url=%s", btnClaimedShowsURL)
 	}
-	if err := s.loadBTNCookiesForClaims(client); err != nil {
+	if err := s.loadBTNCookiesForClaims(ctx, client); err != nil {
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims cookie load failed: %v", err)
 		}
@@ -364,12 +364,12 @@ func resolveBTNLoginBaseURL(entry config.TrackerConfig) string {
 	return btnSiteBaseURL
 }
 
-func (s *Service) loadBTNCookiesForClaims(client *http.Client) error {
+func (s *Service) loadBTNCookiesForClaims(ctx context.Context, client *http.Client) error {
 	if client == nil || client.Jar == nil {
 		return nil
 	}
 
-	trackerCookies, err := cookies.LoadTrackerHTTPCookies(context.Background(), s.cfg.MainSettings.DBPath, "BTN", "")
+	trackerCookies, err := cookies.LoadTrackerHTTPCookies(ctx, s.cfg.MainSettings.DBPath, "BTN", "")
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Debugf("metadata: BTN claims cookie load skipped: %v", err)

@@ -6,6 +6,7 @@ package cookies
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -55,19 +56,22 @@ func EnsureCookieMigration(ctx context.Context, db *sql.DB, dbPath string, cooki
 	keyManager := NewKeyManager(db)
 	encryptionKey, err := keyManager.InitializeEncryptionKey(ctx, dbPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to initialize encryption key: %w", err)
 	}
 
 	// Create cookie store
 	store, err := NewCookieStore(db)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create cookie store: %w", err)
 	}
 
 	// Perform migration
-	migratedCount, err := MigrateFromFilesToDB(ctx, cookiesDir, store, encryptionKey, logger)
+	migratedCount, failedCookies, err := MigrateFromFilesToDB(ctx, cookiesDir, store, encryptionKey, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to migrate cookies from files to DB: %w", err)
+	}
+	if len(failedCookies) > 0 {
+		return nil
 	}
 
 	// Only delete old files if migration was successful
