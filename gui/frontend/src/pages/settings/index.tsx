@@ -275,8 +275,16 @@ export default function SettingsPage(props: Props) {
                     to enable encrypted secret storage for future saves and exports.
                   </p>
                   <div className="settings-auth-status">
-                    <span className={`settings-auth-badge ${webAuthStatus?.usable ? "is-ready" : webAuthStatus?.exists ? "is-warning" : "is-idle"}`}>
-                      {webAuthLoading ? "Checking..." : webAuthStatus?.usable ? "Encryption enabled" : webAuthStatus?.exists ? "Auth file invalid" : "Plaintext fallback active"}
+                    <span
+                      className={`settings-auth-badge ${webAuthStatus?.usable ? "is-ready" : webAuthStatus?.exists ? "is-warning" : "is-idle"}`}
+                    >
+                      {webAuthLoading
+                        ? "Checking..."
+                        : webAuthStatus?.usable
+                          ? "Encryption enabled"
+                          : webAuthStatus?.exists
+                            ? "Auth file invalid"
+                            : "Plaintext fallback active"}
                     </span>
                     {webAuthStatus?.path ? (
                       <p className="muted">Path: {webAuthStatus.path}</p>

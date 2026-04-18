@@ -44,7 +44,7 @@ import type {
   TrackerDryRunPreview,
   TrackerUploadSnapshot,
   WebAuthStatus,
-  UploadedImageLink
+  UploadedImageLink,
 } from "./types";
 import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
 
@@ -467,7 +467,7 @@ const emptyWebAuthStatus: WebAuthStatus = {
   username: "",
   allowUnencryptedExport: false,
   encryptionEnabled: false,
-  message: ""
+  message: "",
 };
 
 export default function App() {
@@ -3143,7 +3143,7 @@ export default function App() {
     markSettingsSaved,
     webAuthConfirm,
     webAuthPassword,
-    webAuthUsername
+    webAuthUsername,
   ]);
 
   useEffect(() => {
