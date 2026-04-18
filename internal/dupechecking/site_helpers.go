@@ -19,6 +19,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -212,7 +213,7 @@ func addSize(entry *api.DupeEntry, value string) {
 }
 
 func categoryOfSiteMeta(meta api.PreparedMetadata) string {
-	return strings.ToUpper(strings.TrimSpace(firstNonEmpty(meta.ExternalIDs.Category, meta.MediaInfoCategory)))
+	return strings.ToUpper(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.ExternalIDs.Category, meta.MediaInfoCategory)))
 }
 
 func resolveSeasonEpisodeQuery(meta api.PreparedMetadata) string {

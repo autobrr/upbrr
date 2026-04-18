@@ -18,9 +18,12 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -122,7 +125,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, req.TrackerConfig, assets)
+	description, err := buildDescription(req, assets)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -214,29 +217,82 @@ func cookieClient(ctx context.Context, dbPath string) (*http.Client, error) {
 	return client, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, assets trackers.DescriptionAssets) (string, error) {
-	_ = cfg
-	parts := make([]string, 0, 6)
-	if logo := strings.TrimSpace(meta.ExternalMetadata.TMDB.Logo); logo != "" {
-		parts = append(parts, `<center><img src="`+logo+`" style="max-width: 300px;"></center>`)
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+	meta := req.Meta
+	parts := make([]string, 0, 8)
+
+	// Custom Header
+	if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+		parts = append(parts, header)
 	}
-	if title := strings.TrimSpace(meta.EpisodeTitle); title != "" {
-		parts = append(parts, "[center]"+title+"[/center]")
+
+	// Logo
+	if req.AppConfig.Description.AddLogo {
+		if logo, _ := descriptionunit3d.ResolveLogo(meta, req.AppConfig); logo != "" {
+			parts = append(parts, `<center><img src="`+logo+`" style="max-width: 300px;"></center>`)
+		}
 	}
-	if overview := strings.TrimSpace(meta.EpisodeOverview); overview != "" {
-		parts = append(parts, "[center]"+overview+"[/center]")
+
+	// TV Episode details
+	if strings.TrimSpace(meta.EpisodeOverview) != "" {
+		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]")
+		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/center]")
 	}
-	if info := commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)); info != "" {
-		parts = append(parts, info)
+
+	// File information (BDInfo or MediaInfo)
+	if media := trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, meta); media != "" {
+		parts = append(parts, media)
 	}
-	if base := strings.TrimSpace(assets.Description); base != "" {
-		parts = append(parts, base)
+
+	// User description
+	if strings.TrimSpace(assets.Description) != "" {
+		parts = append(parts, strings.TrimSpace(assets.Description))
 	}
-	if shots := screenshotHTML(assets.Screenshots); shots != "" {
+
+	// menu
+	if len(assets.MenuImages) > 0 {
+		// header
+		if header := strings.TrimSpace(req.AppConfig.Description.DiscMenuHeader); header != "" {
+			parts = append(parts, header)
+		}
+		// images
+		if shots := screenshotBlock(assets.MenuImages); shots != "" {
+			parts = append(parts, shots)
+		}
+	}
+	// Screenshot Header
+	if header := strings.TrimSpace(req.AppConfig.Description.ScreenshotHeader); header != "" {
+		parts = append(parts, header)
+	}
+
+	// Tonemapped Header
+	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && descriptionunit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+		parts = append(parts, tonemapHeader)
+	}
+
+	// screenshots
+	if shots := screenshotBlock(assets.Screenshots); shots != "" {
 		parts = append(parts, shots)
 	}
-	parts = append(parts, `<div style="text-align: right; font-size: 11px;"><a href="https://github.com/autobrr/upbrr">upbrr</a></div>`)
-	return bbcode.FinalizeTrackerDescription("TL", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+
+	// custom user signature
+	if signature := strings.TrimSpace(req.AppConfig.Description.CustomSignature); signature != "" {
+		parts = append(parts, signature)
+	}
+
+	// upbrr signature
+	link, text := descriptionunit3d.UppbrrSignatureLink()
+	parts = append(parts, fmt.Sprintf("<div style=\"text-align: right; font-size: 11px;\"><a href=\"%s\">%s</a></div>", link, text))
+
+	// finalize description
+	finalDescription := bbcode.FinalizeTrackerDescription("TL", strings.TrimSpace(strings.Join(parts, "\n\n")))
+
+	// save debug description
+	if meta.Options.Debug {
+		descriptionunit3d.SaveDescriptionDebug(meta, "TL", req.AppConfig.MainSettings.DBPath, finalDescription, req.Logger)
+	}
+
+	return finalDescription, nil
 }
 
 func resolveCategory(meta api.PreparedMetadata) string {
@@ -288,7 +344,7 @@ func resolveName(meta api.PreparedMetadata) string {
 	if strings.TrimSpace(meta.SceneName) != "" {
 		return strings.TrimSpace(meta.SceneName)
 	}
-	return strings.TrimSpace(firstNonEmpty(meta.ReleaseName, meta.Release.Title, meta.Filename))
+	return strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.Release.Title, meta.Filename))
 }
 
 func announceKey(cfg config.TrackerConfig) string {
@@ -327,21 +383,21 @@ func tvmazeURL(meta api.PreparedMetadata) string {
 func screenshots(images []api.ScreenshotImage) []string {
 	out := make([]string, 0, len(images))
 	for _, image := range images {
-		if raw := strings.TrimSpace(firstNonEmpty(image.RawURL, image.ImgURL)); raw != "" {
+		if raw := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL)); raw != "" {
 			out = append(out, raw)
 		}
 	}
 	return out
 }
 
-func screenshotHTML(images []api.ScreenshotImage) string {
+func screenshotBlock(images []api.ScreenshotImage) string {
 	if len(images) == 0 {
 		return ""
 	}
 	parts := []string{"<center>"}
 	for idx, image := range images {
-		img := firstNonEmpty(image.ImgURL, image.RawURL)
-		web := firstNonEmpty(image.WebURL, img)
+		img := metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL)
+		web := metautil.FirstNonEmptyTrimmed(image.WebURL, img)
 		if img == "" || web == "" {
 			continue
 		}
@@ -352,15 +408,6 @@ func screenshotHTML(images []api.ScreenshotImage) string {
 	}
 	parts = append(parts, "</center>")
 	return strings.Join(parts, "  ")
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func containsWord(a string, b string) bool {
@@ -391,5 +438,5 @@ func isTV(meta api.PreparedMetadata) bool {
 }
 
 func genresText(meta api.PreparedMetadata) string {
-	return firstNonEmpty(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
 }

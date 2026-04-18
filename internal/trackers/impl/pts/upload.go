@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -145,7 +146,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	state := uploadState{
 		torrentPath:   torrentPath,
 		description:   description,
-		releaseName:   firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
+		releaseName:   metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
 		fields:        buildPayload(req.Meta, description),
 		questionnaire: buildQuestionnaire(req.Meta),
 		blockedReason: validateUpload(req.Meta),
@@ -159,7 +160,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 func buildPayload(meta api.PreparedMetadata, description string) map[string]string {
 	return map[string]string{
-		"name":  firstNonEmpty(meta.ReleaseName, meta.Release.Title, meta.Filename),
+		"name":  metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.Release.Title, meta.Filename),
 		"url":   imdbURL(meta),
 		"descr": description,
 		"type":  resolveType(meta),
@@ -193,7 +194,7 @@ func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
 			Label:    "Mandarin Requirement",
 			Kind:     "select",
 			Options:  []string{"no", "yes"},
-			Value:    firstNonEmpty(answer, "no"),
+			Value:    metautil.FirstNonEmptyTrimmed(answer, "no"),
 			Help:     "PTS expects Mandarin audio or subtitles. Choose yes to override and upload anyway.",
 			Required: true,
 		}},
@@ -246,8 +247,8 @@ func screenshotBlock(images []api.ScreenshotImage) string {
 	}
 	lines := []string{"[center][b]Screenshots[/b]"}
 	for _, image := range images {
-		imgURL := strings.TrimSpace(firstNonEmpty(image.ImgURL, image.RawURL))
-		webURL := strings.TrimSpace(firstNonEmpty(image.WebURL, imgURL))
+		imgURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL))
+		webURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.WebURL, imgURL))
 		if imgURL == "" || webURL == "" {
 			continue
 		}
@@ -279,15 +280,6 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 		return nil
 	}
 	return meta.TrackerQuestionnaireAnswers["PTS"]
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func cloneFields(input map[string]string) map[string]string {

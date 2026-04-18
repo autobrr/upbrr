@@ -14,6 +14,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -70,7 +71,7 @@ func (h hdsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 				continue
 			}
 			entry := api.DupeEntry{
-				Name: strings.TrimSpace(firstNonEmpty(nodeTextHTML(nameNode), attrValueHTML(nameNode, "title"))),
+				Name: strings.TrimSpace(metautil.FirstNonEmptyTrimmed(nodeTextHTML(nameNode), attrValueHTML(nameNode, "title"))),
 				Link: absoluteURL(baseURL, attrValueHTML(nameNode, "href")),
 			}
 			cells := findNodes(row, func(node *xhtml.Node) bool {

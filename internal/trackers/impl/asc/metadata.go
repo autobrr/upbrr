@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -24,7 +25,7 @@ func resolveContainer(meta api.PreparedMetadata) string {
 	}
 	ext := strings.ToLower(strings.TrimSpace(meta.Container))
 	if ext == "" {
-		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(firstNonEmpty(meta.VideoPath, meta.SourcePath)), "."))
+		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(metautil.FirstNonEmptyTrimmed(meta.VideoPath, meta.SourcePath)), "."))
 	}
 	switch ext {
 	case "mkv":
@@ -92,7 +93,7 @@ func resolveResolution(meta api.PreparedMetadata) map[string]string {
 }
 
 func resolveVideoCodec(meta api.PreparedMetadata) string {
-	codec := strings.ToUpper(strings.TrimSpace(firstNonEmpty(meta.VideoEncode, meta.VideoCodec)))
+	codec := strings.ToUpper(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.VideoEncode, meta.VideoCodec)))
 	if strings.Contains(codec, "264") {
 		codec = "H264"
 	} else if strings.Contains(codec, "265") {
@@ -212,14 +213,14 @@ func resolveAnimeType(meta api.PreparedMetadata) string {
 func resolveUploadTitle(meta api.PreparedMetadata) string {
 	base := resolveDisplayTitle(meta)
 	if categoryOf(meta) == "TV" {
-		return strings.TrimSpace(base + " - " + firstNonEmpty(strings.TrimSpace(meta.SeasonStr)+strings.TrimSpace(meta.EpisodeStr), seasonEpisodeText(meta)))
+		return strings.TrimSpace(base + " - " + metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.SeasonStr)+strings.TrimSpace(meta.EpisodeStr), seasonEpisodeText(meta)))
 	}
 	return base
 }
 
 func resolveDisplayTitle(meta api.PreparedMetadata) string {
 	if tmdb := meta.ExternalMetadata.TMDB; tmdb != nil {
-		main := strings.TrimSpace(firstNonEmpty(tmdb.Title, meta.Release.Title))
+		main := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(tmdb.Title, meta.Release.Title))
 		alt := strings.TrimSpace(tmdb.OriginalTitle)
 		if categoryOf(meta) == "TV" {
 			alt = strings.TrimSpace(tmdb.Title)
@@ -231,7 +232,7 @@ func resolveDisplayTitle(meta api.PreparedMetadata) string {
 			return main
 		}
 	}
-	return strings.TrimSpace(firstNonEmpty(meta.Release.Title, meta.ReleaseName, pathutil.Base(meta.SourcePath)))
+	return strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName, pathutil.Base(meta.SourcePath)))
 }
 
 func resolvePoster(meta api.PreparedMetadata) string {
@@ -461,15 +462,6 @@ func mapLanguage(value string, mappings map[string]string, fallback string) stri
 		return mapped
 	}
 	return fallback
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func lowerStrings(values []string) []string {

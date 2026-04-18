@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -238,7 +239,7 @@ func resolveExtraFiles(_ context.Context, meta api.PreparedMetadata) []commonhtt
 			}
 		}
 	}
-	dir := filepath.Dir(firstNonEmpty(meta.MediaInfoTextPath, meta.SourcePath))
+	dir := filepath.Dir(metautil.FirstNonEmptyTrimmed(meta.MediaInfoTextPath, meta.SourcePath))
 	if payload, path, err := commonhttp.ReadFirstMatching(dir, "*.nfo"); err == nil {
 		files = append(files, commonhttp.FileField{FieldName: "nfo", FileName: filepath.Base(path), Content: payload})
 	}
@@ -352,7 +353,7 @@ func resolveName(meta api.PreparedMetadata) string {
 	if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
 		return strings.TrimSpace(meta.SceneName)
 	}
-	return strings.ReplaceAll(firstNonEmpty(meta.ReleaseNameClean, meta.ReleaseName, meta.Filename), " ", ".")
+	return strings.ReplaceAll(metautil.FirstNonEmptyTrimmed(meta.ReleaseNameClean, meta.ReleaseName, meta.Filename), " ", ".")
 }
 
 func resolveIMDbURL(meta api.PreparedMetadata) string {
@@ -392,13 +393,4 @@ func cloneFields(in map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }

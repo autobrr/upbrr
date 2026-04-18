@@ -16,9 +16,11 @@ import (
 
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -51,7 +53,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 
 	files := []commonhttp.FileField{{
 		FieldName: "torrentfile",
-		FileName:  firstNonEmpty(state.releaseName, filepath.Base(state.torrentPath)),
+		FileName:  metautil.FirstNonEmptyTrimmed(state.releaseName, filepath.Base(state.torrentPath)),
 		Path:      state.torrentPath,
 	}}
 	if state.nfo != nil {
@@ -83,7 +85,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	responseBody, _ := io.ReadAll(resp.Body)
 	match := sslPattern.FindStringSubmatch(finalURL + "\n" + string(responseBody))
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && len(match) >= 3 {
-		id := firstNonEmpty(match[1], match[2])
+		id := metautil.FirstNonEmptyTrimmed(match[1], match[2])
 		if id != "" {
 			tURL := torrentURL + id
 			artifactPath := ""
@@ -150,7 +152,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
+	description, err := buildDescription(req, assets)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -181,16 +183,31 @@ func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
 	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "IS", "immortalseed.me")
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	parts := make([]string, 0, 5)
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+	meta := req.Meta
+	parts := make([]string, 0, 8)
 	if strings.TrimSpace(meta.EpisodeOverview) != "" {
 		parts = append(parts, "Title: "+strings.TrimSpace(meta.EpisodeTitle), "Overview: "+strings.TrimSpace(meta.EpisodeOverview))
 	}
-	if media := resolveMedia(meta); media != "" {
+	if media := trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, meta); media != "" {
 		parts = append(parts, media)
 	}
 	if strings.TrimSpace(assets.Description) != "" {
 		parts = append(parts, strings.TrimSpace(assets.Description))
+	}
+	if len(assets.MenuImages) > 0 {
+		var menuLines []string
+		if header := strings.TrimSpace(req.AppConfig.Description.DiscMenuHeader); header != "" {
+			menuLines = append(menuLines, header)
+		}
+		for _, image := range assets.MenuImages {
+			if strings.TrimSpace(image.RawURL) != "" {
+				menuLines = append(menuLines, image.RawURL)
+			}
+		}
+		if len(menuLines) > 0 {
+			parts = append(parts, strings.Join(menuLines, "\n"))
+		}
 	}
 	if len(assets.Screenshots) > 0 {
 		var shotLines []string
@@ -375,17 +392,8 @@ func resolveKeywords(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveMedia(meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		if summary, ok := meta.BDInfo["summary"].(string); ok {
-			return strings.TrimSpace(summary)
-		}
-	}
-	return firstNonEmpty(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
-}
-
 func resolveNFO(meta api.PreparedMetadata) (commonhttp.FileField, bool) {
-	dir := filepath.Dir(firstNonEmpty(meta.MediaInfoTextPath, meta.SourcePath))
+	dir := filepath.Dir(metautil.FirstNonEmptyTrimmed(meta.MediaInfoTextPath, meta.SourcePath))
 	payload, path, err := commonhttp.ReadFirstMatching(dir, "*.nfo")
 	if err != nil {
 		return commonhttp.FileField{}, false
@@ -418,13 +426,4 @@ func cloneFields(in map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }

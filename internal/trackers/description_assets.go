@@ -18,6 +18,7 @@ import (
 type DescriptionAssets struct {
 	Description string
 	Screenshots []api.ScreenshotImage
+	MenuImages  []api.ScreenshotImage
 	Slots       []api.ScreenshotSlot
 	Override    bool
 }
@@ -104,7 +105,73 @@ func resolveDescriptionAssets(ctx context.Context, tracker string, meta api.Prep
 	if logger != nil {
 		logger.Tracef("trackers: description assets resolved desc_len=%d screenshots=%d", len(strings.TrimSpace(description)), len(screenshots))
 	}
-	return DescriptionAssets{Description: sanitizeTrackerDescription(tracker, description), Screenshots: screenshots, Slots: slots, Override: overridden}, nil
+
+	var menuImages []api.ScreenshotImage
+	var normalScreenshots []api.ScreenshotImage
+
+	if len(screenshots) > 0 {
+		selections, _ := finalSelectionsFromSource(ctx, meta, repo, preloaded)
+		menuPaths := make(map[string]struct{})
+		for _, sel := range selections {
+			if sel.Source == string(api.ScreenshotPurposeMenu) && strings.TrimSpace(sel.ImagePath) != "" {
+				menuPaths[strings.TrimSpace(sel.ImagePath)] = struct{}{}
+			}
+		}
+
+		visitedMenuURLs := make(map[string]struct{})
+		for _, shot := range screenshots {
+			isMenu := false
+			path := strings.TrimSpace(shot.Path)
+			if path != "" {
+				if _, ok := menuPaths[path]; ok {
+					isMenu = true
+				}
+			}
+			if isMenu {
+				menuImages = append(menuImages, shot)
+				if u := strings.TrimSpace(shot.RawURL); u != "" {
+					visitedMenuURLs[u] = struct{}{}
+				} else if u := strings.TrimSpace(shot.ImgURL); u != "" {
+					visitedMenuURLs[u] = struct{}{}
+				}
+			}
+		}
+
+		for _, shot := range screenshots {
+			isMenu := false
+			path := strings.TrimSpace(shot.Path)
+			if path != "" {
+				if _, ok := menuPaths[path]; ok {
+					isMenu = true
+				}
+			}
+
+			if isMenu {
+				continue
+			}
+
+			// Defensive check: skip if the URL matches an identified menu image
+			u := strings.TrimSpace(shot.RawURL)
+			if u == "" {
+				u = strings.TrimSpace(shot.ImgURL)
+			}
+			if u != "" {
+				if _, ok := visitedMenuURLs[u]; ok {
+					continue
+				}
+			}
+
+			normalScreenshots = append(normalScreenshots, shot)
+		}
+	}
+
+	return DescriptionAssets{
+		Description: sanitizeTrackerDescription(tracker, description),
+		Screenshots: normalScreenshots,
+		MenuImages:  menuImages,
+		Slots:       slots,
+		Override:    overridden,
+	}, nil
 }
 
 func resolveTrackerDescription(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger, preloaded *preloadedDescriptionAssetData) (string, bool) {

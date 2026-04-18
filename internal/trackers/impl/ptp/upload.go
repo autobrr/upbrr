@@ -31,6 +31,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
@@ -402,17 +403,17 @@ func buildUploadFields(meta api.PreparedMetadata, description string, groupID st
 	}
 
 	title, year := resolveGroupTitleYear(meta)
-	title = firstNonEmpty(strings.TrimSpace(answers["title"]), title)
-	year = firstNonEmpty(strings.TrimSpace(answers["year"]), year)
+	title = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["title"]), title)
+	year = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["year"]), year)
 	if strings.TrimSpace(title) == "" {
 		return nil, errors.New("trackers: PTP missing title for new group upload")
 	}
 	fields["title"] = title
 	fields["year"] = year
-	fields["image"] = firstNonEmpty(strings.TrimSpace(answers["poster"]), resolvePoster(meta))
-	fields["tags"] = firstNonEmpty(strings.TrimSpace(answers["tags"]), resolveTags(meta))
-	fields["album_desc"] = firstNonEmpty(strings.TrimSpace(answers["album_desc"]), resolveOverview(meta))
-	fields["trailer"] = firstNonEmpty(strings.TrimSpace(answers["trailer"]), resolveTrailer(meta))
+	fields["image"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["poster"]), resolvePoster(meta))
+	fields["tags"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta))
+	fields["album_desc"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["album_desc"]), resolveOverview(meta))
+	fields["trailer"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["trailer"]), resolveTrailer(meta))
 	directors := resolveDirectors(meta)
 	if len(directors) > 0 {
 		fields["artist[]"] = strings.Join(directors, "\n")
@@ -1217,15 +1218,6 @@ func questionnaireAnswers(meta api.PreparedMetadata, tracker string) map[string]
 		return nil
 	}
 	return meta.TrackerQuestionnaireAnswers[strings.ToUpper(strings.TrimSpace(tracker))]
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 var subtitleIDs = map[string]int{

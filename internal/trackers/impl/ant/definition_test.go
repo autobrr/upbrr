@@ -106,7 +106,7 @@ func TestDefinitionBuildUploadDryRunMarksManualTagsWhenOnlyIMDbGenresExist(t *te
 }
 
 func TestBuildDescriptionRemovesScreenshotOnlyBlockAndDefaultSignature(t *testing.T) {
-	description, err := buildDescription(api.PreparedMetadata{}, trackers.DescriptionAssets{
+	description, err := buildDescription(trackers.UploadRequest{}, trackers.DescriptionAssets{
 		Description: `[align=center]
 [url=https://ptpimg.me/fv71hr.png][img width=350]https://ptpimg.me/fv71hr.png[/img][/url]
 [/align]

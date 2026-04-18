@@ -17,6 +17,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -91,8 +92,8 @@ func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, 
 		return layoutData{}, err
 	}
 	form := url.Values{
-		"imdb":   {firstNonEmpty(resolveIMDbIDText(meta), "tt0013442")},
-		"layout": {firstNonEmpty(strings.TrimSpace(layoutID), "2")},
+		"imdb":   {metautil.FirstNonEmptyTrimmed(resolveIMDbIDText(meta), "tt0013442")},
+		"layout": {metautil.FirstNonEmptyTrimmed(strings.TrimSpace(layoutID), "2")},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/search.php", strings.NewReader(form.Encode()))
 	if err != nil {
@@ -173,7 +174,7 @@ func layoutCachePath(dbPath string, layoutID string) string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(cacheRoot, "asc_layout_"+firstNonEmpty(strings.TrimSpace(layoutID), "2")+".json")
+	return filepath.Join(cacheRoot, "asc_layout_"+metautil.FirstNonEmptyTrimmed(strings.TrimSpace(layoutID), "2")+".json")
 }
 
 func buildTechnicalSheet(meta api.PreparedMetadata) string {
@@ -215,7 +216,7 @@ func buildMediaInfo(meta api.PreparedMetadata, dbPath string) string {
 		text, _ := readBDSummary(meta, dbPath)
 		return text
 	case "DVD":
-		return firstNonEmpty(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
+		return metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
 	default:
 		return readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath))
 	}

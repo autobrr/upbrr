@@ -19,9 +19,12 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -155,7 +158,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
+	description, err := buildDescription(req, assets)
 	if err != nil {
 		return uploadState{}, err
 	}
@@ -165,16 +168,16 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		return uploadState{}, err
 	}
 	payload := map[string]any{
-		"bdInfo":           resolveBDInfo(req.Meta),
-		"coverPhotoUrl":    firstNonEmpty(req.Meta.ExternalMetadata.TMDB.Backdrop, req.Meta.ExternalMetadata.TMDB.Poster),
+		"bdInfo":           trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, req.Meta),
+		"coverPhotoUrl":    metautil.FirstNonEmptyTrimmed(req.Meta.ExternalMetadata.TMDB.Backdrop, req.Meta.ExternalMetadata.TMDB.Poster),
 		"description":      genresText(req.Meta),
 		"media_info":       commonhttp.ReadOptionalFile(strings.TrimSpace(req.Meta.MediaInfoTextPath)),
-		"name":             normalizeName(firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename)),
+		"name":             normalizeName(metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename)),
 		"nfo":              "",
-		"plot":             firstNonEmpty(req.Meta.EpisodeOverview, req.Meta.ExternalMetadata.TMDB.Overview),
-		"poster":           firstNonEmpty(req.Meta.ExternalMetadata.TMDB.Poster),
+		"plot":             metautil.FirstNonEmptyTrimmed(req.Meta.EpisodeOverview, req.Meta.ExternalMetadata.TMDB.Overview),
+		"poster":           metautil.FirstNonEmptyTrimmed(req.Meta.ExternalMetadata.TMDB.Poster),
 		"technicalDetails": description,
-		"screenshots":      screenshots(assets.Screenshots),
+		"screenshots":      combineUniqueScreenshots(assets.MenuImages, assets.Screenshots),
 		"type":             resolveCategory(req.Meta),
 		"url":              imdbURL(req.Meta),
 		"channel":          channelID,
@@ -192,7 +195,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 func resolveChannel(ctx context.Context, req trackers.UploadRequest) (string, string, *api.TrackerQuestionnaire) {
 	answers := questionnaireAnswers(req.Meta)
-	input := firstNonEmpty(strings.TrimSpace(answers["channel"]), strings.TrimSpace(req.TrackerConfig.Channel))
+	input := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["channel"]), strings.TrimSpace(req.TrackerConfig.Channel))
 	if input == "" {
 		return "1", "", nil
 	}
@@ -236,19 +239,58 @@ func lookupChannelID(ctx context.Context, apiKey string, input string) (string, 
 	return "", errors.New("channel not found")
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	parts := make([]string, 0, 4)
-	if title := strings.TrimSpace(meta.EpisodeTitle); title != "" {
-		parts = append(parts, "[center]"+title+"[/center]")
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+	meta := req.Meta
+	var parts []string
+
+	// Avoid unnecessary descriptions
+	if strings.TrimSpace(assets.Description) != "" || strings.TrimSpace(meta.EpisodeOverview) != "" {
+		// Custom Header
+		if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+			parts = append(parts, header)
+		}
+
+		// Logo
+		if logo, logoSize := descriptionunit3d.ResolveLogo(meta, req.AppConfig); logo != "" {
+			parts = append(parts, fmt.Sprintf("[center][img=%d]https://image.tmdb.org/t/p/w300/%s[/img][/center]", logoSize, logo))
+		}
+
+		// TV Details
+		if strings.TrimSpace(meta.EpisodeOverview) != "" {
+			parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]")
+			parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/center]")
+		}
+
+		// User Description
+		if strings.TrimSpace(assets.Description) != "" {
+			parts = append(parts, strings.TrimSpace(assets.Description))
+		}
 	}
-	if overview := strings.TrimSpace(meta.EpisodeOverview); overview != "" {
-		parts = append(parts, "[center]"+overview+"[/center]")
+
+	// Tonemapped Header
+	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && descriptionunit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+		parts = append(parts, tonemapHeader)
 	}
-	if base := strings.TrimSpace(assets.Description); base != "" {
-		parts = append(parts, base)
+
+	// custom user signature
+	if signature := strings.TrimSpace(req.AppConfig.Description.CustomSignature); signature != "" {
+		parts = append(parts, signature)
 	}
-	parts = append(parts, "[url=https://github.com/autobrr/upbrr]upbrr[/url]")
-	return bbcode.FinalizeTrackerDescription("SPD", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+
+	// Signature
+	link, text := descriptionunit3d.UppbrrSignatureLink()
+	parts = append(parts, fmt.Sprintf("[url=%s]%s[/url]", link, text))
+
+	// Join and finalize
+	description := strings.Join(parts, "\n\n")
+	finalized := bbcode.FinalizeTrackerDescription("SPD", description)
+
+	// Debug saving
+	if meta.Options.Debug {
+		descriptionunit3d.SaveDescriptionDebug(meta, "SPD", req.AppConfig.MainSettings.DBPath, finalized, req.Logger)
+	}
+
+	return finalized, nil
 }
 
 func resolveCategory(meta api.PreparedMetadata) string {
@@ -312,21 +354,30 @@ func hasRomanian(meta api.PreparedMetadata) bool {
 	return false
 }
 
-func screenshots(images []api.ScreenshotImage) []string {
-	out := make([]string, 0, len(images))
-	for _, image := range images {
-		if raw := strings.TrimSpace(firstNonEmpty(image.RawURL, image.ImgURL)); raw != "" {
-			out = append(out, raw)
+func combineUniqueScreenshots(menu []api.ScreenshotImage, normal []api.ScreenshotImage) []string {
+	var out []string
+	seen := make(map[string]struct{})
+
+	for _, image := range menu {
+		u := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL))
+		if u != "" && !isSeen(seen, u) {
+			out = append(out, u)
+			seen[u] = struct{}{}
+		}
+	}
+	for _, image := range normal {
+		u := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL))
+		if u != "" && !isSeen(seen, u) {
+			out = append(out, u)
+			seen[u] = struct{}{}
 		}
 	}
 	return out
 }
 
-func resolveBDInfo(meta api.PreparedMetadata) string {
-	if strings.EqualFold(meta.DiscType, "BDMV") {
-		return commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath))
-	}
-	return ""
+func isSeen(seen map[string]struct{}, url string) bool {
+	_, ok := seen[url]
+	return ok
 }
 
 func normalizeName(input string) string {
@@ -390,17 +441,8 @@ func isSD(res string) bool {
 	return strings.HasPrefix(strings.TrimSpace(res), "480") || strings.HasPrefix(strings.TrimSpace(res), "576") || strings.HasPrefix(strings.TrimSpace(res), "540")
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
 func genresText(meta api.PreparedMetadata) string {
-	return firstNonEmpty(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
 }
 
 func keywordsText(meta api.PreparedMetadata) string {

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -101,7 +102,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "RTF", "upload_failure", responseBody, ".json")
-	return api.UploadSummary{}, fmt.Errorf("trackers: RTF %s", firstNonEmpty(decoded.Message, fmt.Sprintf("upload failed with status %d", resp.StatusCode)))
+	return api.UploadSummary{}, fmt.Errorf("trackers: RTF %s", metautil.FirstNonEmptyTrimmed(decoded.Message, fmt.Sprintf("upload failed with status %d", resp.StatusCode)))
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -159,7 +160,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		return uploadState{}, err
 	}
 	payload := map[string]any{
-		"name":        firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
+		"name":        metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
 		"description": description,
 		"mediaInfo":   commonhttp.ReadOptionalFile(strings.TrimSpace(req.Meta.MediaInfoTextPath)),
 		"nfo":         "",
@@ -243,7 +244,7 @@ func resolveType(meta api.PreparedMetadata) string {
 func screenshots(images []api.ScreenshotImage) []string {
 	out := make([]string, 0, len(images))
 	for _, image := range images {
-		if raw := strings.TrimSpace(firstNonEmpty(image.RawURL, image.ImgURL)); raw != "" {
+		if raw := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL)); raw != "" {
 			out = append(out, raw)
 		}
 	}
@@ -261,16 +262,7 @@ func resolvePoster(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB == nil {
 		return ""
 	}
-	return firstNonEmpty(meta.ExternalMetadata.TMDB.Poster)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Poster)
 }
 
 func isTV(meta api.PreparedMetadata) bool {
@@ -279,9 +271,9 @@ func isTV(meta api.PreparedMetadata) bool {
 
 func genresText(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil {
-		return firstNonEmpty(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+		return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
 	}
-	return firstNonEmpty(meta.Release.Genre)
+	return metautil.FirstNonEmptyTrimmed(meta.Release.Genre)
 }
 
 func keywordsText(meta api.PreparedMetadata) string {

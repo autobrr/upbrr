@@ -13,6 +13,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -31,7 +32,7 @@ func (h ffHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 	}
 	query := imdbForLookup(meta)
 	if meta.Anime {
-		query = firstNonEmpty(meta.Release.Title, meta.ReleaseName)
+		query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
 	}
 	resp, root, err := doHTMLGet(ctx, h.http, trackerBaseURL(h.cfg, "FF", "https://www.funfile.org")+"/torrents.php", url.Values{"searchstr": {query}}, nil, cookies)
 	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {

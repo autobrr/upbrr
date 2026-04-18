@@ -15,7 +15,9 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -93,7 +95,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{Tracker: "GPW", TorrentID: id, TorrentURL: tURL, DownloadURL: tURL, TorrentPath: artifactPath}}}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "GPW", "upload_failure", responseBody, ".json")
-	return api.UploadSummary{}, fmt.Errorf("trackers: GPW %s", firstNonEmpty(decoded.Error, decoded.Message, "upload failed"))
+	return api.UploadSummary{}, fmt.Errorf("trackers: GPW %s", metautil.FirstNonEmptyTrimmed(decoded.Error, decoded.Message, "upload failed"))
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -139,17 +141,17 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
+	description, err := buildDescription(req, assets)
 	if err != nil {
 		return uploadState{}, err
 	}
 	groupID, _ := lookupGroupID(ctx, req.TrackerConfig.APIKey, req.Meta)
 	answers := questionnaireAnswers(req.Meta)
-	fields := buildFields(req.Meta, description, groupID, answers)
+	fields := buildFields(req, description, groupID, answers)
 	state := uploadState{
 		torrentPath:   torrentPath,
 		description:   description,
-		releaseName:   firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
+		releaseName:   metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
 		fields:        fields,
 		groupID:       groupID,
 		questionnaire: buildQuestionnaire(req.Meta, groupID, answers),
@@ -187,13 +189,14 @@ func lookupGroupID(ctx context.Context, apiKey string, meta api.PreparedMetadata
 	return "", nil
 }
 
-func buildFields(meta api.PreparedMetadata, description string, groupID string, answers map[string]string) map[string]string {
+func buildFields(req trackers.UploadRequest, description string, groupID string, answers map[string]string) map[string]string {
+	meta := req.Meta
 	fields := map[string]string{
 		"codec_other":               "",
 		"codec":                     resolveCodec(meta),
 		"container_other":           "",
 		"container":                 resolveContainer(meta),
-		"mediainfo[]":               resolveMedia(meta),
+		"mediainfo[]":               trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, meta),
 		"movie_edition_information": onOff(strings.TrimSpace(meta.Edition) != ""),
 		"processing_other":          "",
 		"processing":                resolveProcessing(meta),
@@ -213,17 +216,17 @@ func buildFields(meta api.PreparedMetadata, description string, groupID string, 
 	if groupID != "" {
 		fields["groupid"] = groupID
 	} else {
-		fields["data_source"] = firstNonEmpty(strings.TrimSpace(answers["data_source"]), "imdb")
-		fields["identifier"] = firstNonEmpty(strings.TrimSpace(answers["identifier"]), resolveIdentifier(meta))
-		fields["desc"] = firstNonEmpty(strings.TrimSpace(answers["desc"]), resolveOverview(meta))
+		fields["data_source"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["data_source"]), "imdb")
+		fields["identifier"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["identifier"]), resolveIdentifier(meta))
+		fields["desc"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["desc"]), resolveOverview(meta))
 		fields["image"] = strings.TrimSpace(answers["poster_url"])
-		fields["maindesc"] = firstNonEmpty(strings.TrimSpace(answers["main_desc"]), resolveOverview(meta))
-		fields["name"] = firstNonEmpty(strings.TrimSpace(answers["title"]), meta.Release.Title)
-		fields["releasetype"] = firstNonEmpty(strings.TrimSpace(answers["release_type"]), resolveMovieType(meta))
-		fields["subname"] = firstNonEmpty(strings.TrimSpace(answers["subname"]), meta.Release.Title)
-		fields["tags"] = firstNonEmpty(strings.TrimSpace(answers["tags"]), resolveTags(meta))
+		fields["maindesc"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["main_desc"]), resolveOverview(meta))
+		fields["name"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["title"]), meta.Release.Title)
+		fields["releasetype"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["release_type"]), resolveMovieType(meta))
+		fields["subname"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["subname"]), meta.Release.Title)
+		fields["tags"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta))
 		fields["year"] = strconv.Itoa(resolveYear(meta))
-		fields["artists[]"] = firstNonEmpty(strings.TrimSpace(answers["director_name"]), resolveDirectorName(meta))
+		fields["artists[]"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["director_name"]), resolveDirectorName(meta))
 		fields["importance[]"] = "1"
 		fields["artist_ids[]"] = strings.TrimSpace(answers["director_imdb"])
 		fields["artist_subs[]"] = strings.TrimSpace(answers["director_chinese"])
@@ -247,11 +250,11 @@ func buildQuestionnaire(meta api.PreparedMetadata, groupID string, answers map[s
 		return nil
 	}
 	fields := []api.TrackerQuestionnaireField{
-		{Key: "poster_url", Label: "Poster URL", Kind: "text", Value: firstNonEmpty(answers["poster_url"], resolvePoster(meta)), Required: true},
+		{Key: "poster_url", Label: "Poster URL", Kind: "text", Value: metautil.FirstNonEmptyTrimmed(answers["poster_url"], resolvePoster(meta)), Required: true},
 		{Key: "director_imdb", Label: "Director IMDb ID", Kind: "text", Value: answers["director_imdb"], Placeholder: "nm0000138", Required: true},
-		{Key: "director_name", Label: "Director Name", Kind: "text", Value: firstNonEmpty(answers["director_name"], resolveDirectorName(meta)), Required: true},
+		{Key: "director_name", Label: "Director Name", Kind: "text", Value: metautil.FirstNonEmptyTrimmed(answers["director_name"], resolveDirectorName(meta)), Required: true},
 		{Key: "director_chinese", Label: "Director Chinese", Kind: "text", Value: answers["director_chinese"]},
-		{Key: "tags", Label: "Tags", Kind: "text", Value: firstNonEmpty(answers["tags"], resolveTags(meta)), Required: true},
+		{Key: "tags", Label: "Tags", Kind: "text", Value: metautil.FirstNonEmptyTrimmed(answers["tags"], resolveTags(meta)), Required: true},
 	}
 	return &api.TrackerQuestionnaire{Tracker: "GPW", Fields: fields}
 }
@@ -274,8 +277,89 @@ func validateFields(groupID string, fields map[string]string) string {
 	return ""
 }
 
-func buildDescription(_ api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	return bbcode.FinalizeTrackerDescription("GPW", strings.TrimSpace(assets.Description)), nil
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+	meta := req.Meta
+	parts := make([]string, 0, 3)
+	// custom header
+	if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+		parts = append(parts, header)
+	}
+
+	// logo
+	logoURL, logoSize := descriptionunit3d.ResolveLogo(meta, req.AppConfig)
+	if logoURL != "" {
+		if strings.HasSuffix(logoURL, ".svg") {
+			logoURL = strings.ReplaceAll(logoURL, ".svg", ".png")
+		}
+		parts = append(parts, fmt.Sprintf("[center][img=%d]%s[/img][/center]", logoSize, logoURL))
+	}
+
+	// description
+	if base := strings.TrimSpace(assets.Description); base != "" {
+		parts = append(parts, base)
+	}
+
+	// menu
+	if len(assets.MenuImages) > 0 {
+		// header
+		if header := strings.TrimSpace(req.AppConfig.Description.DiscMenuHeader); header != "" {
+			parts = append(parts, header)
+		}
+		// images
+		if shots := screenshotBlock(assets.MenuImages); shots != "" {
+			parts = append(parts, shots)
+		}
+	}
+	// Screenshot Header
+	if header := strings.TrimSpace(req.AppConfig.Description.ScreenshotHeader); header != "" {
+		parts = append(parts, header)
+	}
+
+	// Tonemapped Header
+	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && descriptionunit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+		parts = append(parts, tonemapHeader)
+	}
+
+	// screenshots
+	if shots := screenshotBlock(assets.Screenshots); shots != "" {
+		parts = append(parts, shots)
+	}
+
+	// custom user signature
+	if signature := strings.TrimSpace(req.AppConfig.Description.CustomSignature); signature != "" {
+		parts = append(parts, signature)
+	}
+
+	// upbrr signature
+	link, text := descriptionunit3d.UppbrrSignatureLink()
+	parts = append(parts, fmt.Sprintf("[align=right][url=%s][size=1]%s[/size][/url][/align]", link, text))
+
+	// finalize description
+	finalDescription := bbcode.FinalizeTrackerDescription("GPW", strings.TrimSpace(strings.Join(parts, "\n\n")))
+
+	// save debug description
+	if meta.Options.Debug {
+		descriptionunit3d.SaveDescriptionDebug(meta, "GPW", req.AppConfig.MainSettings.DBPath, finalDescription, req.Logger)
+	}
+
+	return finalDescription, nil
+}
+
+func screenshotBlock(images []api.ScreenshotImage) string {
+	if len(images) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(images))
+	for _, image := range images {
+		if strings.TrimSpace(image.RawURL) == "" {
+			continue
+		}
+		parts = append(parts, "[img]"+strings.TrimSpace(image.RawURL)+"[/img]")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "[center]" + strings.Join(parts, " ") + "[/center]"
 }
 
 func extractTorrentID(value any) string {
@@ -297,7 +381,7 @@ func extractTorrentID(value any) string {
 }
 
 func resolveCodec(meta api.PreparedMetadata) string {
-	codec := strings.ToLower(strings.TrimSpace(firstNonEmpty(meta.VideoEncode, meta.VideoCodec)))
+	codec := strings.ToLower(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.VideoEncode, meta.VideoCodec)))
 	switch {
 	case strings.Contains(codec, "hevc"), strings.Contains(codec, "265"):
 		return "HEVC"
@@ -381,15 +465,6 @@ func resolveSubtitles(meta api.PreparedMetadata) []string {
 		}
 	}
 	return out
-}
-
-func resolveMedia(meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		if summary, ok := meta.BDInfo["summary"].(string); ok {
-			return strings.TrimSpace(summary)
-		}
-	}
-	return strings.TrimSpace(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath))
 }
 
 func resolveIdentifier(meta api.PreparedMetadata) string {
@@ -499,13 +574,4 @@ func cloneFields(in map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -190,11 +191,11 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 	_ = cfg
 	parts := []string{
 		"[quote=Info]",
-		"Name: " + strings.TrimSpace(firstNonEmpty(meta.Release.Title, meta.ReleaseName)),
+		"Name: " + strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)),
 		"",
-		"Overview: " + strings.TrimSpace(firstNonEmpty(meta.EpisodeOverview, meta.ExternalMetadata.TMDB.Overview)),
+		"Overview: " + strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.EpisodeOverview, meta.ExternalMetadata.TMDB.Overview)),
 		"",
-		firstNonEmpty(meta.Release.Resolution, meta.Release.Source) + " / " + strings.TrimSpace(meta.Type),
+		metautil.FirstNonEmptyTrimmed(meta.Release.Resolution, meta.Release.Source) + " / " + strings.TrimSpace(meta.Type),
 		"",
 		"Category: " + categoryName(meta),
 	}
@@ -209,7 +210,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 		parts = append(parts, base)
 	}
 	for _, image := range assets.Screenshots {
-		raw := strings.TrimSpace(firstNonEmpty(image.RawURL, image.ImgURL))
+		raw := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL))
 		if raw != "" {
 			parts = append(parts, "[img]"+raw+"[/img]")
 		}
@@ -228,7 +229,7 @@ func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
 }
 
 func resolveName(meta api.PreparedMetadata) string {
-	base := strings.ReplaceAll(firstNonEmpty(meta.ReleaseName, meta.Release.Title, meta.Filename), "DD+", "DDP")
+	base := strings.ReplaceAll(metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.Release.Title, meta.Filename), "DD+", "DDP")
 	return regexp.MustCompile(`[^0-9a-zA-Z. '\-\[\]]+`).ReplaceAllString(base, " ")
 }
 
@@ -292,15 +293,6 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 	return meta.TrackerQuestionnaireAnswers["THR"]
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
 func isSD(res string) bool {
 	return strings.HasPrefix(res, "480") || strings.HasPrefix(res, "576") || strings.HasPrefix(res, "540")
 }
@@ -329,7 +321,7 @@ func isTV(meta api.PreparedMetadata) bool {
 }
 
 func genresText(meta api.PreparedMetadata) string {
-	return firstNonEmpty(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
 }
 
 func keywordsText(meta api.PreparedMetadata) string {

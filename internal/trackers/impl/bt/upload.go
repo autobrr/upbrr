@@ -18,7 +18,9 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -77,7 +79,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	responseBody, _ := io.ReadAll(resp.Body)
 	match := groupPattern.FindStringSubmatch(finalURL + "\n" + string(responseBody))
-	id := firstNonEmpty(matchValue(match, 1), matchValue(match, 2))
+	id := metautil.FirstNonEmptyTrimmed(matchValue(match, 1), matchValue(match, 2))
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && id != "" {
 		tURL := torrentURL + id
 		artifactPath := ""
@@ -150,15 +152,15 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
+	description, err := buildDescription(req, assets)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
-	fields := buildFields(req.Meta, description, auth, req.TrackerConfig, assets)
+	fields := buildFields(req, description, auth, req.TrackerConfig, assets)
 	state := uploadState{
 		torrentPath: torrentPath,
 		description: description,
-		releaseName: firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
+		releaseName: metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
 		fields:      fields,
 	}
 	if len(fields["image"]) == 0 || strings.TrimSpace(fields["image"][0]) == "" {
@@ -168,7 +170,8 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	return state, cookies, nil
 }
 
-func buildFields(meta api.PreparedMetadata, description string, auth string, trackerCfg config.TrackerConfig, assets trackers.DescriptionAssets) map[string][]string {
+func buildFields(req trackers.UploadRequest, description string, auth string, trackerCfg config.TrackerConfig, assets trackers.DescriptionAssets) map[string][]string {
+	meta := req.Meta
 	hasPT, subtitleIDs := resolveSubtitle(meta)
 	width, height := resolveResolution(meta)
 	fields := map[string][]string{
@@ -184,7 +187,7 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, tra
 		"idioma_ori":  {resolveLanguage(meta)},
 		"image":       {resolvePoster(meta)},
 		"legenda":     {hasPT},
-		"mediainfo":   {resolveMedia(meta)},
+		"mediainfo":   {trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, meta)},
 		"resolucao_1": {width},
 		"resolucao_2": {height},
 		"sinopse":     {resolveOverview(meta)},
@@ -241,18 +244,50 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, tra
 	return fields
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	parts := make([]string, 0, 4)
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+	meta := req.Meta
+	var parts []string
+
+	// Custom Header
+	if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+		parts = append(parts, header)
+	}
+
+	// Logo
 	if logo := resolveLogo(meta); logo != "" {
 		parts = append(parts, "[center][img]"+logo+"[/img][/center]")
 	}
+
+	// TV Episode details
 	if episode := strings.TrimSpace(meta.EpisodeOverview); episode != "" {
-		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]\n[center]"+episode+"[/center]")
+		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]")
+		parts = append(parts, "[center]"+episode+"[/center]")
 	}
+
+	// User description
 	if strings.TrimSpace(assets.Description) != "" {
 		parts = append(parts, strings.TrimSpace(assets.Description))
 	}
-	return bbcode.FinalizeTrackerDescription("BT", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+
+	// Tonemapped Header
+	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && descriptionunit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+		parts = append(parts, tonemapHeader)
+	}
+
+	// Signature
+	link, _ := descriptionunit3d.UppbrrSignatureLink()
+	parts = append(parts, fmt.Sprintf("[center][url=%s]Upload realizado via %s[/url][/center]", link, "upbrr"))
+
+	// Join and finalize
+	description := strings.Join(parts, "\n\n")
+	finalized := bbcode.FinalizeTrackerDescription("BT", description)
+
+	// Debug saving
+	if meta.Options.Debug {
+		descriptionunit3d.SaveDescriptionDebug(meta, "BT", req.AppConfig.MainSettings.DBPath, finalized, req.Logger)
+	}
+
+	return finalized, nil
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
@@ -562,7 +597,7 @@ func resolveResolution(meta api.PreparedMetadata) (string, string) {
 }
 
 func resolveVideoCodec(meta api.PreparedMetadata) string {
-	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(meta.VideoEncode, meta.VideoCodec)))
+	value := strings.ToLower(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.VideoEncode, meta.VideoCodec)))
 	switch {
 	case strings.Contains(value, "265"), strings.Contains(value, "hevc"):
 		return "x265"
@@ -575,7 +610,7 @@ func resolveVideoCodec(meta api.PreparedMetadata) string {
 	case strings.Contains(value, "vc-1"):
 		return "VC-1"
 	default:
-		return firstNonEmpty(meta.VideoCodec, "Outro")
+		return metautil.FirstNonEmptyTrimmed(meta.VideoCodec, "Outro")
 	}
 }
 
@@ -678,15 +713,6 @@ func resolveBitrate(meta api.PreparedMetadata) string {
 	}
 }
 
-func resolveMedia(meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		if summary, ok := meta.BDInfo["summary"].(string); ok {
-			return strings.TrimSpace(summary)
-		}
-	}
-	return firstNonEmpty(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
-}
-
 func resolveEdition(meta api.PreparedMetadata) string {
 	edition := strings.ToLower(strings.TrimSpace(meta.Edition))
 	switch {
@@ -763,12 +789,34 @@ func resolvePoster(meta api.PreparedMetadata) string {
 
 func resolveScreens(assets trackers.DescriptionAssets) []string {
 	var screens []string
-	for _, image := range assets.Screenshots {
-		if u := strings.TrimSpace(image.RawURL); u != "" {
+	seen := make(map[string]struct{})
+
+	for _, image := range assets.MenuImages {
+		u := strings.TrimSpace(image.RawURL)
+		if u == "" {
+			u = strings.TrimSpace(image.ImgURL)
+		}
+		if u != "" && !isSeen(seen, u) {
 			screens = append(screens, u)
+			seen[u] = struct{}{}
+		}
+	}
+	for _, image := range assets.Screenshots {
+		u := strings.TrimSpace(image.RawURL)
+		if u == "" {
+			u = strings.TrimSpace(image.ImgURL)
+		}
+		if u != "" && !isSeen(seen, u) {
+			screens = append(screens, u)
+			seen[u] = struct{}{}
 		}
 	}
 	return screens
+}
+
+func isSeen(seen map[string]struct{}, url string) bool {
+	_, ok := seen[url]
+	return ok
 }
 
 func resolveOverview(meta api.PreparedMetadata) string {
@@ -807,14 +855,14 @@ func resolveYear(meta api.PreparedMetadata) int {
 
 func resolveTitle(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil {
-		return firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.Release.Title)
+		return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Title, meta.Release.Title)
 	}
 	return meta.Release.Title
 }
 
 func resolveLocalizedTitle(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil {
-		return firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.ExternalMetadata.TMDB.OriginalTitle)
+		return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Title, meta.ExternalMetadata.TMDB.OriginalTitle)
 	}
 	return ""
 }
@@ -929,15 +977,6 @@ func flattenFields(in map[string][]string) map[string]string {
 		}
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func matchValue(values []string, idx int) string {

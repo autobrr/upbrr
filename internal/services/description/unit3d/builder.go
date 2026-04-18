@@ -19,6 +19,7 @@ import (
 )
 
 const uaSignatureText = "Created by upbrr"
+const uaSignatureLink = "https://github.com/autobrr/upbrr"
 const dvdVOBMediaInfoHeader = "[spoiler=VOB MediaInfo][code]"
 const dvdVOBMediaInfoFooter = "[/code][/spoiler]"
 
@@ -32,7 +33,7 @@ var unit3DWidthImageTag = regexp.MustCompile(`(?i)\[img\s+width=(\d+)\]`)
 var unit3DUASignatureTag = regexp.MustCompile(`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/(?:Audionut|autobrr)/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`)
 var unit3DNFOBlockTag = regexp.MustCompile(`(?is)\[(?:center|align=center)\]\s*\[spoiler=(?:Scene|FraMeSToR) NFO:\]\[code\].*?\[/code\]\[/spoiler\]\s*\[/(?:center|align)\]`)
 
-func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, trackerConfig config.TrackerConfig, logger api.Logger, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
+func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, trackerConfig config.TrackerConfig, logger api.Logger, keptDescription string, menuImages []api.ScreenshotImage, screenshots []api.ScreenshotImage) (string, error) {
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
@@ -78,7 +79,7 @@ func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig 
 		logger.Tracef("trackers: unit3d desc part=custom_header len=%d", len(header))
 	}
 
-	logoURL, logoSize := resolveLogo(meta, appConfig)
+	logoURL, logoSize := ResolveLogo(meta, appConfig)
 	if logoURL != "" {
 		appendUniquePart(fmt.Sprintf("[center][img=%d]%s[/img][/center]", logoSize, logoURL), "logo")
 		logger.Tracef("trackers: unit3d desc part=logo size=%d", logoSize)
@@ -89,14 +90,26 @@ func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig 
 		logger.Tracef("trackers: unit3d desc part=dvd_vob_mediainfo")
 	}
 
-	if tonemapHeader := strings.TrimSpace(appConfig.Description.TonemappedHeader); tonemapHeader != "" && shouldIncludeTonemappedHeader(meta, appConfig, screenshots) {
+	if tonemapHeader := strings.TrimSpace(appConfig.Description.TonemappedHeader); tonemapHeader != "" && ShouldIncludeTonemappedHeader(meta, appConfig, screenshots) {
 		appendUniquePart(tonemapHeader, "tonemap_header")
 		logger.Tracef("trackers: unit3d desc part=tonemap_header len=%d", len(tonemapHeader))
 	}
 
+	if len(menuImages) > 0 {
+		menuHeader := strings.TrimSpace(appConfig.Description.DiscMenuHeader)
+		if menuHeader != "" {
+			appendUniquePart(menuHeader, "menu_header")
+		}
+		menuSection := buildScreenshotSection(menuImages, appConfig.Description.ThumbnailSize, parseScreensPerRow(appConfig.Description.ScreensPerRow))
+		if menuSection != "" {
+			appendUniquePart(menuSection, "menu_images")
+			logger.Tracef("trackers: unit3d desc part=menu_images count=%d", len(menuImages))
+		}
+	}
+
 	logger.Tracef("trackers: unit3d desc part=mediainfo skipped (sent via API)")
 
-	filteredScreenshots := filterScreenshotDuplicates(screenshots, keptDescription)
+	filteredScreenshots := filterScreenshotDuplicates(screenshots, keptDescription, menuImages)
 	logger.Tracef("trackers: unit3d desc screenshots total=%d filtered=%d", len(screenshots), len(filteredScreenshots))
 	screenshotHeader := strings.TrimSpace(appConfig.Description.ScreenshotHeader)
 	screenshotSection := buildScreenshotSection(filteredScreenshots, appConfig.Description.ThumbnailSize, parseScreensPerRow(appConfig.Description.ScreensPerRow))
@@ -112,7 +125,8 @@ func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig 
 		appendUniquePart(customSignature, "custom_signature")
 		logger.Tracef("trackers: unit3d desc part=custom_signature len=%d", len(customSignature))
 	} else {
-		appendUniquePart(buildUASignature(), "signature")
+		link, text := UppbrrSignatureLink()
+		appendUniquePart(fmt.Sprintf("[right][url=%s][size=4]%s[/size][/url][/right]", link, text), "signature")
 		logger.Tracef("trackers: unit3d desc part=signature")
 	}
 
@@ -123,7 +137,7 @@ func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig 
 	}
 
 	if meta.Options.Debug {
-		saveDescriptionDebug(meta, appConfig.MainSettings.DBPath, description, logger)
+		SaveDescriptionDebug(meta, "unit3d", appConfig.MainSettings.DBPath, description, logger)
 	}
 
 	return description, nil
@@ -183,11 +197,20 @@ func parseScreensPerRow(value string) int {
 	return parsed
 }
 
-func filterScreenshotDuplicates(images []api.ScreenshotImage, keptDescription string) []api.ScreenshotImage {
+func filterScreenshotDuplicates(images []api.ScreenshotImage, keptDescription string, menuImages []api.ScreenshotImage) []api.ScreenshotImage {
 	if len(images) == 0 {
 		return images
 	}
 	seen := extractBBCodeImageURLs(keptDescription)
+	if seen == nil {
+		seen = make(map[string]struct{})
+	}
+	for _, img := range menuImages {
+		u := pickScreenshotURL(img)
+		if u != "" {
+			seen[u] = struct{}{}
+		}
+	}
 	if len(seen) == 0 {
 		return images
 	}
@@ -305,7 +328,7 @@ func extractUnit3DBlockImages(value string) []Image {
 	return images
 }
 
-func shouldIncludeTonemappedHeader(meta api.PreparedMetadata, appConfig config.Config, screenshots []api.ScreenshotImage) bool {
+func ShouldIncludeTonemappedHeader(meta api.PreparedMetadata, appConfig config.Config, screenshots []api.ScreenshotImage) bool {
 	if !appConfig.ScreenshotHandling.ToneMap {
 		return false
 	}
@@ -316,7 +339,7 @@ func shouldIncludeTonemappedHeader(meta api.PreparedMetadata, appConfig config.C
 	return strings.Contains(hdr, "HDR") || strings.Contains(hdr, "DV")
 }
 
-func resolveLogo(meta api.PreparedMetadata, appConfig config.Config) (string, int) {
+func ResolveLogo(meta api.PreparedMetadata, appConfig config.Config) (string, int) {
 	if !appConfig.Description.AddLogo {
 		return "", 0
 	}
@@ -337,8 +360,8 @@ func resolveLogo(meta api.PreparedMetadata, appConfig config.Config) (string, in
 	return logoURL, size
 }
 
-func buildUASignature() string {
-	return "[right][url=https://github.com/autobrr/upbrr][size=4]" + uaSignatureText + "[/size][/url][/right]"
+func UppbrrSignatureLink() (string, string) {
+	return uaSignatureLink, uaSignatureText
 }
 
 func DVDVOBMediaInfoBlock(meta api.PreparedMetadata) string {
@@ -451,7 +474,7 @@ func convertUnit3DComparisonsToCollapse(value string, maxWidth int) string {
 	return value
 }
 
-func saveDescriptionDebug(meta api.PreparedMetadata, dbPath string, description string, logger api.Logger) {
+func SaveDescriptionDebug(meta api.PreparedMetadata, tracker string, dbPath string, description string, logger api.Logger) {
 	if strings.TrimSpace(dbPath) == "" {
 		return
 	}
@@ -463,15 +486,15 @@ func saveDescriptionDebug(meta api.PreparedMetadata, dbPath string, description 
 	if err != nil {
 		return
 	}
-	name := "[UNIT3D]DESCRIPTION.txt"
+	name := "[" + tracker + "]DESCRIPTION.txt"
 	path := filepath.Join(tmpDir, name)
 	if err := os.WriteFile(path, []byte(description), 0o600); err != nil {
 		if logger != nil {
-			logger.Warnf("trackers: unit3d description debug save: %v", err)
+			logger.Warnf("trackers: %s description debug save: %v", tracker, err)
 		}
 		return
 	}
 	if logger != nil {
-		logger.Debugf("trackers: unit3d description saved %s", path)
+		logger.Debugf("trackers: %s description saved %s", tracker, path)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -32,7 +33,7 @@ func (h flHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 		params.Set("search", imdb)
 		params.Set("searchin", "3")
 	} else {
-		query := firstNonEmpty(meta.Release.Title, meta.ReleaseName)
+		query := metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
 		if query == "" {
 			return nil, []string{noteSkip("missing FL search query")}, nil
 		}
@@ -51,7 +52,7 @@ func (h flHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 	baseURL := trackerBaseURL(h.cfg, "FL", "https://filelist.io")
 	for _, link := range links {
 		entry := api.DupeEntry{
-			Name: strings.TrimSpace(firstNonEmpty(attrValueHTML(link, "title"), nodeTextHTML(link))),
+			Name: strings.TrimSpace(metautil.FirstNonEmptyTrimmed(attrValueHTML(link, "title"), nodeTextHTML(link))),
 			Link: absoluteURL(baseURL, attrValueHTML(link, "href")),
 		}
 		if entry.Name == "" {

@@ -26,6 +26,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -289,19 +290,19 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"submit":       "true",
 		"type":         resolveUploadType(req.Meta),
 		"scenename":    applyBTNNameMapping(resolveUploadName(req.Meta), bitrate, media),
-		"seriesid":     firstNonEmpty(fields["seriesid"]),
-		"artist":       firstNonEmpty(fields["artist"]),
-		"title":        firstNonEmpty(fields["title"]),
-		"actors":       firstNonEmpty(fields["actors"]),
+		"seriesid":     metautil.FirstNonEmptyTrimmed(fields["seriesid"]),
+		"artist":       metautil.FirstNonEmptyTrimmed(fields["artist"]),
+		"title":        metautil.FirstNonEmptyTrimmed(fields["title"]),
+		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
 		"origin":       resolveOrigin(resolveUploadName(req.Meta)),
-		"year":         firstNonEmpty(fields["year"]),
-		"tags":         firstNonEmpty(fields["tags"], "action"),
-		"image":        firstNonEmpty(fields["image"]),
+		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
+		"tags":         metautil.FirstNonEmptyTrimmed(fields["tags"], "action"),
+		"image":        metautil.FirstNonEmptyTrimmed(fields["image"]),
 		"album_desc":   buildAlbumDesc(req.Meta, fields),
 		"format":       format,
 		"bitrate":      bitrate,
 		"media":        media,
-		"resolution":   firstNonEmpty(fields["resolution"], "SD"),
+		"resolution":   metautil.FirstNonEmptyTrimmed(fields["resolution"], "SD"),
 		"release_desc": description,
 		"tvdb":         "autofilled",
 	}
@@ -360,10 +361,10 @@ func validateAutofill(fields map[string]string) bool {
 
 func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
-		return firstNonEmpty(fields["album_desc"])
+		return metautil.FirstNonEmptyTrimmed(fields["album_desc"])
 	}
-	overview := firstNonEmpty(strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
-	aired := firstNonEmpty(strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
+	overview := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
+	aired := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
 	season := meta.SeasonInt
 	episode := meta.EpisodeInt
 	if season <= 0 {
@@ -372,7 +373,7 @@ func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string 
 	if episode <= 0 {
 		episode = meta.Release.Episode
 	}
-	episodeTitle := firstNonEmpty(strings.TrimSpace(meta.EpisodeTitle), "TBA")
+	episodeTitle := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeTitle), "TBA")
 	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
 }
 
@@ -528,7 +529,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	selectedID := ""
 	for id, torrentData := range response.Result.Torrents {
 		if strings.TrimSpace(groupID) != "" {
-			torrentGroup := firstNonEmpty(fmt.Sprint(torrentData["GroupID"]), fmt.Sprint(torrentData["groupId"]))
+			torrentGroup := metautil.FirstNonEmptyTrimmed(fmt.Sprint(torrentData["GroupID"]), fmt.Sprint(torrentData["groupId"]))
 			if strings.TrimSpace(torrentGroup) != strings.TrimSpace(groupID) {
 				continue
 			}
@@ -641,15 +642,6 @@ func stripHTML(value string) string {
 	cleaned := replacer.Replace(value)
 	cleaned = regexp.MustCompile(`(?s)<[^>]*>`).ReplaceAllString(cleaned, "")
 	return strings.TrimSpace(cleaned)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func mapContainer(meta api.PreparedMetadata, fields map[string]string) string {

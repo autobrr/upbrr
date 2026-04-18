@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -198,7 +199,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 	if title := strings.TrimSpace(meta.EpisodeTitle); title != "" {
 		parts = append(parts, "[center][b]Episode Title:[/b] "+title+"[/center]")
 	}
-	if overview := strings.TrimSpace(firstNonEmpty(meta.EpisodeOverview, meta.ExternalMetadata.TMDB.Overview)); overview != "" {
+	if overview := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.EpisodeOverview, meta.ExternalMetadata.TMDB.Overview)); overview != "" {
 		parts = append(parts, "[center]"+overview+"[/center]")
 	}
 	if links := externalLinks(meta); links != "" {
@@ -231,7 +232,7 @@ func validateUpload(meta api.PreparedMetadata, cfg config.TrackerConfig, assets 
 		return fmt.Sprintf("TVC requires at least %d screenshots", required)
 	}
 	for _, image := range assets.Screenshots {
-		host := strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(firstNonEmpty(image.WebURL, image.ImgURL, image.RawURL))))
+		host := strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(metautil.FirstNonEmptyTrimmed(image.WebURL, image.ImgURL, image.RawURL))))
 		switch host {
 		case "imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage":
 		default:
@@ -286,11 +287,11 @@ func resolveName(meta api.PreparedMetadata) string {
 	name := ""
 	switch {
 	case !isTV(meta):
-		name = fmt.Sprintf("%s (%d) [%s %s %s]", firstNonEmpty(meta.Release.Title, meta.ReleaseName), maxInt(meta.Release.Year, meta.ExternalMetadata.TMDB.Year), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
+		name = fmt.Sprintf("%s (%d) [%s %s %s]", metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName), maxInt(meta.Release.Year, meta.ExternalMetadata.TMDB.Year), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
 	case meta.TVPack:
-		name = fmt.Sprintf("%s - Series %d (%d) [%s %s %s]", firstNonEmpty(meta.Release.Title, meta.ReleaseName), maxInt(meta.SeasonInt, 1), maxInt(meta.Release.Year, meta.ExternalMetadata.TMDB.Year), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
+		name = fmt.Sprintf("%s - Series %d (%d) [%s %s %s]", metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName), maxInt(meta.SeasonInt, 1), maxInt(meta.Release.Year, meta.ExternalMetadata.TMDB.Year), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
 	default:
-		name = fmt.Sprintf("%s S%02dE%02d [%s %s %s]", firstNonEmpty(meta.Release.Title, meta.ReleaseName), maxInt(meta.SeasonInt, 1), maxInt(meta.EpisodeInt, 1), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
+		name = fmt.Sprintf("%s S%02dE%02d [%s %s %s]", metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName), maxInt(meta.SeasonInt, 1), maxInt(meta.EpisodeInt, 1), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
 	}
 	if strings.EqualFold(strings.TrimSpace(meta.VideoCodec), "HEVC") {
 		name = strings.Replace(name, "]", " HEVC]", 1)
@@ -328,8 +329,8 @@ func screenshotBlock(images []api.ScreenshotImage, count int) string {
 	}
 	parts := []string{"[b]Screenshots[/b]"}
 	for _, image := range images[:count] {
-		web := firstNonEmpty(image.WebURL, image.ImgURL, image.RawURL)
-		img := firstNonEmpty(image.ImgURL, image.RawURL)
+		web := metautil.FirstNonEmptyTrimmed(image.WebURL, image.ImgURL, image.RawURL)
+		img := metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL)
 		if web == "" || img == "" {
 			continue
 		}
@@ -343,15 +344,6 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 		return nil
 	}
 	return meta.TrackerQuestionnaireAnswers["TVC"]
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func maxInt(a, b int) int {
@@ -400,7 +392,7 @@ func categoryName(meta api.PreparedMetadata) string {
 }
 
 func genresText(meta api.PreparedMetadata) string {
-	return firstNonEmpty(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
 }
 
 func keywordsText(meta api.PreparedMetadata) string {

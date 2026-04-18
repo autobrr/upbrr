@@ -20,6 +20,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -280,7 +281,7 @@ func resolveMediaDump(meta api.PreparedMetadata, dbPath string) (string, error) 
 		}
 		return text, nil
 	case "DVD":
-		text := firstNonEmpty(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
+		text := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
 		if text == "" {
 			return "", errors.New("trackers: BHD missing DVD MediaInfo text")
 		}
@@ -353,7 +354,7 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
-	name := firstNonEmpty(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.ReleaseNameNoTag), strings.TrimSpace(meta.Filename), pathutil.Base(meta.SourcePath))
+	name := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.ReleaseNameNoTag), strings.TrimSpace(meta.Filename), pathutil.Base(meta.SourcePath))
 	if isDVDSource(meta.Source) {
 		audio := strings.Join(strings.Fields(strings.TrimSpace(meta.Audio)), " ")
 		if audio != "" && strings.TrimSpace(meta.VideoCodec) != "" {

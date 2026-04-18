@@ -142,7 +142,7 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 		"gallery_id":       uploadToken.GalleryID,
 		"gallery_secret":   uploadToken.GallerySecret,
 		"content_type":     "1",
-		"thumbnail_size":   "350c",
+		"thumbnail_size":   "350r",
 		"comments_enabled": "0",
 	}
 	headers := imgboxHeaders(cookie, map[string]string{"X-CSRF-Token": csrfToken})

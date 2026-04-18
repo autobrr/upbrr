@@ -12,9 +12,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildUnit3DDescription(ctx context.Context, tracker string, meta api.PreparedMetadata, appConfig config.Config, trackerConfig config.TrackerConfig, logger api.Logger, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
+func buildUnit3DDescription(ctx context.Context, tracker string, meta api.PreparedMetadata, appConfig config.Config, trackerConfig config.TrackerConfig, logger api.Logger, keptDescription string, menuImages []api.ScreenshotImage, screenshots []api.ScreenshotImage) (string, error) {
 	if strings.EqualFold(strings.TrimSpace(tracker), "ACM") {
-		return buildACMDescription(ctx, meta, appConfig, trackerConfig, logger, keptDescription, screenshots)
+		return buildACMDescription(ctx, meta, appConfig, trackerConfig, logger, keptDescription, menuImages, screenshots)
 	}
-	return descriptionunit3d.BuildDescription(ctx, meta, appConfig, trackerConfig, logger, keptDescription, screenshots)
+	return descriptionunit3d.BuildDescription(ctx, meta, appConfig, trackerConfig, logger, keptDescription, menuImages, screenshots)
 }

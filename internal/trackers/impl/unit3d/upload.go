@@ -87,7 +87,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		}
 	}
 	description := ""
-	description, err = buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.Screenshots)
+	description, err = buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.MenuImages, assets.Screenshots)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return api.UploadSummary{}, err
@@ -382,7 +382,7 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 		}
 	}
 	description := ""
-	description, err = buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.Screenshots)
+	description, err = buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.MenuImages, assets.Screenshots)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return api.TrackerDryRunEntry{}, err
@@ -500,7 +500,7 @@ func loadUnit3DMedia(meta api.PreparedMetadata, dbPath string, logger api.Logger
 
 	if isDiscType(meta.DiscType) {
 		logger.Debugf("trackers: loading BDInfo for disc type: %s", meta.DiscType)
-		text, err := readBDInfo(dbPath, meta)
+		text, err := trackers.ReadBDInfo(dbPath, meta)
 		if err != nil {
 			logger.Warnf("trackers: unit3d bdinfo read failed: %v", err)
 		} else if text != "" {
@@ -526,25 +526,6 @@ func loadUnit3DMedia(meta api.PreparedMetadata, dbPath string, logger api.Logger
 	}
 
 	return mediainfo, bdinfo, nil
-}
-
-func readBDInfo(dbPath string, meta api.PreparedMetadata) (string, error) {
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
-	if err != nil {
-		return "", err
-	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
-	if err != nil {
-		return "", err
-	}
-	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
-	if strings.TrimSpace(path) == "" {
-		return "", nil
-	}
-	if !existsFile(path) {
-		return "", nil
-	}
-	return readTextFile(path)
 }
 
 func readTextFile(path string) (string, error) {

@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -285,7 +286,7 @@ func buildDescription(_ api.PreparedMetadata, assets trackers.DescriptionAssets)
 func buildQuestionnaire(meta api.PreparedMetadata, computedName string) *api.TrackerQuestionnaire {
 	answers := questionnaireAnswers(meta)
 	return &api.TrackerQuestionnaire{Tracker: "FL", Fields: []api.TrackerQuestionnaireField{{
-		Key: "name", Label: "FileList Name", Kind: "text", Value: firstNonEmpty(strings.TrimSpace(answers["name"]), computedName), Required: true,
+		Key: "name", Label: "FileList Name", Kind: "text", Value: metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["name"]), computedName), Required: true,
 	}}}
 }
 
@@ -384,7 +385,7 @@ func resolveMedia(meta api.PreparedMetadata) string {
 			return strings.TrimSpace(summary)
 		}
 	}
-	return firstNonEmpty(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
+	return metautil.FirstNonEmptyTrimmed(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
 }
 
 func resolveGenres(meta api.PreparedMetadata) string {
@@ -415,13 +416,4 @@ func cloneFields(in map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }

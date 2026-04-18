@@ -16,8 +16,10 @@ import (
 
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -150,13 +152,13 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
+	description, err := buildDescription(req, assets)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
 	fields := map[string]string{
 		"category":      strconv.Itoa(resolveCategoryID(req.Meta)),
-		"filename":      firstNonEmpty(req.Meta.ReleaseName, req.Meta.Filename, pathutil.Base(req.Meta.SourcePath)),
+		"filename":      metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Filename, pathutil.Base(req.Meta.SourcePath)),
 		"genre":         resolveGenres(req.Meta),
 		"imdb":          resolveIMDbURL(req.Meta),
 		"info":          description,
@@ -233,30 +235,82 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 	}
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	parts := make([]string, 0, 6)
-	if logo := resolveLogo(meta); logo != "" {
-		parts = append(parts, "[center][img]"+logo+"[/img][/center]")
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+	meta := req.Meta
+	parts := make([]string, 0, 12)
+
+	// Custom Header
+	if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+		parts = append(parts, header)
 	}
-	if media := resolveMedia(meta); media != "" {
+
+	// Logo
+	if req.AppConfig.Description.AddLogo {
+		if logo := resolveLogo(meta); logo != "" {
+			parts = append(parts, "[center][img]"+logo+"[/img][/center]")
+		}
+	}
+
+	// TV Episode details
+	if strings.TrimSpace(meta.EpisodeOverview) != "" {
+		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]")
+		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/center]")
+	}
+
+	// File information (BDInfo or MediaInfo)
+	if media := trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, meta); media != "" {
 		parts = append(parts, "[pre]"+media+"[/pre]")
 	}
+
+	// User description
 	if strings.TrimSpace(assets.Description) != "" {
 		parts = append(parts, strings.TrimSpace(assets.Description))
 	}
-	if shots := screenshots(assets.Screenshots); shots != "" {
-		parts = append(parts, shots)
-	}
-	return bbcode.FinalizeTrackerDescription("HDS", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
-}
 
-func resolveMedia(meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		if summary, ok := meta.BDInfo["summary"].(string); ok {
-			return strings.TrimSpace(summary)
+	// menu
+	if len(assets.MenuImages) > 0 {
+		// header
+		if header := strings.TrimSpace(req.AppConfig.Description.DiscMenuHeader); header != "" {
+			parts = append(parts, header)
+		}
+		// images
+		if shots := screenshotBlock(assets.MenuImages); shots != "" {
+			parts = append(parts, shots)
 		}
 	}
-	return firstNonEmpty(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
+	// Screenshot Header
+	if header := strings.TrimSpace(req.AppConfig.Description.ScreenshotHeader); header != "" {
+		parts = append(parts, header)
+	}
+
+	// Tonemapped Header
+	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && descriptionunit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+		parts = append(parts, tonemapHeader)
+	}
+
+	// screenshots
+	if shots := screenshotBlock(assets.Screenshots); shots != "" {
+		parts = append(parts, shots)
+	}
+
+	// custom user signature
+	if signature := strings.TrimSpace(req.AppConfig.Description.CustomSignature); signature != "" {
+		parts = append(parts, signature)
+	}
+
+	// upbrr signature
+	link, text := descriptionunit3d.UppbrrSignatureLink()
+	parts = append(parts, fmt.Sprintf("[center][url=%s][size=2]%s[/size][/url][/center]", link, text))
+
+	// finalize description
+	finalDescription := bbcode.FinalizeTrackerDescription("HDS", strings.TrimSpace(strings.Join(parts, "\n\n")))
+
+	// save debug description
+	if meta.Options.Debug {
+		descriptionunit3d.SaveDescriptionDebug(meta, "HDS", req.AppConfig.MainSettings.DBPath, finalDescription, req.Logger)
+	}
+
+	return finalDescription, nil
 }
 
 func resolveLogo(meta api.PreparedMetadata) string {
@@ -302,7 +356,7 @@ func resolveYouTube(meta api.PreparedMetadata) string {
 }
 
 func resolveNFO(meta api.PreparedMetadata) (commonhttp.FileField, bool) {
-	dir := filepath.Dir(firstNonEmpty(meta.MediaInfoTextPath, meta.SourcePath))
+	dir := filepath.Dir(metautil.FirstNonEmptyTrimmed(meta.MediaInfoTextPath, meta.SourcePath))
 	payload, path, err := commonhttp.ReadFirstMatching(dir, "*.nfo")
 	if err != nil {
 		return commonhttp.FileField{}, false
@@ -317,18 +371,28 @@ func categoryOf(meta api.PreparedMetadata) string {
 	return strings.TrimSpace(meta.MediaInfoCategory)
 }
 
-func screenshots(images []api.ScreenshotImage) string {
-	parts := make([]string, 0, len(images))
+func screenshotBlock(images []api.ScreenshotImage) string {
+	if len(images) == 0 {
+		return ""
+	}
+	var sb strings.Builder
 	for _, image := range images {
 		if strings.TrimSpace(image.WebURL) == "" || strings.TrimSpace(image.ImgURL) == "" {
 			continue
 		}
-		parts = append(parts, "[url="+image.WebURL+"][img]"+image.ImgURL+"[/img][/url]")
+		sb.WriteString("[url=" + image.WebURL + "][img]" + image.ImgURL + "[/img][/url]")
+
+		// HDS cannot resize images. If the image host does not provide small thumbnails(<400px), place only one image per line.
+		// imgbox provides small thumbnails, so we can place them side-by-side.
+		if !strings.Contains(strings.ToLower(image.WebURL), "imgbox") {
+			sb.WriteString("\n")
+		}
 	}
-	if len(parts) == 0 {
+	content := strings.TrimSpace(sb.String())
+	if content == "" {
 		return ""
 	}
-	return "[center]\n" + strings.Join(parts, "\n") + "\n[/center]"
+	return "[center]\n" + content + "\n[/center]"
 }
 
 func boolString(value bool) string {
@@ -353,13 +417,4 @@ func cloneFields(in map[string]string) map[string]string {
 		out[key] = value
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }

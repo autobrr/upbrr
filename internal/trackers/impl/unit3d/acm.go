@@ -273,7 +273,7 @@ func buildACMName(meta api.PreparedMetadata) string {
 	return strings.TrimSpace(strings.Join(strings.Fields(name), " ")) + acmSubtitleTag(acmSubtitleCodesFor(meta))
 }
 
-func buildACMDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, trackerConfig config.TrackerConfig, logger api.Logger, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
+func buildACMDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, trackerConfig config.TrackerConfig, logger api.Logger, keptDescription string, menuImages []api.ScreenshotImage, screenshots []api.ScreenshotImage) (string, error) {
 	base := acmSceneNFOPattern.ReplaceAllString(strings.TrimSpace(keptDescription), "")
 	base = strings.ReplaceAll(base, "\r\n", "\n")
 	base = strings.ReplaceAll(base, "[pre]", "[code]")
@@ -303,7 +303,7 @@ func buildACMDescription(ctx context.Context, meta api.PreparedMetadata, appConf
 		base = strings.TrimSpace(strings.Join([]string{header, base}, "\n"))
 	}
 
-	return descriptionunit3d.BuildDescription(ctx, meta, cfg, trackerConfig, logger, base, screenshots)
+	return descriptionunit3d.BuildDescription(ctx, meta, cfg, trackerConfig, logger, base, menuImages, screenshots)
 }
 
 func resolveACMKeywords(meta api.PreparedMetadata) string {

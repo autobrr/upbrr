@@ -19,6 +19,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -195,7 +196,7 @@ func buildPayload(meta api.PreparedMetadata, trackerCfg config.TrackerConfig, as
 		"extencao":   resolveContainer(meta),
 		"genre":      resolveGenres(meta, answers),
 		"imdb":       resolveIMDbIDText(meta),
-		"layout":     firstNonEmpty(strings.TrimSpace(trackerCfg.CustomLayout), "2"),
+		"layout":     metautil.FirstNonEmptyTrimmed(strings.TrimSpace(trackerCfg.CustomLayout), "2"),
 		"legenda":    resolveSubtitle(meta),
 		"name":       releaseName,
 		"qualidade":  resolveQuality(meta),
