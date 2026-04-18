@@ -962,6 +962,8 @@ func TestSQLiteMigrationKeepsLegacyRollbackCompatibilityStamp(t *testing.T) {
 		t.Fatalf("expected compatibility user_version %d, got %d", legacyCompatibilitySchemaVersion, userVersion)
 	}
 
+	// Simulate the old integer-version runner contract: a rollback binary should
+	// classify this DB as already migrated past the non-idempotent v3 ALTER.
 	if userVersion < 3 {
 		t.Fatalf("rollback binary would misclassify db as pre-v3, got user_version %d", userVersion)
 	}
@@ -1071,6 +1073,33 @@ func TestSQLiteMigrationFailsWhenAppliedMigrationIsMissingDependency(t *testing.
 	}
 }
 
+func TestValidatedMigrationRegistryRejectsInvalidDefinitions(t *testing.T) {
+	t.Parallel()
+
+	duplicate := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: baselineMigrationID, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	if _, err := validatedMigrationRegistry(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate migration id") {
+		t.Fatalf("expected duplicate migration id error, got %v", err)
+	}
+
+	missingDependency := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: "child", dependsOn: []string{"missing"}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	if _, err := validatedMigrationRegistry(missingDependency); err == nil || !strings.Contains(err.Error(), "depends on unknown migration") {
+		t.Fatalf("expected missing dependency definition error, got %v", err)
+	}
+
+	cycle := []migrationStep{
+		{id: baselineMigrationID, dependsOn: []string{"child"}, apply: createBaselineSchema},
+		{id: "child", dependsOn: []string{baselineMigrationID}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	if _, err := validatedMigrationRegistry(cycle); err == nil || !strings.Contains(err.Error(), "dependency cycle") {
+		t.Fatalf("expected dependency cycle error, got %v", err)
+	}
+}
 func TestSQLiteDescriptionOverrideGroupKeysAreCaseInsensitive(t *testing.T) {
 	t.Parallel()
 
