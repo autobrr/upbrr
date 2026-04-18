@@ -23,7 +23,7 @@ import (
 )
 
 func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest) (api.UploadSummary, error) {
-	state, err := newSession(ctx, site, req.AppConfig.MainSettings.DBPath)
+	state, err := newSession(ctx, site, req.AppConfig.MainSettings.DBPath, req.Logger)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -101,7 +101,7 @@ func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest
 }
 
 func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
-	state, err := newSession(ctx, site, req.AppConfig.MainSettings.DBPath)
+	state, err := newSession(ctx, site, req.AppConfig.MainSettings.DBPath, req.Logger)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}

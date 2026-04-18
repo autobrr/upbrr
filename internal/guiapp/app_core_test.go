@@ -6,11 +6,13 @@ package guiapp
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -224,6 +226,10 @@ func TestNewAppKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	}
 
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	authPath := filepath.Join(filepath.Dir(repoPath), authmaterial.WebAuthFileName)
+	if err := os.WriteFile(authPath, []byte(`{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":"stable-seed-for-tests"}`), 0o600); err != nil {
+		t.Fatalf("write web auth fixture: %v", err)
+	}
 	if err := config.ExportToYAML(cfg, configPath); err != nil {
 		t.Fatalf("export config: %v", err)
 	}
@@ -252,5 +258,84 @@ func TestNewAppKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 		UpdatedAt: time.Now().UTC().Truncate(time.Second),
 	}); err != nil {
 		t.Fatalf("expected startup repo to remain usable after core close: %v", err)
+	}
+}
+
+func TestAppAllowUnencryptedExportFromWebAuth(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "gui.db")
+	authPath := filepath.Join(filepath.Dir(repoPath), authmaterial.WebAuthFileName)
+	if err := os.WriteFile(authPath, []byte(`{"username":"tester","password_hash":"hash","allow_unencrypted_export":true}`), 0o600); err != nil {
+		t.Fatalf("write web auth fixture: %v", err)
+	}
+
+	app := &App{
+		cfg: config.Config{
+			MainSettings: config.MainSettingsConfig{DBPath: repoPath},
+		},
+	}
+
+	allow, err := app.allowUnencryptedExport()
+	if err != nil {
+		t.Fatalf("allowUnencryptedExport: %v", err)
+	}
+	if !allow {
+		t.Fatal("expected allowUnencryptedExport to be true")
+	}
+}
+
+func TestGetWebAuthStatusReportsMissingFile(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "gui.db")
+	app := &App{
+		cfg: config.Config{
+			MainSettings: config.MainSettingsConfig{DBPath: repoPath},
+		},
+	}
+
+	status, err := app.GetWebAuthStatus()
+	if err != nil {
+		t.Fatalf("GetWebAuthStatus: %v", err)
+	}
+	if status.Exists {
+		t.Fatal("expected missing web auth file")
+	}
+	if !status.CanCreate {
+		t.Fatal("expected status to allow creating web auth")
+	}
+	if status.Usable {
+		t.Fatal("expected missing web auth to be unusable")
+	}
+}
+
+func TestCreateWebAuthCreatesUsableAuthFile(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "gui.db")
+	app := &App{
+		cfg: config.Config{
+			MainSettings: config.MainSettingsConfig{DBPath: repoPath},
+		},
+	}
+
+	status, err := app.CreateWebAuth("tester", "very-secure-password")
+	if err != nil {
+		t.Fatalf("CreateWebAuth: %v", err)
+	}
+	if !status.Exists || !status.Usable {
+		t.Fatalf("expected usable web auth after create, got %+v", status)
+	}
+	if status.Username != "tester" {
+		t.Fatalf("expected username tester, got %q", status.Username)
+	}
+	if status.CanCreate {
+		t.Fatal("expected create to be disabled after bootstrap")
+	}
+
+	authPath := authmaterial.AuthFilePath(repoPath)
+	if _, err := os.Stat(authPath); err != nil {
+		t.Fatalf("expected auth file to exist: %v", err)
 	}
 }

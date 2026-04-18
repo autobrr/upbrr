@@ -26,7 +26,7 @@ func (h ptsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("missing IMDb ID for PTS dupe search")}, nil
 	}
 	baseURL := trackerBaseURL(h.cfg, "PTS", "https://www.ptskit.org")
-	cookies, err := loadTrackerTextCookies(h.cfg, "PTS", trackerHost(baseURL, "ptskit.org"))
+	cookies, err := loadTrackerCookies(ctx, h.cfg, "PTS", trackerHost(baseURL, "ptskit.org"))
 	if err != nil {
 		return nil, []string{noteSkip("missing valid PTS cookies")}, nil
 	}

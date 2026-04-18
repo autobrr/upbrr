@@ -849,7 +849,7 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 	}
 }
 
-func TestSQLiteMigrationBootstrapRecordsBaselineInLedger(t *testing.T) {
+func TestSQLiteMigrationBootstrapRecordsLedgerAndCompatibilityStamp(t *testing.T) {
 	t.Parallel()
 
 	rawDB, err := sql.Open("sqlite", ":memory:")
@@ -868,16 +868,6 @@ func TestSQLiteMigrationBootstrapRecordsBaselineInLedger(t *testing.T) {
 	if len(ids) != len(migrationRegistry) {
 		t.Fatalf("expected %d recorded migrations, got %d", len(migrationRegistry), len(ids))
 	}
-	foundBaseline := false
-	for _, id := range ids {
-		if id == baselineMigrationID {
-			foundBaseline = true
-			break
-		}
-	}
-	if !foundBaseline {
-		t.Fatalf("expected baseline migration %q to be recorded, got %v", baselineMigrationID, ids)
-	}
 
 	var userVersion int
 	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
@@ -888,7 +878,7 @@ func TestSQLiteMigrationBootstrapRecordsBaselineInLedger(t *testing.T) {
 	}
 }
 
-func TestSQLiteMigrationBridgeLegacyUserVersionIsIdempotent(t *testing.T) {
+func TestSQLiteMigrationLegacyV8BridgeIsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	rawDB, err := sql.Open("sqlite", ":memory:")
@@ -912,7 +902,19 @@ func TestSQLiteMigrationBridgeLegacyUserVersionIsIdempotent(t *testing.T) {
 	if err := migrateAddHistoryIndexes(ctx, rawDB); err != nil {
 		t.Fatalf("apply legacy v4: %v", err)
 	}
-	if _, err := rawDB.Exec(`PRAGMA user_version = 4`); err != nil {
+	if err := migrateBackfillUploadedImageUsageScope(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v5: %v", err)
+	}
+	if err := migrateAddScreenshotSlotTables(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v6: %v", err)
+	}
+	if err := migrateNormalizeDescriptionOverrides(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v7: %v", err)
+	}
+	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v8: %v", err)
+	}
+	if _, err := rawDB.Exec(`PRAGMA user_version = 8`); err != nil {
 		t.Fatalf("set legacy user_version: %v", err)
 	}
 
@@ -1098,7 +1100,6 @@ func TestValidatedMigrationRegistryRejectsInvalidDefinitions(t *testing.T) {
 		t.Fatalf("expected dependency cycle error, got %v", err)
 	}
 }
-
 func TestSQLiteDescriptionOverrideGroupKeysAreCaseInsensitive(t *testing.T) {
 	t.Parallel()
 

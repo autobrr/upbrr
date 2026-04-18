@@ -15,6 +15,7 @@ require (
 	golang.org/x/crypto v0.48.0
 	golang.org/x/net v0.51.0
 	golang.org/x/sync v0.19.0
+	golang.org/x/term v0.40.0
 	golang.org/x/text v0.34.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.40.1
@@ -67,7 +68,6 @@ require (
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	golang.org/x/exp v0.0.0-20250819193227-8b4c13bb791b // indirect
 	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 	modernc.org/libc v1.66.10 // indirect

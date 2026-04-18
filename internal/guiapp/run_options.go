@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -69,7 +70,7 @@ func (a *App) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
 
 	return coreSvc, logger, nil
 }
-func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
+func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions {
 	return api.UploadOptions{
 		Debug:       opts.Debug,
 		DryRun:      opts.Debug,

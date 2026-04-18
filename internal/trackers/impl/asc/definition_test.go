@@ -14,6 +14,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const testCookieFileName = "ASC.txt"
+
 func TestDefinitionBuildUploadDryRunBlockedWithoutCookies(t *testing.T) {
 	t.Parallel()
 
@@ -57,7 +59,7 @@ func TestDefinitionBuildUploadDryRunQuestionnaireForMissingMetadata(t *testing.T
 		t.Fatalf("mkdir: %v", err)
 	}
 	content := "# Netscape HTTP Cookie File\n.cliente.amigos-share.club\tTRUE\t/\tTRUE\t0\tsession\tcookievalue\n"
-	if err := os.WriteFile(filepath.Join(cookieDir, cookieFileName), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cookieDir, testCookieFileName), []byte(content), 0o600); err != nil {
 		t.Fatalf("write cookie: %v", err)
 	}
 	torrentPath := filepath.Join(tmp, "release.torrent")

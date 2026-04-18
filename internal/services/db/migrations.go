@@ -14,16 +14,15 @@ import (
 )
 
 const (
-	baselineMigrationID      = "2026_04_baseline_schema"
-	schemaMigrationsTableDDL = `
+	baselineMigrationID              = "2026_04_baseline_schema"
+	legacyCompatibilitySchemaVersion = 8
+	schemaMigrationsTableDDL         = `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			id TEXT PRIMARY KEY,
 			applied_at TEXT NOT NULL
 		)
 	`
 )
-
-const legacyCompatibilitySchemaVersion = 7
 
 type migrationStep struct {
 	id        string
@@ -53,6 +52,7 @@ var migrationRegistry = []migrationStep{
 	{id: "2026_04_backfill_uploaded_image_usage_scope", dependsOn: []string{"2026_04_add_history_indexes"}, apply: migrateBackfillUploadedImageUsageScope},
 	{id: "2026_04_add_screenshot_slot_tables", dependsOn: []string{"2026_04_backfill_uploaded_image_usage_scope"}, apply: migrateAddScreenshotSlotTables},
 	{id: "2026_04_normalize_description_overrides", dependsOn: []string{"2026_04_add_screenshot_slot_tables"}, apply: migrateNormalizeDescriptionOverrides},
+	{id: "2026_04_add_tracker_cookies", dependsOn: []string{"2026_04_normalize_description_overrides"}, apply: migrateAddTrackerCookies},
 }
 
 var legacyVersionToMigrationIDs = map[int][]string{
@@ -63,6 +63,7 @@ var legacyVersionToMigrationIDs = map[int][]string{
 	5: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope"},
 	6: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope", "2026_04_add_screenshot_slot_tables"},
 	7: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope", "2026_04_add_screenshot_slot_tables", "2026_04_normalize_description_overrides"},
+	8: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope", "2026_04_add_screenshot_slot_tables", "2026_04_normalize_description_overrides", "2026_04_add_tracker_cookies"},
 }
 
 func migrateAddDVDMediaInfo(ctx context.Context, exec migrationExecutor) error {
@@ -248,6 +249,34 @@ func migrateNormalizeDescriptionOverrides(ctx context.Context, exec migrationExe
 		`,
 		`DROP TABLE description_overrides_legacy`,
 		`CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`,
+	}
+
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func migrateAddTrackerCookies(ctx context.Context, exec migrationExecutor) error {
+	statements := []string{
+		`
+		CREATE TABLE IF NOT EXISTS tracker_cookies (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tracker_id TEXT NOT NULL,
+			cookie_name TEXT NOT NULL,
+			encrypted_value TEXT NOT NULL,
+			nonce TEXT NOT NULL,
+			auth_tag TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(tracker_id, cookie_name)
+		)
+		`,
+		`CREATE INDEX IF NOT EXISTS idx_tracker_cookies_tracker_id ON tracker_cookies (tracker_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tracker_cookies_created_at ON tracker_cookies (created_at)`,
 	}
 
 	for _, statement := range statements {

@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { ConfigMap, ConfigValue, FieldMeta } from "../../types";
+import type { ConfigMap, ConfigValue, FieldMeta, WebAuthStatus } from "../../types";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
 
@@ -37,6 +37,18 @@ type Props = {
   handleImportConfigConfirm: () => void;
   handleImportConfigCancel: () => void;
   handleSaveSettings: () => void;
+  webAuthAvailable: boolean;
+  webAuthStatus: WebAuthStatus | null;
+  webAuthLoading: boolean;
+  webAuthCreating: boolean;
+  webAuthUsername: string;
+  webAuthPassword: string;
+  webAuthConfirm: string;
+  webAuthError: string;
+  setWebAuthUsername: Dispatch<SetStateAction<string>>;
+  setWebAuthPassword: Dispatch<SetStateAction<string>>;
+  setWebAuthConfirm: Dispatch<SetStateAction<string>>;
+  handleCreateWebAuth: () => void;
   renderImageHostingSection: () => JSX.Element | null;
   renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
   renderMapSection: (
@@ -77,6 +89,18 @@ export default function SettingsPage(props: Props) {
     handleImportConfigConfirm,
     handleImportConfigCancel,
     handleSaveSettings,
+    webAuthAvailable,
+    webAuthStatus,
+    webAuthLoading,
+    webAuthCreating,
+    webAuthUsername,
+    webAuthPassword,
+    webAuthConfirm,
+    webAuthError,
+    setWebAuthUsername,
+    setWebAuthPassword,
+    setWebAuthConfirm,
+    handleCreateWebAuth,
     renderImageHostingSection,
     renderTrackerSection,
     renderMapSection,
@@ -241,6 +265,80 @@ export default function SettingsPage(props: Props) {
           </div>
 
           <div className="settings-body">
+            {webAuthAvailable ? (
+              <details className="settings-subgroup settings-subgroup--collapsible settings-subgroup--auth">
+                <summary>Secret Encryption</summary>
+                <div>
+                  <p className="helper">
+                    Desktop installs can keep using plaintext secrets, or you can create
+                    <code> web-auth.json </code>
+                    to enable encrypted secret storage for future saves and exports.
+                  </p>
+                  <div className="settings-auth-status">
+                    <span className={`settings-auth-badge ${webAuthStatus?.usable ? "is-ready" : webAuthStatus?.exists ? "is-warning" : "is-idle"}`}>
+                      {webAuthLoading ? "Checking..." : webAuthStatus?.usable ? "Encryption enabled" : webAuthStatus?.exists ? "Auth file invalid" : "Plaintext fallback active"}
+                    </span>
+                    {webAuthStatus?.path ? (
+                      <p className="muted">Path: {webAuthStatus.path}</p>
+                    ) : null}
+                    {webAuthStatus?.message ? (
+                      <p className="muted">{webAuthStatus.message}</p>
+                    ) : null}
+                    {webAuthStatus?.usable && webAuthStatus.username ? (
+                      <p className="muted">Configured user: {webAuthStatus.username}</p>
+                    ) : null}
+                  </div>
+                  {webAuthStatus?.canCreate ? (
+                    <div className="settings-grid">
+                      <label className="settings-field">
+                        <span>Username</span>
+                        <input
+                          value={webAuthUsername}
+                          onChange={(event) => setWebAuthUsername(event.target.value)}
+                          autoComplete="username"
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Password</span>
+                        <input
+                          type="password"
+                          value={webAuthPassword}
+                          onChange={(event) => setWebAuthPassword(event.target.value)}
+                          autoComplete="new-password"
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Confirm password</span>
+                        <input
+                          type="password"
+                          value={webAuthConfirm}
+                          onChange={(event) => setWebAuthConfirm(event.target.value)}
+                          autoComplete="new-password"
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                  <div className="settings-auth-actions">
+                    <button
+                      className="primary"
+                      type="button"
+                      onClick={handleCreateWebAuth}
+                      disabled={
+                        webAuthLoading ||
+                        webAuthCreating ||
+                        !webAuthStatus?.canCreate ||
+                        !webAuthUsername.trim() ||
+                        !webAuthPassword.trim() ||
+                        !webAuthConfirm.trim()
+                      }
+                    >
+                      {webAuthCreating ? "Creating..." : "Create web-auth.json"}
+                    </button>
+                  </div>
+                  {webAuthError ? <p className="error">{webAuthError}</p> : null}
+                </div>
+              </details>
+            ) : null}
             {configData ? (
               <div className="settings-form">
                 {showAdvancedToggle ? (

@@ -259,6 +259,17 @@ export type TVmazeMetadata = {
   TVDBID: number;
 };
 
+export type WebAuthStatus = {
+  path: string;
+  exists: boolean;
+  usable: boolean;
+  canCreate: boolean;
+  username: string;
+  allowUnencryptedExport: boolean;
+  encryptionEnabled: boolean;
+  message: string;
+};
+
 export type ExternalPreview = {
   Provider: string;
   ID: number;

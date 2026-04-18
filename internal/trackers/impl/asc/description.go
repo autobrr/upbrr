@@ -86,7 +86,7 @@ func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, 
 	if err == nil {
 		return cached, nil
 	}
-	cookies, _, err := LoadCookies(dbPath)
+	cookies, _, err := LoadCookies(ctx, dbPath)
 	if err != nil {
 		return layoutData{}, err
 	}

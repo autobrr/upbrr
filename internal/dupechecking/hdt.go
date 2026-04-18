@@ -27,7 +27,7 @@ func (h hdtHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("resolution below HDT dupe-check minimum")}, nil
 	}
 	baseURL := trackerBaseURL(h.cfg, "HDT", "https://hd-torrents.me")
-	cookies, err := loadTrackerTextCookies(h.cfg, "HDT", trackerHost(baseURL, "hd-torrents.me"))
+	cookies, err := loadTrackerCookies(ctx, h.cfg, "HDT", trackerHost(baseURL, "hd-torrents.me"))
 	if err != nil {
 		return nil, []string{noteSkip("missing valid HDT cookies")}, nil
 	}
