@@ -17,6 +17,30 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
 
+func readSchemaMigrationIDs(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+
+	rows, err := db.Query(`SELECT id FROM schema_migrations ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query schema_migrations: %v", err)
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan schema_migrations: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate schema_migrations: %v", err)
+	}
+
+	return ids
+}
+
 func TestSQLiteRepositoryCRUD(t *testing.T) {
 	t.Parallel()
 
@@ -822,6 +846,330 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 	}
 	if strings.TrimSpace(updatedAt) == "" {
 		t.Fatalf("expected non-empty updated_at after migration")
+	}
+}
+
+func TestSQLiteMigrationBootstrapRecordsBaselineInLedger(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("migrate fresh db: %v", err)
+	}
+
+	ids := readSchemaMigrationIDs(t, rawDB)
+	if len(ids) != len(migrationRegistry) {
+		t.Fatalf("expected %d recorded migrations, got %d", len(migrationRegistry), len(ids))
+	}
+	foundBaseline := false
+	for _, id := range ids {
+		if id == baselineMigrationID {
+			foundBaseline = true
+			break
+		}
+	}
+	if !foundBaseline {
+		t.Fatalf("expected baseline migration %q to be recorded, got %v", baselineMigrationID, ids)
+	}
+
+	var userVersion int
+	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if userVersion != legacyCompatibilitySchemaVersion {
+		t.Fatalf("expected legacy user_version %d, got %d", legacyCompatibilitySchemaVersion, userVersion)
+	}
+}
+
+func TestSQLiteMigrationBridgeLegacyUserVersionIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	if err := createBaselineSchema(ctx, rawDB); err != nil {
+		t.Fatalf("create baseline schema: %v", err)
+	}
+	if err := migrateAddDVDMediaInfo(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v2: %v", err)
+	}
+	if err := migrateAddReleaseOverrideUseSeasonEpisode(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v3: %v", err)
+	}
+	if err := migrateAddHistoryIndexes(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v4: %v", err)
+	}
+	if _, err := rawDB.Exec(`PRAGMA user_version = 4`); err != nil {
+		t.Fatalf("set legacy user_version: %v", err)
+	}
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("first migrate: %v", err)
+	}
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+
+	ids := readSchemaMigrationIDs(t, rawDB)
+	if len(ids) != len(migrationRegistry) {
+		t.Fatalf("expected %d recorded migrations after bridge, got %d", len(migrationRegistry), len(ids))
+	}
+
+	var userVersion int
+	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("read user_version after bridge: %v", err)
+	}
+	if userVersion != legacyCompatibilitySchemaVersion {
+		t.Fatalf("expected legacy compatibility user_version %d after bridge, got %d", legacyCompatibilitySchemaVersion, userVersion)
+	}
+}
+
+func TestSQLiteMigrationBridgesLegacyV8AndAppliesReleaseCategory(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	if err := createBaselineSchema(ctx, rawDB); err != nil {
+		t.Fatalf("create baseline schema: %v", err)
+	}
+	if err := migrateAddDVDMediaInfo(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v2: %v", err)
+	}
+	if err := migrateAddReleaseOverrideUseSeasonEpisode(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v3: %v", err)
+	}
+	if err := migrateAddHistoryIndexes(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v4: %v", err)
+	}
+	if err := migrateBackfillUploadedImageUsageScope(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v5: %v", err)
+	}
+	if err := migrateAddScreenshotSlotTables(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v6: %v", err)
+	}
+	if err := migrateNormalizeDescriptionOverrides(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v7: %v", err)
+	}
+	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy feat/encryption v8: %v", err)
+	}
+	if _, err := rawDB.Exec(`PRAGMA user_version = 8`); err != nil {
+		t.Fatalf("set legacy user_version: %v", err)
+	}
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("migrate bridged legacy v8 db: %v", err)
+	}
+
+	if ok, err := tableColumnExists(ctx, rawDB, "file_metadata", "release_category"); err != nil {
+		t.Fatalf("check release_category column: %v", err)
+	} else if !ok {
+		t.Fatal("expected release_category column to be added after bridging legacy v8 db")
+	}
+
+	ids := readSchemaMigrationIDs(t, rawDB)
+	expected := []string{"2026_04_add_tracker_cookies", "2026_04_add_release_category"}
+	for _, id := range expected {
+		found := false
+		for _, got := range ids {
+			if got == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected migration %q to be recorded after v8 bridge, got %v", id, ids)
+		}
+	}
+
+	var userVersion int
+	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("read user_version after v8 bridge: %v", err)
+	}
+	if userVersion != legacyCompatibilitySchemaVersion {
+		t.Fatalf("expected compatibility user_version %d after v8 bridge, got %d", legacyCompatibilitySchemaVersion, userVersion)
+	}
+}
+
+func TestSQLiteMigrationKeepsLegacyRollbackCompatibilityStamp(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("migrate fresh db: %v", err)
+	}
+
+	var userVersion int
+	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("read compatibility user_version: %v", err)
+	}
+	if userVersion != legacyCompatibilitySchemaVersion {
+		t.Fatalf("expected compatibility user_version %d, got %d", legacyCompatibilitySchemaVersion, userVersion)
+	}
+
+	// Simulate the old integer-version runner contract: a rollback binary should
+	// classify this DB as already migrated past the non-idempotent v3 ALTER.
+	if userVersion < 3 {
+		t.Fatalf("rollback binary would misclassify db as pre-v3, got user_version %d", userVersion)
+	}
+	if _, err := rawDB.Exec(`ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`); err == nil {
+		t.Fatalf("expected legacy v3 ALTER to be unsafe if rerun, but it unexpectedly succeeded")
+	}
+}
+
+func TestSQLiteMigrationUnknownAppliedIDsAreTolerated(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("initial migrate: %v", err)
+	}
+	if _, err := rawDB.Exec(`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "branch_only_future_migration", "2026-04-18T00:00:00Z"); err != nil {
+		t.Fatalf("insert unknown migration: %v", err)
+	}
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("rerun migrate with unknown applied id: %v", err)
+	}
+}
+
+func TestSQLiteMigrationBranchesCanApplyDisjointLedgerMigrations(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	registryA := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: "branch_a_feature", dependsOn: []string{baselineMigrationID}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	registryB := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: "branch_b_feature", dependsOn: []string{baselineMigrationID}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+
+	if err := migrateContextWithRegistry(context.Background(), rawDB, registryA); err != nil {
+		t.Fatalf("migrate branch A: %v", err)
+	}
+	if err := migrateContextWithRegistry(context.Background(), rawDB, registryB); err != nil {
+		t.Fatalf("migrate branch B: %v", err)
+	}
+	if err := migrateContextWithRegistry(context.Background(), rawDB, registryA); err != nil {
+		t.Fatalf("migrate branch A again: %v", err)
+	}
+
+	ids := readSchemaMigrationIDs(t, rawDB)
+	expected := []string{baselineMigrationID, "branch_a_feature", "branch_b_feature"}
+	if len(ids) != len(expected) {
+		t.Fatalf("expected %d migrations after branch sharing, got %d (%v)", len(expected), len(ids), ids)
+	}
+	for _, id := range expected {
+		found := false
+		for _, got := range ids {
+			if got == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected migration %q to be recorded, got %v", id, ids)
+		}
+	}
+}
+
+func TestSQLiteMigrationFailsWhenAppliedMigrationIsMissingDependency(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	if err := ensureSchemaMigrationsTable(context.Background(), rawDB); err != nil {
+		t.Fatalf("ensure schema_migrations: %v", err)
+	}
+	if _, err := rawDB.Exec(`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "child", "2026-04-18T00:00:00Z"); err != nil {
+		t.Fatalf("insert inconsistent applied migration: %v", err)
+	}
+
+	registry := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: "child", dependsOn: []string{baselineMigrationID}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+
+	err = migrateContextWithRegistry(context.Background(), rawDB, registry)
+	if err == nil || !strings.Contains(err.Error(), `missing dependency`) {
+		t.Fatalf("expected missing dependency error, got %v", err)
+	}
+}
+
+func TestValidatedMigrationRegistryRejectsInvalidDefinitions(t *testing.T) {
+	t.Parallel()
+
+	duplicate := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: baselineMigrationID, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	if _, err := validatedMigrationRegistry(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate migration id") {
+		t.Fatalf("expected duplicate migration id error, got %v", err)
+	}
+
+	missingDependency := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: "child", dependsOn: []string{"missing"}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	if _, err := validatedMigrationRegistry(missingDependency); err == nil || !strings.Contains(err.Error(), "depends on unknown migration") {
+		t.Fatalf("expected missing dependency definition error, got %v", err)
+	}
+
+	cycle := []migrationStep{
+		{id: baselineMigrationID, dependsOn: []string{"child"}, apply: createBaselineSchema},
+		{id: "child", dependsOn: []string{baselineMigrationID}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	if _, err := validatedMigrationRegistry(cycle); err == nil || !strings.Contains(err.Error(), "dependency cycle") {
+		t.Fatalf("expected dependency cycle error, got %v", err)
 	}
 }
 
