@@ -196,6 +196,27 @@ func TestDiagnoseHeaderDoubleSpaceAfterColon(t *testing.T) {
 	}
 }
 
+func TestDiagnoseHeaderTabAfterColonSpace(t *testing.T) {
+	t.Parallel()
+
+	// "fix: \tadd thing" — the regex consumes the single space after ':' and captures
+	// "\tadd thing" as subject. validateHeader must still flag the stray tab.
+	result := validateMessage("fix: \tadd validator\n")
+	if !containsSubstring(result.errors, "exactly one space after ':'") {
+		t.Fatalf("expected extra-whitespace diagnostic, got %v", result.errors)
+	}
+}
+
+func TestDiagnoseHeaderNBSPAfterColonSpace(t *testing.T) {
+	t.Parallel()
+
+	// U+00A0 NO-BREAK SPACE after the single separator space should also be flagged.
+	result := validateMessage("fix: \u00a0add validator\n")
+	if !containsSubstring(result.errors, "exactly one space after ':'") {
+		t.Fatalf("expected extra-whitespace diagnostic for NBSP, got %v", result.errors)
+	}
+}
+
 func TestBodyFooterSplit(t *testing.T) {
 	t.Parallel()
 

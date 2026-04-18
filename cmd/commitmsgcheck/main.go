@@ -214,13 +214,23 @@ func validateHeader(header string, result *validationResult) {
 	switch {
 	case strings.TrimSpace(subject) == "":
 		result.errors = append(result.errors, "subject must not be empty")
-	case subject != strings.TrimLeft(subject, " "):
-		result.errors = append(result.errors, "header must have exactly one space after ':' (found multiple)")
+	case hasLeadingWhitespace(subject):
+		// The regex already consumed the single separator space after `:`, so any
+		// leading whitespace on the captured subject (space, tab, NBSP, etc.) means
+		// the "exactly one space after ':'" contract is violated.
+		result.errors = append(result.errors, "header must have exactly one space after ':' (found extra whitespace)")
 	case strings.HasSuffix(subject, "."):
 		result.errors = append(result.errors, "subject must not end with '.'")
 	case startsWithUpper(subject):
 		result.errors = append(result.errors, "subject must not start with an uppercase letter")
 	}
+}
+
+func hasLeadingWhitespace(s string) bool {
+	for _, r := range s {
+		return unicode.IsSpace(r)
+	}
+	return false
 }
 
 // diagnoseHeader emits a more specific error than "header must match" when possible.
