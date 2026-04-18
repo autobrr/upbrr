@@ -89,6 +89,9 @@ Typical first-run options:
 - import a config file into the SQLite store without starting the app: `--import-config path/to/config.{yaml,yml,json,py}` (legacy Upload Assistant `config.py` files are parsed natively)
 - import the same formats through the GUI or web UI from the Settings page
 - export the current SQLite-backed config with `--export-config path/to/config.yaml`
+- create the web auth helper file for CLI-only setups with `--create-auth`
+
+For authenticated GUI/web Settings exports, plaintext secret export is disabled by default. If you need that behavior for a local trusted setup, add `"allow_unencrypted_export": true` to the `web-auth.json` file stored beside the active database. This hidden flag only affects UI export behavior and is not exposed in the app.
 
 Important: `main_settings.tmdb_api` must be set before the core can run normally.
 

@@ -30,6 +30,7 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
@@ -190,7 +191,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 
 	var client *http.Client
 	if !dryRun {
-		client, fields["AntiCsrfToken"], err = resolveSession(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, baseURL)
+		client, fields["AntiCsrfToken"], err = resolveSession(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, baseURL, req.Logger)
 		if err != nil {
 			return uploadState{}, err
 		}
@@ -423,16 +424,20 @@ func buildUploadFields(meta api.PreparedMetadata, description string, groupID st
 	return fields, nil
 }
 
-func resolveSession(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string) (*http.Client, string, error) {
-	cookies, cookiePath, err := loadCookies(dbPath)
+func resolveSession(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string, logger api.Logger) (*http.Client, string, error) {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+
+	cookies, err := loadCookies(ctx, dbPath)
 	if err == nil && len(cookies) > 0 {
 		client, token, tokenErr := fetchAntiCsrfToken(ctx, baseURL, cookies)
 		if tokenErr == nil {
 			return client, token, nil
 		}
-		_ = os.Remove(cookiePath)
+		_ = cookiepkg.DeleteTrackerCookies(ctx, dbPath, "PTP")
 	}
-	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL)
+	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger)
 }
 
 func fetchAntiCsrfToken(ctx context.Context, baseURL string, cookies map[string]string) (*http.Client, string, error) {
@@ -460,7 +465,11 @@ func fetchAntiCsrfToken(ctx context.Context, baseURL string, cookies map[string]
 	return client, token, nil
 }
 
-func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string) (*http.Client, string, error) {
+func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string, logger api.Logger) (*http.Client, string, error) {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+
 	username := strings.TrimSpace(trackerConfig.Username)
 	password := strings.TrimSpace(trackerConfig.Password)
 	announceURL := normalizedAnnounceURL(trackerConfig.AnnounceURL)
@@ -530,8 +539,8 @@ func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.Tracke
 		return nil, "", errors.New("trackers: PTP login failed")
 	}
 
-	if err := saveCookies(resolveCookiePath(dbPath), client, baseURL); err != nil {
-		return nil, "", err
+	if err := saveCookies(ctx, dbPath, client, baseURL); err != nil {
+		logger.Warnf("trackers: PTP failed to persist login cookies: %v", err)
 	}
 	token := strings.TrimSpace(stringFromAny(payload["AntiCsrfToken"]))
 	if token == "" {
@@ -708,24 +717,13 @@ func writeTrackerTorrent(sourcePath string, outputPath string, announceURL strin
 	return torrentMeta.Write(file)
 }
 
-func loadCookies(dbPath string) (map[string]string, string, error) {
-	path := resolveCookiePath(dbPath)
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, path, err
-	}
-	var cookies map[string]string
-	if err := json.Unmarshal(raw, &cookies); err != nil {
-		return nil, path, err
-	}
-	if len(cookies) == 0 {
-		return nil, path, errors.New("empty cookie file")
-	}
-	return cookies, path, nil
+func loadCookies(ctx context.Context, dbPath string) (map[string]string, error) {
+	values, err := cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "PTP")
+	return values, err
 }
 
-func saveCookies(path string, client *http.Client, baseURL string) error {
-	if strings.TrimSpace(path) == "" || client == nil || client.Jar == nil {
+func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseURL string) error {
+	if client == nil || client.Jar == nil {
 		return nil
 	}
 	parsed, err := url.Parse(baseURL)
@@ -742,25 +740,7 @@ func saveCookies(path string, client *http.Client, baseURL string) error {
 	if len(cookies) == 0 {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	payload, err := json.Marshal(cookies)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, payload, 0o600)
-}
-
-func resolveCookiePath(dbPath string) string {
-	if strings.TrimSpace(dbPath) == "" {
-		return ""
-	}
-	path, err := db.CookiePath(dbPath, ptpCookieFile)
-	if err != nil {
-		return ""
-	}
-	return path
+	return cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", cookies)
 }
 
 func passkeyFromAnnounce(announceURL string) (string, error) {

@@ -33,9 +33,9 @@ func (h ascHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("missing IMDb ID for ASC dupe search")}, nil
 	}
 
-	cookies, _, err := ascimpl.LoadCookies(h.cfg.MainSettings.DBPath)
+	cookies, _, err := ascimpl.LoadCookies(ctx, h.cfg.MainSettings.DBPath)
 	if err != nil || len(cookies) == 0 {
-		return nil, []string{noteSkip("missing valid ASC cookies (expected Netscape cookies at cookies/ASC.txt)")}, nil
+		return nil, []string{noteSkip("missing valid ASC cookies")}, nil
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildASCSearchURL(meta), nil)

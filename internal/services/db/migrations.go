@@ -309,7 +309,6 @@ func migrateAddReleaseCategory(ctx context.Context, exec migrationExecutor) erro
 	}
 	return nil
 }
-
 func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName string, columnName string) (bool, error) {
 	rows, err := exec.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {

@@ -16,6 +16,8 @@ export function CancelTrackerUpload(arg1:string):Promise<void>;
 
 export function CheckDupes(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>):Promise<api.DupeCheckSummary>;
 
+export function CreateWebAuth(arg1:string,arg2:string):Promise<guiapp.WebAuthStatus>;
+
 export function DeleteHistoryRelease(arg1:string):Promise<void>;
 
 export function DeleteScreenshot(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:string):Promise<void>;
@@ -57,6 +59,8 @@ export function GetLogPath():Promise<string>;
 export function GetRecentLogs(arg1:number):Promise<Array<logging.Entry>>;
 
 export function GetTrackerUploadSnapshot(arg1:string):Promise<guiapp.TrackerUploadSnapshot>;
+
+export function GetWebAuthStatus():Promise<guiapp.WebAuthStatus>;
 
 export function ImportConfig():Promise<guiapp.ImportResult>;
 

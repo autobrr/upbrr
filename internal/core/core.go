@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/clients"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/dupechecking"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -62,7 +64,22 @@ func New(deps api.CoreDependencies) (*Core, error) {
 	}
 	logger.Infof("core: initializing")
 
-	if err := deps.Config.Validate(); err != nil {
+	var cfg config.Config
+	switch typed := deps.Config.(type) {
+	case nil:
+		return nil, errors.New("core: config is required")
+	case config.Config:
+		cfg = typed
+	case *config.Config:
+		if typed == nil {
+			return nil, errors.New("core: config is required")
+		}
+		cfg = *typed
+	default:
+		return nil, fmt.Errorf("core: unsupported config type %T", deps.Config)
+	}
+
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -70,7 +87,7 @@ func New(deps api.CoreDependencies) (*Core, error) {
 	ownsRepo := false
 	if repo == nil {
 		logger.Debugf("core: opening repository")
-		sqliteRepo, err := db.OpenWithLogger(deps.Config.MainSettings.DBPath, logger)
+		sqliteRepo, err := db.OpenWithLogger(cfg.MainSettings.DBPath, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -78,8 +95,14 @@ func New(deps api.CoreDependencies) (*Core, error) {
 			_ = sqliteRepo.Close()
 			return nil, err
 		}
+
 		repo = sqliteRepo
 		ownsRepo = true
+	}
+	if sqliteRepo, ok := repo.(*db.SQLiteRepository); ok {
+		if err := migrateLegacyCookies(ctx, sqliteRepo.RawDB(), cfg.MainSettings.DBPath, logger); err != nil {
+			logger.Warnf("core: cookie migration failed: %v (continuing)", err)
+		}
 	}
 
 	services := deps.Services
@@ -88,50 +111,50 @@ func New(deps api.CoreDependencies) (*Core, error) {
 
 		services.Metadata = metadata.NewService(
 			repo,
-			metadata.WithTagsPathFromDB(deps.Config.MainSettings.DBPath),
+			metadata.WithTagsPathFromDB(cfg.MainSettings.DBPath),
 			metadata.WithLogger(logger),
-			metadata.WithSRRDBPaths(deps.Config.MainSettings.DBPath),
-			metadata.WithConfig(deps.Config),
+			metadata.WithSRRDBPaths(cfg.MainSettings.DBPath),
+			metadata.WithConfig(cfg),
 			metadata.WithBDInfoService(bdinfoService),
 		)
 	}
 	if services.Torrents == nil {
-		tmpDir, err := db.Subdir(deps.Config.MainSettings.DBPath, "tmp")
+		tmpDir, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
 		if err != nil {
 			return nil, fmt.Errorf("core: tmp dir: %w", err)
 		}
 		services.Torrents = torrent.NewService(logger, tmpDir)
 	}
 	if services.Screenshots == nil {
-		tmpDir, err := db.Subdir(deps.Config.MainSettings.DBPath, "tmp")
+		tmpDir, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
 		if err != nil {
 			return nil, fmt.Errorf("core: tmp dir: %w", err)
 		}
-		services.Screenshots = screenshots.NewServiceWithRepo(deps.Config, logger, tmpDir, nil, repo)
+		services.Screenshots = screenshots.NewServiceWithRepo(cfg, logger, tmpDir, nil, repo)
 	}
 	if services.Images == nil {
-		services.Images = imagehosting.NewService(deps.Config, logger, repo)
+		services.Images = imagehosting.NewService(cfg, logger, repo)
 	}
 	if services.Trackers == nil {
 		registry, err := trackerimpl.NewRegistry()
 		if err != nil {
 			return nil, fmt.Errorf("core: tracker registry: %w", err)
 		}
-		services.Trackers = trackers.NewServiceWithRegistryAndImages(deps.Config, logger, repo, registry, services.Images)
+		services.Trackers = trackers.NewServiceWithRegistryAndImages(cfg, logger, repo, registry, services.Images)
 	}
 	if services.Clients == nil {
-		services.Clients = clients.NewService(deps.Config, logger)
+		services.Clients = clients.NewService(cfg, logger)
 	}
 	if services.Filesystem == nil {
 		services.Filesystem = filesystem.NewValidatorWithLogger(logger)
 	}
 	if services.Dupes == nil {
-		services.Dupes = dupechecking.NewService(deps.Config, logger)
+		services.Dupes = dupechecking.NewService(cfg, logger)
 	}
 	logger.Infof("core: initialized services")
 
 	return &Core{
-		cfg:       deps.Config,
+		cfg:       cfg,
 		logger:    logger,
 		services:  services,
 		repo:      repo,
@@ -3215,4 +3238,36 @@ func splitTrackerLabel(value string) []string {
 		return nil
 	}
 	return mergeTrackerRemovals(nil, strings.Split(value, ","))
+}
+
+// migrateLegacyCookies performs automatic migration of cookies from file-based storage
+// to the encrypted database. This is called during core initialization if needed.
+func migrateLegacyCookies(ctx context.Context, sqliteDB *sql.DB, dbPath string, logger api.Logger) error {
+	if sqliteDB == nil {
+		return errors.New("database connection is required for cookie migration")
+	}
+
+	if err := cookies.SyncCookieEncryptionWithAuth(ctx, sqliteDB, dbPath); err != nil {
+		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+			logger.Debugf("core: cookie encryption sync skipped: web auth helper unavailable")
+		} else {
+			return fmt.Errorf("cookies encryption sync: %w", err)
+		}
+	}
+
+	cookiesDir, err := db.CookiePath(dbPath, "")
+	if err != nil {
+		logger.Debugf("core: failed to resolve cookies directory: %v", err)
+		return nil // Non-fatal: directory path resolution failed
+	}
+
+	if err := cookies.EnsureCookieMigration(ctx, sqliteDB, dbPath, cookiesDir, logger); err != nil {
+		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+			logger.Debugf("core: cookie migration skipped: web auth helper unavailable")
+			return nil
+		}
+		return fmt.Errorf("cookies migration: %w", err)
+	}
+
+	return nil
 }
