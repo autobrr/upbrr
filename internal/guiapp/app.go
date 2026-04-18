@@ -18,6 +18,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/configstore"
@@ -1230,7 +1231,7 @@ func (a *App) SaveConfig(payload string) error {
 		return errors.New("config payload is required")
 	}
 
-	cfg, err := config.ImportFromJSON(payload)
+	cfg, err := config.ImportFromJSONEncrypted(payload)
 	if err != nil {
 		return err
 	}
@@ -1307,6 +1308,18 @@ func (a *App) ExportConfig() (string, error) {
 		ctx = context.Background()
 	}
 
+	allowPlaintext, err := a.allowUnencryptedExport()
+	if err != nil {
+		return "", err
+	}
+
+	if allowPlaintext {
+		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, trimmedPath, a.repo); err != nil {
+			return "", err
+		}
+		return trimmedPath, nil
+	}
+
 	if err := config.ExportFromDatabaseToYAML(ctx, trimmedPath, a.repo); err != nil {
 		return "", err
 	}
@@ -1314,9 +1327,105 @@ func (a *App) ExportConfig() (string, error) {
 	return trimmedPath, nil
 }
 
+func (a *App) allowUnencryptedExport() (bool, error) {
+	if a == nil {
+		return false, errors.New("app not initialized")
+	}
+
+	dbPath := strings.TrimSpace(a.cfg.MainSettings.DBPath)
+	if dbPath == "" {
+		return false, nil
+	}
+
+	material, err := authmaterial.LoadFromDBPath(dbPath)
+	if err == nil {
+		return material.AllowUnencryptedExport, nil
+	}
+	if errors.Is(err, authmaterial.ErrUnavailable) {
+		return false, nil
+	}
+	return false, err
+}
+
 type ImportResult struct {
 	Message  string   `json:"message"`
 	Warnings []string `json:"warnings"`
+}
+
+type WebAuthStatus struct {
+	Path                   string `json:"path"`
+	Exists                 bool   `json:"exists"`
+	Usable                 bool   `json:"usable"`
+	CanCreate              bool   `json:"canCreate"`
+	Username               string `json:"username"`
+	AllowUnencryptedExport bool   `json:"allowUnencryptedExport"`
+	EncryptionEnabled      bool   `json:"encryptionEnabled"`
+	Message                string `json:"message"`
+}
+
+func (a *App) GetWebAuthStatus() (WebAuthStatus, error) {
+	if a == nil {
+		return WebAuthStatus{}, errors.New("app not initialized")
+	}
+
+	dbPath := strings.TrimSpace(a.cfg.MainSettings.DBPath)
+	if dbPath == "" {
+		return WebAuthStatus{
+			CanCreate: false,
+			Message:   "Database path is not configured.",
+		}, nil
+	}
+
+	authPath := authmaterial.AuthFilePath(dbPath)
+	status := WebAuthStatus{
+		Path:      authPath,
+		CanCreate: true,
+		Message:   "No web auth file found. Secrets will continue to be stored in plaintext until one is created.",
+	}
+
+	if _, err := os.Stat(authPath); err == nil {
+		status.Exists = true
+		status.CanCreate = false
+	} else if err != nil && !os.IsNotExist(err) {
+		return WebAuthStatus{}, fmt.Errorf("web auth status: stat auth file: %w", err)
+	}
+
+	material, err := authmaterial.LoadFromDBPath(dbPath)
+	if err == nil {
+		status.Exists = true
+		status.Usable = true
+		status.CanCreate = false
+		status.Username = material.Username
+		status.AllowUnencryptedExport = material.AllowUnencryptedExport
+		status.EncryptionEnabled = true
+		status.Message = "Secret encryption is enabled for this installation."
+		return status, nil
+	}
+	if errors.Is(err, authmaterial.ErrUnavailable) {
+		if status.Exists {
+			status.Message = "web-auth.json exists but is not usable for secret encryption."
+		}
+		return status, nil
+	}
+
+	return WebAuthStatus{}, fmt.Errorf("web auth status: %w", err)
+}
+
+func (a *App) CreateWebAuth(username string, password string) (WebAuthStatus, error) {
+	if a == nil {
+		return WebAuthStatus{}, errors.New("app not initialized")
+	}
+
+	dbPath := strings.TrimSpace(a.cfg.MainSettings.DBPath)
+	if dbPath == "" {
+		return WebAuthStatus{}, errors.New("database path is not configured")
+	}
+
+	if err := authmaterial.BootstrapAuthFile(dbPath, username, password); err != nil {
+		return WebAuthStatus{}, err
+	}
+
+	return a.GetWebAuthStatus()
 }
 
 func (a *App) ImportConfig() (ImportResult, error) {

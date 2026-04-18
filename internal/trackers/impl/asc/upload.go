@@ -168,14 +168,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		releaseName:   releaseName,
 		questionnaire: buildQuestionnaire(req.Meta),
 	}
-	if reason := validatePayload(req.Meta, fields, req.AppConfig.MainSettings.DBPath); reason != "" {
+	if reason := validatePayload(ctx, req.Meta, fields, req.AppConfig.MainSettings.DBPath); reason != "" {
 		state.blockedReason = reason
 	}
 	if dryRun {
 		return state, nil, nil
 	}
 
-	cookies, _, err := LoadCookies(req.AppConfig.MainSettings.DBPath)
+	cookies, _, err := LoadCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: ASC load cookies: %w", err)
 	}
@@ -257,8 +257,8 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 	return meta.TrackerQuestionnaireAnswers["ASC"]
 }
 
-func validatePayload(meta api.PreparedMetadata, fields map[string]string, dbPath string) string {
-	if reason := authProblem(dbPath); reason != "" {
+func validatePayload(ctx context.Context, meta api.PreparedMetadata, fields map[string]string, dbPath string) string {
+	if reason := authProblem(ctx, dbPath); reason != "" {
 		return reason
 	}
 	if strings.TrimSpace(fields["imdb"]) == "" {

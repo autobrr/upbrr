@@ -5,7 +5,6 @@ package webserver
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,112 +16,52 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/crypto/argon2"
+	"github.com/autobrr/upbrr/internal/authmaterial"
 )
 
 const (
 	sessionCookieName = "ua_web_session"
-	authFileName      = "web-auth.json"
 	sessionFileName   = "web-sessions.json"
+
+	legacyAuthArgon2Time        = 1
+	legacyAuthArgon2MemoryKB    = 64 * 1024
+	legacyAuthArgon2Parallelism = 4
+	legacyAuthArgon2KeyLen      = 32
 )
 
-type authRecord struct {
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"password_hash"`
-	CreatedAt    time.Time `json:"created_at"`
-}
+type authRecord = authmaterial.Record
+type authStore = authmaterial.Store
 
-type authStore struct {
-	path string
-	mu   sync.Mutex
-}
+// AuthFileName is the canonical web auth file name stored beside the database.
+const AuthFileName = authmaterial.WebAuthFileName
+
+// AuthPasswordMinLength defines the minimum web auth password length.
+const AuthPasswordMinLength = authmaterial.AuthPasswordMinLength
 
 func newAuthStore(dbPath string) (*authStore, error) {
-	dir := filepath.Dir(strings.TrimSpace(dbPath))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("web auth: create config dir: %w", err)
-	}
-	return &authStore{path: filepath.Join(dir, authFileName)}, nil
+	return authmaterial.NewStore(dbPath)
 }
 
-func (s *authStore) Exists() (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	_, err := os.Stat(s.path)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
+// AuthFilePath returns the auth file path colocated with dbPath.
+func AuthFilePath(dbPath string) string {
+	return authmaterial.AuthFilePath(dbPath)
 }
 
-func (s *authStore) Load() (authRecord, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	raw, err := os.ReadFile(s.path)
-	if err != nil {
-		return authRecord{}, err
-	}
-	var record authRecord
-	if err := json.Unmarshal(raw, &record); err != nil {
-		return authRecord{}, err
-	}
-	return record, nil
-}
-
-func (s *authStore) Bootstrap(username string, password string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, err := os.Stat(s.path); err == nil {
-		return errors.New("web auth: user already exists")
-	}
-
-	hash, err := hashPassword(password)
-	if err != nil {
-		return err
-	}
-
-	record := authRecord{
-		Username:     strings.TrimSpace(username),
-		PasswordHash: hash,
-		CreatedAt:    time.Now().UTC(),
-	}
-	raw, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(s.path, raw, 0o600)
+// BootstrapAuthFile creates the canonical auth file beside dbPath.
+func BootstrapAuthFile(dbPath string, username string, password string) error {
+	return authmaterial.BootstrapAuthFile(dbPath, username, password)
 }
 
 func hashPassword(password string) (string, error) {
-	password = strings.TrimSpace(password)
-	if len(password) < 10 {
-		return "", errors.New("password must be at least 10 characters")
-	}
-	salt, err := randomString(16)
-	if err != nil {
-		return "", err
-	}
-	sum := argon2.IDKey([]byte(password), []byte(salt), 1, 64*1024, 4, 32)
-	return fmt.Sprintf("argon2id$%s$%s", salt, base64.RawStdEncoding.EncodeToString(sum)), nil
+	return authmaterial.HashPassword(password)
 }
 
 func verifyPassword(password string, encoded string) bool {
-	parts := strings.Split(encoded, "$")
-	if len(parts) != 3 || parts[0] != "argon2id" {
-		return false
-	}
-	sum := argon2.IDKey([]byte(password), []byte(parts[1]), 1, 64*1024, 4, 32)
-	expected, err := base64.RawStdEncoding.DecodeString(parts[2])
-	if err != nil {
-		return false
-	}
-	return subtle.ConstantTimeCompare(sum, expected) == 1
+	return authmaterial.VerifyPassword(password, encoded)
+}
+
+func verifyPasswordWithUpgrade(password string, encoded string) (bool, bool) {
+	return authmaterial.VerifyPasswordWithUpgrade(password, encoded)
 }
 
 type session struct {

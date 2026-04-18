@@ -4,13 +4,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/config/importer"
@@ -95,8 +99,17 @@ func run() error {
 	if opts.GUI && strings.TrimSpace(opts.ImportConfigPath) != "" {
 		return exitError(2, errors.New("--gui and --import-config cannot be used together"))
 	}
+	if opts.GUI && opts.CreateAuth {
+		return exitError(2, errors.New("--gui and --create-auth cannot be used together"))
+	}
 	if strings.TrimSpace(opts.ExportConfigPath) != "" && strings.TrimSpace(opts.ImportConfigPath) != "" {
 		return exitError(2, errors.New("--export-config and --import-config cannot be used together"))
+	}
+	if opts.CreateAuth && strings.TrimSpace(opts.ExportConfigPath) != "" {
+		return exitError(2, errors.New("--create-auth and --export-config cannot be used together"))
+	}
+	if opts.CreateAuth && strings.TrimSpace(opts.ImportConfigPath) != "" {
+		return exitError(2, errors.New("--create-auth and --import-config cannot be used together"))
 	}
 
 	if opts.GUI {
@@ -113,9 +126,21 @@ func run() error {
 		return nil
 	}
 
+	if opts.CreateAuth {
+		dbPath, err := resolveExportDBPath(opts.ConfigPath, configFlagProvided)
+		if err != nil {
+			return exitError(1, err)
+		}
+		if err := createCLIAuthFile(os.Stdin, os.Stdout, dbPath); err != nil {
+			return exitError(1, err)
+		}
+		fmt.Printf("created %s\n", webserver.AuthFilePath(dbPath))
+		return nil
+	}
+
+	ctx := context.Background()
 	if strings.TrimSpace(opts.ExportConfigPath) != "" {
-		ctx := context.Background()
-		if err := exportConfigToYAML(ctx, opts.ConfigPath, configFlagProvided, opts.ExportConfigPath); err != nil {
+		if err := exportConfigToYAML(ctx, opts.ConfigPath, configFlagProvided, opts.ExportConfigPath, opts.ExportConfigPlaintext); err != nil {
 			return exitError(1, err)
 		}
 		fmt.Printf("exported config to %s\n", opts.ExportConfigPath)
@@ -123,7 +148,6 @@ func run() error {
 	}
 
 	if strings.TrimSpace(opts.ImportConfigPath) != "" {
-		ctx := context.Background()
 		if err := importConfig(ctx, opts.ImportConfigPath, opts.ConfigPath, configFlagProvided); err != nil {
 			return exitError(1, err)
 		}
@@ -263,6 +287,85 @@ func run() error {
 	return nil
 }
 
+func createCLIAuthFile(stdin io.Reader, stdout io.Writer, dbPath string) error {
+	if stdin == nil {
+		return errors.New("create auth: nil stdin")
+	}
+	if stdout == nil {
+		return errors.New("create auth: nil stdout")
+	}
+
+	reader := bufio.NewReader(stdin)
+
+	username, err := promptAuthValue(reader, stdout, "Username: ")
+	if err != nil {
+		return err
+	}
+	password, err := promptAuthPassword(stdin, reader, stdout, "Password: ")
+	if err != nil {
+		return err
+	}
+	confirm, err := promptAuthPassword(stdin, reader, stdout, "Confirm password: ")
+	if err != nil {
+		return err
+	}
+	if password != confirm {
+		return errors.New("create auth: passwords do not match")
+	}
+	if len(password) < webserver.AuthPasswordMinLength {
+		return fmt.Errorf("create auth: password too short (minimum %d characters)", webserver.AuthPasswordMinLength)
+	}
+	if err := webserver.BootstrapAuthFile(dbPath, username, password); err != nil {
+		return err
+	}
+	return nil
+}
+
+func promptAuthValue(reader *bufio.Reader, stdout io.Writer, label string) (string, error) {
+	if _, err := fmt.Fprint(stdout, label); err != nil {
+		return "", fmt.Errorf("create auth: write prompt: %w", err)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("create auth: read prompt: %w", err)
+	}
+	value := strings.TrimSpace(line)
+	if value == "" {
+		return "", errors.New("create auth: value cannot be empty")
+	}
+	return value, nil
+}
+
+func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer, label string) (string, error) {
+	if _, err := fmt.Fprint(stdout, label); err != nil {
+		return "", fmt.Errorf("create auth: write password prompt: %w", err)
+	}
+	if file, ok := stdin.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		raw, err := term.ReadPassword(int(file.Fd()))
+		if err != nil {
+			return "", fmt.Errorf("create auth: read password: %w", err)
+		}
+		if _, err := fmt.Fprintln(stdout); err != nil {
+			return "", fmt.Errorf("create auth: finish password prompt: %w", err)
+		}
+		value := strings.TrimSpace(string(raw))
+		if value == "" {
+			return "", errors.New("create auth: password cannot be empty")
+		}
+		return value, nil
+	}
+
+	line, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("create auth: read password: %w", err)
+	}
+	value := strings.TrimSpace(line)
+	if value == "" {
+		return "", errors.New("create auth: password cannot be empty")
+	}
+	return value, nil
+}
+
 func runServe(args []string) error {
 	opts, visitedFlags, err := parseServeOptions(args)
 	if err != nil {
@@ -319,7 +422,7 @@ func loadServeConfig(configPath string, configProvided bool) (config.Config, str
 	return configstore.Bootstrap(context.Background(), configPath, configProvided, false)
 }
 
-func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string) error {
+func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string, plaintext bool) error {
 	dbPath, err := resolveExportDBPath(configPath, configProvided)
 	if err != nil {
 		return err
@@ -333,6 +436,13 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 
 	if err := repo.MigrateContext(ctx); err != nil {
 		return fmt.Errorf("migrate config database: %w", err)
+	}
+
+	if plaintext {
+		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, outputPath, repo); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	if err := config.ExportFromDatabaseToYAML(ctx, outputPath, repo); err != nil {

@@ -17,8 +17,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -135,7 +137,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 }
 
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun bool) (uploadState, []*http.Cookie, error) {
-	cookies, err := resolveCookies(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, dryRun)
+	cookies, err := resolveCookies(ctx, req.Logger, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, dryRun)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -185,17 +187,20 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	return state, cookies, nil
 }
 
-func resolveCookies(ctx context.Context, cfg config.TrackerConfig, dbPath string, dryRun bool) ([]*http.Cookie, error) {
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "FL", ".json") {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			if raw, err := commonhttp.LoadJSONCookieMap(candidate); err == nil {
-				return mapCookies(raw, ".filelist.io"), nil
-			}
+func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerConfig, dbPath string, dryRun bool) ([]*http.Cookie, error) {
+	loaded, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "FL", ".filelist.io")
+	if err != nil {
+		if logger != nil {
+			logger.Debugf("trackers: LoadTrackerHTTPCookies failed for FL/.filelist.io, dbPath=%s: %v", dbPath, err)
 		}
+	} else if valid := validFLCookies(loaded); len(valid) > 0 {
+		return valid, nil
+	} else if logger != nil {
+		logger.Debugf("trackers: FL loaded cookies were missing/expired, falling back to credential login, dbPath=%s", dbPath)
 	}
 	if dryRun {
 		if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-			return nil, errors.New("trackers: FL cookie file not found")
+			return nil, errors.New("trackers: FL cookies not found")
 		}
 		return []*http.Cookie{{Name: "dryrun", Value: "1", Domain: ".filelist.io", Path: "/"}}, nil
 	}
@@ -238,15 +243,22 @@ func resolveCookies(ctx context.Context, cfg config.TrackerConfig, dbPath string
 	return loginResp.Cookies(), nil
 }
 
-func mapCookies(values map[string]string, domain string) []*http.Cookie {
-	out := make([]*http.Cookie, 0, len(values))
-	for key, value := range values {
-		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+func validFLCookies(values []*http.Cookie) []*http.Cookie {
+	now := time.Now()
+	valid := make([]*http.Cookie, 0, len(values))
+	for _, cookie := range values {
+		if cookie == nil {
 			continue
 		}
-		out = append(out, &http.Cookie{Name: strings.TrimSpace(key), Value: strings.TrimSpace(value), Domain: domain, Path: "/"})
+		if strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
+			continue
+		}
+		if !cookie.Expires.IsZero() && cookie.Expires.Before(now) {
+			continue
+		}
+		valid = append(valid, cookie)
 	}
-	return out
+	return valid
 }
 
 func downloadPersonalizedTorrent(ctx context.Context, client *http.Client, id string, outputPath string) error {

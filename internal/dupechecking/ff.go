@@ -25,7 +25,7 @@ func (h ffHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 	if !meta.Anime && imdbForLookup(meta) == "" {
 		return nil, []string{noteSkip("missing IMDb ID for FF dupe search")}, nil
 	}
-	cookies, err := loadTrackerTextCookies(h.cfg, "FF", trackerHost(trackerBaseURL(h.cfg, "FF", "https://www.funfile.org"), "funfile.org"))
+	cookies, err := loadTrackerCookies(ctx, h.cfg, "FF", trackerHost(trackerBaseURL(h.cfg, "FF", "https://www.funfile.org"), "funfile.org"))
 	if err != nil {
 		return nil, []string{noteSkip("missing valid FF cookies")}, nil
 	}

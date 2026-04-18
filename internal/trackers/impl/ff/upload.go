@@ -11,12 +11,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -120,7 +120,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 }
 
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun bool) (uploadState, []*http.Cookie, error) {
-	cookies, err := resolveCookies(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, dryRun)
+	cookies, err := resolveCookies(ctx, req.Logger, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, dryRun)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -176,15 +176,18 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	return state, cookies, nil
 }
 
-func resolveCookies(ctx context.Context, cfg config.TrackerConfig, dbPath string, dryRun bool) ([]*http.Cookie, error) {
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "FF", ".txt") {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return commonhttp.LoadNetscapeCookies(candidate, "www.funfile.org")
+func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerConfig, dbPath string, dryRun bool) ([]*http.Cookie, error) {
+	loaded, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "FF", "www.funfile.org")
+	if err != nil {
+		if logger != nil {
+			logger.Debugf("trackers: LoadTrackerHTTPCookies failed for FF/www.funfile.org, dbPath=%s: %v", dbPath, err)
 		}
+	} else if len(loaded) > 0 {
+		return loaded, nil
 	}
 	if dryRun {
 		if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-			return nil, errors.New("trackers: FF cookie file not found")
+			return nil, errors.New("trackers: FF cookies not found")
 		}
 		return []*http.Cookie{{Name: "dryrun", Value: "1", Domain: ".funfile.org", Path: "/"}}, nil
 	}
