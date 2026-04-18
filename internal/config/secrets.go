@@ -180,13 +180,24 @@ func RewrapSecretsInDatabase(ctx context.Context, repo interface {
 	LoadFullConfig(ctx context.Context, dest interface{}) error
 	SaveFullConfig(ctx context.Context, cfg interface{}) error
 }, oldMaterial, newMaterial authmaterial.Material) error {
+	return RewrapSecretsInDatabaseWithFallback(ctx, repo, []authmaterial.Material{oldMaterial}, newMaterial)
+}
+
+func RewrapSecretsInDatabaseWithFallback(ctx context.Context, repo interface {
+	LoadFullConfig(ctx context.Context, dest interface{}) error
+	SaveFullConfig(ctx context.Context, cfg interface{}) error
+}, sourceMaterials []authmaterial.Material, newMaterial authmaterial.Material) error {
 	if repo == nil {
 		return errors.New("config secret rewrap: nil repository")
 	}
 
-	oldHelper, _, err := oldMaterial.PrimaryHelper()
-	if err != nil {
-		return fmt.Errorf("config secret rewrap: derive old helper: %w", err)
+	sourceHelpers := make([]string, 0, len(sourceMaterials))
+	for _, material := range sourceMaterials {
+		helper, _, err := material.PrimaryHelper()
+		if err != nil {
+			return fmt.Errorf("config secret rewrap: derive source helper: %w", err)
+		}
+		sourceHelpers = append(sourceHelpers, helper)
 	}
 	newHelper, _, err := newMaterial.PrimaryHelper()
 	if err != nil {
@@ -198,7 +209,7 @@ func RewrapSecretsInDatabase(ctx context.Context, repo interface {
 		return fmt.Errorf("config secret rewrap: load config: %w", err)
 	}
 
-	decrypted, err := decryptConfigSecretsWithHelper(&stored, oldHelper)
+	decrypted, err := decryptConfigSecretsWithHelpers(&stored, sourceHelpers)
 	if err != nil {
 		return fmt.Errorf("config secret rewrap: decrypt: %w", err)
 	}
@@ -211,6 +222,82 @@ func RewrapSecretsInDatabase(ctx context.Context, repo interface {
 	}
 
 	return nil
+}
+
+func decryptConfigSecretsWithHelpers(cfg *Config, helpers []string) (*Config, error) {
+	return decryptConfigSecretsWithHelpersFrom(cfg, helpers, false)
+}
+
+func decryptConfigSecretsWithHelpersFrom(cfg *Config, helpers []string, assumeCloned bool) (*Config, error) {
+	cloned := cfg
+	if !assumeCloned {
+		var err error
+		cloned, err = cloneConfig(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	needsHelper := false
+	_ = walkSecretFields(cloned, func(_ string, value *string) error {
+		if value != nil && isSecretEnvelope(strings.TrimSpace(*value)) {
+			needsHelper = true
+		}
+		return nil
+	})
+	if !needsHelper {
+		return cloned, nil
+	}
+
+	cleanHelpers := make([]string, 0, len(helpers))
+	for _, helper := range helpers {
+		helper = strings.TrimSpace(helper)
+		if helper == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range cleanHelpers {
+			if existing == helper {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			cleanHelpers = append(cleanHelpers, helper)
+		}
+	}
+	if len(cleanHelpers) == 0 {
+		return nil, ErrSecretEncryptionHelperUnavailable
+	}
+
+	if err := walkSecretFields(cloned, func(path string, value *string) error {
+		if value == nil {
+			return nil
+		}
+		trimmed := strings.TrimSpace(*value)
+		if !isSecretEnvelope(trimmed) {
+			return nil
+		}
+
+		var lastErr error
+		for _, helper := range cleanHelpers {
+			decrypted, err := decryptSecretString(trimmed, helper)
+			if err == nil {
+				*value = decrypted
+				return nil
+			}
+			lastErr = err
+		}
+
+		if lastErr == nil {
+			lastErr = ErrSecretEncryptionHelperUnavailable
+		}
+		return fmt.Errorf("%s: %w", path, lastErr)
+	}); err != nil {
+		return nil, fmt.Errorf("config secret decryption: %w", err)
+	}
+
+	return cloned, nil
 }
 
 func cloneConfig(cfg *Config) (*Config, error) {

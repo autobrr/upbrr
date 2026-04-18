@@ -38,12 +38,25 @@ const (
 )
 
 type Record struct {
-	Username               string    `json:"username"`
-	PasswordHash           string    `json:"password_hash"`
-	EncryptionKeySeed      string    `json:"encryption_key_seed,omitempty"`
-	AllowUnencryptedExport bool      `json:"allow_unencrypted_export,omitempty"`
-	CreatedAt              time.Time `json:"created_at"`
+	Username               string          `json:"username"`
+	PasswordHash           string          `json:"password_hash"`
+	EncryptionKeySeed      string          `json:"encryption_key_seed,omitempty"`
+	AllowUnencryptedExport bool            `json:"allow_unencrypted_export,omitempty"`
+	PendingUpgrade         *PendingUpgrade `json:"pending_upgrade,omitempty"`
+	CreatedAt              time.Time       `json:"created_at"`
 }
+
+type PendingUpgrade struct {
+	Stage     string    `json:"stage"`
+	Target    Record    `json:"target"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+const (
+	UpgradeStagePrepared         = "prepared"
+	UpgradeStageCookiesRewrapped = "cookies_rewrapped"
+	UpgradeStageDataRewrapped    = "data_rewrapped"
+)
 
 type Store struct {
 	path string
@@ -144,6 +157,81 @@ func (s *Store) UpdateRecord(updated Record) error {
 		record.PasswordHash = strings.TrimSpace(updated.PasswordHash)
 		record.EncryptionKeySeed = strings.TrimSpace(updated.EncryptionKeySeed)
 		record.AllowUnencryptedExport = updated.AllowUnencryptedExport
+		record.PendingUpgrade = updated.PendingUpgrade
+		return nil
+	})
+}
+
+func (s *Store) BeginPendingUpgrade(current Record, target Record) error {
+	return s.updateRecordLocked(func(record *Record) error {
+		if record.Username != strings.TrimSpace(current.Username) {
+			return errors.New("web auth: user mismatch")
+		}
+		if strings.TrimSpace(record.PasswordHash) != strings.TrimSpace(current.PasswordHash) ||
+			strings.TrimSpace(record.EncryptionKeySeed) != strings.TrimSpace(current.EncryptionKeySeed) ||
+			record.AllowUnencryptedExport != current.AllowUnencryptedExport {
+			return errors.New("web auth: auth record changed during upgrade")
+		}
+
+		target.PendingUpgrade = nil
+		record.PendingUpgrade = &PendingUpgrade{
+			Stage:     UpgradeStagePrepared,
+			Target:    target,
+			UpdatedAt: time.Now().UTC(),
+		}
+		return nil
+	})
+}
+
+func (s *Store) AdvancePendingUpgrade(username string, stage string) error {
+	stage = strings.TrimSpace(stage)
+	switch stage {
+	case UpgradeStagePrepared, UpgradeStageCookiesRewrapped, UpgradeStageDataRewrapped:
+	default:
+		return fmt.Errorf("web auth: invalid upgrade stage %q", stage)
+	}
+
+	return s.updateRecordLocked(func(record *Record) error {
+		if record.Username != strings.TrimSpace(username) {
+			return errors.New("web auth: user mismatch")
+		}
+		if record.PendingUpgrade == nil {
+			return errors.New("web auth: no pending upgrade")
+		}
+		record.PendingUpgrade.Stage = stage
+		record.PendingUpgrade.UpdatedAt = time.Now().UTC()
+		return nil
+	})
+}
+
+func (s *Store) FinalizePendingUpgrade(username string) (Record, error) {
+	var finalized Record
+
+	err := s.updateRecordLocked(func(record *Record) error {
+		if record.Username != strings.TrimSpace(username) {
+			return errors.New("web auth: user mismatch")
+		}
+		if record.PendingUpgrade == nil {
+			return errors.New("web auth: no pending upgrade")
+		}
+
+		target := record.PendingUpgrade.Target
+		target.PendingUpgrade = nil
+		target.CreatedAt = record.CreatedAt
+		*record = target
+		finalized = target
+		return nil
+	})
+
+	return finalized, err
+}
+
+func (s *Store) ClearPendingUpgrade(username string) error {
+	return s.updateRecordLocked(func(record *Record) error {
+		if record.Username != strings.TrimSpace(username) {
+			return errors.New("web auth: user mismatch")
+		}
+		record.PendingUpgrade = nil
 		return nil
 	})
 }

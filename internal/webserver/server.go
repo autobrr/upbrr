@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -45,8 +44,6 @@ type Server struct {
 	trustedProxies []*net.IPNet
 	server         *http.Server
 	assets         fs.FS
-
-	authUpgradeRollbackFailures atomic.Uint64
 }
 
 func New(opts Options) (*Server, error) {

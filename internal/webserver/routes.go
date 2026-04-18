@@ -14,6 +14,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
@@ -134,7 +136,33 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	if needsUpgrade {
+	if record.PendingUpgrade != nil {
+		target := record.PendingUpgrade.Target
+		if err := s.rewrapProtectedDataForAuthChange(r.Context(), record, target); err != nil {
+			if s.backend != nil && s.backend.logger != nil {
+				s.backend.logger.Errorf(
+					"web: auth upgrade failed incident=%s username=%s",
+					"auth_upgrade_resume_rewrap_failed",
+					redactAuthUsername(record.Username),
+				)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
+		finalized, err := s.auth.FinalizePendingUpgrade(record.Username)
+		if err != nil {
+			if s.backend != nil && s.backend.logger != nil {
+				s.backend.logger.Errorf(
+					"web: auth upgrade failed incident=%s username=%s",
+					"auth_upgrade_resume_finalize_failed",
+					redactAuthUsername(record.Username),
+				)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
+		record = finalized
+	} else if needsUpgrade {
 		upgradedHash, err := hashPassword(req.Password)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
@@ -152,27 +180,28 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		}
 		if err := s.rewrapProtectedDataForAuthChange(r.Context(), record, upgradedRecord); err != nil {
 			if s.backend != nil && s.backend.logger != nil {
-				s.backend.logger.Errorf("web: failed to rewrap protected data for %s during auth upgrade: %v", record.Username, err)
+				s.backend.logger.Errorf(
+					"web: auth upgrade failed incident=%s username=%s",
+					"auth_upgrade_rewrap_failed",
+					redactAuthUsername(record.Username),
+				)
 			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
 			return
 		}
-		if err := s.auth.UpdateRecord(upgradedRecord); err != nil {
-			if rollbackErr := s.rollbackProtectedDataForAuthChange(r, upgradedRecord, record); rollbackErr != nil {
-				s.handleAuthUpgradeRollbackFailure(r, record.Username, err, rollbackErr)
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":                        "failed to refresh credentials; operator intervention required",
-					"code":                         "auth_upgrade_rollback_failed",
-					"requiresOperatorIntervention": true,
-				})
-				return
-			}
+		finalized, err := s.auth.FinalizePendingUpgrade(record.Username)
+		if err != nil {
 			if s.backend != nil && s.backend.logger != nil {
-				s.backend.logger.Errorf("web: failed to upgrade legacy auth hash for %s: %v", record.Username, err)
+				s.backend.logger.Errorf(
+					"web: auth upgrade failed incident=%s username=%s",
+					"auth_upgrade_finalize_failed",
+					redactAuthUsername(record.Username),
+				)
 			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
 			return
 		}
+		record = finalized
 	}
 	current, err := s.sessions.Create(record.Username, req.RetainLogin)
 	if err != nil {
@@ -401,39 +430,6 @@ func (s *Server) isTrustedProxy(ip net.IP) bool {
 	return false
 }
 
-func (s *Server) handleAuthUpgradeRollbackFailure(r *http.Request, username string, updateErr error, rollbackErr error) {
-	if s == nil {
-		return
-	}
-
-	incidentCount := s.authUpgradeRollbackFailures.Add(1)
-	payload := map[string]any{
-		"incident":      "auth_upgrade_rollback_failed",
-		"username":      strings.TrimSpace(username),
-		"updateError":   updateErr.Error(),
-		"rollbackError": rollbackErr.Error(),
-		"count":         incidentCount,
-		"timestamp":     time.Now().UTC().Format(time.RFC3339),
-	}
-
-	if s.hub != nil {
-		if current, ok := s.currentSession(r); ok {
-			s.hub.Emit(current.ID, "auth:incident", payload)
-		}
-	}
-
-	if s.backend != nil && s.backend.logger != nil {
-		s.backend.logger.Errorf(
-			"web: auth upgrade rollback failed username=%q incident=%q count=%d update_error=%v rollback_error=%v",
-			strings.TrimSpace(username),
-			"auth_upgrade_rollback_failed",
-			incidentCount,
-			updateErr,
-			rollbackErr,
-		)
-	}
-}
-
 func decodeJSON(r *http.Request, dest any) error {
 	defer r.Body.Close()
 	return json.NewDecoder(r.Body).Decode(dest)
@@ -441,4 +437,8 @@ func decodeJSON(r *http.Request, dest any) error {
 
 func fsStat(root fs.FS, name string) (fs.FileInfo, error) {
 	return fs.Stat(root, name)
+}
+
+func redactAuthUsername(username string) string {
+	return redaction.RedactValue(strings.TrimSpace(username), nil)
 }

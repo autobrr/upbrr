@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
@@ -23,60 +23,48 @@ func (s *Server) rewrapProtectedDataForAuthChange(ctx context.Context, oldRecord
 		return errors.New("auth_rewrap: missing server/backend/repo configuration (s.backend.repo unavailable)")
 	}
 
+	if oldRecord.PendingUpgrade == nil {
+		if err := s.auth.BeginPendingUpgrade(oldRecord, newRecord); err != nil {
+			return fmt.Errorf("auth rewrap: persist pending upgrade: %w", err)
+		}
+		oldRecord.PendingUpgrade = &authmaterial.PendingUpgrade{
+			Stage:     authmaterial.UpgradeStagePrepared,
+			Target:    newRecord,
+			UpdatedAt: time.Now().UTC(),
+		}
+	}
+
+	pending := oldRecord.PendingUpgrade
+	if pending == nil {
+		return errors.New("auth rewrap: missing pending upgrade state")
+	}
+	newRecord = pending.Target
 	oldMaterial := oldRecord.AuthMaterial()
 	newMaterial := newRecord.AuthMaterial()
 
-	if err := cookies.RewrapCookiesWithAuthChange(ctx, s.backend.repo.RawDB(), oldMaterial, newMaterial); err != nil {
-		return err
-	}
-	if err := config.RewrapSecretsInDatabase(ctx, s.backend.repo, oldMaterial, newMaterial); err != nil {
-		// Operators: cookies and config secret rewrap are not currently bound to one shared DB transaction.
-		rollbackErr := cookies.RewrapCookiesWithAuthChange(ctx, s.backend.repo.RawDB(), newMaterial, oldMaterial)
-		if s.backend.logger != nil {
-			if rollbackErr != nil {
-				s.backend.logger.Errorf("web: protected data rewrap partial rollback failed phase=upgrade config_error=%v rollback_error=%v", err, rollbackErr)
-			} else {
-				s.backend.logger.Warnf("web: protected data rewrap used compensating rollback phase=upgrade config_error=%v", err)
-			}
-		}
-		if rollbackErr != nil {
-			return fmt.Errorf("protected data rewrap upgrade failed: %w", errors.Join(err, rollbackErr))
-		}
-		return err
+	if pending.Stage == "" {
+		pending.Stage = authmaterial.UpgradeStagePrepared
 	}
 
-	return nil
-}
-
-func (s *Server) rollbackProtectedDataForAuthChange(r *http.Request, currentRecord, previousRecord authRecord) error {
-	if s == nil || s.backend == nil || s.backend.repo == nil {
-		return nil
+	if pending.Stage == authmaterial.UpgradeStagePrepared {
+		if err := cookies.RewrapCookiesWithAuthChange(ctx, s.backend.repo.RawDB(), oldMaterial, newMaterial); err != nil {
+			return err
+		}
+		if err := s.auth.AdvancePendingUpgrade(oldRecord.Username, authmaterial.UpgradeStageCookiesRewrapped); err != nil {
+			return fmt.Errorf("auth rewrap: persist cookie phase: %w", err)
+		}
+		pending.Stage = authmaterial.UpgradeStageCookiesRewrapped
 	}
 
-	ctx := r.Context()
-	currentMaterial := currentRecord.AuthMaterial()
-	previousMaterial := previousRecord.AuthMaterial()
-
-	if err := cookies.RewrapCookiesWithAuthChange(ctx, s.backend.repo.RawDB(), currentMaterial, previousMaterial); err != nil {
-		return err
-	}
-	if err := config.RewrapSecretsInDatabase(ctx, s.backend.repo, currentMaterial, previousMaterial); err != nil {
-		// Operators: cookies and config secret rewrap are not currently bound to one shared DB transaction.
-		rollbackErr := cookies.RewrapCookiesWithAuthChange(ctx, s.backend.repo.RawDB(), previousMaterial, currentMaterial)
-		if s.backend.logger != nil {
-			if rollbackErr != nil {
-				s.backend.logger.Errorf("web: protected data rewrap partial rollback failed phase=auth-record-rollback config_error=%v rollback_error=%v", err, rollbackErr)
-			} else {
-				s.backend.logger.Warnf("web: protected data rewrap used compensating rollback phase=auth-record-rollback config_error=%v", err)
-			}
+	if pending.Stage == authmaterial.UpgradeStageCookiesRewrapped {
+		sourceMaterials := []authmaterial.Material{oldMaterial, newMaterial}
+		if err := config.RewrapSecretsInDatabaseWithFallback(ctx, s.backend.repo, sourceMaterials, newMaterial); err != nil {
+			return err
 		}
-		if rollbackErr != nil {
-			return errors.Join(
-				fmt.Errorf("protected data rewrap rollback failed: %w", err),
-				fmt.Errorf("cookie rollback failed: %w", rollbackErr),
-			)
+		if err := s.auth.AdvancePendingUpgrade(oldRecord.Username, authmaterial.UpgradeStageDataRewrapped); err != nil {
+			return fmt.Errorf("auth rewrap: persist data phase: %w", err)
 		}
-		return err
+		pending.Stage = authmaterial.UpgradeStageDataRewrapped
 	}
 
 	return nil
