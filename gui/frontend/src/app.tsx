@@ -1791,42 +1791,6 @@ export default function App() {
     }
   };
 
-  const runPreparation = async (
-    overrides: ExternalIDOverrides,
-    nameOverrides: ReleaseNameOverrides,
-  ) => {
-    setPrepError("");
-    const fetcher = globalThis.go?.guiapp?.App?.FetchPreparation;
-    if (!fetcher) {
-      setPrepError("Preparation preview is unavailable in this build.");
-      return false;
-    }
-    if (!path.trim()) {
-      setPrepError("Please select a file or folder.");
-      return false;
-    }
-    setPrepLoading(true);
-    try {
-      const result = await fetcher(
-        path.trim(),
-        normalizeOverrides(overrides),
-        normalizeReleaseOverrides(nameOverrides),
-        Object.entries(releasePageTrackerSelection)
-          .filter(([, selected]) => selected)
-          .map(([name]) => name),
-        ignoredDupeTrackers,
-      );
-      const filteredDescriptions = filterPrepDescriptions(result.Descriptions || []);
-      setPrepPreview({ ...result, Descriptions: filteredDescriptions });
-      return true;
-    } catch (err) {
-      setPrepError(String(err));
-      return false;
-    } finally {
-      setPrepLoading(false);
-    }
-  };
-
   const runDescriptionBuilder = useCallback(
     async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
       setBuilderError("");
