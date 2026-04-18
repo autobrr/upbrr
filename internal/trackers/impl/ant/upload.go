@@ -29,7 +29,7 @@ import (
 const antUploadURL = "https://anthelion.me/api.php"
 
 var antTorrentIDPattern = regexp.MustCompile(`id=(\d+)`)
-var antDefaultSignaturePattern = regexp.MustCompile(`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/Audionut/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`)
+var antDefaultSignaturePattern = regexp.MustCompile(`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/(?:Audionut|autobrr)/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`)
 var antEmptyURLPattern = regexp.MustCompile(`(?is)\[url=[^\]]*]\s*\[/url\]`)
 
 var antBannedReleaseGroups = map[string]struct{}{
@@ -241,7 +241,7 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 	base := strings.TrimSpace(antDefaultSignaturePattern.ReplaceAllString(assets.Description, ""))
 	report := bbcode.CleanPTPDescription(base, meta.DiscType)
 	userDesc := strings.TrimSpace(report.Description)
-	if userDesc == "" && base != "" {
+	if userDesc == "" && base != "" && len(report.Images) == 0 {
 		userDesc = base
 	}
 
