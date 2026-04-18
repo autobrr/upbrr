@@ -1,7 +1,7 @@
 min_version: 2.1.0
 
 # Skip hooks with `git commit --no-verify` or `LEFTHOOK=0 git commit ...`.
-# Go-only contributors: `go install github.com/evilmartians/lefthook/v2@latest && lefthook install`.
+# Go-only contributors: `go install github.com/evilmartians/lefthook/v2@v2.1.0 && lefthook install`.
 # Frontend/full-stack contributors: `pnpm install` in gui/frontend/ plus `lefthook install`.
 
 # Execution model:
@@ -64,9 +64,8 @@ pre-push:
 
 commit-msg:
   jobs:
-    - name: commitlint
-      root: "gui/frontend/"
-      run: pnpm exec commitlint --edit
+    - name: commit-message
+      run: go run ./cmd/commitmsgcheck {1}
       fail_text: |
         Commit message does not follow Conventional Commits.
         Format: <type>(<scope>): <subject>   (scope optional)

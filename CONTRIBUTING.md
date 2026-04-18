@@ -50,22 +50,22 @@ Notes:
 - **Branching:** Create a descriptively named branch.
   - Example: `git checkout -b fix/bt-dupe-check` or `git checkout -b feat/playlist-selection`
 - **Coding:** Keep changes narrow and match the surrounding style. For Go, follow the rules in [`AGENTS.md`](./AGENTS.md) and let `golangci-lint` drive. For the frontend, let the Lefthook Prettier + ESLint hooks do the work.
-- **Commit messages:** We enforce [Conventional Commits](https://www.conventionalcommits.org/) via Commitlint. See [Commit message format](#commit-message-format) below.
+- **Commit messages:** We enforce [Conventional Commits](https://www.conventionalcommits.org/) via a repo-local validator. See [Commit message format](#commit-message-format) below.
   - No need to force-push or rebase — we squash on merge.
 - **Pull requests:** Submit a PR with a clear description. Mark it _Draft_ if still in progress. Reference related issues.
 - **Code review:** Be open to feedback during review.
 
 ## Git hooks (Lefthook)
 
-All contributors should install the git hooks once. They run Prettier, ESLint, golangci-lint, the log-policy checker, and Commitlint locally so issues surface before CI sees them.
+All contributors should install the git hooks once. They run Prettier, ESLint, golangci-lint, the log-policy checker, and the repo's commit-message validator locally so issues surface before CI sees them.
 
 ```sh
 # Go-only contributors (no Node required):
-go install github.com/evilmartians/lefthook/v2@latest
+go install github.com/evilmartians/lefthook/v2@v2.1.0
 lefthook install
 
 # Frontend / full-stack contributors:
-# `pnpm install` in gui/frontend/ brings in the commitlint + prettier deps the hooks call.
+# `pnpm install` in gui/frontend/ brings in the Prettier + ESLint deps the hooks call.
 cd gui/frontend && pnpm install && cd ../..
 lefthook install
 ```
@@ -74,7 +74,7 @@ What runs when:
 
 - `pre-commit` — on **staged files only**: `prettier --write` (gui/frontend), `eslint` (gui/frontend/src), `golangci-lint fmt` (Go), `go run ./cmd/logpolicy` (when `internal/**` Go files change). Formatters auto-re-stage their fixes.
 - `pre-push` — full-project: `pnpm run typecheck` and `golangci-lint run ./...`. Mirrors CI.
-- `commit-msg` — Commitlint enforces [Conventional Commits](https://www.conventionalcommits.org/).
+- `commit-msg` — `go run ./cmd/commitmsgcheck` enforces [Conventional Commits](https://www.conventionalcommits.org/) without requiring Node.js or `pnpm install`.
 
 Bypass (use sparingly, e.g. for emergency fixes or WIP commits):
 

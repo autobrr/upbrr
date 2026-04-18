@@ -31,13 +31,13 @@
   },
 
   // Source Control input-box validation — warns in the UI before the commit-msg hook
-  // rejects. Limits mirror gui/frontend/commitlint.config.js (header-max-length: 115).
+  // rejects. Limits mirror cmd/commitmsgcheck (header-max-length: 115).
   "git.inputValidation": true,
   "git.inputValidationLength": 115,
   "git.inputValidationSubjectLength": 115,
 
-  // Guide Copilot's "Generate commit message" to produce messages that pass commitlint.
-  // Mirrors the rules in gui/frontend/commitlint.config.js — keep both in sync.
+  // Guide Copilot's "Generate commit message" to produce messages that pass the repo's
+  // commit-message validator. Mirrors the rules in cmd/commitmsgcheck — keep both in sync.
   "github.copilot.chat.commitMessageGeneration.instructions": [
     {
       "text": "Write commits in Conventional Commits v1.0.0 format: `<type>(<scope>)!?: <subject>`. The scope and the `!` breaking-change marker are optional."
