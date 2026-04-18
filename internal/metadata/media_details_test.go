@@ -114,3 +114,203 @@ func TestSourceAndTypeInfersRemuxWhenReleaseTypeMissing(t *testing.T) {
 		t.Fatalf("expected REMUX type, got %q", typeValue)
 	}
 }
+
+// Python get_type() falls back to "ENCODE" for any release that is not a disc
+// and does not match a known keyword. Verify Go does the same.
+func TestSourceAndTypeDefaultsToEncodeForUnknownRelease(t *testing.T) {
+	_, typeValue := sourceAndType(api.PreparedMetadata{
+		SourcePath: "Some.Unknown.Movie.2026-GRP.mkv",
+		Release:    api.ReleaseInfo{},
+	}, mediaInfoDoc{})
+
+	if typeValue != "ENCODE" {
+		t.Fatalf("expected ENCODE type for unknown release, got %q", typeValue)
+	}
+}
+
+func TestSourceAndTypeEncodeDefaultNotAppliedForDiscs(t *testing.T) {
+	for _, discType := range []string{"BDMV", "DVD", "HDDVD"} {
+		_, typeValue := sourceAndType(api.PreparedMetadata{
+			DiscType:   discType,
+			SourcePath: "/media/disc",
+			Release:    api.ReleaseInfo{},
+		}, mediaInfoDoc{})
+		if typeValue != "DISC" {
+			t.Fatalf("disc type %q should default to DISC, got %q", discType, typeValue)
+		}
+	}
+}
+
+func TestSourceAndTypeDefaultsDiscSourceForBDMV(t *testing.T) {
+	source, typeValue := sourceAndType(api.PreparedMetadata{
+		DiscType:   "BDMV",
+		SourcePath: "/media/disc",
+		Release:    api.ReleaseInfo{},
+	}, mediaInfoDoc{})
+
+	if typeValue != "DISC" {
+		t.Fatalf("expected DISC type for BDMV, got %q", typeValue)
+	}
+	if source != "Blu-ray" {
+		t.Fatalf("expected Blu-ray source for BDMV DISC, got %q", source)
+	}
+}
+
+// Python get_uhd() does NOT include WEBRIP in the 2160p→UHD check.
+// Verify that a 2160p WEBRIP does not produce a UHD flag.
+func TestUHDFromMetaWEBRIP2160pNotUHD(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Type: "WEBRIP",
+		Release: api.ReleaseInfo{
+			Resolution: "2160p",
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "" {
+		t.Fatalf("expected no UHD for WEBRIP 2160p, got %q", uhd)
+	}
+}
+
+func TestUHDFromMetaENCODE2160pIsUHD(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Type: "ENCODE",
+		Release: api.ReleaseInfo{
+			Resolution: "2160p",
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "UHD" {
+		t.Fatalf("expected UHD for ENCODE 2160p, got %q", uhd)
+	}
+}
+
+func TestUHDFromMetaUHDInPath(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Type:       "WEBRIP",
+		SourcePath: "/media/Movie.2160p.UHD.WEBRip-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Resolution: "2160p",
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "UHD" {
+		t.Fatalf("expected UHD when path contains UHD, got %q", uhd)
+	}
+}
+
+func TestUHDFromMetaUltraHDReleaseOther(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{
+			Other: []string{"Ultra HD"},
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "UHD" {
+		t.Fatalf("expected UHD when release other contains Ultra HD, got %q", uhd)
+	}
+}
+
+func TestAudioFromMediaAddsDualAudioForEnglishAndOriginalLanguage(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"ja","StreamOrder":"2"}]}}`)
+	meta := api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+	audio, channels, commentary := audioFromMedia(meta, doc, nil)
+	if audio != "Dual-Audio DD 5.1" {
+		t.Fatalf("expected Dual-Audio DD 5.1, got %q", audio)
+	}
+	if channels != "5.1" || commentary {
+		t.Fatalf("expected 5.1 with no commentary, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
+func TestAudioFromMediaAddsDubbedWhenOnlyEnglishTrackPresent(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"}]}}`)
+	meta := api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+	audio, _, _ := audioFromMedia(meta, doc, nil)
+	if audio != "Dubbed DD 5.1" {
+		t.Fatalf("expected Dubbed DD 5.1, got %q", audio)
+	}
+}
+
+func TestAudioFromMediaSkipsLanguagePrefixForDiscs(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"ja","StreamOrder":"2"}]}}`)
+	meta := api.PreparedMetadata{
+		DiscType: "BDMV",
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+	audio, _, _ := audioFromMedia(meta, doc, nil)
+	if audio != "DD 5.1" {
+		t.Fatalf("expected disc audio to skip Dual-Audio prefix, got %q", audio)
+	}
+}
+
+func TestAudioFromMediaAddsEXFormatSetting(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Format_Settings":"Dolby Surround EX","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
+	audio, _, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "DD EX 5.1" {
+		t.Fatalf("expected DD EX 5.1, got %q", audio)
+	}
+}
+
+func TestAudioFromMediaUsesChannelsOriginalWhenPresent(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"8 / 6","Channels_Original":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
+	audio, channels, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "DD 5.1" {
+		t.Fatalf("expected DD 5.1, got %q", audio)
+	}
+	if channels != "5.1" {
+		t.Fatalf("expected 5.1 channels, got %q", channels)
+	}
+}
+
+func TestResolveAudioBloatPolicyBlocksStrictTrackersForEnglishOriginal(t *testing.T) {
+	blocked, warned := resolveAudioBloatPolicy(api.PreparedMetadata{
+		AudioLanguages: []string{"English", "French"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
+		},
+	}, []string{"ANT", "BHD", "MTV", "AITHER", "ASC"})
+
+	if got := blocked["ANT"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected ANT blocked for French bloat, got %#v", blocked)
+	}
+	if got := blocked["BHD"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected BHD blocked for French bloat, got %#v", blocked)
+	}
+	if got := blocked["MTV"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected MTV blocked for French bloat, got %#v", blocked)
+	}
+	if got := warned["AITHER"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected AITHER warning for French bloat, got %#v", warned)
+	}
+	if _, ok := warned["ASC"]; ok {
+		t.Fatalf("did not expect ASC warning, got %#v", warned)
+	}
+}
+
+func TestResolveAudioBloatPolicyWarnsButDoesNotBlockNonEnglishOriginal(t *testing.T) {
+	blocked, warned := resolveAudioBloatPolicy(api.PreparedMetadata{
+		AudioLanguages: []string{"English", "Japanese", "French"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}, []string{"ANT", "BHD", "SPD"})
+
+	if blocked != nil {
+		t.Fatalf("expected no blocked trackers, got %#v", blocked)
+	}
+	if got := warned["ANT"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected ANT warning for French bloat, got %#v", warned)
+	}
+	if got := warned["BHD"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected BHD warning for French bloat, got %#v", warned)
+	}
+	if got := warned["SPD"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected SPD warning for French bloat, got %#v", warned)
+	}
+}

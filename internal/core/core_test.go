@@ -863,7 +863,7 @@ func TestExportGUICachedPreparedMetaExactSignature(t *testing.T) {
 	}
 }
 
-func TestExportGUICachedPreparedMetaFallsBackForGUIWithoutExternalOverrides(t *testing.T) {
+func TestExportGUICachedPreparedMetaRequiresExactMatchForSignedOverrides(t *testing.T) {
 	t.Parallel()
 
 	core, err := New(api.CoreDependencies{
@@ -897,11 +897,11 @@ func TestExportGUICachedPreparedMetaFallsBackForGUIWithoutExternalOverrides(t *t
 	if err != nil {
 		t.Fatalf("export gui cached prepared meta: %v", err)
 	}
-	if !ok {
-		t.Fatal("expected GUI fallback cache hit")
+	if ok {
+		t.Fatal("expected signed GUI cache lookup to miss without an exact cached entry")
 	}
-	if exported.SourcePath != "/tmp/a" {
-		t.Fatalf("expected cached source path /tmp/a, got %q", exported.SourcePath)
+	if exported.SourcePath != "" {
+		t.Fatalf("expected empty prepared metadata on cache miss, got %q", exported.SourcePath)
 	}
 }
 
@@ -2118,6 +2118,10 @@ func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMe
 	if s.prepared.SourcePath != "" {
 		meta = s.prepared
 	}
+	return meta, nil
+}
+
+func (s *stubMeta) RefreshPreparedMetadata(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 

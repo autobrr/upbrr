@@ -328,3 +328,35 @@ func mapDVDResolution(res string, guessed string, width int, scan string) string
 	}
 	return resolution
 }
+
+// resolutionFromMediaInfo derives a standard resolution string from a MediaInfo
+// document for non-DVD content. It mirrors the Python get_resolution() logic:
+// read Width/Height from the video track, snap each using the same Python
+// closest() helper semantics, compose a WxHscan key, and map it through the
+// same resolution table used for DVD content. Returns "" when
+// the video track is absent or both dimensions are zero.
+func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string) string {
+	_, videoTracks, _ := splitMediaInfoTracks(doc)
+	if len(videoTracks) == 0 {
+		return ""
+	}
+	track := videoTracks[0]
+
+	width := trackNumericInt(track, "Width")
+	height := trackNumericInt(track, "Height")
+	if width == 0 && height == 0 {
+		return ""
+	}
+
+	scanType := strings.TrimSpace(trackString(track, "ScanType"))
+	scan := normalizeDVDScan(scanType, "", sourcePath)
+
+	closestWidth := closestDVDValue([]int{3840, 2560, 1920, 1280, 1024, 854, 720, 15360, 7680, 0}, width)
+	closestHeight := closestDVDValue([]int{2160, 1440, 1080, 720, 576, 540, 480, 8640, 4320, 0}, height)
+	resKey := fmt.Sprintf("%dx%d%s", closestWidth, closestHeight, scan)
+	resolution := mapDVDResolution(resKey, "", closestWidth, scan)
+	if resolution == "OTHER" {
+		return ""
+	}
+	return resolution
+}

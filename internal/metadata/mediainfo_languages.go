@@ -51,7 +51,7 @@ func extractMediaInfoLanguages(doc mediaInfoDoc) ([]string, []string) {
 		switch trackType {
 		case "audio":
 			title := strings.ToLower(trackString(track, "Title", "Title_String", "Title_String2", "Title_String3"))
-			if strings.Contains(title, "commentary") {
+			if strings.Contains(title, "commentary") || strings.Contains(title, "compatibility") {
 				continue
 			}
 			language := normalizeLanguage(trackString(track, "Language", "Language_String", "Language_String2", "Language_String3"))

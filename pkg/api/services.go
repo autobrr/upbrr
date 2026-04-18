@@ -21,6 +21,7 @@ type ServiceSet struct {
 
 type MetadataService interface {
 	Prepare(ctx context.Context, req Request) (PreparedMetadata, error)
+	RefreshPreparedMetadata(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
 	EnrichTrackerData(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
 	ApplyMediaInfoIDs(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
 	ApplyArrData(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
@@ -69,6 +70,7 @@ type TrackerBlockReason string
 const (
 	TrackerBlockReasonDupe  TrackerBlockReason = "dupe"
 	TrackerBlockReasonClaim TrackerBlockReason = "claim"
+	TrackerBlockReasonAudio TrackerBlockReason = "audio"
 )
 
 type PreparedMetadata struct {
