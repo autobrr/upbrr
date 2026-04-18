@@ -3,7 +3,9 @@
 
 package api
 
-import "context"
+import (
+	"context"
+)
 
 type Mode string
 
@@ -125,6 +127,12 @@ type Core interface {
 	RenderDescription(ctx context.Context, raw string) (string, error)
 	SaveDescriptionOverride(ctx context.Context, req Request, raw string) (DescriptionBuilderGroup, error)
 	Close() error
+}
+
+// Config defines the minimum application configuration contract required by core wiring.
+// Keeping this in pkg/api avoids leaking internal package types into exported APIs.
+type Config interface {
+	Validate() error
 }
 
 type CoreDependencies struct {

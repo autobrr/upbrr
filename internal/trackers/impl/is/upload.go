@@ -6,16 +6,15 @@ package is
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -142,7 +141,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if err != nil {
 		return uploadState{}, nil, err
 	}
-	cookies, err := loadCookies(req.AppConfig.MainSettings.DBPath)
+	cookies, err := loadCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -178,13 +177,8 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	return state, cookies, nil
 }
 
-func loadCookies(dbPath string) ([]*http.Cookie, error) {
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "IS", ".txt") {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return commonhttp.LoadNetscapeCookies(candidate, "immortalseed.me")
-		}
-	}
-	return nil, errors.New("trackers: IS cookie file not found")
+func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
+	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "IS", "immortalseed.me")
 }
 
 func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {

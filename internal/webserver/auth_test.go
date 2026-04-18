@@ -4,11 +4,192 @@
 package webserver
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 )
+
+func makeLegacyHash(password, salt string) string {
+	sum := argon2.IDKey(
+		[]byte(password),
+		[]byte(salt),
+		legacyAuthArgon2Time,
+		legacyAuthArgon2MemoryKB,
+		legacyAuthArgon2Parallelism,
+		legacyAuthArgon2KeyLen,
+	)
+	return "argon2id$" + salt + "$" + base64.RawStdEncoding.EncodeToString(sum)
+}
+
+func TestHashPasswordEncodesArgon2Parameters(t *testing.T) {
+	hash, err := hashPassword("very-secure-password")
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+
+	parts := strings.Split(hash, "$")
+	if len(parts) != 5 {
+		t.Fatalf("expected parameterized hash format, got %q", hash)
+	}
+	if parts[0] != "argon2id" {
+		t.Fatalf("hash prefix = %q, want %q", parts[0], "argon2id")
+	}
+	if parts[1] != "v=19" {
+		t.Fatalf("hash version = %q, want %q", parts[1], "v=19")
+	}
+	if parts[2] != "m=19456,t=2,p=1" {
+		t.Fatalf("hash params = %q, want %q", parts[2], "m=19456,t=2,p=1")
+	}
+	if parts[3] == "" || parts[4] == "" {
+		t.Fatalf("expected non-empty salt and hash in %q", hash)
+	}
+	if !verifyPassword("very-secure-password", hash) {
+		t.Fatal("expected parameterized hash to verify")
+	}
+}
+
+func TestHashPasswordRejectsTooShortPassword(t *testing.T) {
+	_, err := hashPassword("short-pass")
+	if err == nil {
+		t.Fatal("expected short password validation error")
+	}
+	if !strings.Contains(err.Error(), "password must be at least 12 characters") {
+		t.Fatalf("unexpected short password error: %v", err)
+	}
+}
+
+func TestVerifyPasswordSupportsLegacyImplicitParameters(t *testing.T) {
+	password := "very-secure-password"
+	salt := "legacy-salt-value"
+	legacyHash := makeLegacyHash(password, salt)
+
+	if !verifyPassword(password, legacyHash) {
+		t.Fatal("expected legacy hash to verify with implicit parameters")
+	}
+	if verifyPassword("wrong-password", legacyHash) {
+		t.Fatal("expected wrong password to fail against legacy hash")
+	}
+}
+
+func TestVerifyPasswordWithUpgradeFlagsLegacyHashes(t *testing.T) {
+	password := "very-secure-password"
+	salt := "legacy-salt-value"
+	legacyHash := makeLegacyHash(password, salt)
+
+	ok, needsUpgrade := verifyPasswordWithUpgrade(password, legacyHash)
+	if !ok {
+		t.Fatal("expected legacy hash to verify")
+	}
+	if !needsUpgrade {
+		t.Fatal("expected legacy hash to require upgrade")
+	}
+
+	currentHash, err := hashPassword(password)
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+	ok, needsUpgrade = verifyPasswordWithUpgrade(password, currentHash)
+	if !ok {
+		t.Fatal("expected current hash to verify")
+	}
+	if needsUpgrade {
+		t.Fatal("expected current hash to not require upgrade")
+	}
+}
+
+func TestVerifyPasswordAcceptsHashWithDifferentStoredVersion(t *testing.T) {
+	password := "very-secure-password"
+	hash, err := hashPassword(password)
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+
+	parts := strings.Split(hash, "$")
+	if len(parts) != 5 {
+		t.Fatalf("expected parameterized hash format, got %q", hash)
+	}
+
+	parts[1] = "v=42"
+	mutated := strings.Join(parts, "$")
+
+	ok, needsUpgrade := verifyPasswordWithUpgrade(password, mutated)
+	if !ok {
+		t.Fatal("expected hash with a different stored version to verify")
+	}
+	if needsUpgrade {
+		t.Fatal("expected parameterized hash with parsed params to not require upgrade")
+	}
+}
+
+func TestAuthStoreUpdatePasswordHashReappliesSecurePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are ACL-backed on Windows")
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	store, err := newAuthStore(dbPath)
+	if err != nil {
+		t.Fatalf("newAuthStore: %v", err)
+	}
+	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	authPath := AuthFilePath(dbPath)
+	if err := os.Chmod(authPath, 0o644); err != nil {
+		t.Fatalf("Chmod before update: %v", err)
+	}
+	hash, err := hashPassword("another-secure-password")
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+	if err := store.UpdatePasswordHash("tester", hash); err != nil {
+		t.Fatalf("UpdatePasswordHash: %v", err)
+	}
+
+	info, err := os.Stat(authPath)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("expected auth file permissions 0600 after update, got %o", got)
+	}
+}
+
+func TestAuthStoreUpdateRecordPersistsAllowUnencryptedExport(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	store, err := newAuthStore(dbPath)
+	if err != nil {
+		t.Fatalf("newAuthStore: %v", err)
+	}
+	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	record, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load before update: %v", err)
+	}
+
+	record.AllowUnencryptedExport = true
+	if err := store.UpdateRecord(record); err != nil {
+		t.Fatalf("UpdateRecord: %v", err)
+	}
+
+	updated, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load after update: %v", err)
+	}
+	if !updated.AllowUnencryptedExport {
+		t.Fatal("expected AllowUnencryptedExport to be persisted")
+	}
+}
 
 func TestSessionManagerDeletesExpiredSessionsInBackground(t *testing.T) {
 	manager := &sessionManager{

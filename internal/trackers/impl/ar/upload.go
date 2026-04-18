@@ -23,6 +23,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -35,7 +36,6 @@ const (
 	arUploadURL  = arBaseURL + "/upload.php"
 	arLoginURL   = arBaseURL + "/login.php"
 	arBrowseURL  = arBaseURL + "/torrents.php"
-	arCookieFile = "AR.txt"
 	arAuthFile   = "AR_auth.txt"
 	arUserAgent  = "upbrr"
 	arSourceFlag = "AlphaRatio"
@@ -195,14 +195,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 
 	if dryRun {
-		if authProblem := dryRunAuthProblem(req.TrackerConfig, req.AppConfig.MainSettings.DBPath); authProblem != "" && state.blockedReason == "" {
+		if authProblem := dryRunAuthProblem(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath); authProblem != "" && state.blockedReason == "" {
 			state.blockedReason = authProblem
 		}
 		fields["auth"] = "dry-run-auth"
 		return state, nil, nil
 	}
 
-	client, authKey, err := resolveSession(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath)
+	client, authKey, err := resolveSession(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, req.Logger)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -473,11 +473,11 @@ func resolveIMDbURL(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func dryRunAuthProblem(cfg config.TrackerConfig, dbPath string) string {
+func dryRunAuthProblem(ctx context.Context, cfg config.TrackerConfig, dbPath string) string {
 	if _, err := os.Stat(authPath(dbPath)); err == nil {
 		return ""
 	}
-	if cookies, err := loadCookies(cookiePath(dbPath)); err == nil && len(cookies) > 0 {
+	if cookies, err := loadCookies(ctx, dbPath); err == nil && len(cookies) > 0 {
 		return ""
 	}
 	if strings.TrimSpace(cfg.Username) != "" && strings.TrimSpace(cfg.Password) != "" {
@@ -486,14 +486,18 @@ func dryRunAuthProblem(cfg config.TrackerConfig, dbPath string) string {
 	return "missing valid AR cookies/auth and username/password are not configured"
 }
 
-func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string) (*http.Client, string, error) {
+func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string, logger api.Logger) (*http.Client, string, error) {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, "", err
 	}
 	base, _ := url.Parse(arBaseURL + "/")
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
-	if cookies, err := loadCookies(cookiePath(dbPath)); err == nil && len(cookies) > 0 {
+	if cookies, err := loadCookies(ctx, dbPath); err == nil && len(cookies) > 0 {
 		jar.SetCookies(base, cookies)
 		authKey, valid, authErr := validateSession(ctx, client, dbPath)
 		if authErr == nil && valid {
@@ -507,13 +511,27 @@ func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string
 	if err != nil {
 		return nil, "", err
 	}
-	if err := saveCookies(cookiePath(dbPath), base.Hostname(), jar.Cookies(base)); err != nil {
+	if err := persistLoginCookies(ctx, dbPath, logger, jar.Cookies(base)); err != nil {
 		return nil, "", err
 	}
 	if err := os.WriteFile(authPath(dbPath), []byte(authKey), 0o600); err != nil {
 		return nil, "", err
 	}
 	return client, authKey, nil
+}
+
+func persistLoginCookies(ctx context.Context, dbPath string, logger api.Logger, values []*http.Cookie) error {
+	if err := saveCookies(ctx, dbPath, values); err != nil {
+		if errors.Is(err, cookiepkg.ErrAuthHelperUnavailable) {
+			if logger == nil {
+				logger = api.NopLogger{}
+			}
+			logger.Warnf("trackers: AR failed to persist cookies; continuing with plaintext fallback: %v", err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func validateSession(ctx context.Context, client *http.Client, dbPath string) (string, bool, error) {
@@ -670,17 +688,6 @@ func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error
 	return filepath.Join(tmpDir, "[AR]upload_failure.html"), nil
 }
 
-func cookiePath(dbPath string) string {
-	if strings.TrimSpace(dbPath) == "" {
-		return ""
-	}
-	path, err := db.CookiePath(dbPath, arCookieFile)
-	if err != nil {
-		return ""
-	}
-	return path
-}
-
 func authPath(dbPath string) string {
 	if strings.TrimSpace(dbPath) == "" {
 		return ""
@@ -700,66 +707,12 @@ func readAuthKey(dbPath string) string {
 	return strings.TrimSpace(string(payload))
 }
 
-func loadCookies(path string) ([]*http.Cookie, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	var cookies []*http.Cookie
-	lines, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-	for _, line := range strings.Split(string(lines), "\n") {
-		entry := strings.TrimSpace(line)
-		if entry == "" || strings.HasPrefix(entry, "#") {
-			continue
-		}
-		entry = strings.TrimPrefix(entry, "#HttpOnly_")
-		fields := strings.Split(entry, "\t")
-		if len(fields) < 7 {
-			continue
-		}
-		cookies = append(cookies, &http.Cookie{
-			Domain: strings.TrimSpace(fields[0]),
-			Path:   strings.TrimSpace(fields[2]),
-			Secure: strings.EqualFold(strings.TrimSpace(fields[3]), "TRUE"),
-			Name:   strings.TrimSpace(fields[5]),
-			Value:  strings.TrimSpace(strings.Join(fields[6:], "\t")),
-		})
-	}
-	if len(cookies) == 0 {
-		return nil, errors.New("no valid cookies found")
-	}
-	return cookies, nil
+func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
+	return cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "AR", "alpharatio.cc")
 }
 
-func saveCookies(path string, hostname string, cookies []*http.Cookie) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	lines := []string{"# Netscape HTTP Cookie File"}
-	for _, cookie := range cookies {
-		if cookie == nil || strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
-			continue
-		}
-		domain := strings.TrimSpace(cookie.Domain)
-		if domain == "" {
-			domain = "." + hostname
-		}
-		line := []string{
-			domain,
-			"TRUE",
-			firstNonEmpty(cookie.Path, "/"),
-			strings.ToUpper(strconv.FormatBool(cookie.Secure)),
-			"2147483647",
-			cookie.Name,
-			cookie.Value,
-		}
-		lines = append(lines, strings.Join(line, "\t"))
-	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+func saveCookies(ctx context.Context, dbPath string, values []*http.Cookie) error {
+	return cookiepkg.SaveTrackerHTTPCookies(ctx, dbPath, "AR", values)
 }
 
 func extractAuthKey(body string) string {

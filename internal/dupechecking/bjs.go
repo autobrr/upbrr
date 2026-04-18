@@ -27,7 +27,7 @@ func (h bjsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("missing IMDb ID for BJS dupe search")}, nil
 	}
 	baseURL := trackerBaseURL(h.cfg, "BJS", "https://bj-share.info")
-	cookies, err := loadTrackerTextCookies(h.cfg, "BJS", trackerHost(baseURL, "bj-share.info"))
+	cookies, err := loadTrackerCookies(ctx, h.cfg, "BJS", trackerHost(baseURL, "bj-share.info"))
 	if err != nil {
 		return nil, []string{noteSkip("missing valid BJS cookies")}, nil
 	}

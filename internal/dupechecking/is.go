@@ -22,7 +22,7 @@ type isHandler struct {
 
 func (h isHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ string) ([]api.DupeEntry, []string, error) {
 	baseURL := trackerBaseURL(h.cfg, "IS", "https://immortalseed.me")
-	cookies, err := loadTrackerTextCookies(h.cfg, "IS", trackerHost(baseURL, "immortalseed.me"))
+	cookies, err := loadTrackerCookies(ctx, h.cfg, "IS", trackerHost(baseURL, "immortalseed.me"))
 	if err != nil {
 		return nil, []string{noteSkip("missing valid IS cookies")}, nil
 	}

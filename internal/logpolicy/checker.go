@@ -248,6 +248,18 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 				}
 			}
 		}
+		for _, arg := range call.Args[1:] {
+			if isUnsafeUsernameLikeExpr(arg, sanitizedVars) {
+				violations = append(violations, violationAt(fset, relPath, arg.Pos(), "username log arguments must be redacted before logging"))
+			}
+		}
+		if isAuthSensitiveFormat(lowerFormat) {
+			for _, arg := range call.Args[1:] {
+				if isRawErrorLikeExpr(arg) {
+					violations = append(violations, violationAt(fset, relPath, arg.Pos(), "auth-sensitive log arguments must not include raw errors; log a stable incident code and operator-safe context instead"))
+				}
+			}
+		}
 
 		return true
 	})
@@ -366,6 +378,78 @@ func isUnsafeBodyLikeExpr(expr ast.Expr, sanitizedVars map[string]struct{}) bool
 	return unsafe
 }
 
+func isUnsafeUsernameLikeExpr(expr ast.Expr, sanitizedVars map[string]struct{}) bool {
+	if containsRedactionCall(expr) {
+		return false
+	}
+	if isExplicitlySanitizedExpr(expr) {
+		return false
+	}
+	unsafe := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		switch typed := node.(type) {
+		case *ast.Ident:
+			if _, safe := sanitizedVars[typed.Name]; safe {
+				return false
+			}
+			if isSensitiveUsernameName(typed.Name) {
+				unsafe = true
+				return false
+			}
+		case *ast.SelectorExpr:
+			if isSensitiveUsernameName(typed.Sel.Name) {
+				unsafe = true
+				return false
+			}
+		}
+		return true
+	})
+	return unsafe
+}
+
+func isRawErrorLikeExpr(expr ast.Expr) bool {
+	if isExplicitlySanitizedExpr(expr) {
+		return false
+	}
+	raw := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		switch typed := node.(type) {
+		case *ast.Ident:
+			if isErrorLikeName(typed.Name) {
+				raw = true
+				return false
+			}
+		case *ast.SelectorExpr:
+			if isErrorLikeName(typed.Sel.Name) {
+				raw = true
+				return false
+			}
+		case *ast.CallExpr:
+			if selector, ok := typed.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "Error" {
+				raw = true
+				return false
+			}
+		}
+		return true
+	})
+	return raw
+}
+
+func isExplicitlySanitizedExpr(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(fun.Name)), "redact")
+	case *ast.SelectorExpr:
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(fun.Sel.Name)), "redact")
+	default:
+		return false
+	}
+}
+
 func importAliases(file *ast.File) map[string]string {
 	aliases := make(map[string]string, len(file.Imports))
 	for _, spec := range file.Imports {
@@ -417,6 +501,33 @@ func isRawBodyStringConversion(expr ast.Expr) bool {
 func isSuspiciousBodyName(name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	return lower == "body" || lower == "payload" || strings.HasSuffix(lower, "body") || strings.HasSuffix(lower, "payload") || strings.Contains(lower, "bodystr") || strings.Contains(lower, "bodypreview")
+}
+
+func isSensitiveUsernameName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return lower == "username" || strings.HasSuffix(lower, "username") || strings.Contains(lower, ".username")
+}
+
+func isErrorLikeName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return lower == "err" || lower == "error" || strings.HasSuffix(lower, "err") || strings.HasSuffix(lower, "error")
+}
+
+func isAuthSensitiveFormat(lowerFormat string) bool {
+	authSignals := []string{
+		"auth upgrade",
+		"login upgrade",
+		"credential",
+		"refresh credentials",
+		"protected data rewrap",
+		"pending auth upgrade",
+	}
+	for _, signal := range authSignals {
+		if strings.Contains(lowerFormat, signal) {
+			return true
+		}
+	}
+	return false
 }
 
 func infoLevelHygieneViolations(lowerFormat string, trimmedFormat string) []string {
