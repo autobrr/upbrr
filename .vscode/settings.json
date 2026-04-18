@@ -32,7 +32,7 @@
 
   // Source Control input-box validation — warns in the UI before the commit-msg hook
   // rejects. Limits mirror gui/frontend/commitlint.config.js (header-max-length: 115).
-  "git.inputValidation": "warn",
+  "git.inputValidation": true,
   "git.inputValidationLength": 115,
   "git.inputValidationSubjectLength": 115,
 
