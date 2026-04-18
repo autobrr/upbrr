@@ -140,9 +140,15 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if err != nil {
 		return uploadState{}, err
 	}
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
+	var assets trackers.DescriptionAssets
+	if req.Assets != nil {
+		assets = *req.Assets
+	} else {
+		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		if err != nil {
+			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
+			assets = trackers.DescriptionAssets{}
+		}
 	}
 	description, err := buildDescription(req.Meta, assets)
 	if err != nil {

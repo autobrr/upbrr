@@ -32,6 +32,7 @@ type stubRepo struct {
 	deletedUploads      []string
 	createdUploads      []api.UploadRecord
 	descriptionOverride string
+	overrideGroupKey    string
 	overrideCalls       int
 }
 
@@ -58,17 +59,31 @@ func (s *stubRepo) SaveReleaseNameOverrides(context.Context, string, api.Release
 	return nil
 }
 func (s *stubRepo) DeleteReleaseNameOverrides(context.Context, string) error { return nil }
-func (s *stubRepo) GetDescriptionOverride(context.Context, string) (api.DescriptionOverride, error) {
+func (s *stubRepo) GetDescriptionOverride(_ context.Context, _ string, groupKey string) (api.DescriptionOverride, error) {
 	s.overrideCalls++
 	if s.descriptionOverride == "" {
 		return api.DescriptionOverride{}, internalerrors.ErrNotFound
 	}
-	return api.DescriptionOverride{SourcePath: "/tmp/source", Description: s.descriptionOverride}, nil
+	expectedGroupKey := strings.TrimSpace(s.overrideGroupKey)
+	if expectedGroupKey != "" && !strings.EqualFold(strings.TrimSpace(groupKey), expectedGroupKey) {
+		return api.DescriptionOverride{}, internalerrors.ErrNotFound
+	}
+	if expectedGroupKey == "" && strings.TrimSpace(groupKey) != "" {
+		return api.DescriptionOverride{}, internalerrors.ErrNotFound
+	}
+	return api.DescriptionOverride{SourcePath: "/tmp/source", GroupKey: s.overrideGroupKey, Description: s.descriptionOverride}, nil
+}
+func (s *stubRepo) ListDescriptionOverridesByPath(context.Context, string) ([]api.DescriptionOverride, error) {
+	s.overrideCalls++
+	if s.descriptionOverride == "" {
+		return nil, internalerrors.ErrNotFound
+	}
+	return []api.DescriptionOverride{{SourcePath: "/tmp/source", GroupKey: s.overrideGroupKey, Description: s.descriptionOverride}}, nil
 }
 func (s *stubRepo) SaveDescriptionOverride(context.Context, api.DescriptionOverride) error {
 	return nil
 }
-func (s *stubRepo) DeleteDescriptionOverride(context.Context, string) error { return nil }
+func (s *stubRepo) DeleteDescriptionOverride(context.Context, string, string) error { return nil }
 func (s *stubRepo) ListHistoryEntries(context.Context) ([]api.HistoryEntry, error) {
 	return nil, nil
 }
@@ -209,6 +224,7 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "override desc",
+		overrideGroupKey:    "unit3d",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
@@ -225,9 +241,227 @@ func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "unit3d|ptpimg|global",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d|ptpimg|global",
+			Trackers:       []string{"AITHER", "BLU"},
+			RawDescription: "builder desc",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "builder desc" {
+		t.Fatalf("expected prepared composite group description, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected composite group description to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsLoadsStoredCompositeGroupOverride(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "unit3d|ptpimg|global",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d|ptpimg|global",
+			Trackers:       []string{"AITHER", "BLU"},
+			RawDescription: "",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "override desc" {
+		t.Fatalf("expected stored composite override, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected stored composite override to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsDoesNotFallbackToLegacyDefaultGroupOverride(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "legacy default desc",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "db desc" {
+		t.Fatalf("expected tracker metadata description when no explicit group override exists, got %q", assets.Description)
+	}
+	if assets.Override {
+		t.Fatalf("expected no implicit override from legacy default group")
+	}
+}
+
+func TestResolveDescriptionAssetsPrefersCanonicalGroupDescription(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "hdb",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "hdb",
+			Trackers:       []string{"HDB"},
+			RawDescription: "canonical desc",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "canonical desc" {
+		t.Fatalf("expected canonical description, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected canonical group description to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsPrefersTrackerScopedCompositeGroupDescription(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "hdb|hdb|tracker:HDB",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{
+			{
+				GroupKey:       "hdb|ptpimg|global",
+				Trackers:       []string{"HDB"},
+				RawDescription: "global desc",
+			},
+			{
+				GroupKey:       "hdb|hdb|tracker:HDB",
+				Trackers:       []string{"HDB"},
+				RawDescription: "tracker desc",
+			},
+		},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "tracker desc" {
+		t.Fatalf("expected tracker-scoped composite group description, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected tracker-scoped composite group description to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutRepo(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DescriptionOverride: "legacy override desc",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "hdb",
+			Trackers:       []string{"HDB"},
+			RawDescription: "canonical desc",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, nil, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "canonical desc" {
+		t.Fatalf("expected canonical description without repo, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected canonical group description to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutSourcePath(t *testing.T) {
+	repo := &stubRepo{descriptionOverride: "stored override desc", overrideGroupKey: "hdb"}
+	meta := api.PreparedMetadata{
+		SourcePath:          "",
+		DescriptionOverride: "legacy override desc",
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "hdb",
+			Trackers:       []string{"HDB"},
+			RawDescription: "canonical desc",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "canonical desc" {
+		t.Fatalf("expected canonical description without source path, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected canonical group description to be treated as override")
+	}
+	if repo.overrideCalls != 0 {
+		t.Fatalf("expected no repo description override lookup when source path is blank, got %d calls", repo.overrideCalls)
+	}
+}
+
+func TestResolveDescriptionAssetsIgnoresAmbiguousTrackerGroupFallback(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "override desc",
+		overrideGroupKey:    "hdb",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		DescriptionGroups: []api.DescriptionBuilderGroup{
+			{
+				GroupKey:       "group-a",
+				Trackers:       []string{"HDB"},
+				RawDescription: "canonical a",
+			},
+			{
+				GroupKey:       "group-b",
+				Trackers:       []string{"HDB"},
+				RawDescription: "canonical b",
+			},
+		},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "override desc" {
+		t.Fatalf("expected ambiguous tracker-group fallback to defer to stored override, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected stored override to be treated as override")
+	}
+}
+
 func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "[center][spoiler=Scene NFO:][code]scene nfo[/code][/spoiler][/center]\n\nCustom body",
+		overrideGroupKey:    "ant",
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 
@@ -542,6 +776,7 @@ func TestResolveDescriptionAssetsBackfillsSlotsFromDescriptionOrder(t *testing.T
 Some text
 [comparison=A,B]https://ptpimg.me/second.png https://ptpimg.me/third.png[/comparison]
 `),
+		overrideGroupKey: "unit3d",
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 
@@ -560,6 +795,125 @@ Some text
 	}
 	if assets.Screenshots[1].ImgURL != "https://ptpimg.me/second.png" || assets.Screenshots[2].ImgURL != "https://ptpimg.me/third.png" {
 		t.Fatalf("expected comparison images in source order, got %#v", assets.Screenshots)
+	}
+}
+
+func TestApplyUploadedVariantsToSlotsUsesOrderedFallbackForURLOnlySlots(t *testing.T) {
+	slots := []api.ScreenshotSlot{
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           0,
+			OriginalURL:         "https://ptpimg.me/first.png",
+			OriginalHost:        "ptpimg",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           1,
+			OriginalURL:         "https://ptpimg.me/second.png",
+			OriginalHost:        "ptpimg",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+	}
+	uploads := []api.UploadedImageLink{
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/first.jpg", RawURL: "https://img.hdbits.org/first.jpg", WebURL: "https://img.hdbits.org/first"},
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/second.jpg", RawURL: "https://img.hdbits.org/second.jpg", WebURL: "https://img.hdbits.org/second"},
+	}
+
+	summary := ApplyUploadedVariantsToSlots(slots, uploads)
+
+	if summary.FallbackMatched != 2 {
+		t.Fatalf("expected 2 fallback matches, got %#v", summary)
+	}
+	if slots[0].ImagePath != "/tmp/first-local.png" || slots[1].ImagePath != "/tmp/second-local.png" {
+		t.Fatalf("expected fallback to backfill image paths, got %#v", slots)
+	}
+	if len(slots[0].Variants) != 1 || slots[0].Variants[0].RawURL != "https://img.hdbits.org/first.jpg" {
+		t.Fatalf("expected first slot to receive first uploaded variant, got %#v", slots[0].Variants)
+	}
+	if len(slots[1].Variants) != 1 || slots[1].Variants[0].RawURL != "https://img.hdbits.org/second.jpg" {
+		t.Fatalf("expected second slot to receive second uploaded variant, got %#v", slots[1].Variants)
+	}
+}
+
+func TestApplyUploadedVariantsToSlotsPrefersDirectPathMatches(t *testing.T) {
+	slots := []api.ScreenshotSlot{
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           0,
+			ImagePath:           "/tmp/first-local.png",
+			OriginalKey:         "/tmp/first-local.png",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           1,
+			ImagePath:           "/tmp/second-local.png",
+			OriginalKey:         "/tmp/second-local.png",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+	}
+	uploads := []api.UploadedImageLink{
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/first.jpg", RawURL: "https://img.hdbits.org/first.jpg", WebURL: "https://img.hdbits.org/first"},
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/second.jpg", RawURL: "https://img.hdbits.org/second.jpg", WebURL: "https://img.hdbits.org/second"},
+	}
+
+	summary := ApplyUploadedVariantsToSlots(slots, uploads)
+
+	if summary.FallbackMatched != 0 {
+		t.Fatalf("expected direct path matches only, got %#v", summary)
+	}
+	if slots[0].ImagePath != "/tmp/first-local.png" || slots[1].ImagePath != "/tmp/second-local.png" {
+		t.Fatalf("expected existing image paths to be preserved, got %#v", slots)
+	}
+}
+
+func TestApplyUploadedVariantsToSlotsSkipsNonRenderableSlotsDuringFallback(t *testing.T) {
+	slots := []api.ScreenshotSlot{
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           0,
+			OriginalURL:         "https://image.tmdb.org/poster.jpg",
+			OriginalHost:        "image.tmdb.org",
+			SectionKind:         screenshotSectionInline,
+			RenderInScreenshots: false,
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           1,
+			OriginalURL:         "https://ptpimg.me/first.png",
+			OriginalHost:        "ptpimg",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           2,
+			OriginalURL:         "https://ptpimg.me/second.png",
+			OriginalHost:        "ptpimg",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+	}
+	uploads := []api.UploadedImageLink{
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/first.jpg", RawURL: "https://img.hdbits.org/first.jpg", WebURL: "https://img.hdbits.org/first"},
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/second.jpg", RawURL: "https://img.hdbits.org/second.jpg", WebURL: "https://img.hdbits.org/second"},
+	}
+
+	summary := ApplyUploadedVariantsToSlots(slots, uploads)
+
+	if summary.FallbackMatched != 2 {
+		t.Fatalf("expected fallback to match renderable slots only, got %#v", summary)
+	}
+	if len(slots[0].Variants) != 0 {
+		t.Fatalf("expected non-renderable slot to remain untouched, got %#v", slots[0].Variants)
+	}
+	if slots[1].ImagePath != "/tmp/first-local.png" || slots[2].ImagePath != "/tmp/second-local.png" {
+		t.Fatalf("expected uploads assigned by renderable order, got %#v", slots)
 	}
 }
 

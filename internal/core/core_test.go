@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,65 @@ import (
 
 func ptr[T any](v T) *T {
 	return &v
+}
+
+func TestGetHistoryOverviewIncludesGroupedDescriptionOverrides(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "core-history.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if cerr := repo.Close(); cerr != nil {
+			t.Fatalf("close repo: %v", cerr)
+		}
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.mkv")
+	updatedAt := time.Now().UTC().Add(-time.Hour)
+	groupedOverride := db.DescriptionOverride{
+		SourcePath:  sourcePath,
+		GroupKey:    "unit3d",
+		Description: "grouped override",
+		UpdatedAt:   time.Now().UTC(),
+	}
+
+	if err := repo.Save(context.Background(), db.FileMetadata{
+		Path:       sourcePath,
+		Title:      "Example",
+		Source:     "WEB",
+		Resolution: "2160p",
+		UpdatedAt:  updatedAt,
+	}); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+	if err := repo.SaveDescriptionOverride(context.Background(), groupedOverride); err != nil {
+		t.Fatalf("save description override: %v", err)
+	}
+
+	core := &Core{repo: repo, logger: api.NopLogger{}}
+
+	overview, err := core.GetHistoryOverview(context.Background(), sourcePath)
+	if err != nil {
+		t.Fatalf("get history overview: %v", err)
+	}
+	if len(overview.DescriptionOverrides) != 1 {
+		t.Fatalf("expected 1 grouped description override, got %d", len(overview.DescriptionOverrides))
+	}
+	if overview.DescriptionOverrides[0].GroupKey != "unit3d" {
+		t.Fatalf("expected grouped override key to be preserved, got %q", overview.DescriptionOverrides[0].GroupKey)
+	}
+	if overview.DescriptionOverride.GroupKey != "unit3d" {
+		t.Fatalf("expected preferred description override key to be unit3d, got %q", overview.DescriptionOverride.GroupKey)
+	}
+	if overview.DescriptionOverride.Description != "grouped override" {
+		t.Fatalf("expected preferred description override body to be preserved, got %q", overview.DescriptionOverride.Description)
+	}
 }
 
 func TestRunUploadMultiplePaths(t *testing.T) {
@@ -1705,15 +1765,18 @@ func (stubRepo) DeleteReleaseNameOverrides(context.Context, string) error {
 	return internalerrors.ErrNotImplemented
 }
 
-func (stubRepo) GetDescriptionOverride(context.Context, string) (db.DescriptionOverride, error) {
+func (stubRepo) GetDescriptionOverride(context.Context, string, string) (db.DescriptionOverride, error) {
 	return db.DescriptionOverride{}, internalerrors.ErrNotImplemented
+}
+func (stubRepo) ListDescriptionOverridesByPath(context.Context, string) ([]db.DescriptionOverride, error) {
+	return nil, internalerrors.ErrNotImplemented
 }
 
 func (stubRepo) SaveDescriptionOverride(context.Context, db.DescriptionOverride) error {
 	return internalerrors.ErrNotImplemented
 }
 
-func (stubRepo) DeleteDescriptionOverride(context.Context, string) error {
+func (stubRepo) DeleteDescriptionOverride(context.Context, string, string) error {
 	return internalerrors.ErrNotImplemented
 }
 
@@ -1889,15 +1952,18 @@ func (r *recordingRepo) DeleteReleaseNameOverrides(context.Context, string) erro
 	return internalerrors.ErrNotImplemented
 }
 
-func (r *recordingRepo) GetDescriptionOverride(context.Context, string) (db.DescriptionOverride, error) {
+func (r *recordingRepo) GetDescriptionOverride(context.Context, string, string) (db.DescriptionOverride, error) {
 	return db.DescriptionOverride{}, internalerrors.ErrNotImplemented
+}
+func (r *recordingRepo) ListDescriptionOverridesByPath(context.Context, string) ([]db.DescriptionOverride, error) {
+	return nil, internalerrors.ErrNotImplemented
 }
 
 func (r *recordingRepo) SaveDescriptionOverride(context.Context, db.DescriptionOverride) error {
 	return internalerrors.ErrNotImplemented
 }
 
-func (r *recordingRepo) DeleteDescriptionOverride(context.Context, string) error {
+func (r *recordingRepo) DeleteDescriptionOverride(context.Context, string, string) error {
 	return internalerrors.ErrNotImplemented
 }
 

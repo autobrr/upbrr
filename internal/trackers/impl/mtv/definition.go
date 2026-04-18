@@ -39,15 +39,21 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 	default:
 	}
 
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return trackers.DescriptionResult{}, err
+	var err error
+	assets := trackers.DescriptionAssets{}
+	if req.Assets != nil {
+		assets = *req.Assets
+	} else {
+		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return trackers.DescriptionResult{}, err
+			}
+			if req.Logger != nil {
+				req.Logger.Warnf("trackers: MTV description assets failed: %v", err)
+			}
+			assets = trackers.DescriptionAssets{}
 		}
-		if req.Logger != nil {
-			req.Logger.Warnf("trackers: MTV description assets failed: %v", err)
-		}
-		assets = trackers.DescriptionAssets{}
 	}
 
 	description, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)

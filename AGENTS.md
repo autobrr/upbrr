@@ -33,6 +33,8 @@
 - The application targets Windows, Linux, and macOS. Avoid OS-specific assumptions in paths, process handling, filesystem behavior, archives, and build logic unless the code is already intentionally platform-gated.
 - Preserve api.Mode usage and keep CLI, Wails GUI, and embedded web-serving flows aligned with shared request types under pkg/api and shared core behavior under internal.
 - Changes around upload options, tracker overrides, retries, or execution flags should be checked from both CLI and GUI entrypoints when the same behavior exists in both surfaces.
+- SQLite databases may be shared across branches during development. Keep migration handling compatible with permissive cross-branch usage instead of assuming every running build knows every applied migration ID.
+- Database migrations must remain additive, forward-only, and idempotent where practical. Prefer guarded table/index creation, additive columns, and safe backfills over destructive schema changes such as dropping, renaming, or tightening structures that older branches may still read.
 
 ## Unattended Safety
 

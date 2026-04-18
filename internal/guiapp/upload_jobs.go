@@ -54,6 +54,7 @@ type trackerUploadJob struct {
 	overrides            api.ExternalIDOverrides
 	nameOverrides        api.ReleaseNameOverrides
 	questionnaireAnswers map[string]map[string]string
+	descriptionGroups    []api.DescriptionBuilderGroup
 	trackers             []string
 	ignoreDupesFor       []string
 	ignoreRuleFailures   bool
@@ -89,7 +90,7 @@ func (j *trackerUploadJob) closeResources() {
 	})
 }
 
-func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, debug bool, runLogLevel string) (string, error) {
+func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (string, error) {
 	if err := a.requireCore(); err != nil {
 		return "", err
 	}
@@ -118,6 +119,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	seedReq := api.Request{
 		Paths:                []string{trimmedPath},
 		Mode:                 api.ModeGUI,
+		DescriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
 		Trackers:             resolvedTrackers,
 		IgnoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
 		ExternalIDOverrides:  overrides,
@@ -139,6 +141,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 		overrides:            overrides,
 		nameOverrides:        nameOverrides,
 		questionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
+		descriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
 		trackers:             resolvedTrackers,
 		ignoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
 		ignoreRuleFailures:   ignoreRuleFailures,
@@ -208,6 +211,7 @@ func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 	overrides := job.overrides
 	nameOverrides := job.nameOverrides
 	questionnaireAnswers := cloneQuestionnaireAnswers(job.questionnaireAnswers)
+	descriptionGroups := api.CloneDescriptionBuilderGroups(job.descriptionGroups)
 	ignoreRuleFailures := job.ignoreRuleFailures
 	ignoreDupesFor := append([]string(nil), job.ignoreDupesFor...)
 	runOptions := job.runOptions
@@ -217,7 +221,7 @@ func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 		return "", errors.New("no failed trackers to retry")
 	}
 
-	return a.StartTrackerUpload(sourcePath, overrides, nameOverrides, failedTrackers, ignoreRuleFailures, ignoreDupesFor, questionnaireAnswers, runOptions.Debug, runOptions.RunLogLevel)
+	return a.StartTrackerUpload(sourcePath, overrides, nameOverrides, failedTrackers, ignoreRuleFailures, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.RunLogLevel)
 }
 
 func (a *App) GetTrackerUploadSnapshot(jobID string) (TrackerUploadSnapshot, error) {
@@ -326,6 +330,7 @@ func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob,
 	req := api.Request{
 		Paths:                       []string{job.sourcePath},
 		Mode:                        api.ModeGUI,
+		DescriptionGroups:           api.CloneDescriptionBuilderGroups(job.descriptionGroups),
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
 		IgnoreTrackerRuleFailures:   job.ignoreRuleFailures,
