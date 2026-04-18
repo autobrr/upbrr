@@ -1,5 +1,6 @@
 gui/frontend/node_modules/
 gui/frontend/dist/
+gui/frontend/package.json.md5
 gui/build/bin/
 internal/webserver/assets/
 internal/guiapp/assets/*
