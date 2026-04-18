@@ -149,7 +149,7 @@ The Dockerfile builds both `upbrr` and `upbrr-gui` binaries and places them in t
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to set up a development environment, run the test suite, install the git hooks, and write commit messages that pass our Commitlint rules. The project uses [AGENTS.md](https://agents.md/) for AI-coding-agent guidance — see [`AGENTS.md`](./AGENTS.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to set up a development environment, run the test suite, install the git hooks, and write commit messages that pass the repo's commit-message validator ([`cmd/commitmsgcheck`](./cmd/commitmsgcheck)). The project uses [AGENTS.md](https://agents.md/) for AI-coding-agent guidance — see [`AGENTS.md`](./AGENTS.md).
 
 ## License
 

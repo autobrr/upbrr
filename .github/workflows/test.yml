@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  commitlint:
+  commit-messages:
     name: Commit messages
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -28,9 +28,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # SHAs are passed through env vars rather than interpolated into the shell string
+      # so that GitHub Actions' command-injection scanner (CodeQL actions/command-injection)
+      # sees sanitized input. This is the documented hardening pattern.
       - name: Validate commits in PR range
         if: github.event_name == 'pull_request'
-        run: go run ./cmd/commitmsgcheck --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: go run ./cmd/commitmsgcheck --from "$BASE_SHA" --to "$HEAD_SHA"
 
   test-go:
     name: Go tests
@@ -75,11 +81,16 @@ jobs:
         working-directory: gui/frontend
         run: pnpm install --frozen-lockfile
 
+      # Prettier keeps its own per-file cache keyed on Prettier's version and the
+      # effective config, so the Actions cache key only needs to change when one of
+      # those changes. Hashing the config files (not source) keeps the key stable
+      # across PRs, giving a high hit rate on the primary key.
       - name: Restore Prettier cache
-        uses: actions/cache@v4
+        id: prettier-cache
+        uses: actions/cache/restore@v4
         with:
           path: gui/frontend/node_modules/.cache/prettier
-          key: prettier-${{ runner.os }}-${{ hashFiles('gui/frontend/package.json', 'gui/frontend/pnpm-lock.yaml', 'gui/frontend/.prettierrc*', 'gui/frontend/prettier.config.*', 'gui/frontend/src/**', 'gui/frontend/index.html') }}
+          key: prettier-${{ runner.os }}-${{ hashFiles('gui/frontend/package.json', 'gui/frontend/pnpm-lock.yaml', 'gui/frontend/.prettierrc*', 'gui/frontend/prettier.config.*') }}
           restore-keys: |
             prettier-${{ runner.os }}-
 
@@ -94,3 +105,15 @@ jobs:
       - name: Check frontend formatting
         working-directory: gui/frontend
         run: pnpm run format:check
+
+      # Save only when the primary key wasn't an exact restore-hit so we don't retry
+      # writing to an existing cache entry (no-op warning). `always()` lets the cache
+      # persist even when `format:check` found diffs — the cache contents are valid
+      # regardless of pass/fail. This follows the documented split-restore/save pattern
+      # in actions/cache's README.
+      - name: Save Prettier cache
+        if: always() && steps.prettier-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: gui/frontend/node_modules/.cache/prettier
+          key: ${{ steps.prettier-cache.outputs.cache-primary-key }}

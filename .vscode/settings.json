@@ -64,12 +64,12 @@
       "text": "Breaking changes: either append `!` after the type/scope (e.g. `feat(api)!: drop v1 endpoints`) or add a `BREAKING CHANGE:` footer explaining the impact. Both is fine."
     },
     {
-      "text": "Examples that pass the repo's commitlint rules: `feat(config): add YAML importer`, `fix(bt): correct duplicate search payload`, `chore(ci): switch to pnpm action v5`, `feat!: drop Go 1.19 support`, `revert: undo e3f2a1b`."
+      "text": "Examples that pass the repo's commit-message validator: `feat(config): add YAML importer`, `fix(bt): correct duplicate search payload`, `chore(ci): switch to pnpm action v5`, `feat!: drop Go 1.19 support`, `revert: undo e3f2a1b`."
     }
   ],
 
   // Same style applied to Copilot-generated PR titles & descriptions, since PR titles
-  // become the squashed commit message and must also pass commitlint.
+  // become the squashed commit message and must also pass cmd/commitmsgcheck.
   "github.copilot.chat.pullRequestDescriptionGeneration.instructions": [
     {
       "text": "PR title must be a valid Conventional Commit (same rules as commit messages: type + optional scope + imperative subject, 115 chars max). The PR title becomes the squashed commit message."
