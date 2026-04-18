@@ -23,8 +23,8 @@ func (s *Server) rewrapProtectedDataForAuthChange(ctx context.Context, oldRecord
 		return errors.New("auth_rewrap: missing server/backend/repo configuration (s.backend.repo unavailable)")
 	}
 
-	oldMaterial := oldRecord.authMaterial()
-	newMaterial := newRecord.authMaterial()
+	oldMaterial := oldRecord.AuthMaterial()
+	newMaterial := newRecord.AuthMaterial()
 
 	if err := cookies.RewrapCookiesWithAuthChange(ctx, s.backend.repo.RawDB(), oldMaterial, newMaterial); err != nil {
 		return err
@@ -54,8 +54,8 @@ func (s *Server) rollbackProtectedDataForAuthChange(r *http.Request, currentReco
 	}
 
 	ctx := r.Context()
-	currentMaterial := currentRecord.authMaterial()
-	previousMaterial := previousRecord.authMaterial()
+	currentMaterial := currentRecord.AuthMaterial()
+	previousMaterial := previousRecord.AuthMaterial()
 
 	if err := cookies.RewrapCookiesWithAuthChange(ctx, s.backend.repo.RawDB(), currentMaterial, previousMaterial); err != nil {
 		return err

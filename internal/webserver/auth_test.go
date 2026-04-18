@@ -141,7 +141,8 @@ func TestAuthStoreUpdatePasswordHashReappliesSecurePermissions(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
-	if err := os.Chmod(store.path, 0o644); err != nil {
+	authPath := AuthFilePath(dbPath)
+	if err := os.Chmod(authPath, 0o644); err != nil {
 		t.Fatalf("Chmod before update: %v", err)
 	}
 	hash, err := hashPassword("another-secure-password")
@@ -152,7 +153,7 @@ func TestAuthStoreUpdatePasswordHashReappliesSecurePermissions(t *testing.T) {
 		t.Fatalf("UpdatePasswordHash: %v", err)
 	}
 
-	info, err := os.Stat(store.path)
+	info, err := os.Stat(authPath)
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}

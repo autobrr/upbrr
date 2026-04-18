@@ -534,7 +534,7 @@ func configureConfigSecretEncryption(t *testing.T, cfg *Config) {
 	cfg.MainSettings.DBPath = dbPath
 }
 
-func TestExportToJSONRejectsPermissiveWebAuthPermissions(t *testing.T) {
+func TestExportToJSONFallsBackToPlaintextWithPermissiveWebAuthPermissions(t *testing.T) {
 	t.Parallel()
 
 	if runtime.GOOS == "windows" {
@@ -558,19 +558,16 @@ func TestExportToJSONRejectsPermissiveWebAuthPermissions(t *testing.T) {
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 	}
 
-	_, err := ExportToJSON(cfg)
-	if err == nil {
-		t.Fatalf("expected permission error for permissive web-auth.json")
+	exported, err := ExportToJSON(cfg)
+	if err != nil {
+		t.Fatalf("expected plaintext fallback, got %v", err)
 	}
-	if !errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
-		t.Fatalf("expected ErrSecretEncryptionHelperUnavailable, got %v", err)
-	}
-	if !strings.Contains(err.Error(), webAuthFileName) || !strings.Contains(err.Error(), "0600") {
-		t.Fatalf("expected error to mention %s and 0600 requirement, got %v", webAuthFileName, err)
+	if !strings.Contains(exported, "plain-tmdb-token") {
+		t.Fatalf("expected plaintext secret when auth helper is unusable, got %s", exported)
 	}
 }
 
-func TestExportToJSONRejectsPlaintextSecretsWithoutBootstrap(t *testing.T) {
+func TestExportToJSONFallsBackToPlaintextWithoutBootstrap(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
@@ -581,15 +578,12 @@ func TestExportToJSONRejectsPlaintextSecretsWithoutBootstrap(t *testing.T) {
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 	}
 
-	_, err := ExportToJSON(cfg)
-	if err == nil {
-		t.Fatalf("expected bootstrap error for plaintext secrets")
+	exported, err := ExportToJSON(cfg)
+	if err != nil {
+		t.Fatalf("expected plaintext fallback, got %v", err)
 	}
-	if !errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
-		t.Fatalf("expected ErrSecretEncryptionHelperUnavailable, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "bootstrap web auth") {
-		t.Fatalf("expected actionable bootstrap error, got %v", err)
+	if !strings.Contains(exported, "plain-tmdb-token") {
+		t.Fatalf("expected plaintext secret without bootstrap, got %s", exported)
 	}
 }
 
@@ -699,7 +693,7 @@ func TestSaveLoadDatabaseEncryptsSecrets(t *testing.T) {
 	}
 }
 
-func TestSaveToDatabaseRejectsPlaintextSecretsWithoutBootstrap(t *testing.T) {
+func TestSaveToDatabaseFallsBackToPlaintextWithoutBootstrap(t *testing.T) {
 	t.Parallel()
 
 	repo := &secretRoundTripRepo{}
@@ -711,9 +705,31 @@ func TestSaveToDatabaseRejectsPlaintextSecretsWithoutBootstrap(t *testing.T) {
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 	}
 
-	err := SaveToDatabase(context.Background(), input, repo)
+	if err := SaveToDatabase(context.Background(), input, repo); err != nil {
+		t.Fatalf("expected plaintext fallback, got %v", err)
+	}
+	if repo.saved == nil {
+		t.Fatal("expected repository to receive saved config")
+	}
+	if repo.saved.MainSettings.TMDBAPI != "db-secret-token" {
+		t.Fatalf("expected plaintext TMDB key to be preserved, got %q", repo.saved.MainSettings.TMDBAPI)
+	}
+}
+
+func TestExportToJSONRejectsEncryptedSecretsWhenHelperUnavailable(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		MainSettings: MainSettingsConfig{
+			DBPath:  filepath.Join(t.TempDir(), "upbrr.db"),
+			TMDBAPI: encryptedEnvelopePrefix + "opaque",
+		},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+	}
+
+	_, err := ExportToJSON(cfg)
 	if err == nil {
-		t.Fatalf("expected bootstrap error for plaintext secrets")
+		t.Fatalf("expected helper error for encrypted secrets")
 	}
 	if !errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
 		t.Fatalf("expected ErrSecretEncryptionHelperUnavailable, got %v", err)

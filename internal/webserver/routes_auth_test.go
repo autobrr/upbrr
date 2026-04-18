@@ -109,7 +109,7 @@ func TestLoginUpgradesLegacyPasswordHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalIndent: %v", err)
 	}
-	if err := os.WriteFile(server.auth.path, raw, 0o600); err != nil {
+	if err := os.WriteFile(AuthFilePath(dbPath), raw, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 

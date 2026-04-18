@@ -58,17 +58,14 @@ func EncryptConfigSecrets(cfg *Config) (*Config, error) {
 	helper, err := resolveSecretHelper(cfg)
 	if err != nil {
 		if errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
-			if hasDetailedHelperUnavailableContext(err) {
-				return nil, err
-			}
-			hasPlaintextSecrets, scanErr := hasPersistedPlaintextSecrets(cfg)
+			hasEncryptedSecrets, scanErr := hasEncryptedSecretEnvelopes(cfg)
 			if scanErr != nil {
 				return nil, scanErr
 			}
-			if !hasPlaintextSecrets {
-				return cloneConfig(cfg)
+			if hasEncryptedSecrets {
+				return nil, err
 			}
-			return nil, fmt.Errorf("%w: bootstrap web auth before saving or exporting config secrets", ErrSecretEncryptionHelperUnavailable)
+			return cloneConfig(cfg)
 		}
 		return nil, err
 	}
@@ -228,23 +225,21 @@ func cloneConfig(cfg *Config) (*Config, error) {
 	return &cloned, nil
 }
 
-func hasPersistedPlaintextSecrets(cfg *Config) (bool, error) {
-	hasPlaintextSecrets := false
+func hasEncryptedSecretEnvelopes(cfg *Config) (bool, error) {
+	hasEncryptedSecrets := false
 	if err := walkSecretFields(cfg, func(_ string, value *string) error {
 		if value == nil {
 			return nil
 		}
-		trimmed := strings.TrimSpace(*value)
-		if trimmed == "" || isSecretEnvelope(trimmed) {
-			return nil
+		if isSecretEnvelope(strings.TrimSpace(*value)) {
+			hasEncryptedSecrets = true
 		}
-		hasPlaintextSecrets = true
 		return nil
 	}); err != nil {
-		return false, fmt.Errorf("config secret encryption: inspect secrets: %w", err)
+		return false, fmt.Errorf("config secret encryption: inspect encrypted secrets: %w", err)
 	}
 
-	return hasPlaintextSecrets, nil
+	return hasEncryptedSecrets, nil
 }
 
 func walkSecretFields(cfg *Config, visit func(path string, value *string) error) error {
@@ -412,10 +407,6 @@ func resolveSecretHelper(cfg *Config) (string, error) {
 	}
 
 	return helper, nil
-}
-
-func hasDetailedHelperUnavailableContext(err error) bool {
-	return err != nil && errors.Is(err, ErrSecretEncryptionHelperUnavailable) && errors.Unwrap(err) != nil
 }
 
 func isBareAuthmaterialUnavailable(err error) bool {

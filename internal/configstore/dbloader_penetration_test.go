@@ -132,9 +132,7 @@ func TestLoadFromDBPathMissingReturnsNotFound(t *testing.T) {
 	// Either ErrNotFound or no-error-with-defaults is acceptable depending on
 	// whether db.Open auto-creates — but a crash or unrelated error is not.
 	if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
-		// sqlite auto-creates; LoadFullConfig may return ErrNotFound on empty
-		// schema, which Bootstrap treats as "empty database, use YAML".
-		t.Logf("missing DB error: %v (acceptable if ErrNotFound)", err)
+		t.Fatalf("load missing DB: expected nil or ErrNotFound, got: %v", err)
 	}
 }
 
@@ -247,6 +245,37 @@ func TestBootstrapProvidedYAMLPersistsToDB(t *testing.T) {
 	}
 	if stored.ScreenshotHandling.Screens != 2 {
 		t.Fatalf("persisted screens: got %d want 2 (env override leaked into DB)", stored.ScreenshotHandling.Screens)
+	}
+}
+
+func TestBootstrapProvidedYAMLPersistsPlaintextSecretsWithoutWebAuth(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "bootstrap-plaintext.db")
+	yamlPath := filepath.Join(tmp, "config.yaml")
+
+	body := "main_settings:\n  tmdb_api: provided-secret\n  db_path: " + dbPath + "\nscreenshot_handling:\n  screens: 2\n"
+	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	runtime, resolvedDB, err := configstore.Bootstrap(ctx, yamlPath, true, true)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if resolvedDB != dbPath {
+		t.Fatalf("DB path: got %q want %q", resolvedDB, dbPath)
+	}
+	if runtime.MainSettings.TMDBAPI != "provided-secret" {
+		t.Fatalf("TMDBAPI: got %q", runtime.MainSettings.TMDBAPI)
+	}
+
+	stored, err := configstore.LoadFromDBPath(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("load stored: %v", err)
+	}
+	if stored.MainSettings.TMDBAPI != "provided-secret" {
+		t.Fatalf("expected plaintext secret to round-trip without web auth, got %q", stored.MainSettings.TMDBAPI)
 	}
 }
 

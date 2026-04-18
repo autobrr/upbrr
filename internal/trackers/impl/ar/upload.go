@@ -202,7 +202,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		return state, nil, nil
 	}
 
-	client, authKey, err := resolveSession(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath)
+	client, authKey, err := resolveSession(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, req.Logger)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -486,7 +486,11 @@ func dryRunAuthProblem(ctx context.Context, cfg config.TrackerConfig, dbPath str
 	return "missing valid AR cookies/auth and username/password are not configured"
 }
 
-func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string) (*http.Client, string, error) {
+func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string, logger api.Logger) (*http.Client, string, error) {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, "", err
@@ -507,13 +511,27 @@ func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string
 	if err != nil {
 		return nil, "", err
 	}
-	if err := saveCookies(ctx, dbPath, jar.Cookies(base)); err != nil {
+	if err := persistLoginCookies(ctx, dbPath, logger, jar.Cookies(base)); err != nil {
 		return nil, "", err
 	}
 	if err := os.WriteFile(authPath(dbPath), []byte(authKey), 0o600); err != nil {
 		return nil, "", err
 	}
 	return client, authKey, nil
+}
+
+func persistLoginCookies(ctx context.Context, dbPath string, logger api.Logger, values []*http.Cookie) error {
+	if err := saveCookies(ctx, dbPath, values); err != nil {
+		if errors.Is(err, cookiepkg.ErrAuthHelperUnavailable) {
+			if logger == nil {
+				logger = api.NopLogger{}
+			}
+			logger.Warnf("trackers: AR failed to persist cookies; continuing with plaintext fallback: %v", err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func validateSession(ctx context.Context, client *http.Client, dbPath string) (string, bool, error) {

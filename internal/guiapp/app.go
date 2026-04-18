@@ -1352,6 +1352,82 @@ type ImportResult struct {
 	Warnings []string `json:"warnings"`
 }
 
+type WebAuthStatus struct {
+	Path                   string `json:"path"`
+	Exists                 bool   `json:"exists"`
+	Usable                 bool   `json:"usable"`
+	CanCreate              bool   `json:"canCreate"`
+	Username               string `json:"username"`
+	AllowUnencryptedExport bool   `json:"allowUnencryptedExport"`
+	EncryptionEnabled      bool   `json:"encryptionEnabled"`
+	Message                string `json:"message"`
+}
+
+func (a *App) GetWebAuthStatus() (WebAuthStatus, error) {
+	if a == nil {
+		return WebAuthStatus{}, errors.New("app not initialized")
+	}
+
+	dbPath := strings.TrimSpace(a.cfg.MainSettings.DBPath)
+	if dbPath == "" {
+		return WebAuthStatus{
+			CanCreate: false,
+			Message:   "Database path is not configured.",
+		}, nil
+	}
+
+	authPath := authmaterial.AuthFilePath(dbPath)
+	status := WebAuthStatus{
+		Path:      authPath,
+		CanCreate: true,
+		Message:   "No web auth file found. Secrets will continue to be stored in plaintext until one is created.",
+	}
+
+	if _, err := os.Stat(authPath); err == nil {
+		status.Exists = true
+		status.CanCreate = false
+	} else if err != nil && !os.IsNotExist(err) {
+		return WebAuthStatus{}, fmt.Errorf("web auth status: stat auth file: %w", err)
+	}
+
+	material, err := authmaterial.LoadFromDBPath(dbPath)
+	if err == nil {
+		status.Exists = true
+		status.Usable = true
+		status.CanCreate = false
+		status.Username = material.Username
+		status.AllowUnencryptedExport = material.AllowUnencryptedExport
+		status.EncryptionEnabled = true
+		status.Message = "Secret encryption is enabled for this installation."
+		return status, nil
+	}
+	if errors.Is(err, authmaterial.ErrUnavailable) {
+		if status.Exists {
+			status.Message = "web-auth.json exists but is not usable for secret encryption."
+		}
+		return status, nil
+	}
+
+	return WebAuthStatus{}, fmt.Errorf("web auth status: %w", err)
+}
+
+func (a *App) CreateWebAuth(username string, password string) (WebAuthStatus, error) {
+	if a == nil {
+		return WebAuthStatus{}, errors.New("app not initialized")
+	}
+
+	dbPath := strings.TrimSpace(a.cfg.MainSettings.DBPath)
+	if dbPath == "" {
+		return WebAuthStatus{}, errors.New("database path is not configured")
+	}
+
+	if err := authmaterial.BootstrapAuthFile(dbPath, username, password); err != nil {
+		return WebAuthStatus{}, err
+	}
+
+	return a.GetWebAuthStatus()
+}
+
 func (a *App) ImportConfig() (ImportResult, error) {
 	if a == nil {
 		return ImportResult{}, errors.New("app not initialized")

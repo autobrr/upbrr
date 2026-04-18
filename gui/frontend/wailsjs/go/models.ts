@@ -2449,6 +2449,33 @@ export namespace guiapp {
 		    return a;
 		}
 	}
+	
+	export class WebAuthStatus {
+	    path: string;
+	    exists: boolean;
+	    usable: boolean;
+	    canCreate: boolean;
+	    username: string;
+	    allowUnencryptedExport: boolean;
+	    encryptionEnabled: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WebAuthStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.exists = source["exists"];
+	        this.usable = source["usable"];
+	        this.canCreate = source["canCreate"];
+	        this.username = source["username"];
+	        this.allowUnencryptedExport = source["allowUnencryptedExport"];
+	        this.encryptionEnabled = source["encryptionEnabled"];
+	        this.message = source["message"];
+	    }
+	}
 
 }
 
