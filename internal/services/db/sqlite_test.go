@@ -7,11 +7,39 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
+
+func readSchemaMigrationIDs(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+
+	rows, err := db.Query(`SELECT id FROM schema_migrations ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query schema_migrations: %v", err)
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan schema_migrations: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate schema_migrations: %v", err)
+	}
+
+	return ids
+}
 
 func TestSQLiteRepositoryCRUD(t *testing.T) {
 	t.Parallel()
@@ -296,6 +324,360 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	}
 }
 
+func TestOpenWithLoggerConfiguresConcurrentSQLiteSettings(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "shared.db")
+	repo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	var journalMode string
+	if err := repo.db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Fatalf("expected WAL journal mode, got %q", journalMode)
+	}
+
+	var busyTimeout int
+	if err := repo.db.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if busyTimeout != sqliteBusyTimeout {
+		t.Fatalf("expected busy timeout %d, got %d", sqliteBusyTimeout, busyTimeout)
+	}
+}
+
+func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "shared.db")
+	repos := make([]*SQLiteRepository, 0, 3)
+	for i := 0; i < 3; i++ {
+		repo, err := OpenWithLogger(repoPath, nopLogger{})
+		if err != nil {
+			t.Fatalf("open repo %d: %v", i, err)
+		}
+		repos = append(repos, repo)
+	}
+	for _, repo := range repos {
+		t.Cleanup(func() {
+			_ = repo.Close()
+		})
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 32)
+	start := make(chan struct{})
+	for idx, repo := range repos {
+		wg.Add(1)
+		go func(idx int, repo *SQLiteRepository) {
+			defer wg.Done()
+			<-start
+			for attempt := 0; attempt < 3; attempt++ {
+				if err := repo.Migrate(); err != nil {
+					errCh <- fmt.Errorf("repo %d migrate attempt %d: %w", idx, attempt, err)
+					return
+				}
+			}
+			ctx := context.Background()
+			for item := 0; item < 10; item++ {
+				sourcePath := filepath.Join("C:\\shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
+				if err := repo.Save(ctx, FileMetadata{
+					Path:      sourcePath,
+					Title:     fmt.Sprintf("Title %d-%d", idx, item),
+					UpdatedAt: time.Now().UTC().Truncate(time.Second),
+				}); err != nil {
+					errCh <- fmt.Errorf("repo %d save %d: %w", idx, item, err)
+					return
+				}
+				if _, err := repo.ListHistoryEntries(ctx); err != nil {
+					errCh <- fmt.Errorf("repo %d list history %d: %w", idx, item, err)
+					return
+				}
+			}
+		}(idx, repo)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx := context.Background()
+	for idx := range repos {
+		for item := 0; item < 10; item++ {
+			sourcePath := filepath.Join("C:\\shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
+			if _, err := repos[0].GetByPath(ctx, sourcePath); err != nil {
+				t.Fatalf("get %s: %v", sourcePath, err)
+			}
+		}
+	}
+}
+
+func TestSQLiteRepositoryConcurrentReadsOnDisk(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "readers.db")
+	writerRepo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open writer repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = writerRepo.Close()
+	})
+
+	if err := writerRepo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	for i := 0; i < 25; i++ {
+		sourcePath := filepath.Join("C:\\reads", fmt.Sprintf("release-%d.mkv", i))
+		if err := writerRepo.Save(ctx, FileMetadata{
+			Path:      sourcePath,
+			Title:     fmt.Sprintf("Title %d", i),
+			UpdatedAt: time.Now().UTC().Truncate(time.Second),
+		}); err != nil {
+			t.Fatalf("seed row %d: %v", i, err)
+		}
+	}
+
+	repos := make([]*SQLiteRepository, 0, 4)
+	for i := 0; i < 4; i++ {
+		repo, err := OpenWithLogger(repoPath, nopLogger{})
+		if err != nil {
+			t.Fatalf("open reader repo %d: %v", i, err)
+		}
+		repos = append(repos, repo)
+	}
+	for _, repo := range repos {
+		t.Cleanup(func() {
+			_ = repo.Close()
+		})
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, len(repos))
+	var wg sync.WaitGroup
+	for idx, repo := range repos {
+		wg.Add(1)
+		go func(idx int, repo *SQLiteRepository) {
+			defer wg.Done()
+			<-start
+			for item := 0; item < 25; item++ {
+				sourcePath := filepath.Join("C:\\reads", fmt.Sprintf("release-%d.mkv", item))
+				got, err := repo.GetByPath(ctx, sourcePath)
+				if err != nil {
+					errCh <- fmt.Errorf("reader %d get %d: %w", idx, item, err)
+					return
+				}
+				if got.Path != sourcePath {
+					errCh <- fmt.Errorf("reader %d get %d: unexpected path %q", idx, item, got.Path)
+					return
+				}
+			}
+		}(idx, repo)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestSQLiteRepositoryReadsOverlapWithWriteTransaction(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "reader-writer.db")
+	writerRepo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open writer repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = writerRepo.Close()
+	})
+
+	readerRepoA, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open reader repo A: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = readerRepoA.Close()
+	})
+
+	readerRepoB, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open reader repo B: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = readerRepoB.Close()
+	})
+
+	if err := writerRepo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	sourcePath := filepath.Join("C:\\overlap", "release.mkv")
+	if err := writerRepo.Save(ctx, FileMetadata{
+		Path:      sourcePath,
+		Title:     "Before",
+		UpdatedAt: time.Now().UTC().Truncate(time.Second),
+	}); err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+
+	conn, err := writerRepo.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("acquire writer conn: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("begin immediate: %v", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+	}()
+
+	if _, err := conn.ExecContext(ctx, `
+		UPDATE file_metadata
+		SET release_title = ?, updated_at = ?
+		WHERE path = ?
+	`, "DuringWrite", time.Now().UTC().Format(time.RFC3339Nano), sourcePath); err != nil {
+		t.Fatalf("update within transaction: %v", err)
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, 2)
+	var wg sync.WaitGroup
+	readers := []*SQLiteRepository{readerRepoA, readerRepoB}
+	for idx, repo := range readers {
+		wg.Add(1)
+		go func(idx int, repo *SQLiteRepository) {
+			defer wg.Done()
+			<-start
+			for attempt := 0; attempt < 20; attempt++ {
+				got, err := repo.GetByPath(ctx, sourcePath)
+				if err != nil {
+					errCh <- fmt.Errorf("reader %d get attempt %d: %w", idx, attempt, err)
+					return
+				}
+				if got.Title != "Before" {
+					errCh <- fmt.Errorf("reader %d get attempt %d: expected committed title Before, got %q", idx, attempt, got.Title)
+					return
+				}
+			}
+		}(idx, repo)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRetryBusyContextStopsOnCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	attempts := 0
+	err := retryBusyContext(ctx, nil, "test", 3, func() error {
+		attempts++
+		return errors.New("database is locked")
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled, got %v", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("expected no attempts after cancellation, got %d", attempts)
+	}
+}
+
+func TestIsBusyErrorUnwrapsSQLiteErrors(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "busy.db")
+
+	lockingRepo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open locking repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = lockingRepo.Close()
+	})
+
+	contendingRepo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open contending repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = contendingRepo.Close()
+	})
+
+	if err := lockingRepo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := contendingRepo.db.Exec(`PRAGMA busy_timeout = 1`); err != nil {
+		t.Fatalf("set contending busy_timeout: %v", err)
+	}
+
+	ctx := context.Background()
+	conn, err := lockingRepo.db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("acquire locking conn: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("begin immediate: %v", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+	}()
+
+	err = contendingRepo.Save(ctx, FileMetadata{
+		Path:      filepath.Join("C:\\locked", "file.mkv"),
+		Title:     "Locked",
+		UpdatedAt: time.Now().UTC(),
+	})
+	if err == nil {
+		t.Fatal("expected busy error, got nil")
+	}
+
+	wrappedErr := fmt.Errorf("wrapped save: %w", err)
+	if !IsBusyError(wrappedErr) {
+		t.Fatalf("expected wrapped busy error, got %v", wrappedErr)
+	}
+}
+
 func TestTrackerRuleFailuresCRUD(t *testing.T) {
 	t.Parallel()
 
@@ -364,7 +746,7 @@ func TestSQLiteDescriptionOverrides(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, err = repo.GetDescriptionOverride(ctx, "/missing")
+	_, err = repo.GetDescriptionOverride(ctx, "/missing", "")
 	if !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected not found, got %v", err)
 	}
@@ -374,7 +756,7 @@ func TestSQLiteDescriptionOverrides(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	got, err := repo.GetDescriptionOverride(ctx, "/media/file.mkv")
+	got, err := repo.GetDescriptionOverride(ctx, "/media/file.mkv", "")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -385,11 +767,390 @@ func TestSQLiteDescriptionOverrides(t *testing.T) {
 		t.Fatalf("expected updated_at to be set")
 	}
 
-	if err := repo.DeleteDescriptionOverride(ctx, "/media/file.mkv"); err != nil {
+	if err := repo.DeleteDescriptionOverride(ctx, "/media/file.mkv", ""); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	_, err = repo.GetDescriptionOverride(ctx, "/media/file.mkv")
+	_, err = repo.GetDescriptionOverride(ctx, "/media/file.mkv", "")
 	if !errors.Is(err, internalerrors.ErrNotFound) {
+		t.Fatalf("expected not found after delete, got %v", err)
+	}
+}
+
+func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	dbConn := repo.db
+
+	statements := []string{
+		`PRAGMA user_version = 6`,
+		`CREATE TABLE description_overrides (source_path TEXT, description TEXT, updated_at TEXT)`,
+		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES (NULL, 'broken', NULL)`,
+		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES ('   ', 'blank path', '')`,
+		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES ('/tmp/source', NULL, NULL)`,
+		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES ('/tmp/source', 'latest desc', '')`,
+	}
+	for _, statement := range statements {
+		if _, err := dbConn.Exec(statement); err != nil {
+			t.Fatalf("seed legacy schema: %v", err)
+		}
+	}
+
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	override, err := repo.GetDescriptionOverride(ctx, "/tmp/source", "")
+	if err != nil {
+		t.Fatalf("expected migrated override, got %v", err)
+	}
+	if override.Description != "latest desc" {
+		t.Fatalf("expected duplicate legacy rows to collapse to latest description, got %q", override.Description)
+	}
+	if override.UpdatedAt.IsZero() {
+		t.Fatalf("expected missing updated_at to be backfilled")
+	}
+
+	overrides, err := repo.ListDescriptionOverridesByPath(ctx, "/tmp/source")
+	if err != nil {
+		t.Fatalf("list overrides: %v", err)
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("expected one migrated override, got %d", len(overrides))
+	}
+
+	if _, err := repo.GetDescriptionOverride(ctx, "", ""); !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("expected invalid input for blank path lookup, got %v", err)
+	}
+
+	row := dbConn.QueryRow(`SELECT COUNT(*) FROM description_overrides`)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("count migrated overrides: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected only valid legacy rows to migrate, got %d", count)
+	}
+
+	var updatedAt string
+	if err := dbConn.QueryRow(`SELECT updated_at FROM description_overrides WHERE source_path = ? AND group_key = ?`, "/tmp/source", "").Scan(&updatedAt); err != nil {
+		t.Fatalf("read migrated updated_at: %v", err)
+	}
+	if strings.TrimSpace(updatedAt) == "" {
+		t.Fatalf("expected non-empty updated_at after migration")
+	}
+}
+
+func TestSQLiteMigrationBootstrapRecordsLedgerAndCompatibilityStamp(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("migrate fresh db: %v", err)
+	}
+
+	ids := readSchemaMigrationIDs(t, rawDB)
+	if len(ids) != len(migrationRegistry) {
+		t.Fatalf("expected %d recorded migrations, got %d", len(migrationRegistry), len(ids))
+	}
+
+	var userVersion int
+	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if userVersion != legacyCompatibilitySchemaVersion {
+		t.Fatalf("expected legacy user_version %d, got %d", legacyCompatibilitySchemaVersion, userVersion)
+	}
+}
+
+func TestSQLiteMigrationLegacyV8BridgeIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	if err := createBaselineSchema(ctx, rawDB); err != nil {
+		t.Fatalf("create baseline schema: %v", err)
+	}
+	if err := migrateAddDVDMediaInfo(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v2: %v", err)
+	}
+	if err := migrateAddReleaseOverrideUseSeasonEpisode(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v3: %v", err)
+	}
+	if err := migrateAddHistoryIndexes(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v4: %v", err)
+	}
+	if err := migrateBackfillUploadedImageUsageScope(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v5: %v", err)
+	}
+	if err := migrateAddScreenshotSlotTables(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v6: %v", err)
+	}
+	if err := migrateNormalizeDescriptionOverrides(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v7: %v", err)
+	}
+	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v8: %v", err)
+	}
+	if _, err := rawDB.Exec(`PRAGMA user_version = 8`); err != nil {
+		t.Fatalf("set legacy user_version: %v", err)
+	}
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("first migrate: %v", err)
+	}
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+
+	ids := readSchemaMigrationIDs(t, rawDB)
+	if len(ids) != len(migrationRegistry) {
+		t.Fatalf("expected %d recorded migrations after bridge, got %d", len(migrationRegistry), len(ids))
+	}
+
+	var userVersion int
+	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("read user_version after bridge: %v", err)
+	}
+	if userVersion != legacyCompatibilitySchemaVersion {
+		t.Fatalf("expected legacy compatibility user_version %d after bridge, got %d", legacyCompatibilitySchemaVersion, userVersion)
+	}
+}
+
+func TestSQLiteMigrationKeepsLegacyRollbackCompatibilityStamp(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("migrate fresh db: %v", err)
+	}
+
+	var userVersion int
+	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("read compatibility user_version: %v", err)
+	}
+	if userVersion != legacyCompatibilitySchemaVersion {
+		t.Fatalf("expected compatibility user_version %d, got %d", legacyCompatibilitySchemaVersion, userVersion)
+	}
+
+	// Simulate the old integer-version runner contract: a rollback binary should
+	// classify this DB as already migrated past the non-idempotent v3 ALTER.
+	if userVersion < 3 {
+		t.Fatalf("rollback binary would misclassify db as pre-v3, got user_version %d", userVersion)
+	}
+	if _, err := rawDB.Exec(`ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`); err == nil {
+		t.Fatalf("expected legacy v3 ALTER to be unsafe if rerun, but it unexpectedly succeeded")
+	}
+}
+
+func TestSQLiteMigrationUnknownAppliedIDsAreTolerated(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("initial migrate: %v", err)
+	}
+	if _, err := rawDB.Exec(`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "branch_only_future_migration", "2026-04-18T00:00:00Z"); err != nil {
+		t.Fatalf("insert unknown migration: %v", err)
+	}
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("rerun migrate with unknown applied id: %v", err)
+	}
+}
+
+func TestSQLiteMigrationBranchesCanApplyDisjointLedgerMigrations(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	registryA := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: "branch_a_feature", dependsOn: []string{baselineMigrationID}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	registryB := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: "branch_b_feature", dependsOn: []string{baselineMigrationID}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+
+	if err := migrateContextWithRegistry(context.Background(), rawDB, registryA); err != nil {
+		t.Fatalf("migrate branch A: %v", err)
+	}
+	if err := migrateContextWithRegistry(context.Background(), rawDB, registryB); err != nil {
+		t.Fatalf("migrate branch B: %v", err)
+	}
+	if err := migrateContextWithRegistry(context.Background(), rawDB, registryA); err != nil {
+		t.Fatalf("migrate branch A again: %v", err)
+	}
+
+	ids := readSchemaMigrationIDs(t, rawDB)
+	expected := []string{baselineMigrationID, "branch_a_feature", "branch_b_feature"}
+	if len(ids) != len(expected) {
+		t.Fatalf("expected %d migrations after branch sharing, got %d (%v)", len(expected), len(ids), ids)
+	}
+	for _, id := range expected {
+		found := false
+		for _, got := range ids {
+			if got == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected migration %q to be recorded, got %v", id, ids)
+		}
+	}
+}
+
+func TestSQLiteMigrationFailsWhenAppliedMigrationIsMissingDependency(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	if err := ensureSchemaMigrationsTable(context.Background(), rawDB); err != nil {
+		t.Fatalf("ensure schema_migrations: %v", err)
+	}
+	if _, err := rawDB.Exec(`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "child", "2026-04-18T00:00:00Z"); err != nil {
+		t.Fatalf("insert inconsistent applied migration: %v", err)
+	}
+
+	registry := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: "child", dependsOn: []string{baselineMigrationID}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+
+	err = migrateContextWithRegistry(context.Background(), rawDB, registry)
+	if err == nil || !strings.Contains(err.Error(), `missing dependency`) {
+		t.Fatalf("expected missing dependency error, got %v", err)
+	}
+}
+
+func TestValidatedMigrationRegistryRejectsInvalidDefinitions(t *testing.T) {
+	t.Parallel()
+
+	duplicate := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: baselineMigrationID, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	if _, err := validatedMigrationRegistry(duplicate); err == nil || !strings.Contains(err.Error(), "duplicate migration id") {
+		t.Fatalf("expected duplicate migration id error, got %v", err)
+	}
+
+	missingDependency := []migrationStep{
+		{id: baselineMigrationID, apply: createBaselineSchema},
+		{id: "child", dependsOn: []string{"missing"}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	if _, err := validatedMigrationRegistry(missingDependency); err == nil || !strings.Contains(err.Error(), "depends on unknown migration") {
+		t.Fatalf("expected missing dependency definition error, got %v", err)
+	}
+
+	cycle := []migrationStep{
+		{id: baselineMigrationID, dependsOn: []string{"child"}, apply: createBaselineSchema},
+		{id: "child", dependsOn: []string{baselineMigrationID}, apply: func(context.Context, migrationExecutor) error { return nil }},
+	}
+	if _, err := validatedMigrationRegistry(cycle); err == nil || !strings.Contains(err.Error(), "dependency cycle") {
+		t.Fatalf("expected dependency cycle error, got %v", err)
+	}
+}
+func TestSQLiteDescriptionOverrideGroupKeysAreCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	override := DescriptionOverride{
+		SourcePath:  "/media/file.mkv",
+		GroupKey:    " HDB|HDB|TRACKER:HDB ",
+		Description: "Example desc",
+	}
+	if err := repo.SaveDescriptionOverride(ctx, override); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	got, err := repo.GetDescriptionOverride(ctx, "/media/file.mkv", "hdb|hdb|tracker:hdb")
+	if err != nil {
+		t.Fatalf("get lowercase: %v", err)
+	}
+	if got.GroupKey != "hdb|hdb|tracker:hdb" {
+		t.Fatalf("expected normalized group key, got %q", got.GroupKey)
+	}
+	if got.Description != "Example desc" {
+		t.Fatalf("unexpected description: %q", got.Description)
+	}
+
+	overrides, err := repo.ListDescriptionOverridesByPath(ctx, "/media/file.mkv")
+	if err != nil {
+		t.Fatalf("list overrides: %v", err)
+	}
+	if len(overrides) != 1 {
+		t.Fatalf("expected one override, got %d", len(overrides))
+	}
+	if overrides[0].GroupKey != "hdb|hdb|tracker:hdb" {
+		t.Fatalf("expected listed group key normalized, got %q", overrides[0].GroupKey)
+	}
+
+	if err := repo.DeleteDescriptionOverride(ctx, "/media/file.mkv", "HDB|HDB|TRACKER:HDB"); err != nil {
+		t.Fatalf("delete uppercase: %v", err)
+	}
+	if _, err := repo.GetDescriptionOverride(ctx, "/media/file.mkv", "hdb|hdb|tracker:hdb"); !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected not found after delete, got %v", err)
 	}
 }
@@ -504,7 +1265,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if _, err := repo.GetReleaseNameOverrides(ctx, targetPath); !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected release overrides removed, got %v", err)
 	}
-	if _, err := repo.GetDescriptionOverride(ctx, targetPath); !errors.Is(err, internalerrors.ErrNotFound) {
+	if _, err := repo.GetDescriptionOverride(ctx, targetPath, ""); !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected description override removed, got %v", err)
 	}
 	if _, err := repo.GetPlaylistSelection(ctx, targetPath); !errors.Is(err, internalerrors.ErrNotFound) {

@@ -4,26 +4,22 @@
 package dupechecking
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/services/db"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const (
 	arBrowseEndpoint = "https://alpharatio.cc/ajax.php"
-	arCookieFileName = "AR.txt"
 )
 
 type arHandler struct {
@@ -42,15 +38,15 @@ func (h arHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 		return nil, []string{noteSkip("missing title for AR dupe search")}, nil
 	}
 
-	cookies, cookiePath, err := h.resolveCookies()
+	cookies, cookiePath, err := h.resolveCookies(ctx)
 	if err != nil || len(cookies) == 0 {
 		if err != nil && h.logger != nil {
 			h.logger.Debugf("dupechecking: AR cookie resolution failed: %v", err)
 		}
-		return nil, []string{noteSkip("missing valid AR cookies (expected Netscape cookies at cookies/AR.txt)")}, nil
+		return nil, []string{noteSkip("missing valid AR cookies")}, nil
 	}
 	if h.logger != nil && cookiePath != "" {
-		h.logger.Debugf("dupechecking: AR using cookie file %s", cookiePath)
+		h.logger.Debugf("dupechecking: AR using stored cookies from %s", cookiePath)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, arBrowseEndpoint, nil)
@@ -116,7 +112,7 @@ func (h arHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 	return entries, nil, nil
 }
 
-func (h arHandler) resolveCookies() ([]*http.Cookie, string, error) {
+func (h arHandler) resolveCookies(ctx context.Context) ([]*http.Cookie, string, error) {
 	arURL, _ := url.Parse("https://alpharatio.cc/")
 	merged := map[string]*http.Cookie{}
 
@@ -129,14 +125,13 @@ func (h arHandler) resolveCookies() ([]*http.Cookie, string, error) {
 		}
 	}
 	if len(merged) > 0 {
+		if h.logger != nil {
+			h.logger.Debugf("dupechecking: AR using %d cookies from HTTP client jar", len(merged))
+		}
 		return mapCookiesToSlice(merged), "", nil
 	}
 
-	cookiePath, err := resolveARCookiePath(h.cfg)
-	if err != nil {
-		return nil, "", err
-	}
-	loaded, err := loadNetscapeCookies(cookiePath, "alpharatio.cc")
+	loaded, err := cookiepkg.LoadTrackerHTTPCookies(ctx, h.cfg.MainSettings.DBPath, "AR", "alpharatio.cc")
 	if err != nil {
 		return nil, "", err
 	}
@@ -149,7 +144,7 @@ func (h arHandler) resolveCookies() ([]*http.Cookie, string, error) {
 	if len(merged) == 0 {
 		return nil, "", errors.New("no valid cookies found")
 	}
-	return mapCookiesToSlice(merged), cookiePath, nil
+	return mapCookiesToSlice(merged), "shared store", nil
 }
 
 func mapCookiesToSlice(values map[string]*http.Cookie) []*http.Cookie {
@@ -161,104 +156,6 @@ func mapCookiesToSlice(values map[string]*http.Cookie) []*http.Cookie {
 		out = append(out, cookie)
 	}
 	return out
-}
-
-func resolveARCookiePath(cfg config.Config) (string, error) {
-	candidates := arCookiePathCandidates(cfg)
-	for _, candidate := range candidates {
-		if strings.TrimSpace(candidate) == "" {
-			continue
-		}
-		info, err := os.Stat(candidate)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		return candidate, nil
-	}
-	return "", errors.New("AR cookie file not found")
-}
-
-func arCookiePathCandidates(cfg config.Config) []string {
-	candidates := make([]string, 0, 1)
-	seen := map[string]struct{}{}
-	add := func(path string) {
-		cleaned := strings.TrimSpace(filepath.Clean(path))
-		if cleaned == "" {
-			return
-		}
-		if _, exists := seen[cleaned]; exists {
-			return
-		}
-		seen[cleaned] = struct{}{}
-		candidates = append(candidates, cleaned)
-	}
-
-	if dbPath := strings.TrimSpace(cfg.MainSettings.DBPath); dbPath != "" {
-		if path, err := db.CookiePath(dbPath, arCookieFileName); err == nil {
-			add(path)
-		}
-	}
-	return candidates
-}
-
-func loadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	cookies := make([]*http.Cookie, 0)
-	targetDomain := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(expectedDomain)), ".")
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "#HttpOnly_") {
-			line = strings.TrimPrefix(line, "#HttpOnly_")
-		} else if strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		fields := strings.Split(line, "\t")
-		if len(fields) < 7 {
-			continue
-		}
-
-		domain := strings.TrimPrefix(strings.TrimSpace(fields[0]), ".")
-		domainLower := strings.ToLower(domain)
-		if domain == "" {
-			continue
-		}
-		if targetDomain != "" && domainLower != targetDomain && !strings.HasSuffix(domainLower, "."+targetDomain) {
-			continue
-		}
-		name := strings.TrimSpace(fields[5])
-		value := strings.TrimSpace(strings.Join(fields[6:], "\t"))
-		if name == "" || value == "" {
-			continue
-		}
-		pathValue := strings.TrimSpace(fields[2])
-		if pathValue == "" {
-			pathValue = "/"
-		}
-		secure := strings.EqualFold(strings.TrimSpace(fields[3]), "TRUE")
-		cookies = append(cookies, &http.Cookie{
-			Name:   name,
-			Value:  value,
-			Domain: domain,
-			Path:   pathValue,
-			Secure: secure,
-		})
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return cookies, nil
 }
 
 func arSearchQuery(meta api.PreparedMetadata) string {

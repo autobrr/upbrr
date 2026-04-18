@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackerdata"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
@@ -391,7 +392,7 @@ func trackerClaimsPath(dbPath string, tracker string) (string, error) {
 	return db.FileInSubdir(dbPath, "cache", filepath.Join("banned", strings.ToUpper(strings.TrimSpace(tracker))+"_claimed_releases.json"))
 }
 
-func trackerClaimsBaseURL(cfg api.Config, tracker string) (string, bool) {
+func trackerClaimsBaseURL(cfg config.Config, tracker string) (string, bool) {
 	if entry, ok := trackerConfigFor(cfg, tracker); ok {
 		if announceBase := announceBaseURL(entry.AnnounceURL); announceBase != "" {
 			return announceBase, true

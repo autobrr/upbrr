@@ -16,6 +16,8 @@ export function CancelTrackerUpload(arg1:string):Promise<void>;
 
 export function CheckDupes(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>):Promise<api.DupeCheckSummary>;
 
+export function CreateWebAuth(arg1:string,arg2:string):Promise<guiapp.WebAuthStatus>;
+
 export function DeleteHistoryRelease(arg1:string):Promise<void>;
 
 export function DeleteScreenshot(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:string):Promise<void>;
@@ -38,7 +40,7 @@ export function FetchPreparation(arg1:string,arg2:api.ExternalIDOverrides,arg3:a
 
 export function FetchScreenshotPlan(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides):Promise<api.ScreenshotPlan>;
 
-export function FetchTrackerDryRun(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:boolean,arg6:Array<string>,arg7:Record<string, Record<string, string>>,arg8:boolean,arg9:string):Promise<api.TrackerDryRunPreview>;
+export function FetchTrackerDryRun(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:boolean,arg6:Array<string>,arg7:Record<string, Record<string, string>>,arg8:Array<api.DescriptionBuilderGroup>,arg9:boolean,arg10:string):Promise<api.TrackerDryRunPreview>;
 
 export function GenerateScreenshots(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<api.ScreenshotSelection>,arg5:api.ScreenshotPurpose):Promise<api.ScreenshotResult>;
 
@@ -57,6 +59,10 @@ export function GetLogPath():Promise<string>;
 export function GetRecentLogs(arg1:number):Promise<Array<logging.Entry>>;
 
 export function GetTrackerUploadSnapshot(arg1:string):Promise<guiapp.TrackerUploadSnapshot>;
+
+export function GetWebAuthStatus():Promise<guiapp.WebAuthStatus>;
+
+export function ImportConfig():Promise<guiapp.ImportResult>;
 
 export function ListHistory():Promise<Array<api.HistoryEntry>>;
 
@@ -82,7 +88,7 @@ export function RetryFailedTrackerUpload(arg1:string):Promise<string>;
 
 export function SaveConfig(arg1:string):Promise<void>;
 
-export function SaveDescriptionOverride(arg1:string,arg2:string):Promise<void>;
+export function SaveDescriptionOverride(arg1:string,arg2:string,arg3:string,arg4:Array<string>,arg5:api.ExternalIDOverrides,arg6:api.ReleaseNameOverrides):Promise<api.DescriptionBuilderGroup>;
 
 export function SaveFinalScreenshotSelections(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<api.ScreenshotImage>):Promise<void>;
 
@@ -92,7 +98,7 @@ export function StartDupeCheck(arg1:string,arg2:api.ExternalIDOverrides,arg3:api
 
 export function StartLogStream():Promise<string>;
 
-export function StartTrackerUpload(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:boolean,arg6:Array<string>,arg7:Record<string, Record<string, string>>,arg8:boolean,arg9:string):Promise<string>;
+export function StartTrackerUpload(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:boolean,arg6:Array<string>,arg7:Record<string, Record<string, string>>,arg8:Array<api.DescriptionBuilderGroup>,arg9:boolean,arg10:string):Promise<string>;
 
 export function StopLogStream(arg1:string):Promise<void>;
 

@@ -26,6 +26,10 @@ export function CheckDupes(arg1, arg2, arg3, arg4) {
   return window['go']['guiapp']['App']['CheckDupes'](arg1, arg2, arg3, arg4);
 }
 
+export function CreateWebAuth(arg1, arg2) {
+  return window['go']['guiapp']['App']['CreateWebAuth'](arg1, arg2);
+}
+
 export function DeleteHistoryRelease(arg1) {
   return window['go']['guiapp']['App']['DeleteHistoryRelease'](arg1);
 }
@@ -70,8 +74,8 @@ export function FetchScreenshotPlan(arg1, arg2, arg3) {
   return window['go']['guiapp']['App']['FetchScreenshotPlan'](arg1, arg2, arg3);
 }
 
-export function FetchTrackerDryRun(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
-  return window['go']['guiapp']['App']['FetchTrackerDryRun'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+export function FetchTrackerDryRun(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
+  return window['go']['guiapp']['App']['FetchTrackerDryRun'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
 
 export function GenerateScreenshots(arg1, arg2, arg3, arg4, arg5) {
@@ -108,6 +112,14 @@ export function GetRecentLogs(arg1) {
 
 export function GetTrackerUploadSnapshot(arg1) {
   return window['go']['guiapp']['App']['GetTrackerUploadSnapshot'](arg1);
+}
+
+export function GetWebAuthStatus() {
+  return window['go']['guiapp']['App']['GetWebAuthStatus']();
+}
+
+export function ImportConfig() {
+  return window['go']['guiapp']['App']['ImportConfig']();
 }
 
 export function ListHistory() {
@@ -158,8 +170,8 @@ export function SaveConfig(arg1) {
   return window['go']['guiapp']['App']['SaveConfig'](arg1);
 }
 
-export function SaveDescriptionOverride(arg1, arg2) {
-  return window['go']['guiapp']['App']['SaveDescriptionOverride'](arg1, arg2);
+export function SaveDescriptionOverride(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['guiapp']['App']['SaveDescriptionOverride'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function SaveFinalScreenshotSelections(arg1, arg2, arg3, arg4) {
@@ -178,8 +190,8 @@ export function StartLogStream() {
   return window['go']['guiapp']['App']['StartLogStream']();
 }
 
-export function StartTrackerUpload(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
-  return window['go']['guiapp']['App']['StartTrackerUpload'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+export function StartTrackerUpload(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
+  return window['go']['guiapp']['App']['StartTrackerUpload'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
 
 export function StopLogStream(arg1) {

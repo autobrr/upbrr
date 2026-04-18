@@ -4,6 +4,7 @@
 package guiapp
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 
@@ -13,6 +14,7 @@ import (
 )
 
 type RunOptions struct {
+	StartupContext context.Context
 	Assets         fs.FS
 	ConfigPath     string
 	ConfigProvided bool
@@ -24,7 +26,7 @@ func Run(opts RunOptions) error {
 		return err
 	}
 
-	app, err := NewApp(opts.ConfigPath, opts.ConfigProvided)
+	app, err := NewAppWithContext(opts.StartupContext, opts.ConfigPath, opts.ConfigProvided)
 	if err != nil {
 		return err
 	}

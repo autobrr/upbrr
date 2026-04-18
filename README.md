@@ -20,7 +20,8 @@ The project handles the full preparation pipeline around an upload candidate: me
 
 ## Key capabilities
 
-- Import configuration from YAML and persist it to SQLite
+- Import configuration from YAML, JSON, or a legacy Upload Assistant `config.py` and persist it to SQLite
+- Export the current SQLite-backed config back to YAML
 - Launch a desktop GUI with `--gui` or `./gui`
 - Run uploads from the CLI against one or more paths
 - Process queue roots instead of single paths
@@ -84,9 +85,13 @@ Typical first-run options:
 - start the program once and let it create a new blank/default config state automatically
 - if a `config.yaml` already exists in the same directory as the database, the app will automatically import it into the SQLite config store on startup
 - use the embedded defaults and save changes through the GUI
-- pass `--config path/to/config.yaml` to import a YAML file
+- pass `--config path/to/config.yaml` to load a YAML file as the active config at startup
+- import a config file into the SQLite store without starting the app: `--import-config path/to/config.{yaml,yml,json,py}` (legacy Upload Assistant `config.py` files are parsed natively)
+- import the same formats through the GUI or web UI from the Settings page
 - export the current SQLite-backed config with `--export-config path/to/config.yaml`
-- convert an older Upload Assistant `config.py` with `python scripts/convert_ua_config.py path/to/config.py -o config.yaml` and then import or use that YAML
+- create the web auth helper file for CLI-only setups with `--create-auth`
+
+For authenticated GUI/web Settings exports, plaintext secret export is disabled by default. If you need that behavior for a local trusted setup, add `"allow_unencrypted_export": true` to the `web-auth.json` file stored beside the active database. This hidden flag only affects UI export behavior and is not exposed in the app.
 
 Important: `main_settings.tmdb_api` must be set before the core can run normally.
 
@@ -217,9 +222,9 @@ Configuration is centered around `internal/config.Config` and includes:
 
 The app can:
 
-- import YAML into the SQLite-backed config store
+- import YAML, JSON, or a legacy Upload Assistant `config.py` into the SQLite-backed config store (via `--import-config` or the Settings page in the GUI and web UI)
 - load defaults from the embedded example config
-- apply environment overrides
+- apply environment overrides at runtime without persisting them to the database
 - export the current database-backed config back to YAML
 
 ## Packaging and distribution

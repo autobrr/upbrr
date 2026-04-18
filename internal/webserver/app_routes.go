@@ -149,6 +149,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			IgnoreRuleFailures   bool
 			IgnoreDupesFor       []string
 			QuestionnaireAnswers map[string]map[string]string
+			DescriptionGroups    []api.DescriptionBuilderGroup
 			Debug                bool
 			RunLogLevel          string
 		}
@@ -156,7 +157,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.FetchTrackerDryRun(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreRuleFailures, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.Debug, req.RunLogLevel)
+		value, err := s.backend.FetchTrackerDryRun(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreRuleFailures, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.RunLogLevel)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -200,18 +201,23 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/app/SaveDescriptionOverride", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		var req struct {
-			Path string
-			Raw  string
+			Path          string
+			GroupKey      string
+			Raw           string
+			Trackers      []string
+			Overrides     api.ExternalIDOverrides
+			NameOverrides api.ReleaseNameOverrides
 		}
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.backend.SaveDescriptionOverride(req.Path, req.Raw); err != nil {
+		value, err := s.backend.SaveDescriptionOverride(req.Path, req.GroupKey, req.Raw, req.Trackers, req.Overrides, req.NameOverrides)
+		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		writeJSON(w, http.StatusOK, value)
 	}))
 
 	mux.HandleFunc("/api/app/DiscoverPlaylists", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
@@ -466,6 +472,15 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
+	mux.HandleFunc("/api/app/ExportConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		value, err := s.backend.ExportConfig()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
 	mux.HandleFunc("/api/app/GetDefaultConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		value, err := s.backend.GetDefaultConfig()
 		if err != nil {
@@ -486,6 +501,30 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}))
+
+	mux.HandleFunc("/api/app/ImportConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		// Allow extra headroom for JSON wrapping (FileName, escaping)
+		// beyond the raw file-content limit enforced by the importer.
+		r.Body = http.MaxBytesReader(w, r.Body, configImportMaxBytes+1024*1024)
+		var req struct {
+			FileName    string
+			FileContent string
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		result, warnings, err := s.backend.ImportConfig(req.FileName, req.FileContent)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"result": result, "warnings": warnings})
 	}))
 
 	mux.HandleFunc("/api/app/ListKnownTrackers", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
@@ -652,6 +691,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			IgnoreRuleFailures   bool
 			IgnoreDupesFor       []string
 			QuestionnaireAnswers map[string]map[string]string
+			DescriptionGroups    []api.DescriptionBuilderGroup
 			Debug                bool
 			RunLogLevel          string
 		}
@@ -659,7 +699,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.StartTrackerUpload(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreRuleFailures, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.Debug, req.RunLogLevel)
+		value, err := s.backend.StartTrackerUpload(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreRuleFailures, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.RunLogLevel)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

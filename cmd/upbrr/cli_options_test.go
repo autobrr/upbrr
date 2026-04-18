@@ -75,6 +75,34 @@ func TestParseCLIOptionsCompatibilityFlags(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsExportConfigPlaintext(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"--export-config", "out.yaml", "--export-config-plaintext"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !opts.ExportConfigPlaintext {
+		t.Fatalf("expected export-config-plaintext to parse, got %#v", opts)
+	}
+	if !visited["export-config"] || !visited["export-config-plaintext"] {
+		t.Fatalf("unexpected visited flags: %#v", visited)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("expected no positional paths, got %#v", paths)
+	}
+}
+
+func TestParseCLIOptionsRejectsExportConfigPlaintextWithoutExportConfig(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"--export-config-plaintext"}); err == nil {
+		t.Fatal("expected --export-config-plaintext without --export-config to fail")
+	}
+}
+
+func TestParseCLIOptionsRejectsExportConfigPlaintextWithEmptyExportConfig(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"--export-config", "", "--export-config-plaintext"}); err == nil {
+		t.Fatal("expected --export-config-plaintext with empty --export-config value to fail")
+	}
+}
+
 func TestParseCLIOptionsPythonAliases(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{
 		"-s", "6",

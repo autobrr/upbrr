@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
 import DupeCheckPage from "./pages/dupe_check";
@@ -9,7 +9,6 @@ import InputPage from "./pages/input";
 import HistoryPage from "./pages/history/index";
 import LoggingPage from "./pages/logging";
 import PlaylistSelectionPage from "./pages/playlist_selection";
-import PreparationPage from "./pages/preparation";
 import ScreenshotsPage from "./pages/screenshots";
 import SettingsPage from "./pages/settings";
 import TrackerDataPage from "./pages/tracker_data";
@@ -44,6 +43,7 @@ import type {
   TrackerQuestionnaire,
   TrackerDryRunPreview,
   TrackerUploadSnapshot,
+  WebAuthStatus,
   UploadedImageLink
 } from "./types";
 import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
@@ -120,10 +120,24 @@ const splitTrackerLabel = (value: string) => value
 
 const emptyDescriptionBuilder: DescriptionBuilderPreview = {
   SourcePath: "",
-  Description: "",
-  DescriptionHTML: "",
-  HasOverride: false,
-  ImageHosts: []
+  Groups: []
+};
+
+const upsertBuilderGroup = (
+  preview: DescriptionBuilderPreview,
+  nextGroup: DescriptionBuilderPreview["Groups"][number]
+): DescriptionBuilderPreview => {
+  const nextGroups = [...(preview.Groups || [])];
+  const existingIndex = nextGroups.findIndex((group) => group.GroupKey === nextGroup.GroupKey);
+  if (existingIndex >= 0) {
+    nextGroups[existingIndex] = nextGroup;
+  } else {
+    nextGroups.push(nextGroup);
+  }
+  return {
+    ...preview,
+    Groups: nextGroups
+  };
 };
 
 const bdinfoProgressEvent = "bdinfo:progress";
@@ -189,7 +203,7 @@ declare global {
             ResetMetadata: (path: string, sourceLookupURL: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<MetadataPreview>;
             FetchDescriptionBuilder: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreDupesFor: string[]) => Promise<DescriptionBuilderPreview>;
             FetchPreparation: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreDupesFor: string[]) => Promise<PreparationPreview>;
-            FetchTrackerDryRun: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, debug: boolean, runLogLevel: string) => Promise<TrackerDryRunPreview>;
+            FetchTrackerDryRun: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: DescriptionBuilderPreview["Groups"], debug: boolean, runLogLevel: string) => Promise<TrackerDryRunPreview>;
             CheckDupes: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<DupeCheckSummary>;
             StartDupeCheck: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<string>;
             CancelDupeCheck: (jobID: string) => Promise<void>;
@@ -205,14 +219,17 @@ declare global {
             UploadImages: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, host: string, images: ScreenshotImage[]) => Promise<UploadedImageLink[]>;
             DeleteUploadedImage: (path: string, imagePath: string, host: string) => Promise<void>;
             RenderDescription: (raw: string) => Promise<string>;
-            SaveDescriptionOverride: (path: string, raw: string) => Promise<void>;
+            SaveDescriptionOverride: (path: string, groupKey: string, raw: string, trackers: string[], overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<DescriptionBuilderPreview["Groups"][number]>;
             DiscoverPlaylists: (path: string) => Promise<any[]>;
             SavePlaylistSelection: (path: string, playlists: string[], useAll: boolean) => Promise<void>;
             LoadPlaylistSelection: (path: string) => Promise<any>;
             GetConfig: () => Promise<string>;
             GetDefaultConfig: () => Promise<string>;
+            GetWebAuthStatus: () => Promise<WebAuthStatus>;
+            CreateWebAuth: (username: string, password: string) => Promise<WebAuthStatus>;
             SaveConfig: (payload: string) => Promise<void>;
             ExportConfig: () => Promise<string>;
+            ImportConfig: () => Promise<{ message: string; warnings: string[] }>;
             GetLogPath: () => Promise<string>;
             GetRecentLogs: (limit: number) => Promise<any[]>;
             StartLogStream: () => Promise<string>;
@@ -223,7 +240,7 @@ declare global {
             ListHistory: () => Promise<HistoryEntry[]>;
             GetHistoryOverview: (sourcePath: string) => Promise<HistoryOverview>;
             DeleteHistoryRelease: (sourcePath: string) => Promise<void>;
-            StartTrackerUpload: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, debug: boolean, runLogLevel: string) => Promise<string>;
+            StartTrackerUpload: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: DescriptionBuilderPreview["Groups"], debug: boolean, runLogLevel: string) => Promise<string>;
             CancelTrackerUpload: (jobID: string) => Promise<void>;
             RetryFailedTrackerUpload: (jobID: string) => Promise<string>;
             GetTrackerUploadSnapshot: (jobID: string) => Promise<TrackerUploadSnapshot>;
@@ -333,6 +350,16 @@ const isValidManualDate = (value: string) => {
 
 type ThemeMode = "light" | "dark" | "auto";
 
+const emptyWebAuthStatus: WebAuthStatus = {
+  path: "",
+  exists: false,
+  usable: false,
+  canCreate: false,
+  username: "",
+  allowUnencryptedExport: false,
+  encryptionEnabled: false,
+  message: ""
+};
 
 export default function App() {
   const browserNativeBrowseAvailable = !isBrowserMode() || isBrowserNativeBrowseAvailable();
@@ -372,14 +399,13 @@ export default function App() {
   const [prepPreview, setPrepPreview] = useState<PreparationPreview>(emptyPreparation);
   const [prepLoading, setPrepLoading] = useState(false);
   const [prepError, setPrepError] = useState("");
-  const [prepReady, setPrepReady] = useState(false);
-  const [prepRendered, setPrepRendered] = useState<Record<string, boolean>>({});
   const [builderPreview, setBuilderPreview] = useState<DescriptionBuilderPreview>(emptyDescriptionBuilder);
-  const [builderRaw, setBuilderRaw] = useState("");
-  const [builderRenderedHTML, setBuilderRenderedHTML] = useState("");
+  const [builderRawByGroup, setBuilderRawByGroup] = useState<Record<string, string>>({});
+  const [builderRenderedByGroup, setBuilderRenderedByGroup] = useState<Record<string, string>>({});
+  const [builderExpandedGroups, setBuilderExpandedGroups] = useState<Record<string, boolean>>({});
   const [builderLoading, setBuilderLoading] = useState(false);
   const [builderError, setBuilderError] = useState("");
-  const [builderDirty, setBuilderDirty] = useState(false);
+  const [builderDirtyByGroup, setBuilderDirtyByGroup] = useState<Record<string, boolean>>({});
   const [builderRenderLoading, setBuilderRenderLoading] = useState(false);
   const [builderSaved, setBuilderSaved] = useState("");
   const [builderSaving, setBuilderSaving] = useState(false);
@@ -401,6 +427,37 @@ export default function App() {
   const [liveCaptureLoading, setLiveCaptureLoading] = useState(false);
   const [finalDragIndex, setFinalDragIndex] = useState<number | null>(null);
   const [settingsExporting, setSettingsExporting] = useState(false);
+  const [settingsImporting, setSettingsImporting] = useState(false);
+  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
+  const [configOpStatus, setConfigOpStatus] = useState<{
+    type: "success" | "error" | "warning";
+    title: string;
+    message: string;
+    warnings?: string[];
+  } | null>(null);
+  const [webAuthStatus, setWebAuthStatus] = useState<WebAuthStatus | null>(null);
+  const [webAuthLoading, setWebAuthLoading] = useState(false);
+  const [webAuthCreating, setWebAuthCreating] = useState(false);
+  const [webAuthUsername, setWebAuthUsername] = useState("");
+  const [webAuthPassword, setWebAuthPassword] = useState("");
+  const [webAuthConfirm, setWebAuthConfirm] = useState("");
+  const [webAuthError, setWebAuthError] = useState("");
+  const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const builderDirty = useMemo(
+    () => Object.values(builderDirtyByGroup).some(Boolean),
+    [builderDirtyByGroup]
+  );
+  const builderReady = useMemo(
+    () => {
+      const normalizedPath = path.trim();
+      if (!normalizedPath) {
+        return false;
+      }
+      return builderPreview.SourcePath === normalizedPath && builderPreview.Groups !== undefined;
+    },
+    [builderPreview.SourcePath, builderPreview.Groups, path]
+  );
 
   const {
     configData,
@@ -706,7 +763,7 @@ export default function App() {
     return () => {
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [renderedDescriptions, preview.TrackerData, prepRendered, prepPreview.Descriptions, builderRenderedHTML, activeTab]);
+  }, [renderedDescriptions, preview.TrackerData, prepPreview.Descriptions, builderRenderedByGroup, builderPreview.Groups, activeTab]);
 
   const getThemeIcon = () => {
     if (theme === "auto") return "🔄";
@@ -819,16 +876,6 @@ export default function App() {
     });
     return Array.from(next);
   }, [dupeIgnore]);
-
-
-  const buildPrepRenderedState = (descriptions: PreparationDescription[]) => {
-    const next: Record<string, boolean> = {};
-    descriptions.forEach((_, index) => {
-      next[`prep-${index}`] = true;
-    });
-    return next;
-  };
-
   const filterPrepDescriptions = (descriptions: PreparationDescription[]) => {
     if (dupedTrackerSet.size === 0 && ruleSkippedTrackerSet.size === 0) return descriptions;
     const filtered: PreparationDescription[] = [];
@@ -1357,13 +1404,12 @@ export default function App() {
     setDupeError("");
     setPrepPreview(emptyPreparation);
     setPrepError("");
-    setPrepReady(false);
-    setPrepRendered({});
     setBuilderPreview(emptyDescriptionBuilder);
-    setBuilderRaw("");
-    setBuilderRenderedHTML("");
+    setBuilderRawByGroup({});
+    setBuilderRenderedByGroup({});
+    setBuilderExpandedGroups({});
     setBuilderError("");
-    setBuilderDirty(false);
+    setBuilderDirtyByGroup({});
     setBuilderSaved("");
     setBuilderAutoRequestKey("");
     resetScreenshotState();
@@ -1497,8 +1543,11 @@ export default function App() {
     setDupeSummary(emptyDupeSummary);
     setPrepPreview(emptyPreparation);
     setPrepError("");
-    setPrepReady(false);
-    setPrepRendered({});
+    setBuilderPreview(emptyDescriptionBuilder);
+    setBuilderRawByGroup({});
+    setBuilderRenderedByGroup({});
+    setBuilderExpandedGroups({});
+    setBuilderDirtyByGroup({});
     const fetcher = globalThis.go?.guiapp?.App?.FetchMetadata;
     if (!fetcher) {
       setError("Fetch metadata is unavailable in this build.");
@@ -1612,12 +1661,9 @@ export default function App() {
       );
       const filteredDescriptions = filterPrepDescriptions(result.Descriptions || []);
       setPrepPreview({ ...result, Descriptions: filteredDescriptions });
-      setPrepReady(filteredDescriptions.length > 0);
-      setPrepRendered(buildPrepRenderedState(filteredDescriptions));
       return true;
     } catch (err) {
       setPrepError(String(err));
-      setPrepReady(false);
       return false;
     } finally {
       setPrepLoading(false);
@@ -1648,9 +1694,24 @@ export default function App() {
         ignoredDupeTrackers
       );
       setBuilderPreview(result);
-      setBuilderRaw(result.Description || "");
-      setBuilderRenderedHTML(result.DescriptionHTML || "");
-      setBuilderDirty(false);
+      setBuilderRawByGroup(
+        Object.fromEntries(
+          (result.Groups || []).map((group) => [group.GroupKey, group.RawDescription || ""])
+        )
+      );
+      setBuilderRenderedByGroup(
+        Object.fromEntries(
+          (result.Groups || []).map((group) => [group.GroupKey, group.RawDescriptionHTML || ""])
+        )
+      );
+      setBuilderExpandedGroups((prev) => {
+        const next: Record<string, boolean> = {};
+        (result.Groups || []).forEach((group) => {
+          next[group.GroupKey] = prev[group.GroupKey] ?? false;
+        });
+        return next;
+      });
+      setBuilderDirtyByGroup({});
     } catch (err) {
       setBuilderError(String(err));
     } finally {
@@ -1658,37 +1719,37 @@ export default function App() {
     }
   }, [path, releasePageTrackerSelection, ignoredDupeTrackers]);
 
-  const resetBuilderDescription = async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
+  const resetBuilderDescription = async (groupKey: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
     setBuilderError("");
     setBuilderSaved("");
     const saver = globalThis.go?.guiapp?.App?.SaveDescriptionOverride;
-    const fetcher = globalThis.go?.guiapp?.App?.FetchDescriptionBuilder;
     if (!saver) {
       setBuilderError("Description saving is unavailable in this build.");
-      return;
-    }
-    if (!fetcher) {
-      setBuilderError("Description builder is unavailable in this build.");
       return;
     }
     if (!path.trim()) {
       setBuilderError("Please select a file or folder.");
       return;
     }
+    const currentGroup = (builderPreview.Groups || []).find((group) => group.GroupKey === groupKey);
+    if (!currentGroup) {
+      setBuilderError("Description group not found.");
+      return;
+    }
     setBuilderLoading(true);
     try {
-      await saver(path.trim(), "");
-      const result = await fetcher(
+      const updatedGroup = await saver(
         path.trim(),
+        groupKey,
+        "",
+        currentGroup.Trackers || [],
         normalizeOverrides(overrides),
-        normalizeReleaseOverrides(nameOverrides),
-        getSelectedTrackers(),
-        ignoredDupeTrackers
+        normalizeReleaseOverrides(nameOverrides)
       );
-      setBuilderPreview(result);
-      setBuilderRaw(result.Description || "");
-      setBuilderRenderedHTML(result.DescriptionHTML || "");
-      setBuilderDirty(false);
+      setBuilderPreview((prev) => upsertBuilderGroup(prev, updatedGroup));
+      setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
+      setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescriptionHTML || "" }));
+      setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: false }));
       setBuilderSaved("Description reset.");
     } catch (err) {
       setBuilderError(String(err));
@@ -1697,21 +1758,22 @@ export default function App() {
     }
   };
 
-  const renderBuilderDescription = async () => {
+  const renderBuilderDescription = async (groupKey: string) => {
     setBuilderError("");
     const renderer = globalThis.go?.guiapp?.App?.RenderDescription;
     if (!renderer) {
       setBuilderError("Description rendering is unavailable in this build.");
       return;
     }
-    if (!builderRaw.trim()) {
-      setBuilderRenderedHTML("");
+    const raw = builderRawByGroup[groupKey] || "";
+    if (!raw.trim()) {
+      setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: "" }));
       return;
     }
     setBuilderRenderLoading(true);
     try {
-      const html = await renderer(builderRaw);
-      setBuilderRenderedHTML(html || "");
+      const html = await renderer(raw);
+      setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: html || "" }));
     } catch (err) {
       setBuilderError(String(err));
     } finally {
@@ -1719,7 +1781,7 @@ export default function App() {
     }
   };
 
-  const saveBuilderDescription = async () => {
+  const saveBuilderDescription = async (groupKey: string) => {
     setBuilderError("");
     setBuilderSaved("");
     const saver = globalThis.go?.guiapp?.App?.SaveDescriptionOverride;
@@ -1731,13 +1793,38 @@ export default function App() {
       setBuilderError("Please select a file or folder.");
       return;
     }
+    const currentGroup = (builderPreview.Groups || []).find((group) => group.GroupKey === groupKey);
+    if (!currentGroup) {
+      setBuilderError("Description group not found.");
+      return;
+    }
     setBuilderSaving(true);
     try {
-      await saver(path.trim(), builderRaw);
+      const updatedGroup = await saver(
+        path.trim(),
+        groupKey,
+        builderRawByGroup[groupKey] || "",
+        currentGroup.Trackers || [],
+        normalizeOverrides(idOverrideState?.overrides || {}),
+        normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+      );
+      const nextPreview = upsertBuilderGroup(builderPreview, updatedGroup);
+      const shouldRefreshDryRun = path.trim() === String(trackerDryRunPreview.SourcePath || "").trim() && (trackerDryRunPreview.Trackers || []).length > 0;
+
+      setBuilderPreview(nextPreview);
+      setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
+      setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescriptionHTML || "" }));
       setBuilderSaved("Description saved.");
-      setBuilderDirty(false);
-      await runPreparation(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {});
-      setActiveTab("prepare");
+      setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: false }));
+
+      if (shouldRefreshDryRun) {
+        try {
+          await runTrackerDryRun(nextPreview.Groups || [], false);
+          setBuilderSaved("Description saved. Dry run refreshed.");
+        } catch (err) {
+          setTrackerDryRunError(`Description saved, but dry run refresh failed: ${String(err)}`);
+        }
+      }
     } catch (err) {
       setBuilderError(String(err));
     } finally {
@@ -2106,7 +2193,6 @@ export default function App() {
     } catch (err) {
       const message = String(err);
       setDupeChecked(false);
-      setPrepReady(false);
       setPrepPreview(emptyPreparation);
       if (message.includes("dupe check requires metadata preview")) {
         setDupeError("Fetch metadata first to cache a preview before checking dupes.");
@@ -2142,7 +2228,6 @@ export default function App() {
         setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
       } else if (normalized === "failed" || normalized === "canceled") {
         setDupeChecked(false);
-        setPrepReady(false);
         setPrepPreview(emptyPreparation);
         setDupeError(snapshot.error || "Dupe check failed.");
       }
@@ -2164,13 +2249,12 @@ export default function App() {
     setDupeTrackerFlags({});
     setPrepPreview(emptyPreparation);
     setPrepError("");
-    setPrepReady(false);
-    setPrepRendered({});
     setBuilderPreview(emptyDescriptionBuilder);
-    setBuilderRaw("");
-    setBuilderRenderedHTML("");
+    setBuilderRawByGroup({});
+    setBuilderRenderedByGroup({});
+    setBuilderExpandedGroups({});
     setBuilderError("");
-    setBuilderDirty(false);
+    setBuilderDirtyByGroup({});
     setBuilderSaved("");
     setBuilderAutoRequestKey("");
     setOverrideRuleBlocks(false);
@@ -2203,6 +2287,12 @@ export default function App() {
     setBuilderAutoRequestKey(requestKey);
     runDescriptionBuilder(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {});
   }, [activeTab, dupeChecked, builderLoading, builderSaving, builderDirty, path, idOverrideState, releaseOverrideState, builderAutoRequestKey, runDescriptionBuilder]);
+
+  useEffect(() => {
+    if (activeTab !== "upload") return;
+    if (builderReady) return;
+    setActiveTab("description_builder");
+  }, [activeTab, builderReady]);
 
   useEffect(() => {
     if (activeTab !== "screenshots") return;
@@ -2434,6 +2524,7 @@ export default function App() {
         overrideRuleBlocks,
         ignoredDupeTrackers,
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
+        builderPreview.Groups || [],
         runDebug,
         runLogLevel
       );
@@ -2446,27 +2537,45 @@ export default function App() {
       setTrackerUploadRunning(false);
       setTrackerUploadError(String(err));
     }
-  }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerDryRunPreview, trackerQuestionnaireAnswers, runDebug, runLogLevel]);
+    }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerDryRunPreview, trackerQuestionnaireAnswers, builderPreview, runDebug, runLogLevel]);
 
-  const handleRunTrackerDryRun = useCallback(async () => {
-    setTrackerDryRunError("");
+  const runTrackerDryRun = useCallback(async (descriptionGroups: DescriptionBuilderPreview["Groups"], surfaceError = true) => {
+    if (surfaceError) {
+      setTrackerDryRunError("");
+    }
     const fetcher = globalThis.go?.guiapp?.App?.FetchTrackerDryRun;
     if (!fetcher) {
-      setTrackerDryRunError("Tracker dry run is unavailable in this build.");
-      return;
+      const message = "Tracker dry run is unavailable in this build.";
+      if (surfaceError) {
+        setTrackerDryRunError(message);
+        return null;
+      }
+      throw new Error(message);
     }
     if (!path.trim()) {
-      setTrackerDryRunError("Please select a file or folder.");
-      return;
+      const message = "Please select a file or folder.";
+      if (surfaceError) {
+        setTrackerDryRunError(message);
+        return null;
+      }
+      throw new Error(message);
     }
     if (idOverrideState?.invalid || releaseOverrideState?.invalid) {
-      setTrackerDryRunError("Fix invalid overrides before running dry run.");
-      return;
+      const message = "Fix invalid overrides before running dry run.";
+      if (surfaceError) {
+        setTrackerDryRunError(message);
+        return null;
+      }
+      throw new Error(message);
     }
     const selectedTrackers = getSelectedUploadTrackers();
     if (selectedTrackers.length === 0) {
-      setTrackerDryRunError("Enable at least one tracker in Upload Targets.");
-      return;
+      const message = "Enable at least one tracker in Upload Targets.";
+      if (surfaceError) {
+        setTrackerDryRunError(message);
+        return null;
+      }
+      throw new Error(message);
     }
 
     setTrackerDryRunLoading(true);
@@ -2479,6 +2588,7 @@ export default function App() {
         overrideRuleBlocks,
         ignoredDupeTrackers,
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
+        descriptionGroups,
         runDebug,
         runLogLevel
       );
@@ -2494,12 +2604,21 @@ export default function App() {
         });
         return next;
       });
+      return result || emptyTrackerDryRun;
     } catch (err) {
-      setTrackerDryRunError(String(err));
+      if (surfaceError) {
+        setTrackerDryRunError(String(err));
+        return null;
+      }
+      throw err;
     } finally {
       setTrackerDryRunLoading(false);
     }
   }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerQuestionnaireAnswers, runDebug, runLogLevel]);
+
+  const handleRunTrackerDryRun = useCallback(async () => {
+    await runTrackerDryRun(builderPreview.Groups || []);
+  }, [builderPreview, runTrackerDryRun]);
 
   const handleCancelTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
@@ -2602,11 +2721,31 @@ export default function App() {
     }
   };
 
+  const showConfigOpStatus = useCallback((status: NonNullable<typeof configOpStatus>) => {
+    if (configOpTimerRef.current) clearTimeout(configOpTimerRef.current);
+    setConfigOpStatus(status);
+    if (status.type === "success") {
+      configOpTimerRef.current = setTimeout(() => setConfigOpStatus(null), 8000);
+    }
+  }, []);
+
+  const dismissConfigOpStatus = useCallback(() => {
+    if (configOpTimerRef.current) clearTimeout(configOpTimerRef.current);
+    setConfigOpStatus(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (configOpTimerRef.current) clearTimeout(configOpTimerRef.current);
+    };
+  }, []);
+
   const handleExportSettings = async () => {
     clearSettingsStatus();
+    dismissConfigOpStatus();
     const exportConfig = globalThis.go?.guiapp?.App?.ExportConfig;
     if (!exportConfig) {
-      setSettingsErrorMessage("Settings export is unavailable in this build.");
+      showConfigOpStatus({ type: "error", title: "Export Failed", message: "Settings export is unavailable in this build." });
       return;
     }
 
@@ -2614,14 +2753,120 @@ export default function App() {
     try {
       const exportedPath = await exportConfig();
       if (exportedPath?.trim()) {
-        setSettingsSavedMessage(`Settings exported to ${exportedPath}.`);
+        showConfigOpStatus({ type: "success", title: "Configuration Exported", message: `Saved to ${exportedPath}` });
       }
     } catch (err) {
-      setSettingsErrorMessage(String(err));
+      showConfigOpStatus({ type: "error", title: "Export Failed", message: String(err) });
     } finally {
       setSettingsExporting(false);
     }
   };
+
+  const handleImportConfigRequest = () => {
+    clearSettingsStatus();
+    dismissConfigOpStatus();
+    setImportConfirmOpen(true);
+  };
+
+  const handleImportConfigCancel = () => {
+    if (settingsImporting) return;
+    setImportConfirmOpen(false);
+  };
+
+  const handleImportConfigConfirm = async () => {
+    const importConfig = globalThis.go?.guiapp?.App?.ImportConfig;
+    if (!importConfig) {
+      setImportConfirmOpen(false);
+      showConfigOpStatus({ type: "error", title: "Import Failed", message: "Config import is unavailable in this build." });
+      return;
+    }
+
+    setSettingsImporting(true);
+    try {
+      const result = await importConfig();
+      const message = (result?.message ?? "").trim();
+      if (!message) {
+        return;
+      }
+      const warnings = result?.warnings ?? [];
+      if (warnings.length > 0) {
+        showConfigOpStatus({ type: "warning", title: "Imported with Warnings", message, warnings });
+      } else {
+        showConfigOpStatus({ type: "success", title: "Configuration Imported", message });
+      }
+      loadSettings();
+    } catch (err) {
+      showConfigOpStatus({ type: "error", title: "Import Failed", message: String(err) });
+    } finally {
+      setSettingsImporting(false);
+      setImportConfirmOpen(false);
+    }
+  };
+
+  const loadWebAuthStatus = useCallback(async () => {
+    const getWebAuthStatus = globalThis.go?.guiapp?.App?.GetWebAuthStatus;
+    if (!getWebAuthStatus) {
+      setWebAuthStatus(null);
+      setWebAuthError("");
+      return;
+    }
+
+    setWebAuthLoading(true);
+    setWebAuthError("");
+    try {
+      const status = await getWebAuthStatus();
+      setWebAuthStatus(status);
+    } catch (err) {
+      setWebAuthStatus({ ...emptyWebAuthStatus, message: "Unable to load web auth status." });
+      setWebAuthError(String(err));
+    } finally {
+      setWebAuthLoading(false);
+    }
+  }, []);
+
+  const handleCreateWebAuth = useCallback(async () => {
+    clearSettingsStatus();
+    dismissConfigOpStatus();
+    setWebAuthError("");
+
+    if (webAuthPassword !== webAuthConfirm) {
+      setWebAuthError("Passwords do not match.");
+      return;
+    }
+
+    const createWebAuth = globalThis.go?.guiapp?.App?.CreateWebAuth;
+    if (!createWebAuth) {
+      setWebAuthError("Web auth bootstrap is unavailable in this build.");
+      return;
+    }
+
+    setWebAuthCreating(true);
+    try {
+      const status = await createWebAuth(webAuthUsername, webAuthPassword);
+      setWebAuthStatus(status);
+      setWebAuthPassword("");
+      setWebAuthConfirm("");
+      markSettingsSaved("Web auth created. Future secret saves and exports can use encryption.");
+    } catch (err) {
+      setWebAuthError(String(err));
+    } finally {
+      setWebAuthCreating(false);
+    }
+  }, [
+    clearSettingsStatus,
+    dismissConfigOpStatus,
+    markSettingsSaved,
+    webAuthConfirm,
+    webAuthPassword,
+    webAuthUsername
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== "settings") {
+      return;
+    }
+    loadWebAuthStatus();
+  }, [activeTab, loadWebAuthStatus]);
 
   const dupeProgressStatus = String(dupeCheckSnapshot?.status || "").toLowerCase();
   const dupeCompletedCount = Number(dupeCheckSnapshot?.completedCount || 0);
@@ -2687,16 +2932,7 @@ export default function App() {
                 Description Builder
               </button>
             ) : null}
-            {dupeChecked ? (
-              <button
-                className={`subtab-button ${activeTab === "prepare" ? "active" : ""}`}
-                type="button"
-                onClick={() => setActiveTab("prepare")}
-              >
-                Preparation
-              </button>
-            ) : null}
-            {prepReady ? (
+            {builderReady ? (
               <button
                 className={`subtab-button ${activeTab === "upload" ? "active" : ""}`}
                 type="button"
@@ -2754,9 +2990,12 @@ export default function App() {
               configData={configData}
               settingsLoading={settingsLoading}
               settingsExporting={settingsExporting}
+              settingsImporting={settingsImporting}
               settingsDirty={settingsDirty}
               settingsSaved={settingsSaved}
               settingsError={settingsError}
+              configOpStatus={configOpStatus}
+              dismissConfigOpStatus={dismissConfigOpStatus}
               settingsSection={settingsSection}
               settingsSections={settingsSections}
               showAdvancedToggle={showAdvancedToggle}
@@ -2765,7 +3004,23 @@ export default function App() {
               setSettingsAdvanced={setSettingsAdvanced}
               loadSettings={loadSettings}
               handleExportSettings={handleExportSettings}
+              handleImportConfig={handleImportConfigRequest}
+              importConfirmOpen={importConfirmOpen}
+              handleImportConfigConfirm={handleImportConfigConfirm}
+              handleImportConfigCancel={handleImportConfigCancel}
               handleSaveSettings={handleSaveSettings}
+              webAuthAvailable={Boolean(globalThis.go?.guiapp?.App?.GetWebAuthStatus)}
+              webAuthStatus={webAuthStatus}
+              webAuthLoading={webAuthLoading}
+              webAuthCreating={webAuthCreating}
+              webAuthUsername={webAuthUsername}
+              webAuthPassword={webAuthPassword}
+              webAuthConfirm={webAuthConfirm}
+              webAuthError={webAuthError}
+              setWebAuthUsername={setWebAuthUsername}
+              setWebAuthPassword={setWebAuthPassword}
+              setWebAuthConfirm={setWebAuthConfirm}
+              handleCreateWebAuth={handleCreateWebAuth}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}
               renderMapSection={renderMapSection}
@@ -2888,32 +3143,22 @@ export default function App() {
             <DescriptionBuilderPage
               path={path}
               builderPreview={builderPreview}
-              builderRaw={builderRaw}
-              builderRenderedHTML={builderRenderedHTML}
+              builderRawByGroup={builderRawByGroup}
+              builderRenderedByGroup={builderRenderedByGroup}
+              builderExpandedGroups={builderExpandedGroups}
               builderLoading={builderLoading}
               builderSaving={builderSaving}
               builderRenderLoading={builderRenderLoading}
               builderError={builderError}
               builderSaved={builderSaved}
-              setBuilderRaw={setBuilderRaw}
-              setBuilderDirty={setBuilderDirty}
-              resetBuilderDescription={() =>
-                resetBuilderDescription(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {})
+              setBuilderRawByGroup={setBuilderRawByGroup}
+              setBuilderDirtyByGroup={setBuilderDirtyByGroup}
+              setBuilderExpandedGroups={setBuilderExpandedGroups}
+              resetBuilderDescription={(groupKey) =>
+                resetBuilderDescription(groupKey, idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {})
               }
               renderBuilderDescription={renderBuilderDescription}
               saveBuilderDescription={saveBuilderDescription}
-            />
-          ) : activeTab === "prepare" ? (
-            <PreparationPage
-              path={path}
-              prepLoading={prepLoading}
-              prepError={prepError}
-              prepPreview={prepPreview}
-              prepRendered={prepRendered}
-              setPrepRendered={setPrepRendered}
-              runPreparation={() =>
-                runPreparation(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {})
-              }
             />
           ) : activeTab === "upload" ? (
             <TrackerUploadPage

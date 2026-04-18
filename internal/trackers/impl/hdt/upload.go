@@ -11,12 +11,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -26,6 +26,7 @@ import (
 
 var tokenPattern = regexp.MustCompile(`name="csrfToken"\s+value="([^"]+)"`)
 var successPattern = regexp.MustCompile(`details\.php\?id=([a-zA-Z0-9]+)|Upload successful!`)
+var detailsPattern = regexp.MustCompile(`details\.php\?id=([a-zA-Z0-9]+)`)
 
 type uploadState struct {
 	baseURL       string
@@ -73,7 +74,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	responseBody, _ := io.ReadAll(resp.Body)
 	combined := finalURL + "\n" + string(responseBody)
 	id := ""
-	if match := regexp.MustCompile(`details\.php\?id=([a-zA-Z0-9]+)`).FindStringSubmatch(combined); len(match) >= 2 {
+	if match := detailsPattern.FindStringSubmatch(combined); len(match) >= 2 {
 		id = match[1]
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && successPattern.MatchString(combined) {
@@ -132,7 +133,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun bool) (uploadState, []*http.Cookie, error) {
 	base := resolveBaseURL(req.TrackerConfig.URL)
-	cookies, err := loadCookies(req.AppConfig.MainSettings.DBPath, base)
+	cookies, err := loadCookies(ctx, req.AppConfig.MainSettings.DBPath, base)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -149,6 +150,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
+		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
 	description, err := buildDescription(req.Meta, assets)
@@ -207,17 +209,12 @@ func resolveBaseURL(configURL string) string {
 	return strings.TrimRight(trimmed, "/")
 }
 
-func loadCookies(dbPath string, baseURL string) ([]*http.Cookie, error) {
+func loadCookies(ctx context.Context, dbPath string, baseURL string) ([]*http.Cookie, error) {
 	host := "hd-torrents.me"
 	if parsed, err := url.Parse(baseURL); err == nil && parsed.Host != "" {
 		host = parsed.Host
 	}
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "HDT", ".txt") {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return commonhttp.LoadNetscapeCookies(candidate, host)
-		}
-	}
-	return nil, errors.New("trackers: HDT cookie file not found")
+	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "HDT", host)
 }
 
 func fetchToken(ctx context.Context, baseURL string, cookies []*http.Cookie) (string, error) {

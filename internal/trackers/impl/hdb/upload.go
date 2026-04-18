@@ -4,7 +4,6 @@
 package hdb
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -21,6 +20,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -30,9 +30,8 @@ import (
 )
 
 const (
-	hdbBaseURL        = "https://hdbits.org"
-	hdbUploadPath     = "/upload/upload"
-	hdbCookieFileName = "HDB.txt"
+	hdbBaseURL    = "https://hdbits.org"
+	hdbUploadPath = "/upload/upload"
 )
 
 var hdbSuccessURLPattern = regexp.MustCompile(`(?i)details\.php\?id=(\d+)&uploaded=\d+`)
@@ -62,6 +61,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return api.UploadSummary{}, err
 		}
+		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
 	descriptionText, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
@@ -80,7 +80,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	uploadURL += hdbUploadPath
 
-	cookies, err := resolveHDBCookies(req.AppConfig.MainSettings.DBPath)
+	cookies, err := resolveHDBCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -170,6 +170,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return api.TrackerDryRunEntry{}, err
 		}
+		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
 	descriptionText, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
@@ -386,78 +387,8 @@ func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker
 	return filepath.Join(tmpDir, base+"."+name+".torrent"), nil
 }
 
-func resolveHDBCookies(dbPath string) ([]*http.Cookie, error) {
-	path := ""
-	for _, candidate := range cookiePathCandidates(dbPath) {
-		if candidate == "" {
-			continue
-		}
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			path = candidate
-			break
-		}
-	}
-	if path == "" {
-		return nil, errors.New("trackers: HDB cookie file not found")
-	}
-
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	cookies := make([]*http.Cookie, 0)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "#HttpOnly_") {
-			line = strings.TrimPrefix(line, "#HttpOnly_")
-		} else if strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.Split(line, "\t")
-		if len(parts) < 7 {
-			continue
-		}
-		name := strings.TrimSpace(parts[5])
-		value := strings.TrimSpace(strings.Join(parts[6:], "\t"))
-		if name == "" || value == "" {
-			continue
-		}
-		domain := strings.TrimPrefix(strings.TrimSpace(parts[0]), ".")
-		pathValue := strings.TrimSpace(parts[2])
-		if pathValue == "" {
-			pathValue = "/"
-		}
-		cookies = append(cookies, &http.Cookie{
-			Name:   name,
-			Value:  value,
-			Domain: domain,
-			Path:   pathValue,
-			Secure: strings.EqualFold(strings.TrimSpace(parts[3]), "TRUE"),
-		})
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	if len(cookies) == 0 {
-		return nil, errors.New("trackers: HDB cookie file has no valid entries")
-	}
-	return cookies, nil
-}
-
-func cookiePathCandidates(dbPath string) []string {
-	candidates := make([]string, 0, 1)
-	if strings.TrimSpace(dbPath) != "" {
-		if path, err := db.CookiePath(dbPath, hdbCookieFileName); err == nil {
-			candidates = append(candidates, path)
-		}
-	}
-	return candidates
+func resolveHDBCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
+	return cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "HDB", "hdbits.org")
 }
 
 func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api.PreparedMetadata, torrentPath string, torrentID string, passkey string, cookies []*http.Cookie) error {

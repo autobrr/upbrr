@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -16,15 +17,6 @@ import (
 type runOptions struct {
 	Debug       bool
 	RunLogLevel string
-}
-
-type sharedRepository struct {
-	api.MetadataRepository
-}
-
-// Close is a deliberate no-op so per-run cores cannot close the app's shared repository.
-func (sharedRepository) Close() error {
-	return nil
 }
 
 func (a *App) buildRunOptions(debug bool, runLogLevel string) (runOptions, error) {
@@ -69,7 +61,7 @@ func (a *App) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
-		Repository: sharedRepository{MetadataRepository: a.repo},
+		Repository: a.repo,
 	})
 	if err != nil {
 		_ = logger.Close()
@@ -78,7 +70,7 @@ func (a *App) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
 
 	return coreSvc, logger, nil
 }
-func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
+func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions {
 	return api.UploadOptions{
 		Debug:       opts.Debug,
 		DryRun:      opts.Debug,

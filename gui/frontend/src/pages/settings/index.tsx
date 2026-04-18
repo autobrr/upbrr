@@ -1,18 +1,29 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { ConfigMap, ConfigValue, FieldMeta } from "../../types";
+import type { ConfigMap, ConfigValue, FieldMeta, WebAuthStatus } from "../../types";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
+
+type ConfigOpStatus = {
+  type: "success" | "error" | "warning";
+  title: string;
+  message: string;
+  warnings?: string[];
+} | null;
 
 type Props = {
   configData: ConfigMap | null;
   settingsLoading: boolean;
   settingsExporting: boolean;
+  settingsImporting: boolean;
   settingsDirty: boolean;
   settingsSaved: string;
   settingsError: string;
+  configOpStatus: ConfigOpStatus;
+  dismissConfigOpStatus: () => void;
   settingsSection: string;
   settingsSections: SettingsSection[];
   showAdvancedToggle: boolean;
@@ -21,7 +32,23 @@ type Props = {
   setSettingsAdvanced: Dispatch<SetStateAction<Record<string, boolean>>>;
   loadSettings: () => void;
   handleExportSettings: () => void;
+  handleImportConfig: () => void;
+  importConfirmOpen: boolean;
+  handleImportConfigConfirm: () => void;
+  handleImportConfigCancel: () => void;
   handleSaveSettings: () => void;
+  webAuthAvailable: boolean;
+  webAuthStatus: WebAuthStatus | null;
+  webAuthLoading: boolean;
+  webAuthCreating: boolean;
+  webAuthUsername: string;
+  webAuthPassword: string;
+  webAuthConfirm: string;
+  webAuthError: string;
+  setWebAuthUsername: Dispatch<SetStateAction<string>>;
+  setWebAuthPassword: Dispatch<SetStateAction<string>>;
+  setWebAuthConfirm: Dispatch<SetStateAction<string>>;
+  handleCreateWebAuth: () => void;
   renderImageHostingSection: () => JSX.Element | null;
   renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
   renderMapSection: (
@@ -38,9 +65,12 @@ export default function SettingsPage(props: Props) {
     configData,
     settingsLoading,
     settingsExporting,
+    settingsImporting,
     settingsDirty,
     settingsSaved,
     settingsError,
+    configOpStatus,
+    dismissConfigOpStatus,
     settingsSection,
     settingsSections,
     showAdvancedToggle,
@@ -49,13 +79,31 @@ export default function SettingsPage(props: Props) {
     setSettingsAdvanced,
     loadSettings,
     handleExportSettings,
+    handleImportConfig,
+    importConfirmOpen,
+    handleImportConfigConfirm,
+    handleImportConfigCancel,
     handleSaveSettings,
+    webAuthAvailable,
+    webAuthStatus,
+    webAuthLoading,
+    webAuthCreating,
+    webAuthUsername,
+    webAuthPassword,
+    webAuthConfirm,
+    webAuthError,
+    setWebAuthUsername,
+    setWebAuthPassword,
+    setWebAuthConfirm,
+    handleCreateWebAuth,
     renderImageHostingSection,
     renderTrackerSection,
     renderMapSection,
     renderField,
     sectionFieldMeta
   } = props;
+
+  const [warningsExpanded, setWarningsExpanded] = useState(false);
 
   return (
     <div className="content-stack">
@@ -83,20 +131,67 @@ export default function SettingsPage(props: Props) {
               className="ghost"
               type="button"
               onClick={handleExportSettings}
-              disabled={settingsLoading || settingsExporting}
+              disabled={settingsLoading || settingsExporting || settingsImporting}
             >
               {settingsExporting ? "Exporting..." : "Export"}
+            </button>
+            <button
+              className="ghost"
+              type="button"
+              onClick={handleImportConfig}
+              disabled={settingsLoading || settingsExporting || settingsImporting}
+            >
+              {settingsImporting ? "Importing..." : "Import"}
             </button>
             <button
               className="primary"
               type="button"
               onClick={handleSaveSettings}
-              disabled={settingsLoading || settingsExporting || !settingsDirty}
+              disabled={settingsLoading || settingsExporting || settingsImporting || !settingsDirty}
             >
               Save
             </button>
           </div>
         </div>
+
+        {configOpStatus ? (
+          <div className={`config-status-banner config-status-banner--${configOpStatus.type}`}>
+            <div className="config-status-banner__icon">
+              {configOpStatus.type === "success" ? (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="currentColor" opacity=".15"/><path d="M6.5 10.5 8.5 12.5 13.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5"/></svg>
+              ) : configOpStatus.type === "warning" ? (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="currentColor" opacity=".15"/><path d="M10 7v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="10" cy="13.5" r=".75" fill="currentColor"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5"/></svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="currentColor" opacity=".15"/><path d="M12.5 7.5 7.5 12.5M7.5 7.5l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5"/></svg>
+              )}
+            </div>
+            <div className="config-status-banner__body">
+              <p className="config-status-banner__title">{configOpStatus.title}</p>
+              <p className="config-status-banner__message">{configOpStatus.message}</p>
+              {configOpStatus.warnings && configOpStatus.warnings.length > 0 ? (
+                <div className="config-status-banner__warnings">
+                  <button
+                    type="button"
+                    className="config-status-banner__toggle"
+                    onClick={() => setWarningsExpanded((prev) => !prev)}
+                  >
+                    {warningsExpanded ? "Hide" : "Show"} {configOpStatus.warnings.length} warning{configOpStatus.warnings.length !== 1 ? "s" : ""}
+                  </button>
+                  {warningsExpanded ? (
+                    <ul className="config-status-banner__warning-list">
+                      {configOpStatus.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            <button type="button" className="config-status-banner__dismiss" onClick={dismissConfigOpStatus} aria-label="Dismiss">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10.5 3.5 3.5 10.5M3.5 3.5l7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            </button>
+          </div>
+        ) : null}
 
         <div className="settings-shell">
           <div className="settings-tags">
@@ -113,6 +208,80 @@ export default function SettingsPage(props: Props) {
           </div>
 
           <div className="settings-body">
+            {webAuthAvailable ? (
+              <details className="settings-subgroup settings-subgroup--collapsible settings-subgroup--auth">
+                <summary>Secret Encryption</summary>
+                <div>
+                  <p className="helper">
+                    Desktop installs can keep using plaintext secrets, or you can create
+                    <code> web-auth.json </code>
+                    to enable encrypted secret storage for future saves and exports.
+                  </p>
+                  <div className="settings-auth-status">
+                    <span className={`settings-auth-badge ${webAuthStatus?.usable ? "is-ready" : webAuthStatus?.exists ? "is-warning" : "is-idle"}`}>
+                      {webAuthLoading ? "Checking..." : webAuthStatus?.usable ? "Encryption enabled" : webAuthStatus?.exists ? "Auth file invalid" : "Plaintext fallback active"}
+                    </span>
+                    {webAuthStatus?.path ? (
+                      <p className="muted">Path: {webAuthStatus.path}</p>
+                    ) : null}
+                    {webAuthStatus?.message ? (
+                      <p className="muted">{webAuthStatus.message}</p>
+                    ) : null}
+                    {webAuthStatus?.usable && webAuthStatus.username ? (
+                      <p className="muted">Configured user: {webAuthStatus.username}</p>
+                    ) : null}
+                  </div>
+                  {webAuthStatus?.canCreate ? (
+                    <div className="settings-grid">
+                      <label className="settings-field">
+                        <span>Username</span>
+                        <input
+                          value={webAuthUsername}
+                          onChange={(event) => setWebAuthUsername(event.target.value)}
+                          autoComplete="username"
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Password</span>
+                        <input
+                          type="password"
+                          value={webAuthPassword}
+                          onChange={(event) => setWebAuthPassword(event.target.value)}
+                          autoComplete="new-password"
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Confirm password</span>
+                        <input
+                          type="password"
+                          value={webAuthConfirm}
+                          onChange={(event) => setWebAuthConfirm(event.target.value)}
+                          autoComplete="new-password"
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                  <div className="settings-auth-actions">
+                    <button
+                      className="primary"
+                      type="button"
+                      onClick={handleCreateWebAuth}
+                      disabled={
+                        webAuthLoading ||
+                        webAuthCreating ||
+                        !webAuthStatus?.canCreate ||
+                        !webAuthUsername.trim() ||
+                        !webAuthPassword.trim() ||
+                        !webAuthConfirm.trim()
+                      }
+                    >
+                      {webAuthCreating ? "Creating..." : "Create web-auth.json"}
+                    </button>
+                  </div>
+                  {webAuthError ? <p className="error">{webAuthError}</p> : null}
+                </div>
+              </details>
+            ) : null}
             {configData ? (
               <div className="settings-form">
                 {showAdvancedToggle ? (
@@ -169,6 +338,68 @@ export default function SettingsPage(props: Props) {
         {settingsSaved ? <p className="settings-saved">{settingsSaved}</p> : null}
         {settingsError ? <p className="error">{settingsError}</p> : null}
       </section>
+
+      {importConfirmOpen ? (
+        <div
+          className="import-confirm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="import-confirm-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) handleImportConfigCancel();
+          }}
+        >
+          <div className="import-confirm-dialog">
+            <div className="import-confirm-dialog__icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <path d="M12 3 1.5 21h21L12 3Z" fill="currentColor" opacity=".12" />
+                <path d="M12 3 1.5 21h21L12 3Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                <path d="M12 10v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <circle cx="12" cy="18" r="1" fill="currentColor" />
+              </svg>
+            </div>
+            <div className="import-confirm-dialog__body">
+              <h2 id="import-confirm-title" className="import-confirm-dialog__title">
+                Replace current configuration?
+              </h2>
+              <p className="import-confirm-dialog__message">
+                Importing a configuration file will overwrite your current settings in the database.
+                This action cannot be undone.
+              </p>
+              <p className="import-confirm-dialog__hint">
+                We strongly recommend exporting your current configuration first so you can restore it
+                if the imported file isn&apos;t what you expected.
+              </p>
+            </div>
+            <div className="import-confirm-dialog__actions">
+              <button
+                type="button"
+                className="ghost"
+                onClick={handleImportConfigCancel}
+                disabled={settingsImporting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                onClick={handleExportSettings}
+                disabled={settingsExporting || settingsImporting}
+              >
+                {settingsExporting ? "Exporting..." : "Export current config"}
+              </button>
+              <button
+                type="button"
+                className="primary import-confirm-dialog__confirm"
+                onClick={handleImportConfigConfirm}
+                disabled={settingsImporting}
+              >
+                {settingsImporting ? "Importing..." : "Choose file & import"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

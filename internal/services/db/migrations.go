@@ -4,31 +4,69 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 )
 
-const baselineSchemaVersion = 1
+const (
+	baselineMigrationID              = "2026_04_baseline_schema"
+	legacyCompatibilitySchemaVersion = 8
+	schemaMigrationsTableDDL         = `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			id TEXT PRIMARY KEY,
+			applied_at TEXT NOT NULL
+		)
+	`
+)
 
 type migrationStep struct {
-	version int
-	apply   func(*sql.Tx) error
+	id        string
+	dependsOn []string
+	apply     func(context.Context, migrationExecutor) error
 }
 
-// Add new forward-only migrations here.
-// Example:
-// {version: 2, apply: migrateV2},
-var futureMigrations = []migrationStep{
-	{version: 2, apply: migrateV2},
-	{version: 3, apply: migrateV3},
-	{version: 4, apply: migrateV4},
-	{version: 5, apply: migrateV5},
-	{version: 6, apply: migrateV6},
+type migrationExecutor interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-func migrateV2(tx *sql.Tx) error {
+// Migration authoring note:
+//   - Add new forward-only migrations to migrationRegistry with a stable ID.
+//   - Never rename or reuse an existing migration ID after it ships.
+//   - Depend on the narrowest prerequisite IDs you need instead of assuming a
+//     contiguous global version. That keeps branch-local migrations merge-safe.
+//   - When replacing or superseding a branch-local migration before release,
+//     update legacyVersionToMigrationIDs only if the old integer user_version
+//     bridge mapping also changed historically.
+var migrationRegistry = []migrationStep{
+	{id: baselineMigrationID, apply: createBaselineSchema},
+	{id: "2026_04_add_dvd_mediainfo", dependsOn: []string{baselineMigrationID}, apply: migrateAddDVDMediaInfo},
+	{id: "2026_04_add_release_override_use_season_episode", dependsOn: []string{baselineMigrationID}, apply: migrateAddReleaseOverrideUseSeasonEpisode},
+	{id: "2026_04_add_history_indexes", dependsOn: []string{baselineMigrationID}, apply: migrateAddHistoryIndexes},
+	{id: "2026_04_backfill_uploaded_image_usage_scope", dependsOn: []string{"2026_04_add_history_indexes"}, apply: migrateBackfillUploadedImageUsageScope},
+	{id: "2026_04_add_screenshot_slot_tables", dependsOn: []string{"2026_04_backfill_uploaded_image_usage_scope"}, apply: migrateAddScreenshotSlotTables},
+	{id: "2026_04_normalize_description_overrides", dependsOn: []string{"2026_04_add_screenshot_slot_tables"}, apply: migrateNormalizeDescriptionOverrides},
+	{id: "2026_04_add_tracker_cookies", dependsOn: []string{"2026_04_normalize_description_overrides"}, apply: migrateAddTrackerCookies},
+}
+
+var legacyVersionToMigrationIDs = map[int][]string{
+	1: {baselineMigrationID},
+	2: {baselineMigrationID, "2026_04_add_dvd_mediainfo"},
+	3: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode"},
+	4: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes"},
+	5: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope"},
+	6: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope", "2026_04_add_screenshot_slot_tables"},
+	7: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope", "2026_04_add_screenshot_slot_tables", "2026_04_normalize_description_overrides"},
+	8: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope", "2026_04_add_screenshot_slot_tables", "2026_04_normalize_description_overrides", "2026_04_add_tracker_cookies"},
+}
+
+func migrateAddDVDMediaInfo(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`
 		CREATE TABLE IF NOT EXISTS dvd_mediainfo (
@@ -52,7 +90,7 @@ func migrateV2(tx *sql.Tx) error {
 	}
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -60,13 +98,13 @@ func migrateV2(tx *sql.Tx) error {
 	return nil
 }
 
-func migrateV3(tx *sql.Tx) error {
+func migrateAddReleaseOverrideUseSeasonEpisode(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`,
 	}
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -74,14 +112,14 @@ func migrateV3(tx *sql.Tx) error {
 	return nil
 }
 
-func migrateV4(tx *sql.Tx) error {
+func migrateAddHistoryIndexes(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`CREATE INDEX IF NOT EXISTS idx_file_metadata_updated_at ON file_metadata(updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_upload_records_source_created ON upload_records(source_path, created_at DESC)`,
 	}
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -89,9 +127,9 @@ func migrateV4(tx *sql.Tx) error {
 	return nil
 }
 
-func migrateV5(tx *sql.Tx) error {
+func migrateBackfillUploadedImageUsageScope(ctx context.Context, exec migrationExecutor) error {
 	statements := make([]string, 0, 5)
-	exists, err := tableColumnExists(tx, "uploaded_images", "usage_scope")
+	exists, err := tableColumnExists(ctx, exec, "uploaded_images", "usage_scope")
 	if err != nil {
 		return err
 	}
@@ -106,7 +144,7 @@ func migrateV5(tx *sql.Tx) error {
 	)
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -114,7 +152,7 @@ func migrateV5(tx *sql.Tx) error {
 	return nil
 }
 
-func migrateV6(tx *sql.Tx) error {
+func migrateAddScreenshotSlotTables(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`
 		CREATE TABLE IF NOT EXISTS screenshot_slots (
@@ -153,7 +191,7 @@ func migrateV6(tx *sql.Tx) error {
 	}
 
 	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
@@ -161,8 +199,97 @@ func migrateV6(tx *sql.Tx) error {
 	return nil
 }
 
-func tableColumnExists(tx *sql.Tx, tableName string, columnName string) (bool, error) {
-	rows, err := tx.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
+func migrateNormalizeDescriptionOverrides(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "description_overrides")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := exec.ExecContext(ctx, `
+			CREATE TABLE IF NOT EXISTS description_overrides (
+				source_path TEXT NOT NULL,
+				group_key TEXT NOT NULL DEFAULT "",
+				description TEXT NOT NULL DEFAULT "",
+				updated_at TEXT NOT NULL,
+				PRIMARY KEY (source_path, group_key)
+			)
+		`); err != nil {
+			return err
+		}
+		if _, err := exec.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	statements := []string{
+		`ALTER TABLE description_overrides RENAME TO description_overrides_legacy`,
+		`
+		CREATE TABLE description_overrides (
+			source_path TEXT NOT NULL,
+			group_key TEXT NOT NULL DEFAULT "",
+			description TEXT NOT NULL DEFAULT "",
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (source_path, group_key)
+		)
+		`,
+		`
+		INSERT OR REPLACE INTO description_overrides (source_path, group_key, description, updated_at)
+		SELECT
+			TRIM(COALESCE(source_path, "")),
+			"",
+			COALESCE(description, ""),
+			CASE
+				WHEN TRIM(COALESCE(updated_at, "")) = "" THEN STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')
+				ELSE updated_at
+			END
+		FROM description_overrides_legacy
+		WHERE TRIM(COALESCE(source_path, "")) <> ""
+		ORDER BY rowid
+		`,
+		`DROP TABLE description_overrides_legacy`,
+		`CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`,
+	}
+
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func migrateAddTrackerCookies(ctx context.Context, exec migrationExecutor) error {
+	statements := []string{
+		`
+		CREATE TABLE IF NOT EXISTS tracker_cookies (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tracker_id TEXT NOT NULL,
+			cookie_name TEXT NOT NULL,
+			encrypted_value TEXT NOT NULL,
+			nonce TEXT NOT NULL,
+			auth_tag TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(tracker_id, cookie_name)
+		)
+		`,
+		`CREATE INDEX IF NOT EXISTS idx_tracker_cookies_tracker_id ON tracker_cookies (tracker_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tracker_cookies_created_at ON tracker_cookies (created_at)`,
+	}
+
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName string, columnName string) (bool, error) {
+	rows, err := exec.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {
 		return false, err
 	}
@@ -188,99 +315,308 @@ func tableColumnExists(tx *sql.Tx, tableName string, columnName string) (bool, e
 	return false, nil
 }
 
+func tableExists(ctx context.Context, exec migrationExecutor, tableName string) (bool, error) {
+	var count int
+	if err := exec.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=?`, tableName).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func Migrate(db *sql.DB) error {
+	return MigrateContext(context.Background(), db)
+}
+
+func MigrateContext(ctx context.Context, db *sql.DB) error {
+	return migrateContextWithRegistry(ctx, db, migrationRegistry)
+}
+
+func migrateContextWithRegistry(ctx context.Context, db *sql.DB, registry []migrationStep) error {
 	if db == nil {
 		return errors.New("db: nil connection")
 	}
-
-	tx, err := db.Begin()
+	conn, err := db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("db migrate begin: %w", err)
+		return fmt.Errorf("db migrate conn: %w", err)
 	}
 	defer func() {
-		_ = tx.Rollback()
+		_ = conn.Close()
+	}()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return fmt.Errorf("db migrate begin immediate: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		}
 	}()
 
-	latestVersion, err := latestSchemaVersion()
+	validatedRegistry, err := validatedMigrationRegistry(registry)
 	if err != nil {
 		return err
 	}
 
-	currentVersion, err := readUserVersion(tx)
+	if err := ensureSchemaMigrationsTable(ctx, conn); err != nil {
+		return err
+	}
+
+	applied, err := readAppliedMigrationIDs(ctx, conn)
 	if err != nil {
 		return err
 	}
 
-	switch {
-	case currentVersion == 0:
-		if err := createBaselineSchema(tx); err != nil {
-			return fmt.Errorf("db bootstrap baseline: %w", err)
-		}
-		if err := writeUserVersion(tx, baselineSchemaVersion); err != nil {
+	if len(applied) == 0 {
+		applied, err = bridgeLegacyMigrationState(ctx, conn, validatedRegistry)
+		if err != nil {
 			return err
 		}
-		currentVersion = baselineSchemaVersion
-	case currentVersion > latestVersion:
-		return fmt.Errorf("db migrate: database schema version %d is newer than application version %d", currentVersion, latestVersion)
 	}
 
-	if err := applyFutureMigrations(tx, currentVersion); err != nil {
+	if err := validateAppliedMigrationDependencies(applied, validatedRegistry); err != nil {
 		return err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := applyPendingMigrations(ctx, conn, validatedRegistry, applied); err != nil {
+		return err
+	}
+	if err := writeLegacyCompatibilityVersion(ctx, conn); err != nil {
+		return err
+	}
+
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
 		return fmt.Errorf("db migrate commit: %w", err)
 	}
+	committed = true
 
 	return nil
 }
 
-func latestSchemaVersion() (int, error) {
-	expected := baselineSchemaVersion + 1
-	for _, step := range futureMigrations {
-		if step.apply == nil {
-			return 0, fmt.Errorf("db migrate: nil migration function for version %d", step.version)
-		}
-		if step.version != expected {
-			return 0, fmt.Errorf("db migrate: migration versions must be contiguous, expected v%d got v%d", expected, step.version)
-		}
-		expected++
+func validatedMigrationRegistry(steps []migrationStep) ([]migrationStep, error) {
+	if len(steps) == 0 {
+		return nil, errors.New("db migrate: migration registry is empty")
 	}
-	return expected - 1, nil
+
+	steps = slices.Clone(steps)
+	stepsByID := make(map[string]migrationStep, len(steps))
+	for _, step := range steps {
+		if strings.TrimSpace(step.id) == "" {
+			return nil, errors.New("db migrate: migration id cannot be blank")
+		}
+		if step.apply == nil {
+			return nil, fmt.Errorf("db migrate: nil migration function for id %q", step.id)
+		}
+		if _, exists := stepsByID[step.id]; exists {
+			return nil, fmt.Errorf("db migrate: duplicate migration id %q", step.id)
+		}
+		stepsByID[step.id] = step
+	}
+
+	for _, step := range steps {
+		for _, depID := range step.dependsOn {
+			if _, ok := stepsByID[depID]; !ok {
+				return nil, fmt.Errorf("db migrate: migration %q depends on unknown migration %q", step.id, depID)
+			}
+		}
+	}
+
+	seen := make(map[string]bool, len(steps))
+	inStack := make(map[string]bool, len(steps))
+	var visit func(string) error
+	visit = func(id string) error {
+		if inStack[id] {
+			return fmt.Errorf("db migrate: dependency cycle detected at migration %q", id)
+		}
+		if seen[id] {
+			return nil
+		}
+		inStack[id] = true
+		step := stepsByID[id]
+		for _, depID := range step.dependsOn {
+			if err := visit(depID); err != nil {
+				return err
+			}
+		}
+		inStack[id] = false
+		seen[id] = true
+		return nil
+	}
+
+	for _, step := range steps {
+		if err := visit(step.id); err != nil {
+			return nil, err
+		}
+	}
+
+	return steps, nil
 }
 
-func applyFutureMigrations(tx *sql.Tx, currentVersion int) error {
-	for _, step := range futureMigrations {
-		if step.version <= currentVersion {
+func ensureSchemaMigrationsTable(ctx context.Context, exec migrationExecutor) error {
+	if _, err := exec.ExecContext(ctx, schemaMigrationsTableDDL); err != nil {
+		return fmt.Errorf("db migrate: ensure schema_migrations table: %w", err)
+	}
+	return nil
+}
+
+func readAppliedMigrationIDs(ctx context.Context, exec migrationExecutor) (map[string]struct{}, error) {
+	rows, err := exec.QueryContext(ctx, `SELECT id FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("db migrate: read schema_migrations: %w", err)
+	}
+	defer rows.Close()
+
+	applied := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("db migrate: scan schema_migrations: %w", err)
+		}
+		applied[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db migrate: iterate schema_migrations: %w", err)
+	}
+	return applied, nil
+}
+
+func bridgeLegacyMigrationState(ctx context.Context, exec migrationExecutor, registry []migrationStep) (map[string]struct{}, error) {
+	currentVersion, err := readUserVersion(ctx, exec)
+	if err != nil {
+		return nil, err
+	}
+
+	if currentVersion == 0 {
+		return map[string]struct{}{}, nil
+	}
+
+	legacyIDs, ok := legacyVersionToMigrationIDs[currentVersion]
+	if !ok {
+		return nil, fmt.Errorf("db migrate: unsupported legacy schema version %d for schema_migrations bridge", currentVersion)
+	}
+
+	registryIDs := make(map[string]struct{}, len(registry))
+	for _, step := range registry {
+		registryIDs[step.id] = struct{}{}
+	}
+
+	applied := make(map[string]struct{}, len(legacyIDs))
+	for _, id := range legacyIDs {
+		if _, ok := registryIDs[id]; !ok {
+			return nil, fmt.Errorf("db migrate: legacy migration %q is not registered", id)
+		}
+		if err := recordAppliedMigration(ctx, exec, id); err != nil {
+			return nil, err
+		}
+		applied[id] = struct{}{}
+	}
+
+	return applied, nil
+}
+
+func validateAppliedMigrationDependencies(applied map[string]struct{}, registry []migrationStep) error {
+	stepsByID := make(map[string]migrationStep, len(registry))
+	for _, step := range registry {
+		stepsByID[step.id] = step
+	}
+
+	for appliedID := range applied {
+		step, known := stepsByID[appliedID]
+		if !known {
 			continue
 		}
-		if err := step.apply(tx); err != nil {
-			return fmt.Errorf("db migrate v%d: %w", step.version, err)
+		for _, depID := range step.dependsOn {
+			if _, ok := applied[depID]; !ok {
+				return fmt.Errorf("db migrate: applied migration %q is missing dependency %q", appliedID, depID)
+			}
 		}
-		if err := writeUserVersion(tx, step.version); err != nil {
-			return err
+	}
+
+	return nil
+}
+
+func applyPendingMigrations(ctx context.Context, exec migrationExecutor, registry []migrationStep, applied map[string]struct{}) error {
+	for {
+		progress := false
+		pendingKnown := make([]string, 0)
+
+		for _, step := range registry {
+			if _, ok := applied[step.id]; ok {
+				continue
+			}
+			pendingKnown = append(pendingKnown, step.id)
+
+			ready := true
+			for _, depID := range step.dependsOn {
+				if _, ok := applied[depID]; !ok {
+					ready = false
+					break
+				}
+			}
+			if !ready {
+				continue
+			}
+
+			if err := step.apply(ctx, exec); err != nil {
+				return fmt.Errorf("db migrate %s: %w", step.id, err)
+			}
+			if err := recordAppliedMigration(ctx, exec, step.id); err != nil {
+				return err
+			}
+			applied[step.id] = struct{}{}
+			progress = true
 		}
-		currentVersion = step.version
+
+		if len(pendingKnown) == 0 {
+			return nil
+		}
+		if progress {
+			continue
+		}
+		return fmt.Errorf("db migrate: pending migrations have unmet dependencies: %s", strings.Join(pendingKnown, ", "))
+	}
+}
+
+func recordAppliedMigration(ctx context.Context, exec migrationExecutor, id string) error {
+	appliedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := exec.ExecContext(ctx, `
+		INSERT OR IGNORE INTO schema_migrations (id, applied_at)
+		VALUES (?, ?)
+	`, id, appliedAt); err != nil {
+		return fmt.Errorf("db migrate: record applied migration %q: %w", id, err)
 	}
 	return nil
 }
 
-func readUserVersion(tx *sql.Tx) (int, error) {
+func readUserVersion(ctx context.Context, exec migrationExecutor) (int, error) {
 	var version int
-	if err := tx.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+	if err := exec.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		return 0, fmt.Errorf("db migrate: read user_version: %w", err)
 	}
 	return version, nil
 }
 
-func writeUserVersion(tx *sql.Tx, version int) error {
-	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, version)); err != nil {
+func writeUserVersion(ctx context.Context, exec migrationExecutor, version int) error {
+	if _, err := exec.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, version)); err != nil {
 		return fmt.Errorf("db migrate: write user_version: %w", err)
 	}
 	return nil
 }
 
-func createBaselineSchema(tx *sql.Tx) error {
+func writeLegacyCompatibilityVersion(ctx context.Context, exec migrationExecutor) error {
+	currentVersion, err := readUserVersion(ctx, exec)
+	if err != nil {
+		return err
+	}
+	if currentVersion == legacyCompatibilitySchemaVersion {
+		return nil
+	}
+	if err := writeUserVersion(ctx, exec, legacyCompatibilitySchemaVersion); err != nil {
+		return err
+	}
+	return nil
+}
+
+func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`
 		CREATE TABLE IF NOT EXISTS file_metadata (
@@ -465,11 +801,14 @@ func createBaselineSchema(tx *sql.Tx) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_uploaded_images_unique ON uploaded_images (source_path, usage_scope, host, image_path)`,
 		`
 		CREATE TABLE IF NOT EXISTS description_overrides (
-			source_path TEXT PRIMARY KEY,
+			source_path TEXT NOT NULL,
+			group_key TEXT NOT NULL DEFAULT "",
 			description TEXT NOT NULL DEFAULT "",
-			updated_at TEXT NOT NULL
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (source_path, group_key)
 		)
 		`,
+		`CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`,
 		`
 		CREATE TABLE IF NOT EXISTS tracker_rule_failures (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -494,7 +833,7 @@ func createBaselineSchema(tx *sql.Tx) error {
 	}
 
 	for idx, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("db bootstrap statement %d: %w", idx+1, err)
 		}
 	}

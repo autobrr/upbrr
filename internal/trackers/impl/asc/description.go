@@ -28,6 +28,9 @@ type layoutData struct {
 }
 
 func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets, layoutID string) (string, error) {
+	if assets.Override && strings.TrimSpace(assets.Description) != "" {
+		return strings.TrimSpace(assets.Description), nil
+	}
 	layout, _ := fetchLayout(ctx, cfg.MainSettings.DBPath, meta, layoutID)
 	parts := []string{"[center]"}
 
@@ -51,6 +54,7 @@ func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config
 	}
 
 	if poster := resolvePoster(meta); poster != "" {
+		poster = strings.ReplaceAll(poster, "/t/p/original/", "/t/p/w500/")
 		appendSection("BARRINHA_CAPA", formatImage(poster))
 	}
 	appendSection("BARRINHA_SINOPSE", resolveOverview(meta, questionnaireAnswers(meta)))
@@ -59,9 +63,6 @@ func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config
 
 	if media := buildMediaInfo(meta, cfg.MainSettings.DBPath); media != "" {
 		parts = append(parts, "[spoiler=Informações do Arquivo]\n[left][font=Courier New]"+media+"[/font][/left][/spoiler]")
-	}
-	if screenshots := buildScreenshotSection(assets.Screenshots); screenshots != "" {
-		parts = append(parts, screenshots)
 	}
 	if notes := sanitizeDescriptionNotes(assets.Description); notes != "" {
 		parts = append(parts, notes)
@@ -85,7 +86,7 @@ func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, 
 	if err == nil {
 		return cached, nil
 	}
-	cookies, _, err := LoadCookies(dbPath)
+	cookies, _, err := LoadCookies(ctx, dbPath)
 	if err != nil {
 		return layoutData{}, err
 	}
@@ -244,20 +245,6 @@ func sanitizeDescriptionNotes(value string) string {
 		"[h3]", "[u][b]", "[/h3]", "[/b][/u]",
 	)
 	return strings.TrimSpace(replacer.Replace(value))
-}
-
-func buildScreenshotSection(images []api.ScreenshotImage) string {
-	if len(images) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(images))
-	for _, image := range images {
-		if strings.TrimSpace(image.ImgURL) == "" {
-			continue
-		}
-		parts = append(parts, formatImage(image.ImgURL))
-	}
-	return strings.Join(parts, "\n")
 }
 
 func formatImage(value string) string {

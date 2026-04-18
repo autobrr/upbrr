@@ -6,6 +6,7 @@ package commonhttp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +44,76 @@ func CookiePathCandidates(dbPath string, name string, exts ...string) []string {
 		candidates = append(candidates, filepath.Clean(path))
 	}
 	return candidates
+}
+
+// CookieStore interface for dependency injection of cookie storage (database or file-based).
+// This allows tests and different implementations to be plugged in.
+type CookieStore interface {
+	GetAllTrackerCookies(ctx context.Context, trackerID string, key []byte) (map[string]string, error)
+}
+
+// LoadCookiesForTracker loads cookies for a tracker from startup cookie files and the
+// database. When both sources are available, startup file cookies win on conflicts so
+// a fresh startup bootstrap can override stale persisted values while still preserving
+// DB-only cookies.
+// A nil ctx is accepted and treated as context.Background(); callers should pass
+// an explicit request-scoped context whenever possible.
+func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string, cookieStore CookieStore, encryptionKey []byte) (map[string]string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var storeCookies map[string]string
+
+	// Load database cookies first so startup cookie files can overwrite stale entries.
+	if cookieStore != nil && len(encryptionKey) > 0 {
+		cookies, err := cookieStore.GetAllTrackerCookies(ctx, trackerID, encryptionKey)
+		if err != nil {
+			return nil, fmt.Errorf("load tracker %s cookies from cookie store: %w", trackerID, err)
+		}
+		if len(cookies) > 0 {
+			storeCookies = cookies
+		}
+	}
+
+	// Load startup file cookies and let them override any persisted DB values.
+	candidates := CookiePathCandidates(dbPath, trackerID, ".txt", ".json")
+	for _, path := range candidates {
+		switch filepath.Ext(path) {
+		case ".txt":
+			if cookies, err := LoadNetscapeCookies(path, ""); err == nil && len(cookies) > 0 {
+				result := make(map[string]string, len(storeCookies)+len(cookies))
+				for name, value := range storeCookies {
+					result[name] = value
+				}
+				for _, c := range cookies {
+					result[c.Name] = c.Value
+				}
+				return result, nil
+			}
+		case ".json":
+			if cookies, err := LoadJSONCookieMap(path); err == nil && len(cookies) > 0 {
+				if len(storeCookies) == 0 {
+					return cookies, nil
+				}
+
+				result := make(map[string]string, len(storeCookies)+len(cookies))
+				for name, value := range storeCookies {
+					result[name] = value
+				}
+				for name, value := range cookies {
+					result[name] = value
+				}
+				return result, nil
+			}
+		}
+	}
+
+	if len(storeCookies) > 0 {
+		return storeCookies, nil
+	}
+
+	return nil, errors.New("no cookies found for tracker: " + trackerID)
 }
 
 func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, error) {
@@ -139,6 +210,51 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
 			return nil, "", err
+		}
+	}
+	for _, file := range files {
+		if strings.TrimSpace(file.FieldName) == "" {
+			continue
+		}
+		name := firstNonEmpty(strings.TrimSpace(file.FileName), filepath.Base(strings.TrimSpace(file.Path)), "upload.bin")
+		part, err := writer.CreateFormFile(file.FieldName, name)
+		if err != nil {
+			_ = writer.Close()
+			return nil, "", err
+		}
+		payload := file.Content
+		if len(payload) == 0 {
+			payload, err = os.ReadFile(strings.TrimSpace(file.Path))
+			if err != nil {
+				_ = writer.Close()
+				return nil, "", err
+			}
+		}
+		if _, err := part.Write(payload); err != nil {
+			_ = writer.Close()
+			return nil, "", err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return body.Bytes(), writer.FormDataContentType(), nil
+}
+
+func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) ([]byte, string, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	for _, key := range keys {
+		values := fields[key]
+		for _, value := range values {
+			if err := writer.WriteField(key, value); err != nil {
+				_ = writer.Close()
+				return nil, "", err
+			}
 		}
 	}
 	for _, file := range files {

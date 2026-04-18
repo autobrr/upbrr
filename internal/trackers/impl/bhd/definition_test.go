@@ -179,7 +179,7 @@ func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Count(result.Description, "[size=10]upbrr[/size]") != 1 {
+	if strings.Count(result.Description, "Created by upbrr") != 1 {
 		t.Fatalf("expected single signature, got %q", result.Description)
 	}
 	if !strings.Contains(result.Description, "[img width=350]https://img.hdbits.org/full.jpg[/img]") {
