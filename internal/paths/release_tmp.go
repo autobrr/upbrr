@@ -54,8 +54,10 @@ func releaseBaseName(release api.ReleaseInfo) string {
 	if strings.TrimSpace(release.Source) != "" {
 		parts = append(parts, strings.TrimSpace(release.Source))
 	}
-	if strings.TrimSpace(release.Type) != "" {
-		parts = append(parts, strings.TrimSpace(release.Type))
+	if trimmedType := strings.TrimSpace(release.Type); trimmedType != "" {
+		if !strings.EqualFold(trimmedType, strings.TrimSpace(release.Source)) {
+			parts = append(parts, trimmedType)
+		}
 	}
 	name := strings.Join(parts, ".")
 	if strings.TrimSpace(release.Group) != "" {

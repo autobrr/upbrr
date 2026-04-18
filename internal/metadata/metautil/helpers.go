@@ -32,7 +32,7 @@ func ParseRelease(filename string) ParsedRelease {
 		Title:    release.Title,
 		Alt:      release.Alt,
 		Subtitle: release.Subtitle,
-		Category: releaseCategory(release.Type.String()),
+		Category: ReleaseCategoryFromRLS(release.Type.String()),
 		Year:     release.Year,
 	}
 }
@@ -132,7 +132,7 @@ func AbsInt(value int) int {
 	return value
 }
 
-func releaseCategory(value string) string {
+func ReleaseCategoryFromRLS(value string) string {
 	upper := strings.ToUpper(strings.TrimSpace(value))
 	switch upper {
 	case "MOVIE":

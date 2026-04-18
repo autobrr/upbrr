@@ -879,14 +879,14 @@ func resolveCategoryPreference(meta api.PreparedMetadata) string {
 			return category
 		}
 	}
-	category := normalizeCategory(meta.MediaInfoCategory)
-	if category != "" {
-		return category
-	}
 	for _, record := range meta.TrackerData {
 		if normalized := normalizeCategory(record.Category); normalized != "" {
 			return normalized
 		}
+	}
+	category := normalizeCategory(meta.MediaInfoCategory)
+	if category != "" {
+		return category
 	}
 	if normalized := normalizeCategory(meta.Release.Category); normalized != "" {
 		return normalized

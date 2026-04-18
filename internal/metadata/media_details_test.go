@@ -81,3 +81,36 @@ func TestEditionFromMetaMultiPlaylistFallsBackWhenNoIMDbMatch(t *testing.T) {
 		t.Fatalf("expected fallback edition, got %q", edition)
 	}
 }
+
+func TestSourceAndTypeInfersWebDLFromParsedRelease(t *testing.T) {
+	source, typeValue := sourceAndType(api.PreparedMetadata{
+		SourcePath: "Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Source: "Web",
+			Type:   "WEBDL",
+		},
+	}, mediaInfoDoc{})
+
+	if source != "Web" {
+		t.Fatalf("expected Web source, got %q", source)
+	}
+	if typeValue != "WEBDL" {
+		t.Fatalf("expected WEBDL type, got %q", typeValue)
+	}
+}
+
+func TestSourceAndTypeInfersRemuxWhenReleaseTypeMissing(t *testing.T) {
+	source, typeValue := sourceAndType(api.PreparedMetadata{
+		SourcePath: "Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Source: "BluRay",
+		},
+	}, mediaInfoDoc{})
+
+	if source != "BluRay" {
+		t.Fatalf("expected BluRay source, got %q", source)
+	}
+	if typeValue != "REMUX" {
+		t.Fatalf("expected REMUX type, got %q", typeValue)
+	}
+}

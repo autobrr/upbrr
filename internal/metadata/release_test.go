@@ -11,8 +11,11 @@ func TestParseReleaseInfoMovieUsesRLSCategoryAndSource(t *testing.T) {
 	if release.Category != "MOVIE" {
 		t.Fatalf("expected MOVIE category, got %q", release.Category)
 	}
-	if release.Type != "WEB-DL" {
-		t.Fatalf("expected WEB-DL type, got %q", release.Type)
+	if release.Type != "WEBDL" {
+		t.Fatalf("expected WEBDL type, got %q", release.Type)
+	}
+	if release.Source != "Web" {
+		t.Fatalf("expected Web source, got %q", release.Source)
 	}
 }
 
@@ -22,8 +25,11 @@ func TestParseReleaseInfoEpisodeUsesTVCategoryAndSourceAsType(t *testing.T) {
 	if release.Category != "TV" {
 		t.Fatalf("expected TV category, got %q", release.Category)
 	}
-	if release.Type != "WEB-DL" {
-		t.Fatalf("expected WEB-DL type, got %q", release.Type)
+	if release.Type != "WEBDL" {
+		t.Fatalf("expected WEBDL type, got %q", release.Type)
+	}
+	if release.Source != "Web" {
+		t.Fatalf("expected Web source, got %q", release.Source)
 	}
 }
 
@@ -33,7 +39,32 @@ func TestParseReleaseInfoSeasonPackUsesTVCategory(t *testing.T) {
 	if release.Category != "TV" {
 		t.Fatalf("expected TV category, got %q", release.Category)
 	}
-	if release.Type != "WEB-DL" {
-		t.Fatalf("expected WEB-DL type, got %q", release.Type)
+	if release.Type != "WEBDL" {
+		t.Fatalf("expected WEBDL type, got %q", release.Type)
+	}
+	if release.Source != "Web" {
+		t.Fatalf("expected Web source, got %q", release.Source)
+	}
+}
+
+func TestParseReleaseInfoBlurayRemuxPreservesDistinctSourceAndType(t *testing.T) {
+	release := ParseReleaseInfo("Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv")
+
+	if release.Source != "BluRay" {
+		t.Fatalf("expected BluRay source, got %q", release.Source)
+	}
+	if release.Type != "REMUX" {
+		t.Fatalf("expected REMUX type, got %q", release.Type)
+	}
+}
+
+func TestParseReleaseInfoBlurayEncodeInfersEncodeType(t *testing.T) {
+	release := ParseReleaseInfo("Movie.2026.1080p.BluRay.x264-GRP.mkv")
+
+	if release.Source != "BluRay" {
+		t.Fatalf("expected BluRay source, got %q", release.Source)
+	}
+	if release.Type != "ENCODE" {
+		t.Fatalf("expected ENCODE type, got %q", release.Type)
 	}
 }

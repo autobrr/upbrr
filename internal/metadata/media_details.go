@@ -706,6 +706,21 @@ func threeDFromBDInfo(info *discparse.BDInfo) string {
 func sourceAndType(meta api.PreparedMetadata, doc mediaInfoDoc) (string, string) {
 	source := strings.TrimSpace(meta.Release.Source)
 	typeValue := strings.TrimSpace(meta.Release.Type)
+	if typeValue == "" || isCategoryType(typeValue) {
+		if inferred := inferReleaseTypeFromSource(source); inferred != "" {
+			typeValue = inferred
+		}
+	}
+	if typeValue == "" || isCategoryType(typeValue) {
+		if inferred := inferReleaseTypeFromName(meta.SourcePath); inferred != "" {
+			typeValue = inferred
+		}
+	}
+	if source == "" || !isKnownReleaseSource(source) {
+		if inferred := inferReleaseSourceFromName(meta.SourcePath, typeValue); inferred != "" {
+			source = inferred
+		}
+	}
 	if strings.EqualFold(meta.DiscType, "BDMV") {
 		switch typeValue {
 		case "DISC":
@@ -729,11 +744,16 @@ func sourceAndType(meta api.PreparedMetadata, doc mediaInfoDoc) (string, string)
 			source = "HDDVD"
 		}
 	}
+	switch normalizeReleaseType(typeValue) {
+	case "WEBDL":
+		typeValue = "WEBDL"
+		source = "Web"
+	case "WEBRIP":
+		typeValue = "WEBRIP"
+		source = "Web"
+	}
 	if strings.EqualFold(source, "Web") && typeValue == "ENCODE" {
 		typeValue = "WEBRIP"
-	}
-	if typeValue == "WEBDL" || typeValue == "WEBRIP" {
-		source = "Web"
 	}
 	if strings.EqualFold(source, "Ultra HDTV") {
 		source = "UHDTV"
