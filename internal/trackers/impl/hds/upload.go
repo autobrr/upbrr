@@ -6,7 +6,6 @@ package hds
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +18,7 @@ import (
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
@@ -177,7 +177,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 			}
 		}
 	}
-	cookies, err := loadCookies(req.AppConfig.MainSettings.DBPath)
+	cookies, err := loadCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -222,13 +222,8 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	return state, cookies, nil
 }
 
-func loadCookies(dbPath string) ([]*http.Cookie, error) {
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "HDS", ".txt") {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return commonhttp.LoadNetscapeCookies(candidate, "hd-space.org")
-		}
-	}
-	return nil, errors.New("trackers: HDS cookie file not found")
+func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
+	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "HDS", "hd-space.org")
 }
 
 func resolveCategoryID(meta api.PreparedMetadata) int {

@@ -25,8 +25,8 @@ type sessionState struct {
 	token  string
 }
 
-func newSession(ctx context.Context, site siteDefinition, dbPath string) (sessionState, error) {
-	cookies, err := resolveCookies(dbPath, site)
+func newSession(ctx context.Context, site siteDefinition, dbPath string, logger api.Logger) (sessionState, error) {
+	cookies, err := resolveCookies(ctx, dbPath, site)
 	if err != nil {
 		return sessionState{}, err
 	}
@@ -51,7 +51,10 @@ func newSession(ctx context.Context, site siteDefinition, dbPath string) (sessio
 		return sessionState{}, fmt.Errorf("trackers: %s cookie validation request: %w", site.Name, err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if readErr != nil && logger != nil {
+		logger.Debugf("trackers: %s cookie validation body read failed status=%d err=%v", site.Name, resp.StatusCode, readErr)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || strings.Contains(strings.ToLower(string(body)), "page not found") {
 		return sessionState{}, fmt.Errorf("trackers: %s missing valid cookies", site.Name)
 	}

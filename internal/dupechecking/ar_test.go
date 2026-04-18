@@ -24,7 +24,7 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 	if err := os.MkdirAll(cookieDir, 0o755); err != nil {
 		t.Fatalf("mkdir cookies: %v", err)
 	}
-	cookiePath := filepath.Join(cookieDir, arCookieFileName)
+	cookiePath := filepath.Join(cookieDir, "AR.txt")
 	cookieText := `# Netscape HTTP Cookie File
 .alpharatio.cc	TRUE	/	TRUE	2147483647	session	abc123
 `

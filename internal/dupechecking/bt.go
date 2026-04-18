@@ -25,7 +25,7 @@ type btHandler struct {
 }
 
 func (h btHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ string) ([]api.DupeEntry, []string, error) {
-	cookies, err := loadTrackerTextCookies(h.cfg, "BT", trackerHost(trackerBaseURL(h.cfg, "BT", "https://brasiltracker.org"), "brasiltracker.org"))
+	cookies, err := loadTrackerCookies(ctx, h.cfg, "BT", trackerHost(trackerBaseURL(h.cfg, "BT", "https://brasiltracker.org"), "brasiltracker.org"))
 	if err != nil {
 		return nil, []string{noteSkip("missing valid BT cookies")}, nil
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -188,14 +189,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		{FieldName: "torrent", FileName: "torrent.torrent", Path: torrentPath},
 		{FieldName: "nfo", FileName: "description.txt", Content: []byte(description)},
 	}
-	client, err := cookieClient(req.AppConfig.MainSettings.DBPath)
+	client, err := cookieClient(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
 	return state, client, nil
 }
 
-func cookieClient(dbPath string) (*http.Client, error) {
+func cookieClient(ctx context.Context, dbPath string) (*http.Client, error) {
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -204,7 +205,7 @@ func cookieClient(dbPath string) (*http.Client, error) {
 			return http.ErrUseLastResponse
 		},
 	}
-	cookies, err := loadCookies(dbPath)
+	cookies, err := loadCookies(ctx, dbPath)
 	if err != nil {
 		return nil, err
 	}
@@ -305,14 +306,8 @@ func announceList(cfg config.TrackerConfig) []string {
 	}
 }
 
-func loadCookies(dbPath string) ([]*http.Cookie, error) {
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "TL", ".txt") {
-		cookies, err := commonhttp.LoadNetscapeCookies(candidate, "torrentleech.org")
-		if err == nil {
-			return cookies, nil
-		}
-	}
-	return nil, errors.New("TL cookies not found")
+func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
+	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "TL", "torrentleech.org")
 }
 
 func imdbURL(meta api.PreparedMetadata) string {

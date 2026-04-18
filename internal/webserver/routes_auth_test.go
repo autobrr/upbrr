@@ -4,6 +4,8 @@
 package webserver
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,10 +13,26 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/services/db"
+
+	"golang.org/x/crypto/argon2"
 )
 
 func newAuthTestServer(t *testing.T, dbPath string) *Server {
 	t.Helper()
+
+	repo, err := db.OpenWithLogger(dbPath, nil)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
 
 	auth, err := newAuthStore(dbPath)
 	if err != nil {
@@ -29,6 +47,7 @@ func newAuthTestServer(t *testing.T, dbPath string) *Server {
 	})
 
 	return &Server{
+		backend:        &Backend{repo: repo, hub: newEventHub()},
 		auth:           auth,
 		sessions:       sessions,
 		authLimiter:    newFixedWindowLimiter(100, time.Minute),
@@ -65,6 +84,137 @@ func TestBootstrapRetainedSessionSetsPersistentCookie(t *testing.T) {
 	}
 	if cookie.Expires.IsZero() {
 		t.Fatal("expected persistent cookie expiry to be set")
+	}
+}
+
+func TestLoginUpgradesLegacyPasswordHash(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+
+	password := "very-secure-password"
+	salt := "legacy-salt-value"
+	sum := argon2.IDKey(
+		[]byte(password),
+		[]byte(salt),
+		legacyAuthArgon2Time,
+		legacyAuthArgon2MemoryKB,
+		legacyAuthArgon2Parallelism,
+		legacyAuthArgon2KeyLen,
+	)
+	record := authRecord{
+		Username:     "admin",
+		PasswordHash: "argon2id$" + salt + "$" + base64.RawStdEncoding.EncodeToString(sum),
+		CreatedAt:    time.Now().UTC(),
+	}
+	raw, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent: %v", err)
+	}
+	if err := os.WriteFile(AuthFilePath(dbPath), raw, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	body := `{"username":"admin","password":"very-secure-password","retainLogin":false}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5000"
+
+	recorder := httptest.NewRecorder()
+	server.handleLogin(recorder, req, session{})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleLogin returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	updated, err := server.auth.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if updated.PasswordHash == record.PasswordHash {
+		t.Fatal("expected legacy password hash to be upgraded after login")
+	}
+	if !strings.HasPrefix(updated.PasswordHash, "argon2id$v=19$m=19456,t=2,p=1$") {
+		t.Fatalf("expected upgraded hash format, got %q", updated.PasswordHash)
+	}
+	if strings.TrimSpace(updated.EncryptionKeySeed) == "" {
+		t.Fatal("expected upgraded auth record to persist an encryption key seed")
+	}
+	if !verifyPassword(password, updated.PasswordHash) {
+		t.Fatal("expected upgraded hash to verify")
+	}
+}
+
+func TestLoginFinalizesPendingAuthUpgradeAfterInterruptedRewrap(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+
+	password := "very-secure-password"
+	salt := "legacy-salt-value"
+	sum := argon2.IDKey(
+		[]byte(password),
+		[]byte(salt),
+		legacyAuthArgon2Time,
+		legacyAuthArgon2MemoryKB,
+		legacyAuthArgon2Parallelism,
+		legacyAuthArgon2KeyLen,
+	)
+	upgradedHash, err := hashPassword(password)
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+
+	record := authRecord{
+		Username:     "admin",
+		PasswordHash: "argon2id$" + salt + "$" + base64.RawStdEncoding.EncodeToString(sum),
+		CreatedAt:    time.Now().UTC(),
+		PendingUpgrade: &authmaterial.PendingUpgrade{
+			Stage: authmaterial.UpgradeStageDataRewrapped,
+			Target: authRecord{
+				Username:          "admin",
+				PasswordHash:      upgradedHash,
+				EncryptionKeySeed: "stable-seed-after-interrupt",
+				CreatedAt:         time.Now().UTC(),
+			},
+			UpdatedAt: time.Now().UTC(),
+		},
+	}
+	raw, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent: %v", err)
+	}
+	if err := os.WriteFile(AuthFilePath(dbPath), raw, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	body := `{"username":"admin","password":"very-secure-password","retainLogin":false}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5000"
+
+	recorder := httptest.NewRecorder()
+	server.handleLogin(recorder, req, session{})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleLogin returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	updated, err := server.auth.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if updated.PendingUpgrade != nil {
+		t.Fatal("expected interrupted upgrade marker to be cleared")
+	}
+	if updated.PasswordHash != upgradedHash {
+		t.Fatal("expected login to finalize the upgraded password hash")
+	}
+	if updated.EncryptionKeySeed != "stable-seed-after-interrupt" {
+		t.Fatalf("encryption seed = %q, want %q", updated.EncryptionKeySeed, "stable-seed-after-interrupt")
+	}
+	if !verifyPassword(password, updated.PasswordHash) {
+		t.Fatal("expected finalized hash to verify")
 	}
 }
 

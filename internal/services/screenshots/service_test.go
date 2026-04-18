@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -66,7 +67,7 @@ func TestPlanUsesManualFrameOverridesWithoutDuration(t *testing.T) {
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
-	service := NewService(api.Config{}, api.NopLogger{}, tmpDir, nil)
+	service := NewService(config.Config{}, api.NopLogger{}, tmpDir, nil)
 	meta := api.PreparedMetadata{
 		SourcePath:        filepath.Join(tmpDir, "movie.mkv"),
 		MediaInfoJSONPath: mediaInfoPath,

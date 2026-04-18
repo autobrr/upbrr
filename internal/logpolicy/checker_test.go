@@ -193,6 +193,144 @@ func check(log logger, body []byte) {
 	}
 }
 
+func TestCheckRepositoryFlagsRawUsernameLogging(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+type user struct{ Username string }
+type logger struct{}
+
+func (logger) Errorf(string, ...any) {}
+
+func check(log logger, current user) {
+	log.Errorf("auth upgrade failed username=%s", current.Username)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "username log arguments") {
+		t.Fatalf("expected username redaction violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsRedactedUsernameLogging(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+import redaction "github.com/autobrr/upbrr/internal/redaction"
+
+type user struct{ Username string }
+type logger struct{}
+
+func (logger) Errorf(string, ...any) {}
+
+func check(log logger, current user) {
+	username := redaction.RedactValue(current.Username, nil)
+	log.Errorf("auth upgrade failed username=%s", username)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsRawErrorsInAuthSensitiveLogs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+type logger struct{}
+
+func (logger) Errorf(string, ...any) {}
+
+func check(log logger, err error) {
+	log.Errorf("auth upgrade failed incident=%s: %v", "auth_upgrade_failed", err)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "auth-sensitive log arguments") {
+		t.Fatalf("expected auth-sensitive raw error violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsStableCodesInAuthSensitiveLogs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+import redaction "github.com/autobrr/upbrr/internal/redaction"
+
+type user struct{ Username string }
+type logger struct{}
+
+func (logger) Errorf(string, ...any) {}
+
+func check(log logger, current user) {
+	log.Errorf(
+		"auth upgrade failed incident=%s username=%s",
+		"auth_upgrade_failed",
+		redaction.RedactValue(current.Username, nil),
+	)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryFlagsInfofErrorOrientedMessages(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {

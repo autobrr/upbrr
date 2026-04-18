@@ -43,7 +43,7 @@ func (h hdsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("missing IMDb ID for HDS dupe search")}, nil
 	}
 	baseURL := trackerBaseURL(h.cfg, "HDS", "https://hd-space.org")
-	cookies, err := loadTrackerTextCookies(h.cfg, "HDS", trackerHost(baseURL, "hd-space.org"))
+	cookies, err := loadTrackerCookies(ctx, h.cfg, "HDS", trackerHost(baseURL, "hd-space.org"))
 	if err != nil {
 		return nil, []string{noteSkip("missing valid HDS cookies")}, nil
 	}

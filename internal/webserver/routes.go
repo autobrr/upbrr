@@ -14,6 +14,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
@@ -125,9 +127,81 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	if record.Username != strings.TrimSpace(req.Username) || !verifyPassword(req.Password, record.PasswordHash) {
+	if strings.TrimSpace(record.Username) != strings.TrimSpace(req.Username) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
+	}
+	valid, needsUpgrade := verifyPasswordWithUpgrade(req.Password, record.PasswordHash)
+	if !valid {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	if record.PendingUpgrade != nil {
+		target := record.PendingUpgrade.Target
+		if err := s.rewrapProtectedDataForAuthChange(r.Context(), record, target); err != nil {
+			if s.backend != nil && s.backend.logger != nil {
+				s.backend.logger.Errorf(
+					"web: auth upgrade failed incident=%s username=%s",
+					"auth_upgrade_resume_rewrap_failed",
+					redactAuthUsername(record.Username),
+				)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
+		finalized, err := s.auth.FinalizePendingUpgrade(record.Username)
+		if err != nil {
+			if s.backend != nil && s.backend.logger != nil {
+				s.backend.logger.Errorf(
+					"web: auth upgrade failed incident=%s username=%s",
+					"auth_upgrade_resume_finalize_failed",
+					redactAuthUsername(record.Username),
+				)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
+		record = finalized
+	} else if needsUpgrade {
+		upgradedHash, err := hashPassword(req.Password)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
+		upgradedRecord := record
+		upgradedRecord.PasswordHash = upgradedHash
+		if strings.TrimSpace(upgradedRecord.EncryptionKeySeed) == "" {
+			seed, err := generateStableEncryptionSeed()
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+				return
+			}
+			upgradedRecord.EncryptionKeySeed = seed
+		}
+		if err := s.rewrapProtectedDataForAuthChange(r.Context(), record, upgradedRecord); err != nil {
+			if s.backend != nil && s.backend.logger != nil {
+				s.backend.logger.Errorf(
+					"web: auth upgrade failed incident=%s username=%s",
+					"auth_upgrade_rewrap_failed",
+					redactAuthUsername(record.Username),
+				)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
+		finalized, err := s.auth.FinalizePendingUpgrade(record.Username)
+		if err != nil {
+			if s.backend != nil && s.backend.logger != nil {
+				s.backend.logger.Errorf(
+					"web: auth upgrade failed incident=%s username=%s",
+					"auth_upgrade_finalize_failed",
+					redactAuthUsername(record.Username),
+				)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
+			return
+		}
+		record = finalized
 	}
 	current, err := s.sessions.Create(record.Username, req.RetainLogin)
 	if err != nil {
@@ -363,4 +437,8 @@ func decodeJSON(r *http.Request, dest any) error {
 
 func fsStat(root fs.FS, name string) (fs.FileInfo, error) {
 	return fs.Stat(root, name)
+}
+
+func redactAuthUsername(username string) string {
+	return redaction.RedactValue(strings.TrimSpace(username), nil)
 }

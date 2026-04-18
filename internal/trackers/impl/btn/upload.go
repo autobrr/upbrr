@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -38,7 +39,6 @@ const (
 	btnUploadPath     = "/upload.php"
 	btnLoginPath      = "/login.php"
 	btnAPIRPCURL      = "https://api.broadcasthe.net/"
-	btnCookieFile     = "BTN.json"
 )
 
 var (
@@ -574,11 +574,7 @@ func loadCookies(client *http.Client, dbPath string, baseURL string) error {
 	if client == nil || client.Jar == nil {
 		return nil
 	}
-	candidates := commonhttp.CookiePathCandidates(dbPath, "BTN", ".json")
-	if len(candidates) == 0 {
-		return nil
-	}
-	cookies, err := commonhttp.LoadJSONCookieMap(candidates[0])
+	values, err := cookies.LoadTrackerCookieMap(context.Background(), dbPath, "BTN")
 	if err != nil {
 		return nil
 	}
@@ -586,8 +582,8 @@ func loadCookies(client *http.Client, dbPath string, baseURL string) error {
 	if err != nil {
 		return nil
 	}
-	jarCookies := make([]*http.Cookie, 0, len(cookies))
-	for name, value := range cookies {
+	jarCookies := make([]*http.Cookie, 0, len(values))
+	for name, value := range values {
 		jarCookies = append(jarCookies, &http.Cookie{Name: name, Value: value, Domain: parsed.Hostname(), Path: "/"})
 	}
 	client.Jar.SetCookies(parsed, jarCookies)

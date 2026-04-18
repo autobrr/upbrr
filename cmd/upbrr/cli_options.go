@@ -18,98 +18,100 @@ import (
 )
 
 type cliOptions struct {
-	ConfigPath        string
-	ShowVersion       bool
-	QueueName         string
-	LimitQueue        int
-	SiteCheck         bool
-	SiteUpload        string
-	Trackers          string
-	TrackersRemove    string
-	Debug             bool
-	LogLevel          string
-	DryRun            bool
-	Screens           int
-	NoSeed            bool
-	SkipAutoTorrent   bool
-	OnlyID            bool
-	UploadOnly        bool
-	Category          string
-	Type              string
-	Source            string
-	Resolution        string
-	Tag               string
-	Service           string
-	Distributor       string
-	OriginalLanguage  string
-	Edition           string
-	Season            string
-	Episode           string
-	EpisodeTitle      string
-	ManualYear        int
-	ManualDate        string
-	NoSeason          bool
-	NoYear            bool
-	NoAKA             bool
-	NoTag             bool
-	NoEdition         bool
-	NoDub             bool
-	NoDual            bool
-	DualAudio         bool
-	Region            string
-	GUI               bool
-	ExportConfigPath  string
-	ImportConfigPath  string
-	DeleteTmp         bool
-	Cleanup           bool
-	TMDB              string
-	TVDB              int
-	TVmaze            int
-	IMDb              string
-	MAL               int
-	Unattended        bool
-	UnattendedConfirm bool
-	SkipDupeCheck     bool
-	SkipDupeAsActual  bool
-	DoubleDupeCheck   bool
-	Commentary        bool
-	PersonalRelease   bool
-	StreamOptimized   bool
-	WebDV             bool
-	ConfirmBDMVRescan bool
-	NotAnime          bool
-	Anon              bool
-	Draft             bool
-	ModQ              bool
-	Channel           string
-	PTP               string
-	BLU               string
-	Aither            string
-	LST               string
-	OE                string
-	HDB               string
-	BTN               string
-	BHD               string
-	ULCX              string
-	DescriptionFile   string
-	DescriptionLink   string
-	Client            string
-	QbitTag           string
-	QbitCategory      string
-	ForceRecheck      bool
-	Foreign           bool
-	Opera             bool
-	Asian             bool
-	DiscType          string
-	ImageHost         string
-	SkipImageUpload   bool
-	ManualFrames      string
-	Comparison        string
-	ComparisonIndex   int
-	InfoHash          string
-	MaxPieceSize      int
-	NoHash            bool
-	Rehash            bool
+	ConfigPath            string
+	ShowVersion           bool
+	QueueName             string
+	LimitQueue            int
+	SiteCheck             bool
+	SiteUpload            string
+	Trackers              string
+	TrackersRemove        string
+	Debug                 bool
+	LogLevel              string
+	DryRun                bool
+	Screens               int
+	NoSeed                bool
+	SkipAutoTorrent       bool
+	OnlyID                bool
+	UploadOnly            bool
+	Category              string
+	Type                  string
+	Source                string
+	Resolution            string
+	Tag                   string
+	Service               string
+	Distributor           string
+	OriginalLanguage      string
+	Edition               string
+	Season                string
+	Episode               string
+	EpisodeTitle          string
+	ManualYear            int
+	ManualDate            string
+	NoSeason              bool
+	NoYear                bool
+	NoAKA                 bool
+	NoTag                 bool
+	NoEdition             bool
+	NoDub                 bool
+	NoDual                bool
+	DualAudio             bool
+	Region                string
+	GUI                   bool
+	CreateAuth            bool
+	ExportConfigPath      string
+	ExportConfigPlaintext bool
+	ImportConfigPath      string
+	DeleteTmp             bool
+	Cleanup               bool
+	TMDB                  string
+	TVDB                  int
+	TVmaze                int
+	IMDb                  string
+	MAL                   int
+	Unattended            bool
+	UnattendedConfirm     bool
+	SkipDupeCheck         bool
+	SkipDupeAsActual      bool
+	DoubleDupeCheck       bool
+	Commentary            bool
+	PersonalRelease       bool
+	StreamOptimized       bool
+	WebDV                 bool
+	ConfirmBDMVRescan     bool
+	NotAnime              bool
+	Anon                  bool
+	Draft                 bool
+	ModQ                  bool
+	Channel               string
+	PTP                   string
+	BLU                   string
+	Aither                string
+	LST                   string
+	OE                    string
+	HDB                   string
+	BTN                   string
+	BHD                   string
+	ULCX                  string
+	DescriptionFile       string
+	DescriptionLink       string
+	Client                string
+	QbitTag               string
+	QbitCategory          string
+	ForceRecheck          bool
+	Foreign               bool
+	Opera                 bool
+	Asian                 bool
+	DiscType              string
+	ImageHost             string
+	SkipImageUpload       bool
+	ManualFrames          string
+	Comparison            string
+	ComparisonIndex       int
+	InfoHash              string
+	MaxPieceSize          int
+	NoHash                bool
+	Rehash                bool
 }
 
 type serveOptions struct {
@@ -179,7 +181,9 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.BoolVar(&opts.NoDual, "no-dual", false, "Remove dual-audio tag from audio name")
 	fs.BoolVar(&opts.DualAudio, "dual-audio", false, "Add dual-audio tag to audio name")
 	fs.BoolVar(&opts.GUI, "gui", false, "Launch the GUI")
+	fs.BoolVar(&opts.CreateAuth, "create-auth", false, "Create web-auth.json beside the active database and exit")
 	fs.StringVar(&opts.ExportConfigPath, "export-config", "", "Export SQLite config to YAML file and exit")
+	fs.BoolVar(&opts.ExportConfigPlaintext, "export-config-plaintext", false, "Export config with plaintext secrets (requires --export-config)")
 	fs.StringVar(&opts.ImportConfigPath, "import-config", "", "Import config file (.py, .yaml, .yml, .json) and exit")
 	fs.BoolVar(&opts.DeleteTmp, "dtmp", false, "Delete stored database content for each input path before upload")
 	fs.BoolVar(&opts.DeleteTmp, "delete-tmp", false, "Delete stored database content for each input path before upload")
@@ -400,6 +404,12 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	}
 	if visited["limit-queue"] && opts.LimitQueue < 0 {
 		return cliOptions{}, nil, nil, errors.New("limit-queue must be >= 0")
+	}
+	if opts.ExportConfigPlaintext && !visited["export-config"] {
+		return cliOptions{}, nil, nil, errors.New("--export-config-plaintext requires --export-config")
+	}
+	if opts.ExportConfigPlaintext && strings.TrimSpace(opts.ExportConfigPath) == "" {
+		return cliOptions{}, nil, nil, errors.New("--export-config must have a non-empty value when --export-config-plaintext is used")
 	}
 	if _, err := buildTrackerIDOverrides(opts, visited); err != nil {
 		return cliOptions{}, nil, nil, err

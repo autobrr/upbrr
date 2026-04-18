@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,7 +25,7 @@ import (
 
 func validMinimalConfig() *Config {
 	return &Config{
-		MainSettings:       MainSettingsConfig{TMDBAPI: "penetration-key"},
+		MainSettings:       MainSettingsConfig{},
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 3},
 	}
 }
@@ -184,6 +185,7 @@ func TestExportImportYAMLUnicodeAndSpecialChars(t *testing.T) {
 			TonemapAlgorithm: "\"quoted\" algorithm",
 		},
 	}
+	configureConfigSecretEncryption(t, cfg)
 	path := filepath.Join(t.TempDir(), "unicode.yaml")
 	if err := ExportToYAML(cfg, path); err != nil {
 		t.Fatalf("export: %v", err)
@@ -244,27 +246,53 @@ func TestExportImportYAMLConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	done := make(chan struct{})
+	writerErrCh := make(chan error, 1)
+	importErrCh := make(chan error, 100)
 	wg.Go(func() {
+		defer close(writerErrCh)
 		for {
 			select {
 			case <-done:
 				return
 			default:
-				_ = ExportToYAML(cfg, path)
+				if err := ExportToYAML(cfg, path); err != nil {
+					writerErrCh <- err
+					return
+				}
 			}
 		}
 	})
 	wg.Go(func() {
+		defer close(importErrCh)
 		for i := range 100 {
 			if _, err := ImportFromYAML(path); err != nil {
-				// A truncated mid-write read must not corrupt subsequent runs;
-				// the next successful write will restore parseability.
-				t.Logf("transient import error #%d: %v", i, err)
+				importErrCh <- errors.New("import iteration " + strconv.Itoa(i) + ": " + err.Error())
 			}
 		}
 		close(done)
 	})
 	wg.Wait()
+
+	for err := range writerErrCh {
+		if err != nil {
+			t.Fatalf("concurrent export failed: %v", err)
+		}
+	}
+
+	for err := range importErrCh {
+		if err == nil {
+			continue
+		}
+		msg := err.Error()
+		if strings.Contains(msg, "cannot unmarshal") || strings.Contains(msg, "did not find expected") || strings.Contains(msg, "EOF") {
+			continue
+		}
+		t.Fatalf("unexpected concurrent import error: %v", err)
+	}
+
+	if _, err := ImportFromYAML(path); err != nil {
+		t.Fatalf("final file unreadable after concurrent export/import: %v", err)
+	}
 }
 
 // ExportToYAML should create the full parent directory chain, not just the
@@ -390,8 +418,10 @@ func TestBackupToYAMLOverwrites(t *testing.T) {
 
 	dir := t.TempDir()
 	first := validMinimalConfig()
+	configureConfigSecretEncryption(t, first)
 	first.MainSettings.TMDBAPI = "first"
 	second := validMinimalConfig()
+	second.MainSettings.DBPath = first.MainSettings.DBPath
 	second.MainSettings.TMDBAPI = "second"
 
 	pathA, err := BackupToYAML(first, dir)
@@ -515,6 +545,7 @@ func TestExportFromDatabaseToYAMLAppliesEnv(t *testing.T) {
 		MainSettings:       MainSettingsConfig{TMDBAPI: "from-db"},
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 	}}
+	configureConfigSecretEncryption(t, &repo.cfg)
 	if err := ExportFromDatabaseToYAML(context.Background(), out, repo); err != nil {
 		t.Fatalf("export: %v", err)
 	}

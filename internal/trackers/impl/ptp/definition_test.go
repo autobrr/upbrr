@@ -219,8 +219,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if _, err := os.Stat(artifactPath); err != nil {
 		t.Fatalf("expected tracker torrent file: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, "cookies", ptpCookieFile)); err != nil {
-		t.Fatalf("expected cookie file to be written: %v", err)
+	if _, err := os.Stat(filepath.Join(tmp, "cookies", ptpCookieFile)); !os.IsNotExist(err) {
+		t.Fatalf("expected no legacy PTP cookie file after upload, got err=%v", err)
 	}
 }
 

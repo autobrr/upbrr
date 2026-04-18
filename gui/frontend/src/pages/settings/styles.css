@@ -179,6 +179,48 @@
   color: var(--text);
 }
 
+.settings-subgroup--auth {
+  margin-bottom: 14px;
+}
+
+.settings-auth-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-auth-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.settings-auth-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.settings-auth-badge.is-ready {
+  background: rgba(53, 194, 193, 0.18);
+  border-color: rgba(53, 194, 193, 0.35);
+}
+
+.settings-auth-badge.is-warning {
+  background: rgba(255, 171, 46, 0.18);
+  border-color: rgba(255, 171, 46, 0.35);
+}
+
+.settings-auth-badge.is-idle {
+  background: rgba(120, 141, 173, 0.18);
+  border-color: rgba(120, 141, 173, 0.35);
+}
+
 .settings-subgroup--collapsible {
   padding: 0;
   background: transparent;
