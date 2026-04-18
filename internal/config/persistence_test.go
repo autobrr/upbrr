@@ -124,6 +124,59 @@ func TestExportImportJSON(t *testing.T) {
 	}
 }
 
+func TestExportPlaintextJSONIncludesSecrets(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		MainSettings: MainSettingsConfig{
+			TMDBAPI: "test-api-key",
+			DBPath:  "/test/db",
+		},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+	}
+
+	exported, err := ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("ExportToPlaintextJSON failed: %v", err)
+	}
+	if !strings.Contains(exported, "test-api-key") {
+		t.Fatalf("expected plaintext secret in JSON export, got %s", exported)
+	}
+	if strings.Contains(exported, encryptedEnvelopePrefix) {
+		t.Fatalf("expected plaintext JSON export without encrypted envelopes, got %s", exported)
+	}
+}
+
+func TestExportPlaintextYAMLIncludesSecrets(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	cfg := &Config{
+		MainSettings: MainSettingsConfig{
+			TMDBAPI: "test-api-key",
+			DBPath:  "/test/db",
+		},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+	}
+
+	if err := ExportToPlaintextYAML(cfg, configPath); err != nil {
+		t.Fatalf("ExportToPlaintextYAML failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read plaintext YAML export: %v", err)
+	}
+	exported := string(raw)
+	if !strings.Contains(exported, "test-api-key") {
+		t.Fatalf("expected plaintext secret in YAML export, got %s", exported)
+	}
+	if strings.Contains(exported, encryptedEnvelopePrefix) {
+		t.Fatalf("expected plaintext YAML export without encrypted envelopes, got %s", exported)
+	}
+}
+
 func TestBackupToYAML(t *testing.T) {
 	t.Parallel()
 
@@ -752,6 +805,42 @@ func TestExportFromDatabaseToYAMLSuccess(t *testing.T) {
 	}
 	if loaded.ScreenshotHandling.Screens != 9 {
 		t.Fatalf("Screens mismatch: got %d, want %d", loaded.ScreenshotHandling.Screens, 9)
+	}
+}
+
+func TestExportFromDatabaseToPlaintextYAMLSuccess(t *testing.T) {
+	t.Setenv("UA_DEFAULT_SCREENS", "9")
+
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "exported.yaml")
+	repo := &exportLoadRepo{
+		cfg: Config{
+			MainSettings: MainSettingsConfig{
+				TMDBAPI: "db-api",
+			},
+			ScreenshotHandling: ScreenshotHandlingConfig{
+				Screens: 4,
+			},
+		},
+	}
+
+	if err := ExportFromDatabaseToPlaintextYAML(context.Background(), outputPath, repo); err != nil {
+		t.Fatalf("ExportFromDatabaseToPlaintextYAML failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read plaintext export: %v", err)
+	}
+	exported := string(raw)
+	if !strings.Contains(exported, "db-api") {
+		t.Fatalf("expected plaintext secret in YAML export, got %s", exported)
+	}
+	if strings.Contains(exported, encryptedEnvelopePrefix) {
+		t.Fatalf("expected plaintext YAML export without encrypted envelopes, got %s", exported)
+	}
+	if !strings.Contains(exported, "screens: 9") {
+		t.Fatalf("expected env override in plaintext export, got %s", exported)
 	}
 }
 

@@ -260,3 +260,27 @@ func TestNewAppKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 		t.Fatalf("expected startup repo to remain usable after core close: %v", err)
 	}
 }
+
+func TestAppAllowUnencryptedExportFromWebAuth(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "gui.db")
+	authPath := filepath.Join(filepath.Dir(repoPath), authmaterial.WebAuthFileName)
+	if err := os.WriteFile(authPath, []byte(`{"username":"tester","password_hash":"hash","allow_unencrypted_export":true}`), 0o600); err != nil {
+		t.Fatalf("write web auth fixture: %v", err)
+	}
+
+	app := &App{
+		cfg: config.Config{
+			MainSettings: config.MainSettingsConfig{DBPath: repoPath},
+		},
+	}
+
+	allow, err := app.allowUnencryptedExport()
+	if err != nil {
+		t.Fatalf("allowUnencryptedExport: %v", err)
+	}
+	if !allow {
+		t.Fatal("expected allowUnencryptedExport to be true")
+	}
+}

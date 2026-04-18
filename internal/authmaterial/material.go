@@ -24,9 +24,10 @@ const (
 var ErrUnavailable = errors.New("web auth material unavailable")
 
 type Material struct {
-	Username          string `json:"username"`
-	PasswordHash      string `json:"password_hash"`
-	EncryptionKeySeed string `json:"encryption_key_seed,omitempty"`
+	Username               string `json:"username"`
+	PasswordHash           string `json:"password_hash"`
+	EncryptionKeySeed      string `json:"encryption_key_seed,omitempty"`
+	AllowUnencryptedExport bool   `json:"allow_unencrypted_export,omitempty"`
 }
 
 func LoadFromDBPath(dbPath string) (Material, error) {

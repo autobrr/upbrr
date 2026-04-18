@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/core"
@@ -691,12 +692,45 @@ func (b *Backend) DeleteUploadedImage(path string, imagePath string, host string
 }
 
 func (b *Backend) GetConfig() (string, error) {
+	cfg, err := b.exportableConfig()
+	if err != nil {
+		return "", err
+	}
+	return config.ExportToJSON(cfg)
+}
+
+func (b *Backend) ExportConfig() (string, error) {
+	cfg, err := b.exportableConfig()
+	if err != nil {
+		return "", err
+	}
+
+	allowPlaintext, err := b.allowUnencryptedExport()
+	if err != nil {
+		return "", err
+	}
+	if allowPlaintext {
+		return config.ExportToPlaintextJSON(cfg)
+	}
+
+	return config.ExportToJSON(cfg)
+}
+
+func (b *Backend) GetDefaultConfig() (string, error) {
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		return "", err
+	}
+	return config.ExportToJSON(cfg)
+}
+
+func (b *Backend) exportableConfig() (*config.Config, error) {
 	if b.repo == nil {
-		return "", errors.New("config repository not initialized")
+		return nil, errors.New("config repository not initialized")
 	}
 	cfg, err := config.LoadFromDatabase(context.Background(), b.repo)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
 		cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
@@ -707,15 +741,18 @@ func (b *Backend) GetConfig() (string, error) {
 	if cfg.Trackers.DefaultTrackers == nil {
 		cfg.Trackers.DefaultTrackers = config.CSVList{}
 	}
-	return config.ExportToJSON(cfg)
+	return cfg, nil
 }
 
-func (b *Backend) GetDefaultConfig() (string, error) {
-	cfg, err := config.LoadEmbeddedDefaultConfig()
-	if err != nil {
-		return "", err
+func (b *Backend) allowUnencryptedExport() (bool, error) {
+	material, err := authmaterial.LoadFromDBPath(b.cfg.MainSettings.DBPath)
+	if err == nil {
+		return material.AllowUnencryptedExport, nil
 	}
-	return config.ExportToJSON(cfg)
+	if errors.Is(err, authmaterial.ErrUnavailable) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (b *Backend) SaveConfig(payload string) error {

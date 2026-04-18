@@ -17,8 +17,24 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
 
+type exportFormat int
+
+const (
+	exportFormatYAML exportFormat = iota
+	exportFormatJSON
+)
+
 // ExportToYAML writes the config to a YAML file.
 func ExportToYAML(cfg *Config, path string) error {
+	return exportToFile(cfg, path, exportFormatYAML, true)
+}
+
+// ExportToPlaintextYAML writes the config to a YAML file without encrypting secret fields.
+func ExportToPlaintextYAML(cfg *Config, path string) error {
+	return exportToFile(cfg, path, exportFormatYAML, false)
+}
+
+func exportToFile(cfg *Config, path string, format exportFormat, encryptSecrets bool) error {
 	if cfg == nil {
 		return internalerrors.ErrInvalidInput
 	}
@@ -32,15 +48,25 @@ func ExportToYAML(cfg *Config, path string) error {
 		return fmt.Errorf("config export: mkdir: %w", err)
 	}
 
-	encryptedCfg, err := EncryptConfigSecrets(cfg)
+	exportCfg, err := exportableConfig(cfg, encryptSecrets)
 	if err != nil {
-		return fmt.Errorf("config export: encrypt secrets: %w", err)
+		return err
 	}
 
-	// Marshal to YAML.
-	data, err := yaml.Marshal(encryptedCfg)
-	if err != nil {
-		return fmt.Errorf("config export: marshal yaml: %w", err)
+	var data []byte
+	switch format {
+	case exportFormatYAML:
+		data, err = yaml.Marshal(exportCfg)
+		if err != nil {
+			return fmt.Errorf("config export: marshal yaml: %w", err)
+		}
+	case exportFormatJSON:
+		data, err = json.MarshalIndent(exportCfg, "", "  ")
+		if err != nil {
+			return fmt.Errorf("config export: marshal json: %w", err)
+		}
+	default:
+		return errors.New("config export: unknown format")
 	}
 
 	// Write to file.
@@ -80,16 +106,25 @@ func ImportFromYAML(path string) (*Config, error) {
 
 // ExportToJSON serializes the config to a JSON string.
 func ExportToJSON(cfg *Config) (string, error) {
+	return exportToJSON(cfg, true)
+}
+
+// ExportToPlaintextJSON serializes the config to JSON without encrypting secret fields.
+func ExportToPlaintextJSON(cfg *Config) (string, error) {
+	return exportToJSON(cfg, false)
+}
+
+func exportToJSON(cfg *Config, encryptSecrets bool) (string, error) {
 	if cfg == nil {
 		return "", internalerrors.ErrInvalidInput
 	}
 
-	encryptedCfg, err := EncryptConfigSecrets(cfg)
+	exportCfg, err := exportableConfig(cfg, encryptSecrets)
 	if err != nil {
-		return "", fmt.Errorf("config export: encrypt secrets: %w", err)
+		return "", err
 	}
 
-	data, err := json.MarshalIndent(encryptedCfg, "", "  ")
+	data, err := json.MarshalIndent(exportCfg, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("config export: marshal json: %w", err)
 	}
@@ -235,6 +270,20 @@ func LoadSectionFromDatabase(ctx context.Context, section string, dest interface
 func ExportFromDatabaseToYAML(ctx context.Context, outputPath string, repo interface {
 	LoadFullConfig(ctx context.Context, dest interface{}) error
 }) error {
+	return exportFromDatabaseToYAML(ctx, outputPath, repo, true)
+}
+
+// ExportFromDatabaseToPlaintextYAML loads config from database, applies environment overrides,
+// and writes the resulting config to a YAML file without encrypting secret fields.
+func ExportFromDatabaseToPlaintextYAML(ctx context.Context, outputPath string, repo interface {
+	LoadFullConfig(ctx context.Context, dest interface{}) error
+}) error {
+	return exportFromDatabaseToYAML(ctx, outputPath, repo, false)
+}
+
+func exportFromDatabaseToYAML(ctx context.Context, outputPath string, repo interface {
+	LoadFullConfig(ctx context.Context, dest interface{}) error
+}, encryptSecrets bool) error {
 	if strings.TrimSpace(outputPath) == "" {
 		return errors.New("config export from database: empty output path")
 	}
@@ -245,9 +294,28 @@ func ExportFromDatabaseToYAML(ctx context.Context, outputPath string, repo inter
 	}
 
 	ApplyEnvOverrides(cfg)
-	if err := ExportToYAML(cfg, outputPath); err != nil {
-		return fmt.Errorf("config export from database: %w", err)
+	var exportErr error
+	if encryptSecrets {
+		exportErr = ExportToYAML(cfg, outputPath)
+	} else {
+		exportErr = ExportToPlaintextYAML(cfg, outputPath)
+	}
+	if exportErr != nil {
+		return fmt.Errorf("config export from database: %w", exportErr)
 	}
 
 	return nil
+}
+
+func exportableConfig(cfg *Config, encryptSecrets bool) (*Config, error) {
+	if !encryptSecrets {
+		return cloneConfig(cfg)
+	}
+
+	encryptedCfg, err := EncryptConfigSecrets(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("config export: encrypt secrets: %w", err)
+	}
+
+	return encryptedCfg, nil
 }

@@ -4,12 +4,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/webserver"
 )
 
@@ -140,5 +143,61 @@ func TestRunRejectsCreateAuthConflicts(t *testing.T) {
 	}
 	if !strings.Contains(cliErr.Error(), "--create-auth and --export-config cannot be used together") {
 		t.Fatalf("unexpected error: %v", cliErr)
+	}
+}
+
+func TestRunExportConfigPlaintextExportsPlainSecrets(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state", "upbrr.db")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	outputPath := filepath.Join(tmpDir, "export.yaml")
+
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(context.Background()); err != nil {
+		t.Fatalf("migrate db: %v", err)
+	}
+
+	if err := webserver.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("bootstrap auth: %v", err)
+	}
+
+	cfg := &config.Config{
+		MainSettings: config.MainSettingsConfig{
+			DBPath:  dbPath,
+			TMDBAPI: "plain-tmdb-token",
+		},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+	}
+	if err := config.ExportToYAML(cfg, configPath); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := config.SaveToDatabase(context.Background(), cfg, repo); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	oldArgs := os.Args
+	defer func() {
+		os.Args = oldArgs
+	}()
+
+	os.Args = []string{"upbrr", "--config", configPath, "--export-config", outputPath, "--export-config-plaintext"}
+	if err := run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	raw, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
+	exported := string(raw)
+	if !strings.Contains(exported, "plain-tmdb-token") {
+		t.Fatalf("expected plaintext secret in export, got %s", exported)
+	}
+	if strings.Contains(exported, "upbrr-enc:v1:") {
+		t.Fatalf("expected plaintext export without encrypted envelopes, got %s", exported)
 	}
 }

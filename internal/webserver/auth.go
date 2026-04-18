@@ -41,10 +41,11 @@ const (
 )
 
 type authRecord struct {
-	Username          string    `json:"username"`
-	PasswordHash      string    `json:"password_hash"`
-	EncryptionKeySeed string    `json:"encryption_key_seed,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	Username               string    `json:"username"`
+	PasswordHash           string    `json:"password_hash"`
+	EncryptionKeySeed      string    `json:"encryption_key_seed,omitempty"`
+	AllowUnencryptedExport bool      `json:"allow_unencrypted_export,omitempty"`
+	CreatedAt              time.Time `json:"created_at"`
 }
 
 type authStore struct {
@@ -165,9 +166,10 @@ func (s *authStore) UpdateRecord(updated authRecord) error {
 
 func (r authRecord) authMaterial() authmaterial.Material {
 	return authmaterial.Material{
-		Username:          strings.TrimSpace(r.Username),
-		PasswordHash:      strings.TrimSpace(r.PasswordHash),
-		EncryptionKeySeed: strings.TrimSpace(r.EncryptionKeySeed),
+		Username:               strings.TrimSpace(r.Username),
+		PasswordHash:           strings.TrimSpace(r.PasswordHash),
+		EncryptionKeySeed:      strings.TrimSpace(r.EncryptionKeySeed),
+		AllowUnencryptedExport: r.AllowUnencryptedExport,
 	}
 }
 

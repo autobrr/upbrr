@@ -91,6 +91,8 @@ Typical first-run options:
 - export the current SQLite-backed config with `--export-config path/to/config.yaml`
 - create the web auth helper file for CLI-only setups with `--create-auth`
 
+For authenticated GUI/web Settings exports, plaintext secret export is disabled by default. If you need that behavior for a local trusted setup, add `"allow_unencrypted_export": true` to the `web-auth.json` file stored beside the active database. This hidden flag only affects UI export behavior and is not exposed in the app.
+
 Important: `main_settings.tmdb_api` must be set before the core can run normally.
 
 If you are migrating from the older program and already have tracker cookie files under `data/cookies`, copy those files into the new cookie directory for this build. By default that location is `~/.upbrr/cookies` beside the default database `~/.upbrr/db.sqlite`. If you use a custom `main_settings.db_path`, place the cookie files in the `cookies` folder next to that database instead.

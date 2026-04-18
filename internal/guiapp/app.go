@@ -18,6 +18,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/configstore"
@@ -1307,11 +1308,38 @@ func (a *App) ExportConfig() (string, error) {
 		ctx = context.Background()
 	}
 
+	allowPlaintext, err := a.allowUnencryptedExport()
+	if err != nil {
+		return "", err
+	}
+
+	if allowPlaintext {
+		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, trimmedPath, a.repo); err != nil {
+			return "", err
+		}
+		return trimmedPath, nil
+	}
+
 	if err := config.ExportFromDatabaseToYAML(ctx, trimmedPath, a.repo); err != nil {
 		return "", err
 	}
 
 	return trimmedPath, nil
+}
+
+func (a *App) allowUnencryptedExport() (bool, error) {
+	if a == nil {
+		return false, errors.New("app not initialized")
+	}
+
+	material, err := authmaterial.LoadFromDBPath(a.cfg.MainSettings.DBPath)
+	if err == nil {
+		return material.AllowUnencryptedExport, nil
+	}
+	if errors.Is(err, authmaterial.ErrUnavailable) {
+		return false, nil
+	}
+	return false, err
 }
 
 type ImportResult struct {

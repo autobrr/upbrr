@@ -140,7 +140,7 @@ func run() error {
 
 	ctx := context.Background()
 	if strings.TrimSpace(opts.ExportConfigPath) != "" {
-		if err := exportConfigToYAML(ctx, opts.ConfigPath, configFlagProvided, opts.ExportConfigPath); err != nil {
+		if err := exportConfigToYAML(ctx, opts.ConfigPath, configFlagProvided, opts.ExportConfigPath, opts.ExportConfigPlaintext); err != nil {
 			return exitError(1, err)
 		}
 		fmt.Printf("exported config to %s\n", opts.ExportConfigPath)
@@ -419,7 +419,7 @@ func loadServeConfig(configPath string, configProvided bool) (config.Config, str
 	return configstore.Bootstrap(context.Background(), configPath, configProvided, false)
 }
 
-func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string) error {
+func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string, plaintext bool) error {
 	dbPath, err := resolveExportDBPath(configPath, configProvided)
 	if err != nil {
 		return err
@@ -433,6 +433,13 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 
 	if err := repo.MigrateContext(ctx); err != nil {
 		return fmt.Errorf("migrate config database: %w", err)
+	}
+
+	if plaintext {
+		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, outputPath, repo); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	if err := config.ExportFromDatabaseToYAML(ctx, outputPath, repo); err != nil {

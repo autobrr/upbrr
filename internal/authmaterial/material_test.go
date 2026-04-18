@@ -81,3 +81,22 @@ func TestLoadFromDBPathAllowsSecurePermissions(t *testing.T) {
 		t.Fatalf("expected encryption seed seed, got %q", material.EncryptionKeySeed)
 	}
 }
+
+func TestLoadFromDBPathParsesAllowUnencryptedExport(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "state.db")
+	authPath := filepath.Join(tempDir, WebAuthFileName)
+	if err := os.WriteFile(authPath, []byte(`{"username":"tester","password_hash":"hash","allow_unencrypted_export":true}`), 0o600); err != nil {
+		t.Fatalf("write web auth file: %v", err)
+	}
+
+	material, err := LoadFromDBPath(dbPath)
+	if err != nil {
+		t.Fatalf("LoadFromDBPath: %v", err)
+	}
+	if !material.AllowUnencryptedExport {
+		t.Fatal("expected allow_unencrypted_export to be true")
+	}
+}
