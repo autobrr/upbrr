@@ -4,6 +4,8 @@
 package ar
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -31,5 +33,33 @@ func TestResolveARNameUsesSceneName(t *testing.T) {
 	})
 	if got != "Scene.Release-GRP" {
 		t.Fatalf("expected scene name, got %q", got)
+	}
+}
+
+type captureLogger struct {
+	warnings []string
+}
+
+func (l *captureLogger) Tracef(string, ...any) {}
+func (l *captureLogger) Debugf(string, ...any) {}
+func (l *captureLogger) Infof(string, ...any)  {}
+func (l *captureLogger) Errorf(string, ...any) {}
+func (l *captureLogger) Warnf(format string, args ...any) {
+	l.warnings = append(l.warnings, strings.TrimSpace(format))
+}
+
+func TestPersistLoginCookiesAllowsPlaintextFallbackWhenAuthHelperUnavailable(t *testing.T) {
+	t.Parallel()
+
+	logger := &captureLogger{}
+	err := persistLoginCookies(context.Background(), t.TempDir()+"/upbrr.db", logger, nil)
+	if err != nil {
+		t.Fatalf("expected plaintext fallback, got %v", err)
+	}
+	if len(logger.warnings) != 1 {
+		t.Fatalf("expected one warning, got %d", len(logger.warnings))
+	}
+	if !strings.Contains(logger.warnings[0], "plaintext fallback") {
+		t.Fatalf("expected plaintext fallback warning, got %q", logger.warnings[0])
 	}
 }

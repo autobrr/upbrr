@@ -44,6 +44,7 @@ import type {
   TrackerQuestionnaire,
   TrackerDryRunPreview,
   TrackerUploadSnapshot,
+  WebAuthStatus,
   UploadedImageLink
 } from "./types";
 import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
@@ -227,6 +228,8 @@ declare global {
             LoadPlaylistSelection: (path: string) => Promise<any>;
             GetConfig: () => Promise<string>;
             GetDefaultConfig: () => Promise<string>;
+            GetWebAuthStatus: () => Promise<WebAuthStatus>;
+            CreateWebAuth: (username: string, password: string) => Promise<WebAuthStatus>;
             SaveConfig: (payload: string) => Promise<void>;
             ExportConfig: () => Promise<string>;
             ImportConfig: () => Promise<{ message: string; warnings: string[] }>;
@@ -350,6 +353,16 @@ const isValidManualDate = (value: string) => {
 
 type ThemeMode = "light" | "dark" | "auto";
 
+const emptyWebAuthStatus: WebAuthStatus = {
+  path: "",
+  exists: false,
+  usable: false,
+  canCreate: false,
+  username: "",
+  allowUnencryptedExport: false,
+  encryptionEnabled: false,
+  message: ""
+};
 
 export default function App() {
   const browserNativeBrowseAvailable = !isBrowserMode() || isBrowserNativeBrowseAvailable();
@@ -426,6 +439,13 @@ export default function App() {
     message: string;
     warnings?: string[];
   } | null>(null);
+  const [webAuthStatus, setWebAuthStatus] = useState<WebAuthStatus | null>(null);
+  const [webAuthLoading, setWebAuthLoading] = useState(false);
+  const [webAuthCreating, setWebAuthCreating] = useState(false);
+  const [webAuthUsername, setWebAuthUsername] = useState("");
+  const [webAuthPassword, setWebAuthPassword] = useState("");
+  const [webAuthConfirm, setWebAuthConfirm] = useState("");
+  const [webAuthError, setWebAuthError] = useState("");
   const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const builderDirty = useMemo(
@@ -2788,6 +2808,71 @@ export default function App() {
     }
   };
 
+  const loadWebAuthStatus = useCallback(async () => {
+    const getWebAuthStatus = globalThis.go?.guiapp?.App?.GetWebAuthStatus;
+    if (!getWebAuthStatus) {
+      setWebAuthStatus(null);
+      setWebAuthError("");
+      return;
+    }
+
+    setWebAuthLoading(true);
+    setWebAuthError("");
+    try {
+      const status = await getWebAuthStatus();
+      setWebAuthStatus(status);
+    } catch (err) {
+      setWebAuthStatus({ ...emptyWebAuthStatus, message: "Unable to load web auth status." });
+      setWebAuthError(String(err));
+    } finally {
+      setWebAuthLoading(false);
+    }
+  }, []);
+
+  const handleCreateWebAuth = useCallback(async () => {
+    clearSettingsStatus();
+    dismissConfigOpStatus();
+    setWebAuthError("");
+
+    if (webAuthPassword !== webAuthConfirm) {
+      setWebAuthError("Passwords do not match.");
+      return;
+    }
+
+    const createWebAuth = globalThis.go?.guiapp?.App?.CreateWebAuth;
+    if (!createWebAuth) {
+      setWebAuthError("Web auth bootstrap is unavailable in this build.");
+      return;
+    }
+
+    setWebAuthCreating(true);
+    try {
+      const status = await createWebAuth(webAuthUsername, webAuthPassword);
+      setWebAuthStatus(status);
+      setWebAuthPassword("");
+      setWebAuthConfirm("");
+      markSettingsSaved("Web auth created. Future secret saves and exports can use encryption.");
+    } catch (err) {
+      setWebAuthError(String(err));
+    } finally {
+      setWebAuthCreating(false);
+    }
+  }, [
+    clearSettingsStatus,
+    dismissConfigOpStatus,
+    markSettingsSaved,
+    webAuthConfirm,
+    webAuthPassword,
+    webAuthUsername
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== "settings") {
+      return;
+    }
+    loadWebAuthStatus();
+  }, [activeTab, loadWebAuthStatus]);
+
   const dupeProgressStatus = String(dupeCheckSnapshot?.status || "").toLowerCase();
   const dupeCompletedCount = Number(dupeCheckSnapshot?.completedCount || 0);
   const dupeTotalCount = Number(dupeCheckSnapshot?.totalCount || 0);
@@ -2938,6 +3023,18 @@ export default function App() {
               handleImportConfigConfirm={handleImportConfigConfirm}
               handleImportConfigCancel={handleImportConfigCancel}
               handleSaveSettings={handleSaveSettings}
+              webAuthAvailable={Boolean(globalThis.go?.guiapp?.App?.GetWebAuthStatus)}
+              webAuthStatus={webAuthStatus}
+              webAuthLoading={webAuthLoading}
+              webAuthCreating={webAuthCreating}
+              webAuthUsername={webAuthUsername}
+              webAuthPassword={webAuthPassword}
+              webAuthConfirm={webAuthConfirm}
+              webAuthError={webAuthError}
+              setWebAuthUsername={setWebAuthUsername}
+              setWebAuthPassword={setWebAuthPassword}
+              setWebAuthConfirm={setWebAuthConfirm}
+              handleCreateWebAuth={handleCreateWebAuth}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}
               renderMapSection={renderMapSection}

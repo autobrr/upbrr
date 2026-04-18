@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/core"
@@ -710,22 +711,27 @@ func (b *Backend) DeleteUploadedImage(path string, imagePath string, host string
 }
 
 func (b *Backend) GetConfig() (string, error) {
-	if b.repo == nil {
-		return "", errors.New("config repository not initialized")
-	}
-	cfg, err := config.LoadFromDatabase(context.Background(), b.repo)
+	cfg, err := b.exportableConfig()
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
-		cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
+	return config.ExportToJSON(cfg)
+}
+
+func (b *Backend) ExportConfig() (string, error) {
+	cfg, err := b.exportableConfig()
+	if err != nil {
+		return "", err
 	}
-	if cfg.Trackers.Trackers == nil {
-		cfg.Trackers.Trackers = map[string]config.TrackerConfig{}
+
+	allowPlaintext, err := b.allowUnencryptedExport()
+	if err != nil {
+		return "", err
 	}
-	if cfg.Trackers.DefaultTrackers == nil {
-		cfg.Trackers.DefaultTrackers = config.CSVList{}
+	if allowPlaintext {
+		return config.ExportToPlaintextJSON(cfg)
 	}
+
 	return config.ExportToJSON(cfg)
 }
 
@@ -737,11 +743,42 @@ func (b *Backend) GetDefaultConfig() (string, error) {
 	return config.ExportToJSON(cfg)
 }
 
+func (b *Backend) exportableConfig() (*config.Config, error) {
+	if b.repo == nil {
+		return nil, errors.New("config repository not initialized")
+	}
+	cfg, err := config.LoadFromDatabase(context.Background(), b.repo)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
+		cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
+	}
+	if cfg.Trackers.Trackers == nil {
+		cfg.Trackers.Trackers = map[string]config.TrackerConfig{}
+	}
+	if cfg.Trackers.DefaultTrackers == nil {
+		cfg.Trackers.DefaultTrackers = config.CSVList{}
+	}
+	return cfg, nil
+}
+
+func (b *Backend) allowUnencryptedExport() (bool, error) {
+	material, err := authmaterial.LoadFromDBPath(b.cfg.MainSettings.DBPath)
+	if err == nil {
+		return material.AllowUnencryptedExport, nil
+	}
+	if errors.Is(err, authmaterial.ErrUnavailable) {
+		return false, nil
+	}
+	return false, err
+}
+
 func (b *Backend) SaveConfig(payload string) error {
 	if b.repo == nil {
 		return errors.New("config repository not initialized")
 	}
-	cfg, err := config.ImportFromJSON(payload)
+	cfg, err := config.ImportFromJSONEncrypted(payload)
 	if err != nil {
 		return err
 	}
@@ -985,7 +1022,7 @@ func (b *Backend) buildRunCore(opts runOptions) (api.Core, *logging.Logger, erro
 	return coreSvc, logger, nil
 }
 
-func buildRunUploadOptions(cfg api.Config, opts runOptions) api.UploadOptions {
+func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions {
 	return api.UploadOptions{
 		Debug:       opts.Debug,
 		DryRun:      opts.Debug,

@@ -10,13 +10,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -130,7 +130,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 }
 
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun bool) (uploadState, []*http.Cookie, error) {
-	cookies, err := loadCookies(req.AppConfig.MainSettings.DBPath)
+	cookies, err := loadCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -255,13 +255,8 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	return bbcode.FinalizeTrackerDescription("BT", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
 }
 
-func loadCookies(dbPath string) ([]*http.Cookie, error) {
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "BT", ".txt") {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return commonhttp.LoadNetscapeCookies(candidate, "brasiltracker.org")
-		}
-	}
-	return nil, errors.New("trackers: BT cookie file not found")
+func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
+	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "BT", "brasiltracker.org")
 }
 
 func fetchAuth(ctx context.Context, cookies []*http.Cookie) (string, error) {

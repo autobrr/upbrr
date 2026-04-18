@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/services/db"
 )
@@ -110,7 +111,18 @@ func SaveToDBPath(ctx context.Context, cfg *config.Config, dbPath string) error 
 	if err := repo.Migrate(); err != nil {
 		return err
 	}
-	return config.SaveToDatabase(ctx, cfg, repo)
+	if err := config.SaveToDatabase(ctx, cfg, repo); err != nil {
+		return err
+	}
+
+	if err := cookies.SyncCookieEncryptionWithAuth(ctx, repo.RawDB(), dbPath); err != nil {
+		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+			return nil
+		}
+		return fmt.Errorf("cookie encryption sync after config save: %w", err)
+	}
+
+	return nil
 }
 
 // Bootstrap resolves the effective config and database path at process

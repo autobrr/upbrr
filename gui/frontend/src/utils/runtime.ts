@@ -133,7 +133,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         GetDefaultConfig: () => call("GetDefaultConfig"),
         SaveConfig: (payload: string) => call("SaveConfig", { Payload: payload }),
         ExportConfig: async () => {
-          const payload = await call<string>("GetConfig");
+          const payload = await call<string>("ExportConfig");
           const blob = new Blob([payload], { type: "application/json" });
           const url = URL.createObjectURL(blob);
           const anchor = document.createElement("a");

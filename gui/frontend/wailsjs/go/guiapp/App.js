@@ -30,6 +30,10 @@ export function CheckDupes(arg1, arg2, arg3, arg4) {
   return window['go']['guiapp']['App']['CheckDupes'](arg1, arg2, arg3, arg4);
 }
 
+export function CreateWebAuth(arg1, arg2) {
+  return window['go']['guiapp']['App']['CreateWebAuth'](arg1, arg2);
+}
+
 export function DeleteHistoryRelease(arg1) {
   return window['go']['guiapp']['App']['DeleteHistoryRelease'](arg1);
 }
@@ -112,6 +116,10 @@ export function GetRecentLogs(arg1) {
 
 export function GetTrackerUploadSnapshot(arg1) {
   return window['go']['guiapp']['App']['GetTrackerUploadSnapshot'](arg1);
+}
+
+export function GetWebAuthStatus() {
+  return window['go']['guiapp']['App']['GetWebAuthStatus']();
 }
 
 export function ImportConfig() {
