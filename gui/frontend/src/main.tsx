@@ -20,5 +20,5 @@ import "./pages/upload_images/styles.css";
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <WebRoot />
-  </React.StrictMode>
+  </React.StrictMode>,
 );

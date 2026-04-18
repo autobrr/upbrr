@@ -43,14 +43,14 @@ import type {
   TrackerQuestionnaire,
   TrackerDryRunPreview,
   TrackerUploadSnapshot,
-  UploadedImageLink
+  UploadedImageLink,
 } from "./types";
 import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
 
 const emptyDupeSummary: DupeCheckSummary = {
   SourcePath: "",
   Results: [],
-  Notes: []
+  Notes: [],
 };
 
 const emptyPreview: MetadataPreview = {
@@ -68,40 +68,42 @@ const emptyPreview: MetadataPreview = {
     SourceTMDB: "",
     SourceIMDB: "",
     SourceTVDB: "",
-    SourceTVmaze: ""
+    SourceTVmaze: "",
   },
   ExternalIDCandidates: {
     TMDB: [],
     IMDB: [],
     TMDBAutoSelected: false,
-    IMDBAutoSelected: false
+    IMDBAutoSelected: false,
   },
   ExternalIDInfo: [],
   ExternalPreview: [],
-  TrackerData: []
+  TrackerData: [],
 };
 
 const emptyPreparation: PreparationPreview = {
   SourcePath: "",
-  Descriptions: []
+  Descriptions: [],
 };
 
 const emptyTrackerDryRun: TrackerDryRunPreview = {
   SourcePath: "",
-  Trackers: []
+  Trackers: [],
 };
 
 const cloneQuestionnaireAnswers = (input: Record<string, Record<string, string>>) =>
   Object.fromEntries(
     Object.entries(input).map(([tracker, values]) => [
       tracker,
-      Object.fromEntries(Object.entries(values || {}).map(([key, value]) => [key, String(value ?? "")]))
-    ])
+      Object.fromEntries(
+        Object.entries(values || {}).map(([key, value]) => [key, String(value ?? "")]),
+      ),
+    ]),
   );
 
 const buildQuestionnaireAnswerDefaults = (
   questionnaire: TrackerQuestionnaire | null | undefined,
-  existing: Record<string, string> | undefined
+  existing: Record<string, string> | undefined,
 ) => {
   const next: Record<string, string> = { ...(existing || {}) };
   (questionnaire?.Fields || []).forEach((field) => {
@@ -112,19 +114,20 @@ const buildQuestionnaireAnswerDefaults = (
   return next;
 };
 
-const splitTrackerLabel = (value: string) => value
-  .split(",")
-  .map((entry) => entry.toLowerCase().trim())
-  .filter((entry) => entry.length > 0);
+const splitTrackerLabel = (value: string) =>
+  value
+    .split(",")
+    .map((entry) => entry.toLowerCase().trim())
+    .filter((entry) => entry.length > 0);
 
 const emptyDescriptionBuilder: DescriptionBuilderPreview = {
   SourcePath: "",
-  Groups: []
+  Groups: [],
 };
 
 const upsertBuilderGroup = (
   preview: DescriptionBuilderPreview,
-  nextGroup: DescriptionBuilderPreview["Groups"][number]
+  nextGroup: DescriptionBuilderPreview["Groups"][number],
 ): DescriptionBuilderPreview => {
   const nextGroups = [...(preview.Groups || [])];
   const existingIndex = nextGroups.findIndex((group) => group.GroupKey === nextGroup.GroupKey);
@@ -135,7 +138,7 @@ const upsertBuilderGroup = (
   }
   return {
     ...preview,
-    Groups: nextGroups
+    Groups: nextGroups,
   };
 };
 
@@ -150,7 +153,7 @@ const progressUpdatePrefixes = new Set([
   "initialize",
   "playlist",
   "clipinfo",
-  "stream"
+  "stream",
 ]);
 
 const progressLineKey = (line: string): string | null => {
@@ -198,29 +201,124 @@ declare global {
             BrowseFile: () => Promise<string>;
             BrowseFolder: () => Promise<string>;
             DetectDiscType: (path: string) => Promise<string>;
-            FetchMetadata: (path: string, sourceLookupURL: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<MetadataPreview>;
-            ResetMetadata: (path: string, sourceLookupURL: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<MetadataPreview>;
-            FetchDescriptionBuilder: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreDupesFor: string[]) => Promise<DescriptionBuilderPreview>;
-            FetchPreparation: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreDupesFor: string[]) => Promise<PreparationPreview>;
-            FetchTrackerDryRun: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: DescriptionBuilderPreview["Groups"], debug: boolean, runLogLevel: string) => Promise<TrackerDryRunPreview>;
-            CheckDupes: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<DupeCheckSummary>;
-            StartDupeCheck: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<string>;
+            FetchMetadata: (
+              path: string,
+              sourceLookupURL: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+            ) => Promise<MetadataPreview>;
+            ResetMetadata: (
+              path: string,
+              sourceLookupURL: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+            ) => Promise<MetadataPreview>;
+            FetchDescriptionBuilder: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+              ignoreDupesFor: string[],
+            ) => Promise<DescriptionBuilderPreview>;
+            FetchPreparation: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+              ignoreDupesFor: string[],
+            ) => Promise<PreparationPreview>;
+            FetchTrackerDryRun: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+              ignoreRuleFailures: boolean,
+              ignoreDupesFor: string[],
+              questionnaireAnswers: Record<string, Record<string, string>>,
+              descriptionGroups: DescriptionBuilderPreview["Groups"],
+              debug: boolean,
+              runLogLevel: string,
+            ) => Promise<TrackerDryRunPreview>;
+            CheckDupes: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+            ) => Promise<DupeCheckSummary>;
+            StartDupeCheck: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+            ) => Promise<string>;
             CancelDupeCheck: (jobID: string) => Promise<void>;
             GetDupeCheckSnapshot: (jobID: string) => Promise<DupeCheckSnapshot>;
-            FetchScreenshotPlan: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<ScreenshotPlan>;
-            GenerateScreenshots: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, selections: ScreenshotSelection[], purpose: ScreenshotPurpose) => Promise<ScreenshotResult>;
-            PreviewScreenshotFrame: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, timestampSeconds: number) => Promise<string>;
-            DeleteScreenshot: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, imagePath: string) => Promise<void>;
-            SaveFinalScreenshotSelections: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, images: ScreenshotImage[]) => Promise<void>;
+            FetchScreenshotPlan: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<ScreenshotPlan>;
+            GenerateScreenshots: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              selections: ScreenshotSelection[],
+              purpose: ScreenshotPurpose,
+            ) => Promise<ScreenshotResult>;
+            PreviewScreenshotFrame: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              timestampSeconds: number,
+            ) => Promise<string>;
+            DeleteScreenshot: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              imagePath: string,
+            ) => Promise<void>;
+            SaveFinalScreenshotSelections: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              images: ScreenshotImage[],
+            ) => Promise<void>;
             ReadScreenshotImage: (path: string) => Promise<string>;
-            ListUploadCandidates: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<ScreenshotImage[]>;
-            ListUploadedImages: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<UploadedImageLink[]>;
-            UploadImages: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, host: string, images: ScreenshotImage[]) => Promise<UploadedImageLink[]>;
+            ListUploadCandidates: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<ScreenshotImage[]>;
+            ListUploadedImages: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<UploadedImageLink[]>;
+            UploadImages: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              host: string,
+              images: ScreenshotImage[],
+            ) => Promise<UploadedImageLink[]>;
             DeleteUploadedImage: (path: string, imagePath: string, host: string) => Promise<void>;
             RenderDescription: (raw: string) => Promise<string>;
-            SaveDescriptionOverride: (path: string, groupKey: string, raw: string, trackers: string[], overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<DescriptionBuilderPreview["Groups"][number]>;
+            SaveDescriptionOverride: (
+              path: string,
+              groupKey: string,
+              raw: string,
+              trackers: string[],
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<DescriptionBuilderPreview["Groups"][number]>;
             DiscoverPlaylists: (path: string) => Promise<any[]>;
-            SavePlaylistSelection: (path: string, playlists: string[], useAll: boolean) => Promise<void>;
+            SavePlaylistSelection: (
+              path: string,
+              playlists: string[],
+              useAll: boolean,
+            ) => Promise<void>;
             LoadPlaylistSelection: (path: string) => Promise<any>;
             GetConfig: () => Promise<string>;
             GetDefaultConfig: () => Promise<string>;
@@ -237,7 +335,18 @@ declare global {
             ListHistory: () => Promise<HistoryEntry[]>;
             GetHistoryOverview: (sourcePath: string) => Promise<HistoryOverview>;
             DeleteHistoryRelease: (sourcePath: string) => Promise<void>;
-            StartTrackerUpload: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: DescriptionBuilderPreview["Groups"], debug: boolean, runLogLevel: string) => Promise<string>;
+            StartTrackerUpload: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+              ignoreRuleFailures: boolean,
+              ignoreDupesFor: string[],
+              questionnaireAnswers: Record<string, Record<string, string>>,
+              descriptionGroups: DescriptionBuilderPreview["Groups"],
+              debug: boolean,
+              runLogLevel: string,
+            ) => Promise<string>;
             CancelTrackerUpload: (jobID: string) => Promise<void>;
             RetryFailedTrackerUpload: (jobID: string) => Promise<string>;
             GetTrackerUploadSnapshot: (jobID: string) => Promise<TrackerUploadSnapshot>;
@@ -262,7 +371,7 @@ const providerOrder = ["tmdb", "imdb", "tvdb", "tvmaze"] as const;
 
 const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
   const orderIndex = new Map<string, number>(
-    providerOrder.map((provider, index) => [provider, index])
+    providerOrder.map((provider, index) => [provider, index]),
   );
 
   return [...info].sort((left, right) => {
@@ -275,12 +384,11 @@ const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
 
 const formatNumber = (value: number) => (value ? value.toString() : "");
 
-
 const buildIDEditState = (ids: ExternalIDs) => ({
   tmdb: formatNumber(ids.TMDBID),
   imdb: formatNumber(ids.IMDBID),
   tvdb: formatNumber(ids.TVDBID),
-  tvmaze: formatNumber(ids.TVmazeID)
+  tvmaze: formatNumber(ids.TVmazeID),
 });
 
 const buildReleaseEditState = (overrides?: ReleaseNameOverrides): ReleaseNameEditState => ({
@@ -305,7 +413,7 @@ const buildReleaseEditState = (overrides?: ReleaseNameOverrides): ReleaseNameEdi
   noDub: Boolean(overrides?.NoDub),
   noDual: Boolean(overrides?.NoDual),
   dualAudio: Boolean(overrides?.DualAudio),
-  region: overrides?.Region ?? ""
+  region: overrides?.Region ?? "",
 });
 
 const buildReleaseTouchedState = (overrides?: ReleaseNameOverrides): ReleaseNameTouchedState => ({
@@ -321,7 +429,8 @@ const buildReleaseTouchedState = (overrides?: ReleaseNameOverrides): ReleaseName
   episodeTitle: overrides?.EpisodeTitle !== undefined && overrides?.EpisodeTitle !== null,
   manualYear: overrides?.ManualYear !== undefined && overrides?.ManualYear !== null,
   manualDate: overrides?.ManualDate !== undefined && overrides?.ManualDate !== null,
-  useSeasonEpisode: overrides?.UseSeasonEpisode !== undefined && overrides?.UseSeasonEpisode !== null,
+  useSeasonEpisode:
+    overrides?.UseSeasonEpisode !== undefined && overrides?.UseSeasonEpisode !== null,
   noSeason: overrides?.NoSeason !== undefined && overrides?.NoSeason !== null,
   noYear: overrides?.NoYear !== undefined && overrides?.NoYear !== null,
   noAKA: overrides?.NoAKA !== undefined && overrides?.NoAKA !== null,
@@ -330,7 +439,7 @@ const buildReleaseTouchedState = (overrides?: ReleaseNameOverrides): ReleaseName
   noDub: overrides?.NoDub !== undefined && overrides?.NoDub !== null,
   noDual: overrides?.NoDual !== undefined && overrides?.NoDual !== null,
   dualAudio: overrides?.DualAudio !== undefined && overrides?.DualAudio !== null,
-  region: overrides?.Region !== undefined && overrides?.Region !== null
+  region: overrides?.Region !== undefined && overrides?.Region !== null,
 });
 
 const normalizeTag = (value: string) => {
@@ -347,7 +456,6 @@ const isValidManualDate = (value: string) => {
 
 type ThemeMode = "light" | "dark" | "auto";
 
-
 export default function App() {
   const browserNativeBrowseAvailable = !isBrowserMode() || isBrowserNativeBrowseAvailable();
   const [path, setPath] = useState("");
@@ -357,8 +465,12 @@ export default function App() {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<MetadataPreview>(emptyPreview);
   const [idEdits, setIdEdits] = useState(() => buildIDEditState(emptyPreview.ExternalIDs));
-  const [releaseEdits, setReleaseEdits] = useState(() => buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
-  const [releaseTouched, setReleaseTouched] = useState(() => buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
+  const [releaseEdits, setReleaseEdits] = useState(() =>
+    buildReleaseEditState(emptyPreview.ReleaseNameOverrides),
+  );
+  const [releaseTouched, setReleaseTouched] = useState(() =>
+    buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides),
+  );
   const [showExternalIDInputUI, setShowExternalIDInputUI] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [activeTab, setActiveTab] = useState("input");
@@ -374,7 +486,9 @@ export default function App() {
   const [bdinfoProgressLines, setBdinfoProgressLines] = useState<string[]>([]);
   const [metadataProgressTarget, setMetadataProgressTarget] = useState("");
   const [metadataProgressActive, setMetadataProgressActive] = useState(false);
-  const [metadataProgressUpdates, setMetadataProgressUpdates] = useState<MetadataProgressUpdate[]>([]);
+  const [metadataProgressUpdates, setMetadataProgressUpdates] = useState<MetadataProgressUpdate[]>(
+    [],
+  );
   const [dupeSummary, setDupeSummary] = useState<DupeCheckSummary>(emptyDupeSummary);
   const [dupeLoading, setDupeLoading] = useState(false);
   const [dupeError, setDupeError] = useState("");
@@ -386,7 +500,8 @@ export default function App() {
   const [prepPreview, setPrepPreview] = useState<PreparationPreview>(emptyPreparation);
   const [prepLoading, setPrepLoading] = useState(false);
   const [prepError, setPrepError] = useState("");
-  const [builderPreview, setBuilderPreview] = useState<DescriptionBuilderPreview>(emptyDescriptionBuilder);
+  const [builderPreview, setBuilderPreview] =
+    useState<DescriptionBuilderPreview>(emptyDescriptionBuilder);
   const [builderRawByGroup, setBuilderRawByGroup] = useState<Record<string, string>>({});
   const [builderRenderedByGroup, setBuilderRenderedByGroup] = useState<Record<string, string>>({});
   const [builderExpandedGroups, setBuilderExpandedGroups] = useState<Record<string, boolean>>({});
@@ -402,12 +517,19 @@ export default function App() {
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
   const [trackerUploadError, setTrackerUploadError] = useState("");
   const [trackerUploadJobID, setTrackerUploadJobID] = useState("");
-  const [trackerUploadSnapshot, setTrackerUploadSnapshot] = useState<TrackerUploadSnapshot | null>(null);
+  const [trackerUploadSnapshot, setTrackerUploadSnapshot] = useState<TrackerUploadSnapshot | null>(
+    null,
+  );
   const [trackerDryRunLoading, setTrackerDryRunLoading] = useState(false);
   const [trackerDryRunError, setTrackerDryRunError] = useState("");
-  const [trackerDryRunPreview, setTrackerDryRunPreview] = useState<TrackerDryRunPreview>(emptyTrackerDryRun);
-  const [trackerQuestionnaireAnswers, setTrackerQuestionnaireAnswers] = useState<Record<string, Record<string, string>>>({});
-  const [releasePageTrackerSelection, setReleasePageTrackerSelection] = useState<Record<string, boolean>>({});
+  const [trackerDryRunPreview, setTrackerDryRunPreview] =
+    useState<TrackerDryRunPreview>(emptyTrackerDryRun);
+  const [trackerQuestionnaireAnswers, setTrackerQuestionnaireAnswers] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const [releasePageTrackerSelection, setReleasePageTrackerSelection] = useState<
+    Record<string, boolean>
+  >({});
   const [runDebug, setRunDebug] = useState(false);
   const [runLogLevel, setRunLogLevel] = useState("info");
   const [runLogLevelTouched, setRunLogLevelTouched] = useState(false);
@@ -426,18 +548,15 @@ export default function App() {
 
   const builderDirty = useMemo(
     () => Object.values(builderDirtyByGroup).some(Boolean),
-    [builderDirtyByGroup]
+    [builderDirtyByGroup],
   );
-  const builderReady = useMemo(
-    () => {
-      const normalizedPath = path.trim();
-      if (!normalizedPath) {
-        return false;
-      }
-      return builderPreview.SourcePath === normalizedPath && builderPreview.Groups !== undefined;
-    },
-    [builderPreview.SourcePath, builderPreview.Groups, path]
-  );
+  const builderReady = useMemo(() => {
+    const normalizedPath = path.trim();
+    if (!normalizedPath) {
+      return false;
+    }
+    return builderPreview.SourcePath === normalizedPath && builderPreview.Groups !== undefined;
+  }, [builderPreview.SourcePath, builderPreview.Groups, path]);
 
   const {
     configData,
@@ -468,12 +587,14 @@ export default function App() {
     setSettingsSavedMessage,
     setSettingsErrorMessage,
     resolveImageHostLabel,
-    trackerSelectionNames
+    trackerSelectionNames,
   } = useSettingsState({ activeTab });
 
   const configuredRunLogLevel = useMemo(() => {
     const loggingSection = ((configData as ConfigMap | null)?.Logging ?? null) as ConfigMap | null;
-    const rawLevel = String(loggingSection?.Level ?? "info").toLowerCase().trim();
+    const rawLevel = String(loggingSection?.Level ?? "info")
+      .toLowerCase()
+      .trim();
     return runLogLevels.includes(rawLevel as (typeof runLogLevels)[number]) ? rawLevel : "info";
   }, [configData]);
 
@@ -506,8 +627,6 @@ export default function App() {
     // Add the effective theme class
     root.classList.add(effectiveTheme);
   };
-
-
 
   const handleThemeToggle = () => {
     const themes: ThemeMode[] = ["auto", "light", "dark"];
@@ -561,7 +680,10 @@ export default function App() {
         return;
       }
       const eventPath = typeof payload?.path === "string" ? payload.path : "";
-      if (metadataProgressTarget && normalizePath(eventPath) !== normalizePath(metadataProgressTarget)) {
+      if (
+        metadataProgressTarget &&
+        normalizePath(eventPath) !== normalizePath(metadataProgressTarget)
+      ) {
         return;
       }
 
@@ -571,7 +693,7 @@ export default function App() {
         message: typeof payload?.message === "string" ? payload.message : "",
         status: typeof payload?.status === "string" ? payload.status : "",
         level: typeof payload?.level === "string" ? payload.level : "info",
-        timestamp: typeof payload?.timestamp === "string" ? payload.timestamp : ""
+        timestamp: typeof payload?.timestamp === "string" ? payload.timestamp : "",
       };
 
       if (update.phase === "complete" && update.status === "completed") {
@@ -597,9 +719,7 @@ export default function App() {
   useEffect(() => {
     type ComparisonElement = HTMLElement & { __uaComparisonInit?: boolean };
     const comparisons = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        ".tracker-description.rendered .comparison"
-      )
+      document.querySelectorAll<HTMLElement>(".tracker-description.rendered .comparison"),
     );
     const cleanups: Array<() => void> = [];
 
@@ -610,23 +730,14 @@ export default function App() {
       }
       element.__uaComparisonInit = true;
 
-      const details = comparison.querySelector<HTMLDetailsElement>(
-        ".comparison__details"
-      );
-      const summary = comparison.querySelector<HTMLElement>(
-        ".comparison__details > summary"
-      );
-      const rows = Array.from(
-        comparison.querySelectorAll<HTMLElement>(".comparison__row")
-      );
+      const details = comparison.querySelector<HTMLDetailsElement>(".comparison__details");
+      const summary = comparison.querySelector<HTMLElement>(".comparison__details > summary");
+      const rows = Array.from(comparison.querySelectorAll<HTMLElement>(".comparison__row"));
       if (!details || rows.length === 0) {
         return;
       }
 
-      const maxColumns = rows.reduce(
-        (max, row) => Math.max(max, row.children.length),
-        0
-      );
+      const maxColumns = rows.reduce((max, row) => Math.max(max, row.children.length), 0);
       if (maxColumns <= 1) {
         return;
       }
@@ -643,13 +754,8 @@ export default function App() {
           const columns = Array.from(row.children) as HTMLElement[];
           columns.forEach((cell, index) => {
             const isActive = index + 1 === current;
-            cell.classList.toggle(
-              "comparison__image-container--hidden",
-              !isActive
-            );
-            const image = cell.querySelector<HTMLElement>(
-              ".comparison__image"
-            );
+            cell.classList.toggle("comparison__image-container--hidden", !isActive);
+            const image = cell.querySelector<HTMLElement>(".comparison__image");
             if (image) {
               image.classList.toggle("comparison__image--hidden", !isActive);
             }
@@ -695,10 +801,7 @@ export default function App() {
         }
         const width = globalThis.innerWidth || 1;
         const ratio = event.clientX / width;
-        const next = Math.min(
-          maxColumns,
-          Math.max(1, Math.ceil(ratio * maxColumns))
-        );
+        const next = Math.min(maxColumns, Math.max(1, Math.ceil(ratio * maxColumns)));
         applyColumn(next);
       };
 
@@ -743,7 +846,14 @@ export default function App() {
     return () => {
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [renderedDescriptions, preview.TrackerData, prepPreview.Descriptions, builderRenderedByGroup, builderPreview.Groups, activeTab]);
+  }, [
+    renderedDescriptions,
+    preview.TrackerData,
+    prepPreview.Descriptions,
+    builderRenderedByGroup,
+    builderPreview.Groups,
+    activeTab,
+  ]);
 
   const getThemeIcon = () => {
     if (theme === "auto") return "🔄";
@@ -821,7 +931,9 @@ export default function App() {
     const next = new Set<string>();
     (dupeSummary.Results || []).forEach((result) => {
       if (!result.Tracker) return;
-      const status = String(result.Status || "").toLowerCase().trim();
+      const status = String(result.Status || "")
+        .toLowerCase()
+        .trim();
       const hasError = Boolean(String(result.Error || "").trim());
       if (status !== "failed" && !hasError) return;
       const normalized = result.Tracker.toLowerCase().trim();
@@ -860,19 +972,15 @@ export default function App() {
     if (dupedTrackerSet.size === 0 && ruleSkippedTrackerSet.size === 0) return descriptions;
     const filtered: PreparationDescription[] = [];
     descriptions.forEach((entry) => {
-      const trackers = (entry.Trackers || []).filter(
-        (tracker) => {
-          const normalized = String(tracker).toLowerCase().trim();
-          return !dupedTrackerSet.has(normalized) && !ruleSkippedTrackerSet.has(normalized);
-        }
-      );
+      const trackers = (entry.Trackers || []).filter((tracker) => {
+        const normalized = String(tracker).toLowerCase().trim();
+        return !dupedTrackerSet.has(normalized) && !ruleSkippedTrackerSet.has(normalized);
+      });
       if (trackers.length === 0) return;
       filtered.push({ ...entry, Trackers: trackers });
     });
     return filtered;
   };
-
-
 
   const trackerUploadItems = useMemo(() => {
     if (!configData || !configData.Trackers || typeof configData.Trackers !== "object") {
@@ -886,7 +994,7 @@ export default function App() {
         ? (rawEntries as ConfigMap)
         : {};
     const entries = Object.entries(entriesRoot).filter(
-      ([, value]) => value && typeof value === "object" && !Array.isArray(value)
+      ([, value]) => value && typeof value === "object" && !Array.isArray(value),
     ) as Array<[string, ConfigMap]>;
     const visibleTrackerSet = new Set(trackerSelectionNames);
 
@@ -910,15 +1018,21 @@ export default function App() {
       tmdb: parseIDInput("tmdb", idEdits.tmdb),
       imdb: parseIDInput("imdb", idEdits.imdb),
       tvdb: parseIDInput("tvdb", idEdits.tvdb),
-      tvmaze: parseIDInput("tvmaze", idEdits.tvmaze)
+      tvmaze: parseIDInput("tvmaze", idEdits.tvmaze),
     };
 
     const invalid = Object.values(parsed).includes(null);
     const overrides: ExternalIDOverrides = {
-      TMDBID: parsed.tmdb !== null && parsed.tmdb !== preview.ExternalIDs.TMDBID ? parsed.tmdb : null,
-      IMDBID: parsed.imdb !== null && parsed.imdb !== preview.ExternalIDs.IMDBID ? parsed.imdb : null,
-      TVDBID: parsed.tvdb !== null && parsed.tvdb !== preview.ExternalIDs.TVDBID ? parsed.tvdb : null,
-      TVmazeID: parsed.tvmaze !== null && parsed.tvmaze !== preview.ExternalIDs.TVmazeID ? parsed.tvmaze : null
+      TMDBID:
+        parsed.tmdb !== null && parsed.tmdb !== preview.ExternalIDs.TMDBID ? parsed.tmdb : null,
+      IMDBID:
+        parsed.imdb !== null && parsed.imdb !== preview.ExternalIDs.IMDBID ? parsed.imdb : null,
+      TVDBID:
+        parsed.tvdb !== null && parsed.tvdb !== preview.ExternalIDs.TVDBID ? parsed.tvdb : null,
+      TVmazeID:
+        parsed.tvmaze !== null && parsed.tvmaze !== preview.ExternalIDs.TVmazeID
+          ? parsed.tvmaze
+          : null,
     };
     const dirty = Object.values(overrides).some((value) => value !== null);
 
@@ -932,16 +1046,27 @@ export default function App() {
     }
 
     const overrides: ReleaseNameOverrides = {};
-    const stored = (preview.ReleaseNameOverrides && typeof preview.ReleaseNameOverrides === 'object') ? preview.ReleaseNameOverrides : {};
+    const stored =
+      preview.ReleaseNameOverrides && typeof preview.ReleaseNameOverrides === "object"
+        ? preview.ReleaseNameOverrides
+        : {};
     let invalid = false;
 
     const readTrimmed = (value: string | null | undefined) => (value || "").trim();
-    const stringDirty = (touched: boolean, current: string | null | undefined, storedValue?: string | null) => {
+    const stringDirty = (
+      touched: boolean,
+      current: string | null | undefined,
+      storedValue?: string | null,
+    ) => {
       if (!touched) return false;
       if (storedValue === undefined || storedValue === null) return true;
       return readTrimmed(current) !== readTrimmed(storedValue);
     };
-    const boolDirty = (touched: boolean, current: boolean | null | undefined, storedValue?: boolean | null) => {
+    const boolDirty = (
+      touched: boolean,
+      current: boolean | null | undefined,
+      storedValue?: boolean | null,
+    ) => {
       if (!touched) return false;
       if (storedValue === undefined || storedValue === null) return true;
       return Boolean(current) !== Boolean(storedValue);
@@ -956,7 +1081,8 @@ export default function App() {
     if (releaseTouched.edition) overrides.Edition = readTrimmed(releaseEdits.edition);
     if (releaseTouched.season) overrides.Season = readTrimmed(releaseEdits.season);
     if (releaseTouched.episode) overrides.Episode = readTrimmed(releaseEdits.episode);
-    if (releaseTouched.episodeTitle) overrides.EpisodeTitle = readTrimmed(releaseEdits.episodeTitle);
+    if (releaseTouched.episodeTitle)
+      overrides.EpisodeTitle = readTrimmed(releaseEdits.episodeTitle);
 
     if (releaseTouched.manualYear) {
       const trimmed = readTrimmed(releaseEdits.manualYear);
@@ -1003,7 +1129,11 @@ export default function App() {
       stringDirty(releaseTouched.episode, releaseEdits.episode, stored.Episode) ||
       stringDirty(releaseTouched.episodeTitle, releaseEdits.episodeTitle, stored.EpisodeTitle) ||
       stringDirty(releaseTouched.manualDate, releaseEdits.manualDate, stored.ManualDate) ||
-      boolDirty(releaseTouched.useSeasonEpisode, releaseEdits.useSeasonEpisode, stored.UseSeasonEpisode) ||
+      boolDirty(
+        releaseTouched.useSeasonEpisode,
+        releaseEdits.useSeasonEpisode,
+        stored.UseSeasonEpisode,
+      ) ||
       boolDirty(releaseTouched.noSeason, releaseEdits.noSeason, stored.NoSeason) ||
       boolDirty(releaseTouched.noYear, releaseEdits.noYear, stored.NoYear) ||
       boolDirty(releaseTouched.noAKA, releaseEdits.noAKA, stored.NoAKA) ||
@@ -1099,7 +1229,9 @@ export default function App() {
 
   const uploadCandidatePaths = useMemo(() => {
     return new Set(
-      screenshots.uploadCandidates.map((item) => item.image.Path).filter((path): path is string => Boolean(path))
+      screenshots.uploadCandidates
+        .map((item) => item.image.Path)
+        .filter((path): path is string => Boolean(path)),
     );
   }, [screenshots.uploadCandidates]);
 
@@ -1112,21 +1244,24 @@ export default function App() {
     setLiveCaptureLoading(false);
   }, [resetScreenshots, resetUploadState]);
 
-
-
   // Helper functions for screenshot management (not in the hook)
   const handleDeleteExistingImage = (image: ScreenshotImage) => {
     if (!image.Path) return;
     const deletedPath = image.Path;
-    screenshots.setExistingImages((prev) => prev.filter((entry) => entry.image.Path !== deletedPath));
+    screenshots.setExistingImages((prev) =>
+      prev.filter((entry) => entry.image.Path !== deletedPath),
+    );
     if (screenshots.finalImagesRef.current.length > 0) {
       screenshots.saveFinalSelections(
-        screenshots.finalImagesRef.current.filter((entry) => entry.image.Path !== deletedPath)
+        screenshots.finalImagesRef.current.filter((entry) => entry.image.Path !== deletedPath),
       );
     }
   };
 
-  const mergeFinalSelections = (current: ScreenshotPreviewImage[], additions: ScreenshotPreviewImage[]) => {
+  const mergeFinalSelections = (
+    current: ScreenshotPreviewImage[],
+    additions: ScreenshotPreviewImage[],
+  ) => {
     if (additions.length === 0) return current;
     const seen = new Map<string, number>();
     const merged = [...current];
@@ -1206,10 +1341,17 @@ export default function App() {
   };
 
   const desiredScreenCount = () => {
-    if (screenshotConfig && typeof screenshotConfig.Screens === "number" && screenshotConfig.Screens > 0) {
+    if (
+      screenshotConfig &&
+      typeof screenshotConfig.Screens === "number" &&
+      screenshotConfig.Screens > 0
+    ) {
       return screenshotConfig.Screens;
     }
-    if (screenshots.screenshotPlan && Array.isArray(screenshots.screenshotPlan.SuggestedSelections)) {
+    if (
+      screenshots.screenshotPlan &&
+      Array.isArray(screenshots.screenshotPlan.SuggestedSelections)
+    ) {
       return screenshots.screenshotPlan.SuggestedSelections.length;
     }
     return 0;
@@ -1234,22 +1376,25 @@ export default function App() {
     const tolerance = previewFrameRate > 0 ? 1 / previewFrameRate : 0;
     const filtered = candidates.filter((entry) => {
       const ts = normalizeSelectionTimestamp(entry);
-      return !manual.some((manualEntry) => Math.abs(normalizeSelectionTimestamp(manualEntry) - ts) <= tolerance);
+      return !manual.some(
+        (manualEntry) => Math.abs(normalizeSelectionTimestamp(manualEntry) - ts) <= tolerance,
+      );
     });
 
     const needed = Math.max(0, targetCount - manual.length);
     const auto = filtered.slice(0, needed).map((entry) => ({
       ...entry,
-      Source: "auto"
+      Source: "auto",
     }));
 
     return [...manual, ...auto];
   };
 
   const namingOverrides = useMemo(() => {
-    const stored = (preview.ReleaseNameOverrides && typeof preview.ReleaseNameOverrides === "object")
-      ? preview.ReleaseNameOverrides
-      : {};
+    const stored =
+      preview.ReleaseNameOverrides && typeof preview.ReleaseNameOverrides === "object"
+        ? preview.ReleaseNameOverrides
+        : {};
     const overrides = releaseOverrideState?.dirty
       ? releaseOverrideState.overrides
       : preview.ReleaseNameOverrides || {};
@@ -1516,7 +1661,7 @@ export default function App() {
   const runFetch = async (
     overrides: ExternalIDOverrides,
     nameOverrides: ReleaseNameOverrides,
-    hideExternalIDInputUIOnSuccess = false
+    hideExternalIDInputUIOnSuccess = false,
   ) => {
     setError("");
     setDupeChecked(false);
@@ -1548,7 +1693,7 @@ export default function App() {
         sourceLookupURL.trim(),
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
-        getSelectedTrackers()
+        getSelectedTrackers(),
       );
       applyPreviewResult(result);
       setShowExternalIDInputUI(!hideExternalIDInputUIOnSuccess);
@@ -1571,7 +1716,11 @@ export default function App() {
   };
 
   const handleRefresh = async () => {
-    if ((!idOverrideState?.dirty && !releaseOverrideState?.dirty && !sourceLookupURL.trim()) || idOverrideState?.invalid || releaseOverrideState?.invalid) {
+    if (
+      (!idOverrideState?.dirty && !releaseOverrideState?.dirty && !sourceLookupURL.trim()) ||
+      idOverrideState?.invalid ||
+      releaseOverrideState?.invalid
+    ) {
       return;
     }
     await runFetch(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {}, true);
@@ -1588,7 +1737,11 @@ export default function App() {
       setError("Please select a file or folder.");
       return;
     }
-    if (!globalThis.confirm("Remove cached metadata and temporary files for this content, then refetch metadata?")) {
+    if (
+      !globalThis.confirm(
+        "Remove cached metadata and temporary files for this content, then refetch metadata?",
+      )
+    ) {
       return;
     }
     const targetPath = path.trim();
@@ -1604,7 +1757,7 @@ export default function App() {
         sourceLookupURL.trim(),
         {},
         {},
-        getSelectedTrackers()
+        getSelectedTrackers(),
       );
       applyPreviewResult(result);
       setShowExternalIDInputUI(true);
@@ -1617,7 +1770,10 @@ export default function App() {
     }
   };
 
-  const runPreparation = async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
+  const runPreparation = async (
+    overrides: ExternalIDOverrides,
+    nameOverrides: ReleaseNameOverrides,
+  ) => {
     setPrepError("");
     const fetcher = globalThis.go?.guiapp?.App?.FetchPreparation;
     if (!fetcher) {
@@ -1637,7 +1793,7 @@ export default function App() {
         Object.entries(releasePageTrackerSelection)
           .filter(([, selected]) => selected)
           .map(([name]) => name),
-        ignoredDupeTrackers
+        ignoredDupeTrackers,
       );
       const filteredDescriptions = filterPrepDescriptions(result.Descriptions || []);
       setPrepPreview({ ...result, Descriptions: filteredDescriptions });
@@ -1650,56 +1806,63 @@ export default function App() {
     }
   };
 
-  const runDescriptionBuilder = useCallback(async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
-    setBuilderError("");
-    setBuilderSaved("");
-    const fetcher = globalThis.go?.guiapp?.App?.FetchDescriptionBuilder;
-    if (!fetcher) {
-      setBuilderError("Description builder is unavailable in this build.");
-      return;
-    }
-    if (!path.trim()) {
-      setBuilderError("Please select a file or folder.");
-      return;
-    }
-    setBuilderLoading(true);
-    try {
-      const result = await fetcher(
-        path.trim(),
-        normalizeOverrides(overrides),
-        normalizeReleaseOverrides(nameOverrides),
-        Object.entries(releasePageTrackerSelection)
-          .filter(([, selected]) => selected)
-          .map(([name]) => name),
-        ignoredDupeTrackers
-      );
-      setBuilderPreview(result);
-      setBuilderRawByGroup(
-        Object.fromEntries(
-          (result.Groups || []).map((group) => [group.GroupKey, group.RawDescription || ""])
-        )
-      );
-      setBuilderRenderedByGroup(
-        Object.fromEntries(
-          (result.Groups || []).map((group) => [group.GroupKey, group.RawDescriptionHTML || ""])
-        )
-      );
-      setBuilderExpandedGroups((prev) => {
-        const next: Record<string, boolean> = {};
-        (result.Groups || []).forEach((group) => {
-          next[group.GroupKey] = prev[group.GroupKey] ?? false;
+  const runDescriptionBuilder = useCallback(
+    async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
+      setBuilderError("");
+      setBuilderSaved("");
+      const fetcher = globalThis.go?.guiapp?.App?.FetchDescriptionBuilder;
+      if (!fetcher) {
+        setBuilderError("Description builder is unavailable in this build.");
+        return;
+      }
+      if (!path.trim()) {
+        setBuilderError("Please select a file or folder.");
+        return;
+      }
+      setBuilderLoading(true);
+      try {
+        const result = await fetcher(
+          path.trim(),
+          normalizeOverrides(overrides),
+          normalizeReleaseOverrides(nameOverrides),
+          Object.entries(releasePageTrackerSelection)
+            .filter(([, selected]) => selected)
+            .map(([name]) => name),
+          ignoredDupeTrackers,
+        );
+        setBuilderPreview(result);
+        setBuilderRawByGroup(
+          Object.fromEntries(
+            (result.Groups || []).map((group) => [group.GroupKey, group.RawDescription || ""]),
+          ),
+        );
+        setBuilderRenderedByGroup(
+          Object.fromEntries(
+            (result.Groups || []).map((group) => [group.GroupKey, group.RawDescriptionHTML || ""]),
+          ),
+        );
+        setBuilderExpandedGroups((prev) => {
+          const next: Record<string, boolean> = {};
+          (result.Groups || []).forEach((group) => {
+            next[group.GroupKey] = prev[group.GroupKey] ?? false;
+          });
+          return next;
         });
-        return next;
-      });
-      setBuilderDirtyByGroup({});
-    } catch (err) {
-      setBuilderError(String(err));
-    } finally {
-      setBuilderLoading(false);
-    }
-  }, [path, releasePageTrackerSelection, ignoredDupeTrackers]);
+        setBuilderDirtyByGroup({});
+      } catch (err) {
+        setBuilderError(String(err));
+      } finally {
+        setBuilderLoading(false);
+      }
+    },
+    [path, releasePageTrackerSelection, ignoredDupeTrackers],
+  );
 
-  const resetBuilderDescription = async (groupKey: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
+  const resetBuilderDescription = async (
+    groupKey: string,
+    overrides: ExternalIDOverrides,
+    nameOverrides: ReleaseNameOverrides,
+  ) => {
     setBuilderError("");
     setBuilderSaved("");
     const saver = globalThis.go?.guiapp?.App?.SaveDescriptionOverride;
@@ -1724,11 +1887,14 @@ export default function App() {
         "",
         currentGroup.Trackers || [],
         normalizeOverrides(overrides),
-        normalizeReleaseOverrides(nameOverrides)
+        normalizeReleaseOverrides(nameOverrides),
       );
       setBuilderPreview((prev) => upsertBuilderGroup(prev, updatedGroup));
       setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
-      setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescriptionHTML || "" }));
+      setBuilderRenderedByGroup((prev) => ({
+        ...prev,
+        [groupKey]: updatedGroup.RawDescriptionHTML || "",
+      }));
       setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: false }));
       setBuilderSaved("Description reset.");
     } catch (err) {
@@ -1786,14 +1952,19 @@ export default function App() {
         builderRawByGroup[groupKey] || "",
         currentGroup.Trackers || [],
         normalizeOverrides(idOverrideState?.overrides || {}),
-        normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
       );
       const nextPreview = upsertBuilderGroup(builderPreview, updatedGroup);
-      const shouldRefreshDryRun = path.trim() === String(trackerDryRunPreview.SourcePath || "").trim() && (trackerDryRunPreview.Trackers || []).length > 0;
+      const shouldRefreshDryRun =
+        path.trim() === String(trackerDryRunPreview.SourcePath || "").trim() &&
+        (trackerDryRunPreview.Trackers || []).length > 0;
 
       setBuilderPreview(nextPreview);
       setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
-      setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescriptionHTML || "" }));
+      setBuilderRenderedByGroup((prev) => ({
+        ...prev,
+        [groupKey]: updatedGroup.RawDescriptionHTML || "",
+      }));
       setBuilderSaved("Description saved.");
       setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: false }));
 
@@ -1812,9 +1983,10 @@ export default function App() {
     }
   };
 
-
-
-  const runScreenshotCapture = async (selections: ScreenshotSelection[], purpose: ScreenshotPurpose) => {
+  const runScreenshotCapture = async (
+    selections: ScreenshotSelection[],
+    purpose: ScreenshotPurpose,
+  ) => {
     const runner = globalThis.go?.guiapp?.App?.GenerateScreenshots;
     if (!runner) {
       throw new Error("Screenshot capture is unavailable in this build.");
@@ -1824,7 +1996,7 @@ export default function App() {
       normalizeOverrides(idOverrideState?.overrides || {}),
       normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
       selections,
-      purpose
+      purpose,
     );
   };
 
@@ -1841,7 +2013,7 @@ export default function App() {
       sourceLookupURL.trim(),
       normalizeOverrides(idOverrideState?.overrides || {}),
       normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-      getSelectedTrackers()
+      getSelectedTrackers(),
     );
   };
 
@@ -1850,15 +2022,21 @@ export default function App() {
     return rate > 0 ? rate : 24;
   }, [screenshots.screenshotPlan]);
 
-  const previewDuration = useMemo(() => screenshots.screenshotPlan?.DurationSeconds || 0, [screenshots.screenshotPlan]);
+  const previewDuration = useMemo(
+    () => screenshots.screenshotPlan?.DurationSeconds || 0,
+    [screenshots.screenshotPlan],
+  );
 
-  const clampPreviewSeconds = useCallback((value: number) => {
-    if (!Number.isFinite(value)) return 0;
-    if (previewDuration > 0) {
-      return Math.min(Math.max(value, 0), previewDuration);
-    }
-    return Math.max(value, 0);
-  }, [previewDuration]);
+  const clampPreviewSeconds = useCallback(
+    (value: number) => {
+      if (!Number.isFinite(value)) return 0;
+      if (previewDuration > 0) {
+        return Math.min(Math.max(value, 0), previewDuration);
+      }
+      return Math.max(value, 0);
+    },
+    [previewDuration],
+  );
 
   const livePreviewFrame = useMemo(() => {
     if (previewFrameRate <= 0) return 0;
@@ -1897,7 +2075,7 @@ export default function App() {
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-        timestamp
+        timestamp,
       );
       if (livePreviewRequestId.current !== requestId) {
         return;
@@ -1925,8 +2103,6 @@ export default function App() {
     setLivePreviewSeconds(next);
     void runLivePreviewAt(next);
   };
-
-
 
   const handlePreviewSelection = async (selection: ScreenshotSelection) => {
     screenshots.setScreenshotsError("");
@@ -1976,9 +2152,10 @@ export default function App() {
     }
 
     const timestamp = clampPreviewSeconds(livePreviewSeconds);
-    const baseSelections = screenshots.screenshotSelections.length > 0
-      ? screenshots.screenshotSelections
-      : (screenshots.screenshotPlan?.SuggestedSelections || []);
+    const baseSelections =
+      screenshots.screenshotSelections.length > 0
+        ? screenshots.screenshotSelections
+        : screenshots.screenshotPlan?.SuggestedSelections || [];
     if (baseSelections.length === 0) {
       screenshots.setScreenshotsError("No screenshot selections available.");
       return;
@@ -2000,13 +2177,16 @@ export default function App() {
       return 0;
     };
 
-    const closest = candidates.reduce((best, entry) => {
-      const currentDiff = Math.abs(resolveTimestamp(entry) - timestamp);
-      if (!best) return entry;
-      const bestDiff = Math.abs(resolveTimestamp(best) - timestamp);
-      if (currentDiff < bestDiff) return entry;
-      return best;
-    }, undefined as ScreenshotSelection | undefined);
+    const closest = candidates.reduce(
+      (best, entry) => {
+        const currentDiff = Math.abs(resolveTimestamp(entry) - timestamp);
+        if (!best) return entry;
+        const bestDiff = Math.abs(resolveTimestamp(best) - timestamp);
+        if (currentDiff < bestDiff) return entry;
+        return best;
+      },
+      undefined as ScreenshotSelection | undefined,
+    );
 
     if (!closest) {
       screenshots.setScreenshotsError("No screenshot selections available.");
@@ -2018,11 +2198,11 @@ export default function App() {
       Index: closest.Index,
       TimestampSeconds: timestamp,
       Frame: frame,
-      Source: "manual"
+      Source: "manual",
     };
 
     const updatedSelections = baseSelections.map((entry) =>
-      entry.Index === selection.Index ? selection : entry
+      entry.Index === selection.Index ? selection : entry,
     );
     const regenerated = regenerateAutoSelections(updatedSelections);
     const reindexed = reindexSelectionsByTimestamp(regenerated, selection.Index);
@@ -2034,8 +2214,9 @@ export default function App() {
       if (!Number.isFinite(ts) || ts <= 0) return false;
       return Math.abs(ts - timestamp) <= tolerance;
     });
-    const resolvedSelection = manualSelection
-      || (reindexed.targetIndex >= 0 ? reindexed.selections[reindexed.targetIndex] : undefined);
+    const resolvedSelection =
+      manualSelection ||
+      (reindexed.targetIndex >= 0 ? reindexed.selections[reindexed.targetIndex] : undefined);
     if (!resolvedSelection) {
       screenshots.setScreenshotsError("Failed to resolve capture index.");
       return;
@@ -2162,7 +2343,7 @@ export default function App() {
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-        selectedTrackers
+        selectedTrackers,
       );
       setDupeCheckJobID(jobID);
       if (snapshotLoader) {
@@ -2196,7 +2377,9 @@ export default function App() {
       setDupeCheckSnapshot(snapshot);
       setDupeSummary(snapshot.summary || emptyDupeSummary);
 
-      const normalized = String(snapshot.status || "").toLowerCase().trim();
+      const normalized = String(snapshot.status || "")
+        .toLowerCase()
+        .trim();
       const running = normalized === "queued" || normalized === "running";
       setDupeLoading(running);
 
@@ -2261,12 +2444,23 @@ export default function App() {
     const requestKey = JSON.stringify({
       path: normalizedPath,
       external: normalizeOverrides(idOverrideState?.overrides || {}),
-      release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+      release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
     });
     if (builderAutoRequestKey === requestKey) return;
     setBuilderAutoRequestKey(requestKey);
     runDescriptionBuilder(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {});
-  }, [activeTab, dupeChecked, builderLoading, builderSaving, builderDirty, path, idOverrideState, releaseOverrideState, builderAutoRequestKey, runDescriptionBuilder]);
+  }, [
+    activeTab,
+    dupeChecked,
+    builderLoading,
+    builderSaving,
+    builderDirty,
+    path,
+    idOverrideState,
+    releaseOverrideState,
+    builderAutoRequestKey,
+    runDescriptionBuilder,
+  ]);
 
   useEffect(() => {
     if (activeTab !== "upload") return;
@@ -2279,14 +2473,26 @@ export default function App() {
     if (!dupeChecked) return;
     if (screenshots.screenshotPlan || screenshots.screenshotsLoading) return;
     loadScreenshotPlan();
-  }, [activeTab, dupeChecked, screenshots.screenshotPlan, screenshots.screenshotsLoading, loadScreenshotPlan]);
+  }, [
+    activeTab,
+    dupeChecked,
+    screenshots.screenshotPlan,
+    screenshots.screenshotsLoading,
+    loadScreenshotPlan,
+  ]);
 
   useEffect(() => {
     if (activeTab !== "upload_images") return;
     if (!dupeChecked) return;
     if (screenshots.screenshotPlan || screenshots.screenshotsLoading) return;
     loadScreenshotPlan();
-  }, [activeTab, dupeChecked, screenshots.screenshotPlan, screenshots.screenshotsLoading, loadScreenshotPlan]);
+  }, [
+    activeTab,
+    dupeChecked,
+    screenshots.screenshotPlan,
+    screenshots.screenshotsLoading,
+    loadScreenshotPlan,
+  ]);
 
   useEffect(() => {
     if (activeTab !== "upload_images") return;
@@ -2296,7 +2502,7 @@ export default function App() {
         const candidates = await globalThis.go?.guiapp?.App?.ListUploadCandidates(
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         );
         if (!candidates || candidates.length === 0) {
           setExistingImages([]);
@@ -2310,16 +2516,26 @@ export default function App() {
             } catch {
               return null;
             }
-          })
+          }),
         );
-        setExistingImages(previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)));
+        setExistingImages(
+          previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
+        );
         await refreshUploadedImages();
       } catch (err) {
         console.error("Failed to load upload candidates:", err);
       }
     };
     loadUploadCandidates();
-  }, [activeTab, path, idOverrideState, releaseOverrideState, setExistingImages, readScreenshotImage, refreshUploadedImages]);
+  }, [
+    activeTab,
+    path,
+    idOverrideState,
+    releaseOverrideState,
+    setExistingImages,
+    readScreenshotImage,
+    refreshUploadedImages,
+  ]);
 
   useEffect(() => {
     if (trackerUploadItems.length === 0) return;
@@ -2331,7 +2547,10 @@ export default function App() {
           next[item.name] = false;
           return;
         }
-        if ((dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) && !overrideRuleBlocks) {
+        if (
+          (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) &&
+          !overrideRuleBlocks
+        ) {
           next[item.name] = false;
           return;
         }
@@ -2346,7 +2565,15 @@ export default function App() {
       });
       return next;
     });
-  }, [trackerUploadItems, defaultTrackerSet, dupedTrackerSet, ruleSkippedTrackerSet, failedDupeTrackerSet, releasePageTrackerSelection, overrideRuleBlocks]);
+  }, [
+    trackerUploadItems,
+    defaultTrackerSet,
+    dupedTrackerSet,
+    ruleSkippedTrackerSet,
+    failedDupeTrackerSet,
+    releasePageTrackerSelection,
+    overrideRuleBlocks,
+  ]);
 
   useEffect(() => {
     if (screenshots.uploadCandidates.length === 0) {
@@ -2434,20 +2661,30 @@ export default function App() {
         return true;
       })
       .map(([name]) => name);
-  }, [uploadToggles, trackerUploadItems, dupedTrackerSet, ruleSkippedTrackerSet, failedDupeTrackerSet, overrideRuleBlocks]);
+  }, [
+    uploadToggles,
+    trackerUploadItems,
+    dupedTrackerSet,
+    ruleSkippedTrackerSet,
+    failedDupeTrackerSet,
+    overrideRuleBlocks,
+  ]);
 
-  const updateTrackerQuestionnaireAnswer = useCallback((tracker: string, key: string, value: string) => {
-    setTrackerQuestionnaireAnswers((prev) => {
-      const trackerKey = tracker.toUpperCase().trim();
-      return {
-        ...prev,
-        [trackerKey]: {
-          ...(prev[trackerKey] || {}),
-          [key]: value
-        }
-      };
-    });
-  }, []);
+  const updateTrackerQuestionnaireAnswer = useCallback(
+    (tracker: string, key: string, value: string) => {
+      setTrackerQuestionnaireAnswers((prev) => {
+        const trackerKey = tracker.toUpperCase().trim();
+        return {
+          ...prev,
+          [trackerKey]: {
+            ...(prev[trackerKey] || {}),
+            [key]: value,
+          },
+        };
+      });
+    },
+    [],
+  );
 
   const handleStartTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
@@ -2473,7 +2710,10 @@ export default function App() {
     const missingRequiredFields: string[] = [];
     selectedTrackers.forEach((tracker) => {
       const dryRunEntry = (trackerDryRunPreview.Trackers || []).find(
-        (entry) => String(entry?.Tracker || "").toLowerCase().trim() === tracker.toLowerCase().trim()
+        (entry) =>
+          String(entry?.Tracker || "")
+            .toLowerCase()
+            .trim() === tracker.toLowerCase().trim(),
       );
       const questionnaire = dryRunEntry?.Questionnaire;
       if (!questionnaire?.Fields?.length) {
@@ -2481,7 +2721,7 @@ export default function App() {
       }
       const trackerAnswers = buildQuestionnaireAnswerDefaults(
         questionnaire,
-        trackerQuestionnaireAnswers[tracker.toUpperCase().trim()]
+        trackerQuestionnaireAnswers[tracker.toUpperCase().trim()],
       );
       questionnaire.Fields.forEach((field) => {
         if (field.Required && !String(trackerAnswers[field.Key] || "").trim()) {
@@ -2490,7 +2730,9 @@ export default function App() {
       });
     });
     if (missingRequiredFields.length > 0) {
-      setTrackerUploadError(`Complete required questionnaire fields before uploading: ${missingRequiredFields.join(", ")}`);
+      setTrackerUploadError(
+        `Complete required questionnaire fields before uploading: ${missingRequiredFields.join(", ")}`,
+      );
       return;
     }
     setTrackerUploadRunning(true);
@@ -2506,7 +2748,7 @@ export default function App() {
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
         builderPreview.Groups || [],
         runDebug,
-        runLogLevel
+        runLogLevel,
       );
       setTrackerUploadJobID(jobID);
       if (snapshotLoader) {
@@ -2517,84 +2759,114 @@ export default function App() {
       setTrackerUploadRunning(false);
       setTrackerUploadError(String(err));
     }
-    }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerDryRunPreview, trackerQuestionnaireAnswers, builderPreview, runDebug, runLogLevel]);
+  }, [
+    path,
+    idOverrideState,
+    releaseOverrideState,
+    getSelectedUploadTrackers,
+    overrideRuleBlocks,
+    ignoredDupeTrackers,
+    trackerDryRunPreview,
+    trackerQuestionnaireAnswers,
+    builderPreview,
+    runDebug,
+    runLogLevel,
+  ]);
 
-  const runTrackerDryRun = useCallback(async (descriptionGroups: DescriptionBuilderPreview["Groups"], surfaceError = true) => {
-    if (surfaceError) {
-      setTrackerDryRunError("");
-    }
-    const fetcher = globalThis.go?.guiapp?.App?.FetchTrackerDryRun;
-    if (!fetcher) {
-      const message = "Tracker dry run is unavailable in this build.";
+  const runTrackerDryRun = useCallback(
+    async (descriptionGroups: DescriptionBuilderPreview["Groups"], surfaceError = true) => {
       if (surfaceError) {
-        setTrackerDryRunError(message);
-        return null;
+        setTrackerDryRunError("");
       }
-      throw new Error(message);
-    }
-    if (!path.trim()) {
-      const message = "Please select a file or folder.";
-      if (surfaceError) {
-        setTrackerDryRunError(message);
-        return null;
+      const fetcher = globalThis.go?.guiapp?.App?.FetchTrackerDryRun;
+      if (!fetcher) {
+        const message = "Tracker dry run is unavailable in this build.";
+        if (surfaceError) {
+          setTrackerDryRunError(message);
+          return null;
+        }
+        throw new Error(message);
       }
-      throw new Error(message);
-    }
-    if (idOverrideState?.invalid || releaseOverrideState?.invalid) {
-      const message = "Fix invalid overrides before running dry run.";
-      if (surfaceError) {
-        setTrackerDryRunError(message);
-        return null;
+      if (!path.trim()) {
+        const message = "Please select a file or folder.";
+        if (surfaceError) {
+          setTrackerDryRunError(message);
+          return null;
+        }
+        throw new Error(message);
       }
-      throw new Error(message);
-    }
-    const selectedTrackers = getSelectedUploadTrackers();
-    if (selectedTrackers.length === 0) {
-      const message = "Enable at least one tracker in Upload Targets.";
-      if (surfaceError) {
-        setTrackerDryRunError(message);
-        return null;
+      if (idOverrideState?.invalid || releaseOverrideState?.invalid) {
+        const message = "Fix invalid overrides before running dry run.";
+        if (surfaceError) {
+          setTrackerDryRunError(message);
+          return null;
+        }
+        throw new Error(message);
       }
-      throw new Error(message);
-    }
+      const selectedTrackers = getSelectedUploadTrackers();
+      if (selectedTrackers.length === 0) {
+        const message = "Enable at least one tracker in Upload Targets.";
+        if (surfaceError) {
+          setTrackerDryRunError(message);
+          return null;
+        }
+        throw new Error(message);
+      }
 
-    setTrackerDryRunLoading(true);
-    try {
-      const result = await fetcher(
-        path.trim(),
-        normalizeOverrides(idOverrideState?.overrides || {}),
-        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-        selectedTrackers,
-        overrideRuleBlocks,
-        ignoredDupeTrackers,
-        cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
-        descriptionGroups,
-        runDebug,
-        runLogLevel
-      );
-      setTrackerDryRunPreview(result || emptyTrackerDryRun);
-      setTrackerQuestionnaireAnswers((prev) => {
-        const next = cloneQuestionnaireAnswers(prev);
-        (result?.Trackers || []).forEach((entry) => {
-          const trackerKey = String(entry?.Tracker || "").toUpperCase().trim();
-          if (!trackerKey) {
-            return;
-          }
-          next[trackerKey] = buildQuestionnaireAnswerDefaults(entry.Questionnaire, next[trackerKey]);
+      setTrackerDryRunLoading(true);
+      try {
+        const result = await fetcher(
+          path.trim(),
+          normalizeOverrides(idOverrideState?.overrides || {}),
+          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          selectedTrackers,
+          overrideRuleBlocks,
+          ignoredDupeTrackers,
+          cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
+          descriptionGroups,
+          runDebug,
+          runLogLevel,
+        );
+        setTrackerDryRunPreview(result || emptyTrackerDryRun);
+        setTrackerQuestionnaireAnswers((prev) => {
+          const next = cloneQuestionnaireAnswers(prev);
+          (result?.Trackers || []).forEach((entry) => {
+            const trackerKey = String(entry?.Tracker || "")
+              .toUpperCase()
+              .trim();
+            if (!trackerKey) {
+              return;
+            }
+            next[trackerKey] = buildQuestionnaireAnswerDefaults(
+              entry.Questionnaire,
+              next[trackerKey],
+            );
+          });
+          return next;
         });
-        return next;
-      });
-      return result || emptyTrackerDryRun;
-    } catch (err) {
-      if (surfaceError) {
-        setTrackerDryRunError(String(err));
-        return null;
+        return result || emptyTrackerDryRun;
+      } catch (err) {
+        if (surfaceError) {
+          setTrackerDryRunError(String(err));
+          return null;
+        }
+        throw err;
+      } finally {
+        setTrackerDryRunLoading(false);
       }
-      throw err;
-    } finally {
-      setTrackerDryRunLoading(false);
-    }
-  }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerQuestionnaireAnswers, runDebug, runLogLevel]);
+    },
+    [
+      path,
+      idOverrideState,
+      releaseOverrideState,
+      getSelectedUploadTrackers,
+      overrideRuleBlocks,
+      ignoredDupeTrackers,
+      trackerQuestionnaireAnswers,
+      runDebug,
+      runLogLevel,
+    ],
+  );
 
   const handleRunTrackerDryRun = useCallback(async () => {
     await runTrackerDryRun(builderPreview.Groups || []);
@@ -2725,7 +2997,11 @@ export default function App() {
     dismissConfigOpStatus();
     const exportConfig = globalThis.go?.guiapp?.App?.ExportConfig;
     if (!exportConfig) {
-      showConfigOpStatus({ type: "error", title: "Export Failed", message: "Settings export is unavailable in this build." });
+      showConfigOpStatus({
+        type: "error",
+        title: "Export Failed",
+        message: "Settings export is unavailable in this build.",
+      });
       return;
     }
 
@@ -2733,7 +3009,11 @@ export default function App() {
     try {
       const exportedPath = await exportConfig();
       if (exportedPath?.trim()) {
-        showConfigOpStatus({ type: "success", title: "Configuration Exported", message: `Saved to ${exportedPath}` });
+        showConfigOpStatus({
+          type: "success",
+          title: "Configuration Exported",
+          message: `Saved to ${exportedPath}`,
+        });
       }
     } catch (err) {
       showConfigOpStatus({ type: "error", title: "Export Failed", message: String(err) });
@@ -2757,7 +3037,11 @@ export default function App() {
     const importConfig = globalThis.go?.guiapp?.App?.ImportConfig;
     if (!importConfig) {
       setImportConfirmOpen(false);
-      showConfigOpStatus({ type: "error", title: "Import Failed", message: "Config import is unavailable in this build." });
+      showConfigOpStatus({
+        type: "error",
+        title: "Import Failed",
+        message: "Config import is unavailable in this build.",
+      });
       return;
     }
 
@@ -2786,7 +3070,6 @@ export default function App() {
   const dupeProgressStatus = String(dupeCheckSnapshot?.status || "").toLowerCase();
   const dupeCompletedCount = Number(dupeCheckSnapshot?.completedCount || 0);
   const dupeTotalCount = Number(dupeCheckSnapshot?.totalCount || 0);
-
 
   return (
     <div className="app-shell">
@@ -3058,7 +3341,11 @@ export default function App() {
               setBuilderDirtyByGroup={setBuilderDirtyByGroup}
               setBuilderExpandedGroups={setBuilderExpandedGroups}
               resetBuilderDescription={(groupKey) =>
-                resetBuilderDescription(groupKey, idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {})
+                resetBuilderDescription(
+                  groupKey,
+                  idOverrideState?.overrides || {},
+                  releaseOverrideState?.overrides || {},
+                )
               }
               renderBuilderDescription={renderBuilderDescription}
               saveBuilderDescription={saveBuilderDescription}
@@ -3095,10 +3382,10 @@ export default function App() {
               path={path}
               setPath={setPath}
               sourceLookupURL={sourceLookupURL}
-            setSourceLookupURL={setSourceLookupURL}
-            browseAvailable={browserNativeBrowseAvailable}
-            handleBrowseFile={handleBrowseFile}
-            handleBrowseFolder={handleBrowseFolder}
+              setSourceLookupURL={setSourceLookupURL}
+              browseAvailable={browserNativeBrowseAvailable}
+              handleBrowseFile={handleBrowseFile}
+              handleBrowseFolder={handleBrowseFolder}
               handleFetch={handleFetch}
               handleRefresh={handleRefresh}
               handleResetMetadata={handleResetMetadata}

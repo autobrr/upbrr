@@ -197,7 +197,9 @@
   background: rgba(10, 14, 22, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 14px;
-  transition: background-color 0.2s ease, border-color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 :root.light .settings-subgroup--collapsible summary {
@@ -254,7 +256,6 @@
 .tracker-defaults-body .tracker-pills {
   gap: 5px;
 }
-
 
 .settings-array {
   display: flex;
@@ -376,8 +377,14 @@
 }
 
 @keyframes configBannerIn {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .config-status-banner--success {
@@ -485,7 +492,9 @@
   color: inherit;
   opacity: 0.5;
   border-radius: 6px;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease;
 }
 
 .config-status-banner__dismiss:hover {
@@ -517,8 +526,12 @@
 }
 
 @keyframes importConfirmFade {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .import-confirm-dialog {
@@ -541,8 +554,14 @@
 }
 
 @keyframes importConfirmIn {
-  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .import-confirm-dialog__icon {

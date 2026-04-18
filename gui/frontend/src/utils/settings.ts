@@ -14,9 +14,7 @@ export const formatLabel = (value: string) => {
 
 export const normalizeDefaultTrackerList = (value: ConfigValue): string[] => {
   if (Array.isArray(value)) {
-    return value
-      .map((entry) => String(entry ?? "").trim())
-      .filter(Boolean);
+    return value.map((entry) => String(entry ?? "").trim()).filter(Boolean);
   }
   if (typeof value === "string") {
     return value

@@ -35,28 +35,26 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     dupeCompletedCount,
     dupeTotalCount,
     handleDupeCheck,
-    setDupeIgnore
+    setDupeIgnore,
   } = props;
 
   const dupeSummaryNotes = dupeSummary.Notes || [];
   const hasDupeNotes = dupeSummaryNotes.length > 0;
   const hasDupeResults = dupeSummary.Results && dupeSummary.Results.length > 0;
-  const dupeEmptyMessage = hasDupeNotes
-    ? dupeSummaryNotes.join(" ")
-    : "No dupe results yet.";
-  const showProgress = dupeLoading || dupeProgressStatus === "running" || dupeProgressStatus === "queued";
-  const progressText = dupeTotalCount > 0
-    ? `${Math.min(dupeCompletedCount, dupeTotalCount)}/${dupeTotalCount} trackers complete`
-    : "Preparing tracker search";
+  const dupeEmptyMessage = hasDupeNotes ? dupeSummaryNotes.join(" ") : "No dupe results yet.";
+  const showProgress =
+    dupeLoading || dupeProgressStatus === "running" || dupeProgressStatus === "queued";
+  const progressText =
+    dupeTotalCount > 0
+      ? `${Math.min(dupeCompletedCount, dupeTotalCount)}/${dupeTotalCount} trackers complete`
+      : "Preparing tracker search";
 
   return (
     <section className="dupe-panel">
       <header className="dupe-header">
         <p className="eyebrow">Dupe Checking</p>
         <h1>Check Trackers</h1>
-        <p className="subtitle">
-          Scan selected trackers for potential dupes before upload.
-        </p>
+        <p className="subtitle">Scan selected trackers for potential dupes before upload.</p>
       </header>
 
       <section className="panel dupe-actions">
@@ -70,7 +68,9 @@ export default function DupeCheckPage(props: Readonly<Props>) {
           onClick={handleDupeCheck}
           disabled={dupeLoading || !path.trim()}
         >
-          {dupeLoading ? `Checking ${dupeCompletedCount}/${dupeTotalCount || "?"}...` : "Run dupe check"}
+          {dupeLoading
+            ? `Checking ${dupeCompletedCount}/${dupeTotalCount || "?"}...`
+            : "Run dupe check"}
         </button>
       </section>
 
@@ -121,20 +121,24 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               const hasDupes = result.HasDupes ?? false;
               const pathedNote = "pathed torrent match found; skipping dupe search";
               const hasPathedNote = result.Notes?.includes(pathedNote) ?? false;
-              const status = String(result.Status || "").toLowerCase().trim();
+              const status = String(result.Status || "")
+                .toLowerCase()
+                .trim();
               const hasFailure = status === "failed" || Boolean(result.Error?.trim());
               const normalizedTracker = result.Tracker.toLowerCase().trim();
               const ruleSkipReason = ruleSkipReasons[normalizedTracker];
-              const visibleNotes = result.Notes?.filter((note) => {
-                if (note === pathedNote) return false;
-                const normalizedNote = note.toLowerCase().trim();
-                if (normalizedNote.startsWith("skip:")) return false;
-                if (normalizedNote.startsWith("rule check failed")) return false;
-                if (ruleSkipReason && note.trim() === ruleSkipReason) return false;
-                return true;
-              }) ?? [];
+              const visibleNotes =
+                result.Notes?.filter((note) => {
+                  if (note === pathedNote) return false;
+                  const normalizedNote = note.toLowerCase().trim();
+                  if (normalizedNote.startsWith("skip:")) return false;
+                  if (normalizedNote.startsWith("rule check failed")) return false;
+                  if (ruleSkipReason && note.trim() === ruleSkipReason) return false;
+                  return true;
+                }) ?? [];
               const showIgnoreToggle = !hasPathedNote && (hasDupes || dupeCount > 0);
-              const displayDupeCount = (dupeTrackerFlags[result.Tracker] ?? hasDupes) ? dupeCount : 0;
+              const displayDupeCount =
+                (dupeTrackerFlags[result.Tracker] ?? hasDupes) ? dupeCount : 0;
 
               return (
                 <article className="dupe-card" key={result.Tracker}>
@@ -144,18 +148,20 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                       <p className="value dupe-tracker-title">
                         <span>{result.Tracker}</span>
                         {hasPathedNote ? (
-                          <span className="dupe-badge dupe-badge--pathed">Existing torrent in client</span>
+                          <span className="dupe-badge dupe-badge--pathed">
+                            Existing torrent in client
+                          </span>
                         ) : null}
                         {ruleSkipReason ? (
-                          <span
-                            className="dupe-badge dupe-badge--rule"
-                            title={ruleSkipReason}
-                          >
+                          <span className="dupe-badge dupe-badge--rule" title={ruleSkipReason}>
                             Rule checking failed
                           </span>
                         ) : null}
                         {hasFailure ? (
-                          <span className="dupe-badge dupe-badge--rule" title={result.Error || "tracker check failed"}>
+                          <span
+                            className="dupe-badge dupe-badge--rule"
+                            title={result.Error || "tracker check failed"}
+                          >
                             Tracker error
                           </span>
                         ) : null}
@@ -174,7 +180,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                           onChange={(event) =>
                             setDupeIgnore((prev) => ({
                               ...prev,
-                              [result.Tracker]: event.target.checked
+                              [result.Tracker]: event.target.checked,
                             }))
                           }
                         />
@@ -203,7 +209,13 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                         {result.Filtered.map((entry, index) => (
                           <span className="dupe-inline__item" key={`${entry.Name}-${index}`}>
                             {entry.Link ? (
-                              <a href={entry.Link} target="_blank" rel="noreferrer" className="tracker-link" onClick={handleExternalLinkClick}>
+                              <a
+                                href={entry.Link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="tracker-link"
+                                onClick={handleExternalLinkClick}
+                              >
                                 {entry.Name}
                               </a>
                             ) : (

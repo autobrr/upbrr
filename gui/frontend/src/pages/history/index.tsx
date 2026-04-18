@@ -20,7 +20,11 @@ const isUploadedStatus = (value: string) => {
   return normalized === "uploaded" || normalized === "success" || normalized === "completed";
 };
 
-const formatLastUpload = (latestUploadStatus: string, statusLabel: string, latestUploadAt: string) => {
+const formatLastUpload = (
+  latestUploadStatus: string,
+  statusLabel: string,
+  latestUploadAt: string,
+) => {
   if (!isUploadedStatus(latestUploadStatus) && !isUploadedStatus(statusLabel)) {
     return "never";
   }
@@ -102,7 +106,9 @@ export default function HistoryPage() {
       setOverview(null);
       return;
     }
-    const selectionStillVisible = filteredEntries.some((entry) => entry.SourcePath === selectedPath);
+    const selectionStillVisible = filteredEntries.some(
+      (entry) => entry.SourcePath === selectedPath,
+    );
     if (!selectionStillVisible) {
       setSelectedPath(filteredEntries[0].SourcePath);
     }
@@ -137,7 +143,7 @@ export default function HistoryPage() {
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.SourcePath === selectedPath) || null,
-    [entries, selectedPath]
+    [entries, selectedPath],
   );
 
   const descriptionOverrides = useMemo(() => {
@@ -206,7 +212,9 @@ export default function HistoryPage() {
           </div>
 
           {loading ? <p className="muted">Loading history...</p> : null}
-          {!loading && entries.length === 0 ? <p className="muted">No stored releases found.</p> : null}
+          {!loading && entries.length === 0 ? (
+            <p className="muted">No stored releases found.</p>
+          ) : null}
           {!loading && entries.length > 0 && filteredEntries.length === 0 ? (
             <p className="muted">No releases match the current title filter.</p>
           ) : null}
@@ -221,7 +229,9 @@ export default function HistoryPage() {
               >
                 <span className="history-item-title">{releaseLabel(entry)}</span>
                 <span className="history-item-meta">{entry.LatestUploadStatus || "Stored"}</span>
-                <span className="history-item-meta">Updated {formatDate(entry.MetadataUpdatedAt)}</span>
+                <span className="history-item-meta">
+                  Updated {formatDate(entry.MetadataUpdatedAt)}
+                </span>
               </button>
             ))}
           </div>
@@ -252,7 +262,11 @@ export default function HistoryPage() {
               <div className="summary">
                 <div>
                   <p className="label">Release</p>
-                  <p className="value">{selectedEntry ? releaseLabel(selectedEntry) : releaseLabelFromOverview(overview)}</p>
+                  <p className="value">
+                    {selectedEntry
+                      ? releaseLabel(selectedEntry)
+                      : releaseLabelFromOverview(overview)}
+                  </p>
                 </div>
                 <div>
                   <p className="label">Status</p>
@@ -264,7 +278,13 @@ export default function HistoryPage() {
                 </div>
                 <div>
                   <p className="label">Last Upload</p>
-                  <p className="value">{formatLastUpload(overview.LatestUploadStatus, overview.StatusLabel, overview.LatestUploadAt)}</p>
+                  <p className="value">
+                    {formatLastUpload(
+                      overview.LatestUploadStatus,
+                      overview.StatusLabel,
+                      overview.LatestUploadAt,
+                    )}
+                  </p>
                 </div>
               </div>
 
@@ -317,7 +337,8 @@ export default function HistoryPage() {
                     <ul className="history-simple-list">
                       {overview.UploadHistory.map((row, index) => (
                         <li key={`${row.Tracker}-${row.CreatedAt}-${index}`}>
-                          <strong>{row.Tracker || "UNKNOWN"}</strong> — {row.Status || "unknown"} — {formatDate(row.CreatedAt)}
+                          <strong>{row.Tracker || "UNKNOWN"}</strong> — {row.Status || "unknown"} —{" "}
+                          {formatDate(row.CreatedAt)}
                         </li>
                       ))}
                     </ul>
@@ -332,7 +353,8 @@ export default function HistoryPage() {
                     <ul className="history-simple-list">
                       {overview.TrackerRuleFailures.map((failure, index) => (
                         <li key={`${failure.Tracker}-${failure.Rule}-${index}`}>
-                          <strong>{failure.Tracker || "UNKNOWN"}</strong>: {failure.Rule} {failure.Reason ? `— ${failure.Reason}` : ""}
+                          <strong>{failure.Tracker || "UNKNOWN"}</strong>: {failure.Rule}{" "}
+                          {failure.Reason ? `— ${failure.Reason}` : ""}
                         </li>
                       ))}
                     </ul>

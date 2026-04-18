@@ -38,7 +38,7 @@ export default function PreparationPage(props: Props) {
     prepPreview,
     prepRendered,
     setPrepRendered,
-    runPreparation
+    runPreparation,
   } = props;
 
   const prepDescriptions = prepPreview.Descriptions || [];
@@ -49,9 +49,7 @@ export default function PreparationPage(props: Props) {
       <header className="prepare-header">
         <p className="eyebrow">Final Preparation</p>
         <h1>Review Description</h1>
-        <p className="subtitle">
-          Inspect the description that will be sent to trackers.
-        </p>
+        <p className="subtitle">Inspect the description that will be sent to trackers.</p>
       </header>
 
       <section className="panel prepare-actions">
@@ -89,7 +87,10 @@ export default function PreparationPage(props: Props) {
                     <div>
                       <p className="label">Trackers</p>
                       <p className="value">{entry.Trackers?.join(", ") || "Unknown"}</p>
-                      {renderImageHostMessage(entry.ImageHost?.Message || "", Boolean(entry.ImageHost?.Reuploaded))}
+                      {renderImageHostMessage(
+                        entry.ImageHost?.Message || "",
+                        Boolean(entry.ImageHost?.Reuploaded),
+                      )}
                     </div>
                     {entry.DescriptionHTML ? (
                       <button
@@ -98,7 +99,7 @@ export default function PreparationPage(props: Props) {
                         onClick={() =>
                           setPrepRendered((prev) => ({
                             ...prev,
-                            [entryKey]: !isRendered
+                            [entryKey]: !isRendered,
                           }))
                         }
                       >

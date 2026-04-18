@@ -28,7 +28,7 @@ export default function LoggingPage(props: Props) {
     handleSaveSettings,
     renderField,
     updateConfigValue,
-    sectionFieldMeta
+    sectionFieldMeta,
   } = props;
 
   return (
@@ -36,21 +36,22 @@ export default function LoggingPage(props: Props) {
       <header className="hero">
         <p className="eyebrow">upbrr</p>
         <h1>Logging</h1>
-        <p className="subtitle">
-          Monitor live logs and adjust logging settings.
-        </p>
+        <p className="subtitle">Monitor live logs and adjust logging settings.</p>
       </header>
 
       <section className="panel">
         <div className="settings-header">
           <div className="settings-meta">
             <p className="label">Logging controls</p>
-            <p className="helper">
-              Changes apply immediately and are saved to SQLite.
-            </p>
+            <p className="helper">Changes apply immediately and are saved to SQLite.</p>
           </div>
           <div className="settings-actions">
-            <button className="ghost" type="button" onClick={loadSettings} disabled={settingsLoading}>
+            <button
+              className="ghost"
+              type="button"
+              onClick={loadSettings}
+              disabled={settingsLoading}
+            >
               Reload
             </button>
             <button

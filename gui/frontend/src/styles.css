@@ -250,7 +250,6 @@ h1 {
   border-color: rgba(0, 0, 0, 0.08);
 }
 
-
 .path-row {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
@@ -287,7 +286,10 @@ button {
   border: 1px solid transparent;
   padding: 9px 16px;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    opacity 0.2s ease;
 }
 
 button:disabled {
@@ -428,7 +430,9 @@ button:hover:not(:disabled) {
   gap: 19px;
   opacity: 0;
   transform: translateY(12px);
-  transition: opacity 0.5s ease, transform 0.5s ease;
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
 }
 
 .details.loaded {
@@ -569,7 +573,11 @@ h2 {
   letter-spacing: 0.02em;
   user-select: none;
   cursor: pointer;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, background-color 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease,
+    background-color 0.2s ease;
 }
 
 :root.light .pill-label {
@@ -1035,7 +1043,11 @@ h2 {
   text-align: center;
   top: 4px;
   left: calc(50vw - 50%);
-  text-shadow: -2px 0 #000, 0 2px #000, 2px 0 #000, 0 -2px #000;
+  text-shadow:
+    -2px 0 #000,
+    0 2px #000,
+    2px 0 #000,
+    0 -2px #000;
   color: #fff;
   font-size: 18px;
 }
@@ -1049,7 +1061,6 @@ h2 {
   padding: 19px;
   z-index: 9999;
 }
-
 
 .warning {
   color: var(--accent);

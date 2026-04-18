@@ -332,7 +332,11 @@
   text-align: center;
   top: 4px;
   left: calc(50vw - 50%);
-  text-shadow: -2px 0 #000, 0 2px #000, 2px 0 #000, 0 -2px #000;
+  text-shadow:
+    -2px 0 #000,
+    0 2px #000,
+    2px 0 #000,
+    0 -2px #000;
   color: #fff;
   font-size: 18px;
 }
