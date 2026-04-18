@@ -565,7 +565,7 @@ func TestResolveExternalIDsEpisodeTypeForcesTVTMDBSearchCategory(t *testing.T) {
 
 	meta := api.PreparedMetadata{
 		SourcePath: `/media/Example.Show.2025.11.10.1080p.WEB-DL.mkv`,
-		Release:    api.ReleaseInfo{Title: "Example Show", Year: 2025, Type: "episode"},
+		Release:    api.ReleaseInfo{Title: "Example Show", Year: 2025, Category: "TV", Type: "WEB-DL"},
 	}
 
 	result, err := svc.ResolveExternalIDs(context.Background(), meta)

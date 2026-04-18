@@ -13,6 +13,18 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func releaseCategoryFromRLS(value string) string {
+	upper := strings.ToUpper(strings.TrimSpace(value))
+	switch upper {
+	case "MOVIE":
+		return "MOVIE"
+	case "EP", "EPS", "EPISODE", "SEASON", "SEASONPACK", "SERIES", "TV", "TVSHOW", "TV-SHOW":
+		return "TV"
+	default:
+		return ""
+	}
+}
+
 func ParseReleaseInfo(path string) api.ReleaseInfo {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -38,7 +50,8 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 	}
 
 	return api.ReleaseInfo{
-		Type:       release.Type.String(),
+		Category:   releaseCategoryFromRLS(release.Type.String()),
+		Type:       release.Source,
 		Artist:     release.Artist,
 		Title:      release.Title,
 		Subtitle:   release.Subtitle,

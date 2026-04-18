@@ -358,7 +358,7 @@ func trackerClaimTarget(meta api.PreparedMetadata) (trackerClaimMatchTarget, boo
 }
 
 func resolveTrackerClaimCategory(meta api.PreparedMetadata) string {
-	for _, candidate := range []string{meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Type, meta.Release.Type} {
+	for _, candidate := range []string{meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category} {
 		if canonical := trackerdata.CanonicalUnit3DCategory(candidate); canonical != "" {
 			return canonical
 		}

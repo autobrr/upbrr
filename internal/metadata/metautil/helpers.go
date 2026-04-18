@@ -133,11 +133,11 @@ func AbsInt(value int) int {
 }
 
 func releaseCategory(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	switch {
-	case strings.Contains(value, "movie"):
+	upper := strings.ToUpper(strings.TrimSpace(value))
+	switch upper {
+	case "MOVIE":
 		return "MOVIE"
-	case value != "":
+	case "EP", "EPS", "EPISODE", "SEASON", "SEASONPACK", "SERIES", "TV", "TVSHOW", "TV-SHOW":
 		return "TV"
 	default:
 		return ""

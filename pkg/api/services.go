@@ -510,6 +510,7 @@ type TrackerMatch struct {
 }
 
 type ReleaseInfo struct {
+	Category   string
 	Type       string
 	Artist     string
 	Title      string

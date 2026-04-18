@@ -220,6 +220,69 @@ func (a azRepoStub) DeleteScreenshot(context.Context, string) error { return nil
 func (a azRepoStub) SaveFinalSelections(context.Context, string, []api.ScreenshotFinalSelection) error {
 	return nil
 }
+
+func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/torrents":
+			_, _ = io.WriteString(w, `<meta name="_token" content="secret-token">`)
+		case "/ajax/movies/2":
+			_, _ = io.WriteString(w, `{"data":[{"id":"77","imdb":"tt0000123","tmdb":"0"}]}`)
+		case "/requests":
+			_, _ = io.WriteString(w, "<html></html>")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	parsedServerURL, _ := url.Parse(server.URL)
+	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
+
+	entry, err := New("AZ").BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+		Tracker: "AZ",
+		Meta: api.PreparedMetadata{
+			SourcePath:        filepath.Join(tmp, "Show.S01E02.1080p.WEB-DL.mkv"),
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			ExternalIDs:       api.ExternalIDs{Category: "TV", IMDBID: 123},
+			ReleaseName:       "Show.S01E02.1080p.WEB-DL-GRP",
+			Release: api.ReleaseInfo{
+				Category:   "TV",
+				Title:      "Show",
+				Resolution: "1080p",
+				Source:     "WEB-DL",
+				Type:       "WEB-DL",
+			},
+			Type:              "WEBDL",
+			Source:            "WEB-DL",
+			Container:         "mkv",
+			AudioLanguages:    []string{"English"},
+			SubtitleLanguages: []string{"English"},
+			SeasonInt:         1,
+			EpisodeInt:        2,
+		},
+		TrackerConfig: config.TrackerConfig{URL: server.URL},
+		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
+		Logger:        api.NopLogger{},
+		Repo:          azRepoStub{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Status == "blocked" && strings.Contains(entry.Message, "rip type") {
+		t.Fatalf("expected WEB-DL TV release not to be blocked by rip type, got %q", entry.Message)
+	}
+}
 func (a azRepoStub) ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error) {
 	return nil, nil
 }

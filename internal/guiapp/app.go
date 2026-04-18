@@ -355,12 +355,13 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 	if err == nil {
 		releaseBase := paths.ReleaseTempBase(api.PreparedMetadata{
 			Release: api.ReleaseInfo{
-				Title:  stored.Title,
-				Alt:    stored.Alt,
-				Year:   stored.Year,
-				Source: stored.Source,
-				Type:   stored.Type,
-				Group:  stored.Group,
+				Title:    stored.Title,
+				Alt:      stored.Alt,
+				Year:     stored.Year,
+				Category: stored.Category,
+				Source:   stored.Source,
+				Type:     stored.Type,
+				Group:    stored.Group,
 			},
 		}, trimmedPath)
 		tmpDirs[filepath.Join(tmpRoot, releaseBase)] = struct{}{}

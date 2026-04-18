@@ -19,6 +19,7 @@ type FileMetadata struct {
 	Scene      bool
 	SceneName  string
 	SceneIMDB  int
+	Category   string
 	Type       string
 	Artist     string
 	Title      string

@@ -34,6 +34,8 @@ var futureMigrations = []migrationStep{
 	{version: 5, apply: migrateV5},
 	{version: 6, apply: migrateV6},
 	{version: 7, apply: migrateV7},
+	{version: 8, apply: migrateV8},
+	{version: 9, apply: migrateV9},
 }
 
 func migrateV2(ctx context.Context, exec migrationExecutor) error {
@@ -230,6 +232,29 @@ func migrateV7(ctx context.Context, exec migrationExecutor) error {
 	return nil
 }
 
+func migrateV8(context.Context, migrationExecutor) error {
+	return nil
+}
+
+func migrateV9(ctx context.Context, exec migrationExecutor) error {
+	tablePresent, err := tableExists(ctx, exec, "file_metadata")
+	if err != nil {
+		return err
+	}
+	if !tablePresent {
+		return nil
+	}
+	exists, err := tableColumnExists(ctx, exec, "file_metadata", "release_category")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err = exec.ExecContext(ctx, `ALTER TABLE file_metadata ADD COLUMN release_category TEXT NOT NULL DEFAULT ""`)
+	return err
+}
+
 func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName string, columnName string) (bool, error) {
 	rows, err := exec.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {
@@ -383,6 +408,7 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			scene INTEGER NOT NULL DEFAULT 0,
 			scene_name TEXT NOT NULL DEFAULT "",
 			scene_imdb INTEGER NOT NULL DEFAULT 0,
+			release_category TEXT NOT NULL DEFAULT "",
 			release_type TEXT NOT NULL DEFAULT "",
 			release_artist TEXT NOT NULL DEFAULT "",
 			release_title TEXT NOT NULL DEFAULT "",

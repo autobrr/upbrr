@@ -888,7 +888,7 @@ func resolveCategoryPreference(meta api.PreparedMetadata) string {
 			return normalized
 		}
 	}
-	if normalized := normalizeCategory(meta.Release.Type); normalized != "" {
+	if normalized := normalizeCategory(meta.Release.Category); normalized != "" {
 		return normalized
 	}
 	if isLikelyTV(meta) {

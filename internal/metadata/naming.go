@@ -202,6 +202,9 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 		category = strings.ToUpper(strings.TrimSpace(meta.MediaInfoCategory))
 	}
 	if category == "" {
+		category = strings.ToUpper(strings.TrimSpace(meta.Release.Category))
+	}
+	if category == "" {
 		category = normalizeCategoryFromType(meta.Type)
 	}
 	if category == "" {
@@ -454,6 +457,9 @@ func inferCategoryFromMetadata(meta api.PreparedMetadata) string {
 	}
 	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
 		return "TV"
+	}
+	if category := strings.ToUpper(strings.TrimSpace(meta.Release.Category)); category == "MOVIE" || category == "TV" {
+		return category
 	}
 	if strings.TrimSpace(meta.DailyEpisodeDate) != "" {
 		return "TV"
