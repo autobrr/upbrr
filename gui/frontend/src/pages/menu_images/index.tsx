@@ -89,7 +89,12 @@ export default function MenuImagesPage(props: Props) {
         <div className="upload-images-actions" style={{ marginTop: "1rem" }}>
           {browseAvailable ? (
             <>
-              <button className="ghost" type="button" onClick={handleBrowseImages} disabled={importing}>
+              <button
+                className="ghost"
+                type="button"
+                onClick={handleBrowseImages}
+                disabled={importing}
+              >
                 Add images
               </button>
             </>
@@ -107,17 +112,45 @@ export default function MenuImagesPage(props: Props) {
           </button>
         </div>
 
-        {error ? <p className="error" style={{ marginTop: "1rem" }}>{error}</p> : null}
-        {success ? <p className="success" style={{ marginTop: "1rem", color: "var(--success-color, #22c55e)" }}>Images imported successfully! They will appear in the Upload Images tab.</p> : null}
+        {error ? (
+          <p className="error" style={{ marginTop: "1rem" }}>
+            {error}
+          </p>
+        ) : null}
+        {success ? (
+          <p
+            className="success"
+            style={{ marginTop: "1rem", color: "var(--success-color, #22c55e)" }}
+          >
+            Images imported successfully! They will appear in the Upload Images tab.
+          </p>
+        ) : null}
 
         {menuPaths.length > 0 ? (
           <div style={{ marginTop: "1.5rem" }}>
-            <p className="label" style={{ marginBottom: "0.5rem" }}>Selected files for import:</p>
+            <p className="label" style={{ marginBottom: "0.5rem" }}>
+              Selected files for import:
+            </p>
             <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
               {menuPaths.map((p) => (
-                <li key={p} style={{ display: "flex", justifyContent: "space-between", padding: "0.5rem", background: "var(--bg-secondary)", marginBottom: "0.25rem", borderRadius: "4px" }}>
+                <li
+                  key={p}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "0.5rem",
+                    background: "var(--bg-secondary)",
+                    marginBottom: "0.25rem",
+                    borderRadius: "4px",
+                  }}
+                >
                   <span style={{ wordBreak: "break-all" }}>{p}</span>
-                  <button className="ghost" type="button" onClick={() => handleRemoveItem(p)} style={{ padding: "0.25rem 0.5rem", height: "auto", minHeight: "0" }}>
+                  <button
+                    className="ghost"
+                    type="button"
+                    onClick={() => handleRemoveItem(p)}
+                    style={{ padding: "0.25rem 0.5rem", height: "auto", minHeight: "0" }}
+                  >
                     Remove
                   </button>
                 </li>
@@ -125,7 +158,9 @@ export default function MenuImagesPage(props: Props) {
             </ul>
           </div>
         ) : (
-          <p className="muted" style={{ marginTop: "1.5rem" }}>No images selected yet.</p>
+          <p className="muted" style={{ marginTop: "1.5rem" }}>
+            No images selected yet.
+          </p>
         )}
       </section>
     </section>
