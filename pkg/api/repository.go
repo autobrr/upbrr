@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -49,6 +50,8 @@ func (c Category) IsValid() bool {
 	switch c.Canonical() {
 	case CategoryMovie, CategoryTV:
 		return true
+	case CategoryUnknown:
+		return false
 	default:
 		return false
 	}
@@ -56,15 +59,19 @@ func (c Category) IsValid() bool {
 
 func (c Category) Value() (driver.Value, error) {
 	canonical := c.Canonical()
-	if canonical.IsValid() {
+	switch canonical {
+	case CategoryMovie, CategoryTV:
 		return string(canonical), nil
+	case CategoryUnknown:
+		return strings.TrimSpace(string(c)), nil
+	default:
+		return strings.TrimSpace(string(c)), nil
 	}
-	return strings.TrimSpace(string(c)), nil
 }
 
 func (c *Category) Scan(src any) error {
 	if c == nil {
-		return fmt.Errorf("api: scan category: nil destination")
+		return errors.New("api: scan category: nil destination")
 	}
 	if src == nil {
 		*c = CategoryUnknown
