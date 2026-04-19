@@ -4,6 +4,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { DescriptionBuilderPreview } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
+import "./styles.css";
 
 type Props = {
   path: string;
@@ -57,7 +58,7 @@ export default function DescriptionBuilderPage(props: Props) {
     setBuilderExpandedGroups,
     resetBuilderDescription,
     renderBuilderDescription,
-    saveBuilderDescription
+    saveBuilderDescription,
   } = props;
 
   const groups = builderPreview.Groups || [];
@@ -68,7 +69,8 @@ export default function DescriptionBuilderPage(props: Props) {
         <p className="eyebrow">Description Builder</p>
         <h1>Customize Description</h1>
         <p className="subtitle">
-          Edit tracker-group raw descriptions here. Tracker-specific formatting is applied from this builder.
+          Edit tracker-group raw descriptions here. Tracker-specific formatting is applied from this
+          builder.
         </p>
       </header>
 
@@ -87,7 +89,9 @@ export default function DescriptionBuilderPage(props: Props) {
           <div className="builder-preview__header">
             <h2>Building Descriptions</h2>
           </div>
-          <p className="muted">Preparing tracker-group descriptions and image-host adjustments...</p>
+          <p className="muted">
+            Preparing tracker-group descriptions and image-host adjustments...
+          </p>
         </section>
       ) : groups.length === 0 ? (
         <section className="panel builder-preview">
@@ -110,7 +114,9 @@ export default function DescriptionBuilderPage(props: Props) {
                 <div>
                   <h2>{label}</h2>
                   <p className="muted">
-                    {group.HasOverride ? "Saved override active for this group." : "Using generated raw description."}
+                    {group.HasOverride
+                      ? "Saved override active for this group."
+                      : "Using generated raw description."}
                   </p>
                   {group.ImageHost?.Reuploaded && group.ImageHost?.Message ? (
                     <p className="muted">{group.ImageHost.Message}</p>
@@ -122,7 +128,7 @@ export default function DescriptionBuilderPage(props: Props) {
                   onClick={() =>
                     setBuilderExpandedGroups((prev) => ({
                       ...prev,
-                      [groupKey]: !expanded
+                      [groupKey]: !expanded,
                     }))
                   }
                 >
@@ -162,7 +168,9 @@ export default function DescriptionBuilderPage(props: Props) {
                   <section className="panel builder-editor">
                     <div className="builder-editor__header">
                       <h2>Raw Description</h2>
-                      <p className="muted">This saved raw description is the upload source of truth for {label}.</p>
+                      <p className="muted">
+                        This saved raw description is the upload source of truth for {label}.
+                      </p>
                     </div>
                     <textarea
                       className="builder-textarea"

@@ -9,11 +9,23 @@ dist/
 .trunk/
 *.exe
 /scripts/__pycache__/
+
+# Lefthook
+.lefthook-local.yml
+.lefthook/
+
+# Lint / formatter caches
+gui/frontend/.eslintcache
+gui/frontend/node_modules/.cache/prettier/
+
+# App Configs
 /config/*.yaml
 /config/*.yml
 /config.converted.yaml
 /config.converted.yml
 /config-export.yaml
+
+#Claude user local settings
 .claude/settings.local.json
 .claude/CLAUDE.local.md
 CLAUDE.local.md

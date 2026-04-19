@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
 import type { ExternalIDOverrides, ReleaseNameOverrides } from "../../types";
 
 type Props = Readonly<{

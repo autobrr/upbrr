@@ -53,12 +53,28 @@
       "problemMatcher": []
     },
     {
+      "label": "format-go",
+      "type": "shell",
+      "command": "golangci-lint",
+      "args": ["fmt", "./..."],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
       "label": "lint-go",
       "type": "shell",
       "command": "golangci-lint",
       "args": ["run", "--timeout=5m"],
       "options": { "cwd": "${workspaceFolder}" },
       "group": "test",
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "lint-fix-go",
+      "type": "shell",
+      "command": "golangci-lint",
+      "args": ["run", "--fix", "--timeout=5m"],
+      "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": ["$go"]
     },
     {
@@ -81,12 +97,37 @@
       }
     },
     {
+      "label": "format-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "format"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "format-check-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "format:check"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
       "label": "lint-frontend",
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "lint"],
       "options": { "cwd": "${workspaceFolder}/gui/frontend" },
       "group": "test",
+      "problemMatcher": ["$eslint-stylish"]
+    },
+    {
+      "label": "lint-fix-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint:fix"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
       "problemMatcher": ["$eslint-stylish"]
     },
     {
@@ -97,6 +138,32 @@
       "options": { "cwd": "${workspaceFolder}/gui/frontend" },
       "group": "test",
       "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "lint-dead-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint:dead"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "lint-style-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint:style"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "lint-style-fix-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint:style:fix"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "problemMatcher": []
     },
     {
       "label": "test-go",
@@ -136,6 +203,49 @@
       "label": "build-all",
       "dependsOn": ["build-cli", "build-gui"],
       "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "lint-all",
+      "dependsOn": [
+        "lint-go",
+        "lint-frontend",
+        "lint-dead-frontend",
+        "lint-style-frontend",
+        "typecheck-frontend",
+        "format-check-frontend",
+        "logpolicy"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "fix-all",
+      "dependsOn": [
+        "format-go",
+        "lint-fix-go",
+        "format-frontend",
+        "lint-fix-frontend",
+        "lint-style-fix-frontend"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "setup-hooks",
+      "type": "shell",
+      "command": "lefthook",
+      "args": ["install"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "run-pre-commit",
+      "type": "shell",
+      "command": "lefthook",
+      "args": ["run", "pre-commit", "--all-files"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
       "problemMatcher": []
     }
   ]

@@ -31,7 +31,12 @@ type UseSettingsStateResult = {
   renderMapSection: (
     sectionKey: string,
     sectionValue: ConfigMap,
-    options?: { entriesKey?: string; defaultKey?: string; fieldMeta?: Record<string, FieldMeta>; advancedOpen?: boolean }
+    options?: {
+      entriesKey?: string;
+      defaultKey?: string;
+      fieldMeta?: Record<string, FieldMeta>;
+      advancedOpen?: boolean;
+    },
   ) => JSX.Element;
   renderField: (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => JSX.Element;
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
@@ -60,7 +65,7 @@ const settingsSections: SettingsSection[] = [
   { key: "torrent_creation", jsonKey: "TorrentCreation", label: "Torrent" },
   { key: "post_upload", jsonKey: "PostUpload", label: "Post Upload" },
   { key: "trackers", jsonKey: "Trackers", label: "Trackers" },
-  { key: "torrent_clients", jsonKey: "TorrentClients", label: "Torrent Clients" }
+  { key: "torrent_clients", jsonKey: "TorrentClients", label: "Torrent Clients" },
 ];
 
 const imageHostOptions = [
@@ -77,7 +82,7 @@ const imageHostOptions = [
   { value: "passtheimage", label: "PassTheImage" },
   { value: "seedpool_cdn", label: "Seedpool CDN" },
   { value: "sharex", label: "ShareX" },
-  { value: "utppm", label: "UTPPM" }
+  { value: "utppm", label: "UTPPM" },
 ];
 
 const imageHostKeyMap: Record<string, string[]> = {
@@ -91,23 +96,23 @@ const imageHostKeyMap: Record<string, string[]> = {
   passtheimage: ["PassTheImageAPI"],
   seedpool_cdn: ["SeedpoolCDNAPI"],
   sharex: ["ShareXURL", "ShareXAPIKey"],
-  utppm: ["UTPPMAPI"]
+  utppm: ["UTPPMAPI"],
 };
 
 const stringField = (key: string, meta: Omit<FieldMeta, "key" | "type"> = {}): FieldMeta => ({
   key,
   type: "string",
-  ...meta
+  ...meta,
 });
 const boolField = (key: string, meta: Omit<FieldMeta, "key" | "type"> = {}): FieldMeta => ({
   key,
   type: "boolean",
-  ...meta
+  ...meta,
 });
 const numberField = (key: string, meta: Omit<FieldMeta, "key" | "type"> = {}): FieldMeta => ({
   key,
   type: "number",
-  ...meta
+  ...meta,
 });
 
 const trackerFieldMeta: Record<string, FieldMeta> = {
@@ -118,8 +123,16 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   Username: stringField("Username", { label: "Username" }),
   Password: stringField("Password", { label: "Password", sensitive: true }),
   Passkey: stringField("Passkey", { label: "Passkey", sensitive: true }),
-  AnnounceURL: stringField("AnnounceURL", { label: "Announce URL", sensitive: true, advanced: true }),
-  MyAnnounceURL: stringField("MyAnnounceURL", { label: "My announce URL", sensitive: true, advanced: true }),
+  AnnounceURL: stringField("AnnounceURL", {
+    label: "Announce URL",
+    sensitive: true,
+    advanced: true,
+  }),
+  MyAnnounceURL: stringField("MyAnnounceURL", {
+    label: "My announce URL",
+    sensitive: true,
+    advanced: true,
+  }),
   URL: stringField("URL", { label: "URL", advanced: true }),
   UploaderName: stringField("UploaderName", { label: "Uploader name" }),
   UploaderStatus: boolField("UploaderStatus", { label: "Uploader status", advanced: true }),
@@ -141,64 +154,199 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   SkipIfRehash: boolField("SkipIfRehash", { label: "Skip if rehash", advanced: true }),
   PreferMTV: boolField("PreferMTV", { label: "Prefer MTV torrent", advanced: true }),
   PTGenAPI: stringField("PTGenAPI", { label: "PTGen API", sensitive: true, advanced: true }),
-  AddWebSourceToDesc: boolField("AddWebSourceToDesc", { label: "Add web source to desc", advanced: true }),
+  AddWebSourceToDesc: boolField("AddWebSourceToDesc", {
+    label: "Add web source to desc",
+    advanced: true,
+  }),
   ImageCount: numberField("ImageCount", { label: "Image count", advanced: true }),
   Channel: stringField("Channel", { label: "Channel", advanced: true }),
   ImgAPI: stringField("ImgAPI", { label: "Image API", sensitive: true, advanced: true }),
-  PronfoAPIKey: stringField("PronfoAPIKey", { label: "Pronfo API key", sensitive: true, advanced: true }),
+  PronfoAPIKey: stringField("PronfoAPIKey", {
+    label: "Pronfo API key",
+    sensitive: true,
+    advanced: true,
+  }),
   PronfoTheme: stringField("PronfoTheme", { label: "Pronfo theme", advanced: true }),
   PronfoRAPIID: stringField("PronfoRAPIID", { label: "Pronfo RAPI ID", advanced: true }),
   APIUpload: boolField("APIUpload", { label: "API upload", advanced: true }),
   Exclusive: boolField("Exclusive", { label: "Exclusive", advanced: true }),
-  LoginQuestion: stringField("LoginQuestion", { label: "Login question", sensitive: true, advanced: true }),
-  LoginAnswer: stringField("LoginAnswer", { label: "Login answer", sensitive: true, advanced: true }),
+  LoginQuestion: stringField("LoginQuestion", {
+    label: "Login question",
+    sensitive: true,
+    advanced: true,
+  }),
+  LoginAnswer: stringField("LoginAnswer", {
+    label: "Login answer",
+    sensitive: true,
+    advanced: true,
+  }),
   UserID: stringField("UserID", { label: "User ID", sensitive: true, advanced: true }),
-  Filebrowser: stringField("Filebrowser", { label: "Filebrowser", advanced: true })
+  Filebrowser: stringField("Filebrowser", { label: "Filebrowser", advanced: true }),
 };
 
 const trackerSchemas: Record<string, FieldMeta[]> = {
-  A4K: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ],
-  ACM: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
-  AITHER: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ],
-  ANT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
-  AR: [trackerFieldMeta.LinkDirName, trackerFieldMeta.Username, trackerFieldMeta.Password, trackerFieldMeta.AnnounceURL],
-  ASC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.UploaderStatus, trackerFieldMeta.CustomLayout, trackerFieldMeta.AnnounceURL],
-  AZ: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.CheckForRules],
+  A4K: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+  ],
+  ACM: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
+  AITHER: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+  ],
+  ANT: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
+  AR: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.Username,
+    trackerFieldMeta.Password,
+    trackerFieldMeta.AnnounceURL,
+  ],
+  ASC: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.UploaderStatus,
+    trackerFieldMeta.CustomLayout,
+    trackerFieldMeta.AnnounceURL,
+  ],
+  AZ: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.CheckForRules,
+  ],
   BHD: [
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.BhdRSSKey,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.DraftDefault,
-    trackerFieldMeta.Anon
+    trackerFieldMeta.Anon,
   ],
-  BHDTV: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL, trackerFieldMeta.MyAnnounceURL, trackerFieldMeta.Anon],
-  BJS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.ShowGroupIfAnon],
+  BHDTV: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.MyAnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
+  BJS: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ShowGroupIfAnon,
+  ],
   BLU: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   BT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
-  BTN: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Username, trackerFieldMeta.Password, trackerFieldMeta.URL, trackerFieldMeta.OTPURI],
-  CBR: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ, trackerFieldMeta.TagForCustomRelease],
-  CZ: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.CheckForRules],
+  BTN: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Username,
+    trackerFieldMeta.Password,
+    trackerFieldMeta.URL,
+    trackerFieldMeta.OTPURI,
+  ],
+  CBR: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+    trackerFieldMeta.TagForCustomRelease,
+  ],
+  CZ: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.CheckForRules,
+  ],
   DC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  DP: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ],
-  EMUW: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.UseSpanishTitle],
-  FF: [trackerFieldMeta.LinkDirName, trackerFieldMeta.Username, trackerFieldMeta.Password, trackerFieldMeta.AnnounceURL, trackerFieldMeta.CheckRequests, trackerFieldMeta.FullMediainfo],
-  FL: [trackerFieldMeta.LinkDirName, trackerFieldMeta.Username, trackerFieldMeta.Passkey, trackerFieldMeta.UploaderName, trackerFieldMeta.Anon],
+  DP: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+  ],
+  EMUW: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.UseSpanishTitle,
+  ],
+  FF: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.Username,
+    trackerFieldMeta.Password,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.CheckRequests,
+    trackerFieldMeta.FullMediainfo,
+  ],
+  FL: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.Username,
+    trackerFieldMeta.Passkey,
+    trackerFieldMeta.UploaderName,
+    trackerFieldMeta.Anon,
+  ],
   FNP: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   FRIKI: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
   GPW: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL],
-  HDB: [trackerFieldMeta.LinkDirName, trackerFieldMeta.Username, trackerFieldMeta.Passkey, trackerFieldMeta.AnnounceURL, trackerFieldMeta.ImgRehost],
-  HDS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.FullMediainfo],
-  HDT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.URL, trackerFieldMeta.Anon, trackerFieldMeta.AnnounceURL, trackerFieldMeta.FullMediainfo],
+  HDB: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.Username,
+    trackerFieldMeta.Passkey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.ImgRehost,
+  ],
+  HDS: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.FullMediainfo,
+  ],
+  HDT: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.URL,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.FullMediainfo,
+  ],
   HHD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   IHD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   IS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
   ITT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   LCD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   LDU: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  LST: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ, trackerFieldMeta.Draft],
-  LT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ],
-  LUME: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ],
+  LST: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+    trackerFieldMeta.Draft,
+  ],
+  LT: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+  ],
+  LUME: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+  ],
   MTV: [
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
@@ -208,12 +356,22 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
     trackerFieldMeta.OTPURI,
     trackerFieldMeta.SkipIfRehash,
-    trackerFieldMeta.PreferMTV
+    trackerFieldMeta.PreferMTV,
   ],
   NBL: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL],
   OE: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  OTW: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.ModQ, trackerFieldMeta.Anon],
-  PHD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.CheckForRules],
+  OTW: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.ModQ,
+    trackerFieldMeta.Anon,
+  ],
+  PHD: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.CheckForRules,
+  ],
   PT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   PTP: [
     trackerFieldMeta.LinkDirName,
@@ -222,16 +380,38 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.ApiKey,
     trackerFieldMeta.Username,
     trackerFieldMeta.Password,
-    trackerFieldMeta.AnnounceURL
+    trackerFieldMeta.AnnounceURL,
   ],
   PTS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL],
   PTT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  R4E: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
+  R4E: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
   RAS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   RF: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  RTF: [trackerFieldMeta.LinkDirName, trackerFieldMeta.Username, trackerFieldMeta.Password, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
-  SAM: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.TagForCustomRelease],
-  SHRI: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.UseItalianTitle],
+  RTF: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.Username,
+    trackerFieldMeta.Password,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
+  SAM: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.TagForCustomRelease,
+  ],
+  SHRI: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.UseItalianTitle,
+  ],
   SP: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
   SPD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Channel],
   STC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
@@ -244,22 +424,51 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.PronfoAPIKey,
     trackerFieldMeta.PronfoTheme,
     trackerFieldMeta.PronfoRAPIID,
-    trackerFieldMeta.Anon
+    trackerFieldMeta.Anon,
   ],
   TIK: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  TL: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIUpload, trackerFieldMeta.Passkey, trackerFieldMeta.Anon, trackerFieldMeta.ImgRehost, trackerFieldMeta.FullMediainfo],
+  TL: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIUpload,
+    trackerFieldMeta.Passkey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ImgRehost,
+    trackerFieldMeta.FullMediainfo,
+  ],
   TLZ: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  TOS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon, trackerFieldMeta.Exclusive],
-  TTR: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ],
-  TVC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.ImageCount, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
-  ULCX: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon, trackerFieldMeta.ModQ],
+  TOS: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.Exclusive,
+  ],
+  TTR: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+  ],
+  TVC: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.ImageCount,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
+  ULCX: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+  ],
   UTP: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   YUS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  MANUAL: [trackerFieldMeta.Filebrowser]
+  MANUAL: [trackerFieldMeta.Filebrowser],
 };
 
 const trackerHasAdvancedFields = Object.values(trackerSchemas).some((fields) =>
-  fields.some((field) => field.advanced)
+  fields.some((field) => field.advanced),
 );
 
 const REDACTED_VALUE = "[REDACTED]";
@@ -274,13 +483,13 @@ const sensitiveKeyHints = [
   "session",
   "otp",
   "announce_url",
-  "announceurl"
+  "announceurl",
 ];
 
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   MainSettings: {
     TrackerPassChecks: { key: "TrackerPassChecks", advanced: true },
-    DBPath: { key: "DBPath", advanced: true }
+    DBPath: { key: "DBPath", advanced: true },
   },
   Metadata: {
     UserOverrides: { key: "UserOverrides", advanced: true },
@@ -288,7 +497,7 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     GetBlurayInfo: { key: "GetBlurayInfo", advanced: true },
     BlurayScore: { key: "BlurayScore", advanced: true },
     BluraySingleScore: { key: "BluraySingleScore", advanced: true },
-    CheckPredb: { key: "CheckPredb", advanced: true }
+    CheckPredb: { key: "CheckPredb", advanced: true },
   },
   ScreenshotHandling: {
     ProcessLimit: { key: "ProcessLimit", advanced: true },
@@ -297,7 +506,7 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     UseLibplacebo: { key: "UseLibplacebo", advanced: true },
     FFmpegCompression: { key: "FFmpegCompression", advanced: true },
     TonemapAlgorithm: { key: "TonemapAlgorithm", advanced: true },
-    Desat: { key: "Desat", advanced: true }
+    Desat: { key: "Desat", advanced: true },
   },
   Description: {
     TonemappedHeader: { key: "TonemappedHeader", advanced: true },
@@ -310,7 +519,7 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     ScreenshotHeader: { key: "ScreenshotHeader", advanced: true },
     DiscMenuHeader: { key: "DiscMenuHeader", advanced: true },
     CustomSignature: { key: "CustomSignature", advanced: true },
-    BlurayImageSize: { key: "BlurayImageSize", advanced: true }
+    BlurayImageSize: { key: "BlurayImageSize", advanced: true },
   },
   ArrIntegration: {
     SonarrURL1: { key: "SonarrURL1", advanced: true },
@@ -326,23 +535,23 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     RadarrURL3: { key: "RadarrURL3", advanced: true },
     RadarrAPIKey3: { key: "RadarrAPIKey3", advanced: true, sensitive: true },
     EmbyDir: { key: "EmbyDir", advanced: true },
-    EmbyTVDir: { key: "EmbyTVDir", advanced: true }
+    EmbyTVDir: { key: "EmbyTVDir", advanced: true },
   },
   TorrentCreation: {
     MkbrrThreads: { key: "MkbrrThreads", advanced: true },
     PreferMax16: { key: "PreferMax16", advanced: true },
-    RehashCooldown: { key: "RehashCooldown", advanced: true }
+    RehashCooldown: { key: "RehashCooldown", advanced: true },
   },
   PostUpload: {
     PrintTrackerMessages: { key: "PrintTrackerMessages", advanced: true },
     PrintTrackerLinks: { key: "PrintTrackerLinks", advanced: true },
     SearchRequests: { key: "SearchRequests", advanced: true },
-    CrossSeedCheckEverything: { key: "CrossSeedCheckEverything", advanced: true }
+    CrossSeedCheckEverything: { key: "CrossSeedCheckEverything", advanced: true },
   },
   Logging: {
     MaxTotalSizeMB: { key: "MaxTotalSizeMB", advanced: true },
-    MaxFiles: { key: "MaxFiles", advanced: true }
-  }
+    MaxFiles: { key: "MaxFiles", advanced: true },
+  },
 };
 
 const isSensitiveKeyName = (key: string) => {
@@ -447,7 +656,11 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   }, [configData]);
 
   const screenshotConfig = useMemo(() => {
-    if (!configData || !configData.ScreenshotHandling || typeof configData.ScreenshotHandling !== "object") {
+    if (
+      !configData ||
+      !configData.ScreenshotHandling ||
+      typeof configData.ScreenshotHandling !== "object"
+    ) {
       return null;
     }
     if (Array.isArray(configData.ScreenshotHandling)) {
@@ -600,7 +813,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const result = await getDefaultConfig();
       const parsed = JSON.parse(result) as ConfigMap;
       setDefaultConfig(parsed);
-    } catch (err) {
+    } catch (_err) {
       // Silently fail if we can't load default config; it's optional for tracker comparison
     }
   }, []);
@@ -646,13 +859,23 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   useEffect(() => {
-    if ((activeTab === "input" || activeTab === "settings" || activeTab === "logging" || activeTab === "upload" || activeTab === "upload_images") && !configData) {
+    if (
+      (activeTab === "input" ||
+        activeTab === "settings" ||
+        activeTab === "logging" ||
+        activeTab === "upload" ||
+        activeTab === "upload_images") &&
+      !configData
+    ) {
       loadSettings();
     }
   }, [activeTab, configData, loadSettings]);
 
   useEffect(() => {
-    if ((activeTab === "settings" || activeTab === "input" || activeTab === "upload") && !defaultConfig) {
+    if (
+      (activeTab === "settings" || activeTab === "input" || activeTab === "upload") &&
+      !defaultConfig
+    ) {
       loadDefaultConfig();
     }
   }, [activeTab, defaultConfig, loadDefaultConfig]);
@@ -721,7 +944,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     const typeHint = meta?.type;
     if (typeHint === "boolean" || typeof value === "boolean") {
       return (
-        <label className="settings-toggle" key={path.join(".")}> 
+        <label className="settings-toggle" key={path.join(".")}>
           <span>{displayLabel}</span>
           <input
             type="checkbox"
@@ -735,7 +958,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (typeHint === "number" || typeof value === "number") {
       const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
       return (
-        <label className="settings-field" key={path.join(".")}> 
+        <label className="settings-field" key={path.join(".")}>
           <span>{displayLabel}</span>
           <input
             type="number"
@@ -747,7 +970,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
     if (Array.isArray(value)) {
       return (
-        <div className="settings-field" key={path.join(".")}> 
+        <div className="settings-field" key={path.join(".")}>
           <span>{displayLabel}</span>
           {renderArrayEditor(value, path)}
         </div>
@@ -755,11 +978,11 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
     if (value && typeof value === "object") {
       return (
-        <div className="settings-subgroup" key={path.join(".")}> 
+        <div className="settings-subgroup" key={path.join(".")}>
           <div className="settings-subgroup__title">{displayLabel}</div>
           <div className="settings-grid">
             {Object.entries(value).map(([childKey, childValue]) =>
-              renderField(childKey, childValue, [...path, childKey])
+              renderField(childKey, childValue, [...path, childKey]),
             )}
           </div>
         </div>
@@ -767,7 +990,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
 
     return (
-      <label className="settings-field" key={path.join(".")}> 
+      <label className="settings-field" key={path.join(".")}>
         <span>{displayLabel}</span>
         <input
           value={value === null ? "" : String(value ?? "")}
@@ -780,13 +1003,18 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const renderMapSection = (
     sectionKey: string,
     sectionValue: ConfigMap,
-    options?: { entriesKey?: string; defaultKey?: string; fieldMeta?: Record<string, FieldMeta>; advancedOpen?: boolean }
+    options?: {
+      entriesKey?: string;
+      defaultKey?: string;
+      fieldMeta?: Record<string, FieldMeta>;
+      advancedOpen?: boolean;
+    },
   ) => {
     const entriesRoot = options?.entriesKey
       ? (sectionValue[options.entriesKey] as ConfigMap) || {}
       : sectionValue;
     const entries = Object.entries(entriesRoot).filter(
-      ([, value]) => value && typeof value === "object" && !Array.isArray(value)
+      ([, value]) => value && typeof value === "object" && !Array.isArray(value),
     ) as Array<[string, ConfigMap]>;
     const defaultKey = options?.defaultKey;
     const fieldMeta = options?.fieldMeta || {};
@@ -797,7 +1025,10 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         {defaultKey ? (
           <div className="settings-subgroup">
             <div className="settings-subgroup__title">{formatLabel(defaultKey)}</div>
-            {renderField(defaultKey, sectionValue[defaultKey] as ConfigValue, [sectionKey, defaultKey])}
+            {renderField(defaultKey, sectionValue[defaultKey] as ConfigValue, [
+              sectionKey,
+              defaultKey,
+            ])}
           </div>
         ) : null}
 
@@ -854,8 +1085,8 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                         childKey,
                         childValue,
                         [sectionKey, options?.entriesKey || "", key, childKey].filter(Boolean),
-                        fieldMeta[childKey]
-                      )
+                        fieldMeta[childKey],
+                      ),
                     )}
                 </div>
               </div>
@@ -873,70 +1104,86 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
    * - The baseline doesn't have the tracker
    * - It has Unknown keys (custom fields not in the schema)
    */
-  const isTrackerConfigured = useCallback((trackerName: string, trackerValue: ConfigMap): boolean => {
-    if (!defaultConfig || typeof defaultConfig !== "object" || Array.isArray(defaultConfig)) {
-      return true; // If we can't load defaults, assume it's configured
-    }
-
-    const defaultTrackersCfg = defaultConfig.Trackers;
-    if (!defaultTrackersCfg || typeof defaultTrackersCfg !== "object" || Array.isArray(defaultTrackersCfg)) {
-      return true; // If defaults don't have Trackers section, assume all are configured
-    }
-
-    const defaultTrackersMap = defaultTrackersCfg.Trackers;
-    if (!defaultTrackersMap || typeof defaultTrackersMap !== "object" || Array.isArray(defaultTrackersMap)) {
-      return true; // If defaults don't have tracker entries, assume all are configured
-    }
-
-    const baselineTracker = (defaultTrackersMap as ConfigMap)[trackerName];
-    if (baselineTracker === undefined) {
-      // Not in baseline = configured (user added this tracker)
-      return true;
-    }
-
-    if (typeof baselineTracker !== "object" || Array.isArray(baselineTracker)) {
-      // Baseline has invalid type = configured
-      return true;
-    }
-
-    // Compare field-by-field
-    const currentKeys = new Set(Object.keys(trackerValue));
-    const baselineKeys = new Set(Object.keys(baselineTracker as ConfigMap));
-
-    // Check if any current key differs from baseline
-    for (const key of currentKeys) {
-      const currentValue = trackerValue[key];
-      const baselineValue = (baselineTracker as ConfigMap)[key];
-
-      // If key not in baseline, or values differ, it's configured
-      if (baselineValue === undefined) {
-        return true; // User added a new field
+  const isTrackerConfigured = useCallback(
+    (trackerName: string, trackerValue: ConfigMap): boolean => {
+      if (!defaultConfig || typeof defaultConfig !== "object" || Array.isArray(defaultConfig)) {
+        return true; // If we can't load defaults, assume it's configured
       }
 
-      // Deep comparison for objects, shallow for primitives
-      if (typeof currentValue === "object" && typeof baselineValue === "object") {
-        if (JSON.stringify(currentValue) !== JSON.stringify(baselineValue)) {
+      const defaultTrackersCfg = defaultConfig.Trackers;
+      if (
+        !defaultTrackersCfg ||
+        typeof defaultTrackersCfg !== "object" ||
+        Array.isArray(defaultTrackersCfg)
+      ) {
+        return true; // If defaults don't have Trackers section, assume all are configured
+      }
+
+      const defaultTrackersMap = defaultTrackersCfg.Trackers;
+      if (
+        !defaultTrackersMap ||
+        typeof defaultTrackersMap !== "object" ||
+        Array.isArray(defaultTrackersMap)
+      ) {
+        return true; // If defaults don't have tracker entries, assume all are configured
+      }
+
+      const baselineTracker = (defaultTrackersMap as ConfigMap)[trackerName];
+      if (baselineTracker === undefined) {
+        // Not in baseline = configured (user added this tracker)
+        return true;
+      }
+
+      if (typeof baselineTracker !== "object" || Array.isArray(baselineTracker)) {
+        // Baseline has invalid type = configured
+        return true;
+      }
+
+      // Compare field-by-field
+      const currentKeys = new Set(Object.keys(trackerValue));
+      const baselineKeys = new Set(Object.keys(baselineTracker as ConfigMap));
+
+      // Check if any current key differs from baseline
+      for (const key of currentKeys) {
+        const currentValue = trackerValue[key];
+        const baselineValue = (baselineTracker as ConfigMap)[key];
+
+        // If key not in baseline, or values differ, it's configured
+        if (baselineValue === undefined) {
+          return true; // User added a new field
+        }
+
+        // Deep comparison for objects, shallow for primitives
+        if (typeof currentValue === "object" && typeof baselineValue === "object") {
+          if (JSON.stringify(currentValue) !== JSON.stringify(baselineValue)) {
+            return true;
+          }
+        } else if (currentValue !== baselineValue) {
           return true;
         }
-      } else if (currentValue !== baselineValue) {
-        return true;
       }
-    }
 
-    // Check if baseline has keys not in current (field was removed from baseline template)
-    for (const key of baselineKeys) {
-      if (!currentKeys.has(key)) {
-        // User may have intentionally removed a field; this is also a configuration
-        return true;
+      // Check if baseline has keys not in current (field was removed from baseline template)
+      for (const key of baselineKeys) {
+        if (!currentKeys.has(key)) {
+          // User may have intentionally removed a field; this is also a configuration
+          return true;
+        }
       }
-    }
 
-    // All fields match baseline exactly
-    return false;
-  }, [defaultConfig]);
+      // All fields match baseline exactly
+      return false;
+    },
+    [defaultConfig],
+  );
 
   const trackerSelectionNames = useMemo(() => {
-    if (!configData || !configData.Trackers || typeof configData.Trackers !== "object" || Array.isArray(configData.Trackers)) {
+    if (
+      !configData ||
+      !configData.Trackers ||
+      typeof configData.Trackers !== "object" ||
+      Array.isArray(configData.Trackers)
+    ) {
       return [] as string[];
     }
 
@@ -947,18 +1194,18 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         ? (rawEntries as ConfigMap)
         : {};
     const allEntries = Object.entries(entriesRoot).filter(
-      ([, value]) => value && typeof value === "object" && !Array.isArray(value)
+      ([, value]) => value && typeof value === "object" && !Array.isArray(value),
     ) as Array<[string, ConfigMap]>;
     const manualTrackerSet = new Set(
       Object.entries(manualTrackerEntries)
         .filter(([, enabled]) => enabled)
-        .map(([name]) => name)
+        .map(([name]) => name),
     );
 
     return allEntries
       .filter(
         ([trackerName, trackerValue]) =>
-          isTrackerConfigured(trackerName, trackerValue) || manualTrackerSet.has(trackerName)
+          isTrackerConfigured(trackerName, trackerValue) || manualTrackerSet.has(trackerName),
       )
       .map(([trackerName]) => trackerName)
       .sort((left, right) => left.localeCompare(right));
@@ -966,7 +1213,12 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
   const renderTrackerSection = (advancedOpen: boolean) => {
     try {
-      if (!configData || !configData.Trackers || typeof configData.Trackers !== "object" || Array.isArray(configData.Trackers)) {
+      if (
+        !configData ||
+        !configData.Trackers ||
+        typeof configData.Trackers !== "object" ||
+        Array.isArray(configData.Trackers)
+      ) {
         return null;
       }
 
@@ -977,20 +1229,23 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         rawEntries && typeof rawEntries === "object" && !Array.isArray(rawEntries)
           ? (rawEntries as ConfigMap)
           : {};
-      
+
       const allEntries = Object.entries(entriesRoot).filter(
-        ([, value]) => value && typeof value === "object" && !Array.isArray(value)
+        ([, value]) => value && typeof value === "object" && !Array.isArray(value),
       ) as Array<[string, ConfigMap]>;
       const visibleTrackerSet = new Set(trackerSelectionNames);
-      const visibleEntries = allEntries.filter(([trackerName]) => visibleTrackerSet.has(trackerName));
+      const visibleEntries = allEntries.filter(([trackerName]) =>
+        visibleTrackerSet.has(trackerName),
+      );
 
       const normalizedDefaultTrackers = normalizeDefaultTrackerList(defaultTrackers);
       const preferredTrackerRaw = trackerRoot.PreferredTracker;
-      const preferredTracker = typeof preferredTrackerRaw === "string" ? preferredTrackerRaw.trim() : "";
+      const preferredTracker =
+        typeof preferredTrackerRaw === "string" ? preferredTrackerRaw.trim() : "";
       const trackerNames = trackerSelectionNames;
       const normalizedTrackerNameSet = new Set(trackerNames.map((name) => name.toLowerCase()));
       const selectedDefaultTrackerCount = normalizedDefaultTrackers.filter((name) =>
-        normalizedTrackerNameSet.has(name.toLowerCase())
+        normalizedTrackerNameSet.has(name.toLowerCase()),
       ).length;
       const trackerOptions = (knownTrackers.length ? knownTrackers : Object.keys(trackerSchemas))
         .filter((name) => typeof name === "string" && name.trim().length > 0)
@@ -1005,7 +1260,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         trackerFieldMeta.AnnounceURL,
         trackerFieldMeta.Username,
         trackerFieldMeta.Password,
-        trackerFieldMeta.Anon
+        trackerFieldMeta.Anon,
       ];
 
       const buildDefault = (meta: FieldMeta) => {
@@ -1037,50 +1292,83 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
       return (
         <div className="settings-map">
-        <details
-          className="settings-subgroup settings-subgroup--collapsible"
-          open={defaultTrackersPanelOpen}
-          onToggle={(event) => {
-            const target = event.currentTarget as HTMLDetailsElement;
-            setDefaultTrackersPanelOpen(target.open);
-          }}
-        >
-          <summary className="settings-subgroup__title tracker-summary-heading">
-            <span>Default trackers</span>
-            <span className="tracker-summary-count">{selectedDefaultTrackerCount}/{trackerNames.length}</span>
-          </summary>
-          <div className="tracker-defaults-body">
-            {trackerNames.length === 0 ? (
-              <p className="muted">Add tracker entries to select defaults.</p>
-            ) : (
-              <div className="tracker-selection-container">
-                <div className="tracker-pills">
-                  {trackerNames.map((tracker) => (
-                    <label key={tracker} className="tracker-pill">
-                      <input
-                        type="checkbox"
-                        checked={normalizedDefaultTrackers.includes(tracker)}
-                        onChange={(event) => toggleDefaultTracker(tracker, event.target.checked)}
-                      />
-                      <span className="pill-label">{tracker}</span>
-                    </label>
-                  ))}
+          <details
+            className="settings-subgroup settings-subgroup--collapsible"
+            open={defaultTrackersPanelOpen}
+            onToggle={(event) => {
+              const target = event.currentTarget as HTMLDetailsElement;
+              setDefaultTrackersPanelOpen(target.open);
+            }}
+          >
+            <summary className="settings-subgroup__title tracker-summary-heading">
+              <span>Default trackers</span>
+              <span className="tracker-summary-count">
+                {selectedDefaultTrackerCount}/{trackerNames.length}
+              </span>
+            </summary>
+            <div className="tracker-defaults-body">
+              {trackerNames.length === 0 ? (
+                <p className="muted">Add tracker entries to select defaults.</p>
+              ) : (
+                <div className="tracker-selection-container">
+                  <div className="tracker-pills">
+                    {trackerNames.map((tracker) => (
+                      <label key={tracker} className="tracker-pill">
+                        <input
+                          type="checkbox"
+                          checked={normalizedDefaultTrackers.includes(tracker)}
+                          onChange={(event) => toggleDefaultTracker(tracker, event.target.checked)}
+                        />
+                        <span className="pill-label">{tracker}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        </details>
+              )}
+            </div>
+          </details>
 
-        <details className="settings-subgroup settings-subgroup--collapsible">
-          <summary className="settings-subgroup__title">Preferred tracker data source</summary>
-          <div style={{ paddingTop: "0.5rem" }}>
+          <details className="settings-subgroup settings-subgroup--collapsible">
+            <summary className="settings-subgroup__title">Preferred tracker data source</summary>
+            <div style={{ paddingTop: "0.5rem" }}>
+              <div className="settings-map__controls">
+                <select
+                  value={preferredTracker}
+                  onChange={(event) => updatePreferredTracker(event.target.value)}
+                >
+                  <option value="">None</option>
+                  {trackerOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={preferredTracker === ""}
+                  onClick={() => updatePreferredTracker("")}
+                >
+                  Clear
+                </button>
+              </div>
+              <p className="muted" style={{ marginTop: "0.5rem" }}>
+                Moves the selected tracker to the top of tracker-data lookup and qBit tracker
+                priority when present.
+              </p>
+            </div>
+          </details>
+
+          <div className="settings-map__header">
+            <p className="label">Entries</p>
             <div className="settings-map__controls">
               <select
-                value={preferredTracker}
-                onChange={(event) => updatePreferredTracker(event.target.value)}
+                value={trackerAddSelection}
+                onChange={(event) => setTrackerAddSelection(event.target.value)}
+                disabled={availableTrackers.length === 0}
               >
-                <option value="">None</option>
-                {trackerOptions.map((name) => (
+                <option value="">Select tracker</option>
+                {availableTrackers.map((name) => (
                   <option key={name} value={name}>
                     {name}
                   </option>
@@ -1089,113 +1377,85 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               <button
                 className="ghost"
                 type="button"
-                disabled={preferredTracker === ""}
-                onClick={() => updatePreferredTracker("")}
+                disabled={!trackerAddSelection}
+                onClick={() => {
+                  const name = trackerAddSelection.trim();
+                  if (!name) return;
+                  if (!allEntrySet.has(name)) {
+                    const schema = trackerSchemas[name] || trackerFallbackSchema;
+                    addConfigKey(["Trackers", "Trackers"], name, buildTrackerDefaults(schema));
+                  }
+                  setManualTrackerEntries((prev) => ({ ...prev, [name]: true }));
+                  setTrackerAddSelection("");
+                  setSettingsTrackerPanels((prev) => ({ ...prev, [name]: true }));
+                }}
               >
-                Clear
+                Add entry
               </button>
             </div>
-            <p className="muted" style={{ marginTop: "0.5rem" }}>
-              Moves the selected tracker to the top of tracker-data lookup and qBit tracker priority when present.
-            </p>
           </div>
-        </details>
 
-        <div className="settings-map__header">
-          <p className="label">Entries</p>
-          <div className="settings-map__controls">
-            <select
-              value={trackerAddSelection}
-              onChange={(event) => setTrackerAddSelection(event.target.value)}
-              disabled={availableTrackers.length === 0}
-            >
-              <option value="">Select tracker</option>
-              {availableTrackers.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-            <button
-              className="ghost"
-              type="button"
-              disabled={!trackerAddSelection}
-              onClick={() => {
-                const name = trackerAddSelection.trim();
-                if (!name) return;
-                if (!allEntrySet.has(name)) {
-                  const schema = trackerSchemas[name] || trackerFallbackSchema;
-                  addConfigKey(["Trackers", "Trackers"], name, buildTrackerDefaults(schema));
-                }
-                setManualTrackerEntries((prev) => ({ ...prev, [name]: true }));
-                setTrackerAddSelection("");
-                setSettingsTrackerPanels((prev) => ({ ...prev, [name]: true }));
-              }}
-            >
-              Add entry
-            </button>
-          </div>
-        </div>
-
-        <div className="settings-map__grid">
-          {visibleEntries.length === 0 ? (
-            <p className="muted">No configured entries yet.</p>
-          ) : (
-            visibleEntries.map(([key, value]) => {
-              const schema = (trackerSchemas[key] || trackerFallbackSchema).filter((meta): meta is FieldMeta => Boolean(meta));
-              return (
-                <details
-                  className="settings-card settings-card--collapsible"
-                  key={`Trackers-${key}`}
-                  open={settingsTrackerPanels[key] ?? false}
-                  onToggle={(event) => {
-                    const target = event.currentTarget as HTMLDetailsElement;
-                    setSettingsTrackerPanels((prev) => ({ ...prev, [key]: target.open }));
-                  }}
-                >
-                  <summary className="settings-card__summary">
-                    <span className="settings-card__summary-name">{key}</span>
-                    <button
-                      className="ghost"
-                      type="button"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        removeConfigKey(["Trackers", "Trackers"], key);
-                        setManualTrackerEntries((prev) => {
-                          const next = { ...prev };
-                          delete next[key];
-                          return next;
-                        });
-                        setSettingsTrackerPanels((prev) => {
-                          const next = { ...prev };
-                          delete next[key];
-                          return next;
-                        });
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </summary>
-                  <div className="settings-card__body">
-                    <div className="settings-grid">
-                      {schema
-                        .filter((meta) => !(meta.advanced && !advancedOpen))
-                        .map((meta) =>
-                          renderField(
-                            meta.key,
-                            value[meta.key] ?? buildDefault(meta),
-                            ["Trackers", "Trackers", key, meta.key],
-                            meta
-                          )
-                        )}
+          <div className="settings-map__grid">
+            {visibleEntries.length === 0 ? (
+              <p className="muted">No configured entries yet.</p>
+            ) : (
+              visibleEntries.map(([key, value]) => {
+                const schema = (trackerSchemas[key] || trackerFallbackSchema).filter(
+                  (meta): meta is FieldMeta => Boolean(meta),
+                );
+                return (
+                  <details
+                    className="settings-card settings-card--collapsible"
+                    key={`Trackers-${key}`}
+                    open={settingsTrackerPanels[key] ?? false}
+                    onToggle={(event) => {
+                      const target = event.currentTarget as HTMLDetailsElement;
+                      setSettingsTrackerPanels((prev) => ({ ...prev, [key]: target.open }));
+                    }}
+                  >
+                    <summary className="settings-card__summary">
+                      <span className="settings-card__summary-name">{key}</span>
+                      <button
+                        className="ghost"
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          removeConfigKey(["Trackers", "Trackers"], key);
+                          setManualTrackerEntries((prev) => {
+                            const next = { ...prev };
+                            delete next[key];
+                            return next;
+                          });
+                          setSettingsTrackerPanels((prev) => {
+                            const next = { ...prev };
+                            delete next[key];
+                            return next;
+                          });
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </summary>
+                    <div className="settings-card__body">
+                      <div className="settings-grid">
+                        {schema
+                          .filter((meta) => !(meta.advanced && !advancedOpen))
+                          .map((meta) =>
+                            renderField(
+                              meta.key,
+                              value[meta.key] ?? buildDefault(meta),
+                              ["Trackers", "Trackers", key, meta.key],
+                              meta,
+                            ),
+                          )}
+                      </div>
                     </div>
-                  </div>
-                </details>
-              );
-            })
-          )}
-        </div>
+                  </details>
+                );
+              })
+            )}
+          </div>
         </div>
       );
     } catch (err) {
@@ -1231,7 +1491,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                 <span>{`Host ${index + 1}`}</span>
                 <select
                   value={String(imageCfg[field] ?? "")}
-                  onChange={(event) => updateConfigValue(["ImageHosting", field], event.target.value)}
+                  onChange={(event) =>
+                    updateConfigValue(["ImageHosting", field], event.target.value)
+                  }
                 >
                   {imageHostOptions.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -1251,7 +1513,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
           ) : (
             <div className="settings-grid">
               {Array.from(requiredKeys).map((key) =>
-                renderField(key, imageCfg[key] as ConfigValue, ["ImageHosting", key])
+                renderField(key, imageCfg[key] as ConfigValue, ["ImageHosting", key]),
               )}
             </div>
           )}
@@ -1290,6 +1552,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     setSettingsErrorMessage,
     resolveImageHostLabel,
     knownTrackersLoading,
-    trackerSelectionNames
+    trackerSelectionNames,
   };
 };

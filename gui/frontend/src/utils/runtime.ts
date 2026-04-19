@@ -13,10 +13,12 @@ let nativeBrowseEnabled = false;
 
 const isWebUIRuntime = () => {
   const runtime = (window as typeof window & { runtime?: unknown }).runtime;
-  return !runtime && (window.location.protocol === "http:" || window.location.protocol === "https:");
+  return (
+    !runtime && (window.location.protocol === "http:" || window.location.protocol === "https:")
+  );
 };
 
-const parseJSONResponse = async <T,>(response: Response): Promise<T | null> => {
+const parseJSONResponse = async <T>(response: Response): Promise<T | null> => {
   const text = await response.text();
   if (!text.trim()) {
     return null;
@@ -66,15 +68,15 @@ const recreateEventSource = () => {
   ensureEventSource();
 };
 
-const postJSON = async <T,>(path: string, body?: unknown): Promise<T> => {
+const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
   const response = await fetch(path, {
     method: "POST",
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {})
+      ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
     },
-    body: body === undefined ? undefined : JSON.stringify(body)
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const payload = await parseJSONResponse<T & { error?: string }>(response);
   if (!response.ok) {
@@ -94,7 +96,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
   }
   csrfToken = token;
 
-  const call = <T,>(method: string, body?: unknown) => postJSON<T>(`/api/app/${method}`, body);
+  const call = <T>(method: string, body?: unknown) => postJSON<T>(`/api/app/${method}`, body);
 
   (globalThis as any).go = {
     guiapp: {
@@ -103,31 +105,241 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         BrowseFile: () => call<string>("BrowseFile"),
         BrowseFolder: () => call<string>("BrowseFolder"),
         DetectDiscType: (path: string) => call<string>("DetectDiscType", { Path: path }),
-        FetchMetadata: (path: string, sourceLookupURL: string, overrides: unknown, nameOverrides: unknown, trackers: string[]) => call("FetchMetadata", { Path: path, SourceLookupURL: sourceLookupURL, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers }),
-        ResetMetadata: (path: string, sourceLookupURL: string, overrides: unknown, nameOverrides: unknown, trackers: string[]) => call("ResetMetadata", { Path: path, SourceLookupURL: sourceLookupURL, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers }),
-        FetchDescriptionBuilder: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreDupesFor: string[]) => call("FetchDescriptionBuilder", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreDupesFor: ignoreDupesFor }),
-        FetchPreparation: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreDupesFor: string[]) => call("FetchPreparation", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreDupesFor: ignoreDupesFor }),
-        FetchTrackerDryRun: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: unknown, debug: boolean, runLogLevel: string) => call("FetchTrackerDryRun", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreRuleFailures: ignoreRuleFailures, IgnoreDupesFor: ignoreDupesFor, QuestionnaireAnswers: questionnaireAnswers, DescriptionGroups: descriptionGroups, Debug: debug, RunLogLevel: runLogLevel }),
-        CheckDupes: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[]) => call("CheckDupes", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers }),
-        StartDupeCheck: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[]) => call("StartDupeCheck", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers }),
+        FetchMetadata: (
+          path: string,
+          sourceLookupURL: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          trackers: string[],
+        ) =>
+          call("FetchMetadata", {
+            Path: path,
+            SourceLookupURL: sourceLookupURL,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Trackers: trackers,
+          }),
+        ResetMetadata: (
+          path: string,
+          sourceLookupURL: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          trackers: string[],
+        ) =>
+          call("ResetMetadata", {
+            Path: path,
+            SourceLookupURL: sourceLookupURL,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Trackers: trackers,
+          }),
+        FetchDescriptionBuilder: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          trackers: string[],
+          ignoreDupesFor: string[],
+        ) =>
+          call("FetchDescriptionBuilder", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Trackers: trackers,
+            IgnoreDupesFor: ignoreDupesFor,
+          }),
+        FetchPreparation: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          trackers: string[],
+          ignoreDupesFor: string[],
+        ) =>
+          call("FetchPreparation", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Trackers: trackers,
+            IgnoreDupesFor: ignoreDupesFor,
+          }),
+        FetchTrackerDryRun: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          trackers: string[],
+          ignoreRuleFailures: boolean,
+          ignoreDupesFor: string[],
+          questionnaireAnswers: Record<string, Record<string, string>>,
+          descriptionGroups: unknown,
+          debug: boolean,
+          runLogLevel: string,
+        ) =>
+          call("FetchTrackerDryRun", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Trackers: trackers,
+            IgnoreRuleFailures: ignoreRuleFailures,
+            IgnoreDupesFor: ignoreDupesFor,
+            QuestionnaireAnswers: questionnaireAnswers,
+            DescriptionGroups: descriptionGroups,
+            Debug: debug,
+            RunLogLevel: runLogLevel,
+          }),
+        CheckDupes: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          trackers: string[],
+        ) =>
+          call("CheckDupes", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Trackers: trackers,
+          }),
+        StartDupeCheck: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          trackers: string[],
+        ) =>
+          call("StartDupeCheck", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Trackers: trackers,
+          }),
         CancelDupeCheck: (jobID: string) => call("CancelDupeCheck", { JobID: jobID }),
         GetDupeCheckSnapshot: (jobID: string) => call("GetDupeCheckSnapshot", { JobID: jobID }),
-        FetchScreenshotPlan: (path: string, overrides: unknown, nameOverrides: unknown) => call("FetchScreenshotPlan", { Path: path, Overrides: overrides, NameOverrides: nameOverrides }),
-        GenerateScreenshots: (path: string, overrides: unknown, nameOverrides: unknown, selections: unknown, purpose: string) => call("GenerateScreenshots", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Selections: selections, Purpose: purpose }),
-        PreviewScreenshotFrame: (path: string, overrides: unknown, nameOverrides: unknown, timestampSeconds: number) => call("PreviewScreenshotFrame", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, TimestampSeconds: timestampSeconds }),
-        DeleteScreenshot: (path: string, overrides: unknown, nameOverrides: unknown, imagePath: string) => call("DeleteScreenshot", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, ImagePath: imagePath }),
-        SaveFinalScreenshotSelections: (path: string, overrides: unknown, nameOverrides: unknown, images: unknown) => call("SaveFinalScreenshotSelections", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Images: images }),
-        ImportMenuImages: (path: string, overrides: unknown, nameOverrides: unknown, paths: string[]) => call("ImportMenuImages", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Paths: paths }),
+        FetchScreenshotPlan: (path: string, overrides: unknown, nameOverrides: unknown) =>
+          call("FetchScreenshotPlan", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+          }),
+        GenerateScreenshots: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          selections: unknown,
+          purpose: string,
+        ) =>
+          call("GenerateScreenshots", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Selections: selections,
+            Purpose: purpose,
+          }),
+        PreviewScreenshotFrame: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          timestampSeconds: number,
+        ) =>
+          call("PreviewScreenshotFrame", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            TimestampSeconds: timestampSeconds,
+          }),
+        DeleteScreenshot: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          imagePath: string,
+        ) =>
+          call("DeleteScreenshot", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            ImagePath: imagePath,
+          }),
+        SaveFinalScreenshotSelections: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          images: unknown,
+        ) =>
+          call("SaveFinalScreenshotSelections", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Images: images,
+          }),
+        ImportMenuImages: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          paths: string[],
+        ) =>
+          call("ImportMenuImages", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Paths: paths,
+          }),
         ReadScreenshotImage: (path: string) => call("ReadScreenshotImage", { Path: path }),
-        ListUploadCandidates: (path: string, overrides: unknown, nameOverrides: unknown) => call("ListUploadCandidates", { Path: path, Overrides: overrides, NameOverrides: nameOverrides }),
-        ListUploadedImages: (path: string, overrides: unknown, nameOverrides: unknown) => call("ListUploadedImages", { Path: path, Overrides: overrides, NameOverrides: nameOverrides }),
-        UploadImages: (path: string, overrides: unknown, nameOverrides: unknown, host: string, images: unknown) => call("UploadImages", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Host: host, Images: images }),
-        DeleteUploadedImage: (path: string, imagePath: string, host: string) => call("DeleteUploadedImage", { Path: path, ImagePath: imagePath, Host: host }),
-        DeleteTrackerImageURL: (path: string, overrides: unknown, nameOverrides: unknown, url: string) => call("DeleteTrackerImageURL", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, URL: url }),
+        ListUploadCandidates: (path: string, overrides: unknown, nameOverrides: unknown) =>
+          call("ListUploadCandidates", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+          }),
+        ListUploadedImages: (path: string, overrides: unknown, nameOverrides: unknown) =>
+          call("ListUploadedImages", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+          }),
+        UploadImages: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          host: string,
+          images: unknown,
+        ) =>
+          call("UploadImages", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Host: host,
+            Images: images,
+          }),
+        DeleteUploadedImage: (path: string, imagePath: string, host: string) =>
+          call("DeleteUploadedImage", { Path: path, ImagePath: imagePath, Host: host }),
+        DeleteTrackerImageURL: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          url: string,
+        ) =>
+          call("DeleteTrackerImageURL", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            URL: url,
+          }),
         RenderDescription: (raw: string) => call("RenderDescription", { Raw: raw }),
-        SaveDescriptionOverride: (path: string, groupKey: string, raw: string, trackers: string[], overrides: unknown, nameOverrides: unknown) => call("SaveDescriptionOverride", { Path: path, GroupKey: groupKey, Raw: raw, Trackers: trackers, Overrides: overrides, NameOverrides: nameOverrides }),
+        SaveDescriptionOverride: (
+          path: string,
+          groupKey: string,
+          raw: string,
+          trackers: string[],
+          overrides: unknown,
+          nameOverrides: unknown,
+        ) =>
+          call("SaveDescriptionOverride", {
+            Path: path,
+            GroupKey: groupKey,
+            Raw: raw,
+            Trackers: trackers,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+          }),
         DiscoverPlaylists: (path: string) => call("DiscoverPlaylists", { Path: path }),
-        SavePlaylistSelection: (path: string, playlists: string[], useAll: boolean) => call("SavePlaylistSelection", { Path: path, Playlists: playlists, UseAll: useAll }),
+        SavePlaylistSelection: (path: string, playlists: string[], useAll: boolean) =>
+          call("SavePlaylistSelection", { Path: path, Playlists: playlists, UseAll: useAll }),
         LoadPlaylistSelection: (path: string) => call("LoadPlaylistSelection", { Path: path }),
         GetConfig: () => call("GetConfig"),
         GetDefaultConfig: () => call("GetDefaultConfig"),
@@ -144,26 +356,32 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           return anchor.download;
         },
         ImportConfig: async () => {
-          const fileData = await new Promise<{ name: string; content: string }>((resolve, reject) => {
-            const input = document.createElement("input");
-            input.type = "file";
-            input.accept = ".py,.yaml,.yml,.json";
-            input.onchange = () => {
-              const file = input.files?.[0];
-              if (!file) {
-                resolve({ name: "", content: "" });
-                return;
-              }
-              const reader = new FileReader();
-              reader.onload = () => resolve({ name: file.name, content: reader.result as string });
-              reader.onerror = () => reject(reader.error);
-              reader.readAsText(file);
-            };
-            input.addEventListener("cancel", () => resolve({ name: "", content: "" }));
-            input.click();
-          });
+          const fileData = await new Promise<{ name: string; content: string }>(
+            (resolve, reject) => {
+              const input = document.createElement("input");
+              input.type = "file";
+              input.accept = ".py,.yaml,.yml,.json";
+              input.onchange = () => {
+                const file = input.files?.[0];
+                if (!file) {
+                  resolve({ name: "", content: "" });
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = () =>
+                  resolve({ name: file.name, content: reader.result as string });
+                reader.onerror = () => reject(reader.error);
+                reader.readAsText(file);
+              };
+              input.addEventListener("cancel", () => resolve({ name: "", content: "" }));
+              input.click();
+            },
+          );
           if (!fileData.name) return { message: "", warnings: [] };
-          const resp = await call<{ result: string; warnings: string[] }>("ImportConfig", { FileName: fileData.name, FileContent: fileData.content });
+          const resp = await call<{ result: string; warnings: string[] }>("ImportConfig", {
+            FileName: fileData.name,
+            FileContent: fileData.content,
+          });
           return { message: resp.result, warnings: resp.warnings ?? [] };
         },
         GetLogPath: () => call("GetLogPath"),
@@ -171,17 +389,45 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         StartLogStream: () => call("StartLogStream"),
         StopLogStream: (streamID: string) => call("StopLogStream", { StreamID: streamID }),
         GetLogExclusions: () => call("GetLogExclusions"),
-        UpdateLogExclusions: (patterns: string[]) => call("UpdateLogExclusions", { Patterns: patterns }),
+        UpdateLogExclusions: (patterns: string[]) =>
+          call("UpdateLogExclusions", { Patterns: patterns }),
         ListKnownTrackers: () => call("ListKnownTrackers"),
         ListHistory: () => call("ListHistory"),
-        GetHistoryOverview: (sourcePath: string) => call("GetHistoryOverview", { SourcePath: sourcePath }),
-        DeleteHistoryRelease: (sourcePath: string) => call("DeleteHistoryRelease", { SourcePath: sourcePath }),
-        StartTrackerUpload: (path: string, overrides: unknown, nameOverrides: unknown, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: unknown, debug: boolean, runLogLevel: string) => call("StartTrackerUpload", { Path: path, Overrides: overrides, NameOverrides: nameOverrides, Trackers: trackers, IgnoreRuleFailures: ignoreRuleFailures, IgnoreDupesFor: ignoreDupesFor, QuestionnaireAnswers: questionnaireAnswers, DescriptionGroups: descriptionGroups, Debug: debug, RunLogLevel: runLogLevel }),
+        GetHistoryOverview: (sourcePath: string) =>
+          call("GetHistoryOverview", { SourcePath: sourcePath }),
+        DeleteHistoryRelease: (sourcePath: string) =>
+          call("DeleteHistoryRelease", { SourcePath: sourcePath }),
+        StartTrackerUpload: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          trackers: string[],
+          ignoreRuleFailures: boolean,
+          ignoreDupesFor: string[],
+          questionnaireAnswers: Record<string, Record<string, string>>,
+          descriptionGroups: unknown,
+          debug: boolean,
+          runLogLevel: string,
+        ) =>
+          call("StartTrackerUpload", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Trackers: trackers,
+            IgnoreRuleFailures: ignoreRuleFailures,
+            IgnoreDupesFor: ignoreDupesFor,
+            QuestionnaireAnswers: questionnaireAnswers,
+            DescriptionGroups: descriptionGroups,
+            Debug: debug,
+            RunLogLevel: runLogLevel,
+          }),
         CancelTrackerUpload: (jobID: string) => call("CancelTrackerUpload", { JobID: jobID }),
-        RetryFailedTrackerUpload: (jobID: string) => call("RetryFailedTrackerUpload", { JobID: jobID }),
-        GetTrackerUploadSnapshot: (jobID: string) => call("GetTrackerUploadSnapshot", { JobID: jobID })
-      }
-    }
+        RetryFailedTrackerUpload: (jobID: string) =>
+          call("RetryFailedTrackerUpload", { JobID: jobID }),
+        GetTrackerUploadSnapshot: (jobID: string) =>
+          call("GetTrackerUploadSnapshot", { JobID: jobID }),
+      },
+    },
   };
   recreateEventSource();
 };
@@ -212,9 +458,11 @@ export const browserAuth = {
     }
     return payload || {};
   },
-  bootstrap: (username: string, password: string, retainLogin: boolean) => postJSON("/api/auth/bootstrap", { username, password, retainLogin }),
-  login: (username: string, password: string, retainLogin: boolean) => postJSON("/api/auth/login", { username, password, retainLogin }),
-  logout: () => postJSON("/api/auth/logout")
+  bootstrap: (username: string, password: string, retainLogin: boolean) =>
+    postJSON("/api/auth/bootstrap", { username, password, retainLogin }),
+  login: (username: string, password: string, retainLogin: boolean) =>
+    postJSON("/api/auth/login", { username, password, retainLogin }),
+  logout: () => postJSON("/api/auth/logout"),
 };
 
 export const EventsOn = (eventName: string, callback: EventCallback) => {
