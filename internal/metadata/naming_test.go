@@ -156,27 +156,39 @@ func TestReleaseNameRequestFromMetaFallsBackMovieCategory(t *testing.T) {
 }
 
 func TestReleaseNameRequestFromMetaIgnoresUnsupportedReleaseCategory(t *testing.T) {
-	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\1982 - Fitzcarraldo [DVD9.PAL]`,
-		DiscType:   "DVD",
-		Type:       "DISC",
-		Source:     "DVD",
-		Release: api.ReleaseInfo{
-			Category: "MUSIC",
-			Title:    "Fitzcarraldo",
-			Year:     1982,
-			Size:     "DVD9",
-		},
+	testCases := []struct {
+		category string
+	}{
+		{"MUSIC"},
+		{"AUDIO"},
+		{"EBOOK"},
 	}
 
-	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
-	if req.Category != "MOVIE" {
-		t.Fatalf("expected unsupported release category to fall back to MOVIE, got %q", req.Category)
-	}
+	for _, tc := range testCases {
+		t.Run(tc.category, func(t *testing.T) {
+			meta := api.PreparedMetadata{
+				SourcePath: `D:\Movies\1982 - Fitzcarraldo [DVD9.PAL]`,
+				DiscType:   "DVD",
+				Type:       "DISC",
+				Source:     "DVD",
+				Release: api.ReleaseInfo{
+					Category: tc.category,
+					Title:    "Fitzcarraldo",
+					Year:     1982,
+					Size:     "DVD9",
+				},
+			}
 
-	result := BuildReleaseName(req, api.NopLogger{})
-	if result.NameNoTag == "" {
-		t.Fatalf("expected release name to be built after category fallback")
+			req := releaseNameRequestFromMeta(meta, api.NopLogger{})
+			if req.Category != "MOVIE" {
+				t.Fatalf("expected unsupported release category to fall back to MOVIE, got %q", req.Category)
+			}
+
+			result := BuildReleaseName(req, api.NopLogger{})
+			if result.NameNoTag == "" {
+				t.Fatalf("expected release name to be built after category fallback")
+			}
+		})
 	}
 }
 

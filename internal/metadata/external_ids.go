@@ -106,7 +106,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	if categoryPref != "" {
 		ids.Category = categoryPref
 	}
-	tmdbCategoryPref := tmdbCategoryPreference(ids.Category)
+	tmdbCategoryPref := normalizeCategory(ids.Category)
 	if s.logger != nil {
 		s.logger.Debugf("metadata: external ids start path=%q category=%q", meta.SourcePath, ids.Category)
 	}
@@ -887,7 +887,7 @@ func resolveCategoryPreference(meta api.PreparedMetadata) string {
 		}
 	}
 	for _, record := range meta.TrackerData {
-		if normalized := normalizeCategory(record.Category); normalized != "" {
+		if normalized := normalizeCategory(string(record.Category)); normalized != "" {
 			return normalized
 		}
 	}
@@ -905,39 +905,16 @@ func resolveCategoryPreference(meta api.PreparedMetadata) string {
 }
 
 func normalizeCategory(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	upper := strings.ToUpper(trimmed)
-	switch upper {
-	case "MOVIE", "FILM":
-		return "MOVIE"
-	case "TV", "SHOW", "SERIES", "TVSHOW", "TV-SHOW", "EPISODE":
-		return "TV"
-	}
-	if strings.Contains(upper, "MOVIE") {
-		return "MOVIE"
-	}
-	if strings.Contains(upper, "TV") || strings.Contains(upper, "SERIES") || strings.Contains(upper, "EPISODE") {
-		return "TV"
+	category := api.NormalizeCategory(value)
+	if category.IsValid() {
+		return string(category.Canonical())
 	}
 	return ""
 }
 
-func tmdbCategoryPreference(category string) string {
-	switch normalizeCategory(category) {
-	case "MOVIE":
-		return "MOVIE"
-	case "TV":
-		return "TV"
-	default:
-		return ""
-	}
-}
-
 func (s *Service) persistResolvedReleaseCategory(ctx context.Context, sourcePath string, category string, updatedAt time.Time) error {
-	if s.repo == nil || strings.TrimSpace(sourcePath) == "" || strings.TrimSpace(category) == "" {
+	normalized := api.NormalizeCategory(category)
+	if s.repo == nil || strings.TrimSpace(sourcePath) == "" || !normalized.IsValid() {
 		return nil
 	}
 
@@ -948,11 +925,11 @@ func (s *Service) persistResolvedReleaseCategory(ctx context.Context, sourcePath
 		}
 		return fmt.Errorf("metadata: load stored metadata for resolved category: %w", err)
 	}
-	if strings.EqualFold(strings.TrimSpace(stored.Category), strings.TrimSpace(category)) {
+	if stored.Category.Canonical() == normalized {
 		return nil
 	}
 
-	stored.Category = category
+	stored.Category = normalized
 	stored.UpdatedAt = updatedAt
 	if stored.UpdatedAt.IsZero() {
 		stored.UpdatedAt = time.Now().UTC()
@@ -961,7 +938,7 @@ func (s *Service) persistResolvedReleaseCategory(ctx context.Context, sourcePath
 		return fmt.Errorf("metadata: persist resolved release category: %w", err)
 	}
 	if s.logger != nil {
-		s.logger.Debugf("metadata: persisted resolved release category path=%q category=%q", sourcePath, category)
+		s.logger.Debugf("metadata: persisted resolved release category path=%q category=%q", sourcePath, normalized)
 	}
 	return nil
 }

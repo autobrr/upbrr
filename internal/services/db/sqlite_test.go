@@ -973,7 +973,7 @@ func TestSQLiteMigrationBridgesLegacyV8AndAppliesReleaseCategory(t *testing.T) {
 		t.Fatalf("apply legacy v7: %v", err)
 	}
 	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
-		t.Fatalf("apply legacy feat/encryption v8: %v", err)
+		t.Fatalf("apply legacy v8: %v", err)
 	}
 	if _, err := rawDB.Exec(`PRAGMA user_version = 8`); err != nil {
 		t.Fatalf("set legacy user_version: %v", err)

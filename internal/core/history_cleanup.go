@@ -132,7 +132,7 @@ func (c *Core) collectReleaseCleanupTargets(ctx context.Context, sourcePath stri
 				Title:    stored.Title,
 				Alt:      stored.Alt,
 				Year:     stored.Year,
-				Category: stored.Category,
+				Category: string(stored.Category),
 				Source:   stored.Source,
 				Type:     stored.Type,
 				Group:    stored.Group,

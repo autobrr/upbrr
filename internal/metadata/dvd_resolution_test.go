@@ -145,14 +145,27 @@ func TestResolutionFromMediaInfo(t *testing.T) {
 }
 
 func TestResolutionFromMediaInfoEmptyOnSingleZeroDimension(t *testing.T) {
-	for _, payload := range []string{
-		`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"0","Height":"1080"}]}}`,
-		`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"0"}]}}`,
-	} {
-		res := resolutionFromMediaInfo(mustParseMediaInfoDoc(payload), "/releases/Movie")
-		if res != "" {
-			t.Fatalf("expected empty when one dimension is zero, got %q", res)
-		}
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "zero width",
+			payload: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"0","Height":"1080"}]}}`,
+		},
+		{
+			name:    "zero height",
+			payload: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"0"}]}}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := resolutionFromMediaInfo(mustParseMediaInfoDoc(tc.payload), "/releases/Movie")
+			if res != "" {
+				t.Fatalf("expected empty when one dimension is zero, got %q", res)
+			}
+		})
 	}
 }
 

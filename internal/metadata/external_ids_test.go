@@ -19,11 +19,12 @@ import (
 )
 
 type fakeRepo struct {
-	ids               api.ExternalIDs
-	meta              api.ExternalMetadata
-	fileMetadata      api.FileMetadata
-	trackerMetadata   []api.TrackerMetadata
-	trackerTimestamps []api.TrackerTimestamp
+	ids                 api.ExternalIDs
+	meta                api.ExternalMetadata
+	fileMetadata        api.FileMetadata
+	trackerMetadata     []api.TrackerMetadata
+	trackerTimestamps   []api.TrackerTimestamp
+	trackerRuleFailures []api.TrackerRuleFailure
 }
 
 func (f *fakeRepo) GetByPath(ctx context.Context, path string) (api.FileMetadata, error) {
@@ -97,6 +98,7 @@ func (f *fakeRepo) UpdateLatestUploadRecordStatus(ctx context.Context, sourcePat
 }
 
 func (f *fakeRepo) SaveTrackerRuleFailures(ctx context.Context, sourcePath string, tracker string, failures []api.TrackerRuleFailure) error {
+	f.trackerRuleFailures = append([]api.TrackerRuleFailure{}, failures...)
 	return nil
 }
 

@@ -185,11 +185,10 @@ func (s *Service) RefreshPreparedMetadata(ctx context.Context, meta api.Prepared
 		return meta, nil
 	}
 	refreshService := *s
-	refreshService.repo = nil
 
 	meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonAudio)
 	meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonClaim)
-	meta.TrackerRuleFailures = nil
+	meta.TrackerRuleFailures = removeTrackerRule(meta.TrackerRuleFailures, trackerClaimRuleActive)
 
 	ApplyRequestScopedAudioPolicy(&meta, refreshService.cfg, refreshService.logger)
 	RebuildReleaseName(&meta, refreshService.logger)
@@ -403,8 +402,7 @@ func normalizeAudioFormatSettings(value string) string {
 func audioLanguagePrefix(meta api.PreparedMetadata, tracks []map[string]any) string {
 	filtered := make([]map[string]any, 0, len(tracks))
 	for _, track := range tracks {
-		title := strings.ToLower(trackString(track, "Title", "title"))
-		if strings.Contains(title, "commentary") || strings.Contains(title, "compatibility") {
+		if isCommentaryOrCompatibilityAudioValue(trackString(track, "Title", "title")) {
 			continue
 		}
 		filtered = append(filtered, track)
@@ -500,6 +498,11 @@ func canonicalAudioLanguage(value string) string {
 	return token
 }
 
+func isCommentaryOrCompatibilityAudioValue(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(lower, "commentary") || strings.Contains(lower, "compatibility")
+}
+
 func ApplyRequestScopedAudioPolicy(meta *api.PreparedMetadata, cfg config.Config, logger api.Logger) {
 	if meta == nil {
 		return
@@ -545,7 +548,15 @@ func applyAudioLanguagePrefix(audio string, meta api.PreparedMetadata) string {
 		return base
 	}
 
-	prefix := audioLanguagePrefixFromLanguages(meta, meta.AudioLanguages)
+	filteredLanguages := make([]string, 0, len(meta.AudioLanguages))
+	for _, language := range meta.AudioLanguages {
+		if isCommentaryOrCompatibilityAudioValue(language) {
+			continue
+		}
+		filteredLanguages = append(filteredLanguages, language)
+	}
+
+	prefix := audioLanguagePrefixFromLanguages(meta, filteredLanguages)
 	if prefix == "" || base == "" {
 		return base
 	}

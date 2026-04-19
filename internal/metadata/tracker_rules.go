@@ -97,7 +97,7 @@ func mergeRuleFailures(existing []api.RuleFailure, current []api.RuleFailure) []
 	for _, failure := range current {
 		duplicate := false
 		for _, prior := range merged {
-			if strings.EqualFold(strings.TrimSpace(prior.Rule), strings.TrimSpace(failure.Rule)) && strings.EqualFold(strings.TrimSpace(prior.Reason), strings.TrimSpace(failure.Reason)) {
+			if ruleFailureEquals(prior, failure) {
 				duplicate = true
 				break
 			}
@@ -108,6 +108,11 @@ func mergeRuleFailures(existing []api.RuleFailure, current []api.RuleFailure) []
 		merged = append(merged, failure)
 	}
 	return merged
+}
+
+func ruleFailureEquals(a api.RuleFailure, b api.RuleFailure) bool {
+	return strings.EqualFold(strings.TrimSpace(a.Rule), strings.TrimSpace(b.Rule)) &&
+		strings.EqualFold(strings.TrimSpace(a.Reason), strings.TrimSpace(b.Reason))
 }
 
 func (s *Service) persistRuleFailures(ctx context.Context, sourcePath string, tracker string, failures []api.RuleFailure) error {

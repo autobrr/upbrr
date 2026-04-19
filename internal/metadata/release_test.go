@@ -14,6 +14,20 @@ func TestParseReleaseInfo(t *testing.T) {
 		source   string
 	}{
 		{
+			name:     "empty input returns defaults",
+			input:    "",
+			category: "",
+			typ:      "",
+			source:   "",
+		},
+		{
+			name:     "malformed filename leaves derived fields empty",
+			input:    "invalid_filename",
+			category: "",
+			typ:      "",
+			source:   "",
+		},
+		{
 			name:     "movie uses rls category and source",
 			input:    "Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
 			category: "MOVIE",
@@ -35,24 +49,28 @@ func TestParseReleaseInfo(t *testing.T) {
 			source:   "Web",
 		},
 		{
-			name:   "bluray remux preserves distinct source and type",
-			input:  "Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
-			typ:    "REMUX",
-			source: "BluRay",
+			name:     "bluray remux preserves distinct source and type",
+			input:    "Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
+			category: "MOVIE",
+			typ:      "REMUX",
+			source:   "BluRay",
 		},
 		{
-			name:   "bluray encode infers encode type",
-			input:  "Movie.2026.1080p.BluRay.x264-GRP.mkv",
-			typ:    "ENCODE",
-			source: "BluRay",
+			name:     "bluray encode infers encode type",
+			input:    "Movie.2026.1080p.BluRay.x264-GRP.mkv",
+			category: "MOVIE",
+			typ:      "ENCODE",
+			source:   "BluRay",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			release := ParseReleaseInfo(tc.input)
 
-			if tc.category != "" && release.Category != tc.category {
+			if release.Category != tc.category {
 				t.Errorf("expected category %q, got %q", tc.category, release.Category)
 			}
 			if release.Type != tc.typ {

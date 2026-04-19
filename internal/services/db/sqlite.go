@@ -18,6 +18,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type SQLiteRepository struct {
@@ -338,6 +339,11 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 	}
 	if strings.TrimSpace(metadata.Path) == "" {
 		return internalerrors.ErrInvalidInput
+	}
+	if metadata.Category.IsValid() {
+		metadata.Category = metadata.Category.Canonical()
+	} else {
+		metadata.Category = api.CategoryUnknown
 	}
 
 	timestamp := metadata.UpdatedAt
@@ -1673,6 +1679,11 @@ func (r *SQLiteRepository) SaveTrackerMetadata(ctx context.Context, metadata Tra
 	}
 	if strings.TrimSpace(metadata.SourcePath) == "" || strings.TrimSpace(metadata.Tracker) == "" {
 		return internalerrors.ErrInvalidInput
+	}
+	if metadata.Category.IsValid() {
+		metadata.Category = metadata.Category.Canonical()
+	} else {
+		metadata.Category = api.CategoryUnknown
 	}
 	updatedAt := metadata.UpdatedAt
 	if updatedAt.IsZero() {

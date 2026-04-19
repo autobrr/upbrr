@@ -4,8 +4,10 @@
 package metadata
 
 import (
+	"context"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -131,14 +133,17 @@ func TestSourceAndTypeDefaultsToEncodeForUnknownRelease(t *testing.T) {
 
 func TestSourceAndTypeEncodeDefaultNotAppliedForDiscs(t *testing.T) {
 	for _, discType := range []string{"BDMV", "DVD", "HDDVD"} {
-		_, typeValue := sourceAndType(api.PreparedMetadata{
-			DiscType:   discType,
-			SourcePath: "/media/disc",
-			Release:    api.ReleaseInfo{},
-		}, mediaInfoDoc{})
-		if typeValue != "DISC" {
-			t.Fatalf("disc type %q should default to DISC, got %q", discType, typeValue)
-		}
+		t.Run(discType, func(t *testing.T) {
+			t.Parallel()
+			_, typeValue := sourceAndType(api.PreparedMetadata{
+				DiscType:   discType,
+				SourcePath: "/media/disc",
+				Release:    api.ReleaseInfo{},
+			}, mediaInfoDoc{})
+			if typeValue != "DISC" {
+				t.Fatalf("disc type %q should default to DISC, got %q", discType, typeValue)
+			}
+		})
 	}
 }
 
@@ -250,6 +255,20 @@ func TestAudioFromMediaSkipsLanguagePrefixForDiscs(t *testing.T) {
 	}
 }
 
+func TestApplyAudioLanguagePrefixFiltersCommentaryAndCompatibilityEntries(t *testing.T) {
+	meta := api.PreparedMetadata{
+		AudioLanguages: []string{"English Commentary", "Compatibility Track", "Japanese"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+
+	got := applyAudioLanguagePrefix("DD 5.1", meta)
+	if got != "DD 5.1" {
+		t.Fatalf("expected commentary and compatibility entries to be ignored, got %q", got)
+	}
+}
+
 func TestAudioFromMediaAddsEXFormatSetting(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Format_Settings":"Dolby Surround EX","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
 	audio, _, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
@@ -271,6 +290,73 @@ func TestRemoveTrackerBlockReasonDoesNotMutateInput(t *testing.T) {
 	}
 	if got := filtered["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
 		t.Fatalf("expected filtered map to keep only claim block, got %#v", filtered)
+	}
+}
+
+func TestRefreshPreparedMetadataPreservesNonRequestScopedFailures(t *testing.T) {
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	meta := api.PreparedMetadata{
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"AITHER": {api.TrackerBlockReasonAudio, api.TrackerBlockReasonClaim},
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"AITHER": {
+				{Rule: "audio_bloat", Reason: "audio languages French may be considered bloated"},
+				{Rule: trackerClaimRuleActive, Reason: "AITHER has an active claim for this release"},
+				{Rule: "language_rule", Reason: "missing original language coverage"},
+			},
+			"ANT": {
+				{Rule: "require_movie_only", Reason: "category tv is not movie"},
+			},
+		},
+	}
+
+	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("refresh prepared metadata: %v", err)
+	}
+	if refreshed.BlockedTrackers != nil {
+		t.Fatalf("expected request-scoped tracker blocks cleared, got %#v", refreshed.BlockedTrackers)
+	}
+	if failures := refreshed.TrackerRuleFailures["AITHER"]; len(failures) != 1 || failures[0].Rule != "language_rule" {
+		t.Fatalf("expected only non-request-scoped AITHER failure preserved, got %#v", refreshed.TrackerRuleFailures)
+	}
+	if failures := refreshed.TrackerRuleFailures["ANT"]; len(failures) != 1 || failures[0].Rule != "require_movie_only" {
+		t.Fatalf("expected unrelated ANT failure preserved, got %#v", refreshed.TrackerRuleFailures)
+	}
+	for tracker, failures := range refreshed.TrackerRuleFailures {
+		for _, failure := range failures {
+			if failure.Rule == "audio_bloat" || failure.Rule == trackerClaimRuleActive {
+				t.Fatalf("did not expect request-scoped failure %q for %s after refresh: %#v", failure.Rule, tracker, refreshed.TrackerRuleFailures)
+			}
+		}
+	}
+}
+
+func TestRefreshPreparedMetadataKeepsRepoForRulePersistence(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo, WithConfig(config.Config{}))
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/example.mkv",
+		Trackers:   []string{"ANT"},
+		ExternalIDs: api.ExternalIDs{
+			Category: "tv",
+		},
+	}
+
+	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("refresh prepared metadata: %v", err)
+	}
+	failures := refreshed.TrackerRuleFailures["ANT"]
+	if len(failures) == 0 {
+		t.Fatalf("expected refreshed metadata to retain ANT rule failure, got %#v", refreshed.TrackerRuleFailures)
+	}
+	if len(repo.trackerRuleFailures) == 0 {
+		t.Fatalf("expected tracker rule failures to be persisted during refresh")
+	}
+	if repo.trackerRuleFailures[0].Tracker != "ANT" || repo.trackerRuleFailures[0].Rule != "require_movie_only" {
+		t.Fatalf("unexpected persisted tracker rule failures: %#v", repo.trackerRuleFailures)
 	}
 }
 

@@ -641,7 +641,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		Scene:      meta.Scene,
 		SceneName:  meta.SceneName,
 		SceneIMDB:  meta.SceneIMDB,
-		Category:   meta.Release.Category,
+		Category:   api.NormalizeCategory(meta.Release.Category),
 		Type:       meta.Release.Type,
 		Artist:     meta.Release.Artist,
 		Title:      meta.Release.Title,
