@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { ConfigMap, ConfigValue } from "../types";
+import type { ConfigValue } from "../types";
 
 export const formatLabel = (value: string) => {
   if (value.includes("_")) {
@@ -23,18 +23,4 @@ export const normalizeDefaultTrackerList = (value: ConfigValue): string[] => {
       .filter(Boolean);
   }
   return [];
-};
-
-export const trackerHasDetails = (value: ConfigValue): boolean => {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "string") return value.trim().length > 0;
-  if (typeof value === "number") return value > 0;
-  if (typeof value === "boolean") return value;
-  if (Array.isArray(value)) {
-    return value.some((entry) => trackerHasDetails(entry));
-  }
-  if (typeof value === "object") {
-    return Object.values(value as ConfigMap).some((entry) => trackerHasDetails(entry));
-  }
-  return false;
 };
