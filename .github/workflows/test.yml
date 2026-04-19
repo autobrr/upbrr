@@ -98,6 +98,10 @@ jobs:
         working-directory: gui/frontend
         run: pnpm run lint
 
+      - name: Run frontend dead-code lint
+        working-directory: gui/frontend
+        run: pnpm run lint:dead
+
       - name: Run frontend typecheck
         working-directory: gui/frontend
         run: pnpm run typecheck

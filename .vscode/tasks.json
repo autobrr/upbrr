@@ -124,6 +124,15 @@
       "problemMatcher": ["$tsc"]
     },
     {
+      "label": "lint-dead-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint:dead"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
       "label": "test-go",
       "type": "shell",
       "command": "go",
@@ -168,6 +177,7 @@
       "dependsOn": [
         "lint-go",
         "lint-frontend",
+        "lint-dead-frontend",
         "typecheck-frontend",
         "format-check-frontend",
         "logpolicy"
