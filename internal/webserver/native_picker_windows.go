@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 type powershellNativePicker struct{}
@@ -42,6 +44,10 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 }
 
 func runPickerScript(script string) (string, error) {
+	wrapped := strings.TrimSpace(`
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+` + "\n" + script)
+
 	cmd := exec.Command(
 		"powershell",
 		"-NoLogo",
@@ -49,7 +55,7 @@ func runPickerScript(script string) (string, error) {
 		"-NonInteractive",
 		"-STA",
 		"-Command",
-		script,
+		wrapped,
 	)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -62,5 +68,62 @@ func runPickerScript(script string) (string, error) {
 		}
 		return "", fmt.Errorf("native browse failed: %s", message)
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return decodePickerOutput(stdout.Bytes()), nil
+}
+
+func decodePickerOutput(raw []byte) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return ""
+	}
+
+	if utf8.Valid(trimmed) {
+		return strings.TrimSpace(string(trimmed))
+	}
+
+	if len(trimmed) >= 2 {
+		if trimmed[0] == 0xFF && trimmed[1] == 0xFE {
+			if decoded, ok := decodeUTF16(trimmed[2:], true); ok {
+				return decoded
+			}
+		}
+		if trimmed[0] == 0xFE && trimmed[1] == 0xFF {
+			if decoded, ok := decodeUTF16(trimmed[2:], false); ok {
+				return decoded
+			}
+		}
+	}
+
+	if decoded, ok := decodeUTF16(trimmed, true); ok {
+		return decoded
+	}
+	if decoded, ok := decodeUTF16(trimmed, false); ok {
+		return decoded
+	}
+
+	return strings.TrimSpace(string(trimmed))
+}
+
+func decodeUTF16(raw []byte, littleEndian bool) (string, bool) {
+	if len(raw) < 2 || len(raw)%2 != 0 {
+		return "", false
+	}
+
+	u16 := make([]uint16, 0, len(raw)/2)
+	for i := 0; i < len(raw); i += 2 {
+		if littleEndian {
+			u16 = append(u16, uint16(raw[i])|uint16(raw[i+1])<<8)
+		} else {
+			u16 = append(u16, uint16(raw[i])<<8|uint16(raw[i+1]))
+		}
+	}
+
+	decoded := strings.TrimSpace(string(utf16.Decode(u16)))
+	if decoded == "" {
+		return "", false
+	}
+	if strings.ContainsRune(decoded, '\uFFFD') {
+		return "", false
+	}
+	return decoded, true
 }
