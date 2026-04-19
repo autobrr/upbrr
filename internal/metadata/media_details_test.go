@@ -6,6 +6,7 @@ package metadata
 import (
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -265,6 +266,39 @@ func TestAudioFromMediaUsesChannelsOriginalWhenPresent(t *testing.T) {
 	}
 	if channels != "5.1" {
 		t.Fatalf("expected 5.1 channels, got %q", channels)
+	}
+}
+
+func TestAudioFromMediaNormalizesBDInfoCodec(t *testing.T) {
+	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, mediaInfoDoc{}, &discparse.BDInfo{
+		Audio: []discparse.BDAudio{{
+			Codec:    "Dolby TrueHD Audio",
+			Channels: "5.1",
+		}},
+	})
+
+	if audio != "TrueHD 5.1" {
+		t.Fatalf("expected normalized BDInfo audio to be TrueHD 5.1, got %q", audio)
+	}
+	if channels != "5.1" || commentary {
+		t.Fatalf("expected channels=5.1 commentary=false, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
+func TestAudioFromMediaNormalizesBDInfoCodecWithAtmos(t *testing.T) {
+	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, mediaInfoDoc{}, &discparse.BDInfo{
+		Audio: []discparse.BDAudio{{
+			Codec:    "Dolby TrueHD Audio",
+			Channels: "7.1",
+			Atmos:    "Yes",
+		}},
+	})
+
+	if audio != "TrueHD Atmos 7.1" {
+		t.Fatalf("expected normalized BDInfo audio to be TrueHD Atmos 7.1, got %q", audio)
+	}
+	if channels != "7.1" || commentary {
+		t.Fatalf("expected channels=7.1 commentary=false, got channels=%q commentary=%t", channels, commentary)
 	}
 }
 

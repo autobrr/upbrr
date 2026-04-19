@@ -319,7 +319,11 @@ func containerFromMeta(meta api.PreparedMetadata) string {
 func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discparse.BDInfo) (string, string, bool) {
 	if bdinfo != nil && len(bdinfo.Audio) > 0 {
 		track := bdinfo.Audio[0]
-		codec := strings.TrimSpace(track.Codec)
+		codec := normalizeAudioFormat(map[string]any{
+			"Format_Commercial": track.Codec,
+			"Format":            track.Codec,
+		})
+		codec = strings.TrimSpace(codec)
 		if track.Atmos != "" && !strings.Contains(strings.ToLower(codec), "atmos") {
 			codec = strings.TrimSpace(codec + " Atmos")
 		}
