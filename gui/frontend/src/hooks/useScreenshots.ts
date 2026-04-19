@@ -20,11 +20,6 @@ interface ScreenshotHookProps {
   releaseOverrideState?: { overrides?: ReleaseNameOverrides };
 }
 
-interface ScreenshotDeletion {
-  byPath?: Map<string, ScreenshotLinkedImage>;
-  byURL?: Map<string, ScreenshotLinkedImage>;
-}
-
 export const useScreenshots = ({
   path,
   idOverrideState,
@@ -117,7 +112,7 @@ export const useScreenshots = ({
       const dataUri = await reader(image.Path);
       return { image, dataUri } as ScreenshotPreviewImage;
     },
-    []
+    [],
   );
 
   // Load screenshot plan from backend
@@ -139,7 +134,7 @@ export const useScreenshots = ({
         const result = await fetcher(
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         );
         setScreenshotPlan(result);
         setScreenshotSelections(result.SuggestedSelections || []);
@@ -169,10 +164,10 @@ export const useScreenshots = ({
               } catch {
                 return null;
               }
-            })
+            }),
           );
           setExistingImages(
-            previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry))
+            previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
           );
         }
 
@@ -185,15 +180,19 @@ export const useScreenshots = ({
               } catch {
                 return null;
               }
-            })
+            }),
           );
           setExistingTrackerImages(
-            previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry))
+            previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
           );
         }
 
         // Load final selections
-        if (result.FinalSelections && result.FinalSelections.length > 0 && finalImagesRef.current.length === 0) {
+        if (
+          result.FinalSelections &&
+          result.FinalSelections.length > 0 &&
+          finalImagesRef.current.length === 0
+        ) {
           const previews = await Promise.all(
             result.FinalSelections.map(async (image) => {
               try {
@@ -201,10 +200,10 @@ export const useScreenshots = ({
               } catch {
                 return null;
               }
-            })
+            }),
           );
           setFinalImages(
-            previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry))
+            previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
           );
         }
 
@@ -212,7 +211,9 @@ export const useScreenshots = ({
       } catch (err) {
         const message = String(err);
         if (message.includes("screenshot plan requires metadata preview")) {
-          setScreenshotsError("Fetch metadata first to cache a preview before planning screenshots.");
+          setScreenshotsError(
+            "Fetch metadata first to cache a preview before planning screenshots.",
+          );
         } else {
           setScreenshotsError(message);
         }
@@ -221,7 +222,7 @@ export const useScreenshots = ({
         setScreenshotsLoading(false);
       }
     },
-    [path, idOverrideState, releaseOverrideState, livePreviewSeconds, readScreenshotImage]
+    [path, idOverrideState, releaseOverrideState, livePreviewSeconds, readScreenshotImage],
   );
 
   // Save final selections
@@ -237,13 +238,13 @@ export const useScreenshots = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          next.map((entry) => entry.image)
+          next.map((entry) => entry.image),
         );
       } catch (err) {
         setScreenshotsError(String(err));
       }
     },
-    [path, idOverrideState, releaseOverrideState]
+    [path, idOverrideState, releaseOverrideState],
   );
 
   // Update selection timestamp
@@ -257,7 +258,7 @@ export const useScreenshots = ({
               TimestampSeconds: Number.isFinite(next) ? next : 0,
               Source: "manual",
             }
-          : selection
+          : selection,
       );
     });
   }, []);
@@ -273,7 +274,7 @@ export const useScreenshots = ({
               Frame: Number.isFinite(next) ? next : 0,
               Source: "manual",
             }
-          : selection
+          : selection,
       );
     });
   }, []);
@@ -292,35 +293,44 @@ export const useScreenshots = ({
         await saveFinalSelections(next);
       }
     },
-    [saveFinalSelections]
+    [saveFinalSelections],
   );
 
   // Add image to final selections
-  const addFinalSelection = useCallback((image: ScreenshotPreviewImage) => {
-    if (!image.image.Path) return;
-    const updated = mergeFinalSelections(finalImagesRef.current, [image]);
-    void updateFinalSelections(updated, true);
-  }, [updateFinalSelections]);
+  const addFinalSelection = useCallback(
+    (image: ScreenshotPreviewImage) => {
+      if (!image.image.Path) return;
+      const updated = mergeFinalSelections(finalImagesRef.current, [image]);
+      void updateFinalSelections(updated, true);
+    },
+    [updateFinalSelections],
+  );
 
-  const removeFinalSelectionInternal = useCallback((pathValue: string, persist: boolean) => {
-    if (!pathValue) return false;
-    if (!finalImagesRef.current.some((entry) => entry.image.Path === pathValue)) {
-      return false;
-    }
-    const updated = finalImagesRef.current.filter((entry) => entry.image.Path !== pathValue);
-    void updateFinalSelections(updated, persist);
-    return true;
-  }, [updateFinalSelections]);
+  const removeFinalSelectionInternal = useCallback(
+    (pathValue: string, persist: boolean) => {
+      if (!pathValue) return false;
+      if (!finalImagesRef.current.some((entry) => entry.image.Path === pathValue)) {
+        return false;
+      }
+      const updated = finalImagesRef.current.filter((entry) => entry.image.Path !== pathValue);
+      void updateFinalSelections(updated, persist);
+      return true;
+    },
+    [updateFinalSelections],
+  );
 
   // Remove image from final selections
-  const removeFinalSelection = useCallback((pathValue: string) => {
-    removeFinalSelectionInternal(pathValue, true);
-  }, [removeFinalSelectionInternal]);
+  const removeFinalSelection = useCallback(
+    (pathValue: string) => {
+      removeFinalSelectionInternal(pathValue, true);
+    },
+    [removeFinalSelectionInternal],
+  );
 
   // Merge final selections intelligently
   const mergeFinalSelections = (
     current: ScreenshotPreviewImage[],
-    additions: ScreenshotPreviewImage[]
+    additions: ScreenshotPreviewImage[],
   ): ScreenshotPreviewImage[] => {
     if (additions.length === 0) return current;
     const seen = new Map<string, number>();
@@ -394,7 +404,7 @@ export const useScreenshots = ({
             path.trim(),
             normalizeOverrides(idOverrideState?.overrides || {}),
             normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-            image.Path
+            image.Path,
           );
           deleted.push(image);
         } catch (err) {
@@ -407,7 +417,7 @@ export const useScreenshots = ({
       }
       return deleted;
     },
-    [path, idOverrideState, releaseOverrideState]
+    [path, idOverrideState, releaseOverrideState],
   );
 
   const deleteTrackerImageURL = useCallback(
@@ -421,13 +431,13 @@ export const useScreenshots = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          url
+          url,
         );
       } catch (err) {
         setScreenshotsError(String(err));
       }
     },
-    [path, idOverrideState, releaseOverrideState]
+    [path, idOverrideState, releaseOverrideState],
   );
 
   const deleteTrackerImageFile = useCallback(
@@ -441,13 +451,13 @@ export const useScreenshots = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          imagePath
+          imagePath,
         );
       } catch (err) {
         setScreenshotsError(String(err));
       }
     },
-    [path, idOverrideState, releaseOverrideState]
+    [path, idOverrideState, releaseOverrideState],
   );
 
   const removeTrackerImageURLState = useCallback((url: string) => {
@@ -479,13 +489,16 @@ export const useScreenshots = ({
     setExistingImages((prev) => prev.filter((entry) => !deletedPaths.has(entry.image.Path)));
     if (finalImagesRef.current.length > 0) {
       await saveFinalSelections(
-        finalImagesRef.current.filter((entry) => !deletedPaths.has(entry.image.Path))
+        finalImagesRef.current.filter((entry) => !deletedPaths.has(entry.image.Path)),
       );
     }
     setScreenshotPlan((prev) => {
       if (!prev) return prev;
       const existing = prev.ExistingScreenshots || [];
-      return { ...prev, ExistingScreenshots: existing.filter((entry) => !deletedPaths.has(entry.Path)) };
+      return {
+        ...prev,
+        ExistingScreenshots: existing.filter((entry) => !deletedPaths.has(entry.Path)),
+      };
     });
   }, [screenshotPlan, existingImages, deleteImageSet, saveFinalSelections]);
 
@@ -521,7 +534,7 @@ export const useScreenshots = ({
     setExistingTrackerImages((prev) => prev.filter((entry) => !deletedPaths.has(entry.image.Path)));
     if (finalImagesRef.current.length > 0) {
       await saveFinalSelections(
-        finalImagesRef.current.filter((entry) => !deletedPaths.has(entry.image.Path))
+        finalImagesRef.current.filter((entry) => !deletedPaths.has(entry.image.Path)),
       );
     }
     setScreenshotPlan((prev) => {
@@ -530,11 +543,20 @@ export const useScreenshots = ({
       const trackerLinks = prev.TrackerImageLinks || [];
       return {
         ...prev,
-        ExistingTrackerScreenshots: trackerExisting.filter((entry) => !deletedPaths.has(entry.Path)),
+        ExistingTrackerScreenshots: trackerExisting.filter(
+          (entry) => !deletedPaths.has(entry.Path),
+        ),
         TrackerImageLinks: trackerLinks.filter((entry) => !deletedPaths.has(entry.Path)),
       };
     });
-  }, [screenshotPlan, existingTrackerImages, trackerLinkByPath, deleteImageSet, saveFinalSelections, deleteTrackerImageURL]);
+  }, [
+    screenshotPlan,
+    existingTrackerImages,
+    trackerLinkByPath,
+    deleteImageSet,
+    saveFinalSelections,
+    deleteTrackerImageURL,
+  ]);
 
   // Delete all preview images
   const handleDeleteAllPreviewImages = useCallback(async () => {
@@ -572,7 +594,7 @@ export const useScreenshots = ({
       }
     }
     await saveFinalSelections(
-      finalImagesRef.current.filter((entry) => !deletedPaths.has(entry.image.Path))
+      finalImagesRef.current.filter((entry) => !deletedPaths.has(entry.image.Path)),
     );
     setExistingImages((prev) => prev.filter((entry) => !deletedPaths.has(entry.image.Path)));
     setExistingTrackerImages((prev) => prev.filter((entry) => !deletedPaths.has(entry.image.Path)));
@@ -585,7 +607,9 @@ export const useScreenshots = ({
       return {
         ...prev,
         ExistingScreenshots: existing.filter((entry) => !deletedPaths.has(entry.Path)),
-        ExistingTrackerScreenshots: trackerExisting.filter((entry) => !deletedPaths.has(entry.Path)),
+        ExistingTrackerScreenshots: trackerExisting.filter(
+          (entry) => !deletedPaths.has(entry.Path),
+        ),
         TrackerImageLinks: trackerLinks.filter((entry) => !deletedPaths.has(entry.Path)),
       };
     });
@@ -606,7 +630,13 @@ export const useScreenshots = ({
       }
       return removedFinal;
     },
-    [deleteTrackerImageURL, removeTrackerImageURLState, trackerLinkByURL, removeFinalSelectionInternal, deleteTrackerImageFile]
+    [
+      deleteTrackerImageURL,
+      removeTrackerImageURLState,
+      trackerLinkByURL,
+      removeFinalSelectionInternal,
+      deleteTrackerImageFile,
+    ],
   );
 
   // Delete a specific tracker image
@@ -622,7 +652,7 @@ export const useScreenshots = ({
       }
       await handleDeleteTrackerImageURL(url, true);
     },
-    [handleDeleteTrackerImageURL]
+    [handleDeleteTrackerImageURL],
   );
 
   // Delete all tracker image URLs

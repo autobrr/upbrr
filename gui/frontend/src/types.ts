@@ -596,13 +596,39 @@ export type HistoryOverview = {
   ExternalIDs: ExternalIDs;
   ExternalMetadata: Record<string, unknown>;
   ReleaseNameOverrides: ReleaseNameOverrides;
-  DescriptionOverride: { SourcePath: string; GroupKey: string; Description: string; UpdatedAt: string };
-  DescriptionOverrides: Array<{ SourcePath: string; GroupKey: string; Description: string; UpdatedAt: string }>;
-  PlaylistSelection: { SourcePath: string; SelectedPlaylists: string[]; UseAll: boolean; UpdatedAt: string };
+  DescriptionOverride: {
+    SourcePath: string;
+    GroupKey: string;
+    Description: string;
+    UpdatedAt: string;
+  };
+  DescriptionOverrides: Array<{
+    SourcePath: string;
+    GroupKey: string;
+    Description: string;
+    UpdatedAt: string;
+  }>;
+  PlaylistSelection: {
+    SourcePath: string;
+    SelectedPlaylists: string[];
+    UseAll: boolean;
+    UpdatedAt: string;
+  };
   TrackerMetadata: HistoryTrackerMetadata[];
   TrackerRuleFailures: HistoryRuleFailure[];
-  Screenshots: Array<{ SourcePath: string; ImagePath: string; Purpose: string; CapturedAt: string }>;
-  FinalSelections: Array<{ SourcePath: string; ImagePath: string; Order: number; Source: string; SelectedAt: string }>;
+  Screenshots: Array<{
+    SourcePath: string;
+    ImagePath: string;
+    Purpose: string;
+    CapturedAt: string;
+  }>;
+  FinalSelections: Array<{
+    SourcePath: string;
+    ImagePath: string;
+    Order: number;
+    Source: string;
+    SelectedAt: string;
+  }>;
   UploadedImages: UploadedImageLink[];
   UploadHistory: HistoryUploadRecord[];
 };

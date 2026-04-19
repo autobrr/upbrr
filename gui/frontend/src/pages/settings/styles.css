@@ -95,12 +95,6 @@
   margin-top: 2px;
 }
 
-:root.light .settings-field select {
-  border-color: rgba(0, 0, 0, 0.12);
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--text);
-}
-
 .settings-toggle {
   display: flex;
   align-items: center;
@@ -239,17 +233,19 @@
   background: rgba(10, 14, 22, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 14px;
-  transition: background-color 0.2s ease, border-color 0.2s ease;
-}
-
-:root.light .settings-subgroup--collapsible summary {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(0, 0, 0, 0.08);
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .settings-subgroup--collapsible summary:hover {
   background: rgba(10, 14, 22, 0.85);
   border-color: rgba(255, 255, 255, 0.12);
+}
+
+:root.light .settings-subgroup--collapsible summary {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(0, 0, 0, 0.08);
 }
 
 :root.light .settings-subgroup--collapsible summary:hover {
@@ -297,7 +293,6 @@
   gap: 5px;
 }
 
-
 .settings-array {
   display: flex;
   flex-direction: column;
@@ -325,6 +320,12 @@
 
 .settings-map__controls select {
   min-width: 180px;
+}
+
+:root.light .settings-field select {
+  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
 }
 
 .settings-map__grid {
@@ -418,8 +419,14 @@
 }
 
 @keyframes configBannerIn {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .config-status-banner--success {
@@ -479,7 +486,7 @@
   color: var(--text);
   margin: 0;
   opacity: 0.85;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .config-status-banner__warnings {
@@ -515,7 +522,7 @@
 }
 
 .config-status-banner__warning-list li {
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .config-status-banner__dismiss {
@@ -527,7 +534,9 @@
   color: inherit;
   opacity: 0.5;
   border-radius: 6px;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease;
 }
 
 .config-status-banner__dismiss:hover {
@@ -559,8 +568,12 @@
 }
 
 @keyframes importConfirmFade {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .import-confirm-dialog {
@@ -583,8 +596,14 @@
 }
 
 @keyframes importConfirmIn {
-  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .import-confirm-dialog__icon {

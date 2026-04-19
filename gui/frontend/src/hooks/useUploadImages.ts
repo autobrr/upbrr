@@ -34,12 +34,15 @@ export const useUploadImages = ({
   const [uploadImagesError, setUploadImagesError] = useState("");
   const [uploadedImages, setUploadedImages] = useState<UploadedImageLink[]>([]);
   const [uploadedImageRecords, setUploadedImageRecords] = useState<UploadedImageLink[]>([]);
-  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number }>({
+    current: 0,
+    total: 0,
+  });
 
   // Build set of upload candidate paths for filtering
   const uploadCandidatePaths = useMemo(
     () => new Set(uploadCandidates.map((item) => item.image.Path)),
-    [uploadCandidates]
+    [uploadCandidates],
   );
 
   // Build record-by-path map for display
@@ -114,7 +117,7 @@ export const useUploadImages = ({
       });
       setUploadSelections(next);
     },
-    [uploadCandidates]
+    [uploadCandidates],
   );
 
   // Refresh uploaded images from backend
@@ -129,7 +132,7 @@ export const useUploadImages = ({
       const records = await fetcher(
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
-        normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
       );
       setUploadedImageRecords(records || []);
     } catch (err) {
@@ -168,7 +171,7 @@ export const useUploadImages = ({
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
           uploadHost,
-          selected.map((entry) => entry.image)
+          selected.map((entry) => entry.image),
         );
         setUploadedImages(result || []);
         setUploadProgress({ current: result?.length || 0, total: selected.length });
@@ -180,7 +183,7 @@ export const useUploadImages = ({
         setUploadImagesLoading(false);
       }
     },
-    [path, idOverrideState, releaseOverrideState, uploadHost, refreshUploadedImages]
+    [path, idOverrideState, releaseOverrideState, uploadHost, refreshUploadedImages],
   );
 
   // Delete a single uploaded image record
@@ -197,26 +200,30 @@ export const useUploadImages = ({
         const refreshed = await globalThis.go?.guiapp?.App?.ListUploadCandidates(
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         );
 
         if (!refreshed || refreshed.length === 0) {
           setUploadedImages((prev) =>
-            prev.filter((image) => !(image.ImagePath === imagePath && (image.Host || uploadHost) === host))
+            prev.filter(
+              (image) => !(image.ImagePath === imagePath && (image.Host || uploadHost) === host),
+            ),
           );
           await refreshUploadedImages();
           return;
         }
 
         setUploadedImages((prev) =>
-          prev.filter((image) => !(image.ImagePath === imagePath && (image.Host || uploadHost) === host))
+          prev.filter(
+            (image) => !(image.ImagePath === imagePath && (image.Host || uploadHost) === host),
+          ),
         );
         await refreshUploadedImages();
       } catch (err) {
         console.error("Failed to delete uploaded image:", err);
       }
     },
-    [path, idOverrideState, releaseOverrideState, uploadHost, refreshUploadedImages]
+    [path, idOverrideState, releaseOverrideState, uploadHost, refreshUploadedImages],
   );
 
   // Reset upload state

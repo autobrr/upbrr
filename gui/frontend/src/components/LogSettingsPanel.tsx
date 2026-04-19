@@ -30,7 +30,7 @@ const normalizeEntry = (payload: any): LogEntry | null => {
       ID: Date.now(),
       Time: new Date().toISOString(),
       Level: "info",
-      Message: payload
+      Message: payload,
     };
   }
   const level = String(payload.Level ?? payload.level ?? "info").toLowerCase();
@@ -38,15 +38,18 @@ const normalizeEntry = (payload: any): LogEntry | null => {
     ID: Number(payload.ID ?? payload.id ?? Date.now()),
     Time: String(payload.Time ?? payload.time ?? new Date().toISOString()),
     Level: level,
-    Message: String(payload.Message ?? payload.message ?? "")
+    Message: String(payload.Message ?? payload.message ?? ""),
   };
 };
 
 const normalizeLevels = () =>
-  levelOrder.reduce((acc, level) => {
-    acc[level] = true;
-    return acc;
-  }, {} as Record<string, boolean>);
+  levelOrder.reduce(
+    (acc, level) => {
+      acc[level] = true;
+      return acc;
+    },
+    {} as Record<string, boolean>,
+  );
 
 const formatTime = (iso: string) => {
   const date = new Date(iso);
@@ -58,7 +61,7 @@ export default function LogSettingsPanel({
   configData,
   renderField,
   updateConfigValue,
-  fieldMeta
+  fieldMeta,
 }: LogSettingsPanelProps) {
   const [logPath, setLogPath] = useState("");
   const [entries, setEntries] = useState<LogEntry[]>([]);
@@ -98,19 +101,22 @@ export default function LogSettingsPanel({
     }
   };
 
-  const appendEntries = useCallback((incoming: LogEntry[]) => {
-    if (incoming.length === 0) return;
-    setEntries((prev) => {
-      let next = [...prev, ...incoming];
-      if (autoScroll && next.length > LOG_SOFT_CAP) {
-        next = next.slice(-LOG_SOFT_CAP);
-      } else if (!autoScroll && next.length > LOG_HARD_CAP) {
-        next = next.slice(-LOG_HARD_CAP);
-        setBufferWarning("Log buffer capped. Oldest entries were dropped.");
-      }
-      return next;
-    });
-  }, [autoScroll]);
+  const appendEntries = useCallback(
+    (incoming: LogEntry[]) => {
+      if (incoming.length === 0) return;
+      setEntries((prev) => {
+        let next = [...prev, ...incoming];
+        if (autoScroll && next.length > LOG_SOFT_CAP) {
+          next = next.slice(-LOG_SOFT_CAP);
+        } else if (!autoScroll && next.length > LOG_HARD_CAP) {
+          next = next.slice(-LOG_HARD_CAP);
+          setBufferWarning("Log buffer capped. Oldest entries were dropped.");
+        }
+        return next;
+      });
+    },
+    [autoScroll],
+  );
 
   useEffect(() => {
     const fetchLogPath = async () => {
@@ -264,7 +270,9 @@ export default function LogSettingsPanel({
                   <span>{label}</span>
                   <select
                     value={levelValue}
-                    onChange={(event) => updateConfigValue(["Logging", "Level"], event.target.value)}
+                    onChange={(event) =>
+                      updateConfigValue(["Logging", "Level"], event.target.value)
+                    }
                   >
                     {levelOrder.map((level) => (
                       <option key={level} value={level}>
@@ -296,7 +304,11 @@ export default function LogSettingsPanel({
             </button>
             <label className="settings-toggle log-autoscroll">
               <span>Auto-scroll</span>
-              <input type="checkbox" checked={autoScroll} onChange={(event) => setAutoScroll(event.target.checked)} />
+              <input
+                type="checkbox"
+                checked={autoScroll}
+                onChange={(event) => setAutoScroll(event.target.checked)}
+              />
               <span className="settings-toggle__pill" />
             </label>
           </div>
@@ -306,7 +318,11 @@ export default function LogSettingsPanel({
           <div className="log-levels">
             {levelOrder.map((level) => (
               <label key={level} className={`log-level-toggle ${level}`}>
-                <input type="checkbox" checked={levelFilter[level]} onChange={() => toggleLevel(level)} />
+                <input
+                  type="checkbox"
+                  checked={levelFilter[level]}
+                  onChange={() => toggleLevel(level)}
+                />
                 <span>{level.toUpperCase()}</span>
               </label>
             ))}
