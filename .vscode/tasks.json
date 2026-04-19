@@ -172,7 +172,17 @@
       "args": ["test", "-v", "-timeout", "20m", "./..."],
       "options": { "cwd": "${workspaceFolder}" },
       "group": { "kind": "test", "isDefault": true },
-      "problemMatcher": ["$go"]
+      "problemMatcher": {
+        "owner": "go-test",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^([\\w./\\-]+\\.go):(\\d+)(?::(\\d+))?:\\s+(?!(?:permission bits are ACL-backed on Windows|permission bits are not enforced consistently on Windows|parent-directory permissions behave differently on Windows|symlink privilege on Windows requires elevation|Unix permission model)$)(.+)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        }
+      }
     },
     {
       "label": "serve-backend",
@@ -229,6 +239,20 @@
         "lint-style-fix-frontend"
       ],
       "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "all",
+      "dependsOn": ["fix-all", "lint-all", "test-go"],
+      "dependsOrder": "sequence",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "all+build",
+      "dependsOn": ["all", "build-all"],
+      "dependsOrder": "sequence",
+      "group": "build",
       "problemMatcher": []
     },
     {
