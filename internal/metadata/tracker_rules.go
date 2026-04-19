@@ -56,9 +56,6 @@ func (s *Service) applyTrackerRules(ctx context.Context, meta api.PreparedMetada
 			} else {
 				delete(ruleFailures, name)
 			}
-			if s.logger != nil {
-				s.logger.Debugf("metadata: tracker rules ok for %s", tracker)
-			}
 		}
 
 		if len(failures) == 0 && len(combined) > 0 && s.logger != nil {

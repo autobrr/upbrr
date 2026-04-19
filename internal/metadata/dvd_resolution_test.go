@@ -83,59 +83,76 @@ func TestExtractDVDMediaInfoDefaultsUnknownScanToProgressive(t *testing.T) {
 	}
 }
 
-func TestResolutionFromMediaInfo1080p(t *testing.T) {
-	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Progressive"}]}}`)
-	res := resolutionFromMediaInfo(doc, "/releases/Movie")
-	if res != "1080p" {
-		t.Fatalf("expected 1080p, got %q", res)
+func TestResolutionFromMediaInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		payload  string
+		expected string
+		message  string
+	}{
+		{
+			name:     "1080p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+			message:  "expected 1080p, got %q",
+		},
+		{
+			name:     "720p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1280","Height":"720","ScanType":"Progressive"}]}}`,
+			expected: "720p",
+			message:  "expected 720p, got %q",
+		},
+		{
+			name:     "1080i",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Interlaced"}]}}`,
+			expected: "1080i",
+			message:  "expected 1080i, got %q",
+		},
+		{
+			name:     "2160p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"3840","Height":"2160","ScanType":"Progressive"}]}}`,
+			expected: "2160p",
+			message:  "expected 2160p, got %q",
+		},
+		{
+			name:     "floors cropped dimensions",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1916","Height":"800","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+			message:  "expected 1080p for cropped dimensions, got %q",
+		},
+		{
+			name:     "empty on missing track",
+			payload:  `{"media":{"track":[{"@type":"General"}]}}`,
+			expected: "",
+			message:  "expected empty on missing video track, got %q",
+		},
+		{
+			name:     "empty on zero dimensions",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"0","Height":"0"}]}}`,
+			expected: "",
+			message:  "expected empty on zero dimensions, got %q",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := resolutionFromMediaInfo(mustParseMediaInfoDoc(tc.payload), "/releases/Movie")
+			if res != tc.expected {
+				t.Fatalf(tc.message, res)
+			}
+		})
 	}
 }
 
-func TestResolutionFromMediaInfo720p(t *testing.T) {
-	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1280","Height":"720","ScanType":"Progressive"}]}}`)
-	res := resolutionFromMediaInfo(doc, "/releases/Movie")
-	if res != "720p" {
-		t.Fatalf("expected 720p, got %q", res)
-	}
-}
-
-func TestResolutionFromMediaInfo1080i(t *testing.T) {
-	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Interlaced"}]}}`)
-	res := resolutionFromMediaInfo(doc, "/releases/Movie")
-	if res != "1080i" {
-		t.Fatalf("expected 1080i, got %q", res)
-	}
-}
-
-func TestResolutionFromMediaInfo2160p(t *testing.T) {
-	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"3840","Height":"2160","ScanType":"Progressive"}]}}`)
-	res := resolutionFromMediaInfo(doc, "/releases/Movie")
-	if res != "2160p" {
-		t.Fatalf("expected 2160p, got %q", res)
-	}
-}
-
-func TestResolutionFromMediaInfoFloorsCroppedDimensions(t *testing.T) {
-	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1916","Height":"800","ScanType":"Progressive"}]}}`)
-	res := resolutionFromMediaInfo(doc, "/releases/Movie")
-	if res != "1080p" {
-		t.Fatalf("expected 1080p for cropped dimensions, got %q", res)
-	}
-}
-
-func TestResolutionFromMediaInfoEmptyOnMissingTrack(t *testing.T) {
-	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"}]}}`)
-	res := resolutionFromMediaInfo(doc, "/releases/Movie")
-	if res != "" {
-		t.Fatalf("expected empty on missing video track, got %q", res)
-	}
-}
-
-func TestResolutionFromMediaInfoEmptyOnZeroDimensions(t *testing.T) {
-	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"0","Height":"0"}]}}`)
-	res := resolutionFromMediaInfo(doc, "/releases/Movie")
-	if res != "" {
-		t.Fatalf("expected empty on zero dimensions, got %q", res)
+func TestResolutionFromMediaInfoEmptyOnSingleZeroDimension(t *testing.T) {
+	for _, payload := range []string{
+		`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"0","Height":"1080"}]}}`,
+		`{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"0"}]}}`,
+	} {
+		res := resolutionFromMediaInfo(mustParseMediaInfoDoc(payload), "/releases/Movie")
+		if res != "" {
+			t.Fatalf("expected empty when one dimension is zero, got %q", res)
+		}
 	}
 }
 

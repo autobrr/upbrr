@@ -155,6 +155,31 @@ func TestReleaseNameRequestFromMetaFallsBackMovieCategory(t *testing.T) {
 	}
 }
 
+func TestReleaseNameRequestFromMetaIgnoresUnsupportedReleaseCategory(t *testing.T) {
+	meta := api.PreparedMetadata{
+		SourcePath: `D:\Movies\1982 - Fitzcarraldo [DVD9.PAL]`,
+		DiscType:   "DVD",
+		Type:       "DISC",
+		Source:     "DVD",
+		Release: api.ReleaseInfo{
+			Category: "MUSIC",
+			Title:    "Fitzcarraldo",
+			Year:     1982,
+			Size:     "DVD9",
+		},
+	}
+
+	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if req.Category != "MOVIE" {
+		t.Fatalf("expected unsupported release category to fall back to MOVIE, got %q", req.Category)
+	}
+
+	result := BuildReleaseName(req, api.NopLogger{})
+	if result.NameNoTag == "" {
+		t.Fatalf("expected release name to be built after category fallback")
+	}
+}
+
 func TestReleaseNameRequestFromMetaInfersTVFromPath(t *testing.T) {
 	meta := api.PreparedMetadata{
 		SourcePath: `D:\Shows\Example.Show.S01E01.1080p.WEB-DL`,

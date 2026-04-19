@@ -495,16 +495,7 @@ func canonicalAudioLanguage(value string) string {
 		return "unknown"
 	}
 	if normalized := strings.ToLower(strings.TrimSpace(languageutil.NormalizeLanguageDisplay(value))); normalized != "" {
-		switch normalized {
-		case "english":
-			return "english"
-		case "chinese", "mandarin":
-			return "chinese"
-		case "norwegian":
-			return "norwegian"
-		default:
-			return normalized
-		}
+		return normalized
 	}
 	return token
 }
@@ -688,7 +679,7 @@ func removeTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, reaso
 
 	filtered := make(map[string][]api.TrackerBlockReason, len(blocked))
 	for tracker, reasons := range blocked {
-		kept := reasons[:0]
+		kept := make([]api.TrackerBlockReason, 0, len(reasons))
 		for _, existing := range reasons {
 			if existing == reason {
 				continue

@@ -106,6 +106,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	if categoryPref != "" {
 		ids.Category = categoryPref
 	}
+	tmdbCategoryPref := tmdbCategoryPreference(ids.Category)
 	if s.logger != nil {
 		s.logger.Debugf("metadata: external ids start path=%q category=%q", meta.SourcePath, ids.Category)
 	}
@@ -184,7 +185,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			TVDBID:             ids.TVDBID,
 			SearchYear:         year,
 			Filename:           filename,
-			CategoryPreference: ids.Category,
+			CategoryPreference: tmdbCategoryPref,
 			IMDbInfo: &tmdb.IMDbInfo{
 				Title:         filename,
 				OriginalTitle: secondary,
@@ -221,7 +222,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 				year,
 				searchYears,
 				unattendedSearch,
-				ids.Category,
+				tmdbCategoryPref,
 			)
 		}
 
@@ -258,9 +259,9 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 						Filename:       filename,
 						SecondaryTitle: secondary,
 						SearchYear:     stageYear,
-						Category:       ids.Category,
+						Category:       tmdbCategoryPref,
 						Unattended:     unattendedSearch,
-						DontSwitch:     strings.EqualFold(ids.Category, "TV"),
+						DontSwitch:     strings.EqualFold(tmdbCategoryPref, "TV"),
 						Debug:          meta.Options.Debug,
 					})
 					if err != nil {
@@ -635,6 +636,12 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 
 	ids.UpdatedAt = time.Now().UTC()
 	metadata.UpdatedAt = ids.UpdatedAt
+	if ids.Category != "" {
+		meta.Release.Category = ids.Category
+		if err := s.persistResolvedReleaseCategory(ctx, meta.SourcePath, ids.Category, ids.UpdatedAt); err != nil {
+			return api.PreparedMetadata{}, err
+		}
+	}
 
 	if err := s.repo.SaveExternalIDs(ctx, ids); err != nil {
 		return api.PreparedMetadata{}, fmt.Errorf("metadata: save external ids: %w", err)
@@ -916,6 +923,47 @@ func normalizeCategory(value string) string {
 		return "TV"
 	}
 	return ""
+}
+
+func tmdbCategoryPreference(category string) string {
+	switch normalizeCategory(category) {
+	case "MOVIE":
+		return "MOVIE"
+	case "TV":
+		return "TV"
+	default:
+		return ""
+	}
+}
+
+func (s *Service) persistResolvedReleaseCategory(ctx context.Context, sourcePath string, category string, updatedAt time.Time) error {
+	if s.repo == nil || strings.TrimSpace(sourcePath) == "" || strings.TrimSpace(category) == "" {
+		return nil
+	}
+
+	stored, err := s.repo.GetByPath(ctx, sourcePath)
+	if err != nil {
+		if errors.Is(err, internalerrors.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("metadata: load stored metadata for resolved category: %w", err)
+	}
+	if strings.EqualFold(strings.TrimSpace(stored.Category), strings.TrimSpace(category)) {
+		return nil
+	}
+
+	stored.Category = category
+	stored.UpdatedAt = updatedAt
+	if stored.UpdatedAt.IsZero() {
+		stored.UpdatedAt = time.Now().UTC()
+	}
+	if err := s.repo.Save(ctx, stored); err != nil {
+		return fmt.Errorf("metadata: persist resolved release category: %w", err)
+	}
+	if s.logger != nil {
+		s.logger.Debugf("metadata: persisted resolved release category path=%q category=%q", sourcePath, category)
+	}
+	return nil
 }
 
 func applyOverrideID(target *int, source *string, override *int, origin string) (bool, bool) {

@@ -68,9 +68,14 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 	singleReq.ExternalIDOverrides = mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, uniquePaths[0]))
 
 	signature := overrideSignature(singleReq.ExternalIDOverrides, singleReq.ReleaseNameOverrides, singleReq.MetadataOverrides, singleReq.TrackerConfigOverrides, singleReq.TrackerSiteOverrides, singleReq.ClientOverrides, singleReq.TorrentOverrides, singleReq.ImageHostOverrides, singleReq.ScreenshotOverrides)
-	meta, ok := c.getDupeCache(uniquePaths[0], signature)
+	var (
+		meta api.PreparedMetadata
+		ok   bool
+	)
 	if req.Mode == api.ModeGUI {
 		meta, ok = c.getGUICachedMeta(uniquePaths[0], signature, singleReq.ExternalIDOverrides)
+	} else {
+		meta, ok = c.getDupeCache(uniquePaths[0], signature)
 	}
 	if !ok {
 		return api.UploadReview{}, fmt.Errorf("core: upload review requires prepared metadata for %s", uniquePaths[0])

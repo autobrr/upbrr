@@ -19,11 +19,11 @@ type FileMetadata struct {
 	Scene      bool
 	SceneName  string
 	SceneIMDB  int
-	// Category is the normalized content category that drives upload logic
-	// (e.g., "MOVIE", "TV", "MUSIC"). It is seeded from release parsing but
-	// should be overridden by TrackerMetadata.Category when that value is
-	// available, since a site-reported category is the authoritative
-	// classification for the upload.
+	// Category is the normalized movie/TV content category that drives upload
+	// logic. It is seeded from release parsing but should be overridden by a
+	// supported TrackerMetadata.Category when that value is available, since a
+	// site-reported movie/TV category is the authoritative classification for
+	// the upload.
 	Category   string
 	Type       string
 	Artist     string
@@ -61,10 +61,10 @@ type TrackerMetadata struct {
 	IMDBID     int
 	TVDBID     int
 	MALID      int
-	// Category is the site-reported content category from the tracker API
-	// (e.g., "MOVIE", "TV"). When present it takes precedence over
-	// MediaInfoCategory and Release.Category when resolving ExternalIDs.Category
-	// for upload classification.
+	// Category is the site-reported movie/TV content category from the tracker
+	// API. Supported values take precedence over MediaInfoCategory and
+	// Release.Category when resolving ExternalIDs.Category for upload
+	// classification; unsupported categories are ignored.
 	Category    string
 	Description string
 	ImageURLs   []string

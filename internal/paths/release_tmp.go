@@ -51,11 +51,12 @@ func releaseBaseName(release api.ReleaseInfo) string {
 	if release.Year > 0 {
 		parts = append(parts, strconv.Itoa(release.Year))
 	}
-	if strings.TrimSpace(release.Source) != "" {
-		parts = append(parts, strings.TrimSpace(release.Source))
+	trimmedSource := strings.TrimSpace(release.Source)
+	if trimmedSource != "" {
+		parts = append(parts, trimmedSource)
 	}
 	if trimmedType := strings.TrimSpace(release.Type); trimmedType != "" {
-		if !strings.EqualFold(trimmedType, strings.TrimSpace(release.Source)) {
+		if !strings.EqualFold(trimmedType, trimmedSource) {
 			parts = append(parts, trimmedType)
 		}
 	}

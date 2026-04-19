@@ -907,7 +907,7 @@ func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, i
 	var meta api.PreparedMetadata
 	if req.Mode == api.ModeGUI {
 		mergedOverrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, uniquePaths[0]))
-		signature := overrideSignature(mergedOverrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides)
+		signature := overrideSignature(mergedOverrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
 		if cached, ok := c.getGUICachedMeta(uniquePaths[0], signature, mergedOverrides); ok {
 			meta = cached
 		} else {

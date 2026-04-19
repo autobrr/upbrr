@@ -21,15 +21,20 @@ import (
 type fakeRepo struct {
 	ids               api.ExternalIDs
 	meta              api.ExternalMetadata
+	fileMetadata      api.FileMetadata
 	trackerMetadata   []api.TrackerMetadata
 	trackerTimestamps []api.TrackerTimestamp
 }
 
 func (f *fakeRepo) GetByPath(ctx context.Context, path string) (api.FileMetadata, error) {
+	if strings.EqualFold(strings.TrimSpace(f.fileMetadata.Path), strings.TrimSpace(path)) {
+		return f.fileMetadata, nil
+	}
 	return api.FileMetadata{}, internalerrors.ErrNotFound
 }
 
 func (f *fakeRepo) Save(ctx context.Context, metadata api.FileMetadata) error {
+	f.fileMetadata = metadata
 	return nil
 }
 
@@ -395,6 +400,97 @@ func TestResolveExternalIDsPrecedence(t *testing.T) {
 	}
 	if result.ExternalMetadata.TMDB == nil || result.ExternalMetadata.IMDB == nil {
 		t.Fatalf("expected metadata results")
+	}
+}
+
+func TestResolveExternalIDsPropagatesAuthoritativeMovieTVCategoryToRelease(t *testing.T) {
+	repo := &fakeRepo{
+		fileMetadata: api.FileMetadata{
+			Path:     "/media/file.mkv",
+			Category: "MOVIE",
+			Title:    "Example",
+			Year:     2024,
+		},
+	}
+	tmdbClient := &stubTMDB{}
+	imdbClient := &stubIMDB{}
+	tvdbClient := &stubTVDB{}
+	tvmazeClient := &stubTVmaze{}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:  "/media/file.mkv",
+		Release:     api.ReleaseInfo{Category: "MOVIE", Title: "Example", Year: 2024},
+		TrackerData: []api.TrackerMetadata{{Category: "TV"}},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if result.ExternalIDs.Category != "TV" {
+		t.Fatalf("expected external IDs category TV, got %q", result.ExternalIDs.Category)
+	}
+	if result.Release.Category != "TV" {
+		t.Fatalf("expected release category TV, got %q", result.Release.Category)
+	}
+	if repo.fileMetadata.Category != "TV" {
+		t.Fatalf("expected persisted release category TV, got %q", repo.fileMetadata.Category)
+	}
+	if repo.ids.Category != "TV" {
+		t.Fatalf("expected persisted external IDs category TV, got %q", repo.ids.Category)
+	}
+	if len(tmdbClient.searchInputs) == 0 || tmdbClient.searchInputs[0].Category != "TV" {
+		t.Fatalf("expected TV to be passed as TMDB preference, got %#v", tmdbClient.searchInputs)
+	}
+}
+
+func TestResolveExternalIDsIgnoresUnsupportedTrackerCategory(t *testing.T) {
+	repo := &fakeRepo{
+		fileMetadata: api.FileMetadata{
+			Path:     "/media/file.mkv",
+			Category: "MOVIE",
+			Title:    "Example",
+			Year:     2024,
+		},
+	}
+	tmdbClient := &stubTMDB{}
+	imdbClient := &stubIMDB{}
+	tvdbClient := &stubTVDB{}
+	tvmazeClient := &stubTVmaze{}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:  "/media/file.mkv",
+		Release:     api.ReleaseInfo{Category: "MOVIE", Title: "Example", Year: 2024},
+		TrackerData: []api.TrackerMetadata{{Category: "Music"}},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if result.ExternalIDs.Category != "MOVIE" {
+		t.Fatalf("expected external IDs category MOVIE, got %q", result.ExternalIDs.Category)
+	}
+	if result.Release.Category != "MOVIE" {
+		t.Fatalf("expected release category MOVIE, got %q", result.Release.Category)
+	}
+	if repo.fileMetadata.Category != "MOVIE" {
+		t.Fatalf("expected persisted release category MOVIE, got %q", repo.fileMetadata.Category)
+	}
+	if repo.ids.Category != "MOVIE" {
+		t.Fatalf("expected persisted external IDs category MOVIE, got %q", repo.ids.Category)
 	}
 }
 

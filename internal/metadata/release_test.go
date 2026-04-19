@@ -5,66 +5,62 @@ package metadata
 
 import "testing"
 
-func TestParseReleaseInfoMovieUsesRLSCategoryAndSource(t *testing.T) {
-	release := ParseReleaseInfo("Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv")
+func TestParseReleaseInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		category string
+		typ      string
+		source   string
+	}{
+		{
+			name:     "movie uses rls category and source",
+			input:    "Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
+			category: "MOVIE",
+			typ:      "WEBDL",
+			source:   "Web",
+		},
+		{
+			name:     "episode uses tv category and webdl source",
+			input:    "Show.S01E02.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
+			category: "TV",
+			typ:      "WEBDL",
+			source:   "Web",
+		},
+		{
+			name:     "season pack uses tv category",
+			input:    "Show.S01.1080p.WEB-DL.DDP5.1.H.264-GRP",
+			category: "TV",
+			typ:      "WEBDL",
+			source:   "Web",
+		},
+		{
+			name:   "bluray remux preserves distinct source and type",
+			input:  "Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
+			typ:    "REMUX",
+			source: "BluRay",
+		},
+		{
+			name:   "bluray encode infers encode type",
+			input:  "Movie.2026.1080p.BluRay.x264-GRP.mkv",
+			typ:    "ENCODE",
+			source: "BluRay",
+		},
+	}
 
-	if release.Category != "MOVIE" {
-		t.Fatalf("expected MOVIE category, got %q", release.Category)
-	}
-	if release.Type != "WEBDL" {
-		t.Fatalf("expected WEBDL type, got %q", release.Type)
-	}
-	if release.Source != "Web" {
-		t.Fatalf("expected Web source, got %q", release.Source)
-	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			release := ParseReleaseInfo(tc.input)
 
-func TestParseReleaseInfoEpisodeUsesTVCategoryAndSourceAsType(t *testing.T) {
-	release := ParseReleaseInfo("Show.S01E02.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv")
-
-	if release.Category != "TV" {
-		t.Fatalf("expected TV category, got %q", release.Category)
-	}
-	if release.Type != "WEBDL" {
-		t.Fatalf("expected WEBDL type, got %q", release.Type)
-	}
-	if release.Source != "Web" {
-		t.Fatalf("expected Web source, got %q", release.Source)
-	}
-}
-
-func TestParseReleaseInfoSeasonPackUsesTVCategory(t *testing.T) {
-	release := ParseReleaseInfo("Show.S01.1080p.WEB-DL.DDP5.1.H.264-GRP")
-
-	if release.Category != "TV" {
-		t.Fatalf("expected TV category, got %q", release.Category)
-	}
-	if release.Type != "WEBDL" {
-		t.Fatalf("expected WEBDL type, got %q", release.Type)
-	}
-	if release.Source != "Web" {
-		t.Fatalf("expected Web source, got %q", release.Source)
-	}
-}
-
-func TestParseReleaseInfoBlurayRemuxPreservesDistinctSourceAndType(t *testing.T) {
-	release := ParseReleaseInfo("Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv")
-
-	if release.Source != "BluRay" {
-		t.Fatalf("expected BluRay source, got %q", release.Source)
-	}
-	if release.Type != "REMUX" {
-		t.Fatalf("expected REMUX type, got %q", release.Type)
-	}
-}
-
-func TestParseReleaseInfoBlurayEncodeInfersEncodeType(t *testing.T) {
-	release := ParseReleaseInfo("Movie.2026.1080p.BluRay.x264-GRP.mkv")
-
-	if release.Source != "BluRay" {
-		t.Fatalf("expected BluRay source, got %q", release.Source)
-	}
-	if release.Type != "ENCODE" {
-		t.Fatalf("expected ENCODE type, got %q", release.Type)
+			if tc.category != "" && release.Category != tc.category {
+				t.Errorf("expected category %q, got %q", tc.category, release.Category)
+			}
+			if release.Type != tc.typ {
+				t.Errorf("expected type %q, got %q", tc.typ, release.Type)
+			}
+			if release.Source != tc.source {
+				t.Errorf("expected source %q, got %q", tc.source, release.Source)
+			}
+		})
 	}
 }
