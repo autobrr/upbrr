@@ -106,18 +106,18 @@ body {
   letter-spacing: 0.02em;
 }
 
-:root.light .tab-button,
-:root.light .subtab-button {
-  background: rgba(255, 255, 255, 0.8);
-  border-color: rgba(0, 0, 0, 0.08);
-  color: var(--text);
-}
-
 .subtab-button {
   margin-left: 9px;
   font-size: 0.9rem;
   font-weight: 500;
   background: rgba(12, 16, 26, 0.7);
+}
+
+:root.light .tab-button,
+:root.light .subtab-button {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.08);
+  color: var(--text);
 }
 
 .tab-button.active,
@@ -753,7 +753,7 @@ h2 {
 }
 
 .dupe-path {
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .screens-gallery {
@@ -950,10 +950,6 @@ h2 {
   border-radius: 999px;
 }
 
-:root.light .tracker-description.rendered .comparison__details > summary {
-  border-color: rgba(0, 0, 0, 0.2);
-}
-
 .tracker-description.rendered .comparison__details > summary::-webkit-details-marker {
   display: none;
 }
@@ -965,6 +961,10 @@ h2 {
   z-index: 1101;
   background-color: rgba(0, 0, 0, 0.6);
   border-color: rgba(255, 255, 255, 0.4);
+}
+
+:root.light .tracker-description.rendered .comparison__details > summary {
+  border-color: rgba(0, 0, 0, 0.2);
 }
 
 :root.light .tracker-description.rendered .comparison__details[open] > summary {
@@ -979,7 +979,7 @@ h2 {
   display: none;
 }
 
-.tracker-description.rendered .comparison__details[open] .comparison__screenshots {
+.tracker-description.rendered .comparison--open .comparison__screenshots {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -993,7 +993,7 @@ h2 {
   background-color: #000;
 }
 
-.tracker-description.rendered .comparison--open .comparison__screenshots {
+.tracker-description.rendered .comparison__details[open] .comparison__screenshots {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1092,7 +1092,7 @@ h2 {
   border-color: rgba(0, 0, 0, 0.1);
 }
 
-.lightbox-content img {
+.lightbox-overlay .lightbox-content img {
   border-radius: 12px;
 }
 
@@ -1227,7 +1227,7 @@ h2 {
   backdrop-filter: blur(18px);
 }
 
-.web-shell__bar button {
+.web-shell .web-shell__bar button {
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 999px;
   padding: 0.55rem 0.95rem;
@@ -1276,7 +1276,7 @@ h2 {
   gap: 0.45rem;
 }
 
-.web-auth-card input {
+.web-auth-shell .web-auth-card input {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 0.9rem;
   padding: 0.8rem 0.95rem;
@@ -1291,14 +1291,14 @@ h2 {
   color: rgba(226, 232, 240, 0.9);
 }
 
-.web-auth-card__checkbox input {
+.web-auth-shell .web-auth-card__checkbox input {
   width: 1rem;
   height: 1rem;
   margin: 0;
   padding: 0;
 }
 
-.web-auth-card button {
+.web-auth-shell .web-auth-card button {
   border: none;
   border-radius: 1rem;
   padding: 0.9rem 1rem;

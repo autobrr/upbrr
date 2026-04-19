@@ -24,6 +24,7 @@ import type {
   TMDBNetwork,
   TrackerUploadItem,
 } from "../../types";
+import "./styles.css";
 
 const formatProvider = (value: string) => value.toUpperCase();
 

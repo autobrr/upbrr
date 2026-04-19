@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ScreenshotLinkedImage, ScreenshotPreviewImage, UploadedImageLink } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
+import "./styles.css";
 
 type UploadedByHost = { host: string; items: UploadedImageLink[] };
 

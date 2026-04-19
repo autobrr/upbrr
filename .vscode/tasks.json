@@ -70,6 +70,14 @@
       "problemMatcher": ["$go"]
     },
     {
+      "label": "lint-fix-go",
+      "type": "shell",
+      "command": "golangci-lint",
+      "args": ["run", "--fix", "--timeout=5m"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$go"]
+    },
+    {
       "label": "logpolicy",
       "type": "shell",
       "command": "go",
@@ -115,6 +123,14 @@
       "problemMatcher": ["$eslint-stylish"]
     },
     {
+      "label": "lint-fix-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint:fix"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "problemMatcher": ["$eslint-stylish"]
+    },
+    {
       "label": "typecheck-frontend",
       "type": "shell",
       "command": "pnpm",
@@ -130,6 +146,23 @@
       "args": ["run", "lint:dead"],
       "options": { "cwd": "${workspaceFolder}/gui/frontend" },
       "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "lint-style-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint:style"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "lint-style-fix-frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint:style:fix"],
+      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
       "problemMatcher": []
     },
     {
@@ -178,11 +211,24 @@
         "lint-go",
         "lint-frontend",
         "lint-dead-frontend",
+        "lint-style-frontend",
         "typecheck-frontend",
         "format-check-frontend",
         "logpolicy"
       ],
       "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "fix-all",
+      "dependsOn": [
+        "format-go",
+        "lint-fix-go",
+        "format-frontend",
+        "lint-fix-frontend",
+        "lint-style-fix-frontend"
+      ],
+      "dependsOrder": "parallel",
       "problemMatcher": []
     },
     {

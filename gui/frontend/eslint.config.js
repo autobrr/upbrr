@@ -58,5 +58,21 @@ export default [
       ],
     },
   },
+  {
+    files: ["src/main.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["./pages/**/styles.css"],
+              message: "Import page styles from the owning page component instead of src/main.tsx.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettier,
 ];

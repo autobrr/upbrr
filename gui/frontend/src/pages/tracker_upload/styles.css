@@ -210,6 +210,15 @@
     background 0.2s ease;
 }
 
+:root.light .upload-toggle__pill {
+  border-color: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+:root.light .upload-toggle__pill::after {
+  background: rgba(0, 0, 0, 0.5);
+}
+
 .upload-toggle input:checked + .upload-toggle__pill {
   background: rgba(53, 194, 193, 0.35);
   border-color: rgba(53, 194, 193, 0.6);
@@ -218,15 +227,6 @@
 .upload-toggle input:checked + .upload-toggle__pill::after {
   transform: translateX(20px);
   background: var(--accent-2);
-}
-
-:root.light .upload-toggle__pill {
-  border-color: rgba(0, 0, 0, 0.2);
-  background: rgba(0, 0, 0, 0.05);
-}
-
-:root.light .upload-toggle__pill::after {
-  background: rgba(0, 0, 0, 0.5);
 }
 
 .upload-toggle__label {

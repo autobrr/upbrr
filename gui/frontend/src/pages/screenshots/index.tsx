@@ -11,6 +11,7 @@ import type {
   ScreenshotResult,
   ScreenshotSelection,
 } from "../../types";
+import "./styles.css";
 
 type Props = Readonly<{
   path: string;

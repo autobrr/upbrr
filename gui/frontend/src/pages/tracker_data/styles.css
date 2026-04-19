@@ -89,7 +89,6 @@
 .tracker-meta-value {
   min-width: 0;
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .tracker-desc__header {
@@ -239,10 +238,6 @@
   border-radius: 999px;
 }
 
-:root.light .tracker-description.rendered .comparison__details > summary {
-  border-color: rgba(0, 0, 0, 0.2);
-}
-
 .tracker-description.rendered .comparison__details > summary::-webkit-details-marker {
   display: none;
 }
@@ -254,6 +249,10 @@
   z-index: 1101;
   background-color: rgba(0, 0, 0, 0.6);
   border-color: rgba(255, 255, 255, 0.4);
+}
+
+:root.light .tracker-description.rendered .comparison__details > summary {
+  border-color: rgba(0, 0, 0, 0.2);
 }
 
 :root.light .tracker-description.rendered .comparison__details[open] > summary {
@@ -268,7 +267,7 @@
   display: none;
 }
 
-.tracker-description.rendered .comparison__details[open] .comparison__screenshots {
+.tracker-description.rendered .comparison--open .comparison__screenshots {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -282,7 +281,7 @@
   background-color: #000;
 }
 
-.tracker-description.rendered .comparison--open .comparison__screenshots {
+.tracker-description.rendered .comparison__details[open] .comparison__screenshots {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -354,7 +353,7 @@
   cursor: pointer;
 }
 
-.tracker-images img {
+.tracker-images .tracker-image-button img {
   width: 100%;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.1);

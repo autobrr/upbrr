@@ -4,6 +4,7 @@
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ConfigMap, ConfigValue, FieldMeta, WebAuthStatus } from "../../types";
+import "./styles.css";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
 

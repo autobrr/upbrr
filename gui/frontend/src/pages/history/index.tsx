@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { HistoryEntry, HistoryOverview } from "../../types";
+import "./styles.css";
 
 const formatDate = (value: string) => {
   if (!value) {

@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { MetadataPreview, TrackerPreview } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
+import "./styles.css";
 
 type Props = {
   preview: MetadataPreview;

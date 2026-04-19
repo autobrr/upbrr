@@ -21,7 +21,7 @@
 }
 
 .dupe-path {
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .dupe-card {
@@ -92,6 +92,15 @@
     background 0.2s ease;
 }
 
+:root.light .dupe-toggle__pill {
+  border-color: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+:root.light .dupe-toggle__pill::after {
+  background: rgba(0, 0, 0, 0.5);
+}
+
 .dupe-toggle input:checked + .dupe-toggle__pill {
   background: rgba(53, 194, 193, 0.35);
   border-color: rgba(53, 194, 193, 0.6);
@@ -100,15 +109,6 @@
 .dupe-toggle input:checked + .dupe-toggle__pill::after {
   transform: translateX(18px);
   background: var(--accent-2);
-}
-
-:root.light .dupe-toggle__pill {
-  border-color: rgba(0, 0, 0, 0.2);
-  background: rgba(0, 0, 0, 0.05);
-}
-
-:root.light .dupe-toggle__pill::after {
-  background: rgba(0, 0, 0, 0.5);
 }
 
 .dupe-notes {

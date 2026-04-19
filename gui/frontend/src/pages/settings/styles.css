@@ -95,12 +95,6 @@
   margin-top: 2px;
 }
 
-:root.light .settings-field select {
-  border-color: rgba(0, 0, 0, 0.12);
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--text);
-}
-
 .settings-toggle {
   display: flex;
   align-items: center;
@@ -244,14 +238,14 @@
     border-color 0.2s ease;
 }
 
-:root.light .settings-subgroup--collapsible summary {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(0, 0, 0, 0.08);
-}
-
 .settings-subgroup--collapsible summary:hover {
   background: rgba(10, 14, 22, 0.85);
   border-color: rgba(255, 255, 255, 0.12);
+}
+
+:root.light .settings-subgroup--collapsible summary {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(0, 0, 0, 0.08);
 }
 
 :root.light .settings-subgroup--collapsible summary:hover {
@@ -326,6 +320,12 @@
 
 .settings-map__controls select {
   min-width: 180px;
+}
+
+:root.light .settings-field select {
+  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
 }
 
 .settings-map__grid {
@@ -486,7 +486,7 @@
   color: var(--text);
   margin: 0;
   opacity: 0.85;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .config-status-banner__warnings {
@@ -522,7 +522,7 @@
 }
 
 .config-status-banner__warning-list li {
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .config-status-banner__dismiss {
