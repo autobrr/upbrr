@@ -15,6 +15,7 @@
   "files.associations": {
     "*.instructions.md": "markdown"
   },
+  "npm.packageManager": "pnpm",
   "files.exclude": {
     "gui/frontend/node_modules": true,
     "gui/frontend/dist": true,

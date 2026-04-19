@@ -20,11 +20,6 @@ interface ScreenshotHookProps {
   releaseOverrideState?: { overrides?: ReleaseNameOverrides };
 }
 
-interface ScreenshotDeletion {
-  byPath?: Map<string, ScreenshotLinkedImage>;
-  byURL?: Map<string, ScreenshotLinkedImage>;
-}
-
 export const useScreenshots = ({
   path,
   idOverrideState,

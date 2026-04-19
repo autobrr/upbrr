@@ -9,6 +9,7 @@ import type {
   TrackerUploadItem,
   TrackerUploadSnapshot,
 } from "../../types";
+import "./styles.css";
 
 type Props = {
   trackerUploadItems: TrackerUploadItem[];

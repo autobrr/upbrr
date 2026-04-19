@@ -169,12 +169,10 @@
 .upload-images-result .value,
 .upload-images-result .value.mono {
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .upload-images-result .tracker-link {
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 :root.light .upload-images-result {

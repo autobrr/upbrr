@@ -3,6 +3,7 @@
 
 import LogSettingsPanel from "../../components/LogSettingsPanel";
 import type { ConfigMap, ConfigValue, FieldMeta } from "../../types";
+import "./styles.css";
 
 type Props = Readonly<{
   configData: ConfigMap | null;

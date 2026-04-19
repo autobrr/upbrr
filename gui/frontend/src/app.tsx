@@ -29,7 +29,6 @@ import type {
   HistoryOverview,
   MetadataPreview,
   MetadataProgressUpdate,
-  PreparationDescription,
   PreparationPreview,
   ReleaseNameEditState,
   ReleaseNameOverrides,
@@ -512,8 +511,7 @@ export default function App() {
   const [dupeIgnore, setDupeIgnore] = useState<Record<string, boolean>>({});
   const [dupeTrackerFlags, setDupeTrackerFlags] = useState<Record<string, boolean>>({});
   const [prepPreview, setPrepPreview] = useState<PreparationPreview>(emptyPreparation);
-  const [prepLoading, setPrepLoading] = useState(false);
-  const [prepError, setPrepError] = useState("");
+  const [, setPrepError] = useState("");
   const [builderPreview, setBuilderPreview] =
     useState<DescriptionBuilderPreview>(emptyDescriptionBuilder);
   const [builderRawByGroup, setBuilderRawByGroup] = useState<Record<string, string>>({});
@@ -605,8 +603,6 @@ export default function App() {
     buildSavePayload,
     clearSettingsStatus,
     markSettingsSaved,
-    setSettingsSavedMessage,
-    setSettingsErrorMessage,
     resolveImageHostLabel,
     trackerSelectionNames,
   } = useSettingsState({ activeTab });
@@ -989,19 +985,6 @@ export default function App() {
     });
     return Array.from(next);
   }, [dupeIgnore]);
-  const filterPrepDescriptions = (descriptions: PreparationDescription[]) => {
-    if (dupedTrackerSet.size === 0 && ruleSkippedTrackerSet.size === 0) return descriptions;
-    const filtered: PreparationDescription[] = [];
-    descriptions.forEach((entry) => {
-      const trackers = (entry.Trackers || []).filter((tracker) => {
-        const normalized = String(tracker).toLowerCase().trim();
-        return !dupedTrackerSet.has(normalized) && !ruleSkippedTrackerSet.has(normalized);
-      });
-      if (trackers.length === 0) return;
-      filtered.push({ ...entry, Trackers: trackers });
-    });
-    return filtered;
-  };
 
   const trackerUploadItems = useMemo(() => {
     if (!configData || !configData.Trackers || typeof configData.Trackers !== "object") {
@@ -1195,7 +1178,6 @@ export default function App() {
     setScreenshotsEnabled,
     screenshotsSettingsSaving,
     setScreenshotsSettingsSaving,
-    setScreenshotsError,
     loadScreenshotPlan,
     readScreenshotImage,
     setExistingImages,

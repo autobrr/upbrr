@@ -4,6 +4,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { DupeCheckSummary } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
+import "./styles.css";
 
 type Props = {
   path: string;

@@ -813,7 +813,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const result = await getDefaultConfig();
       const parsed = JSON.parse(result) as ConfigMap;
       setDefaultConfig(parsed);
-    } catch (err) {
+    } catch (_err) {
       // Silently fail if we can't load default config; it's optional for tracker comparison
     }
   }, []);
