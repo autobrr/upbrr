@@ -1232,6 +1232,7 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 	singleReq := req
 	singleReq.Paths = []string{uniquePaths[0]}
 	singleReq.Options = options
+	singleReq.ExternalIDOverrides = mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, uniquePaths[0]))
 
 	meta, err := c.services.Metadata.Prepare(ctx, singleReq)
 	if err != nil {
@@ -1440,6 +1441,7 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 		singleReq := req
 		singleReq.Paths = []string{uniquePaths[0]}
 		singleReq.Options = options
+		singleReq.ExternalIDOverrides = mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, uniquePaths[0]))
 		meta, err = c.services.Metadata.Prepare(ctx, singleReq)
 		if err != nil {
 			return api.DescriptionBuilderPreview{}, err
@@ -1583,6 +1585,7 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 		singleReq := req
 		singleReq.Paths = []string{uniquePaths[0]}
 		singleReq.Options = options
+		singleReq.ExternalIDOverrides = mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, uniquePaths[0]))
 		meta, err = c.services.Metadata.Prepare(ctx, singleReq)
 		if err != nil {
 			return api.DescriptionBuilderGroup{}, err
