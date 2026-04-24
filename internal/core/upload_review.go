@@ -73,16 +73,21 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		ok   bool
 	)
 	if req.Mode == api.ModeGUI {
-		meta, ok = c.getGUICachedMeta(uniquePaths[0], signature, singleReq.ExternalIDOverrides)
+		meta, ok, err = c.resolveGUICachedPreparedMeta(ctx, singleReq, uniquePaths[0])
+		if err != nil {
+			return api.UploadReview{}, err
+		}
 	} else {
 		meta, ok = c.getDupeCache(uniquePaths[0], signature)
+		if ok {
+			meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, singleReq)
+			if err != nil {
+				return api.UploadReview{}, err
+			}
+		}
 	}
 	if !ok {
 		return api.UploadReview{}, fmt.Errorf("core: upload review requires prepared metadata for %s", uniquePaths[0])
-	}
-	meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, singleReq)
-	if err != nil {
-		return api.UploadReview{}, err
 	}
 
 	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, singleReq.Trackers, singleReq.TrackersRemove, c.logger)

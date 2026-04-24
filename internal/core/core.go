@@ -334,7 +334,9 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 	}
 
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return api.DupeCheckSummary{}, err
+		} else if ok {
 			matchedTrackers := mergeTrackerRemovals(nil, cached.MatchedTrackers)
 			removeTrackers := mergeTrackerRemovals(req.TrackersRemove, matchedTrackers)
 			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, removeTrackers, c.logger)
@@ -500,7 +502,9 @@ func (c *Core) FetchScreenshotPlan(ctx context.Context, req api.Request) (api.Sc
 	}
 
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return api.ScreenshotPlan{}, err
+		} else if ok {
 			return c.services.Screenshots.Plan(ctx, cached, cached.Options.Screens)
 		}
 		return api.ScreenshotPlan{}, errors.New("core: screenshot plan requires metadata preview")
@@ -552,7 +556,9 @@ func (c *Core) GenerateScreenshots(ctx context.Context, req api.Request, selecti
 	}
 
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return api.ScreenshotResult{}, err
+		} else if ok {
 			return c.services.Screenshots.Capture(ctx, cached, selections, purpose)
 		}
 		return api.ScreenshotResult{}, errors.New("core: screenshot capture requires metadata preview")
@@ -600,7 +606,9 @@ func (c *Core) PreviewScreenshotFrame(ctx context.Context, req api.Request, time
 	}
 
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return api.ScreenshotPreview{}, err
+		} else if ok {
 			return c.services.Screenshots.PreviewFrame(ctx, cached, timestampSeconds)
 		}
 		return api.ScreenshotPreview{}, errors.New("core: screenshot preview requires metadata preview")
@@ -651,7 +659,9 @@ func (c *Core) DeleteScreenshot(ctx context.Context, req api.Request, imagePath 
 	}
 
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return err
+		} else if ok {
 			return c.services.Screenshots.Delete(ctx, cached, imagePath)
 		}
 		return errors.New("core: screenshot delete requires metadata preview")
@@ -761,7 +771,9 @@ func (c *Core) SaveFinalScreenshotSelections(ctx context.Context, req api.Reques
 	}
 
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return err
+		} else if ok {
 			return c.services.Screenshots.SaveFinalSelections(ctx, cached, images)
 		}
 		return errors.New("core: screenshot selection save requires metadata preview")
@@ -810,7 +822,9 @@ func (c *Core) ListUploadCandidates(ctx context.Context, req api.Request) ([]api
 
 	var meta api.PreparedMetadata
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return nil, err
+		} else if ok {
 			meta = cached
 		} else {
 			meta = api.PreparedMetadata{SourcePath: uniquePaths[0]}
@@ -892,7 +906,9 @@ func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, i
 
 	var meta api.PreparedMetadata
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return nil, err
+		} else if ok {
 			meta = cached
 		} else {
 			meta = api.PreparedMetadata{SourcePath: uniquePaths[0]}
@@ -1198,11 +1214,9 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 	}
 
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
-			cached, err = c.applyRequestToCachedPreparedMeta(ctx, cached, req)
-			if err != nil {
-				return api.PreparationPreview{}, err
-			}
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return api.PreparationPreview{}, err
+		} else if ok {
 			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
 			c.logger.Debugf("core: preparation resolved trackers %v", resolvedTrackers)
 			return c.services.Trackers.BuildPreparation(ctx, cached, resolvedTrackers)
@@ -1291,17 +1305,23 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	signature := overrideSignature(singleReq.ExternalIDOverrides, singleReq.ReleaseNameOverrides, singleReq.MetadataOverrides, singleReq.TrackerConfigOverrides, singleReq.TrackerSiteOverrides, singleReq.ClientOverrides, singleReq.TorrentOverrides, singleReq.ImageHostOverrides, singleReq.ScreenshotOverrides)
 	meta, ok := c.getDupeCache(uniquePaths[0], signature)
 	if req.Mode == api.ModeGUI {
-		meta, ok = c.getGUICachedMeta(uniquePaths[0], signature, singleReq.ExternalIDOverrides)
+		meta, ok, err = c.resolveGUICachedPreparedMeta(ctx, singleReq, uniquePaths[0])
+		if err != nil {
+			return api.TrackerDryRunPreview{}, err
+		}
+	} else {
+		if !ok {
+			return api.TrackerDryRunPreview{}, fmt.Errorf("core: tracker dry-run requires prepared metadata for %s", uniquePaths[0])
+		}
+		meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, singleReq)
+		if err != nil {
+			return api.TrackerDryRunPreview{}, err
+		}
 	}
 	if !ok {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: tracker dry-run requires prepared metadata for %s", uniquePaths[0])
 	}
 	c.logger.Debugf("core: tracker dry-run using cached prepared metadata for %s", uniquePaths[0])
-
-	meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, singleReq)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, err
-	}
 	descriptionGroups, err := c.resolveCanonicalDescriptionGroups(ctx, meta, singleReq)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
@@ -1378,12 +1398,11 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 
 	var meta api.PreparedMetadata
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return api.DescriptionBuilderPreview{}, err
+		} else if ok {
 			c.logger.Debugf("core: description builder cache hit source=%s", uniquePaths[0])
-			meta, err = c.applyRequestToCachedPreparedMeta(ctx, cached, req)
-			if err != nil {
-				return api.DescriptionBuilderPreview{}, err
-			}
+			meta = cached
 		}
 	}
 	if strings.TrimSpace(meta.SourcePath) == "" {
@@ -1538,11 +1557,10 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 
 	var meta api.PreparedMetadata
 	if req.Mode == api.ModeGUI {
-		if cached, ok := c.lookupGUICachedMeta(req, uniquePaths[0]); ok {
-			meta, err = c.applyRequestToCachedPreparedMeta(ctx, cached, req)
-			if err != nil {
-				return api.DescriptionBuilderGroup{}, err
-			}
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+			return api.DescriptionBuilderGroup{}, err
+		} else if ok {
+			meta = cached
 		}
 	}
 	if strings.TrimSpace(meta.SourcePath) == "" {
@@ -1748,7 +1766,6 @@ func (c *Core) getGUICachedMeta(path string, signature string, overrides api.Ext
 		if cached, ok := c.getDupeCache(path, signature); ok {
 			return cached, true
 		}
-		return api.PreparedMetadata{}, false
 	}
 	if hasExternalIDOverrides(overrides) {
 		return api.PreparedMetadata{}, false
@@ -1756,7 +1773,7 @@ func (c *Core) getGUICachedMeta(path string, signature string, overrides api.Ext
 	c.dupeMu.RLock()
 	defer c.dupeMu.RUnlock()
 	entry, ok := c.dupeCache[path]
-	if !ok || strings.TrimSpace(entry.signature) != "" {
+	if !ok || hasExternalIDOverrides(entry.meta.ExternalIDOverrides) {
 		return api.PreparedMetadata{}, false
 	}
 	return entry.meta, true
@@ -1766,6 +1783,18 @@ func (c *Core) lookupGUICachedMeta(req api.Request, path string) (api.PreparedMe
 	mergedOverrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
 	signature := overrideSignature(mergedOverrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
 	return c.getGUICachedMeta(path, signature, mergedOverrides)
+}
+
+func (c *Core) resolveGUICachedPreparedMeta(ctx context.Context, req api.Request, path string) (api.PreparedMetadata, bool, error) {
+	cached, ok := c.lookupGUICachedMeta(req, path)
+	if !ok {
+		return api.PreparedMetadata{}, false, nil
+	}
+	resolved, err := c.applyRequestToCachedPreparedMeta(ctx, cached, req)
+	if err != nil {
+		return api.PreparedMetadata{}, false, err
+	}
+	return resolved, true, nil
 }
 
 // ExportGUICachedPreparedMeta exposes the resolved GUI prepared metadata cache entry

@@ -281,7 +281,7 @@ func TestBuildUploadReviewMarksBlockedTrackersInDryRun(t *testing.T) {
 	}
 }
 
-func TestGetGUICachedMetaDoesNotFallbackWhenSignatureMismatch(t *testing.T) {
+func TestGetGUICachedMetaFallsBackWhenNonExternalSignatureMismatch(t *testing.T) {
 	t.Parallel()
 
 	coreSvc, err := New(api.CoreDependencies{
@@ -296,12 +296,14 @@ func TestGetGUICachedMetaDoesNotFallbackWhenSignatureMismatch(t *testing.T) {
 	}
 
 	coreSvc.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
-	if _, ok := coreSvc.getGUICachedMeta("/tmp/a", "originalLanguage=ja", api.ExternalIDOverrides{}); ok {
-		t.Fatalf("expected signed GUI cache lookup to miss when only unsigned cache exists")
+	if cached, ok := coreSvc.getGUICachedMeta("/tmp/a", "originalLanguage=ja", api.ExternalIDOverrides{}); !ok {
+		t.Fatalf("expected signed GUI cache lookup to reuse non-external cached metadata")
+	} else if cached.SourcePath != "/tmp/a" {
+		t.Fatalf("expected cached metadata source path, got %q", cached.SourcePath)
 	}
 }
 
-func TestGetGUICachedMetaDoesNotReuseSignedEntryForEmptySignature(t *testing.T) {
+func TestGetGUICachedMetaReusesSignedEntryForEmptySignatureWhenNonExternal(t *testing.T) {
 	t.Parallel()
 
 	coreSvc, err := New(api.CoreDependencies{
@@ -316,8 +318,10 @@ func TestGetGUICachedMetaDoesNotReuseSignedEntryForEmptySignature(t *testing.T) 
 	}
 
 	coreSvc.storeDupeCache("/tmp/a", "originalLanguage=ja", api.PreparedMetadata{SourcePath: "/tmp/a"})
-	if _, ok := coreSvc.getGUICachedMeta("/tmp/a", "", api.ExternalIDOverrides{}); ok {
-		t.Fatalf("expected unsigned GUI cache lookup to miss when only a signed cache entry exists")
+	if cached, ok := coreSvc.getGUICachedMeta("/tmp/a", "", api.ExternalIDOverrides{}); !ok {
+		t.Fatalf("expected unsigned GUI cache lookup to reuse signed non-external cached metadata")
+	} else if cached.SourcePath != "/tmp/a" {
+		t.Fatalf("expected cached metadata source path, got %q", cached.SourcePath)
 	}
 }
 

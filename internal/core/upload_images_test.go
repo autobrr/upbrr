@@ -15,12 +15,14 @@ type stubImageHosting struct {
 	candidates []api.ScreenshotImage
 	uploaded   []api.UploadedImageLink
 	err        error
+	lastMeta   api.PreparedMetadata
 }
 
 func (s *stubImageHosting) ListCandidates(ctx context.Context, meta api.PreparedMetadata) ([]api.ScreenshotImage, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
+	s.lastMeta = meta
 	return s.candidates, nil
 }
 
@@ -28,6 +30,7 @@ func (s *stubImageHosting) Upload(ctx context.Context, meta api.PreparedMetadata
 	if s.err != nil {
 		return nil, s.err
 	}
+	s.lastMeta = meta
 	return s.uploaded, nil
 }
 
@@ -91,5 +94,43 @@ func TestListUploadCandidatesWithoutCache(t *testing.T) {
 	}
 	if result[0].Path != "/tmp/img1.png" {
 		t.Fatalf("expected path /tmp/img1.png, got %s", result[0].Path)
+	}
+}
+
+func TestUploadImagesGUIFallbackReappliesReleaseOverrides(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	imageService := &stubImageHosting{uploaded: []api.UploadedImageLink{{ImagePath: "/tmp/img1.png", Host: "imgbox"}}}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg:    config.Config{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Metadata:   &stubMeta{},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeDupeCache("/tmp/source", "", api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Release: api.ReleaseInfo{
+			Title: "Example",
+		},
+	})
+
+	edition := "Director's Cut"
+	_, err := core.UploadImages(context.Background(), api.Request{
+		Paths: []string{"/tmp/source"},
+		Mode:  api.ModeGUI,
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			Edition: &edition,
+		},
+	}, "imgbox", images)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if imageService.lastMeta.ReleaseNameOverrides.Edition == nil || *imageService.lastMeta.ReleaseNameOverrides.Edition != edition {
+		t.Fatalf("expected upload images to receive edition override, got %#v", imageService.lastMeta.ReleaseNameOverrides)
 	}
 }

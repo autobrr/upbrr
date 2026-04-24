@@ -863,7 +863,7 @@ func TestExportGUICachedPreparedMetaExactSignature(t *testing.T) {
 	}
 }
 
-func TestExportGUICachedPreparedMetaRequiresExactMatchForSignedOverrides(t *testing.T) {
+func TestExportGUICachedPreparedMetaFallsBackForNonExternalSignedOverrides(t *testing.T) {
 	t.Parallel()
 
 	core, err := New(api.CoreDependencies{
@@ -897,11 +897,62 @@ func TestExportGUICachedPreparedMetaRequiresExactMatchForSignedOverrides(t *test
 	if err != nil {
 		t.Fatalf("export gui cached prepared meta: %v", err)
 	}
-	if ok {
-		t.Fatal("expected signed GUI cache lookup to miss without an exact cached entry")
+	if !ok {
+		t.Fatal("expected non-external GUI override to fall back to cached metadata")
 	}
-	if exported.SourcePath != "" {
-		t.Fatalf("expected empty prepared metadata on cache miss, got %q", exported.SourcePath)
+	if exported.SourcePath != "/tmp/a" {
+		t.Fatalf("expected cached prepared metadata on fallback, got %q", exported.SourcePath)
+	}
+}
+
+func TestCheckDupesGUIFallbackReappliesReleaseOverrides(t *testing.T) {
+	t.Parallel()
+
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Release: api.ReleaseInfo{
+			Title:  "Example",
+			Source: "WEB",
+		},
+	}); err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+
+	category := "TV"
+	edition := "Hybrid"
+	if _, err := core.CheckDupes(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			Category: &category,
+			Edition:  &edition,
+		},
+	}); err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+
+	if dupes.lastMeta.ReleaseNameOverrides.Category == nil || *dupes.lastMeta.ReleaseNameOverrides.Category != category {
+		t.Fatalf("expected dupe check to receive category override, got %#v", dupes.lastMeta.ReleaseNameOverrides)
+	}
+	if dupes.lastMeta.ReleaseNameOverrides.Edition == nil || *dupes.lastMeta.ReleaseNameOverrides.Edition != edition {
+		t.Fatalf("expected dupe check to receive edition override, got %#v", dupes.lastMeta.ReleaseNameOverrides)
 	}
 }
 
@@ -2212,9 +2263,11 @@ func (s *stubClient) SearchPathedTorrents(context.Context, api.PreparedMetadata)
 
 type stubDupes struct {
 	lastTrackers []string
+	lastMeta     api.PreparedMetadata
 }
 
-func (s *stubDupes) Check(ctx context.Context, _ api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
+func (s *stubDupes) Check(ctx context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
+	s.lastMeta = meta
 	s.lastTrackers = append([]string{}, trackers...)
 	return api.DupeCheckSummary{}, nil
 }
