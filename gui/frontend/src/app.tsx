@@ -592,6 +592,8 @@ export default function App() {
   const [webAuthError, setWebAuthError] = useState("");
   const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uiStateHydratedRef = useRef(false);
+  const uiStateInitialLiveStateCheckedRef = useRef(false);
+  const freshUIStateCanPromoteRef = useRef(false);
   const uiStateSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uiStateResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hostBrowserMode, setHostBrowserMode] = useState<"file" | "folder" | null>(null);
@@ -1445,9 +1447,18 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (uiStateMode !== "live") {
+    const shouldCheckForSavedLiveState =
+      browserMode &&
+      !uiStateInitialLiveStateCheckedRef.current &&
+      uiStateMode === "fresh" &&
+      !uiStateID;
+    const shouldBootstrapLiveState = uiStateMode === "live" || shouldCheckForSavedLiveState;
+    if (!shouldBootstrapLiveState) {
       uiStateHydratedRef.current = true;
       return;
+    }
+    if (browserMode && !uiStateInitialLiveStateCheckedRef.current) {
+      uiStateInitialLiveStateCheckedRef.current = true;
     }
 
     let canceled = false;
@@ -1463,8 +1474,13 @@ export default function App() {
           null;
         if (selected) {
           setUIStateID(selected.id);
+          localStorage.setItem("ui-state-mode", "live");
           localStorage.setItem("ui-state-id", selected.id);
           applyUIState(selected.state || {});
+          setUIStateMode("live");
+          return;
+        }
+        if (shouldCheckForSavedLiveState) {
           return;
         }
         const nextID = uiStateID || createUIStateID();
@@ -1486,17 +1502,17 @@ export default function App() {
       canceled = true;
       suspendUIStateSaves();
     };
-  }, [applyUIState, refreshLiveUIStates, uiStateID, uiStateMode]);
+  }, [applyUIState, browserMode, refreshLiveUIStates, uiStateID, uiStateMode]);
 
   useEffect(() => {
-    if (uiStateMode !== "live") {
+    if (uiStateMode !== "live" && !freshUIStateCanPromoteRef.current) {
       return;
     }
     if (!uiStateHydratedRef.current) {
       return;
     }
     const saveUIState = globalThis.go?.guiapp?.App?.SaveUIState;
-    if (!saveUIState || !uiStateID) {
+    if (!saveUIState) {
       return;
     }
     if (uiStateSaveTimerRef.current) {
@@ -1553,9 +1569,11 @@ export default function App() {
           console.error("Failed to refresh UI states before save:", err);
         }
         const currentSource = uiStateSourceKey(state);
-        const attachedRecord = records.find((record) => record.id === uiStateID) || null;
+        const attachedRecord = saveID
+          ? records.find((record) => record.id === saveID) || null
+          : null;
         const attachedSource = uiStateSourceKey(attachedRecord?.state);
-        if (currentSource && attachedSource && currentSource !== attachedSource) {
+        if (!saveID || (currentSource && attachedSource && currentSource !== attachedSource)) {
           const matchingRecord = matchingLiveUIState(records, state);
           saveID = matchingRecord?.id || createUIStateID();
           localStorage.setItem("ui-state-mode", "live");
@@ -1565,6 +1583,7 @@ export default function App() {
         }
         const label = uiStateLabel(state);
         await saveUIState(saveID, label, state);
+        freshUIStateCanPromoteRef.current = false;
         setLiveUIStates((prev) => {
           const baseRecords = records.length > 0 ? records : prev;
           return liveUIStateRecords([
@@ -1786,6 +1805,7 @@ export default function App() {
   );
 
   const resetFreshWorkflowState = useCallback(() => {
+    freshUIStateCanPromoteRef.current = false;
     if (uiStateSaveTimerRef.current) {
       clearTimeout(uiStateSaveTimerRef.current);
     }
@@ -2431,6 +2451,7 @@ export default function App() {
 
   // Auto-detect BDMV and show playlist selection
   const handlePathSelected = async (selectedPath: string, mode: "file" | "folder" = "folder") => {
+    freshUIStateCanPromoteRef.current = false;
     setPath(selectedPath);
     setShowExternalIDInputUI(true);
     setPlaylistPreparationError("");
@@ -2537,6 +2558,7 @@ export default function App() {
         getSelectedTrackers(),
       );
       applyPreviewResult(result);
+      freshUIStateCanPromoteRef.current = uiStateMode === "fresh";
       setShowExternalIDInputUI(!hideExternalIDInputUIOnSuccess);
     } catch (err) {
       setError(String(err));
