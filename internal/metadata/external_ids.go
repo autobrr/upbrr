@@ -137,8 +137,17 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, meta.MediaInfoTVDBID, "mediainfo")
 	}
 
+	if !overrideTMDB && !clearedTMDB {
+		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, meta.SceneTMDBID, "scene")
+	}
 	if !overrideIMDB && !clearedIMDB {
 		applyResolvedID(&ids.IMDBID, &ids.SourceIMDB, meta.SceneIMDB, "scene")
+	}
+	if !overrideTVDB && !clearedTVDB {
+		applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, meta.SceneTVDBID, "scene")
+	}
+	if !overrideTVmaze {
+		applyResolvedID(&ids.TVmazeID, &ids.SourceTVmaze, meta.SceneTVmazeID, "scene")
 	}
 	if !overrideTMDB && !clearedTMDB {
 		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, meta.ArrTMDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
@@ -362,7 +371,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0) {
 			return true
 		}
-		if !overrideTVmaze && ids.TVmazeID == 0 && metadata.TVmaze == nil && isTVForTVmaze() && (ids.IMDBID != 0 || ids.TVDBID != 0) {
+		if metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0))) {
 			return true
 		}
 		return false
@@ -372,7 +381,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		fetchTMDB := ids.TMDBID != 0 && metadata.TMDB == nil
 		fetchIMDB := ids.IMDBID != 0 && metadata.IMDB == nil
 		lookupTVDB := !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
-		lookupTVmaze := !overrideTVmaze && ids.TVmazeID == 0 && metadata.TVmaze == nil && isTVForTVmaze() && (ids.IMDBID != 0 || ids.TVDBID != 0)
+		lookupTVmaze := metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
 
 		if s.logger != nil {
 			s.logger.Debugf(
@@ -478,6 +487,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 					Year:              yearText,
 					ImdbID:            formatIMDbID(ids.IMDBID),
 					TVDBID:            formatOptionalInt(ids.TVDBID),
+					ManualID:          ids.TVmazeID,
 					ManualDate:        manualDate,
 					StrictIDOnly:      !allowTVmazeNameFallback,
 					AllowNameFallback: allowTVmazeNameFallback,
@@ -1364,6 +1374,9 @@ func (s *Service) applyTVEpisodeMetadata(
 	if external != nil && external.TMDB != nil {
 		meta.Anime = external.TMDB.Anime
 		meta.MALID = external.TMDB.MALID
+	}
+	if meta.MALID == 0 {
+		meta.MALID = meta.SceneMALID
 	}
 	if overrideMAL {
 		meta.MALID = metautil.FirstInt(*meta.ExternalIDOverrides.MALID, 0)

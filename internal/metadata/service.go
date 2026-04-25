@@ -501,14 +501,39 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		}
 		meta.Scene = result.IsScene
 		meta.SceneName = result.SceneName
+		meta.SceneTMDBID = result.TMDBID
 		meta.SceneIMDB = result.IMDBID
+		meta.SceneTVDBID = result.TVDBID
+		meta.SceneTVmazeID = result.TVmazeID
+		meta.SceneMALID = result.MALID
+		if meta.Service == "" {
+			meta.Service = strings.TrimSpace(result.Service)
+		}
+		if meta.ServiceLongName == "" {
+			meta.ServiceLongName = strings.TrimSpace(result.ServiceLongName)
+		}
 		meta.SceneNFOPath = result.NFOPath
 		meta.SceneNFONew = result.NFONew
 		if meta.Scene {
 			s.logger.Debugf("metadata: scene release detected")
 		}
+		if meta.SceneTMDBID > 0 {
+			s.logger.Debugf("metadata: scene tmdb detected %d", meta.SceneTMDBID)
+		}
 		if meta.SceneIMDB > 0 {
 			s.logger.Debugf("metadata: scene imdb detected %d", meta.SceneIMDB)
+		}
+		if meta.SceneTVDBID > 0 {
+			s.logger.Debugf("metadata: scene tvdb detected %d", meta.SceneTVDBID)
+		}
+		if meta.SceneTVmazeID > 0 {
+			s.logger.Debugf("metadata: scene tvmaze detected %d", meta.SceneTVmazeID)
+		}
+		if meta.SceneMALID > 0 {
+			s.logger.Debugf("metadata: scene mal detected %d", meta.SceneMALID)
+		}
+		if meta.Service != "" && strings.TrimSpace(result.Service) != "" {
+			s.logger.Debugf("metadata: scene service detected %q", meta.Service)
 		}
 		if meta.SceneNFOPath != "" {
 			if meta.SceneNFONew {

@@ -19,6 +19,7 @@ var (
 	tmdbURLIDPattern   = regexp.MustCompile(`(?i)/(movie|tv)/(\d+)`)
 	tvmazeURLIDPattern = regexp.MustCompile(`(?i)/shows/(\d+)`)
 	tvdbURLIDPattern   = regexp.MustCompile(`(?i)/(series|movies|movie)/(\d+)`)
+	malURLIDPattern    = regexp.MustCompile(`(?i)/(anime|manga)/(\d+)`)
 	unit3dIDPattern    = regexp.MustCompile(`/(\d+)`)
 )
 
@@ -29,6 +30,7 @@ type sourceLookupResolution struct {
 	IMDBID    int
 	TVDBID    int
 	TVmazeID  int
+	MALID     int
 	Mode      string
 }
 
@@ -84,6 +86,10 @@ func applySourceLookupOverride(meta *api.PreparedMetadata) {
 			tvmazeID := resolution.TVmazeID
 			meta.ExternalIDOverrides.TVmazeID = &tvmazeID
 		}
+		if resolution.MALID > 0 && meta.ExternalIDOverrides.MALID == nil {
+			malID := resolution.MALID
+			meta.ExternalIDOverrides.MALID = &malID
+		}
 		meta.SourceLookupActive = true
 		meta.SourceLookupMode = "media"
 		meta.Trackers = nil
@@ -138,6 +144,11 @@ func resolveSourceLookupURL(raw string) (sourceLookupResolution, error) {
 	}
 	if tvdbID, ok := extractTVDBIDFromQuery(host, query); ok {
 		return sourceLookupResolution{TVDBID: tvdbID, Mode: "media"}, nil
+	}
+	if malMatch := malURLIDPattern.FindStringSubmatch(path); len(malMatch) == 3 && host == "myanimelist.net" {
+		if value, convErr := strconv.Atoi(malMatch[2]); convErr == nil && value > 0 {
+			return sourceLookupResolution{MALID: value, Mode: "media"}, nil
+		}
 	}
 
 	return sourceLookupResolution{}, url.InvalidHostError("no supported id in source url")
