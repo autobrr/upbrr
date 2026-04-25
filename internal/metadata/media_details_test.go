@@ -333,6 +333,40 @@ func TestRefreshPreparedMetadataPreservesNonRequestScopedFailures(t *testing.T) 
 	}
 }
 
+func TestRefreshPreparedMetadataClearsResolvedRuleFailures(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo, WithConfig(config.Config{}))
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/example.mkv",
+		Trackers:   []string{"ANT"},
+		ExternalIDs: api.ExternalIDs{
+			Category: "MOVIE",
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"ANT": {
+				{Rule: "require_movie_only", Reason: "category tv is not movie"},
+			},
+			"BTN": {
+				{Rule: "language_rule", Reason: "missing original language coverage"},
+			},
+		},
+	}
+
+	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("refresh prepared metadata: %v", err)
+	}
+	if failures := refreshed.TrackerRuleFailures["ANT"]; len(failures) != 0 {
+		t.Fatalf("expected resolved ANT rule failure to be cleared, got %#v", failures)
+	}
+	if failures := refreshed.TrackerRuleFailures["BTN"]; len(failures) != 1 || failures[0].Rule != "language_rule" {
+		t.Fatalf("expected unevaluated BTN rule failure to remain, got %#v", refreshed.TrackerRuleFailures)
+	}
+	if len(repo.trackerRuleFailures) != 0 {
+		t.Fatalf("expected cleared ANT rule failures to be persisted, got %#v", repo.trackerRuleFailures)
+	}
+}
+
 func TestRefreshPreparedMetadataKeepsRepoForRulePersistence(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(repo, WithConfig(config.Config{}))

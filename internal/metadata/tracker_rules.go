@@ -42,32 +42,23 @@ func (s *Service) applyTrackerRules(ctx context.Context, meta api.PreparedMetada
 			}
 			continue
 		}
-		combined := mergeRuleFailures(ruleFailures[name], failures)
 		if len(failures) > 0 {
-			ruleFailures[name] = combined
+			ruleFailures[name] = append([]api.RuleFailure{}, failures...)
 			if s.logger != nil {
 				for _, failure := range failures {
 					s.logger.Warnf("metadata: tracker rule failed tracker=%s rule=%s reason=%s", name, failure.Rule, failure.Reason)
 				}
 			}
 		} else {
-			if len(combined) > 0 {
-				ruleFailures[name] = combined
-			} else {
-				delete(ruleFailures, name)
-			}
+			delete(ruleFailures, name)
 		}
 
-		if len(failures) == 0 && len(combined) > 0 && s.logger != nil {
-			s.logger.Debugf("metadata: tracker retained metadata rule failures for %s", tracker)
-		}
-
-		if len(failures) == 0 && len(combined) == 0 && s.logger != nil {
+		if len(failures) == 0 && s.logger != nil {
 			s.logger.Debugf("metadata: tracker rules ok for %s", tracker)
 		}
 
 		if s.repo != nil {
-			if err := s.persistRuleFailures(ctx, meta.SourcePath, tracker, combined); err != nil {
+			if err := s.persistRuleFailures(ctx, meta.SourcePath, tracker, failures); err != nil {
 				return api.PreparedMetadata{}, err
 			}
 		}
@@ -90,29 +81,6 @@ func cloneTrackerRuleFailures(input map[string][]api.RuleFailure) map[string][]a
 		cloned[tracker] = append([]api.RuleFailure{}, failures...)
 	}
 	return cloned
-}
-
-func mergeRuleFailures(existing []api.RuleFailure, current []api.RuleFailure) []api.RuleFailure {
-	merged := append([]api.RuleFailure{}, existing...)
-	for _, failure := range current {
-		duplicate := false
-		for _, prior := range merged {
-			if ruleFailureEquals(prior, failure) {
-				duplicate = true
-				break
-			}
-		}
-		if duplicate {
-			continue
-		}
-		merged = append(merged, failure)
-	}
-	return merged
-}
-
-func ruleFailureEquals(a api.RuleFailure, b api.RuleFailure) bool {
-	return strings.EqualFold(strings.TrimSpace(a.Rule), strings.TrimSpace(b.Rule)) &&
-		strings.EqualFold(strings.TrimSpace(a.Reason), strings.TrimSpace(b.Reason))
 }
 
 func (s *Service) persistRuleFailures(ctx context.Context, sourcePath string, tracker string, failures []api.RuleFailure) error {
