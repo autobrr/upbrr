@@ -149,12 +149,26 @@ func (a *App) BrowseFile() (string, error) {
 	}
 
 	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select a file",
+		Title:   "Select a file",
+		Filters: []runtime.FileFilter{videoFileDialogFilter()},
 	})
 	if err != nil {
 		return "", err
 	}
 	return selection, nil
+}
+
+func videoFileDialogFilter() runtime.FileFilter {
+	extensions := filesystem.SupportedVideoExtensions()
+	patterns := make([]string, 0, len(extensions))
+	for _, ext := range extensions {
+		patterns = append(patterns, "*"+ext)
+	}
+	pattern := strings.Join(patterns, ";")
+	return runtime.FileFilter{
+		DisplayName: "Video files (" + pattern + ")",
+		Pattern:     pattern,
+	}
 }
 
 func (a *App) BrowseFolder() (string, error) {

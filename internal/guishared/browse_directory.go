@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -103,6 +104,9 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 		if err != nil {
 			continue
 		}
+		if !showBrowseEntry(mode, entry.Name(), entryInfo.IsDir()) {
+			continue
+		}
 		itemPath := filepath.Join(current, entry.Name())
 		if root != "" {
 			itemRealPath, err := filepath.EvalSymlinks(itemPath)
@@ -131,6 +135,16 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 		Mode:        mode,
 		Entries:     items,
 	}, nil
+}
+
+func showBrowseEntry(mode string, name string, isDir bool) bool {
+	if isDir {
+		return true
+	}
+	if mode == "folder" {
+		return false
+	}
+	return filesystem.IsVideoFile(name)
 }
 
 func normalizedBrowseRoots(rootPaths []string) ([]string, error) {

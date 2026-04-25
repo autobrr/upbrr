@@ -368,6 +368,9 @@ func TestBrowseDirectoryRouteAllowsRemoteSessionsAndSortsEntries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a-file.txt"), []byte("hello"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "c-video.mkv"), []byte("video"), 0o600); err != nil {
+		t.Fatalf("write video: %v", err)
+	}
 	server := testServerWithBackend(t, repo, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 	})
@@ -392,8 +395,13 @@ func TestBrowseDirectoryRouteAllowsRemoteSessionsAndSortsEntries(t *testing.T) {
 	if payload.Entries[0].Name != "b-folder" || !payload.Entries[0].IsDir {
 		t.Fatalf("expected folder first, got %#v", payload.Entries)
 	}
-	if payload.Entries[1].Name != "a-file.txt" || payload.Entries[1].IsDir {
+	if payload.Entries[1].Name != "c-video.mkv" || payload.Entries[1].IsDir {
 		t.Fatalf("expected file second, got %#v", payload.Entries)
+	}
+	for _, entry := range payload.Entries {
+		if entry.Name == "a-file.txt" {
+			t.Fatalf("expected non-video file to be hidden, got %#v", payload.Entries)
+		}
 	}
 }
 
