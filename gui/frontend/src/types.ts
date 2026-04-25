@@ -266,6 +266,8 @@ export type WebAuthStatus = {
   canCreate: boolean;
   username: string;
   allowUnencryptedExport: boolean;
+  browseRoot: string;
+  allowUnrestrictedBrowse: boolean;
   encryptionEnabled: boolean;
   message: string;
 };
@@ -766,6 +768,13 @@ export type ReleaseNameTouchedState = {
   region: boolean;
 };
 
+export type ReleaseNameIDEditState = {
+  tmdb: string;
+  imdb: string;
+  tvdb: string;
+  tvmaze: string;
+};
+
 export type DetailItem = {
   label: string;
   value: string;
@@ -797,4 +806,78 @@ export type PlaylistSelection = {
   SelectedPlaylists: string[];
   UseAll: boolean;
   UpdatedAt: string;
+};
+
+export type BrowseDirectoryEntry = {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  modifiedAt: string;
+};
+
+export type BrowseDirectoryResponse = {
+  currentPath: string;
+  parentPath: string;
+  mode: "file" | "folder";
+  entries: BrowseDirectoryEntry[];
+};
+
+export type BrowseDirectoryRequest = {
+  path: string;
+  mode: "file" | "folder";
+};
+
+export type UIState = {
+  path?: string;
+  sourceLookupURL?: string;
+  activeTab?: string;
+  preview?: MetadataPreview;
+  idEdits?: ReleaseNameIDEditState;
+  releaseEdits?: ReleaseNameEditState;
+  releaseTouched?: ReleaseNameTouchedState;
+  showExternalIDInputUI?: boolean;
+  selectedProvider?: string;
+  releasePageTrackerSelection?: Record<string, boolean>;
+  uploadToggles?: Record<string, boolean>;
+  overrideRuleBlocks?: boolean;
+  runDebug?: boolean;
+  runLogLevel?: string;
+  runLogLevelTouched?: boolean;
+  dupeSummary?: DupeCheckSummary;
+  dupeChecked?: boolean;
+  dupeIgnore?: Record<string, boolean>;
+  dupeTrackerFlags?: Record<string, boolean>;
+  dupeCheckJobID?: string;
+  dupeCheckSnapshot?: DupeCheckSnapshot | null;
+  prepPreview?: PreparationPreview;
+  screenshotPlan?: ScreenshotPlan | null;
+  screenshotSelections?: ScreenshotSelection[];
+  screenshotsEnabled?: boolean;
+  showFrameSelections?: boolean;
+  previewImages?: ScreenshotPreviewImage[];
+  existingImages?: ScreenshotPreviewImage[];
+  existingTrackerImages?: ScreenshotPreviewImage[];
+  finalImages?: ScreenshotPreviewImage[];
+  finalResult?: ScreenshotResult | null;
+  deletedTrackerImages?: string[];
+  uploadHost?: string;
+  uploadSelections?: Record<string, boolean>;
+  uploadedImages?: UploadedImageLink[];
+  uploadedImageRecords?: UploadedImageLink[];
+  trackerUploadJobID?: string;
+  trackerUploadSnapshot?: TrackerUploadSnapshot | null;
+  trackerDryRunPreview?: TrackerDryRunPreview;
+  trackerQuestionnaireAnswers?: Record<string, Record<string, string>>;
+};
+
+export type UIStateRecord = {
+  id: string;
+  label: string;
+  updatedAt: string;
+  state: UIState;
+};
+
+export type UIStateList = {
+  states: UIStateRecord[];
 };

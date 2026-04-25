@@ -91,6 +91,11 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		_ = logger.Close()
 		return nil, err
 	}
+	if err := repo.ClearUIState(ctx); err != nil {
+		_ = repo.Close()
+		_ = logger.Close()
+		return nil, err
+	}
 
 	var coreSvc api.Core
 	var coreInitErr error
@@ -485,6 +490,67 @@ func (b *Backend) LoadPlaylistSelection(path string) (api.PlaylistSelection, err
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	return b.core.LoadPlaylistSelection(ctx, path)
+}
+
+func (b *Backend) ListUIStates() (api.UIStateList, error) {
+	if b == nil || b.repo == nil {
+		return api.UIStateList{}, errors.New("config repository not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	states, err := b.repo.ListUIStates(ctx)
+	if err != nil {
+		return api.UIStateList{}, err
+	}
+	return api.UIStateList{States: states}, nil
+}
+
+func (b *Backend) GetUIState(id string) (api.UIStateRecord, error) {
+	if b == nil || b.repo == nil {
+		return api.UIStateRecord{}, errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(id) == "" {
+		return api.UIStateRecord{}, errors.New("id is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return b.repo.LoadUIState(ctx, id)
+}
+
+func (b *Backend) SaveUIState(id string, label string, state api.UIState) error {
+	if b == nil || b.repo == nil {
+		return errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(id) == "" {
+		return errors.New("id is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return b.repo.SaveUIState(ctx, id, label, state)
+}
+
+func (b *Backend) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResponse, error) {
+	if b == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(b.cfg.MainSettings.DBPath)
+	return guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback)
+}
+
+func (b *Backend) BrowseDirectoryWithinRoot(path string, mode string, root string) (api.BrowseDirectoryResponse, error) {
+	if b == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(b.cfg.MainSettings.DBPath)
+	return guishared.BrowseDirectoryWithinRoot(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, root)
+}
+
+func (b *Backend) BrowseDirectoryWithinRoots(path string, mode string, roots []string) (api.BrowseDirectoryResponse, error) {
+	if b == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(b.cfg.MainSettings.DBPath)
+	return guishared.BrowseDirectoryWithinRoots(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, roots)
 }
 
 func (b *Backend) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.ScreenshotPlan, error) {

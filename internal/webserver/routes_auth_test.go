@@ -319,6 +319,66 @@ func TestAuthStatusRejectsNonRetainedSessionAfterRestart(t *testing.T) {
 	}
 }
 
+func TestAuthStatusMasksBrowseRootUntilAuthenticated(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+
+	body := `{"username":"admin","password":"very-secure-password","retainLogin":false}`
+	bootstrapReq := httptest.NewRequest(http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	bootstrapReq.Header.Set("Content-Type", "application/json")
+	bootstrapReq.Host = "127.0.0.1:7480"
+	bootstrapReq.RemoteAddr = "127.0.0.1:5000"
+
+	bootstrapRecorder := httptest.NewRecorder()
+	server.handleBootstrap(bootstrapRecorder, bootstrapReq, session{})
+	if bootstrapRecorder.Code != http.StatusOK {
+		t.Fatalf("handleBootstrap returned %d: %s", bootstrapRecorder.Code, bootstrapRecorder.Body.String())
+	}
+	cookie := bootstrapRecorder.Result().Cookies()[0]
+
+	record, err := server.auth.Load()
+	if err != nil {
+		t.Fatalf("load auth record: %v", err)
+	}
+	record.BrowseRoot = filepath.Join(t.TempDir(), "media")
+	if err := server.auth.UpdateRecord(record); err != nil {
+		t.Fatalf("update auth record: %v", err)
+	}
+
+	unauthReq := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	unauthRecorder := httptest.NewRecorder()
+	server.handleAuthStatus(unauthRecorder, unauthReq, session{})
+	if unauthRecorder.Code != http.StatusOK {
+		t.Fatalf("handleAuthStatus returned %d: %s", unauthRecorder.Code, unauthRecorder.Body.String())
+	}
+	var unauthPayload struct {
+		BrowseRoot string `json:"browseRoot"`
+	}
+	if err := json.Unmarshal(unauthRecorder.Body.Bytes(), &unauthPayload); err != nil {
+		t.Fatalf("unmarshal unauth auth status: %v", err)
+	}
+	if unauthPayload.BrowseRoot != "" {
+		t.Fatalf("expected unauthenticated auth status to mask browse root, got %q", unauthPayload.BrowseRoot)
+	}
+
+	authReq := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	authReq.AddCookie(cookie)
+	authRecorder := httptest.NewRecorder()
+	server.handleAuthStatus(authRecorder, authReq, session{})
+	if authRecorder.Code != http.StatusOK {
+		t.Fatalf("handleAuthStatus returned %d: %s", authRecorder.Code, authRecorder.Body.String())
+	}
+	var authPayload struct {
+		BrowseRoot string `json:"browseRoot"`
+	}
+	if err := json.Unmarshal(authRecorder.Body.Bytes(), &authPayload); err != nil {
+		t.Fatalf("unmarshal auth status: %v", err)
+	}
+	if authPayload.BrowseRoot != record.BrowseRoot {
+		t.Fatalf("expected authenticated auth status to include browse root %q, got %q", record.BrowseRoot, authPayload.BrowseRoot)
+	}
+}
+
 func TestLogoutRemovesRetainedSessionFromDisk(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
 	server := newAuthTestServer(t, dbPath)

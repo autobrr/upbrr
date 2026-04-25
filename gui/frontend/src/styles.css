@@ -145,8 +145,23 @@ body {
   box-shadow: 0 0 18px rgba(53, 194, 193, 0.2);
 }
 
+.settings-button--state,
 .settings-button--theme {
   margin-top: 9px;
+}
+
+.settings-button--state {
+  max-width: 7.5rem;
+}
+
+.settings-button--state span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-button--state + .settings-button--theme {
+  margin-top: 0;
 }
 
 :root.light .settings-button {
@@ -1254,6 +1269,97 @@ h2 {
 
 :root.light .lightbox-toggle {
   border-color: rgba(0, 0, 0, 0.15);
+}
+
+.host-browser-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(5, 8, 14, 0.72);
+}
+
+.host-browser-dialog {
+  width: min(900px, 100%);
+  max-height: min(760px, 88vh);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: var(--shadow);
+}
+
+:root.light .host-browser-dialog {
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.host-browser-header,
+.host-browser-toolbar,
+.host-browser-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.host-browser-header {
+  justify-content: space-between;
+}
+
+.host-browser-toolbar {
+  flex-wrap: wrap;
+}
+
+.host-browser-path {
+  margin: 4px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.host-browser-list {
+  min-height: 240px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+.host-browser-entry {
+  width: 100%;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+:root.light .host-browser-entry {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.host-browser-entry__name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.host-browser-entry__meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.host-browser-entry__actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .mono {

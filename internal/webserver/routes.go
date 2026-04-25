@@ -11,10 +11,14 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
 
@@ -23,6 +27,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/bootstrap", func(w http.ResponseWriter, r *http.Request) { s.handleBootstrap(w, r, session{}) })
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) { s.handleLogin(w, r, session{}) })
 	mux.HandleFunc("/api/auth/logout", s.requireSession(s.handleLogout))
+	mux.HandleFunc("/api/auth/browse-policy", s.requireSession(s.handleBrowsePolicy))
 	mux.HandleFunc("/api/events", s.requireSession(s.handleEvents))
 
 	s.registerAppRoutes(mux)
@@ -54,11 +59,27 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 	current, ok := s.currentSession(r)
 	browseAvailable := s.nativeBrowseAvailable(r)
 	payload := map[string]any{
-		"authenticated":       ok,
-		"needsSetup":          !exists,
-		"username":            "",
-		"csrfToken":           "",
-		"nativeBrowseEnabled": browseAvailable,
+		"authenticated":           ok,
+		"needsSetup":              !exists,
+		"username":                "",
+		"csrfToken":               "",
+		"nativeBrowseEnabled":     browseAvailable,
+		"browseRoot":              "",
+		"allowUnrestrictedBrowse": false,
+		"needsBrowsePolicy":       false,
+	}
+	if exists {
+		record, err := s.auth.Load()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if ok {
+			browseRoots := recordBrowseRoots(record)
+			payload["browseRoot"] = joinBrowsePolicyRoots(browseRoots)
+			payload["allowUnrestrictedBrowse"] = record.AllowUnrestrictedBrowse
+			payload["needsBrowsePolicy"] = !record.AllowUnrestrictedBrowse && len(browseRoots) == 0
+		}
 	}
 	if ok {
 		payload["username"] = current.Username
@@ -96,11 +117,14 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 	}
 	s.writeSessionCookie(w, r, current)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated":       true,
-		"needsSetup":          false,
-		"username":            current.Username,
-		"csrfToken":           current.CSRFToken,
-		"nativeBrowseEnabled": s.nativeBrowseAvailable(r),
+		"authenticated":           true,
+		"needsSetup":              false,
+		"username":                current.Username,
+		"csrfToken":               current.CSRFToken,
+		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+		"browseRoot":              "",
+		"allowUnrestrictedBrowse": false,
+		"needsBrowsePolicy":       true,
 	})
 }
 
@@ -209,12 +233,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		return
 	}
 	s.writeSessionCookie(w, r, current)
+	browseRoots := recordBrowseRoots(record)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated":       true,
-		"needsSetup":          false,
-		"username":            current.Username,
-		"csrfToken":           current.CSRFToken,
-		"nativeBrowseEnabled": s.nativeBrowseAvailable(r),
+		"authenticated":           true,
+		"needsSetup":              false,
+		"username":                current.Username,
+		"csrfToken":               current.CSRFToken,
+		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+		"browseRoot":              joinBrowsePolicyRoots(browseRoots),
+		"allowUnrestrictedBrowse": record.AllowUnrestrictedBrowse,
+		"needsBrowsePolicy":       !record.AllowUnrestrictedBrowse && len(browseRoots) == 0,
 	})
 }
 
@@ -238,6 +266,135 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		HttpOnly: true,
 	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleBrowsePolicy(w http.ResponseWriter, r *http.Request, current session) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req struct {
+		BrowseRoot              string `json:"browseRoot"`
+		AllowUnrestrictedBrowse bool   `json:"allowUnrestrictedBrowse"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	roots, err := normalizeBrowsePolicyRoots(splitBrowsePolicyRoots(req.BrowseRoot))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !req.AllowUnrestrictedBrowse && len(roots) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one browse root is required unless unrestricted browsing is explicitly allowed"})
+		return
+	}
+
+	record, err := s.auth.Load()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if strings.TrimSpace(record.Username) != strings.TrimSpace(current.Username) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "session user does not match auth record"})
+		return
+	}
+	record.BrowseRoot = joinBrowsePolicyRoots(roots)
+	record.AllowUnrestrictedBrowse = req.AllowUnrestrictedBrowse
+	if err := s.auth.UpdateRecord(record); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated":           true,
+		"needsSetup":              false,
+		"username":                current.Username,
+		"csrfToken":               current.CSRFToken,
+		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+		"browseRoot":              joinBrowsePolicyRoots(roots),
+		"allowUnrestrictedBrowse": req.AllowUnrestrictedBrowse,
+		"needsBrowsePolicy":       false,
+	})
+}
+
+func splitBrowsePolicyRoots(value string) []string {
+	parts := strings.Split(value, ",")
+	roots := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			roots = append(roots, trimmed)
+		}
+	}
+	return roots
+}
+
+func normalizeBrowsePolicyRoots(values []string) ([]string, error) {
+	roots := make([]string, 0, len(values))
+	for _, value := range values {
+		root, err := normalizeBrowsePolicyRoot(value)
+		if err != nil {
+			return nil, err
+		}
+		if root == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range roots {
+			if sameFilesystemPath(existing, root) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			roots = append(roots, root)
+		}
+	}
+	return roots, nil
+}
+
+func normalizeBrowsePolicyRoot(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil
+	}
+	root, err := filepath.Abs(filepath.Clean(trimmed))
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("browse root %q is not a directory", root)
+	}
+	return root, nil
+}
+
+func recordBrowseRoots(record authmaterial.Record) []string {
+	roots := splitBrowsePolicyRoots(record.BrowseRoot)
+	normalized, err := normalizeBrowsePolicyRoots(roots)
+	if err != nil {
+		return roots
+	}
+	return normalized
+}
+
+func joinBrowsePolicyRoots(roots []string) string {
+	return strings.Join(roots, ", ")
+}
+
+func sameFilesystemPath(left string, right string) bool {
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current session) {
