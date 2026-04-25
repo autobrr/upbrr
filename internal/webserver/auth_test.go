@@ -162,7 +162,7 @@ func TestAuthStoreUpdatePasswordHashReappliesSecurePermissions(t *testing.T) {
 	}
 }
 
-func TestAuthStoreUpdateRecordPersistsAllowUnencryptedExport(t *testing.T) {
+func TestAuthStoreUpdateRecordPersistsOptionalPolicyFields(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
 	store, err := newAuthStore(dbPath)
 	if err != nil {
@@ -178,6 +178,8 @@ func TestAuthStoreUpdateRecordPersistsAllowUnencryptedExport(t *testing.T) {
 	}
 
 	record.AllowUnencryptedExport = true
+	record.BrowseRoot = filepath.Join(t.TempDir(), "media")
+	record.AllowUnrestrictedBrowse = true
 	if err := store.UpdateRecord(record); err != nil {
 		t.Fatalf("UpdateRecord: %v", err)
 	}
@@ -188,6 +190,12 @@ func TestAuthStoreUpdateRecordPersistsAllowUnencryptedExport(t *testing.T) {
 	}
 	if !updated.AllowUnencryptedExport {
 		t.Fatal("expected AllowUnencryptedExport to be persisted")
+	}
+	if updated.BrowseRoot != record.BrowseRoot {
+		t.Fatalf("expected BrowseRoot %q, got %q", record.BrowseRoot, updated.BrowseRoot)
+	}
+	if !updated.AllowUnrestrictedBrowse {
+		t.Fatal("expected AllowUnrestrictedBrowse to be persisted")
 	}
 }
 

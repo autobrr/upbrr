@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,41 +32,57 @@ type Material struct {
 }
 
 func LoadFromDBPath(dbPath string) (Material, error) {
-	dbPath = strings.TrimSpace(dbPath)
-	if dbPath == "" {
-		return Material{}, ErrUnavailable
-	}
-
-	authPath := filepath.Join(filepath.Dir(dbPath), WebAuthFileName)
-	info, err := os.Stat(authPath)
+	record, err := LoadRecordFromDBPath(dbPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return Material{}, ErrUnavailable
-		}
-		return Material{}, fmt.Errorf("failed to stat web auth file %q: %w", authPath, err)
-	}
-	if err := validateWebAuthPermissions(authPath, info); err != nil {
 		return Material{}, err
 	}
-
-	raw, err := os.ReadFile(authPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return Material{}, ErrUnavailable
-		}
-		return Material{}, fmt.Errorf("failed to read web auth file: %w", err)
-	}
-
-	var material Material
-	if err := json.Unmarshal(raw, &material); err != nil {
-		return Material{}, fmt.Errorf("failed to parse web auth file: %w", err)
-	}
-
+	material := record.AuthMaterial()
 	if !material.IsUsable() {
 		return Material{}, ErrUnavailable
 	}
 
 	return material, nil
+}
+
+func LoadRecordFromDBPath(dbPath string) (Record, error) {
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" {
+		return Record{}, ErrUnavailable
+	}
+
+	authPath := filepath.Join(filepath.Dir(dbPath), WebAuthFileName)
+	file, err := os.Open(authPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Record{}, ErrUnavailable
+		}
+		return Record{}, fmt.Errorf("failed to open web auth file %q: %w", authPath, err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return Record{}, fmt.Errorf("failed to stat web auth file %q: %w", authPath, err)
+	}
+	if err := validateWebAuthPermissions(authPath, info); err != nil {
+		return Record{}, err
+	}
+
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return Record{}, fmt.Errorf("failed to read web auth file: %w", err)
+	}
+
+	var record Record
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return Record{}, fmt.Errorf("failed to parse web auth file: %w", err)
+	}
+
+	if !record.AuthMaterial().IsUsable() {
+		return Record{}, ErrUnavailable
+	}
+
+	return record, nil
 }
 
 func validateWebAuthPermissions(authPath string, info os.FileInfo) error {

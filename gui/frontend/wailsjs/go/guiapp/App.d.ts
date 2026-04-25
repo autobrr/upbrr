@@ -4,6 +4,8 @@ import {api} from '../models';
 import {guiapp} from '../models';
 import {logging} from '../models';
 
+export function BrowseDirectory(arg1:string,arg2:string):Promise<api.BrowseDirectoryResponse>;
+
 export function BrowseFile():Promise<string>;
 
 export function BrowseFolder():Promise<string>;
@@ -60,6 +62,8 @@ export function GetRecentLogs(arg1:number):Promise<Array<logging.Entry>>;
 
 export function GetTrackerUploadSnapshot(arg1:string):Promise<guiapp.TrackerUploadSnapshot>;
 
+export function GetUIState(arg1:string):Promise<api.UIStateRecord>;
+
 export function GetWebAuthStatus():Promise<guiapp.WebAuthStatus>;
 
 export function ImportConfig():Promise<guiapp.ImportResult>;
@@ -67,6 +71,8 @@ export function ImportConfig():Promise<guiapp.ImportResult>;
 export function ListHistory():Promise<Array<api.HistoryEntry>>;
 
 export function ListKnownTrackers():Promise<Array<string>>;
+
+export function ListUIStates():Promise<api.UIStateList>;
 
 export function ListUploadCandidates(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides):Promise<Array<api.ScreenshotImage>>;
 
@@ -93,6 +99,8 @@ export function SaveDescriptionOverride(arg1:string,arg2:string,arg3:string,arg4
 export function SaveFinalScreenshotSelections(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<api.ScreenshotImage>):Promise<void>;
 
 export function SavePlaylistSelection(arg1:string,arg2:Array<string>,arg3:boolean):Promise<void>;
+
+export function SaveUIState(arg1:string,arg2:string,arg3:api.UIState):Promise<void>;
 
 export function StartDupeCheck(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>):Promise<string>;
 
