@@ -8,7 +8,7 @@ import "testing"
 func TestRedactValueURLPatterns(t *testing.T) {
 	t.Parallel()
 
-	input := "https://tracker.example/0123456789abcdef/announce?passkey=secret&token=abc&info_hash=deadbeef"
+	input := "https://tracker.example/0123456789abcdef/announce?passkey=secret&token=abc&info_hash=deadbeef&authkey=private&uid=123"
 	output := RedactValue(input, nil)
 
 	if output == input {
@@ -17,8 +17,33 @@ func TestRedactValueURLPatterns(t *testing.T) {
 	if contains(output, "0123456789abcdef") {
 		t.Fatalf("expected passkey redacted, got %q", output)
 	}
-	if contains(output, "secret") || contains(output, "token=abc") {
+	if contains(output, "secret") || contains(output, "token=abc") || contains(output, "authkey=private") || contains(output, "uid=123") {
 		t.Fatalf("expected query params redacted, got %q", output)
+	}
+}
+
+func TestRedactValueAnnouncePathToken(t *testing.T) {
+	t.Parallel()
+
+	input := "https://tracker.example/announce/0123456789abcdef"
+	output := RedactValue(input, nil)
+
+	if contains(output, "0123456789abcdef") {
+		t.Fatalf("expected announce path token redacted, got %q", output)
+	}
+}
+
+func TestRedactValueTrackerLookupRequestErrors(t *testing.T) {
+	t.Parallel()
+
+	input := "trackerdata: bhd request: Post \"https://beyond-hd.me/api/torrents/bhdSecretKey123\": dial tcp timeout; unit3d: request: Get \"https://aither.cc/api/torrents/filter?api_token=aitherSecretKey123&file_name=Release.Name\": context deadline exceeded"
+	output := RedactValue(input, nil)
+
+	if contains(output, "bhdSecretKey123") || contains(output, "aitherSecretKey123") {
+		t.Fatalf("expected request error secrets redacted, got %q", output)
+	}
+	if !contains(output, "/api/torrents/[REDACTED]") || !contains(output, "api_token=[REDACTED]") {
+		t.Fatalf("expected redacted request error shape preserved, got %q", output)
 	}
 }
 

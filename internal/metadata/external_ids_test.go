@@ -534,6 +534,91 @@ func TestResolveExternalIDsSearchAndMetadata(t *testing.T) {
 	}
 }
 
+func TestResolveExternalIDsUsesSceneTVmazeToResolveIMDb(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "From", Year: 2022}}
+	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt9813792", Title: "From", Year: 2022}}
+	tvdbClient := &stubTVDB{id: 401003, name: "FROM"}
+	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{SelectedID: 54723, IMDBID: 9813792, TVDBID: 401003}}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:        "/media/From.S04E01.2160p.WEB.h265-ETHEL.mkv",
+		SceneTVmazeID:     54723,
+		Release:           api.ReleaseInfo{Category: "TV", Title: "From"},
+		MediaInfoCategory: "TV",
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if result.ExternalIDs.TVmazeID != 54723 || result.ExternalIDs.SourceTVmaze != "scene" {
+		t.Fatalf("expected scene tvmaze id, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalIDs.IMDBID != 9813792 || result.ExternalIDs.SourceIMDB != "tvmaze" {
+		t.Fatalf("expected imdb from tvmaze, got %#v", result.ExternalIDs)
+	}
+	if tvmazeClient.calls == 0 || len(tvmazeClient.inputs) == 0 || tvmazeClient.inputs[0].ManualID != 54723 {
+		t.Fatalf("expected tvmaze manual lookup, got calls=%d inputs=%#v", tvmazeClient.calls, tvmazeClient.inputs)
+	}
+	if repo.ids.IMDBID != 9813792 || repo.ids.TVmazeID != 54723 {
+		t.Fatalf("expected persisted ids from tvmaze, got %#v", repo.ids)
+	}
+}
+
+func TestResolveExternalIDsUsesSceneNFOIDs(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Example", Year: 2024, TMDBType: "TV", MALID: 999}}
+	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt0123456", Title: "Example", Year: 2024}}
+	tvdbClient := &stubTVDB{}
+	tvmazeClient := &stubTVmaze{}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:    "/media/example.mkv",
+		SceneTMDBID:   42,
+		SceneIMDB:     123456,
+		SceneTVDBID:   333,
+		SceneTVmazeID: 444,
+		SceneMALID:    555,
+		Release:       api.ReleaseInfo{Category: "TV", Title: "Example"},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if result.ExternalIDs.TMDBID != 42 || result.ExternalIDs.SourceTMDB != "scene" {
+		t.Fatalf("expected scene tmdb id, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalIDs.IMDBID != 123456 || result.ExternalIDs.SourceIMDB != "scene" {
+		t.Fatalf("expected scene imdb id, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalIDs.TVDBID != 333 || result.ExternalIDs.SourceTVDB != "scene" {
+		t.Fatalf("expected scene tvdb id, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalIDs.TVmazeID != 444 || result.ExternalIDs.SourceTVmaze != "scene" {
+		t.Fatalf("expected scene tvmaze id, got %#v", result.ExternalIDs)
+	}
+	if result.MALID != 999 {
+		t.Fatalf("expected tmdb mal to take precedence after metadata fetch, got %d", result.MALID)
+	}
+	if repo.ids.TMDBID != 42 || repo.ids.IMDBID != 123456 || repo.ids.TVDBID != 333 || repo.ids.TVmazeID != 444 {
+		t.Fatalf("expected persisted scene ids, got %#v", repo.ids)
+	}
+}
+
 func TestResolveExternalIDsUsesStoredFreshData(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{}

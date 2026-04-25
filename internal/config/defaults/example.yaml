@@ -29,6 +29,7 @@ image_hosting:
 metadata:
   btn_api: ""
   skip_auto_torrent: false
+  skip_tracker_filename_lookup: false
   use_largest_playlist: false
   keep_images: true
   only_id: false

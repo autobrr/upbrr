@@ -39,10 +39,16 @@ func (c *Client) lookupHDB(
 		payload["id"] = id
 	} else {
 		payload["limit"] = 100
+		hasSearchFilter := false
 		if shouldUseFolderSearch(meta) {
 			payload["search"] = pathutil.Base(meta.SourcePath)
+			hasSearchFilter = true
 		} else if strings.TrimSpace(searchFileName) != "" {
 			payload["file_in_torrent"] = searchFileName
+			hasSearchFilter = true
+		}
+		if !hasSearchFilter {
+			return Result{}, nil
 		}
 	}
 

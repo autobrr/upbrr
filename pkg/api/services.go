@@ -96,7 +96,11 @@ type PreparedMetadata struct {
 	MediaInfoUniqueID           string
 	Scene                       bool
 	SceneName                   string
+	SceneTMDBID                 int
 	SceneIMDB                   int
+	SceneTVDBID                 int
+	SceneTVmazeID               int
+	SceneMALID                  int
 	SceneNFOPath                string
 	SceneNFONew                 bool
 	Mode                        Mode

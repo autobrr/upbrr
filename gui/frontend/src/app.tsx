@@ -523,6 +523,7 @@ export default function App() {
   const [builderRenderLoading, setBuilderRenderLoading] = useState(false);
   const [builderSaved, setBuilderSaved] = useState("");
   const [builderSaving, setBuilderSaving] = useState(false);
+  const [builderRefreshing, setBuilderRefreshing] = useState(false);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
   const [overrideRuleBlocks, setOverrideRuleBlocks] = useState(false);
@@ -1539,6 +1540,7 @@ export default function App() {
     setBuilderError("");
     setBuilderDirtyByGroup({});
     setBuilderSaved("");
+    setBuilderRefreshing(false);
     setBuilderAutoRequestKey("");
     resetScreenshotState();
   };
@@ -1824,6 +1826,27 @@ export default function App() {
     },
     [path, releasePageTrackerSelection, ignoredDupeTrackers],
   );
+
+  const refreshDescriptionBuilder = useCallback(async () => {
+    if (builderDirty) {
+      const shouldRefresh = window.confirm(
+        "Refreshing descriptions will discard unsaved description edits. Continue?",
+      );
+      if (!shouldRefresh) {
+        return;
+      }
+    }
+
+    setBuilderRefreshing(true);
+    try {
+      await runDescriptionBuilder(
+        idOverrideState?.overrides || {},
+        releaseOverrideState?.overrides || {},
+      );
+    } finally {
+      setBuilderRefreshing(false);
+    }
+  }, [builderDirty, idOverrideState, releaseOverrideState, runDescriptionBuilder]);
 
   const resetBuilderDescription = async (
     groupKey: string,
@@ -2386,6 +2409,7 @@ export default function App() {
     setBuilderError("");
     setBuilderDirtyByGroup({});
     setBuilderSaved("");
+    setBuilderRefreshing(false);
     setBuilderAutoRequestKey("");
     setOverrideRuleBlocks(false);
     setTrackerUploadRunning(false);
@@ -3379,8 +3403,10 @@ export default function App() {
               builderLoading={builderLoading}
               builderSaving={builderSaving}
               builderRenderLoading={builderRenderLoading}
+              builderRefreshing={builderRefreshing}
               builderError={builderError}
               builderSaved={builderSaved}
+              refreshDescriptionBuilder={refreshDescriptionBuilder}
               setBuilderRawByGroup={setBuilderRawByGroup}
               setBuilderDirtyByGroup={setBuilderDirtyByGroup}
               setBuilderExpandedGroups={setBuilderExpandedGroups}

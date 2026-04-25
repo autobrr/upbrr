@@ -15,8 +15,10 @@ type Props = {
   builderLoading: boolean;
   builderSaving: boolean;
   builderRenderLoading: boolean;
+  builderRefreshing: boolean;
   builderError: string;
   builderSaved: string;
+  refreshDescriptionBuilder: () => void;
   setBuilderRawByGroup: Dispatch<SetStateAction<Record<string, string>>>;
   setBuilderDirtyByGroup: Dispatch<SetStateAction<Record<string, boolean>>>;
   setBuilderExpandedGroups: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -51,8 +53,10 @@ export default function DescriptionBuilderPage(props: Props) {
     builderLoading,
     builderSaving,
     builderRenderLoading,
+    builderRefreshing,
     builderError,
     builderSaved,
+    refreshDescriptionBuilder,
     setBuilderRawByGroup,
     setBuilderDirtyByGroup,
     setBuilderExpandedGroups,
@@ -79,6 +83,14 @@ export default function DescriptionBuilderPage(props: Props) {
           <p className="label">Source path</p>
           <p className="value dupe-path">{path || "No path selected"}</p>
         </div>
+        <button
+          className="ghost"
+          type="button"
+          onClick={refreshDescriptionBuilder}
+          disabled={builderLoading || builderSaving || builderRenderLoading || !path.trim()}
+        >
+          {builderRefreshing ? "Refreshing..." : "Refresh descriptions"}
+        </button>
       </section>
 
       {builderError ? <p className="error">{builderError}</p> : null}

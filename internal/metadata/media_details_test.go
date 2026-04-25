@@ -102,6 +102,39 @@ func TestSourceAndTypeInfersWebDLFromParsedRelease(t *testing.T) {
 	}
 }
 
+func TestSourceAndTypeBareWebEncodeDefaultsToWebDL(t *testing.T) {
+	source, typeValue := sourceAndType(api.PreparedMetadata{
+		SourcePath: "Movie.2026.HDR.2160p.WEB.h265-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Source: "WEB",
+			Type:   "ENCODE",
+		},
+	}, mediaInfoDoc{})
+
+	if source != "Web" {
+		t.Fatalf("expected Web source, got %q", source)
+	}
+	if typeValue != "WEBDL" {
+		t.Fatalf("expected WEBDL type, got %q", typeValue)
+	}
+}
+
+func TestSourceAndTypeBareWebMissingTypeDefaultsToWebDL(t *testing.T) {
+	source, typeValue := sourceAndType(api.PreparedMetadata{
+		SourcePath: "Movie.2026.HDR.2160p.WEB.h265-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Source: "WEB",
+		},
+	}, mediaInfoDoc{})
+
+	if source != "Web" {
+		t.Fatalf("expected Web source, got %q", source)
+	}
+	if typeValue != "WEBDL" {
+		t.Fatalf("expected WEBDL type, got %q", typeValue)
+	}
+}
+
 func TestSourceAndTypeInfersRemuxWhenReleaseTypeMissing(t *testing.T) {
 	source, typeValue := sourceAndType(api.PreparedMetadata{
 		SourcePath: "Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
@@ -173,6 +206,32 @@ func TestUHDFromMetaWEBRIP2160pNotUHD(t *testing.T) {
 	}
 	if uhd := uhdFromMeta(meta); uhd != "" {
 		t.Fatalf("expected no UHD for WEBRIP 2160p, got %q", uhd)
+	}
+}
+
+func TestUHDFromMetaWEBDL2160pNotUHD(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Type: "WEBDL",
+		Release: api.ReleaseInfo{
+			Resolution: "2160p",
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "" {
+		t.Fatalf("expected no UHD for WEBDL 2160p, got %q", uhd)
+	}
+}
+
+func TestUHDFromMetaBareWebEncode2160pNotUHD(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Type:   "ENCODE",
+		Source: "WEB",
+		Release: api.ReleaseInfo{
+			Resolution: "2160p",
+			Source:     "WEB",
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "" {
+		t.Fatalf("expected no UHD for WEB ENCODE 2160p, got %q", uhd)
 	}
 }
 

@@ -249,3 +249,78 @@ func TestLookupUnit3DOnlyIDKeepsImages(t *testing.T) {
 		t.Fatalf("expected keepImages to retain images with onlyID=true, got %d", len(result.Images))
 	}
 }
+
+func TestLookupHDBSkipsUnfilteredSearch(t *testing.T) {
+	t.Parallel()
+
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = true
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"HDB": {Username: "user", Passkey: "pass"},
+		}},
+	}, api.NopLogger{}, server.Client())
+	client.hdbURL = server.URL + "/hdb"
+
+	result, err := client.Lookup(
+		context.Background(),
+		"HDB",
+		"",
+		api.PreparedMetadata{SourcePath: `D:\TV\From.S04E01.2160p.WEB.h265-ETHEL.mkv`, FileList: []string{"From.S04E01.2160p.WEB.h265-ETHEL.mkv"}},
+		"",
+		false,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("hdb lookup failed: %v", err)
+	}
+	if result.HasData() {
+		t.Fatalf("expected empty result for unfiltered HDB lookup, got %+v", result)
+	}
+	if requested {
+		t.Fatalf("expected HDB lookup to skip request without id or filename")
+	}
+}
+
+func TestLookupBHDSkipsUnfilteredSearch(t *testing.T) {
+	t.Parallel()
+
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = true
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	token := strings.Repeat("a", minTokenLength)
+	client := NewClient(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BHD": {APIKey: token, BhdRSSKey: token},
+		}},
+	}, api.NopLogger{}, server.Client())
+	client.bhdBaseURL = server.URL + "/api/torrents"
+
+	result, err := client.Lookup(
+		context.Background(),
+		"BHD",
+		"",
+		api.PreparedMetadata{SourcePath: `D:\TV\From.S04E01.2160p.WEB.h265-ETHEL.mkv`, FileList: []string{"From.S04E01.2160p.WEB.h265-ETHEL.mkv"}},
+		"",
+		false,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("bhd lookup failed: %v", err)
+	}
+	if result.HasData() {
+		t.Fatalf("expected empty result for unfiltered BHD lookup, got %+v", result)
+	}
+	if requested {
+		t.Fatalf("expected BHD lookup to skip request without id or filename")
+	}
+}

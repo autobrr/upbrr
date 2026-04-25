@@ -42,10 +42,16 @@ func (c *Client) lookupBHD(
 	} else {
 		payload["action"] = "search"
 		payload["rsskey"] = rssKey
+		hasSearchFilter := false
 		if shouldUseFolderSearch(meta) {
 			payload["folder_name"] = pathutil.Base(meta.SourcePath)
+			hasSearchFilter = true
 		} else if trimmed := strings.TrimSpace(searchFileName); trimmed != "" {
 			payload["file_name"] = trimmed
+			hasSearchFilter = true
+		}
+		if !hasSearchFilter {
+			return Result{}, nil
 		}
 	}
 

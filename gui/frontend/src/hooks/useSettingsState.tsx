@@ -492,6 +492,7 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     DBPath: { key: "DBPath", advanced: true },
   },
   Metadata: {
+    SkipTrackerFilenameLookup: { key: "SkipTrackerFilenameLookup", advanced: true },
     UserOverrides: { key: "UserOverrides", advanced: true },
     PingUnit3D: { key: "PingUnit3D", advanced: true },
     GetBlurayInfo: { key: "GetBlurayInfo", advanced: true },

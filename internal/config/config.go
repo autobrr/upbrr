@@ -63,17 +63,18 @@ type ImageHostingConfig struct {
 }
 
 type MetadataConfig struct {
-	BTNAPI             string  `yaml:"btn_api"`
-	SkipAutoTorrent    bool    `yaml:"skip_auto_torrent"`
-	UseLargestPlaylist bool    `yaml:"use_largest_playlist"`
-	KeepImages         bool    `yaml:"keep_images"`
-	OnlyID             bool    `yaml:"only_id"`
-	UserOverrides      bool    `yaml:"user_overrides"`
-	PingUnit3D         bool    `yaml:"ping_unit3d"`
-	GetBlurayInfo      bool    `yaml:"get_bluray_info"`
-	BlurayScore        float64 `yaml:"bluray_score"`
-	BluraySingleScore  float64 `yaml:"bluray_single_score"`
-	CheckPredb         bool    `yaml:"check_predb"`
+	BTNAPI                    string  `yaml:"btn_api"`
+	SkipAutoTorrent           bool    `yaml:"skip_auto_torrent"`
+	SkipTrackerFilenameLookup bool    `yaml:"skip_tracker_filename_lookup"`
+	UseLargestPlaylist        bool    `yaml:"use_largest_playlist"`
+	KeepImages                bool    `yaml:"keep_images"`
+	OnlyID                    bool    `yaml:"only_id"`
+	UserOverrides             bool    `yaml:"user_overrides"`
+	PingUnit3D                bool    `yaml:"ping_unit3d"`
+	GetBlurayInfo             bool    `yaml:"get_bluray_info"`
+	BlurayScore               float64 `yaml:"bluray_score"`
+	BluraySingleScore         float64 `yaml:"bluray_single_score"`
+	CheckPredb                bool    `yaml:"check_predb"`
 }
 
 type ScreenshotHandlingConfig struct {
