@@ -1121,6 +1121,7 @@ export namespace api {
 	    Scene: boolean;
 	    SceneName: string;
 	    SceneIMDB: number;
+	    Category: string;
 	    Type: string;
 	    Artist: string;
 	    Title: string;
@@ -1163,6 +1164,7 @@ export namespace api {
 	        this.Scene = source["Scene"];
 	        this.SceneName = source["SceneName"];
 	        this.SceneIMDB = source["SceneIMDB"];
+	        this.Category = source["Category"];
 	        this.Type = source["Type"];
 	        this.Artist = source["Artist"];
 	        this.Title = source["Title"];

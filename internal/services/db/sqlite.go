@@ -18,6 +18,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type SQLiteRepository struct {
@@ -223,6 +224,7 @@ func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMeta
 
 	row := r.db.QueryRowContext(ctx, `
 		SELECT path, info_hash, updated_at, disc_type, video_path, file_list, scene, scene_name, scene_imdb,
+			release_category,
 			release_type, release_artist, release_title, release_subtitle, release_alt, release_year, release_month, release_day,
 			release_source, release_resolution, release_codec, release_audio, release_hdr, release_ext,
 			release_language, release_site, release_genre, release_channels, release_collection,
@@ -252,6 +254,7 @@ func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMeta
 		&sceneValue,
 		&metadata.SceneName,
 		&metadata.SceneIMDB,
+		&metadata.Category,
 		&metadata.Type,
 		&metadata.Artist,
 		&metadata.Title,
@@ -337,6 +340,11 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 	if strings.TrimSpace(metadata.Path) == "" {
 		return internalerrors.ErrInvalidInput
 	}
+	if metadata.Category.IsValid() {
+		metadata.Category = metadata.Category.Canonical()
+	} else {
+		metadata.Category = api.CategoryUnknown
+	}
 
 	timestamp := metadata.UpdatedAt
 	if timestamp.IsZero() {
@@ -357,13 +365,14 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO file_metadata (
 			path, info_hash, updated_at, disc_type, video_path, file_list, scene, scene_name, scene_imdb,
+			release_category,
 			release_type, release_artist, release_title, release_subtitle, release_alt, release_year, release_month, release_day,
 			release_source, release_resolution, release_codec, release_audio, release_hdr, release_ext,
 			release_language, release_site, release_genre, release_channels, release_collection,
 			release_region, release_size, release_group, release_disc,
 			release_edition, release_other, source_size
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			info_hash = excluded.info_hash,
 			updated_at = excluded.updated_at,
@@ -373,6 +382,7 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 			scene = excluded.scene,
 			scene_name = excluded.scene_name,
 			scene_imdb = excluded.scene_imdb,
+			release_category = excluded.release_category,
 			release_type = excluded.release_type,
 			release_artist = excluded.release_artist,
 			release_title = excluded.release_title,
@@ -409,6 +419,7 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 		sceneValue,
 		metadata.SceneName,
 		metadata.SceneIMDB,
+		metadata.Category,
 		metadata.Type,
 		metadata.Artist,
 		metadata.Title,
@@ -1668,6 +1679,11 @@ func (r *SQLiteRepository) SaveTrackerMetadata(ctx context.Context, metadata Tra
 	}
 	if strings.TrimSpace(metadata.SourcePath) == "" || strings.TrimSpace(metadata.Tracker) == "" {
 		return internalerrors.ErrInvalidInput
+	}
+	if metadata.Category.IsValid() {
+		metadata.Category = metadata.Category.Canonical()
+	} else {
+		metadata.Category = api.CategoryUnknown
 	}
 	updatedAt := metadata.UpdatedAt
 	if updatedAt.IsZero() {

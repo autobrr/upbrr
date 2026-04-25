@@ -342,6 +342,9 @@ func resolveCategory(meta api.PreparedMetadata) string {
 			return value
 		}
 	}
+	if value := strings.ToLower(strings.TrimSpace(meta.Release.Category)); value != "" {
+		return value
+	}
 	return ""
 }
 

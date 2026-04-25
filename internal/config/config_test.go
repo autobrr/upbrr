@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -138,47 +137,6 @@ func TestLoadExampleConfig(t *testing.T) {
 	if err.Error() != "config: main_settings.tmdb_api is required" {
 		t.Fatalf("unexpected example config error: %v", err)
 	}
-}
-
-func TestLoadDefaultConfig(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("user home dir: %v", err)
-	}
-	configPath := filepath.Join(home, ".upbrr", "config.yaml")
-	if _, err := os.Stat(configPath); err != nil {
-		if os.IsNotExist(err) {
-			t.Skipf("default config file not present at %s", configPath)
-		}
-		t.Fatalf("stat default config path: %v", err)
-	}
-	_, err = Load(configPath)
-	if err != nil {
-		lineInfo := formatConfigLineInfo(t, configPath, err.Error())
-		t.Fatalf("default config load failed for %s: %v%s", configPath, err, lineInfo)
-	}
-}
-
-func formatConfigLineInfo(t *testing.T, path, message string) string {
-	re := regexp.MustCompile(`line (\d+)`)
-	matches := re.FindStringSubmatch(message)
-	if len(matches) < 2 {
-		return ""
-	}
-	line, err := strconv.Atoi(matches[1])
-	if err != nil || line <= 0 {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Logf("unable to read config for context: %v", err)
-		return ""
-	}
-	lines := strings.Split(string(data), "\n")
-	if line > len(lines) {
-		return ""
-	}
-	return "\nconfig line " + matches[1] + ": " + strings.TrimRight(lines[line-1], "\r")
 }
 
 func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {

@@ -518,9 +518,10 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 			}
 		}
 	}
-	if release.Title != "" || release.Alt != "" || release.Subtitle != "" || release.Artist != "" || release.Year != 0 || release.Month != 0 || release.Day != 0 || release.Source != "" || release.Resolution != "" || release.Ext != "" || release.Site != "" || release.Genre != "" || release.Channels != "" || release.Collection != "" || release.Region != "" || release.Size != "" || release.Group != "" || release.Disc != "" || release.Type != "" || len(release.Codec) > 0 || len(release.Audio) > 0 || len(release.HDR) > 0 || len(release.Language) > 0 {
+	if release.Title != "" || release.Alt != "" || release.Subtitle != "" || release.Artist != "" || release.Year != 0 || release.Month != 0 || release.Day != 0 || release.Source != "" || release.Resolution != "" || release.Ext != "" || release.Site != "" || release.Genre != "" || release.Channels != "" || release.Collection != "" || release.Region != "" || release.Size != "" || release.Group != "" || release.Disc != "" || release.Type != "" || release.Category != "" || len(release.Codec) > 0 || len(release.Audio) > 0 || len(release.HDR) > 0 || len(release.Language) > 0 {
 		s.logger.Debugf(
-			"metadata: release parsed type=%q artist=%q title=%q subtitle=%q alt=%q year=%d month=%d day=%d source=%q resolution=%q codec=%v audio=%v hdr=%v ext=%q language=%v site=%q genre=%q channels=%q collection=%q region=%q size=%q group=%q disc=%q",
+			"metadata: release parsed category=%q type=%q artist=%q title=%q subtitle=%q alt=%q year=%d month=%d day=%d source=%q resolution=%q codec=%v audio=%v hdr=%v ext=%q language=%v site=%q genre=%q channels=%q collection=%q region=%q size=%q group=%q disc=%q",
+			release.Category,
 			release.Type,
 			release.Artist,
 			release.Title,
@@ -640,6 +641,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		Scene:      meta.Scene,
 		SceneName:  meta.SceneName,
 		SceneIMDB:  meta.SceneIMDB,
+		Category:   api.NormalizeCategory(meta.Release.Category),
 		Type:       meta.Release.Type,
 		Artist:     meta.Release.Artist,
 		Title:      meta.Release.Title,

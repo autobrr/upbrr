@@ -25,7 +25,7 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		logger = api.NopLogger{}
 	}
 
-	category := strings.ToUpper(strings.TrimSpace(req.Category))
+	category := normalizeNamingCategory(req.Category)
 	typeValue := strings.ToUpper(strings.TrimSpace(req.Type))
 	typeValue = normalizeReleaseTypeForCategory(category, typeValue, strings.TrimSpace(req.Source), "")
 	matchType := normalizeReleaseType(typeValue)
@@ -197,9 +197,12 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 		logger = api.NopLogger{}
 	}
 
-	category := strings.ToUpper(strings.TrimSpace(meta.ExternalIDs.Category))
+	category := normalizeNamingCategory(meta.ExternalIDs.Category)
 	if category == "" {
-		category = strings.ToUpper(strings.TrimSpace(meta.MediaInfoCategory))
+		category = normalizeNamingCategory(meta.MediaInfoCategory)
+	}
+	if category == "" {
+		category = normalizeNamingCategory(meta.Release.Category)
 	}
 	if category == "" {
 		category = normalizeCategoryFromType(meta.Type)
@@ -440,12 +443,16 @@ func removeHybrid(edition string) string {
 	return strings.TrimSpace(strings.Join(cleaned, " "))
 }
 
-func normalizeCategoryFromType(value string) string {
+func normalizeNamingCategory(value string) string {
 	upper := strings.ToUpper(strings.TrimSpace(value))
 	if upper == "MOVIE" || upper == "TV" {
 		return upper
 	}
 	return ""
+}
+
+func normalizeCategoryFromType(value string) string {
+	return normalizeNamingCategory(value)
 }
 
 func inferCategoryFromMetadata(meta api.PreparedMetadata) string {
@@ -454,6 +461,9 @@ func inferCategoryFromMetadata(meta api.PreparedMetadata) string {
 	}
 	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
 		return "TV"
+	}
+	if category := normalizeNamingCategory(meta.Release.Category); category != "" {
+		return category
 	}
 	if strings.TrimSpace(meta.DailyEpisodeDate) != "" {
 		return "TV"

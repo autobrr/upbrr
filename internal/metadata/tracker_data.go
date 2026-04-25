@@ -841,15 +841,12 @@ func searchFileName(meta api.PreparedMetadata) string {
 	return pathutil.Base(base)
 }
 
-func normalizeUnit3DCategory(category string) string {
-	value := strings.ToUpper(strings.TrimSpace(category))
-	if strings.Contains(value, "MOVIE") {
-		return "MOVIE"
+func normalizeUnit3DCategory(category string) api.Category {
+	normalized := api.NormalizeCategory(category)
+	if normalized.IsValid() {
+		return normalized.Canonical()
 	}
-	if strings.Contains(value, "TV") {
-		return "TV"
-	}
-	return strings.TrimSpace(category)
+	return api.CategoryUnknown
 }
 
 func hasUnit3DData(result trackerdata.Result) bool {

@@ -4,8 +4,11 @@
 package metadata
 
 import (
+	"context"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -79,5 +82,405 @@ func TestEditionFromMetaMultiPlaylistFallsBackWhenNoIMDbMatch(t *testing.T) {
 	edition, _, _ := editionFromMeta(meta)
 	if edition != "Collector's Edition" {
 		t.Fatalf("expected fallback edition, got %q", edition)
+	}
+}
+
+func TestSourceAndTypeInfersWebDLFromParsedRelease(t *testing.T) {
+	source, typeValue := sourceAndType(api.PreparedMetadata{
+		SourcePath: "Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Source: "Web",
+			Type:   "WEBDL",
+		},
+	}, mediaInfoDoc{})
+
+	if source != "Web" {
+		t.Fatalf("expected Web source, got %q", source)
+	}
+	if typeValue != "WEBDL" {
+		t.Fatalf("expected WEBDL type, got %q", typeValue)
+	}
+}
+
+func TestSourceAndTypeInfersRemuxWhenReleaseTypeMissing(t *testing.T) {
+	source, typeValue := sourceAndType(api.PreparedMetadata{
+		SourcePath: "Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Source: "BluRay",
+		},
+	}, mediaInfoDoc{})
+
+	if source != "BluRay" {
+		t.Fatalf("expected BluRay source, got %q", source)
+	}
+	if typeValue != "REMUX" {
+		t.Fatalf("expected REMUX type, got %q", typeValue)
+	}
+}
+
+// Python get_type() falls back to "ENCODE" for any release that is not a disc
+// and does not match a known keyword. Verify Go does the same.
+func TestSourceAndTypeDefaultsToEncodeForUnknownRelease(t *testing.T) {
+	_, typeValue := sourceAndType(api.PreparedMetadata{
+		SourcePath: "Some.Unknown.Movie.2026-GRP.mkv",
+		Release:    api.ReleaseInfo{},
+	}, mediaInfoDoc{})
+
+	if typeValue != "ENCODE" {
+		t.Fatalf("expected ENCODE type for unknown release, got %q", typeValue)
+	}
+}
+
+func TestSourceAndTypeEncodeDefaultNotAppliedForDiscs(t *testing.T) {
+	for _, discType := range []string{"BDMV", "DVD", "HDDVD"} {
+		t.Run(discType, func(t *testing.T) {
+			t.Parallel()
+			_, typeValue := sourceAndType(api.PreparedMetadata{
+				DiscType:   discType,
+				SourcePath: "/media/disc",
+				Release:    api.ReleaseInfo{},
+			}, mediaInfoDoc{})
+			if typeValue != "DISC" {
+				t.Fatalf("disc type %q should default to DISC, got %q", discType, typeValue)
+			}
+		})
+	}
+}
+
+func TestSourceAndTypeDefaultsDiscSourceForBDMV(t *testing.T) {
+	source, typeValue := sourceAndType(api.PreparedMetadata{
+		DiscType:   "BDMV",
+		SourcePath: "/media/disc",
+		Release:    api.ReleaseInfo{},
+	}, mediaInfoDoc{})
+
+	if typeValue != "DISC" {
+		t.Fatalf("expected DISC type for BDMV, got %q", typeValue)
+	}
+	if source != "Blu-ray" {
+		t.Fatalf("expected Blu-ray source for BDMV DISC, got %q", source)
+	}
+}
+
+// Python get_uhd() does NOT include WEBRIP in the 2160p→UHD check.
+// Verify that a 2160p WEBRIP does not produce a UHD flag.
+func TestUHDFromMetaWEBRIP2160pNotUHD(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Type: "WEBRIP",
+		Release: api.ReleaseInfo{
+			Resolution: "2160p",
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "" {
+		t.Fatalf("expected no UHD for WEBRIP 2160p, got %q", uhd)
+	}
+}
+
+func TestUHDFromMetaENCODE2160pIsUHD(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Type: "ENCODE",
+		Release: api.ReleaseInfo{
+			Resolution: "2160p",
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "UHD" {
+		t.Fatalf("expected UHD for ENCODE 2160p, got %q", uhd)
+	}
+}
+
+func TestUHDFromMetaUHDInPath(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Type:       "WEBRIP",
+		SourcePath: "/media/Movie.2160p.UHD.WEBRip-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Resolution: "2160p",
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "UHD" {
+		t.Fatalf("expected UHD when path contains UHD, got %q", uhd)
+	}
+}
+
+func TestUHDFromMetaUltraHDReleaseOther(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{
+			Other: []string{"Ultra HD"},
+		},
+	}
+	if uhd := uhdFromMeta(meta); uhd != "UHD" {
+		t.Fatalf("expected UHD when release other contains Ultra HD, got %q", uhd)
+	}
+}
+
+func TestAudioFromMediaAddsDualAudioForEnglishAndOriginalLanguage(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"ja","StreamOrder":"2"}]}}`)
+	meta := api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+	audio, channels, commentary := audioFromMedia(meta, doc, nil)
+	if audio != "Dual-Audio DD 5.1" {
+		t.Fatalf("expected Dual-Audio DD 5.1, got %q", audio)
+	}
+	if channels != "5.1" || commentary {
+		t.Fatalf("expected 5.1 with no commentary, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
+func TestAudioFromMediaAddsDubbedWhenOnlyEnglishTrackPresent(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"}]}}`)
+	meta := api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+	audio, _, _ := audioFromMedia(meta, doc, nil)
+	if audio != "Dubbed DD 5.1" {
+		t.Fatalf("expected Dubbed DD 5.1, got %q", audio)
+	}
+}
+
+func TestAudioFromMediaSkipsLanguagePrefixForDiscs(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"ja","StreamOrder":"2"}]}}`)
+	meta := api.PreparedMetadata{
+		DiscType: "BDMV",
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+	audio, _, _ := audioFromMedia(meta, doc, nil)
+	if audio != "DD 5.1" {
+		t.Fatalf("expected disc audio to skip Dual-Audio prefix, got %q", audio)
+	}
+}
+
+func TestApplyAudioLanguagePrefixFiltersCommentaryAndCompatibilityEntries(t *testing.T) {
+	meta := api.PreparedMetadata{
+		AudioLanguages: []string{"English Commentary", "Compatibility Track", "Japanese"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+
+	got := applyAudioLanguagePrefix("DD 5.1", meta)
+	if got != "DD 5.1" {
+		t.Fatalf("expected commentary and compatibility entries to be ignored, got %q", got)
+	}
+}
+
+func TestAudioFromMediaAddsEXFormatSetting(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Format_Settings":"Dolby Surround EX","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
+	audio, _, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "DD EX 5.1" {
+		t.Fatalf("expected DD EX 5.1, got %q", audio)
+	}
+}
+
+func TestRemoveTrackerBlockReasonDoesNotMutateInput(t *testing.T) {
+	original := []api.TrackerBlockReason{api.TrackerBlockReasonAudio, api.TrackerBlockReasonClaim}
+	blocked := map[string][]api.TrackerBlockReason{
+		"AITHER": append([]api.TrackerBlockReason{}, original...),
+	}
+
+	filtered := removeTrackerBlockReason(blocked, api.TrackerBlockReasonAudio)
+
+	if got := blocked["AITHER"]; len(got) != len(original) || got[0] != original[0] || got[1] != original[1] {
+		t.Fatalf("expected input blocked map to remain unchanged, got %#v", blocked)
+	}
+	if got := filtered["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
+		t.Fatalf("expected filtered map to keep only claim block, got %#v", filtered)
+	}
+}
+
+func TestRefreshPreparedMetadataPreservesNonRequestScopedFailures(t *testing.T) {
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	meta := api.PreparedMetadata{
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"AITHER": {api.TrackerBlockReasonAudio, api.TrackerBlockReasonClaim},
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"AITHER": {
+				{Rule: "audio_bloat", Reason: "audio languages French may be considered bloated"},
+				{Rule: trackerClaimRuleActive, Reason: "AITHER has an active claim for this release"},
+				{Rule: "language_rule", Reason: "missing original language coverage"},
+			},
+			"ANT": {
+				{Rule: "require_movie_only", Reason: "category tv is not movie"},
+			},
+		},
+	}
+
+	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("refresh prepared metadata: %v", err)
+	}
+	if refreshed.BlockedTrackers != nil {
+		t.Fatalf("expected request-scoped tracker blocks cleared, got %#v", refreshed.BlockedTrackers)
+	}
+	if failures := refreshed.TrackerRuleFailures["AITHER"]; len(failures) != 1 || failures[0].Rule != "language_rule" {
+		t.Fatalf("expected only non-request-scoped AITHER failure preserved, got %#v", refreshed.TrackerRuleFailures)
+	}
+	if failures := refreshed.TrackerRuleFailures["ANT"]; len(failures) != 1 || failures[0].Rule != "require_movie_only" {
+		t.Fatalf("expected unrelated ANT failure preserved, got %#v", refreshed.TrackerRuleFailures)
+	}
+	for tracker, failures := range refreshed.TrackerRuleFailures {
+		for _, failure := range failures {
+			if failure.Rule == "audio_bloat" || failure.Rule == trackerClaimRuleActive {
+				t.Fatalf("did not expect request-scoped failure %q for %s after refresh: %#v", failure.Rule, tracker, refreshed.TrackerRuleFailures)
+			}
+		}
+	}
+}
+
+func TestRefreshPreparedMetadataClearsResolvedRuleFailures(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo, WithConfig(config.Config{}))
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/example.mkv",
+		Trackers:   []string{"ANT"},
+		ExternalIDs: api.ExternalIDs{
+			Category: "MOVIE",
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"ANT": {
+				{Rule: "require_movie_only", Reason: "category tv is not movie"},
+			},
+			"BTN": {
+				{Rule: "language_rule", Reason: "missing original language coverage"},
+			},
+		},
+	}
+
+	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("refresh prepared metadata: %v", err)
+	}
+	if failures := refreshed.TrackerRuleFailures["ANT"]; len(failures) != 0 {
+		t.Fatalf("expected resolved ANT rule failure to be cleared, got %#v", failures)
+	}
+	if failures := refreshed.TrackerRuleFailures["BTN"]; len(failures) != 1 || failures[0].Rule != "language_rule" {
+		t.Fatalf("expected unevaluated BTN rule failure to remain, got %#v", refreshed.TrackerRuleFailures)
+	}
+	if len(repo.trackerRuleFailures) != 0 {
+		t.Fatalf("expected cleared ANT rule failures to be persisted, got %#v", repo.trackerRuleFailures)
+	}
+}
+
+func TestRefreshPreparedMetadataKeepsRepoForRulePersistence(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo, WithConfig(config.Config{}))
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/example.mkv",
+		Trackers:   []string{"ANT"},
+		ExternalIDs: api.ExternalIDs{
+			Category: "tv",
+		},
+	}
+
+	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("refresh prepared metadata: %v", err)
+	}
+	failures := refreshed.TrackerRuleFailures["ANT"]
+	if len(failures) == 0 {
+		t.Fatalf("expected refreshed metadata to retain ANT rule failure, got %#v", refreshed.TrackerRuleFailures)
+	}
+	if len(repo.trackerRuleFailures) == 0 {
+		t.Fatalf("expected tracker rule failures to be persisted during refresh")
+	}
+	if repo.trackerRuleFailures[0].Tracker != "ANT" || repo.trackerRuleFailures[0].Rule != "require_movie_only" {
+		t.Fatalf("unexpected persisted tracker rule failures: %#v", repo.trackerRuleFailures)
+	}
+}
+
+func TestAudioFromMediaUsesChannelsOriginalWhenPresent(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"8 / 6","Channels_Original":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
+	audio, channels, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "DD 5.1" {
+		t.Fatalf("expected DD 5.1, got %q", audio)
+	}
+	if channels != "5.1" {
+		t.Fatalf("expected 5.1 channels, got %q", channels)
+	}
+}
+
+func TestAudioFromMediaNormalizesBDInfoCodec(t *testing.T) {
+	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, mediaInfoDoc{}, &discparse.BDInfo{
+		Audio: []discparse.BDAudio{{
+			Codec:    "Dolby TrueHD Audio",
+			Channels: "5.1",
+		}},
+	})
+
+	if audio != "TrueHD 5.1" {
+		t.Fatalf("expected normalized BDInfo audio to be TrueHD 5.1, got %q", audio)
+	}
+	if channels != "5.1" || commentary {
+		t.Fatalf("expected channels=5.1 commentary=false, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
+func TestAudioFromMediaNormalizesBDInfoCodecWithAtmos(t *testing.T) {
+	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, mediaInfoDoc{}, &discparse.BDInfo{
+		Audio: []discparse.BDAudio{{
+			Codec:    "Dolby TrueHD Audio",
+			Channels: "7.1",
+			Atmos:    "Yes",
+		}},
+	})
+
+	if audio != "TrueHD Atmos 7.1" {
+		t.Fatalf("expected normalized BDInfo audio to be TrueHD Atmos 7.1, got %q", audio)
+	}
+	if channels != "7.1" || commentary {
+		t.Fatalf("expected channels=7.1 commentary=false, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
+func TestResolveAudioBloatPolicyBlocksStrictTrackersForEnglishOriginal(t *testing.T) {
+	blocked, warned := resolveAudioBloatPolicy(api.PreparedMetadata{
+		AudioLanguages: []string{"English", "French"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
+		},
+	}, []string{"ANT", "BHD", "MTV", "AITHER", "ASC"})
+
+	if got := blocked["ANT"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected ANT blocked for French bloat, got %#v", blocked)
+	}
+	if got := blocked["BHD"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected BHD blocked for French bloat, got %#v", blocked)
+	}
+	if got := blocked["MTV"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected MTV blocked for French bloat, got %#v", blocked)
+	}
+	if got := warned["AITHER"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected AITHER warning for French bloat, got %#v", warned)
+	}
+	if _, ok := warned["ASC"]; ok {
+		t.Fatalf("did not expect ASC warning, got %#v", warned)
+	}
+}
+
+func TestResolveAudioBloatPolicyWarnsButDoesNotBlockNonEnglishOriginal(t *testing.T) {
+	blocked, warned := resolveAudioBloatPolicy(api.PreparedMetadata{
+		AudioLanguages: []string{"English", "Japanese", "French"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}, []string{"ANT", "BHD", "SPD"})
+
+	if blocked != nil {
+		t.Fatalf("expected no blocked trackers, got %#v", blocked)
+	}
+	if got := warned["ANT"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected ANT warning for French bloat, got %#v", warned)
+	}
+	if got := warned["BHD"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected BHD warning for French bloat, got %#v", warned)
+	}
+	if got := warned["SPD"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected SPD warning for French bloat, got %#v", warned)
 	}
 }
