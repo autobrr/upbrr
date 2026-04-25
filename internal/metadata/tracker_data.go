@@ -131,7 +131,7 @@ func (s *Service) enrichTrackerDataPriority(
 		record, persistable, hasIDs, err := s.lookupTrackerData(ctx, meta, tracker, now, unit3dClient)
 		if err != nil {
 			if s.logger != nil {
-				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %v", tracker, err)
+				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", tracker, redaction.RedactValue(err.Error(), nil))
 			}
 			continue
 		}
@@ -222,7 +222,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 		outcome := <-results
 		if outcome.err != nil {
 			if s.logger != nil {
-				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %v", outcome.tracker, outcome.err)
+				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", outcome.tracker, redaction.RedactValue(outcome.err.Error(), nil))
 			}
 			continue
 		}
@@ -810,7 +810,7 @@ func logClientSearchIDs(meta api.PreparedMetadata, logger api.Logger) {
 		if value == "" {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s=%s", strings.ToUpper(key), value))
+		parts = append(parts, fmt.Sprintf("%s=%s", strings.ToUpper(key), redaction.RedactValue(value, nil)))
 	}
 	if len(parts) == 0 {
 		return
