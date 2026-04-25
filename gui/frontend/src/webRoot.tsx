@@ -3,7 +3,12 @@
 
 import { useEffect, useState } from "react";
 import App from "./app";
-import { browserAuth, initializeBrowserBridge, isBrowserMode, updateBrowserCSRFToken } from "./utils/runtime";
+import {
+  browserAuth,
+  initializeBrowserBridge,
+  isBrowserMode,
+  updateBrowserCSRFToken,
+} from "./utils/runtime";
 
 type AuthStatus = {
   authenticated: boolean;
@@ -18,7 +23,7 @@ const initialStatus: AuthStatus = {
   needsSetup: false,
   username: "",
   csrfToken: "",
-  nativeBrowseEnabled: false
+  nativeBrowseEnabled: false,
 };
 
 export default function WebRoot() {
@@ -35,19 +40,26 @@ export default function WebRoot() {
       setStatus({ ...initialStatus, authenticated: true });
       return;
     }
-    browserAuth.status().then((payload) => {
-      const next = { ...initialStatus, ...payload };
-      setStatus(next);
-      initializeBrowserBridge(next.csrfToken || "", !!next.nativeBrowseEnabled);
-    }).catch((err) => {
-      setError(String(err));
-      setStatus(initialStatus);
-      initializeBrowserBridge("", false);
-    });
+    browserAuth
+      .status()
+      .then((payload) => {
+        const next = { ...initialStatus, ...payload };
+        setStatus(next);
+        initializeBrowserBridge(next.csrfToken || "", !!next.nativeBrowseEnabled);
+      })
+      .catch((err) => {
+        setError(String(err));
+        setStatus(initialStatus);
+        initializeBrowserBridge("", false);
+      });
   }, [browserMode]);
 
   if (status === null) {
-    return <div className="web-auth-shell"><div className="web-auth-card">Loading web UI...</div></div>;
+    return (
+      <div className="web-auth-shell">
+        <div className="web-auth-card">Loading web UI...</div>
+      </div>
+    );
   }
 
   if (!browserMode) {
@@ -105,18 +117,35 @@ export default function WebRoot() {
         </p>
         <label>
           <span>Username</span>
-          <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+          <input
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="username"
+          />
         </label>
         <label>
           <span>Password</span>
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={status.needsSetup ? "new-password" : "current-password"} />
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete={status.needsSetup ? "new-password" : "current-password"}
+          />
         </label>
         <label className="web-auth-card__checkbox">
-          <input type="checkbox" checked={retainLogin} onChange={(event) => setRetainLogin(event.target.checked)} />
+          <input
+            type="checkbox"
+            checked={retainLogin}
+            onChange={(event) => setRetainLogin(event.target.checked)}
+          />
           <span>Keep me signed in on this device</span>
         </label>
         {error ? <p className="web-auth-card__error">{error}</p> : null}
-        <button type="button" onClick={submit} disabled={submitting || !username.trim() || !password.trim()}>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={submitting || !username.trim() || !password.trim()}
+        >
           {submitting ? "Working..." : status.needsSetup ? "Create Account" : "Sign In"}
         </button>
       </div>

@@ -9,8 +9,9 @@ import type {
   ScreenshotPlan,
   ScreenshotPreviewImage,
   ScreenshotResult,
-  ScreenshotSelection
+  ScreenshotSelection,
 } from "../../types";
+import "./styles.css";
 
 type Props = Readonly<{
   path: string;
@@ -126,7 +127,7 @@ export default function ScreenshotsPage(props: Props) {
     setFinalDragIndex,
     reorderFinalSelections,
     finalResult,
-    handleDeleteAllFinalImages
+    handleDeleteAllFinalImages,
   } = props;
 
   return (
@@ -190,8 +191,12 @@ export default function ScreenshotsPage(props: Props) {
                 <span>Screenshot count</span>
                 <input
                   type="number"
-                  value={typeof screenshotConfig.Screens === "number" ? screenshotConfig.Screens : 0}
-                  onChange={(event) => updateScreenshotConfigValue("Screens", Number(event.target.value))}
+                  value={
+                    typeof screenshotConfig.Screens === "number" ? screenshotConfig.Screens : 0
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("Screens", Number(event.target.value))
+                  }
                 />
               </label>
               <label className="settings-toggle">
@@ -208,7 +213,9 @@ export default function ScreenshotsPage(props: Props) {
                 <input
                   type="checkbox"
                   checked={Boolean(screenshotConfig.UseLibplacebo)}
-                  onChange={(event) => updateScreenshotConfigValue("UseLibplacebo", event.target.checked)}
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("UseLibplacebo", event.target.checked)
+                  }
                 />
                 <span className="settings-toggle__pill" />
               </label>
@@ -217,7 +224,9 @@ export default function ScreenshotsPage(props: Props) {
                 <input
                   type="checkbox"
                   checked={Boolean(screenshotConfig.FrameOverlay)}
-                  onChange={(event) => updateScreenshotConfigValue("FrameOverlay", event.target.checked)}
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("FrameOverlay", event.target.checked)
+                  }
                 />
                 <span className="settings-toggle__pill" />
               </label>
@@ -225,24 +234,42 @@ export default function ScreenshotsPage(props: Props) {
                 <span>Overlay text size</span>
                 <input
                   type="number"
-                  value={typeof screenshotConfig.OverlayTextSize === "number" ? screenshotConfig.OverlayTextSize : 0}
-                  onChange={(event) => updateScreenshotConfigValue("OverlayTextSize", Number(event.target.value))}
+                  value={
+                    typeof screenshotConfig.OverlayTextSize === "number"
+                      ? screenshotConfig.OverlayTextSize
+                      : 0
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("OverlayTextSize", Number(event.target.value))
+                  }
                 />
               </label>
               <label className="settings-field">
                 <span>FFmpeg compression</span>
                 <input
                   type="number"
-                  value={typeof screenshotConfig.FFmpegCompression === "number" ? screenshotConfig.FFmpegCompression : 0}
-                  onChange={(event) => updateScreenshotConfigValue("FFmpegCompression", Number(event.target.value))}
+                  value={
+                    typeof screenshotConfig.FFmpegCompression === "number"
+                      ? screenshotConfig.FFmpegCompression
+                      : 0
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("FFmpegCompression", Number(event.target.value))
+                  }
                 />
               </label>
               <label className="settings-field">
                 <span>Tonemap algorithm</span>
                 <input
                   type="text"
-                  value={typeof screenshotConfig.TonemapAlgorithm === "string" ? screenshotConfig.TonemapAlgorithm : ""}
-                  onChange={(event) => updateScreenshotConfigValue("TonemapAlgorithm", event.target.value)}
+                  value={
+                    typeof screenshotConfig.TonemapAlgorithm === "string"
+                      ? screenshotConfig.TonemapAlgorithm
+                      : ""
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("TonemapAlgorithm", event.target.value)
+                  }
                 />
               </label>
               <label className="settings-field">
@@ -251,7 +278,9 @@ export default function ScreenshotsPage(props: Props) {
                   type="number"
                   step="0.01"
                   value={typeof screenshotConfig.Desat === "number" ? screenshotConfig.Desat : 0}
-                  onChange={(event) => updateScreenshotConfigValue("Desat", Number(event.target.value))}
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("Desat", Number(event.target.value))
+                  }
                 />
               </label>
               <label className="settings-toggle">
@@ -259,7 +288,9 @@ export default function ScreenshotsPage(props: Props) {
                 <input
                   type="checkbox"
                   checked={Boolean(screenshotConfig.FFmpegLimit)}
-                  onChange={(event) => updateScreenshotConfigValue("FFmpegLimit", event.target.checked)}
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("FFmpegLimit", event.target.checked)
+                  }
                 />
                 <span className="settings-toggle__pill" />
               </label>
@@ -267,8 +298,14 @@ export default function ScreenshotsPage(props: Props) {
                 <span>FFmpeg concurrency</span>
                 <input
                   type="number"
-                  value={typeof screenshotConfig.ProcessLimit === "number" ? screenshotConfig.ProcessLimit : 1}
-                  onChange={(event) => updateScreenshotConfigValue("ProcessLimit", Number(event.target.value))}
+                  value={
+                    typeof screenshotConfig.ProcessLimit === "number"
+                      ? screenshotConfig.ProcessLimit
+                      : 1
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("ProcessLimit", Number(event.target.value))
+                  }
                 />
               </label>
             </div>
@@ -418,7 +455,7 @@ export default function ScreenshotsPage(props: Props) {
                         pointerEvents: "none",
                         color: "white",
                         textShadow: "0 0 4px black",
-                        fontWeight: "bold"
+                        fontWeight: "bold",
                       }}
                     >
                       Loading...
@@ -442,11 +479,7 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Tracker Images</h2>
             <p className="muted">Already available from tracker data.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllTrackerImageURLs}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllTrackerImageURLs}>
               Delete all
             </button>
           </div>
@@ -481,17 +514,16 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Existing Captures</h2>
             <p className="muted">Previously generated screenshots in the temp folder.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllExistingImages}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllExistingImages}>
               Delete all
             </button>
           </div>
           <div className="screens-grid">
             {existingImages.map((item) => (
-              <div className="screens-thumb-card" key={`existing-${item.image.Path || item.image.Index}`}>
+              <div
+                className="screens-thumb-card"
+                key={`existing-${item.image.Path || item.image.Index}`}
+              >
                 <button
                   className="screens-thumb"
                   type="button"
@@ -528,17 +560,16 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Tracker Temp Images</h2>
             <p className="muted">Images stored in tracker temp folders.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllTrackerImages}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllTrackerImages}>
               Delete all
             </button>
           </div>
           <div className="screens-grid">
             {existingTrackerImages.map((item) => (
-              <div className="screens-thumb-card" key={`tracker-${item.image.Path || item.image.Index}`}>
+              <div
+                className="screens-thumb-card"
+                key={`tracker-${item.image.Path || item.image.Index}`}
+              >
                 <button
                   className="screens-thumb"
                   type="button"
@@ -592,7 +623,9 @@ export default function ScreenshotsPage(props: Props) {
                   <input
                     type="number"
                     step="0.1"
-                    value={Number.isFinite(selection.TimestampSeconds) ? selection.TimestampSeconds : 0}
+                    value={
+                      Number.isFinite(selection.TimestampSeconds) ? selection.TimestampSeconds : 0
+                    }
                     onChange={(event) => updateSelectionTime(selection.Index, event.target.value)}
                   />
                 </label>
@@ -624,11 +657,7 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Preview Captures</h2>
             <p className="muted">Click any image to view full size.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllPreviewImages}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllPreviewImages}>
               Delete all
             </button>
           </div>
@@ -655,11 +684,7 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Final Captures</h2>
             <p className="muted">Generated screenshots ready for upload.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllFinalImages}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllFinalImages}>
               Delete all
             </button>
           </div>
@@ -709,7 +734,9 @@ export default function ScreenshotsPage(props: Props) {
           </div>
           <ul>
             {finalResult.Errors.map((entry, index) => (
-              <li key={`err-${entry.Index}-${index}`}>Shot {entry.Index + 1}: {entry.Message}</li>
+              <li key={`err-${entry.Index}-${index}`}>
+                Shot {entry.Index + 1}: {entry.Message}
+              </li>
             ))}
           </ul>
         </section>

@@ -21,7 +21,7 @@
 }
 
 .dupe-path {
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .dupe-card {
@@ -73,7 +73,9 @@
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: rgba(255, 255, 255, 0.08);
   position: relative;
-  transition: background 0.2s ease, border-color 0.2s ease;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .dupe-toggle__pill::after {
@@ -85,7 +87,18 @@
   height: 14px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.6);
-  transition: transform 0.2s ease, background 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    background 0.2s ease;
+}
+
+:root.light .dupe-toggle__pill {
+  border-color: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+:root.light .dupe-toggle__pill::after {
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .dupe-toggle input:checked + .dupe-toggle__pill {
@@ -96,15 +109,6 @@
 .dupe-toggle input:checked + .dupe-toggle__pill::after {
   transform: translateX(18px);
   background: var(--accent-2);
-}
-
-:root.light .dupe-toggle__pill {
-  border-color: rgba(0, 0, 0, 0.2);
-  background: rgba(0, 0, 0, 0.05);
-}
-
-:root.light .dupe-toggle__pill::after {
-  background: rgba(0, 0, 0, 0.5);
 }
 
 .dupe-notes {

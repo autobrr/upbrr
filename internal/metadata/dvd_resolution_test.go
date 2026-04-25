@@ -82,3 +82,97 @@ func TestExtractDVDMediaInfoDefaultsUnknownScanToProgressive(t *testing.T) {
 		t.Fatalf("expected 576p, got %q", info.Resolution)
 	}
 }
+
+func TestResolutionFromMediaInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		payload  string
+		expected string
+		message  string
+	}{
+		{
+			name:     "1080p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+			message:  "expected 1080p, got %q",
+		},
+		{
+			name:     "720p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1280","Height":"720","ScanType":"Progressive"}]}}`,
+			expected: "720p",
+			message:  "expected 720p, got %q",
+		},
+		{
+			name:     "1080i",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Interlaced"}]}}`,
+			expected: "1080i",
+			message:  "expected 1080i, got %q",
+		},
+		{
+			name:     "2160p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"3840","Height":"2160","ScanType":"Progressive"}]}}`,
+			expected: "2160p",
+			message:  "expected 2160p, got %q",
+		},
+		{
+			name:     "floors cropped dimensions",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1916","Height":"800","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+			message:  "expected 1080p for cropped dimensions, got %q",
+		},
+		{
+			name:     "empty on missing track",
+			payload:  `{"media":{"track":[{"@type":"General"}]}}`,
+			expected: "",
+			message:  "expected empty on missing video track, got %q",
+		},
+		{
+			name:     "empty on zero dimensions",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"0","Height":"0"}]}}`,
+			expected: "",
+			message:  "expected empty on zero dimensions, got %q",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := resolutionFromMediaInfo(mustParseMediaInfoDoc(tc.payload), "/releases/Movie")
+			if res != tc.expected {
+				t.Fatalf(tc.message, res)
+			}
+		})
+	}
+}
+
+func TestResolutionFromMediaInfoEmptyOnSingleZeroDimension(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "zero width",
+			payload: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"0","Height":"1080"}]}}`,
+		},
+		{
+			name:    "zero height",
+			payload: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"0"}]}}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := resolutionFromMediaInfo(mustParseMediaInfoDoc(tc.payload), "/releases/Movie")
+			if res != "" {
+				t.Fatalf("expected empty when one dimension is zero, got %q", res)
+			}
+		})
+	}
+}
+
+func mustParseMediaInfoDoc(payload string) mediaInfoDoc {
+	doc, err := loadMediaInfoDocFromJSONPayload(payload)
+	if err != nil {
+		panic(err)
+	}
+	return doc
+}

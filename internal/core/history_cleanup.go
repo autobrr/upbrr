@@ -129,12 +129,13 @@ func (c *Core) collectReleaseCleanupTargets(ctx context.Context, sourcePath stri
 	if err == nil {
 		releaseBase := paths.ReleaseTempBase(api.PreparedMetadata{
 			Release: api.ReleaseInfo{
-				Title:  stored.Title,
-				Alt:    stored.Alt,
-				Year:   stored.Year,
-				Source: stored.Source,
-				Type:   stored.Type,
-				Group:  stored.Group,
+				Title:    stored.Title,
+				Alt:      stored.Alt,
+				Year:     stored.Year,
+				Category: string(stored.Category),
+				Source:   stored.Source,
+				Type:     stored.Type,
+				Group:    stored.Group,
 			},
 		}, sourcePath)
 		tmpDirs[filepath.Join(tmpRoot, releaseBase)] = struct{}{}

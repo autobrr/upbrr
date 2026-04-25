@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { MetadataPreview, TrackerPreview } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
+import "./styles.css";
 
 type Props = {
   preview: MetadataPreview;
@@ -30,7 +31,7 @@ export default function TrackerDataPage(props: Props) {
     renderedDescriptions,
     setRenderedDescriptions,
     setLightboxImage,
-    setLightboxAlt
+    setLightboxAlt,
   } = props;
 
   const trackerDataOrdered = useMemo(() => {
@@ -41,15 +42,15 @@ export default function TrackerDataPage(props: Props) {
     const hasActualData = (item: TrackerPreview) =>
       Boolean(
         item.Description ||
-          item.DescriptionHTML ||
-          (item.ImageURLs && item.ImageURLs.length > 0) ||
-          item.TMDBID ||
-          item.IMDBID ||
-          item.TVDBID ||
-          item.MALID ||
-          item.InfoHash ||
-          item.Category ||
-          item.Filename
+        item.DescriptionHTML ||
+        (item.ImageURLs && item.ImageURLs.length > 0) ||
+        item.TMDBID ||
+        item.IMDBID ||
+        item.TVDBID ||
+        item.MALID ||
+        item.InfoHash ||
+        item.Category ||
+        item.Filename,
       );
     const primaryIndex = items.findIndex(hasActualData);
     if (primaryIndex <= 0) {
@@ -65,9 +66,7 @@ export default function TrackerDataPage(props: Props) {
       <header className="tracker-header">
         <p className="eyebrow">Tracker Data</p>
         <h1>Input Metadata</h1>
-        <p className="subtitle">
-          Tracker-provided metadata, descriptions, and images.
-        </p>
+        <p className="subtitle">Tracker-provided metadata, descriptions, and images.</p>
       </header>
       {preview.TrackerData.length === 0 ? (
         <p className="muted">No tracker data available.</p>
@@ -75,7 +74,8 @@ export default function TrackerDataPage(props: Props) {
         <div className="tracker-grid">
           {trackerDataOrdered.items.map((item, index) => {
             const trackerKey = `${item.Tracker}-${index}`;
-            const isRendered = Boolean(renderedDescriptions[trackerKey]) && Boolean(item.DescriptionHTML);
+            const isRendered =
+              Boolean(renderedDescriptions[trackerKey]) && Boolean(item.DescriptionHTML);
             const renderedHTML = isRendered ? decodeHtmlEntities(item.DescriptionHTML) : "";
             const isPrimary = index === trackerDataOrdered.primaryIndex;
             return (
@@ -159,7 +159,7 @@ export default function TrackerDataPage(props: Props) {
                           onClick={() =>
                             setRenderedDescriptions((prev) => ({
                               ...prev,
-                              [trackerKey]: !prev[trackerKey]
+                              [trackerKey]: !prev[trackerKey],
                             }))
                           }
                         >
