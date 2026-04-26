@@ -1,0 +1,4326 @@
+openapi: 3.1.1
+info:
+    description: Public REST API for upbrr automation and embedded web workflows.
+    title: upbrr Public API
+    version: v1
+servers:
+    - url: /
+paths:
+    /api/v1/auth/bootstrap:
+        post:
+            operationId: bootstrapAuth
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_apiAuthCredentialsRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiAuthStatusResponse'
+                    description: OK
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            summary: Create initial REST auth
+            tags:
+                - auth
+    /api/v1/auth/browse-policy:
+        put:
+            operationId: saveBrowsePolicy
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_apiBrowsePolicyRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiAuthStatusResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Save web browse policy
+            tags:
+                - auth
+    /api/v1/auth/logout:
+        post:
+            operationId: revokeCurrentToken
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Revoke current bearer token
+            tags:
+                - auth
+    /api/v1/auth/status:
+        get:
+            operationId: getAuthStatus
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiAuthStatusResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            summary: Get REST auth status
+            tags:
+                - auth
+    /api/v1/auth/token:
+        post:
+            operationId: createLoginToken
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_apiAuthCredentialsRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiAuthStatusResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            summary: Create bearer token from credentials
+            tags:
+                - auth
+    /api/v1/auth/web-status:
+        get:
+            operationId: getWebAuthStatus
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiWebAuthStatusResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get web auth material status
+            tags:
+                - auth
+    /api/v1/config/current:
+        get:
+            operationId: getConfig
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get current config
+            tags:
+                - config
+        put:
+            operationId: saveConfig
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_configPayloadRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Save config
+            tags:
+                - config
+    /api/v1/config/default:
+        get:
+            operationId: getDefaultConfig
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get default config
+            tags:
+                - config
+    /api/v1/config/export:
+        get:
+            operationId: exportConfig
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Export config
+            tags:
+                - config
+    /api/v1/config/import:
+        post:
+            operationId: importConfig
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_importConfigRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_importConfigResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Import config
+            tags:
+                - config
+    /api/v1/description-builder/fetch:
+        post:
+            operationId: fetchDescriptionBuilder
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_preparationRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_DescriptionBuilderPreview'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "409":
+                    $ref: '#/components/responses/Conflict'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Fetch description builder
+            tags:
+                - description-builder
+    /api/v1/description/override:
+        post:
+            operationId: saveDescriptionOverride
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_saveDescriptionOverrideRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_DescriptionBuilderGroup'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Save description override
+            tags:
+                - description
+    /api/v1/description/render:
+        post:
+            operationId: renderDescription
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_renderDescriptionRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Render description
+            tags:
+                - description
+    /api/v1/dupes/check:
+        post:
+            operationId: checkDupes
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_contentRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_DupeCheckSummary'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Check dupes synchronously
+            tags:
+                - dupes
+    /api/v1/events:
+        get:
+            operationId: streamEvents
+            responses:
+                "200":
+                    content:
+                        text/event-stream:
+                            schema:
+                                type: string
+                    description: Server-sent event stream
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Stream API events
+            tags:
+                - events
+    /api/v1/files/browse:
+        post:
+            operationId: browseDirectory
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/api_BrowseDirectoryRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_BrowseDirectoryResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "403":
+                    $ref: '#/components/responses/Forbidden'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Browse server-side files
+            tags:
+                - files
+    /api/v1/files/native/file:
+        post:
+            operationId: browseNativeFile
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "403":
+                    $ref: '#/components/responses/Forbidden'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Open native file picker
+            tags:
+                - files
+    /api/v1/files/native/folder:
+        post:
+            operationId: browseNativeFolder
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "403":
+                    $ref: '#/components/responses/Forbidden'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Open native folder picker
+            tags:
+                - files
+    /api/v1/history:
+        get:
+            operationId: listHistory
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/api_HistoryEntry'
+                                type: array
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: List history
+            tags:
+                - history
+    /api/v1/history/delete:
+        post:
+            operationId: deleteHistoryRelease
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_sourcePathRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Delete history release
+            tags:
+                - history
+    /api/v1/history/overview:
+        post:
+            operationId: getHistoryOverview
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_sourcePathRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_HistoryOverview'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get history overview
+            tags:
+                - history
+    /api/v1/jobs/dupes:
+        post:
+            operationId: startDupeJob
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_contentRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_jobIDResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Start dupe-check job
+            tags:
+                - jobs
+    /api/v1/jobs/dupes/{jobID}:
+        delete:
+            operationId: cancelDupeJob
+            parameters:
+                - in: path
+                  name: jobID
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Cancel dupe-check job
+            tags:
+                - jobs
+        get:
+            operationId: getDupeJob
+            parameters:
+                - in: path
+                  name: jobID
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_DupeCheckSnapshot'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get dupe-check job snapshot
+            tags:
+                - jobs
+    /api/v1/jobs/uploads:
+        post:
+            operationId: startTrackerUploadJob
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_trackerUploadRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_jobIDResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Start tracker upload job
+            tags:
+                - jobs
+    /api/v1/jobs/uploads/{jobID}:
+        delete:
+            operationId: cancelTrackerUploadJob
+            parameters:
+                - in: path
+                  name: jobID
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Cancel tracker upload job
+            tags:
+                - jobs
+        get:
+            operationId: getTrackerUploadJob
+            parameters:
+                - in: path
+                  name: jobID
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_TrackerUploadSnapshot'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get tracker upload job snapshot
+            tags:
+                - jobs
+    /api/v1/jobs/uploads/{jobID}/retry:
+        post:
+            operationId: retryTrackerUploadJob
+            parameters:
+                - in: path
+                  name: jobID
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_jobIDResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Retry failed tracker upload job
+            tags:
+                - jobs
+    /api/v1/logs/exclusions:
+        get:
+            operationId: getLogExclusions
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    type: string
+                                type: array
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get log exclusions
+            tags:
+                - logs
+        put:
+            operationId: updateLogExclusions
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_logExclusionsRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Update log exclusions
+            tags:
+                - logs
+    /api/v1/logs/path:
+        get:
+            operationId: getLogPath
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get log path
+            tags:
+                - logs
+    /api/v1/logs/recent:
+        post:
+            operationId: getRecentLogs
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_recentLogsRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items: {}
+                                type: array
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get recent logs
+            tags:
+                - logs
+    /api/v1/logs/streams:
+        post:
+            operationId: startLogStream
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Start log stream
+            tags:
+                - logs
+    /api/v1/logs/streams/{streamID}:
+        delete:
+            operationId: stopLogStream
+            parameters:
+                - in: path
+                  name: streamID
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Stop log stream
+            tags:
+                - logs
+    /api/v1/media/disc-type:
+        post:
+            operationId: detectDiscType
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_pathRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Detect disc type
+            tags:
+                - media
+    /api/v1/metadata/fetch:
+        post:
+            operationId: fetchMetadata
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_metadataRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_MetadataPreview'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "409":
+                    $ref: '#/components/responses/Conflict'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Fetch metadata
+            tags:
+                - metadata
+    /api/v1/metadata/reset:
+        post:
+            operationId: resetMetadata
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_metadataRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_MetadataPreview'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "409":
+                    $ref: '#/components/responses/Conflict'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Reset metadata
+            tags:
+                - metadata
+    /api/v1/playlists/discover:
+        post:
+            operationId: discoverPlaylists
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_pathRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/api_PlaylistInfo'
+                                type: array
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Discover playlists
+            tags:
+                - playlists
+    /api/v1/playlists/selection:
+        put:
+            operationId: savePlaylistSelection
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_playlistSelectionRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Save playlist selection
+            tags:
+                - playlists
+    /api/v1/playlists/selection/get:
+        post:
+            operationId: loadPlaylistSelection
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_pathRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_PlaylistSelection'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Load playlist selection
+            tags:
+                - playlists
+    /api/v1/preparation/fetch:
+        post:
+            operationId: fetchPreparation
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_preparationRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_PreparationPreview'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                "409":
+                    $ref: '#/components/responses/Conflict'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Fetch preparation preview
+            tags:
+                - preparation
+    /api/v1/screenshots/delete:
+        post:
+            operationId: deleteScreenshot
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_screenshotImageRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Delete screenshot
+            tags:
+                - screenshots
+    /api/v1/screenshots/delete-tracker-url:
+        post:
+            operationId: deleteTrackerImageURL
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_trackerImageURLRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Delete tracker image URL
+            tags:
+                - screenshots
+    /api/v1/screenshots/delete-uploaded:
+        post:
+            operationId: deleteUploadedImage
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_deleteUploadedImageRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Delete uploaded image
+            tags:
+                - screenshots
+    /api/v1/screenshots/final-selections:
+        put:
+            operationId: saveFinalScreenshotSelections
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_finalScreenshotSelectionsRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Save final screenshot selections
+            tags:
+                - screenshots
+    /api/v1/screenshots/generate:
+        post:
+            operationId: generateScreenshots
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_generateScreenshotsRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_ScreenshotResult'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Generate screenshots
+            tags:
+                - screenshots
+    /api/v1/screenshots/plan:
+        post:
+            operationId: fetchScreenshotPlan
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_screenshotPlanRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_ScreenshotPlan'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Fetch screenshot plan
+            tags:
+                - screenshots
+    /api/v1/screenshots/preview-frame:
+        post:
+            operationId: previewScreenshotFrame
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_previewScreenshotFrameRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Preview screenshot frame
+            tags:
+                - screenshots
+    /api/v1/screenshots/read-image:
+        post:
+            operationId: readScreenshotImage
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_pathRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                type: string
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Read screenshot image
+            tags:
+                - screenshots
+    /api/v1/screenshots/upload:
+        post:
+            operationId: uploadImages
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_uploadImagesRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/api_UploadedImageLink'
+                                type: array
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Upload images
+            tags:
+                - screenshots
+    /api/v1/screenshots/upload-candidates:
+        post:
+            operationId: listUploadCandidates
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_screenshotPlanRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/api_ScreenshotImage'
+                                type: array
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: List upload candidates
+            tags:
+                - screenshots
+    /api/v1/screenshots/uploaded-images:
+        post:
+            operationId: listUploadedImages
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_screenshotPlanRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/api_UploadedImageLink'
+                                type: array
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: List uploaded images
+            tags:
+                - screenshots
+    /api/v1/status:
+        get:
+            operationId: getStatus
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiStatusResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get API status
+            tags:
+                - status
+    /api/v1/tokens:
+        get:
+            operationId: listAPITokens
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/webserver_apiTokenStatusResponse'
+                                type: array
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: List API tokens
+            tags:
+                - tokens
+        post:
+            operationId: createAPIToken
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_apiTokenRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiCreatedTokenResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Create API token
+            tags:
+                - tokens
+    /api/v1/tokens/{tokenID}:
+        delete:
+            operationId: revokeAPIToken
+            parameters:
+                - in: path
+                  name: tokenID
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiWebAuthStatusResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Revoke API token
+            tags:
+                - tokens
+    /api/v1/tracker-dry-run/fetch:
+        post:
+            operationId: fetchTrackerDryRun
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_trackerDryRunRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_TrackerDryRunPreview'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Fetch tracker dry run
+            tags:
+                - tracker-dry-run
+    /api/v1/trackers/known:
+        get:
+            operationId: listKnownTrackers
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    type: string
+                                type: array
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: List known trackers
+            tags:
+                - trackers
+    /api/v1/ui-state:
+        get:
+            operationId: listUIStates
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_UIStateList'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: List UI states
+            tags:
+                - ui-state
+        post:
+            operationId: saveUIState
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/webserver_uiStateSaveRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/webserver_apiOKResponse'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Save UI state
+            tags:
+                - ui-state
+    /api/v1/ui-state/{stateID}:
+        get:
+            operationId: getUIState
+            parameters:
+                - in: path
+                  name: stateID
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/api_UIStateRecord'
+                    description: OK
+                "401":
+                    $ref: '#/components/responses/Unauthorized'
+                default:
+                    $ref: '#/components/responses/DefaultError'
+            security:
+                - bearerAuth: []
+            summary: Get UI state
+            tags:
+                - ui-state
+components:
+    responses:
+        Conflict:
+            content:
+                application/json:
+                    schema:
+                        $ref: '#/components/schemas/BDMVRescanRequiredResponse'
+            description: BDMV rescan confirmation required
+        DefaultError:
+            content:
+                application/json:
+                    schema:
+                        $ref: '#/components/schemas/webserver_apiErrorResponse'
+            description: Bad request, rate limit, or internal server error
+        Forbidden:
+            content:
+                application/json:
+                    schema:
+                        $ref: '#/components/schemas/webserver_apiErrorResponse'
+            description: Forbidden
+        Unauthorized:
+            content:
+                application/json:
+                    schema:
+                        $ref: '#/components/schemas/webserver_apiErrorResponse'
+            description: Unauthorized
+    schemas:
+        api_BrowseDirectoryEntry:
+            additionalProperties: false
+            properties:
+                isDir:
+                    type: boolean
+                modifiedAt:
+                    type: string
+                name:
+                    type: string
+                path:
+                    type: string
+                size:
+                    type: integer
+            required:
+                - name
+                - path
+                - isDir
+                - size
+                - modifiedAt
+            type: object
+        api_BrowseDirectoryRequest:
+            additionalProperties: false
+            properties:
+                mode:
+                    type: string
+                path:
+                    type: string
+            required:
+                - path
+                - mode
+            type: object
+        api_BrowseDirectoryResponse:
+            additionalProperties: false
+            properties:
+                currentPath:
+                    type: string
+                entries:
+                    items:
+                        $ref: '#/components/schemas/api_BrowseDirectoryEntry'
+                    type: array
+                mode:
+                    type: string
+                parentPath:
+                    type: string
+            required:
+                - currentPath
+                - parentPath
+                - mode
+                - entries
+            type: object
+        api_DescriptionBuilderGroup:
+            additionalProperties: false
+            properties:
+                GroupKey:
+                    type: string
+                HasOverride:
+                    type: boolean
+                ImageHost:
+                    $ref: '#/components/schemas/api_ImageHostFeedback'
+                RawDescription:
+                    type: string
+                RawDescriptionHTML:
+                    type: string
+                Trackers:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - GroupKey
+                - Trackers
+                - RawDescription
+                - RawDescriptionHTML
+                - HasOverride
+                - ImageHost
+            type: object
+        api_DescriptionBuilderPreview:
+            additionalProperties: false
+            properties:
+                Groups:
+                    items:
+                        $ref: '#/components/schemas/api_DescriptionBuilderGroup'
+                    type: array
+                SourcePath:
+                    type: string
+            required:
+                - SourcePath
+                - Groups
+            type: object
+        api_DescriptionOverride:
+            additionalProperties: false
+            properties:
+                Description:
+                    type: string
+                GroupKey:
+                    type: string
+                SourcePath:
+                    type: string
+                UpdatedAt:
+                    format: date-time
+                    type: string
+            required:
+                - SourcePath
+                - GroupKey
+                - Description
+                - UpdatedAt
+            type: object
+        api_DupeCheckResult:
+            additionalProperties: false
+            properties:
+                CheckedAt:
+                    format: date-time
+                    type: string
+                ContentFail:
+                    type: boolean
+                Error:
+                    type: string
+                Filtered:
+                    items:
+                        $ref: '#/components/schemas/api_DupeEntry'
+                    type: array
+                HasDupes:
+                    type: boolean
+                Match:
+                    $ref: '#/components/schemas/api_DupeMatch'
+                Notes:
+                    items:
+                        type: string
+                    type: array
+                Raw:
+                    items:
+                        $ref: '#/components/schemas/api_DupeEntry'
+                    type: array
+                SkipReason:
+                    type: string
+                SkipRules:
+                    items:
+                        type: string
+                    type: array
+                Skipped:
+                    type: boolean
+                Status:
+                    type: string
+                Tracker:
+                    type: string
+            required:
+                - Tracker
+                - Raw
+                - Filtered
+                - HasDupes
+                - ContentFail
+                - Match
+                - Notes
+                - Skipped
+                - SkipReason
+                - SkipRules
+                - Status
+                - Error
+                - CheckedAt
+            type: object
+        api_DupeCheckSummary:
+            additionalProperties: false
+            properties:
+                Notes:
+                    items:
+                        type: string
+                    type: array
+                Results:
+                    items:
+                        $ref: '#/components/schemas/api_DupeCheckResult'
+                    type: array
+                SourcePath:
+                    type: string
+            required:
+                - SourcePath
+                - Results
+                - Notes
+            type: object
+        api_DupeEntry:
+            additionalProperties: false
+            properties:
+                BDInfo:
+                    type: string
+                Description:
+                    type: string
+                Download:
+                    type: string
+                FileCount:
+                    type: integer
+                Files:
+                    items:
+                        type: string
+                    type: array
+                Flags:
+                    items:
+                        type: string
+                    type: array
+                ID:
+                    type: string
+                Internal:
+                    type: boolean
+                Link:
+                    type: string
+                Name:
+                    type: string
+                Res:
+                    type: string
+                SizeBytes:
+                    type: integer
+                SizeKnown:
+                    type: boolean
+                SizeText:
+                    type: string
+                Trumpable:
+                    type: boolean
+                Type:
+                    type: string
+            required:
+                - Name
+                - SizeBytes
+                - SizeKnown
+                - SizeText
+                - Files
+                - FileCount
+                - Trumpable
+                - Link
+                - Download
+                - Flags
+                - ID
+                - Type
+                - Res
+                - Internal
+                - BDInfo
+                - Description
+            type: object
+        api_DupeEpisodeMatch:
+            additionalProperties: false
+            properties:
+                ID:
+                    type: string
+                Internal:
+                    type: boolean
+                Link:
+                    type: string
+                Name:
+                    type: string
+                Tracker:
+                    type: string
+            required:
+                - ID
+                - Name
+                - Link
+                - Tracker
+                - Internal
+            type: object
+        api_DupeMatch:
+            additionalProperties: false
+            properties:
+                FileCountMatch:
+                    type: integer
+                FilenameMatch:
+                    type: string
+                MatchedDownload:
+                    type: string
+                MatchedEpisodeIDs:
+                    items:
+                        $ref: '#/components/schemas/api_DupeEpisodeMatch'
+                    type: array
+                MatchedID:
+                    type: string
+                MatchedLink:
+                    type: string
+                MatchedName:
+                    type: string
+                MatchedReason:
+                    type: string
+                SeasonPackContainsEpisode:
+                    type: boolean
+                SeasonPackExists:
+                    type: boolean
+                SeasonPackID:
+                    type: string
+                SeasonPackLink:
+                    type: string
+                SeasonPackName:
+                    type: string
+                SizeMatch:
+                    type: string
+                TrumpableID:
+                    type: string
+            required:
+                - FilenameMatch
+                - FileCountMatch
+                - SizeMatch
+                - TrumpableID
+                - MatchedID
+                - MatchedName
+                - MatchedLink
+                - MatchedDownload
+                - MatchedReason
+                - SeasonPackExists
+                - SeasonPackName
+                - SeasonPackLink
+                - SeasonPackID
+                - SeasonPackContainsEpisode
+                - MatchedEpisodeIDs
+            type: object
+        api_ExternalIDCandidate:
+            additionalProperties: false
+            properties:
+                Category:
+                    type: string
+                ID:
+                    type: integer
+                MediaType:
+                    type: string
+                OriginalTitle:
+                    type: string
+                Overview:
+                    type: string
+                PosterURL:
+                    type: string
+                Provider:
+                    type: string
+                Similarity:
+                    type: number
+                Title:
+                    type: string
+                Year:
+                    type: integer
+            required:
+                - Provider
+                - ID
+                - Title
+                - OriginalTitle
+                - Year
+                - Category
+                - MediaType
+                - Overview
+                - PosterURL
+                - Similarity
+            type: object
+        api_ExternalIDCandidates:
+            additionalProperties: false
+            properties:
+                IMDB:
+                    items:
+                        $ref: '#/components/schemas/api_ExternalIDCandidate'
+                    type: array
+                IMDBAutoSelected:
+                    type: boolean
+                TMDB:
+                    items:
+                        $ref: '#/components/schemas/api_ExternalIDCandidate'
+                    type: array
+                TMDBAutoSelected:
+                    type: boolean
+            required:
+                - TMDB
+                - IMDB
+                - TMDBAutoSelected
+                - IMDBAutoSelected
+            type: object
+        api_ExternalIDInfo:
+            additionalProperties: false
+            properties:
+                ID:
+                    type: integer
+                Provider:
+                    type: string
+                Source:
+                    type: string
+            required:
+                - Provider
+                - ID
+                - Source
+            type: object
+        api_ExternalIDOverrides:
+            additionalProperties: false
+            properties:
+                IMDBID:
+                    type: integer
+                MALID:
+                    type: integer
+                TMDBID:
+                    type: integer
+                TVDBID:
+                    type: integer
+                TVmazeID:
+                    type: integer
+            type: object
+        api_ExternalIDs:
+            additionalProperties: false
+            properties:
+                Category:
+                    type: string
+                IMDBID:
+                    type: integer
+                SourceIMDB:
+                    type: string
+                SourcePath:
+                    type: string
+                SourceTMDB:
+                    type: string
+                SourceTVDB:
+                    type: string
+                SourceTVmaze:
+                    type: string
+                TMDBID:
+                    type: integer
+                TVDBID:
+                    type: integer
+                TVmazeID:
+                    type: integer
+                UpdatedAt:
+                    format: date-time
+                    type: string
+            required:
+                - SourcePath
+                - TMDBID
+                - IMDBID
+                - TVDBID
+                - TVmazeID
+                - Category
+                - SourceTMDB
+                - SourceIMDB
+                - SourceTVDB
+                - SourceTVmaze
+                - UpdatedAt
+            type: object
+        api_ExternalMetadata:
+            additionalProperties: false
+            properties:
+                IMDB:
+                    $ref: '#/components/schemas/api_IMDBMetadata'
+                SourcePath:
+                    type: string
+                TMDB:
+                    $ref: '#/components/schemas/api_TMDBMetadata'
+                TVDB:
+                    $ref: '#/components/schemas/api_TVDBMetadata'
+                TVmaze:
+                    $ref: '#/components/schemas/api_TVmazeMetadata'
+                UpdatedAt:
+                    format: date-time
+                    type: string
+            required:
+                - SourcePath
+                - UpdatedAt
+            type: object
+        api_ExternalPreview:
+            additionalProperties: false
+            properties:
+                BackdropURL:
+                    type: string
+                Category:
+                    type: string
+                Country:
+                    type: string
+                FirstAirDate:
+                    type: string
+                Genres:
+                    type: string
+                ID:
+                    type: integer
+                IMDB:
+                    $ref: '#/components/schemas/api_IMDBMetadata'
+                IMDBID:
+                    type: integer
+                IMDBType:
+                    type: string
+                Keywords:
+                    type: string
+                LastAirDate:
+                    type: string
+                OriginalLanguage:
+                    type: string
+                OriginalTitle:
+                    type: string
+                Overview:
+                    type: string
+                PosterURL:
+                    type: string
+                Premiered:
+                    type: string
+                Provider:
+                    type: string
+                Rating:
+                    type: number
+                RatingCount:
+                    type: integer
+                ReleaseDate:
+                    type: string
+                Runtime:
+                    type: integer
+                RuntimeMinutes:
+                    type: integer
+                Source:
+                    type: string
+                TMDB:
+                    $ref: '#/components/schemas/api_TMDBMetadata'
+                TMDBType:
+                    type: string
+                TVDB:
+                    $ref: '#/components/schemas/api_TVDBMetadata'
+                TVDBID:
+                    type: integer
+                TVmaze:
+                    $ref: '#/components/schemas/api_TVmazeMetadata'
+                Title:
+                    type: string
+                Year:
+                    type: integer
+                YouTube:
+                    type: string
+            required:
+                - Provider
+                - ID
+                - Source
+                - Title
+                - Year
+                - Overview
+                - PosterURL
+                - BackdropURL
+                - Category
+                - OriginalTitle
+                - ReleaseDate
+                - FirstAirDate
+                - LastAirDate
+                - OriginalLanguage
+                - TMDBType
+                - Runtime
+                - Genres
+                - Keywords
+                - YouTube
+                - IMDBType
+                - Rating
+                - RatingCount
+                - RuntimeMinutes
+                - Country
+                - Premiered
+                - IMDBID
+                - TVDBID
+            type: object
+        api_FileMetadata:
+            additionalProperties: false
+            properties:
+                Alt:
+                    type: string
+                Artist:
+                    type: string
+                Audio:
+                    items:
+                        type: string
+                    type: array
+                Category:
+                    type: string
+                Channels:
+                    type: string
+                Codec:
+                    items:
+                        type: string
+                    type: array
+                Collection:
+                    type: string
+                Day:
+                    type: integer
+                Disc:
+                    type: string
+                DiscType:
+                    type: string
+                Edition:
+                    items:
+                        type: string
+                    type: array
+                Ext:
+                    type: string
+                FileList:
+                    items:
+                        type: string
+                    type: array
+                Genre:
+                    type: string
+                Group:
+                    type: string
+                HDR:
+                    items:
+                        type: string
+                    type: array
+                InfoHash:
+                    type: string
+                Language:
+                    items:
+                        type: string
+                    type: array
+                Month:
+                    type: integer
+                Other:
+                    items:
+                        type: string
+                    type: array
+                Path:
+                    type: string
+                Region:
+                    type: string
+                Resolution:
+                    type: string
+                Scene:
+                    type: boolean
+                SceneIMDB:
+                    type: integer
+                SceneName:
+                    type: string
+                Site:
+                    type: string
+                Size:
+                    type: string
+                Source:
+                    type: string
+                SourceSize:
+                    type: integer
+                Subtitle:
+                    type: string
+                Title:
+                    type: string
+                Type:
+                    type: string
+                UpdatedAt:
+                    format: date-time
+                    type: string
+                VideoPath:
+                    type: string
+                Year:
+                    type: integer
+            required:
+                - Path
+                - InfoHash
+                - UpdatedAt
+                - DiscType
+                - VideoPath
+                - FileList
+                - SourceSize
+                - Scene
+                - SceneName
+                - SceneIMDB
+                - Category
+                - Type
+                - Artist
+                - Title
+                - Subtitle
+                - Alt
+                - Year
+                - Month
+                - Day
+                - Source
+                - Resolution
+                - Codec
+                - Audio
+                - HDR
+                - Ext
+                - Language
+                - Site
+                - Genre
+                - Channels
+                - Collection
+                - Region
+                - Size
+                - Group
+                - Disc
+                - Edition
+                - Other
+            type: object
+        api_HistoryEntry:
+            additionalProperties: false
+            properties:
+                LatestUploadAt:
+                    format: date-time
+                    type: string
+                LatestUploadStatus:
+                    type: string
+                MetadataUpdatedAt:
+                    format: date-time
+                    type: string
+                ReleaseResolution:
+                    type: string
+                ReleaseSource:
+                    type: string
+                ReleaseTitle:
+                    type: string
+                RuleFailureCount:
+                    type: integer
+                SourcePath:
+                    type: string
+            required:
+                - SourcePath
+                - ReleaseTitle
+                - ReleaseSource
+                - ReleaseResolution
+                - MetadataUpdatedAt
+                - LatestUploadStatus
+                - LatestUploadAt
+                - RuleFailureCount
+            type: object
+        api_HistoryOverview:
+            additionalProperties: false
+            properties:
+                DescriptionOverride:
+                    $ref: '#/components/schemas/api_DescriptionOverride'
+                DescriptionOverrides:
+                    items:
+                        $ref: '#/components/schemas/api_DescriptionOverride'
+                    type: array
+                ExternalIDs:
+                    $ref: '#/components/schemas/api_ExternalIDs'
+                ExternalMetadata:
+                    $ref: '#/components/schemas/api_ExternalMetadata'
+                FinalSelections:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotFinalSelection'
+                    type: array
+                LatestUploadAt:
+                    format: date-time
+                    type: string
+                LatestUploadStatus:
+                    type: string
+                Metadata:
+                    $ref: '#/components/schemas/api_FileMetadata'
+                MetadataUpdatedAt:
+                    format: date-time
+                    type: string
+                PlaylistSelection:
+                    $ref: '#/components/schemas/api_PlaylistSelection'
+                ReleaseNameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                ReleaseResolution:
+                    type: string
+                ReleaseSource:
+                    type: string
+                ReleaseTitle:
+                    type: string
+                Screenshots:
+                    items:
+                        $ref: '#/components/schemas/api_Screenshot'
+                    type: array
+                SourcePath:
+                    type: string
+                StatusLabel:
+                    type: string
+                TrackerMetadata:
+                    items:
+                        $ref: '#/components/schemas/api_TrackerMetadata'
+                    type: array
+                TrackerRuleFailures:
+                    items:
+                        $ref: '#/components/schemas/api_TrackerRuleFailure'
+                    type: array
+                UploadHistory:
+                    items:
+                        $ref: '#/components/schemas/api_UploadRecord'
+                    type: array
+                UploadedImages:
+                    items:
+                        $ref: '#/components/schemas/api_UploadedImageLink'
+                    type: array
+            required:
+                - SourcePath
+                - ReleaseTitle
+                - ReleaseSource
+                - ReleaseResolution
+                - MetadataUpdatedAt
+                - LatestUploadStatus
+                - LatestUploadAt
+                - StatusLabel
+                - Metadata
+                - ExternalIDs
+                - ExternalMetadata
+                - ReleaseNameOverrides
+                - DescriptionOverride
+                - DescriptionOverrides
+                - PlaylistSelection
+                - TrackerMetadata
+                - TrackerRuleFailures
+                - Screenshots
+                - FinalSelections
+                - UploadedImages
+                - UploadHistory
+            type: object
+        api_IMDBAKA:
+            additionalProperties: false
+            properties:
+                Attributes:
+                    items:
+                        type: string
+                    type: array
+                Country:
+                    type: string
+                Language:
+                    type: string
+                Title:
+                    type: string
+            required:
+                - Title
+                - Country
+                - Language
+                - Attributes
+            type: object
+        api_IMDBEditionDetail:
+            additionalProperties: false
+            properties:
+                Attributes:
+                    items:
+                        type: string
+                    type: array
+                DisplayName:
+                    type: string
+                Minutes:
+                    type: integer
+                Seconds:
+                    type: integer
+            required:
+                - DisplayName
+                - Seconds
+                - Minutes
+                - Attributes
+            type: object
+        api_IMDBEpisode:
+            additionalProperties: false
+            properties:
+                EpisodeText:
+                    type: string
+                ID:
+                    type: string
+                ReleaseDate:
+                    $ref: '#/components/schemas/api_IMDBReleaseDate'
+                ReleaseYear:
+                    type: integer
+                Season:
+                    type: integer
+                Title:
+                    type: string
+            required:
+                - ID
+                - Title
+                - ReleaseYear
+                - ReleaseDate
+                - Season
+                - EpisodeText
+            type: object
+        api_IMDBMetadata:
+            additionalProperties: false
+            properties:
+                AKA:
+                    type: string
+                Akas:
+                    items:
+                        $ref: '#/components/schemas/api_IMDBAKA'
+                    type: array
+                Country:
+                    type: string
+                CountryList:
+                    type: string
+                Cover:
+                    type: string
+                Creators:
+                    items:
+                        $ref: '#/components/schemas/api_IMDBPerson'
+                    type: array
+                Directors:
+                    items:
+                        $ref: '#/components/schemas/api_IMDBPerson'
+                    type: array
+                EditionDetails:
+                    additionalProperties:
+                        $ref: '#/components/schemas/api_IMDBEditionDetail'
+                    type: object
+                Editions:
+                    items:
+                        type: string
+                    type: array
+                EndYear:
+                    type: integer
+                Episodes:
+                    items:
+                        $ref: '#/components/schemas/api_IMDBEpisode'
+                    type: array
+                Genres:
+                    type: string
+                IMDBID:
+                    type: integer
+                IMDbIDText:
+                    type: string
+                IMDbURL:
+                    type: string
+                OriginalLanguage:
+                    type: string
+                Plot:
+                    type: string
+                Rating:
+                    type: number
+                RatingCount:
+                    type: integer
+                RatingText:
+                    type: string
+                RuntimeMinutes:
+                    type: integer
+                RuntimeText:
+                    type: string
+                SeasonsSummary:
+                    items:
+                        $ref: '#/components/schemas/api_IMDBSeasonSummary'
+                    type: array
+                SoundMixes:
+                    items:
+                        type: string
+                    type: array
+                Stars:
+                    items:
+                        $ref: '#/components/schemas/api_IMDBPerson'
+                    type: array
+                TVYear:
+                    type: integer
+                Title:
+                    type: string
+                Type:
+                    type: string
+                Writers:
+                    items:
+                        $ref: '#/components/schemas/api_IMDBPerson'
+                    type: array
+                Year:
+                    type: integer
+            required:
+                - IMDBID
+                - IMDbIDText
+                - IMDbURL
+                - Title
+                - Year
+                - EndYear
+                - AKA
+                - Type
+                - Plot
+                - Rating
+                - RatingCount
+                - RatingText
+                - RuntimeMinutes
+                - RuntimeText
+                - Genres
+                - Country
+                - CountryList
+                - Cover
+                - Directors
+                - Creators
+                - Writers
+                - Stars
+                - Editions
+                - EditionDetails
+                - Akas
+                - Episodes
+                - SeasonsSummary
+                - SoundMixes
+                - TVYear
+                - OriginalLanguage
+            type: object
+        api_IMDBPerson:
+            additionalProperties: false
+            properties:
+                ID:
+                    type: string
+                Name:
+                    type: string
+            required:
+                - ID
+                - Name
+            type: object
+        api_IMDBReleaseDate:
+            additionalProperties: false
+            properties:
+                Day:
+                    type: integer
+                Month:
+                    type: integer
+                Year:
+                    type: integer
+            required:
+                - Year
+                - Month
+                - Day
+            type: object
+        api_IMDBSeasonSummary:
+            additionalProperties: false
+            properties:
+                Season:
+                    type: integer
+                Year:
+                    type: integer
+                YearRange:
+                    type: string
+            required:
+                - Season
+                - Year
+                - YearRange
+            type: object
+        api_ImageHostFeedback:
+            additionalProperties: false
+            properties:
+                AllowedHosts:
+                    items:
+                        type: string
+                    type: array
+                Message:
+                    type: string
+                Reuploaded:
+                    type: boolean
+                SelectedHost:
+                    type: string
+                Status:
+                    type: string
+            required:
+                - Status
+                - SelectedHost
+                - AllowedHosts
+                - Reuploaded
+                - Message
+            type: object
+        api_MetadataPreview:
+            additionalProperties: false
+            properties:
+                ExternalIDCandidates:
+                    $ref: '#/components/schemas/api_ExternalIDCandidates'
+                ExternalIDInfo:
+                    items:
+                        $ref: '#/components/schemas/api_ExternalIDInfo'
+                    type: array
+                ExternalIDs:
+                    $ref: '#/components/schemas/api_ExternalIDs'
+                ExternalPreview:
+                    items:
+                        $ref: '#/components/schemas/api_ExternalPreview'
+                    type: array
+                ReleaseName:
+                    type: string
+                ReleaseNameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                SourcePath:
+                    type: string
+                TrackerData:
+                    items:
+                        $ref: '#/components/schemas/api_TrackerPreview'
+                    type: array
+                TrackerName:
+                    type: string
+                Warnings:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - SourcePath
+                - TrackerName
+                - ReleaseName
+                - Warnings
+                - ReleaseNameOverrides
+                - ExternalIDs
+                - ExternalIDCandidates
+                - ExternalIDInfo
+                - ExternalPreview
+                - TrackerData
+            type: object
+        api_PlaylistInfo:
+            additionalProperties: false
+            properties:
+                duration:
+                    type: number
+                edition:
+                    type: string
+                file:
+                    type: string
+                items:
+                    items:
+                        $ref: '#/components/schemas/api_PlaylistItem'
+                    type: array
+                score:
+                    type: number
+            required:
+                - file
+                - duration
+                - items
+                - score
+                - edition
+            type: object
+        api_PlaylistItem:
+            additionalProperties: false
+            properties:
+                file:
+                    type: string
+                size:
+                    type: integer
+            required:
+                - file
+                - size
+            type: object
+        api_PlaylistSelection:
+            additionalProperties: false
+            properties:
+                SelectedPlaylists:
+                    items:
+                        type: string
+                    type: array
+                SourcePath:
+                    type: string
+                UpdatedAt:
+                    format: date-time
+                    type: string
+                UseAll:
+                    type: boolean
+            required:
+                - SourcePath
+                - SelectedPlaylists
+                - UseAll
+                - UpdatedAt
+            type: object
+        api_PreparationDescription:
+            additionalProperties: false
+            properties:
+                Description:
+                    type: string
+                DescriptionHTML:
+                    type: string
+                GroupKey:
+                    type: string
+                HasOverride:
+                    type: boolean
+                ImageHost:
+                    $ref: '#/components/schemas/api_ImageHostFeedback'
+                RawDescription:
+                    type: string
+                RawDescriptionHTML:
+                    type: string
+                Trackers:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - GroupKey
+                - Trackers
+                - RawDescription
+                - RawDescriptionHTML
+                - Description
+                - DescriptionHTML
+                - HasOverride
+                - ImageHost
+            type: object
+        api_PreparationPreview:
+            additionalProperties: false
+            properties:
+                Descriptions:
+                    items:
+                        $ref: '#/components/schemas/api_PreparationDescription'
+                    type: array
+                SourcePath:
+                    type: string
+            required:
+                - SourcePath
+                - Descriptions
+            type: object
+        api_ReleaseNameOverrides:
+            additionalProperties: false
+            properties:
+                Category:
+                    type: string
+                DualAudio:
+                    type: boolean
+                Edition:
+                    type: string
+                Episode:
+                    type: string
+                EpisodeTitle:
+                    type: string
+                ManualDate:
+                    type: string
+                ManualYear:
+                    type: integer
+                NoAKA:
+                    type: boolean
+                NoDual:
+                    type: boolean
+                NoDub:
+                    type: boolean
+                NoEdition:
+                    type: boolean
+                NoSeason:
+                    type: boolean
+                NoTag:
+                    type: boolean
+                NoYear:
+                    type: boolean
+                Region:
+                    type: string
+                Resolution:
+                    type: string
+                Season:
+                    type: string
+                Service:
+                    type: string
+                Source:
+                    type: string
+                Tag:
+                    type: string
+                Type:
+                    type: string
+                UseSeasonEpisode:
+                    type: boolean
+            type: object
+        api_Screenshot:
+            additionalProperties: false
+            properties:
+                CapturedAt:
+                    format: date-time
+                    type: string
+                FrameNumber:
+                    type: integer
+                Height:
+                    type: integer
+                ImagePath:
+                    type: string
+                Purpose:
+                    type: string
+                SourcePath:
+                    type: string
+                Timestamp:
+                    type: number
+                Width:
+                    type: integer
+            required:
+                - SourcePath
+                - ImagePath
+                - Timestamp
+                - FrameNumber
+                - Width
+                - Height
+                - Purpose
+                - CapturedAt
+            type: object
+        api_ScreenshotError:
+            additionalProperties: false
+            properties:
+                Index:
+                    type: integer
+                Message:
+                    type: string
+            required:
+                - Index
+                - Message
+            type: object
+        api_ScreenshotFinalSelection:
+            additionalProperties: false
+            properties:
+                ImagePath:
+                    type: string
+                Order:
+                    type: integer
+                SelectedAt:
+                    format: date-time
+                    type: string
+                Source:
+                    type: string
+                SourcePath:
+                    type: string
+            required:
+                - SourcePath
+                - ImagePath
+                - Order
+                - Source
+                - SelectedAt
+            type: object
+        api_ScreenshotImage:
+            additionalProperties: false
+            properties:
+                Height:
+                    type: integer
+                Host:
+                    type: string
+                ImgURL:
+                    type: string
+                Index:
+                    type: integer
+                Path:
+                    type: string
+                RawURL:
+                    type: string
+                SizeBytes:
+                    type: integer
+                TimestampSeconds:
+                    type: number
+                UploadedAt:
+                    format: date-time
+                    type: string
+                WebURL:
+                    type: string
+                Width:
+                    type: integer
+            required:
+                - Index
+                - TimestampSeconds
+                - Path
+                - Width
+                - Height
+                - SizeBytes
+            type: object
+        api_ScreenshotLinkedImage:
+            additionalProperties: false
+            properties:
+                Host:
+                    type: string
+                Path:
+                    type: string
+                Tracker:
+                    type: string
+                URL:
+                    type: string
+            required:
+                - Tracker
+                - URL
+                - Path
+                - Host
+            type: object
+        api_ScreenshotPlan:
+            additionalProperties: false
+            properties:
+                DiscType:
+                    type: string
+                DurationSeconds:
+                    type: number
+                ExistingScreenshots:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotImage'
+                    type: array
+                ExistingTrackerScreenshots:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotImage'
+                    type: array
+                FinalSelections:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotImage'
+                    type: array
+                FrameRate:
+                    type: number
+                MetadataTimestamp:
+                    type: string
+                PreviewImages:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotImage'
+                    type: array
+                RequiresManualFrames:
+                    type: boolean
+                SourcePath:
+                    type: string
+                SuggestedSelections:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotSelection'
+                    type: array
+                TrackerImageLinks:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotLinkedImage'
+                    type: array
+            required:
+                - SourcePath
+                - DiscType
+                - DurationSeconds
+                - FrameRate
+                - SuggestedSelections
+                - ExistingScreenshots
+                - ExistingTrackerScreenshots
+                - FinalSelections
+                - TrackerImageLinks
+                - PreviewImages
+                - MetadataTimestamp
+                - RequiresManualFrames
+            type: object
+        api_ScreenshotResult:
+            additionalProperties: false
+            properties:
+                Errors:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotError'
+                    type: array
+                Images:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotImage'
+                    type: array
+                Purpose:
+                    type: string
+                SourcePath:
+                    type: string
+                Tonemapped:
+                    type: boolean
+                UsedLibplacebo:
+                    type: boolean
+            required:
+                - SourcePath
+                - Purpose
+                - Images
+                - Tonemapped
+                - UsedLibplacebo
+                - Errors
+            type: object
+        api_ScreenshotSelection:
+            additionalProperties: false
+            properties:
+                Frame:
+                    type: integer
+                Index:
+                    type: integer
+                Source:
+                    type: string
+                TimestampSeconds:
+                    type: number
+            required:
+                - Index
+                - TimestampSeconds
+                - Frame
+                - Source
+            type: object
+        api_TMDBCompany:
+            additionalProperties: false
+            properties:
+                ID:
+                    type: integer
+                LogoPath:
+                    type: string
+                Name:
+                    type: string
+                OriginCountry:
+                    type: string
+            required:
+                - ID
+                - Name
+                - LogoPath
+                - OriginCountry
+            type: object
+        api_TMDBCountry:
+            additionalProperties: false
+            properties:
+                ISO3166:
+                    type: string
+                Name:
+                    type: string
+            required:
+                - ISO3166
+                - Name
+            type: object
+        api_TMDBMetadata:
+            additionalProperties: false
+            properties:
+                Anime:
+                    type: boolean
+                Backdrop:
+                    type: string
+                Cast:
+                    items:
+                        type: string
+                    type: array
+                Category:
+                    type: string
+                Certification:
+                    type: string
+                Creators:
+                    items:
+                        type: string
+                    type: array
+                Demographic:
+                    type: string
+                Directors:
+                    items:
+                        type: string
+                    type: array
+                FirstAirDate:
+                    type: string
+                GenreIDs:
+                    type: string
+                Genres:
+                    type: string
+                IMDBID:
+                    type: integer
+                IMDbMismatch:
+                    type: boolean
+                Keywords:
+                    type: string
+                LastAirDate:
+                    type: string
+                Logo:
+                    type: string
+                MALID:
+                    type: integer
+                MismatchedIMDbID:
+                    type: integer
+                Networks:
+                    items:
+                        $ref: '#/components/schemas/api_TMDBNetwork'
+                    type: array
+                OriginCountry:
+                    items:
+                        type: string
+                    type: array
+                OriginalLanguage:
+                    type: string
+                OriginalTitle:
+                    type: string
+                Overview:
+                    type: string
+                Poster:
+                    type: string
+                ProductionCompanies:
+                    items:
+                        $ref: '#/components/schemas/api_TMDBCompany'
+                    type: array
+                ProductionCountries:
+                    items:
+                        $ref: '#/components/schemas/api_TMDBCountry'
+                    type: array
+                ReleaseDate:
+                    type: string
+                RetrievedAKA:
+                    type: string
+                Runtime:
+                    type: integer
+                TMDBID:
+                    type: integer
+                TMDBLogo:
+                    type: string
+                TMDBPosterPath:
+                    type: string
+                TMDBType:
+                    type: string
+                TVDBID:
+                    type: integer
+                Title:
+                    type: string
+                Year:
+                    type: integer
+                YouTube:
+                    type: string
+            required:
+                - TMDBID
+                - IMDBID
+                - TVDBID
+                - Category
+                - Title
+                - OriginalTitle
+                - Year
+                - ReleaseDate
+                - FirstAirDate
+                - LastAirDate
+                - OriginCountry
+                - OriginalLanguage
+                - Overview
+                - Poster
+                - TMDBPosterPath
+                - Logo
+                - TMDBLogo
+                - Backdrop
+                - TMDBType
+                - Runtime
+                - Genres
+                - GenreIDs
+                - Creators
+                - Directors
+                - Cast
+                - MALID
+                - Anime
+                - Demographic
+                - RetrievedAKA
+                - Keywords
+                - YouTube
+                - Certification
+                - ProductionCompanies
+                - ProductionCountries
+                - Networks
+                - IMDbMismatch
+                - MismatchedIMDbID
+            type: object
+        api_TMDBNetwork:
+            additionalProperties: false
+            properties:
+                ID:
+                    type: integer
+                LogoPath:
+                    type: string
+                Name:
+                    type: string
+                OriginCountry:
+                    type: string
+            required:
+                - ID
+                - Name
+                - LogoPath
+                - OriginCountry
+            type: object
+        api_TVDBMetadata:
+            additionalProperties: false
+            properties:
+                Aliases:
+                    items:
+                        type: string
+                    type: array
+                EpisodeAired:
+                    type: string
+                EpisodeName:
+                    type: string
+                EpisodeNameEnglish:
+                    type: string
+                EpisodeNumber:
+                    type: integer
+                EpisodeOverview:
+                    type: string
+                EpisodeOverviewEnglish:
+                    type: string
+                EpisodeSeason:
+                    type: integer
+                FirstAired:
+                    type: string
+                Genres:
+                    type: string
+                HasEnglish:
+                    type: boolean
+                Name:
+                    type: string
+                NameEnglish:
+                    type: string
+                Network:
+                    type: string
+                OriginalCountry:
+                    type: string
+                OriginalLanguage:
+                    type: string
+                Overview:
+                    type: string
+                OverviewEnglish:
+                    type: string
+                Poster:
+                    type: string
+                Status:
+                    type: string
+                TVDBID:
+                    type: integer
+                Type:
+                    type: string
+                Year:
+                    type: integer
+                YearFromAlias:
+                    type: boolean
+            required:
+                - TVDBID
+                - Name
+                - NameEnglish
+                - Overview
+                - OverviewEnglish
+                - FirstAired
+                - Year
+                - YearFromAlias
+                - Type
+                - Status
+                - Network
+                - OriginalCountry
+                - OriginalLanguage
+                - HasEnglish
+                - Genres
+                - Poster
+                - Aliases
+                - EpisodeSeason
+                - EpisodeNumber
+                - EpisodeName
+                - EpisodeNameEnglish
+                - EpisodeOverview
+                - EpisodeOverviewEnglish
+                - EpisodeAired
+            type: object
+        api_TVmazeMetadata:
+            additionalProperties: false
+            properties:
+                AverageRuntime:
+                    type: integer
+                Backdrop:
+                    type: string
+                BackdropMedium:
+                    type: string
+                Country:
+                    type: string
+                Ended:
+                    type: string
+                Genres:
+                    type: string
+                IMDBID:
+                    type: integer
+                Language:
+                    type: string
+                Name:
+                    type: string
+                Network:
+                    type: string
+                NetworkCountry:
+                    type: string
+                NetworkLogo:
+                    type: string
+                OfficialSite:
+                    type: string
+                Poster:
+                    type: string
+                PosterMedium:
+                    type: string
+                Premiered:
+                    type: string
+                Rating:
+                    type: number
+                Runtime:
+                    type: integer
+                Status:
+                    type: string
+                Summary:
+                    type: string
+                TVDBID:
+                    type: integer
+                TVmazeID:
+                    type: integer
+                Type:
+                    type: string
+                WebChannel:
+                    type: string
+                WebCountry:
+                    type: string
+                WebLogo:
+                    type: string
+                Weight:
+                    type: integer
+            required:
+                - TVmazeID
+                - Name
+                - Premiered
+                - Ended
+                - Summary
+                - Status
+                - Type
+                - Language
+                - Genres
+                - Runtime
+                - AverageRuntime
+                - Rating
+                - Weight
+                - OfficialSite
+                - Country
+                - Network
+                - NetworkCountry
+                - NetworkLogo
+                - WebChannel
+                - WebCountry
+                - WebLogo
+                - Poster
+                - PosterMedium
+                - Backdrop
+                - BackdropMedium
+                - IMDBID
+                - TVDBID
+            type: object
+        api_TrackerDryRunEntry:
+            additionalProperties: false
+            properties:
+                Description:
+                    type: string
+                DescriptionGroup:
+                    type: string
+                Endpoint:
+                    type: string
+                Files:
+                    items:
+                        $ref: '#/components/schemas/api_TrackerDryRunFile'
+                    type: array
+                ImageHost:
+                    $ref: '#/components/schemas/api_ImageHostFeedback'
+                Message:
+                    type: string
+                Payload:
+                    additionalProperties:
+                        type: string
+                    type: object
+                Questionnaire:
+                    $ref: '#/components/schemas/api_TrackerQuestionnaire'
+                ReleaseName:
+                    type: string
+                Status:
+                    type: string
+                Tracker:
+                    type: string
+            required:
+                - Tracker
+                - Status
+                - Message
+                - ReleaseName
+                - DescriptionGroup
+                - Description
+                - Endpoint
+                - Payload
+                - Files
+                - ImageHost
+            type: object
+        api_TrackerDryRunFile:
+            additionalProperties: false
+            properties:
+                Field:
+                    type: string
+                Path:
+                    type: string
+                Present:
+                    type: boolean
+            required:
+                - Field
+                - Path
+                - Present
+            type: object
+        api_TrackerDryRunPreview:
+            additionalProperties: false
+            properties:
+                SourcePath:
+                    type: string
+                Trackers:
+                    items:
+                        $ref: '#/components/schemas/api_TrackerDryRunEntry'
+                    type: array
+            required:
+                - SourcePath
+                - Trackers
+            type: object
+        api_TrackerMetadata:
+            additionalProperties: false
+            properties:
+                Category:
+                    type: string
+                Description:
+                    type: string
+                Filename:
+                    type: string
+                IMDBID:
+                    type: integer
+                ImageURLs:
+                    items:
+                        type: string
+                    type: array
+                InfoHash:
+                    type: string
+                MALID:
+                    type: integer
+                Matched:
+                    type: boolean
+                SourcePath:
+                    type: string
+                TMDBID:
+                    type: integer
+                TVDBID:
+                    type: integer
+                Tracker:
+                    type: string
+                TrackerID:
+                    type: string
+                UpdatedAt:
+                    format: date-time
+                    type: string
+            required:
+                - SourcePath
+                - Tracker
+                - TrackerID
+                - InfoHash
+                - TMDBID
+                - IMDBID
+                - TVDBID
+                - MALID
+                - Category
+                - Description
+                - ImageURLs
+                - Filename
+                - Matched
+                - UpdatedAt
+            type: object
+        api_TrackerPreview:
+            additionalProperties: false
+            properties:
+                Category:
+                    type: string
+                Description:
+                    type: string
+                DescriptionHTML:
+                    type: string
+                Filename:
+                    type: string
+                IMDBID:
+                    type: integer
+                ImageURLs:
+                    items:
+                        type: string
+                    type: array
+                InfoHash:
+                    type: string
+                MALID:
+                    type: integer
+                Matched:
+                    type: boolean
+                TMDBID:
+                    type: integer
+                TVDBID:
+                    type: integer
+                TorrentURL:
+                    type: string
+                Tracker:
+                    type: string
+                TrackerID:
+                    type: string
+                UpdatedAt:
+                    type: string
+            required:
+                - Tracker
+                - TrackerID
+                - TorrentURL
+                - InfoHash
+                - TMDBID
+                - IMDBID
+                - TVDBID
+                - MALID
+                - Category
+                - Description
+                - DescriptionHTML
+                - ImageURLs
+                - Filename
+                - Matched
+                - UpdatedAt
+            type: object
+        api_TrackerQuestionnaire:
+            additionalProperties: false
+            properties:
+                Fields:
+                    items:
+                        $ref: '#/components/schemas/api_TrackerQuestionnaireField'
+                    type: array
+                Tracker:
+                    type: string
+            required:
+                - Tracker
+                - Fields
+            type: object
+        api_TrackerQuestionnaireField:
+            additionalProperties: false
+            properties:
+                Help:
+                    type: string
+                Key:
+                    type: string
+                Kind:
+                    type: string
+                Label:
+                    type: string
+                Options:
+                    items:
+                        type: string
+                    type: array
+                Placeholder:
+                    type: string
+                Required:
+                    type: boolean
+                Value:
+                    type: string
+            required:
+                - Key
+                - Label
+                - Kind
+                - Options
+                - Value
+                - Placeholder
+                - Help
+                - Required
+            type: object
+        api_TrackerRuleFailure:
+            additionalProperties: false
+            properties:
+                CreatedAt:
+                    format: date-time
+                    type: string
+                Reason:
+                    type: string
+                Rule:
+                    type: string
+                SourcePath:
+                    type: string
+                Tracker:
+                    type: string
+            required:
+                - SourcePath
+                - Tracker
+                - Rule
+                - Reason
+                - CreatedAt
+            type: object
+        api_UIStateList:
+            additionalProperties: false
+            properties:
+                states:
+                    items:
+                        $ref: '#/components/schemas/api_UIStateRecord'
+                    type: array
+            required:
+                - states
+            type: object
+        api_UIStateRecord:
+            additionalProperties: false
+            properties:
+                id:
+                    type: string
+                label:
+                    type: string
+                state:
+                    additionalProperties: {}
+                    type: object
+                updatedAt:
+                    type: string
+            required:
+                - id
+                - label
+                - updatedAt
+                - state
+            type: object
+        api_UploadRecord:
+            additionalProperties: false
+            properties:
+                CreatedAt:
+                    format: date-time
+                    type: string
+                SourcePath:
+                    type: string
+                Status:
+                    type: string
+                Tracker:
+                    type: string
+            required:
+                - Tracker
+                - Status
+                - CreatedAt
+                - SourcePath
+            type: object
+        api_UploadedImageLink:
+            additionalProperties: false
+            properties:
+                Host:
+                    type: string
+                ImagePath:
+                    type: string
+                ImgURL:
+                    type: string
+                RawURL:
+                    type: string
+                SizeBytes:
+                    type: integer
+                SourcePath:
+                    type: string
+                UploadedAt:
+                    format: date-time
+                    type: string
+                UsageScope:
+                    type: string
+                WebURL:
+                    type: string
+            required:
+                - SourcePath
+                - ImagePath
+                - Host
+                - UsageScope
+                - ImgURL
+                - RawURL
+                - WebURL
+                - SizeBytes
+                - UploadedAt
+            type: object
+        webserver_DupeCheckSnapshot:
+            additionalProperties: false
+            properties:
+                completedCount:
+                    type: integer
+                error:
+                    type: string
+                finishedAt:
+                    type: string
+                jobID:
+                    type: string
+                sourcePath:
+                    type: string
+                startedAt:
+                    type: string
+                status:
+                    type: string
+                summary:
+                    $ref: '#/components/schemas/api_DupeCheckSummary'
+                totalCount:
+                    type: integer
+                trackers:
+                    items:
+                        $ref: '#/components/schemas/webserver_DupeCheckTrackerState'
+                    type: array
+            required:
+                - jobID
+                - sourcePath
+                - status
+                - trackers
+                - completedCount
+                - totalCount
+                - summary
+                - error
+                - startedAt
+                - finishedAt
+            type: object
+        webserver_DupeCheckTrackerState:
+            additionalProperties: false
+            properties:
+                finishedAt:
+                    type: string
+                message:
+                    type: string
+                result:
+                    $ref: '#/components/schemas/api_DupeCheckResult'
+                startedAt:
+                    type: string
+                status:
+                    type: string
+                tracker:
+                    type: string
+            required:
+                - tracker
+                - status
+                - message
+                - result
+                - startedAt
+                - finishedAt
+            type: object
+        webserver_TrackerUploadSnapshot:
+            additionalProperties: false
+            properties:
+                error:
+                    type: string
+                failedTrackers:
+                    items:
+                        type: string
+                    type: array
+                finishedAt:
+                    type: string
+                jobID:
+                    type: string
+                sourcePath:
+                    type: string
+                startedAt:
+                    type: string
+                status:
+                    type: string
+                trackers:
+                    items:
+                        $ref: '#/components/schemas/webserver_TrackerUploadTrackerState'
+                    type: array
+                uploadedCount:
+                    type: integer
+            required:
+                - jobID
+                - sourcePath
+                - status
+                - trackers
+                - failedTrackers
+                - uploadedCount
+                - error
+                - startedAt
+                - finishedAt
+            type: object
+        webserver_TrackerUploadTrackerState:
+            additionalProperties: false
+            properties:
+                finishedAt:
+                    type: string
+                message:
+                    type: string
+                startedAt:
+                    type: string
+                status:
+                    type: string
+                tracker:
+                    type: string
+                uploadedCount:
+                    type: integer
+            required:
+                - tracker
+                - status
+                - message
+                - uploadedCount
+                - startedAt
+                - finishedAt
+            type: object
+        webserver_apiAuthCredentialsRequest:
+            additionalProperties: false
+            properties:
+                password:
+                    type: string
+                retainLogin:
+                    type: boolean
+                username:
+                    type: string
+            required:
+                - username
+                - password
+                - retainLogin
+            type: object
+        webserver_apiAuthStatusResponse:
+            additionalProperties: false
+            properties:
+                allowUnrestrictedBrowse:
+                    type: boolean
+                authenticated:
+                    type: boolean
+                bearerToken:
+                    type: string
+                browseRoot:
+                    type: string
+                nativeBrowseEnabled:
+                    type: boolean
+                needsBrowsePolicy:
+                    type: boolean
+                needsSetup:
+                    type: boolean
+                username:
+                    type: string
+            required:
+                - authenticated
+                - needsSetup
+                - username
+                - nativeBrowseEnabled
+                - browseRoot
+                - allowUnrestrictedBrowse
+                - needsBrowsePolicy
+            type: object
+        BDMVRescanRequiredResponse:
+            additionalProperties: false
+            properties:
+                cached_playlists:
+                    items:
+                        type: string
+                    type: array
+                code:
+                    type: string
+                error:
+                    type: string
+                missing_playlists:
+                    items:
+                        type: string
+                    type: array
+                selected_playlists:
+                    items:
+                        type: string
+                    type: array
+                source_path:
+                    type: string
+            required:
+                - error
+                - code
+                - source_path
+                - selected_playlists
+                - cached_playlists
+                - missing_playlists
+            type: object
+        webserver_apiBrowsePolicyRequest:
+            additionalProperties: false
+            properties:
+                allowUnrestrictedBrowse:
+                    type: boolean
+                browseRoot:
+                    type: string
+            required:
+                - browseRoot
+                - allowUnrestrictedBrowse
+            type: object
+        webserver_apiCreatedTokenResponse:
+            additionalProperties: false
+            properties:
+                record:
+                    $ref: '#/components/schemas/webserver_apiTokenStatusResponse'
+                token:
+                    type: string
+            required:
+                - token
+                - record
+            type: object
+        webserver_apiErrorResponse:
+            additionalProperties: false
+            properties:
+                code:
+                    type: string
+                error:
+                    type: string
+            required:
+                - error
+            type: object
+        webserver_apiOKResponse:
+            additionalProperties: false
+            properties:
+                ok:
+                    type: boolean
+            required:
+                - ok
+            type: object
+        webserver_apiStatusResponse:
+            additionalProperties: false
+            properties:
+                coreReady:
+                    type: boolean
+                ok:
+                    type: boolean
+                version:
+                    type: string
+            required:
+                - ok
+                - version
+                - coreReady
+            type: object
+        webserver_apiTokenRequest:
+            additionalProperties: false
+            properties:
+                name:
+                    type: string
+            required:
+                - name
+            type: object
+        webserver_apiTokenStatusResponse:
+            additionalProperties: false
+            properties:
+                createdAt:
+                    type: string
+                id:
+                    type: string
+                lastUsedAt:
+                    type: string
+                name:
+                    type: string
+                revokedAt:
+                    type: string
+            required:
+                - id
+                - name
+                - createdAt
+            type: object
+        webserver_apiWebAuthStatusResponse:
+            additionalProperties: false
+            properties:
+                allowUnencryptedExport:
+                    type: boolean
+                allowUnrestrictedBrowse:
+                    type: boolean
+                apiTokens:
+                    items:
+                        $ref: '#/components/schemas/webserver_apiTokenStatusResponse'
+                    type: array
+                browseRoot:
+                    type: string
+                canCreate:
+                    type: boolean
+                encryptionEnabled:
+                    type: boolean
+                exists:
+                    type: boolean
+                message:
+                    type: string
+                path:
+                    type: string
+                usable:
+                    type: boolean
+                username:
+                    type: string
+            required:
+                - path
+                - exists
+                - usable
+                - canCreate
+                - username
+                - allowUnencryptedExport
+                - browseRoot
+                - allowUnrestrictedBrowse
+                - encryptionEnabled
+                - apiTokens
+                - message
+            type: object
+        webserver_configPayloadRequest:
+            additionalProperties: false
+            properties:
+                payload:
+                    type: string
+            required:
+                - payload
+            type: object
+        webserver_contentRequest:
+            additionalProperties: false
+            properties:
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+                trackers:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - path
+                - overrides
+                - nameOverrides
+            type: object
+        webserver_deleteUploadedImageRequest:
+            additionalProperties: false
+            properties:
+                host:
+                    type: string
+                imagePath:
+                    type: string
+                path:
+                    type: string
+            required:
+                - path
+                - imagePath
+                - host
+            type: object
+        webserver_finalScreenshotSelectionsRequest:
+            additionalProperties: false
+            properties:
+                images:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotImage'
+                    type: array
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+            required:
+                - path
+                - overrides
+                - nameOverrides
+                - images
+            type: object
+        webserver_generateScreenshotsRequest:
+            additionalProperties: false
+            properties:
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+                purpose:
+                    type: string
+                selections:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotSelection'
+                    type: array
+            required:
+                - path
+                - overrides
+                - nameOverrides
+                - selections
+                - purpose
+            type: object
+        webserver_importConfigRequest:
+            additionalProperties: false
+            properties:
+                fileContent:
+                    type: string
+                fileName:
+                    type: string
+            required:
+                - fileName
+                - fileContent
+            type: object
+        webserver_importConfigResponse:
+            additionalProperties: false
+            properties:
+                result:
+                    type: string
+                warnings:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - result
+                - warnings
+            type: object
+        webserver_jobIDResponse:
+            additionalProperties: false
+            properties:
+                jobID:
+                    type: string
+            required:
+                - jobID
+            type: object
+        webserver_logExclusionsRequest:
+            additionalProperties: false
+            properties:
+                patterns:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - patterns
+            type: object
+        webserver_metadataRequest:
+            additionalProperties: false
+            properties:
+                confirmBDMVRescan:
+                    type: boolean
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+                sourceLookupURL:
+                    type: string
+                trackers:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - path
+                - sourceLookupURL
+                - overrides
+                - nameOverrides
+                - trackers
+                - confirmBDMVRescan
+            type: object
+        webserver_pathRequest:
+            additionalProperties: false
+            properties:
+                path:
+                    type: string
+            required:
+                - path
+            type: object
+        webserver_playlistSelectionRequest:
+            additionalProperties: false
+            properties:
+                path:
+                    type: string
+                playlists:
+                    items:
+                        type: string
+                    type: array
+                useAll:
+                    type: boolean
+            required:
+                - path
+                - playlists
+                - useAll
+            type: object
+        webserver_preparationRequest:
+            additionalProperties: false
+            properties:
+                ignoreDupesFor:
+                    items:
+                        type: string
+                    type: array
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+                trackers:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - path
+                - overrides
+                - nameOverrides
+                - trackers
+                - ignoreDupesFor
+            type: object
+        webserver_previewScreenshotFrameRequest:
+            additionalProperties: false
+            properties:
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+                timestampSeconds:
+                    type: number
+            required:
+                - path
+                - overrides
+                - nameOverrides
+                - timestampSeconds
+            type: object
+        webserver_recentLogsRequest:
+            additionalProperties: false
+            properties:
+                limit:
+                    type: integer
+            required:
+                - limit
+            type: object
+        webserver_renderDescriptionRequest:
+            additionalProperties: false
+            properties:
+                raw:
+                    type: string
+            required:
+                - raw
+            type: object
+        webserver_saveDescriptionOverrideRequest:
+            additionalProperties: false
+            properties:
+                groupKey:
+                    type: string
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+                raw:
+                    type: string
+                trackers:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - path
+                - groupKey
+                - raw
+                - trackers
+                - overrides
+                - nameOverrides
+            type: object
+        webserver_screenshotImageRequest:
+            additionalProperties: false
+            properties:
+                imagePath:
+                    type: string
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+            required:
+                - path
+                - overrides
+                - nameOverrides
+                - imagePath
+            type: object
+        webserver_screenshotPlanRequest:
+            additionalProperties: false
+            properties:
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+            required:
+                - path
+                - overrides
+                - nameOverrides
+            type: object
+        webserver_sourcePathRequest:
+            additionalProperties: false
+            properties:
+                sourcePath:
+                    type: string
+            required:
+                - sourcePath
+            type: object
+        webserver_trackerDryRunRequest:
+            additionalProperties: false
+            properties:
+                debug:
+                    type: boolean
+                descriptionGroups:
+                    items:
+                        $ref: '#/components/schemas/api_DescriptionBuilderGroup'
+                    type: array
+                ignoreDupesFor:
+                    items:
+                        type: string
+                    type: array
+                ignoreRuleFailures:
+                    type: boolean
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+                questionnaireAnswers:
+                    additionalProperties:
+                        additionalProperties:
+                            type: string
+                        type: object
+                    type: object
+                runLogLevel:
+                    type: string
+                trackers:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - path
+                - overrides
+                - nameOverrides
+                - trackers
+                - ignoreRuleFailures
+                - ignoreDupesFor
+                - questionnaireAnswers
+                - descriptionGroups
+                - debug
+                - runLogLevel
+            type: object
+        webserver_trackerImageURLRequest:
+            additionalProperties: false
+            properties:
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+                url:
+                    type: string
+            required:
+                - path
+                - overrides
+                - nameOverrides
+                - url
+            type: object
+        webserver_trackerUploadRequest:
+            additionalProperties: false
+            properties:
+                debug:
+                    type: boolean
+                descriptionGroups:
+                    items:
+                        $ref: '#/components/schemas/api_DescriptionBuilderGroup'
+                    type: array
+                ignoreDupesFor:
+                    items:
+                        type: string
+                    type: array
+                ignoreRuleFailures:
+                    type: boolean
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+                questionnaireAnswers:
+                    additionalProperties:
+                        additionalProperties:
+                            type: string
+                        type: object
+                    type: object
+                runLogLevel:
+                    type: string
+                trackers:
+                    items:
+                        type: string
+                    type: array
+            required:
+                - path
+                - overrides
+                - nameOverrides
+                - trackers
+                - ignoreRuleFailures
+                - ignoreDupesFor
+                - questionnaireAnswers
+                - descriptionGroups
+                - debug
+                - runLogLevel
+            type: object
+        webserver_uiStateSaveRequest:
+            additionalProperties: false
+            properties:
+                id:
+                    type: string
+                label:
+                    type: string
+                state:
+                    additionalProperties: {}
+                    type: object
+            required:
+                - id
+                - label
+                - state
+            type: object
+        webserver_uploadImagesRequest:
+            additionalProperties: false
+            properties:
+                host:
+                    type: string
+                images:
+                    items:
+                        $ref: '#/components/schemas/api_ScreenshotImage'
+                    type: array
+                nameOverrides:
+                    $ref: '#/components/schemas/api_ReleaseNameOverrides'
+                overrides:
+                    $ref: '#/components/schemas/api_ExternalIDOverrides'
+                path:
+                    type: string
+            required:
+                - path
+                - overrides
+                - nameOverrides
+                - host
+                - images
+            type: object
+    securitySchemes:
+        bearerAuth:
+            scheme: bearer
+            type: http

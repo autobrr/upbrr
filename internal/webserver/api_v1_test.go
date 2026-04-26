@@ -10,9 +10,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
@@ -266,24 +269,15 @@ func TestAPIV1BrowseDirectoryAllowsDesktopTokenOnLoopback(t *testing.T) {
 
 func TestOpenAPIDocumentCoversAPIV1Routes(t *testing.T) {
 	routes := apiV1Routes()
-	doc, err := buildOpenAPIDocument(routes)
+	doc, err := openAPIDocumentSpec()
 	if err != nil {
-		t.Fatalf("buildOpenAPIDocument: %v", err)
+		t.Fatalf("openAPIDocumentSpec: %v", err)
 	}
-	paths, ok := doc["paths"].(map[string]any)
-	if !ok {
-		t.Fatalf("openapi paths has unexpected type %T", doc["paths"])
-	}
+	paths := openAPIMap(t, doc["paths"], "openapi.paths")
 	seenOperationIDs := make(map[string]struct{}, len(routes))
 	for _, route := range routes {
-		item, ok := paths[route.Path].(map[string]any)
-		if !ok {
-			t.Fatalf("missing path %s", route.Path)
-		}
-		operation, ok := item[lowerHTTPMethod(route.Method)].(map[string]any)
-		if !ok {
-			t.Fatalf("missing operation %s %s", route.Method, route.Path)
-		}
+		item := openAPIMap(t, paths[route.Path], route.Path)
+		operation := openAPIMap(t, item[lowerHTTPMethod(route.Method)], route.Path+"."+lowerHTTPMethod(route.Method))
 		id, _ := operation["operationId"].(string)
 		if id == "" {
 			t.Fatalf("missing operation id for %s %s", route.Method, route.Path)
@@ -292,6 +286,112 @@ func TestOpenAPIDocumentCoversAPIV1Routes(t *testing.T) {
 			t.Fatalf("duplicate operation id %q", id)
 		}
 		seenOperationIDs[id] = struct{}{}
+		if route.Request != nil {
+			if _, exists := operation["requestBody"]; !exists {
+				t.Fatalf("missing request body for %s %s", route.Method, route.Path)
+			}
+		}
+		_, hasSecurity := operation["security"]
+		if route.Public && hasSecurity {
+			t.Fatalf("public route should not require security: %s %s", route.Method, route.Path)
+		}
+		if !route.Public && !hasSecurity {
+			t.Fatalf("authenticated route should document security: %s %s", route.Method, route.Path)
+		}
+	}
+}
+
+func TestOpenAPIYAMLHandler(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state.db"))
+	mux := http.NewServeMux()
+	server.registerAPIV1Routes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil)
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "application/yaml") {
+		t.Fatalf("expected application/yaml content type, got %q", contentType)
+	}
+	var payload map[string]any
+	if err := yaml.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal openapi yaml: %v", err)
+	}
+	if got, _ := payload["openapi"].(string); got != "3.1.1" {
+		t.Fatalf("unexpected openapi version %q", got)
+	}
+}
+
+func TestOpenAPIDocumentUsesRouteSpecificErrorResponses(t *testing.T) {
+	doc, err := openAPIDocumentSpec()
+	if err != nil {
+		t.Fatalf("openAPIDocumentSpec: %v", err)
+	}
+	responses := openAPIOperationResponses(t, doc, "/api/v1/status", "get")
+	for _, status := range []string{"400", "403", "404", "409", "429", "500"} {
+		if _, exists := responses[status]; exists {
+			t.Fatalf("status route should not document %s response", status)
+		}
+	}
+	if _, exists := responses["default"]; !exists {
+		t.Fatalf("status route should document default error response")
+	}
+	if _, exists := openAPIOperationResponses(t, doc, "/api/v1/files/browse", "post")["403"]; !exists {
+		t.Fatalf("browse route should document 403 response")
+	}
+	if _, exists := openAPIOperationResponses(t, doc, "/api/v1/metadata/fetch", "post")["409"]; !exists {
+		t.Fatalf("metadata fetch route should document 409 response")
+	}
+}
+
+func TestOpenAPIRouteErrorStatusesMatchSpec(t *testing.T) {
+	doc, err := openAPIDocumentSpec()
+	if err != nil {
+		t.Fatalf("openAPIDocumentSpec: %v", err)
+	}
+	for _, route := range apiV1Routes() {
+		responses := openAPIOperationResponses(t, doc, route.Path, lowerHTTPMethod(route.Method))
+		if _, exists := responses["default"]; !exists {
+			t.Fatalf("missing default error response for %s %s", route.Method, route.Path)
+		}
+		if !route.Public {
+			if _, exists := responses["401"]; !exists {
+				t.Fatalf("missing 401 response for authenticated route %s %s", route.Method, route.Path)
+			}
+		}
+		for _, status := range route.ErrorStatuses {
+			if _, exists := responses[http.StatusText(status)]; exists {
+				t.Fatalf("response status should use numeric key, got text for %s %s", route.Method, route.Path)
+			}
+			key := strings.TrimSpace(strconv.Itoa(status))
+			if _, exists := responses[key]; !exists {
+				t.Fatalf("missing %s response for %s %s", key, route.Method, route.Path)
+			}
+		}
+	}
+}
+
+func openAPIOperationResponses(t *testing.T, doc openAPIDocument, path string, method string) map[string]any {
+	t.Helper()
+	paths := openAPIMap(t, doc["paths"], "openapi.paths")
+	pathItem := openAPIMap(t, paths[path], path)
+	operation := openAPIMap(t, pathItem[method], path+"."+method)
+	return openAPIMap(t, operation["responses"], path+"."+method+".responses")
+}
+
+func openAPIMap(t *testing.T, value any, name string) map[string]any {
+	t.Helper()
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	case openAPIDocument:
+		return map[string]any(typed)
+	default:
+		t.Fatalf("%s has unexpected type %T", name, value)
+		return nil
 	}
 }
 

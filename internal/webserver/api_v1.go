@@ -21,18 +21,20 @@ type apiV1Context struct {
 type apiV1Handler func(*Server, http.ResponseWriter, *http.Request, apiV1Context, map[string]string)
 
 type apiV1Route struct {
-	Method      string
-	Path        string
-	OperationID string
-	Summary     string
-	Public      bool
-	Request     any
-	Response    any
-	Handler     apiV1Handler
+	Method        string
+	Path          string
+	OperationID   string
+	Summary       string
+	Public        bool
+	ErrorStatuses []int
+	Request       any
+	Response      any
+	Handler       apiV1Handler
 }
 
 func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/openapi.json", s.handleOpenAPI)
+	mux.HandleFunc("/api/openapi.yaml", s.handleOpenAPIYAML)
 	mux.HandleFunc("/api/docs", s.handleSwaggerUI)
 	mux.HandleFunc("/api/docs/", s.handleSwaggerUI)
 	mux.HandleFunc("/api/v1/", s.handleAPIV1)
@@ -40,9 +42,9 @@ func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
 
 func apiV1Routes() []apiV1Route {
 	return []apiV1Route{
-		{Method: http.MethodGet, Path: "/api/v1/auth/status", OperationID: "getAuthStatus", Summary: "Get REST auth status", Public: true, Response: apiAuthStatusResponse{}, Handler: handleAPIAuthStatus},
+		{Method: http.MethodGet, Path: "/api/v1/auth/status", OperationID: "getAuthStatus", Summary: "Get REST auth status", Public: true, ErrorStatuses: []int{http.StatusUnauthorized}, Response: apiAuthStatusResponse{}, Handler: handleAPIAuthStatus},
 		{Method: http.MethodPost, Path: "/api/v1/auth/bootstrap", OperationID: "bootstrapAuth", Summary: "Create initial REST auth", Public: true, Request: apiAuthCredentialsRequest{}, Response: apiAuthStatusResponse{}, Handler: handleAPIAuthBootstrap},
-		{Method: http.MethodPost, Path: "/api/v1/auth/token", OperationID: "createLoginToken", Summary: "Create bearer token from credentials", Public: true, Request: apiAuthCredentialsRequest{}, Response: apiAuthStatusResponse{}, Handler: handleAPIAuthToken},
+		{Method: http.MethodPost, Path: "/api/v1/auth/token", OperationID: "createLoginToken", Summary: "Create bearer token from credentials", Public: true, ErrorStatuses: []int{http.StatusUnauthorized}, Request: apiAuthCredentialsRequest{}, Response: apiAuthStatusResponse{}, Handler: handleAPIAuthToken},
 		{Method: http.MethodPost, Path: "/api/v1/auth/logout", OperationID: "revokeCurrentToken", Summary: "Revoke current bearer token", Response: apiOKResponse{}, Handler: handleAPIAuthLogout},
 		{Method: http.MethodPut, Path: "/api/v1/auth/browse-policy", OperationID: "saveBrowsePolicy", Summary: "Save web browse policy", Request: apiBrowsePolicyRequest{}, Response: apiAuthStatusResponse{}, Handler: handleAPISaveBrowsePolicy},
 		{Method: http.MethodGet, Path: "/api/v1/auth/web-status", OperationID: "getWebAuthStatus", Summary: "Get web auth material status", Response: apiWebAuthStatusResponse{}, Handler: handleAPIWebAuthStatus},
@@ -59,19 +61,19 @@ func apiV1Routes() []apiV1Route {
 		{Method: http.MethodGet, Path: "/api/v1/config/export", OperationID: "exportConfig", Summary: "Export config", Response: "", Handler: handleAPIExportConfig},
 		{Method: http.MethodPut, Path: "/api/v1/config/current", OperationID: "saveConfig", Summary: "Save config", Request: configPayloadRequest{}, Response: apiOKResponse{}, Handler: handleAPISaveConfig},
 		{Method: http.MethodPost, Path: "/api/v1/config/import", OperationID: "importConfig", Summary: "Import config", Request: importConfigRequest{}, Response: importConfigResponse{}, Handler: handleAPIImportConfig},
-		{Method: http.MethodPost, Path: "/api/v1/files/browse", OperationID: "browseDirectory", Summary: "Browse server-side files", Request: api.BrowseDirectoryRequest{}, Response: api.BrowseDirectoryResponse{}, Handler: handleAPIBrowseDirectory},
-		{Method: http.MethodPost, Path: "/api/v1/files/native/file", OperationID: "browseNativeFile", Summary: "Open native file picker", Response: "", Handler: handleAPIBrowseNativeFile},
-		{Method: http.MethodPost, Path: "/api/v1/files/native/folder", OperationID: "browseNativeFolder", Summary: "Open native folder picker", Response: "", Handler: handleAPIBrowseNativeFolder},
+		{Method: http.MethodPost, Path: "/api/v1/files/browse", OperationID: "browseDirectory", Summary: "Browse server-side files", ErrorStatuses: []int{http.StatusForbidden}, Request: api.BrowseDirectoryRequest{}, Response: api.BrowseDirectoryResponse{}, Handler: handleAPIBrowseDirectory},
+		{Method: http.MethodPost, Path: "/api/v1/files/native/file", OperationID: "browseNativeFile", Summary: "Open native file picker", ErrorStatuses: []int{http.StatusForbidden}, Response: "", Handler: handleAPIBrowseNativeFile},
+		{Method: http.MethodPost, Path: "/api/v1/files/native/folder", OperationID: "browseNativeFolder", Summary: "Open native folder picker", ErrorStatuses: []int{http.StatusForbidden}, Response: "", Handler: handleAPIBrowseNativeFolder},
 		{Method: http.MethodPost, Path: "/api/v1/media/disc-type", OperationID: "detectDiscType", Summary: "Detect disc type", Request: pathRequest{}, Response: "", Handler: handleAPIDetectDiscType},
-		{Method: http.MethodPost, Path: "/api/v1/metadata/fetch", OperationID: "fetchMetadata", Summary: "Fetch metadata", Request: metadataRequest{}, Response: api.MetadataPreview{}, Handler: handleAPIFetchMetadata},
-		{Method: http.MethodPost, Path: "/api/v1/metadata/reset", OperationID: "resetMetadata", Summary: "Reset metadata", Request: metadataRequest{}, Response: api.MetadataPreview{}, Handler: handleAPIResetMetadata},
+		{Method: http.MethodPost, Path: "/api/v1/metadata/fetch", OperationID: "fetchMetadata", Summary: "Fetch metadata", ErrorStatuses: []int{http.StatusConflict}, Request: metadataRequest{}, Response: api.MetadataPreview{}, Handler: handleAPIFetchMetadata},
+		{Method: http.MethodPost, Path: "/api/v1/metadata/reset", OperationID: "resetMetadata", Summary: "Reset metadata", ErrorStatuses: []int{http.StatusConflict}, Request: metadataRequest{}, Response: api.MetadataPreview{}, Handler: handleAPIResetMetadata},
 		{Method: http.MethodPost, Path: "/api/v1/dupes/check", OperationID: "checkDupes", Summary: "Check dupes synchronously", Request: contentRequest{}, Response: api.DupeCheckSummary{}, Handler: handleAPICheckDupes},
 		{Method: http.MethodPost, Path: "/api/v1/jobs/dupes", OperationID: "startDupeJob", Summary: "Start dupe-check job", Request: contentRequest{}, Response: jobIDResponse{}, Handler: handleAPIStartDupeJob},
 		{Method: http.MethodGet, Path: "/api/v1/jobs/dupes/{jobID}", OperationID: "getDupeJob", Summary: "Get dupe-check job snapshot", Response: DupeCheckSnapshot{}, Handler: handleAPIGetDupeJob},
 		{Method: http.MethodDelete, Path: "/api/v1/jobs/dupes/{jobID}", OperationID: "cancelDupeJob", Summary: "Cancel dupe-check job", Response: apiOKResponse{}, Handler: handleAPICancelDupeJob},
-		{Method: http.MethodPost, Path: "/api/v1/preparation/fetch", OperationID: "fetchPreparation", Summary: "Fetch preparation preview", Request: preparationRequest{}, Response: api.PreparationPreview{}, Handler: handleAPIFetchPreparation},
+		{Method: http.MethodPost, Path: "/api/v1/preparation/fetch", OperationID: "fetchPreparation", Summary: "Fetch preparation preview", ErrorStatuses: []int{http.StatusConflict}, Request: preparationRequest{}, Response: api.PreparationPreview{}, Handler: handleAPIFetchPreparation},
 		{Method: http.MethodPost, Path: "/api/v1/tracker-dry-run/fetch", OperationID: "fetchTrackerDryRun", Summary: "Fetch tracker dry run", Request: trackerDryRunRequest{}, Response: api.TrackerDryRunPreview{}, Handler: handleAPIFetchTrackerDryRun},
-		{Method: http.MethodPost, Path: "/api/v1/description-builder/fetch", OperationID: "fetchDescriptionBuilder", Summary: "Fetch description builder", Request: preparationRequest{}, Response: api.DescriptionBuilderPreview{}, Handler: handleAPIFetchDescriptionBuilder},
+		{Method: http.MethodPost, Path: "/api/v1/description-builder/fetch", OperationID: "fetchDescriptionBuilder", Summary: "Fetch description builder", ErrorStatuses: []int{http.StatusConflict}, Request: preparationRequest{}, Response: api.DescriptionBuilderPreview{}, Handler: handleAPIFetchDescriptionBuilder},
 		{Method: http.MethodPost, Path: "/api/v1/description/render", OperationID: "renderDescription", Summary: "Render description", Request: renderDescriptionRequest{}, Response: "", Handler: handleAPIRenderDescription},
 		{Method: http.MethodPost, Path: "/api/v1/description/override", OperationID: "saveDescriptionOverride", Summary: "Save description override", Request: saveDescriptionOverrideRequest{}, Response: api.DescriptionBuilderGroup{}, Handler: handleAPISaveDescriptionOverride},
 		{Method: http.MethodPost, Path: "/api/v1/playlists/discover", OperationID: "discoverPlaylists", Summary: "Discover playlists", Request: pathRequest{}, Response: []api.PlaylistInfo{}, Handler: handleAPIDiscoverPlaylists},
@@ -930,7 +932,7 @@ func handleAPIEvents(s *Server, w http.ResponseWriter, r *http.Request, ctx apiV
 }
 
 func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
-	payload, err := buildOpenAPIDocument(apiV1Routes())
+	payload, err := openAPIDocumentSpec()
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -938,6 +940,17 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (s *Server) handleOpenAPIYAML(w http.ResponseWriter, _ *http.Request) {
+	payload, err := openAPIYAMLSpec()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
 }
 
 func (s *Server) handleSwaggerUI(w http.ResponseWriter, _ *http.Request) {
