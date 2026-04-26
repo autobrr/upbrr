@@ -17,17 +17,17 @@ import (
 )
 
 var (
-	seasonEpisodePattern = regexp.MustCompile(`(?i)\bS(\d{1,2})[ ._-]*E(\d{1,3}(?:[ ._-]*E\d{1,3})*)\b`)
-	episodeTokenPattern  = regexp.MustCompile(`(?i)E(\d{1,3})`)
-	multiEpisodePattern  = regexp.MustCompile(`(?i)E\d{1,3}\s*[-+&]\s*(?:E)?\d{1,3}`)
-	altSeasonEpisode     = regexp.MustCompile(`(?i)\b(\d{1,2})x(\d{2,3})\b`)
-	seasonOnlyPattern    = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
-	seasonWordPattern    = regexp.MustCompile(`(?i)\b(?:season|series)\s*(\d+)\b`)
-	episodeOnlyPattern   = regexp.MustCompile(`(?i)\bE(\d{2,3})\b`)
-	dailyPattern         = regexp.MustCompile(`\b(19\d{2}|20\d{2})[.-](\d{2})[.-](\d{2})\b`)
-	animeDashPattern     = regexp.MustCompile(`\s-\s(\d{1,4})\s*[\(\[]`)
-	animeEpisodePattern  = regexp.MustCompile(`(?i)\b(?:ep|episode)\s*([0-9]{1,4})\b`)
-	animeGenericPattern  = regexp.MustCompile(`(?:^|[\s._-])(\d{1,4})(?:$|[\s._-])`)
+	seasonEpisodePattern   = regexp.MustCompile(`(?i)\bS(\d{1,2})[ ._-]*E(\d{1,3}(?:[ ._-]*E\d{1,3})*)\b`)
+	episodeTokenPattern    = regexp.MustCompile(`(?i)E(\d{1,3})`)
+	multiEpisodePattern    = regexp.MustCompile(`(?i)E\d{1,3}\s*[-+&]\s*(?:E)?\d{1,3}`)
+	altSeasonEpisode       = regexp.MustCompile(`(?i)\b(\d{1,2})x(\d{2,3})\b`)
+	seasonOnlyPattern      = regexp.MustCompile(`(?i)\bS(\d{1,2})\b`)
+	seasonWordPattern      = regexp.MustCompile(`(?i)\b(?:season|series)\s*(\d+)\b`)
+	episodeOnlyPattern     = regexp.MustCompile(`(?i)\bE(\d{2,3})\b`)
+	dailyPattern           = regexp.MustCompile(`\b(19\d{2}|20\d{2})[.-](\d{2})[.-](\d{2})\b`)
+	animeResolutionPattern = regexp.MustCompile(`(?i)(?:\s-\s)?(\d{1,4})(?:v\d+)?\s*\((?:\d+[pi])\)`)
+	animeEpisodePattern    = regexp.MustCompile(`(?i)\b(?:ep|episode)\s*([0-9]{1,4})\b`)
+	animeGenericPattern    = regexp.MustCompile(`(?:^|[\s._-])(\d{1,4})(?:$|[\s._-])`)
 )
 
 var videoExtensions = map[string]struct{}{
@@ -245,8 +245,8 @@ func parseDailyDate(value string) string {
 }
 
 func parseAnimeAbsolute(value string) int {
-	if match := animeDashPattern.FindStringSubmatch(value); len(match) > 1 {
-		if episode := parseInt(match[1]); validAbsolute(episode) {
+	if match := animeResolutionPattern.FindStringSubmatch(value); len(match) > 1 {
+		if episode := parseInt(match[1]); episode > 0 {
 			return episode
 		}
 	}

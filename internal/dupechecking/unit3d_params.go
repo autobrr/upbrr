@@ -61,11 +61,13 @@ func buildUnit3DSearchParams(meta api.PreparedMetadata, tracker string) (url.Val
 	params.Set("name", "")
 	params.Set("perPage", "100")
 
-	if resolutionID == "3" || resolutionID == "4" {
-		params.Add("resolutions[]", "3")
-		params.Add("resolutions[]", "4")
-	} else {
-		params.Set("resolutions[]", resolutionID)
+	if !strings.EqualFold(tracker, "OTW") {
+		if resolutionID == "3" || resolutionID == "4" {
+			params.Add("resolutions[]", "3")
+			params.Add("resolutions[]", "4")
+		} else {
+			params.Set("resolutions[]", resolutionID)
+		}
 	}
 
 	if typeID != "" && !strings.EqualFold(tracker, "SP") && !strings.EqualFold(tracker, "STC") {

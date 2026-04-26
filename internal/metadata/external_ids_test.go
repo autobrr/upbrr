@@ -290,6 +290,9 @@ type stubTVDB struct {
 	id                int
 	name              string
 	calls             int
+	tvMovieCalls      []bool
+	idWhenTVMovie     int
+	nameWhenTVMovie   string
 	episodes          tvdb.EpisodesData
 	specificAlias     string
 	episodeErr        error
@@ -305,6 +308,10 @@ type stubTVDB struct {
 
 func (s *stubTVDB) GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
 	s.calls++
+	s.tvMovieCalls = append(s.tvMovieCalls, tvMovie)
+	if tvMovie && s.idWhenTVMovie != 0 {
+		return s.idWhenTVMovie, s.nameWhenTVMovie, nil
+	}
 	return s.id, s.name, nil
 }
 
@@ -963,6 +970,89 @@ func TestResolveExternalIDsFetchesIMDBAfterTMDBResolvesIt(t *testing.T) {
 	}
 	if result.ExternalMetadata.IMDB == nil {
 		t.Fatalf("expected imdb metadata after enrichment")
+	}
+}
+
+func TestResolveExternalIDsDoesNotTreatTMDBMovieWithoutIMDbAsTVMovie(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 1234, Category: "Movie"},
+		metadata:      tmdb.MetadataResult{Title: "Example Movie", TMDBType: "Movie"},
+	}
+	imdbClient := &stubIMDB{}
+	tvdbClient := &stubTVDB{idWhenTVMovie: 55, nameWhenTVMovie: "Example TV Movie"}
+	tvmazeClient := &stubTVmaze{}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	meta := api.PreparedMetadata{
+		SourcePath:        "/media/Example.Movie.2024.2160p.WEB-DL.mkv",
+		MediaInfoCategory: "movie",
+		Release:           api.ReleaseInfo{Title: "Example Movie", Year: 2024},
+	}
+
+	result, err := svc.ResolveExternalIDs(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if result.ExternalIDs.TVDBID != 0 {
+		t.Fatalf("expected no tvdb id without imdb tv movie metadata, got %d", result.ExternalIDs.TVDBID)
+	}
+	if len(tvdbClient.tvMovieCalls) == 0 {
+		t.Fatalf("expected tvdb lookup")
+	}
+	for _, tvMovie := range tvdbClient.tvMovieCalls {
+		if tvMovie {
+			t.Fatalf("expected tvdb lookup not to use tv movie fallback without imdb metadata, got calls %#v", tvdbClient.tvMovieCalls)
+		}
+	}
+}
+
+func TestResolveExternalIDsTreatsIMDbTVMovieTypeAsTVMovie(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 1234, Category: "Movie"},
+		metadata:      tmdb.MetadataResult{Title: "Example TV Movie", TMDBType: "Movie"},
+	}
+	imdbClient := &stubIMDB{
+		searchResult: imdb.SearchResult{IMDbID: 9876},
+		info:         imdb.Info{IMDbID: "tt0009876", Title: "Example TV Movie", Type: "tvMovie"},
+	}
+	tvdbClient := &stubTVDB{idWhenTVMovie: 55, nameWhenTVMovie: "Example TV Movie"}
+	tvmazeClient := &stubTVmaze{}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	meta := api.PreparedMetadata{
+		SourcePath:        "/media/Example.TV.Movie.2024.1080p.WEB-DL.mkv",
+		MediaInfoCategory: "movie",
+		Release:           api.ReleaseInfo{Title: "Example TV Movie", Year: 2024},
+	}
+
+	result, err := svc.ResolveExternalIDs(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if result.ExternalIDs.TVDBID != 55 {
+		t.Fatalf("expected tvdb id from tv movie fallback, got %d", result.ExternalIDs.TVDBID)
+	}
+	if len(tvdbClient.tvMovieCalls) != 2 {
+		t.Fatalf("expected initial non-tv-movie lookup and metadata-backed retry, got %#v", tvdbClient.tvMovieCalls)
+	}
+	if tvdbClient.tvMovieCalls[0] || !tvdbClient.tvMovieCalls[1] {
+		t.Fatalf("expected tv movie fallback only after imdb metadata, got %#v", tvdbClient.tvMovieCalls)
 	}
 }
 

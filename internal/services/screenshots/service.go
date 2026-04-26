@@ -313,6 +313,10 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 				FrameOverlay:  s.cfg.ScreenshotHandling.FrameOverlay,
 				OverlaySize:   s.cfg.ScreenshotHandling.OverlayTextSize,
 				FrameInfo:     frameInfo[ts],
+				SourceWidth:   info.Width,
+				SourceHeight:  info.Height,
+				WidthScale:    info.WidthScale,
+				HeightScale:   info.HeightScale,
 			}
 
 			usedLib, captureErr := captureFrame(ctx, s.runner, cmd, capture)

@@ -92,6 +92,16 @@ func TestExtract(t *testing.T) {
 			want: Result{Episode: 43, AbsoluteEpisode: 43},
 		},
 		{
+			name: "anime absolute revision",
+			path: "[SubsPlease] Anime - 43v2 (1080p).mkv",
+			want: Result{Episode: 43, AbsoluteEpisode: 43},
+		},
+		{
+			name: "anime absolute four digit with arbitrary progressive resolution",
+			path: "[Group] Long Anime 1001 (1440p).mkv",
+			want: Result{Episode: 1001, AbsoluteEpisode: 1001},
+		},
+		{
 			name: "anime season episode",
 			path: "[Group] Anime S02E05.mkv",
 			want: Result{Season: 2, Episode: 5},

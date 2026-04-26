@@ -450,7 +450,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 
 		if lookupTVDB {
 			group.Go(func() error {
-				tvMovie := strings.EqualFold(ids.Category, "MOVIE")
+				tvMovie := isIMDbTVMovie(ids, metadata)
 				id, name, err := tvdbClient.GetByExternalID(gctx, formatIMDbID(ids.IMDBID), formatOptionalInt(ids.TMDBID), tvMovie)
 				if err != nil {
 					mu.Lock()
@@ -751,6 +751,31 @@ func (s *Service) ensureExternalClients() (TMDBClient, IMDBClient, TVDBClient, T
 		s.tvmaze = tvmaze.NewClient(nil, s.logger)
 	}
 	return s.tmdb, s.imdb, s.tvdb, s.tvmaze, nil
+}
+
+func isIMDbTVMovie(ids api.ExternalIDs, metadata api.ExternalMetadata) bool {
+	if ids.IMDBID == 0 || metadata.IMDB == nil {
+		return false
+	}
+	imdbType := strings.TrimSpace(metadata.IMDB.Type)
+	if imdbType == "" {
+		return false
+	}
+	for _, keyword := range []string{"tv movie", "tv special", "tvmovie"} {
+		if imdbTypeContains(imdbType, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func imdbTypeContains(value string, keyword string) bool {
+	for _, part := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveTVDBCacheDir(dbPath string) string {

@@ -381,8 +381,36 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 		c.logger.Debugf("unit3d: %s missing api token; request may be unauthenticated", tracker)
 	}
 
-	endpoint := strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "filter")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	endpoints := []unit3dSearchEndpoint{{
+		url: strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "filter"),
+	}}
+	if usesUnit3DPendingSearch(tracker) {
+		tmdbID, _ := strconv.Atoi(strings.TrimSpace(params.Get("tmdbId")))
+		endpoints = append(endpoints, unit3dSearchEndpoint{
+			url:           strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "pending"),
+			pending:       true,
+			filterTMDBID:  tmdbID,
+			pendingWebURL: strings.TrimRight(baseURL, "/") + "/torrents/pending",
+		})
+	}
+
+	var entries []api.DupeEntry
+	for _, endpoint := range endpoints {
+		endpointEntries, warning, err := c.searchUnit3DEndpoint(ctx, tracker, endpoint, params, isDisc)
+		if err != nil {
+			return nil, "", err
+		}
+		if warning != "" {
+			return entries, warning, nil
+		}
+		entries = append(entries, endpointEntries...)
+	}
+
+	return entries, "", nil
+}
+
+func (c *Client) searchUnit3DEndpoint(ctx context.Context, tracker string, endpoint unit3dSearchEndpoint, params url.Values, isDisc bool) ([]api.DupeEntry, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.url, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("unit3d: request: %w", err)
 	}
@@ -402,13 +430,24 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 		return nil, fmt.Sprintf("%s search failed (status=%d)", strings.ToUpper(strings.TrimSpace(tracker)), resp.StatusCode), nil
 	}
 
+	if endpoint.pending {
+		var payload unit3dPendingSearchResponse
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			return nil, "", fmt.Errorf("unit3d: decode: %w", err)
+		}
+		return buildUnit3DPendingEntries(payload.Data, endpoint, isDisc), "", nil
+	}
+
 	var payload unit3dSearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, "", fmt.Errorf("unit3d: decode: %w", err)
 	}
+	return buildUnit3DSearchEntries(payload.Data, isDisc), "", nil
+}
 
-	entries := make([]api.DupeEntry, 0, len(payload.Data))
-	for _, item := range payload.Data {
+func buildUnit3DSearchEntries(items []unit3dSearchItem, isDisc bool) []api.DupeEntry {
+	entries := make([]api.DupeEntry, 0, len(items))
+	for _, item := range items {
 		entry := api.DupeEntry{
 			Name:        strings.TrimSpace(item.Attributes.Name),
 			Trumpable:   item.Attributes.Trumpable,
@@ -446,7 +485,58 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 		entries = append(entries, entry)
 	}
 
-	return entries, "", nil
+	return entries
+}
+
+func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dSearchEndpoint, isDisc bool) []api.DupeEntry {
+	entries := make([]api.DupeEntry, 0, len(items))
+	for _, item := range items {
+		if endpoint.filterTMDBID > 0 && item.TMDBID != endpoint.filterTMDBID {
+			continue
+		}
+
+		entry := api.DupeEntry{
+			Name:        strings.TrimSpace(item.Name),
+			Trumpable:   item.Trumpable,
+			Link:        endpoint.pendingWebURL,
+			Download:    strings.TrimSpace(item.DownloadLink),
+			ID:          strings.TrimSpace(item.ID.String()),
+			Type:        strings.TrimSpace(item.Type),
+			Res:         strings.TrimSpace(item.Resolution),
+			Internal:    item.Internal,
+			BDInfo:      strings.TrimSpace(item.BDInfo),
+			Description: strings.TrimSpace(item.Description),
+			Flags:       append([]string{}, item.Flags...),
+		}
+
+		if sizeValue, err := parseNumberToInt64(item.Size); err == nil {
+			entry.SizeBytes = sizeValue
+			entry.SizeKnown = sizeValue > 0
+		} else if raw := strings.TrimSpace(item.Size.String()); raw != "" {
+			entry.SizeText = raw
+		}
+
+		if len(item.Files) > 0 {
+			entry.FileCount = len(item.Files)
+			if !isDisc {
+				entry.Files = make([]string, 0, len(item.Files))
+				for _, file := range item.Files {
+					trimmed := strings.TrimSpace(file.Name)
+					if trimmed != "" {
+						entry.Files = append(entry.Files, trimmed)
+					}
+				}
+			}
+		}
+
+		entries = append(entries, entry)
+	}
+
+	return entries
+}
+
+func usesUnit3DPendingSearch(tracker string) bool {
+	return strings.EqualFold(tracker, "CBR")
 }
 
 func validateImages(ctx context.Context, client *http.Client, images []bbcode.Image) []bbcode.Image {
@@ -694,6 +784,13 @@ type unit3dSearchResponse struct {
 	Data []unit3dSearchItem `json:"data"`
 }
 
+type unit3dSearchEndpoint struct {
+	url           string
+	pending       bool
+	filterTMDBID  int
+	pendingWebURL string
+}
+
 type unit3dSearchItem struct {
 	ID         json.Number       `json:"id"`
 	Attributes unit3dSearchAttrs `json:"attributes"`
@@ -705,6 +802,26 @@ type unit3dSearchAttrs struct {
 	Files        []unit3dFile `json:"files"`
 	Trumpable    bool         `json:"trumpable"`
 	DetailsLink  string       `json:"details_link"`
+	DownloadLink string       `json:"download_link"`
+	Type         string       `json:"type"`
+	Resolution   string       `json:"resolution"`
+	Internal     bool         `json:"internal"`
+	BDInfo       string       `json:"bd_info"`
+	Description  string       `json:"description"`
+	Flags        []string     `json:"flags"`
+}
+
+type unit3dPendingSearchResponse struct {
+	Data []unit3dPendingSearchItem `json:"data"`
+}
+
+type unit3dPendingSearchItem struct {
+	ID           json.Number  `json:"id"`
+	TMDBID       int          `json:"tmdb_id"`
+	Name         string       `json:"name"`
+	Size         json.Number  `json:"size"`
+	Files        []unit3dFile `json:"files"`
+	Trumpable    bool         `json:"trumpable"`
 	DownloadLink string       `json:"download_link"`
 	Type         string       `json:"type"`
 	Resolution   string       `json:"resolution"`

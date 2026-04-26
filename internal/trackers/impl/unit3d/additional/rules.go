@@ -31,6 +31,7 @@ var trackerRuleFactories = map[string]func() RuleSet{
 	"AITHER": rulesAITHER,
 	"ANT":    rulesANT,
 	"A4K":    rulesA4K,
+	"BHD":    rulesBHD,
 	"DP":     rulesDP,
 	"HHD":    rulesHHD,
 	"LST":    rulesLST,
@@ -83,6 +84,10 @@ func rulesA4K() RuleSet {
 	return RuleSet{Language: nonDiscEnglishAudioSubsRule()}
 }
 
+func rulesBHD() RuleSet {
+	return RuleSet{RequireValidMISetting: true}
+}
+
 func rulesHHD() RuleSet {
 	return RuleSet{BlockDVDRip: true}
 }
@@ -101,7 +106,13 @@ func rulesTIK() RuleSet {
 func rulesNBL() RuleSet {
 	return RuleSet{
 		RequireTVOnly: true,
-		Language:      nonDiscEnglishAudioSubsRule(),
+		Language: &LanguageRule{
+			Languages:      languagesEnglish,
+			RequireAudio:   true,
+			RequireSubs:    true,
+			AllowOriginal:  true,
+			ApplyIfNonBDMV: true,
+		},
 	}
 }
 
@@ -109,7 +120,6 @@ func rulesDP() RuleSet {
 	return RuleSet{
 		BlockSingleFileFolder: true,
 		BlockHardcodedSubs:    true,
-		BlockGroups:           []string{"FGT"},
 		BlockGroupUnlessType:  map[string][]string{"EVO": {"WEBDL"}},
 		Language: &LanguageRule{
 			Languages:    languagesNordic,

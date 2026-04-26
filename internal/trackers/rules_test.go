@@ -97,6 +97,23 @@ func TestEvaluateRulesANTAllowsMovie(t *testing.T) {
 	}
 }
 
+func TestEvaluateRulesBHDRequiresValidMISettings(t *testing.T) {
+	meta := api.PreparedMetadata{ValidMediaInfoSettings: false}
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "require_valid_mi_setting" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+
+	meta.ValidMediaInfoSettings = true
+	failures = EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
 func TestEvaluateRulesNBLRequiresTV(t *testing.T) {
 	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "movie"}}
 	failures := EvaluateRules(context.Background(), "NBL", meta, nil)
@@ -132,6 +149,45 @@ func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
 	failures := EvaluateRules(context.Background(), "NBL", meta, nil)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesNBLSkipsLanguageRuleForBDMVOnly(t *testing.T) {
+	bdmv := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "tv"},
+		DiscType:    "BDMV",
+	}
+	if failures := EvaluateRules(context.Background(), "NBL", bdmv, nil); len(failures) != 0 {
+		t.Fatalf("expected BDMV to skip NBL language rule, got %#v", failures)
+	}
+
+	dvd := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "tv"},
+		DiscType:    "DVD",
+	}
+	failures := EvaluateRules(context.Background(), "NBL", dvd, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected DVD to require NBL language data, got %#v", failures)
+	}
+	if failures[0].Rule != "language_rule" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+}
+
+func TestEvaluateRulesDPDoesNotSpecialCaseFGTEncodes(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Tag:               "-FGT",
+		Type:              "ENCODE",
+		AudioLanguages:    []string{"English"},
+		SubtitleLanguages: []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "DP", meta, nil)
+	for _, failure := range failures {
+		if failure.Rule == "block_group" {
+			t.Fatalf("expected FGT to be handled as a banned group, got rule failure %#v", failures)
+		}
 	}
 }
 
