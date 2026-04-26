@@ -9,6 +9,7 @@ const globalImageUsageScope = "global"
 
 var trackerOwnedImageHosts = map[string]string{
 	"hdb": "HDB",
+	"thr": "THR",
 }
 
 func normalizeUsageScope(scope string) string {

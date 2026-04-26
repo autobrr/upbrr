@@ -570,7 +570,7 @@ func TestResolveUnit3DResolutionIDForTrackerUTPDefaultOther(t *testing.T) {
 	}
 }
 
-func TestBuildUnit3DDataAddsModQAliasForA4K(t *testing.T) {
+func TestBuildUnit3DDataOmitsLegacyModQAliasForA4K(t *testing.T) {
 	req := trackers.UploadRequest{
 		Tracker: "A4K",
 		TrackerConfig: config.TrackerConfig{
@@ -590,8 +590,8 @@ func TestBuildUnit3DDataAddsModQAliasForA4K(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got := data["modq"]; got != "1" {
-		t.Fatalf("expected modq alias=1 for A4K, got %q", got)
+	if _, ok := data["modq"]; ok {
+		t.Fatalf("did not expect legacy modq alias for A4K")
 	}
 }
 

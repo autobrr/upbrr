@@ -60,6 +60,31 @@ func TestIsSeasonEpisodeMatchDailyEpisodeNonMatch(t *testing.T) {
 	}
 }
 
+func TestFilterDupesKeepsMatchingDailyEpisode(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName:      "Show.2026.03.27.1080p.WEB-DL.x264-GRP",
+		ExternalIDs:      api.ExternalIDs{Category: "TV"},
+		DailyEpisodeDate: "2026-03-27",
+		Release:          api.ReleaseInfo{Resolution: "1080p"},
+		Type:             "WEBDL",
+		SourcePath:       "x",
+	}
+	dupes := []api.DupeEntry{
+		{Name: "Show.2026.03.27.1080p.WEB-DL.x264-OTHER"},
+		{Name: "Show.2026.03.28.1080p.WEB-DL.x264-OTHER"},
+	}
+
+	filtered, _ := FilterDupes(dupes, meta, "AITHER", config.Config{}, api.NopLogger{})
+	if len(filtered) != 1 {
+		t.Fatalf("expected one surviving dupe, got %d", len(filtered))
+	}
+	if got := filtered[0].Name; got != "Show.2026.03.27.1080p.WEB-DL.x264-OTHER" {
+		t.Fatalf("unexpected surviving dupe %q", got)
+	}
+}
+
 func TestFilterDupesOTWDropsSameSeasonEpisodeResolutionMismatch(t *testing.T) {
 	t.Parallel()
 

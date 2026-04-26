@@ -46,6 +46,19 @@ func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, logger 
 	return Pass()
 }
 
+func checkLUMERequirements(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+	select {
+	case <-ctx.Done():
+		return Fail(ctx.Err().Error())
+	default:
+	}
+
+	if !isDiscType(meta.DiscType) && !strings.EqualFold(strings.TrimSpace(meta.Container), "mkv") {
+		return Fail("LUME only allows MKV containers for non-disc uploads.")
+	}
+	return checkLUMEResolution(ctx, meta, logger)
+}
+
 func checkOTWGenres(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
 	select {
 	case <-ctx.Done():

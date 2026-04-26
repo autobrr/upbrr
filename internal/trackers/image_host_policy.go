@@ -39,6 +39,11 @@ func policyForTracker(tracker string, trackerCfg config.TrackerConfig) imageHost
 		return newImageHostPolicy(true, "ptpimg", "pixhost")
 	case "STC":
 		return newImageHostPolicy(true, "imgbox", "imgbb")
+	case "THR":
+		if strings.TrimSpace(trackerCfg.ImgAPI) != "" {
+			return newImageHostPolicy(true, "thr")
+		}
+		return imageHostPolicy{}
 	case "TVC":
 		return newImageHostPolicy(true, "imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage")
 	default:

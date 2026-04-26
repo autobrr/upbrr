@@ -37,6 +37,30 @@ func resolveUnit3DSHRITypeID(meta api.PreparedMetadata) string {
 	return mapping[inferUnit3DType(meta)]
 }
 
+func applySHRIDescriptionNotes(description string, meta api.PreparedMetadata) string {
+	if !strings.EqualFold(resolveSHRIReleaseGroup(meta), "island") {
+		return description
+	}
+	const shareislandNotes = "Release Shareisland 🏴‍☠️\nFalla girare, condividila e contribuisci a mantenerla viva restando in seed il più possi" + "bile.\nGrazie per il supporto!"
+	trimmed := strings.TrimSpace(description)
+	if strings.Contains(trimmed, shareislandNotes) {
+		return trimmed
+	}
+	if trimmed == "" {
+		return shareislandNotes
+	}
+	return trimmed + "\n\n" + shareislandNotes
+}
+
+func resolveSHRIReleaseGroup(meta api.PreparedMetadata) string {
+	for _, value := range []string{meta.Release.Group, meta.ArrReleaseGroup, strings.TrimPrefix(meta.Tag, "-")} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func numericValue(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {

@@ -141,7 +141,7 @@ func rulesLUME() RuleSet {
 			AllowOriginal:  true,
 			ApplyIfNonDisc: true,
 		},
-		ExtraCheck: checkLUMEResolution,
+		ExtraCheck: checkLUMERequirements,
 	}
 }
 

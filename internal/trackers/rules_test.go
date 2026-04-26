@@ -48,6 +48,7 @@ func TestEvaluateRulesLanguageRuleOriginalFallback(t *testing.T) {
 		AudioLanguages:         []string{"Japanese"},
 		SubtitleLanguages:      []string{"English"},
 		ValidMediaInfoSettings: true,
+		Container:              "mkv",
 		Release:                api.ReleaseInfo{Resolution: "720p"},
 		ExternalMetadata: api.ExternalMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
@@ -56,6 +57,53 @@ func TestEvaluateRulesLanguageRuleOriginalFallback(t *testing.T) {
 	failures := EvaluateRules(context.Background(), "LUME", meta, nil)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesLUMERequiresMKVForNonDisc(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Container:              "mp4",
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+		ValidMediaInfoSettings: true,
+		Release:                api.ReleaseInfo{Resolution: "720p"},
+	}
+	failures := EvaluateRules(context.Background(), "LUME", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "extra_check" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+	if failures[0].Reason != "LUME only allows MKV containers for non-disc uploads." {
+		t.Fatalf("unexpected failure reason: %s", failures[0].Reason)
+	}
+}
+
+func TestEvaluateRulesLUMEAllowsMKVForNonDisc(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Container:              "mkv",
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+		ValidMediaInfoSettings: true,
+		Release:                api.ReleaseInfo{Resolution: "720p"},
+	}
+	failures := EvaluateRules(context.Background(), "LUME", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesLUMESkipsContainerRuleForDisc(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DiscType:               "BDMV",
+		Container:              "mp4",
+		ValidMediaInfoSettings: true,
+		Release:                api.ReleaseInfo{Resolution: "480p"},
+	}
+	failures := EvaluateRules(context.Background(), "LUME", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected disc upload to skip LUME container and resolution rules, got %#v", failures)
 	}
 }
 

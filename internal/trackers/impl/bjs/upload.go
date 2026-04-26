@@ -184,13 +184,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 
 func buildFields(meta api.PreparedMetadata, description string, auth string, answers map[string]string) map[string]string {
 	width, height := resolveResolution(meta)
+	runtimeMinutes := resolveRuntime(meta)
 	fields := map[string]string{
 		"audio":            resolveAudio(meta),
 		"auth":             auth,
 		"codecaudio":       resolveAudioCodec(meta),
 		"codecvideo":       resolveVideoCodec(meta),
-		"duracaoHR":        strconv.Itoa(resolveRuntime(meta) / 60),
-		"duracaoMIN":       strconv.Itoa(resolveRuntime(meta) % 60),
+		"duracaoHR":        strconv.Itoa(runtimeMinutes / 60),
+		"duracaoMIN":       strconv.Itoa(runtimeMinutes % 60),
 		"duracaotipo":      "selectbox",
 		"fichatecnica":     description,
 		"formato":          resolveContainer(meta),
@@ -486,6 +487,11 @@ func resolveRuntime(meta api.PreparedMetadata) int {
 			return minutes
 		}
 	}
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		if minutes := parseBDInfoLengthMinutes(meta.BDInfo["length"]); minutes > 0 {
+			return minutes
+		}
+	}
 	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.RuntimeMinutes > 0 {
 		return meta.ExternalMetadata.IMDB.RuntimeMinutes
 	}
@@ -496,6 +502,34 @@ func resolveRuntime(meta api.PreparedMetadata) int {
 		return meta.ExternalMetadata.TVmaze.Runtime
 	}
 	return 0
+}
+
+func parseBDInfoLengthMinutes(value interface{}) int {
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "" || text == "<nil>" {
+		return 0
+	}
+	parts := strings.Split(text, ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	hours, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if err != nil || hours < 0 {
+		return 0
+	}
+	minutes, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err != nil || minutes < 0 {
+		return 0
+	}
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+	if err != nil || seconds < 0 {
+		return 0
+	}
+	totalSeconds := hours*3600 + minutes*60 + seconds
+	if totalSeconds <= 0 {
+		return 0
+	}
+	return int(math.Round(totalSeconds / 60))
 }
 
 func parseMediaInfoDurationMinutes(text string) int {

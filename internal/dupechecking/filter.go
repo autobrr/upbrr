@@ -454,6 +454,12 @@ func resolveSeasonEpisode(meta api.PreparedMetadata) (string, string) {
 			episode = normalizeEpisodeValue(strconv.Itoa(meta.EpisodeInt))
 		}
 	}
+	if episode == "" {
+		episode = strings.TrimSpace(meta.DailyEpisodeDate)
+		if episode == "" && meta.ReleaseNameOverrides.ManualDate != nil {
+			episode = strings.TrimSpace(*meta.ReleaseNameOverrides.ManualDate)
+		}
+	}
 	if season == "" || episode == "" {
 		parsedSeason, parsedEpisode := parseSeasonEpisode(meta.ReleaseName)
 		if season == "" {

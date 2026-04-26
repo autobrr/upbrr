@@ -25,7 +25,7 @@ func buildUnit3DSearchParams(meta api.PreparedMetadata, tracker string) (url.Val
 	if category == "" && meta.ReleaseNameOverrides.Category != nil {
 		category = strings.ToUpper(strings.TrimSpace(*meta.ReleaseNameOverrides.Category))
 	}
-	categoryID := trackerdata.CategoryID(category)
+	categoryID := resolveUnit3DDupeCategoryID(tracker, category)
 	if categoryID == "" {
 		return nil, nil
 	}
@@ -42,7 +42,7 @@ func buildUnit3DSearchParams(meta api.PreparedMetadata, tracker string) (url.Val
 			typeValue = strings.ToUpper(strings.TrimSpace(*meta.ReleaseNameOverrides.Type))
 		}
 	}
-	typeID := trackerdata.TypeID(typeValue)
+	typeID := resolveUnit3DDupeTypeID(tracker, typeValue)
 
 	resolution := strings.TrimSpace(meta.Release.Resolution)
 	if resolution == "" {
@@ -50,9 +50,9 @@ func buildUnit3DSearchParams(meta api.PreparedMetadata, tracker string) (url.Val
 			resolution = strings.TrimSpace(*meta.ReleaseNameOverrides.Resolution)
 		}
 	}
-	resolutionID := trackerdata.ResolutionID(resolution)
+	resolutionID := resolveUnit3DDupeResolutionID(tracker, resolution)
 	if resolutionID == "" {
-		resolutionID = trackerdata.ResolutionID("8640p")
+		resolutionID = resolveUnit3DDupeResolutionID(tracker, "8640p")
 	}
 
 	params := url.Values{}
@@ -82,6 +82,54 @@ func buildUnit3DSearchParams(meta api.PreparedMetadata, tracker string) (url.Val
 	}
 
 	return params, nil
+}
+
+func resolveUnit3DDupeCategoryID(tracker string, category string) string {
+	if strings.EqualFold(tracker, "EMUW") {
+		switch strings.ToUpper(strings.TrimSpace(category)) {
+		case "MOVIE", "FANRES":
+			return "1"
+		case "TV":
+			return "2"
+		default:
+			return ""
+		}
+	}
+	return trackerdata.CategoryID(category)
+}
+
+func resolveUnit3DDupeTypeID(tracker string, typeValue string) string {
+	if strings.EqualFold(tracker, "EMUW") {
+		mapping := map[string]string{
+			"DISC":   "1",
+			"REMUX":  "2",
+			"ENCODE": "3",
+			"WEBDL":  "4",
+			"WEBRIP": "5",
+			"HDTV":   "6",
+			"SD":     "7",
+		}
+		return mapping[strings.ToUpper(strings.TrimSpace(typeValue))]
+	}
+	return trackerdata.TypeID(typeValue)
+}
+
+func resolveUnit3DDupeResolutionID(tracker string, resolution string) string {
+	if strings.EqualFold(tracker, "EMUW") {
+		mapping := map[string]string{
+			"4320p": "1",
+			"2160p": "2",
+			"1080p": "3",
+			"1080i": "4",
+			"720p":  "5",
+			"576p":  "6",
+			"540p":  "7",
+			"480p":  "8",
+			"8640p": "10",
+		}
+		return mapping[strings.ToLower(strings.TrimSpace(resolution))]
+	}
+	return trackerdata.ResolutionID(resolution)
 }
 
 func resolveSeasonValue(meta api.PreparedMetadata) string {
