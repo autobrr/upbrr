@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+:root {
+  --ifm-color-primary: #275f7c;
+  --ifm-color-primary-dark: #22556f;
+  --ifm-color-primary-darker: #1f5068;
+  --ifm-color-primary-darkest: #1a4256;
+  --ifm-color-primary-light: #2c6989;
+  --ifm-color-primary-lighter: #2f7092;
+  --ifm-color-primary-lightest: #367fa6;
+  --ifm-background-color: #ffffff;
+  --ifm-background-surface-color: #f7f8fb;
+  --ifm-navbar-background-color: #ffffff;
+  --ifm-footer-background-color: #172033;
+  --ifm-color-content: #172033;
+  --ifm-color-content-secondary: #5f6b7a;
+  --ifm-heading-color: #172033;
+  --ifm-toc-border-color: #d8dee8;
+  --ifm-hr-border-color: #d8dee8;
+  --ifm-code-font-size: 92%;
+  --ifm-border-radius: 6px;
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #67b7dc;
+  --ifm-color-primary-dark: #4caad5;
+  --ifm-color-primary-darker: #3fa4d2;
+  --ifm-color-primary-darkest: #2b86ae;
+  --ifm-color-primary-light: #82c4e3;
+  --ifm-color-primary-lighter: #8fc9e6;
+  --ifm-color-primary-lightest: #b5dbef;
+  --ifm-background-color: #111722;
+  --ifm-background-surface-color: #172033;
+  --ifm-navbar-background-color: #111722;
+  --ifm-footer-background-color: #0b1018;
+  --ifm-color-content: #e7edf5;
+  --ifm-color-content-secondary: #aab5c4;
+  --ifm-heading-color: #f5f8fc;
+  --ifm-toc-border-color: #2c3748;
+  --ifm-hr-border-color: #2c3748;
+}
+
+body {
+  letter-spacing: 0;
+}
+
+.navbar {
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+  box-shadow: none;
+}
+
+.navbar-icon-link,
+.footer-icon-link {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.navbar-icon-link::before,
+.footer-icon-link::before {
+  background: currentColor;
+  content: "";
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 1.1rem;
+  mask: var(--upbrr-link-icon) center / contain no-repeat;
+  width: 1.1rem;
+}
+
+.navbar-icon-link::after,
+.footer-icon-link::after {
+  display: none;
+}
+
+.navbar-icon-link [class*="iconExternalLink"],
+.footer-icon-link [class*="iconExternalLink"] {
+  display: none;
+}
+
+.navbar-icon-link--discord,
+.footer-icon-link--discord {
+  --upbrr-link-icon: url("/img/icons/discord.svg");
+}
+
+.navbar-icon-link--github,
+.footer-icon-link--github {
+  --upbrr-link-icon: url("/img/icons/github.svg");
+}
+
+.footer {
+  border-top: 1px solid var(--ifm-toc-border-color);
+}
+
+.theme-doc-sidebar-container,
+.table-of-contents {
+  border-color: var(--ifm-toc-border-color);
+}
+
+.markdown h1:first-child {
+  letter-spacing: 0;
+}
+
+.markdown code {
+  border: 1px solid var(--ifm-toc-border-color);
+}
+
+.hero--upbrr {
+  background:
+    radial-gradient(circle at 18% 12%, rgba(103, 183, 220, 0.26), transparent 34%),
+    linear-gradient(135deg, #111722 0%, #172033 52%, #24364a 100%);
+  color: #f5f8fc;
+}
+
+.hero--upbrr .button {
+  border-radius: 6px;
+}
+
+.feature-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.feature-panel {
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: 6px;
+  padding: 1rem;
+  background: var(--ifm-background-surface-color);
+}
+
+.feature-panel h3 {
+  margin-top: 0;
+}

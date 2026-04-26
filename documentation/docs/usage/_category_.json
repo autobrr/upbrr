@@ -1,0 +1,8 @@
+{
+  "label": "Usage",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "Run upbrr from the CLI, desktop GUI, or embedded web mode."
+  }
+}

@@ -1,0 +1,11 @@
+.actionsRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 640px) {
+  .actionsRow {
+    justify-content: flex-start;
+  }
+}

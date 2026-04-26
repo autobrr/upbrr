@@ -1,0 +1,104 @@
+.container {
+  position: relative;
+  z-index: 2;
+}
+
+.splitButton {
+  display: inline-flex;
+  overflow: visible;
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: 6px;
+  background: var(--ifm-background-surface-color);
+}
+
+.primaryButton,
+.chevronButton,
+.menuItem {
+  border: 0;
+  color: var(--ifm-color-content);
+  cursor: pointer;
+  font: inherit;
+}
+
+.primaryButton,
+.chevronButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.15rem;
+  padding: 0.35rem 0.65rem;
+  background: transparent;
+}
+
+.primaryButton {
+  border-right: 1px solid var(--ifm-toc-border-color);
+}
+
+.primaryButton:hover,
+.chevronButton:hover,
+.menuItem:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ifm-color-primary) 12%, transparent);
+}
+
+.primaryButton svg,
+.chevronButton svg,
+.menuIcon svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.chevronButton {
+  width: 2.1rem;
+  justify-content: center;
+  padding: 0.35rem;
+}
+
+.chevronOpen svg {
+  transform: rotate(180deg);
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  min-width: 17rem;
+  overflow: hidden;
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: 6px;
+  background: var(--ifm-background-surface-color);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+}
+
+.menuItem {
+  display: grid;
+  grid-template-columns: 1.35rem 1fr 1rem;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.75rem;
+  background: transparent;
+  text-align: left;
+}
+
+.menuItem:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.menuText {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.menuText small {
+  color: var(--ifm-color-content-secondary);
+  font-size: 0.78rem;
+}
+
+@media (max-width: 640px) {
+  .menu {
+    right: auto;
+    left: 0;
+    min-width: min(17rem, calc(100vw - 2rem));
+  }
+}

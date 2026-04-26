@@ -53,6 +53,8 @@ The project handles the full preparation pipeline around an upload candidate: me
 
 Setting up a development environment? See [CONTRIBUTING.md](./CONTRIBUTING.md) for dependencies, supported platforms, and git hooks.
 
+Full user documentation lives in [`documentation/docs`](./documentation/docs). The docs site can be run locally from `documentation/` with `pnpm install` and `pnpm start`.
+
 ## Quick start
 
 ### 1. Create or export config

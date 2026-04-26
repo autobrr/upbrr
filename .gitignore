@@ -2,6 +2,10 @@ gui/frontend/node_modules/
 gui/frontend/dist/
 gui/frontend/package.json.md5
 gui/frontend/tsconfig.tsbuildinfo
+documentation/node_modules/
+documentation/build/
+documentation/.docusaurus/
+documentation/.generated/
 gui/build/bin/
 internal/webserver/assets/
 internal/guiapp/assets/*

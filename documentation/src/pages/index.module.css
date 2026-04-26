@@ -1,0 +1,43 @@
+.hero {
+  padding: 5rem 0 4rem;
+}
+
+.heroInner {
+  margin: 0 auto;
+  max-width: 980px;
+  padding: 0 1rem;
+}
+
+.kicker {
+  color: #9bd2ec;
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.75rem;
+  text-transform: uppercase;
+}
+
+.title {
+  color: #ffffff;
+  font-size: clamp(2.5rem, 7vw, 5.25rem);
+  line-height: 0.95;
+  margin: 0;
+}
+
+.subtitle {
+  color: #d9e6f2;
+  font-size: 1.2rem;
+  line-height: 1.6;
+  margin: 1.25rem 0 2rem;
+  max-width: 720px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.features {
+  padding: 3rem 0;
+}

@@ -1,0 +1,60 @@
+{
+  "name": "upbrr-documentation",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.27.0",
+  "scripts": {
+    "docusaurus": "docusaurus",
+    "start": "docusaurus start",
+    "build": "docusaurus build",
+    "serve": "docusaurus serve",
+    "clear": "docusaurus clear",
+    "docs:context": "node scripts/collect-doc-context.mjs",
+    "docs:check": "node scripts/check-doc-context.mjs",
+    "docs:generate": "node scripts/generate-doc-draft.mjs",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@docusaurus/core": "3.9.2",
+    "@docusaurus/plugin-content-docs": "3.9.2",
+    "@docusaurus/preset-classic": "3.9.2",
+    "@docusaurus/theme-common": "3.9.2",
+    "@easyops-cn/docusaurus-search-local": "0.52.2",
+    "@mdx-js/react": "^3.0.0",
+    "@tailwindcss/postcss": "^4.1.18",
+    "clsx": "^2.0.0",
+    "docusaurus-plugin-llms": "^0.3.0",
+    "postcss": "^8.5.6",
+    "prism-react-renderer": "^2.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.1.18"
+  },
+  "devDependencies": {
+    "@docusaurus/module-type-aliases": "3.9.2",
+    "@docusaurus/tsconfig": "3.9.2",
+    "@docusaurus/types": "3.9.2",
+    "raw-loader": "^4.0.2",
+    "typescript": "~5.6.2"
+  },
+  "browserslist": {
+    "production": [
+      ">0.5%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 3 chrome version",
+      "last 3 firefox version",
+      "last 5 safari version"
+    ]
+  },
+  "engines": {
+    "node": ">=20.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "webpack": "5.104.1"
+    }
+  }
+}

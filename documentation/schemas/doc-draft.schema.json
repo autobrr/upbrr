@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["targetPath", "title", "frontMatter", "markdown", "sourceFiles", "warnings"],
+  "properties": {
+    "targetPath": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "frontMatter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sidebar_position", "title"],
+      "properties": {
+        "sidebar_position": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        }
+      }
+    },
+    "markdown": {
+      "type": "string"
+    },
+    "sourceFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

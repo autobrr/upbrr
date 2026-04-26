@@ -1,0 +1,8 @@
+{
+  "label": "Workflows",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "Follow the upload preparation pipeline from source path to tracker upload."
+  }
+}
