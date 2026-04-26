@@ -8,6 +8,7 @@ import Ajv from "ajv";
 import {
   applyDraft,
   formatAjvErrors,
+  parseArgs,
   readJsonFile,
   renderDraftMarkdown,
   resolveDraftTarget,
@@ -51,6 +52,22 @@ test("resolveDraftTarget accepts docs-relative and repository-relative targets",
       "docs/generated/example.md",
     );
   });
+});
+
+test("parseArgs ignores pnpm argument separators", () => {
+  const args = parseArgs([
+    "--",
+    "--provider",
+    "codex",
+    "--topic",
+    "document CLI site-check safety",
+    "--apply",
+  ]);
+
+  assert.equal(args.has(""), false);
+  assert.equal(args.get("provider"), "codex");
+  assert.equal(args.get("topic"), "document CLI site-check safety");
+  assert.equal(args.get("apply"), "true");
 });
 
 test("resolveDraftTarget rejects path traversal and non-doc targets", () => {

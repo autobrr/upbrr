@@ -10,6 +10,9 @@
 .generated
 .eslintcache
 
+# Generated from ../internal/webserver/openapi.yaml
+/static/openapi.yaml
+
 # Misc
 .DS_Store
 .env.local

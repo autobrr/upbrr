@@ -7,6 +7,7 @@ import {
   contextPath,
   docsRoot,
   draftSchemaPath,
+  draftSlug,
   draftsDir,
   formatAjvErrors,
   parseArgs,
@@ -35,8 +36,11 @@ const validateDraftSchema = ajv.compile(draftSchema);
 
 const topic =
   args.get("topic") || "improve the most obviously incomplete upbrr docs page";
+const legacyDefaultTarget = "documentation/docs/maintenance/generated-draft.md";
+const explicitTarget = args.get("target");
+const defaultTargetSlug = draftSlug(topic.replace(/^document\s+/i, ""));
 const target =
-  args.get("target") || "documentation/docs/maintenance/generated-draft.md";
+  explicitTarget || `documentation/docs/maintenance/${defaultTargetSlug}.md`;
 const shouldApply = args.get("apply") === "true";
 const forceApply = args.get("force") === "true";
 const allowWarnings = args.get("allow-warnings") === "true";
@@ -282,7 +286,11 @@ try {
 
 let draft;
 try {
-  draft = validateDraft(parseDraft(outputText));
+  const parsedDraft = parseDraft(outputText);
+  if (explicitTarget || parsedDraft.targetPath === legacyDefaultTarget) {
+    parsedDraft.targetPath = target;
+  }
+  draft = validateDraft(parsedDraft);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   console.error("Raw LLM output:");

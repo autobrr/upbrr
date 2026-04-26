@@ -22,7 +22,7 @@ export function parseArgs(argv = process.argv.slice(2)) {
   const args = new Map();
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (!arg.startsWith("--")) {
+    if (arg === "--" || !arg.startsWith("--")) {
       continue;
     }
 
