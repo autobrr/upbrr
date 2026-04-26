@@ -5,10 +5,19 @@ import type { PrismTheme } from "prism-react-renderer";
 const minimalLightTheme: PrismTheme = {
   plain: { color: "#172033", backgroundColor: "#f7f8fb" },
   styles: [
-    { types: ["comment", "prolog", "doctype", "cdata"], style: { color: "#687386" } },
+    {
+      types: ["comment", "prolog", "doctype", "cdata"],
+      style: { color: "#687386" },
+    },
     { types: ["punctuation"], style: { color: "#4b5563" } },
-    { types: ["property", "tag", "boolean", "number", "constant", "symbol"], style: { color: "#047857" } },
-    { types: ["selector", "attr-name", "string", "char", "builtin"], style: { color: "#2563eb" } },
+    {
+      types: ["property", "tag", "boolean", "number", "constant", "symbol"],
+      style: { color: "#047857" },
+    },
+    {
+      types: ["selector", "attr-name", "string", "char", "builtin"],
+      style: { color: "#2563eb" },
+    },
     { types: ["operator", "entity", "url"], style: { color: "#4b5563" } },
     { types: ["atrule", "attr-value", "keyword"], style: { color: "#7c3aed" } },
     { types: ["function", "class-name"], style: { color: "#b91c1c" } },
@@ -19,10 +28,19 @@ const minimalLightTheme: PrismTheme = {
 const minimalDarkTheme: PrismTheme = {
   plain: { color: "#e5e7eb", backgroundColor: "#151924" },
   styles: [
-    { types: ["comment", "prolog", "doctype", "cdata"], style: { color: "#8b95a7" } },
+    {
+      types: ["comment", "prolog", "doctype", "cdata"],
+      style: { color: "#8b95a7" },
+    },
     { types: ["punctuation"], style: { color: "#cbd5e1" } },
-    { types: ["property", "tag", "boolean", "number", "constant", "symbol"], style: { color: "#5eead4" } },
-    { types: ["selector", "attr-name", "string", "char", "builtin"], style: { color: "#93c5fd" } },
+    {
+      types: ["property", "tag", "boolean", "number", "constant", "symbol"],
+      style: { color: "#5eead4" },
+    },
+    {
+      types: ["selector", "attr-name", "string", "char", "builtin"],
+      style: { color: "#93c5fd" },
+    },
     { types: ["operator", "entity", "url"], style: { color: "#cbd5e1" } },
     { types: ["atrule", "attr-value", "keyword"], style: { color: "#c4b5fd" } },
     { types: ["function", "class-name"], style: { color: "#fca5a5" } },
@@ -32,7 +50,8 @@ const minimalDarkTheme: PrismTheme = {
 
 const config: Config = {
   title: "upbrr",
-  tagline: "Upload preparation and tracker submission for private-tracker workflows",
+  tagline:
+    "Upload preparation and tracker submission for private-tracker workflows",
   favicon: "img/favicon.ico",
   url: "https://upbrr.com",
   baseUrl: "/",
@@ -144,8 +163,15 @@ const config: Config = {
         {
           title: "Project",
           items: [
-            { label: "GitHub", href: "https://github.com/autobrr/upbrr", className: "footer-icon-link footer-icon-link--github" },
-            { label: "Issues", href: "https://github.com/autobrr/upbrr/issues" },
+            {
+              label: "GitHub",
+              href: "https://github.com/autobrr/upbrr",
+              className: "footer-icon-link footer-icon-link--github",
+            },
+            {
+              label: "Issues",
+              href: "https://github.com/autobrr/upbrr/issues",
+            },
             { label: "llms.txt", href: "https://upbrr.com/llms.txt" },
             { label: "llms-full.txt", href: "https://upbrr.com/llms-full.txt" },
           ],

@@ -5,8 +5,10 @@ package authmaterial
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +25,13 @@ import (
 const (
 	// AuthPasswordMinLength defines the minimum web auth password length.
 	AuthPasswordMinLength = 12
+
+	DesktopUsername = "__upbrr_desktop__"
+	// DesktopAPITokenName is a token display name, not a secret.
+	DesktopAPITokenName    = "upbrr desktop local" //nolint:gosec
+	WebSessionAPITokenName = "web ui session"
+
+	APITokenPurposeDesktop = "desktop"
 
 	// OWASP Password Storage Cheat Sheet Argon2id baseline.
 	authArgon2Time        = 2
@@ -44,8 +53,33 @@ type Record struct {
 	AllowUnencryptedExport  bool            `json:"allow_unencrypted_export,omitempty"`
 	BrowseRoot              string          `json:"browse_root,omitempty"`
 	AllowUnrestrictedBrowse bool            `json:"allow_unrestricted_browse,omitempty"`
+	APITokens               []APIToken      `json:"api_tokens,omitempty"`
 	PendingUpgrade          *PendingUpgrade `json:"pending_upgrade,omitempty"`
 	CreatedAt               time.Time       `json:"created_at"`
+}
+
+type APIToken struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Purpose    string     `json:"purpose,omitempty"`
+	Hash       string     `json:"hash"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+}
+
+type CreatedAPIToken struct {
+	Token  string
+	Record APIToken
+}
+
+type APITokenStatus struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Purpose    string     `json:"purpose,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
 
 type PendingUpgrade struct {
@@ -140,6 +174,42 @@ func (s *Store) Bootstrap(username string, password string) error {
 	return s.saveLocked(record)
 }
 
+func (s *Store) BootstrapReplacingDesktop(username string, password string) error {
+	trimmedUsername := strings.TrimSpace(username)
+	if trimmedUsername == "" {
+		return errors.New("web auth: username is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		return err
+	}
+	var record Record
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return err
+	}
+	if strings.TrimSpace(record.Username) != DesktopUsername {
+		return errors.New("web auth: user already exists")
+	}
+	hash, err := HashPassword(password)
+	if err != nil {
+		return err
+	}
+	seed := strings.TrimSpace(record.EncryptionKeySeed)
+	if seed == "" {
+		seed, err = GenerateSeed()
+		if err != nil {
+			return err
+		}
+	}
+	record.Username = trimmedUsername
+	record.PasswordHash = hash
+	record.EncryptionKeySeed = seed
+	return s.saveLocked(record)
+}
+
 func (s *Store) UpdatePasswordHash(username string, passwordHash string) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(username) {
@@ -161,6 +231,7 @@ func (s *Store) UpdateRecord(updated Record) error {
 		record.AllowUnencryptedExport = updated.AllowUnencryptedExport
 		record.BrowseRoot = strings.TrimSpace(updated.BrowseRoot)
 		record.AllowUnrestrictedBrowse = updated.AllowUnrestrictedBrowse
+		record.APITokens = append([]APIToken(nil), updated.APITokens...)
 		record.PendingUpgrade = updated.PendingUpgrade
 		return nil
 	})
@@ -180,6 +251,7 @@ func (s *Store) BeginPendingUpgrade(current Record, target Record) error {
 		}
 
 		target.PendingUpgrade = nil
+		target.APITokens = append([]APIToken(nil), record.APITokens...)
 		record.PendingUpgrade = &PendingUpgrade{
 			Stage:     UpgradeStagePrepared,
 			Target:    target,
@@ -240,6 +312,134 @@ func (s *Store) ClearPendingUpgrade(username string) error {
 		record.PendingUpgrade = nil
 		return nil
 	})
+}
+
+func (s *Store) CreateAPIToken(name string) (CreatedAPIToken, error) {
+	return s.createAPIToken(name, "")
+}
+
+func (s *Store) CreateDesktopAPIToken() (CreatedAPIToken, error) {
+	return s.createAPIToken(DesktopAPITokenName, APITokenPurposeDesktop)
+}
+
+func (s *Store) createAPIToken(name string, purpose string) (CreatedAPIToken, error) {
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
+		return CreatedAPIToken{}, errors.New("api token name is required")
+	}
+
+	var created CreatedAPIToken
+	err := s.updateRecordLocked(func(record *Record) error {
+		id, err := randomHexString(8)
+		if err != nil {
+			return err
+		}
+		secret, err := randomHexString(32)
+		if err != nil {
+			return err
+		}
+		token := "upbrr_" + id + "_" + secret
+		apiToken := APIToken{
+			ID:        id,
+			Name:      trimmedName,
+			Purpose:   strings.TrimSpace(purpose),
+			Hash:      hashAPIToken(token),
+			CreatedAt: time.Now().UTC(),
+		}
+		record.APITokens = append(record.APITokens, apiToken)
+		created = CreatedAPIToken{Token: token, Record: apiToken}
+		return nil
+	})
+	return created, err
+}
+
+func (s *Store) ListAPITokens() ([]APITokenStatus, error) {
+	record, err := s.Load()
+	if err != nil {
+		return nil, err
+	}
+	statuses := make([]APITokenStatus, 0, len(record.APITokens))
+	for _, token := range record.APITokens {
+		statuses = append(statuses, APITokenStatus{
+			ID:         token.ID,
+			Name:       token.Name,
+			Purpose:    token.Purpose,
+			CreatedAt:  token.CreatedAt,
+			LastUsedAt: token.LastUsedAt,
+			RevokedAt:  token.RevokedAt,
+		})
+	}
+	return statuses, nil
+}
+
+func (s *Store) RevokeAPIToken(id string) error {
+	trimmedID := strings.TrimSpace(id)
+	if trimmedID == "" {
+		return errors.New("api token id is required")
+	}
+	now := time.Now().UTC()
+	return s.updateRecordLocked(func(record *Record) error {
+		for idx := range record.APITokens {
+			if record.APITokens[idx].ID == trimmedID {
+				record.APITokens[idx].RevokedAt = &now
+				return nil
+			}
+		}
+		return errors.New("api token not found")
+	})
+}
+
+func (s *Store) VerifyAPIToken(rawToken string) (APITokenStatus, bool, error) {
+	token := strings.TrimSpace(rawToken)
+	id := apiTokenID(token)
+	if id == "" {
+		return APITokenStatus{}, false, nil
+	}
+	hash := hashAPIToken(token)
+	now := time.Now().UTC()
+	var status APITokenStatus
+	found := false
+	err := s.updateRecordLocked(func(record *Record) error {
+		for idx := range record.APITokens {
+			current := &record.APITokens[idx]
+			if current.ID != id || current.RevokedAt != nil {
+				continue
+			}
+			if subtle.ConstantTimeCompare([]byte(current.Hash), []byte(hash)) != 1 {
+				return nil
+			}
+			current.LastUsedAt = &now
+			status = APITokenStatus{
+				ID:         current.ID,
+				Name:       current.Name,
+				Purpose:    current.Purpose,
+				CreatedAt:  current.CreatedAt,
+				LastUsedAt: current.LastUsedAt,
+				RevokedAt:  current.RevokedAt,
+			}
+			found = true
+			return nil
+		}
+		return nil
+	})
+	return status, found, err
+}
+
+func apiTokenID(token string) string {
+	remaining, ok := strings.CutPrefix(strings.TrimSpace(token), "upbrr_")
+	if !ok {
+		return ""
+	}
+	id, secret, ok := strings.Cut(remaining, "_")
+	if !ok || strings.TrimSpace(secret) == "" {
+		return ""
+	}
+	return strings.TrimSpace(id)
+}
+
+func hashAPIToken(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Store) updateRecordLocked(apply func(record *Record) error) error {
@@ -466,4 +666,12 @@ func randomString(length int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(buf)[:length], nil
+}
+
+func randomHexString(length int) (string, error) {
+	buf := make([]byte, length)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }

@@ -1,84 +1,68 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import Ajv from "ajv";
+import {
+  applyDraft,
+  contextPath,
+  docsRoot,
+  draftSchemaPath,
+  draftsDir,
+  formatAjvErrors,
+  parseArgs,
+  readJsonFile,
+  repoRoot,
+  validateDraftSemantics,
+  writeDraftOutputs,
+} from "./doc-tooling.mjs";
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const docsRoot = path.resolve(scriptDir, "..");
-const repoRoot = path.resolve(docsRoot, "..");
-const contextPath = path.join(docsRoot, ".generated", "context", "upbrr-doc-context.json");
-const draftsDir = path.join(docsRoot, ".generated", "drafts");
-const schemaPath = path.join(docsRoot, "schemas", "doc-draft.schema.json");
-
-const args = new Map();
-for (let index = 2; index < process.argv.length; index += 1) {
-  const arg = process.argv[index];
-  if (!arg.startsWith("--")) {
-    continue;
-  }
-  const key = arg.slice(2);
-  const value = process.argv[index + 1]?.startsWith("--") ? "true" : process.argv[index + 1] || "true";
-  args.set(key, value);
-  if (value !== "true") {
-    index += 1;
-  }
-}
+const args = parseArgs();
 
 let context;
 try {
-  context = JSON.parse(readFileSync(contextPath, "utf8"));
+  context = readJsonFile(contextPath);
 } catch {
-  console.error("Docs context is missing. Run `pnpm run docs:context` before generating drafts.");
+  console.error(
+    "Docs context is missing. Run `pnpm run docs:context` before generating drafts.",
+  );
   process.exit(1);
 }
 
-const topic = args.get("topic") || "improve the most obviously incomplete upbrr docs page";
-const target = args.get("target") || "documentation/.generated/drafts";
-const provider = (args.get("provider") || process.env.DOCS_LLM_PROVIDER || "codex").toLowerCase();
+const draftSchema = readJsonFile(draftSchemaPath);
+const schemaText = JSON.stringify(draftSchema, null, 2);
+const ajv = new Ajv({ allErrors: true, strict: false });
+const validateDraftSchema = ajv.compile(draftSchema);
+
+const topic =
+  args.get("topic") || "improve the most obviously incomplete upbrr docs page";
+const target =
+  args.get("target") || "documentation/docs/maintenance/generated-draft.md";
+const shouldApply = args.get("apply") === "true";
+const forceApply = args.get("force") === "true";
+const allowWarnings = args.get("allow-warnings") === "true";
+const provider = (
+  args.get("provider") ||
+  process.env.DOCS_LLM_PROVIDER ||
+  "codex"
+).toLowerCase();
 const model = args.get("model") || process.env.DOCS_LLM_MODEL || "llama3.1:8b";
-const codexModel = args.get("codex-model") || process.env.DOCS_CODEX_MODEL || "gpt-5.3-codex";
-const baseUrl = (args.get("base-url") || process.env.DOCS_LLM_BASE_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
-const numCtx = Number(args.get("num-ctx") || process.env.DOCS_LLM_NUM_CTX || 32768);
-const keepAlive = args.get("keep-alive") || process.env.DOCS_LLM_KEEP_ALIVE || "10m";
-const codexCommand = args.get("codex-command") || process.env.DOCS_CODEX_COMMAND || (process.platform === "win32" ? "codex.cmd" : "codex");
+const codexModel =
+  args.get("codex-model") || process.env.DOCS_CODEX_MODEL || "gpt-5.3-codex";
+const baseUrl = (
+  args.get("base-url") ||
+  process.env.DOCS_LLM_BASE_URL ||
+  "http://127.0.0.1:11434"
+).replace(/\/$/, "");
+const numCtx = Number(
+  args.get("num-ctx") || process.env.DOCS_LLM_NUM_CTX || 32768,
+);
+const keepAlive =
+  args.get("keep-alive") || process.env.DOCS_LLM_KEEP_ALIVE || "10m";
+const codexCommand =
+  args.get("codex-command") ||
+  process.env.DOCS_CODEX_COMMAND ||
+  (process.platform === "win32" ? "codex.cmd" : "codex");
 
-const schema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["targetPath", "title", "frontMatter", "markdown", "sourceFiles", "warnings"],
-  properties: {
-    targetPath: {
-      type: "string",
-      description: "Suggested repository-relative path for the final docs page.",
-    },
-    title: { type: "string" },
-    frontMatter: {
-      type: "object",
-      additionalProperties: false,
-      required: ["sidebar_position", "title"],
-      properties: {
-        sidebar_position: { type: "number" },
-        title: { type: "string" },
-      },
-    },
-    markdown: {
-      type: "string",
-      description: "Complete Markdown body excluding front matter.",
-    },
-    sourceFiles: {
-      type: "array",
-      items: { type: "string" },
-      description: "Repository-relative files that informed the draft.",
-    },
-    warnings: {
-      type: "array",
-      items: { type: "string" },
-      description: "Uncertainties or follow-up checks needed before publishing.",
-    },
-  },
-};
-
-const schemaText = JSON.stringify(schema, null, 2);
 const criticalFacts = [
   "upbrr is not a download manager.",
   "upbrr prepares and submits uploads for private-tracker workflows.",
@@ -138,7 +122,9 @@ async function generateWithOpenAICompatible() {
   });
 
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+    throw new Error(
+      `${response.status} ${response.statusText}: ${await response.text()}`,
+    );
   }
 
   const payload = await response.json();
@@ -165,7 +151,7 @@ async function generateWithOllamaNative() {
         },
       ],
       stream: false,
-      format: schema,
+      format: draftSchema,
       keep_alive: keepAlive,
       options: {
         temperature: 0,
@@ -176,7 +162,9 @@ async function generateWithOllamaNative() {
   });
 
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+    throw new Error(
+      `${response.status} ${response.statusText}: ${await response.text()}`,
+    );
   }
 
   const payload = await response.json();
@@ -207,24 +195,26 @@ function generateWithCodex() {
     "-m",
     codexModel,
     "--output-schema",
-    schemaPath,
+    draftSchemaPath,
     "-o",
     outputPath,
     "-",
   ];
-  const command = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : codexCommand;
-  const commandArgs = process.platform === "win32" ? ["/d", "/s", "/c", codexCommand, ...codexArgs] : codexArgs;
+  const command =
+    process.platform === "win32"
+      ? process.env.ComSpec || "cmd.exe"
+      : codexCommand;
+  const commandArgs =
+    process.platform === "win32"
+      ? ["/d", "/s", "/c", codexCommand, ...codexArgs]
+      : codexArgs;
 
-  const result = spawnSync(
-    command,
-    commandArgs,
-    {
-      cwd: repoRoot,
-      encoding: "utf8",
-      input: codexPrompt,
-      maxBuffer: 1024 * 1024 * 256,
-    },
-  );
+  const result = spawnSync(command, commandArgs, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    input: codexPrompt,
+    maxBuffer: 1024 * 1024 * 256,
+  });
 
   if (result.status !== 0) {
     const details = [
@@ -244,7 +234,7 @@ function generateWithCodex() {
 
 function parseDraft(raw) {
   if (!raw || typeof raw !== "string") {
-    throw new Error("local LLM response did not contain text");
+    throw new Error("LLM response did not contain text");
   }
 
   const trimmed = raw.trim();
@@ -253,59 +243,19 @@ function parseDraft(raw) {
   } catch {
     const match = trimmed.match(/\{[\s\S]*\}/);
     if (!match) {
-      throw new Error("local LLM response did not contain a JSON object");
+      throw new Error("LLM response did not contain a JSON object");
     }
     return JSON.parse(match[0]);
   }
 }
 
 function validateDraft(draft) {
-  const required = ["targetPath", "title", "frontMatter", "markdown", "sourceFiles", "warnings"];
-  for (const key of required) {
-    if (!(key in draft)) {
-      throw new Error(`local LLM draft is missing required key: ${key}`);
-    }
+  if (!validateDraftSchema(draft)) {
+    throw new Error(
+      `generated draft failed schema validation: ${formatAjvErrors(validateDraftSchema.errors)}`,
+    );
   }
-  if (typeof draft.targetPath !== "string" || typeof draft.title !== "string" || typeof draft.markdown !== "string") {
-    throw new Error("local LLM draft has invalid string fields");
-  }
-  if (!Array.isArray(draft.sourceFiles) || !Array.isArray(draft.warnings)) {
-    throw new Error("local LLM draft sourceFiles and warnings must be arrays");
-  }
-  if (!draft.targetPath.startsWith("documentation/docs/") && !draft.targetPath.startsWith("docs/")) {
-    throw new Error(`local LLM draft targetPath must be a docs page, got: ${draft.targetPath}`);
-  }
-  const combined = `${draft.title}\n${JSON.stringify(draft.frontMatter)}\n${draft.markdown}`;
-  const bannedPatterns = [
-    /\bProject Name\b/i,
-    /\byourusername\b/i,
-    /\brequirements\.txt\b/i,
-    /\bMIT License\b/i,
-    /\bupbrr\s+download\b/i,
-    /\bupbrr\s+list\b/i,
-    /\bcontent_id\b/i,
-    /\b--auth-token\b/i,
-    /\bdownload(s|ing)? content\b/i,
-    /\bdownloading, parsing\b/i,
-    /\bDownloadMetadata\b/i,
-    /\bParseContent\b/i,
-    /\bUpdateLocalCache\b/i,
-    /\bservice stubs\b/i,
-    /\bimplementation steps\b/i,
-    /\binternal\/cli\/upbrr\.go\b/i,
-    /\[Describe\b/i,
-    /\[Prerequisite\b/i,
-    /\bTODO\b/i,
-  ];
-  for (const pattern of bannedPatterns) {
-    if (pattern.test(combined)) {
-      throw new Error(`local LLM draft looks like a generic template: matched ${pattern}`);
-    }
-  }
-  if (!/\bupbrr\b/i.test(combined)) {
-    throw new Error("local LLM draft does not mention upbrr");
-  }
-  return draft;
+  return validateDraftSemantics(draft);
 }
 
 let outputText;
@@ -324,7 +274,9 @@ try {
       : `Local LLM request failed via ${provider} at ${baseUrl}`,
   );
   console.error(error instanceof Error ? error.message : String(error));
-  console.error("Set DOCS_CODEX_MODEL for Codex, or pass --provider ollama/openai-compatible for local LLMs.");
+  console.error(
+    "Set DOCS_CODEX_MODEL for Codex, or pass --provider ollama/openai-compatible for local LLMs.",
+  );
   process.exit(1);
 }
 
@@ -333,29 +285,29 @@ try {
   draft = validateDraft(parseDraft(outputText));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
-  console.error("Raw local LLM output:");
+  console.error("Raw LLM output:");
   console.error(outputText);
   process.exit(1);
 }
 
-const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const slug = draft.title
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, "-")
-  .replace(/^-|-$/g, "")
-  .slice(0, 80);
+try {
+  const outputs = writeDraftOutputs(draft);
+  console.log(`Wrote ${path.relative(repoRoot, outputs.jsonPath)}`);
+  console.log(`Wrote ${path.relative(repoRoot, outputs.mdPath)}`);
 
-mkdirSync(draftsDir, { recursive: true });
-
-const jsonPath = path.join(draftsDir, `${stamp}-${slug}.json`);
-const mdPath = path.join(draftsDir, `${stamp}-${slug}.md`);
-const frontMatter = Object.entries(draft.frontMatter || {})
-  .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
-  .join("\n");
-
-writeFileSync(jsonPath, `${JSON.stringify(draft, null, 2)}\n`);
-writeFileSync(mdPath, `---\n${frontMatter}\n---\n\n${draft.markdown.trim()}\n`);
-
-console.log(`Wrote ${path.relative(repoRoot, jsonPath)}`);
-console.log(`Wrote ${path.relative(repoRoot, mdPath)}`);
-console.log("Review the draft manually before copying it into documentation/docs.");
+  if (shouldApply) {
+    const target = applyDraft(draft, {
+      docsRoot,
+      force: forceApply,
+      allowWarnings,
+    });
+    console.log(`Applied draft to ${target.repoRelativePath}`);
+  } else {
+    console.log(
+      "Review the draft manually, or rerun with --apply to publish it into documentation/docs.",
+    );
+  }
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import App from "./app";
 import {
   browserAuth,
+  initializeDesktopBridge,
   initializeBrowserBridge,
   isBrowserMode,
   updateBrowserCSRFToken,
@@ -15,7 +16,7 @@ type AuthStatus = {
   authenticated: boolean;
   needsSetup: boolean;
   username: string;
-  csrfToken: string;
+  bearerToken: string;
   nativeBrowseEnabled: boolean;
   browseRoot: string;
   allowUnrestrictedBrowse: boolean;
@@ -26,7 +27,7 @@ const initialStatus: AuthStatus = {
   authenticated: false,
   needsSetup: false,
   username: "",
-  csrfToken: "",
+  bearerToken: "",
   nativeBrowseEnabled: false,
   browseRoot: "",
   allowUnrestrictedBrowse: false,
@@ -46,7 +47,12 @@ export default function WebRoot() {
 
   useEffect(() => {
     if (!browserMode) {
-      setStatus({ ...initialStatus, authenticated: true });
+      initializeDesktopBridge()
+        .then(() => setStatus({ ...initialStatus, authenticated: true }))
+        .catch((err) => {
+          setError(String(err));
+          setStatus(initialStatus);
+        });
       return;
     }
     browserAuth
@@ -56,7 +62,7 @@ export default function WebRoot() {
         setStatus(next);
         setBrowseRoot(next.browseRoot || "");
         setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
-        initializeBrowserBridge(next.csrfToken || "", !!next.nativeBrowseEnabled);
+        initializeBrowserBridge(next.bearerToken || "", !!next.nativeBrowseEnabled);
       })
       .catch((err) => {
         setError(String(err));
@@ -91,8 +97,8 @@ export default function WebRoot() {
         setStatus(next);
         setBrowseRoot(next.browseRoot || "");
         setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
-        updateBrowserCSRFToken(next.csrfToken || "");
-        initializeBrowserBridge(next.csrfToken || "", !!next.nativeBrowseEnabled);
+        updateBrowserCSRFToken(next.bearerToken || "");
+        initializeBrowserBridge(next.bearerToken || "", !!next.nativeBrowseEnabled);
       } catch (err) {
         setError(String(err));
       } finally {
@@ -176,8 +182,8 @@ export default function WebRoot() {
       setStatus(next);
       setBrowseRoot(next.browseRoot || "");
       setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
-      updateBrowserCSRFToken(next.csrfToken || "");
-      initializeBrowserBridge(next.csrfToken || "", !!next.nativeBrowseEnabled);
+      updateBrowserCSRFToken(next.bearerToken || "");
+      initializeBrowserBridge(next.bearerToken || "", !!next.nativeBrowseEnabled);
     } catch (err) {
       setError(String(err));
     } finally {

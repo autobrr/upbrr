@@ -46,10 +46,16 @@ type Props = {
   webAuthPassword: string;
   webAuthConfirm: string;
   webAuthError: string;
+  apiTokenName: string;
+  apiTokenCreating: boolean;
+  apiTokenValue: string;
   setWebAuthUsername: Dispatch<SetStateAction<string>>;
   setWebAuthPassword: Dispatch<SetStateAction<string>>;
   setWebAuthConfirm: Dispatch<SetStateAction<string>>;
+  setAPITokenName: Dispatch<SetStateAction<string>>;
   handleCreateWebAuth: () => void;
+  handleCreateAPIToken: () => void;
+  handleRevokeAPIToken: (id: string) => void;
   renderImageHostingSection: () => JSX.Element | null;
   renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
   renderMapSection: (
@@ -98,10 +104,16 @@ export default function SettingsPage(props: Props) {
     webAuthPassword,
     webAuthConfirm,
     webAuthError,
+    apiTokenName,
+    apiTokenCreating,
+    apiTokenValue,
     setWebAuthUsername,
     setWebAuthPassword,
     setWebAuthConfirm,
+    setAPITokenName,
     handleCreateWebAuth,
+    handleCreateAPIToken,
+    handleRevokeAPIToken,
     renderImageHostingSection,
     renderTrackerSection,
     renderMapSection,
@@ -350,6 +362,71 @@ export default function SettingsPage(props: Props) {
                       {webAuthCreating ? "Creating..." : "Create web-auth.json"}
                     </button>
                   </div>
+                  {webAuthStatus?.usable ? (
+                    <div className="settings-api-tokens">
+                      <div className="settings-api-tokens__header">
+                        <div>
+                          <p className="settings-subgroup__title">Public API Tokens</p>
+                          <p className="helper">
+                            Bearer tokens unlock the REST API at <code>/api/v1</code>.
+                          </p>
+                        </div>
+                        <a className="ghost-link" href="/api/docs" target="_blank" rel="noreferrer">
+                          Open API docs
+                        </a>
+                      </div>
+                      <div className="settings-api-tokens__create">
+                        <label className="settings-field">
+                          <span>Token name</span>
+                          <input
+                            value={apiTokenName}
+                            onChange={(event) => setAPITokenName(event.target.value)}
+                            placeholder="automation"
+                          />
+                        </label>
+                        <button
+                          className="primary"
+                          type="button"
+                          onClick={handleCreateAPIToken}
+                          disabled={apiTokenCreating || !apiTokenName.trim()}
+                        >
+                          {apiTokenCreating ? "Creating..." : "Create API token"}
+                        </button>
+                      </div>
+                      {apiTokenValue ? (
+                        <div className="settings-api-token-value">
+                          <span>New token</span>
+                          <code>{apiTokenValue}</code>
+                        </div>
+                      ) : null}
+                      <div className="settings-api-token-list">
+                        {(webAuthStatus.apiTokens ?? []).length > 0 ? (
+                          (webAuthStatus.apiTokens ?? []).map((token) => (
+                            <div key={token.id} className="settings-api-token-row">
+                              <div>
+                                <p className="settings-api-token-row__name">{token.name}</p>
+                                <p className="muted">
+                                  {token.id} · created {token.createdAt || "unknown"}
+                                  {token.lastUsedAt ? ` · last used ${token.lastUsedAt}` : ""}
+                                  {token.revokedAt ? ` · revoked ${token.revokedAt}` : ""}
+                                </p>
+                              </div>
+                              <button
+                                className="ghost"
+                                type="button"
+                                onClick={() => handleRevokeAPIToken(token.id)}
+                                disabled={Boolean(token.revokedAt)}
+                              >
+                                Revoke
+                              </button>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="muted">No API tokens have been created.</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                   {webAuthError ? <p className="error">{webAuthError}</p> : null}
                 </div>
               </details>

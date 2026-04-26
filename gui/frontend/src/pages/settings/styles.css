@@ -188,6 +188,80 @@
   justify-content: flex-start;
 }
 
+.settings-api-tokens {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+:root.light .settings-api-tokens {
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+.settings-api-tokens__header,
+.settings-api-token-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-api-tokens__create {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.settings-api-token-value {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(53, 194, 193, 0.12);
+  border: 1px solid rgba(53, 194, 193, 0.3);
+}
+
+.settings-api-token-value code {
+  overflow-wrap: anywhere;
+}
+
+.settings-api-token-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-api-token-row {
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(6, 9, 14, 0.45);
+}
+
+:root.light .settings-api-token-row {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.settings-api-token-row__name {
+  margin: 0 0 4px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ghost-link {
+  color: var(--text);
+  text-decoration: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 8px 11px;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
 .settings-auth-badge {
   display: inline-flex;
   align-self: flex-start;

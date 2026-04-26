@@ -7,6 +7,14 @@ title: Tracker Uploads
 
 Tracker uploads use shared request types under `pkg/api` and tracker implementations under `internal/trackers`.
 
+## Implementation groups
+
+Tracker-specific upload behavior lives under `internal/trackers/impl`. Current implementation groups include:
+
+`AITHER`, `ANT`, `AR`, `ASC`, `AZFAMILY`, `BHD`, `BHDTV`, `BJS`, `BT`, `BTN`, `COMMONHTTP`, `DC`, `FF`, `FL`, `GPW`, `HDB`, `HDS`, `HDT`, `IS`, `MTV`, `NBL`, `PTP`, `PTS`, `RTF`, `SPD`, `THR`, `TL`, `TVC`, and `UNIT3D`.
+
+Some groups are shared foundations rather than a single upload target. For example, `COMMONHTTP` contains reusable HTTP helpers, and `UNIT3D` covers many Unit3D-based sites.
+
 ## Dry run first
 
 Run a dry run when changing tracker config, overrides, description groups, screenshot links, or unattended behavior:

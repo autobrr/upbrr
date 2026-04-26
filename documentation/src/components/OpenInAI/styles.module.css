@@ -34,12 +34,6 @@
   border-right: 1px solid var(--ifm-toc-border-color);
 }
 
-.primaryButton:hover,
-.chevronButton:hover,
-.menuItem:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ifm-color-primary) 12%, transparent);
-}
-
 .primaryButton svg,
 .chevronButton svg,
 .menuIcon svg {
@@ -51,6 +45,11 @@
   width: 2.1rem;
   justify-content: center;
   padding: 0.35rem;
+}
+
+.primaryButton:hover,
+.chevronButton:hover {
+  background: color-mix(in srgb, var(--ifm-color-primary) 12%, transparent);
 }
 
 .chevronOpen svg {
@@ -83,6 +82,10 @@
 .menuItem:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.menuItem:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ifm-color-primary) 12%, transparent);
 }
 
 .menuText {

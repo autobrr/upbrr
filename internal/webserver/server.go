@@ -22,13 +22,13 @@ import (
 	"github.com/pkg/browser"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/guiapp"
 )
 
 type Options struct {
 	StartupContext context.Context
 	Config         config.Config
 	CLIConfig      CLIConfig
+	Assets         fs.FS
 }
 
 type Server struct {
@@ -37,7 +37,6 @@ type Server struct {
 	backend        *Backend
 	picker         nativePicker
 	auth           *authStore
-	sessions       *sessionManager
 	hub            *eventHub
 	authLimiter    *fixedWindowLimiter
 	generalLimiter *fixedWindowLimiter
@@ -60,13 +59,13 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	hub.SetLogger(backend.logger)
-	assets, err := resolveWebAssets()
-	if err != nil {
-		return nil, err
-	}
-	sessions, err := newSessionManager(cliCfg.SessionTTL, cfg.MainSettings.DBPath)
-	if err != nil {
-		return nil, err
+	assets := opts.Assets
+	if assets == nil {
+		var err error
+		assets, err = resolveWebAssets()
+		if err != nil {
+			return nil, err
+		}
 	}
 	srv := &Server{
 		cfg:            cfg,
@@ -74,16 +73,12 @@ func New(opts Options) (*Server, error) {
 		backend:        backend,
 		picker:         newNativePicker(),
 		auth:           authStore,
-		sessions:       sessions,
 		hub:            hub,
 		authLimiter:    newFixedWindowLimiter(10, 5*time.Minute),
 		generalLimiter: newFixedWindowLimiter(300, time.Minute),
 		trustedProxies: parseTrustedProxies(cliCfg.TrustedProxies),
 		assets:         assets,
 	}
-	sessions.SetLogger(func(format string, args ...any) {
-		backend.logger.Warnf(format, args...)
-	})
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
 	srv.server = &http.Server{
@@ -95,9 +90,6 @@ func New(opts Options) (*Server, error) {
 }
 
 func (s *Server) Close() error {
-	if s.sessions != nil {
-		s.sessions.Close()
-	}
 	if s.backend != nil {
 		_ = s.backend.Close()
 	}
@@ -147,6 +139,31 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+func (s *Server) ServeListener(ctx context.Context, listener net.Listener) error {
+	if listener == nil {
+		return errors.New("web server listener is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.server.Serve(listener)
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return s.server.Shutdown(shutdownCtx)
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
+}
+
 func (s *Server) baseURL() string {
 	if strings.TrimSpace(s.cliCfg.BaseURL) != "" {
 		return strings.TrimRight(strings.TrimSpace(s.cliCfg.BaseURL), "/")
@@ -155,11 +172,6 @@ func (s *Server) baseURL() string {
 }
 
 func resolveWebAssets() (fs.FS, error) {
-	assets, err := guiapp.ResolveAssets(nil)
-	if err == nil {
-		return assets, nil
-	}
-
 	// Keep the legacy repo-local fallback so local development can still serve
 	// generated assets even if embedding was skipped for some reason.
 	distPath := filepath.Join("gui", "frontend", "dist")
@@ -167,7 +179,7 @@ func resolveWebAssets() (fs.FS, error) {
 		return os.DirFS(distPath), nil
 	}
 
-	return nil, fmt.Errorf("web assets not found: %w", err)
+	return nil, errors.New("web assets not found: build gui/frontend and retry")
 }
 
 func parseTrustedProxies(values []string) []*net.IPNet {

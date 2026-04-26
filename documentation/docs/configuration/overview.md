@@ -9,17 +9,17 @@ Configuration is centered around `internal/config.Config` and persisted through 
 
 The config covers:
 
-- main settings and database path
-- image hosting credentials and host order
-- metadata behavior
-- screenshot handling
-- description formatting
-- torrent client setup
-- Sonarr and Radarr integration
-- torrent creation defaults
-- post-upload behavior
-- logging
-- tracker-specific settings
+- `main_settings` for global behavior and database paths
+- `image_hosting` for image host credentials and host order
+- `metadata_settings` for metadata lookup behavior
+- `screenshot_handling` for screenshot capture and selection behavior
+- `description_settings` for generated description formatting
+- `client_setup` and `torrent_clients` for torrent client integration
+- `arr_integration` for Sonarr and Radarr integration
+- `torrent_creation` for torrent generation defaults
+- `post_upload` for behavior after a successful upload
+- `logging` for run log output
+- `trackers` for tracker-specific settings
 
 ## Required setting
 

@@ -121,10 +121,6 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 	}, nil
 }
 
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
-}
-
 func (a *App) shutdown(ctx context.Context) {
 	a.stopAllLogStreams()
 	a.stopAllDupeJobs()
@@ -1423,16 +1419,30 @@ type ImportResult struct {
 }
 
 type WebAuthStatus struct {
-	Path                    string `json:"path"`
-	Exists                  bool   `json:"exists"`
-	Usable                  bool   `json:"usable"`
-	CanCreate               bool   `json:"canCreate"`
-	Username                string `json:"username"`
-	AllowUnencryptedExport  bool   `json:"allowUnencryptedExport"`
-	BrowseRoot              string `json:"browseRoot"`
-	AllowUnrestrictedBrowse bool   `json:"allowUnrestrictedBrowse"`
-	EncryptionEnabled       bool   `json:"encryptionEnabled"`
-	Message                 string `json:"message"`
+	Path                    string           `json:"path"`
+	Exists                  bool             `json:"exists"`
+	Usable                  bool             `json:"usable"`
+	CanCreate               bool             `json:"canCreate"`
+	Username                string           `json:"username"`
+	AllowUnencryptedExport  bool             `json:"allowUnencryptedExport"`
+	BrowseRoot              string           `json:"browseRoot"`
+	AllowUnrestrictedBrowse bool             `json:"allowUnrestrictedBrowse"`
+	EncryptionEnabled       bool             `json:"encryptionEnabled"`
+	APITokens               []APITokenStatus `json:"apiTokens"`
+	Message                 string           `json:"message"`
+}
+
+type APITokenStatus struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	CreatedAt  string `json:"createdAt"`
+	LastUsedAt string `json:"lastUsedAt"`
+	RevokedAt  string `json:"revokedAt"`
+}
+
+type CreatedAPIToken struct {
+	Token  string         `json:"token"`
+	Record APITokenStatus `json:"record"`
 }
 
 func (a *App) GetWebAuthStatus() (WebAuthStatus, error) {
@@ -1472,6 +1482,7 @@ func (a *App) GetWebAuthStatus() (WebAuthStatus, error) {
 		if record, loadErr := authmaterial.LoadRecordFromDBPath(dbPath); loadErr == nil {
 			status.BrowseRoot = record.BrowseRoot
 			status.AllowUnrestrictedBrowse = record.AllowUnrestrictedBrowse
+			status.APITokens = formatAPITokenStatuses(record.APITokens)
 		} else if a.logger != nil {
 			a.logger.Debugf(
 				"gui: web auth browse policy record unavailable db_path=%s error=%s",
@@ -1508,6 +1519,79 @@ func (a *App) CreateWebAuth(username string, password string) (WebAuthStatus, er
 	}
 
 	return a.GetWebAuthStatus()
+}
+
+func (a *App) CreateAPIToken(name string) (CreatedAPIToken, error) {
+	if a == nil {
+		return CreatedAPIToken{}, errors.New("app not initialized")
+	}
+	dbPath := strings.TrimSpace(a.cfg.MainSettings.DBPath)
+	if dbPath == "" {
+		return CreatedAPIToken{}, errors.New("database path is not configured")
+	}
+	store, err := authmaterial.NewStore(dbPath)
+	if err != nil {
+		return CreatedAPIToken{}, err
+	}
+	created, err := store.CreateAPIToken(name)
+	if err != nil {
+		return CreatedAPIToken{}, err
+	}
+	return CreatedAPIToken{
+		Token: created.Token,
+		Record: formatAPITokenStatus(authmaterial.APIToken{
+			ID:        created.Record.ID,
+			Name:      created.Record.Name,
+			CreatedAt: created.Record.CreatedAt,
+		}),
+	}, nil
+}
+
+func (a *App) RevokeAPIToken(id string) (WebAuthStatus, error) {
+	if a == nil {
+		return WebAuthStatus{}, errors.New("app not initialized")
+	}
+	dbPath := strings.TrimSpace(a.cfg.MainSettings.DBPath)
+	if dbPath == "" {
+		return WebAuthStatus{}, errors.New("database path is not configured")
+	}
+	store, err := authmaterial.NewStore(dbPath)
+	if err != nil {
+		return WebAuthStatus{}, err
+	}
+	if err := store.RevokeAPIToken(id); err != nil {
+		return WebAuthStatus{}, err
+	}
+	return a.GetWebAuthStatus()
+}
+
+func formatAPITokenStatuses(tokens []authmaterial.APIToken) []APITokenStatus {
+	if len(tokens) == 0 {
+		return nil
+	}
+	statuses := make([]APITokenStatus, 0, len(tokens))
+	for _, token := range tokens {
+		statuses = append(statuses, formatAPITokenStatus(token))
+	}
+	return statuses
+}
+
+func formatAPITokenStatus(token authmaterial.APIToken) APITokenStatus {
+	status := APITokenStatus{
+		ID:        token.ID,
+		Name:      token.Name,
+		CreatedAt: formatOptionalTime(&token.CreatedAt),
+	}
+	status.LastUsedAt = formatOptionalTime(token.LastUsedAt)
+	status.RevokedAt = formatOptionalTime(token.RevokedAt)
+	return status
+}
+
+func formatOptionalTime(value *time.Time) string {
+	if value == nil || value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 func (a *App) ImportConfig() (ImportResult, error) {

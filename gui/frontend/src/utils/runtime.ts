@@ -1,15 +1,55 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { EventsOn as wailsEventsOn } from "../../wailsjs/runtime/runtime";
-
 type EventCallback = (payload: unknown) => void;
 
+type RuntimeConfig = {
+  apiBaseURL: string;
+  bearerToken: string;
+  nativeBrowseEnabled: boolean;
+};
+
+type AuthStatus = {
+  authenticated?: boolean;
+  needsSetup?: boolean;
+  username?: string;
+  bearerToken?: string;
+  nativeBrowseEnabled?: boolean;
+  browseRoot?: string;
+  allowUnrestrictedBrowse?: boolean;
+  needsBrowsePolicy?: boolean;
+};
+
 const callbackMap = new Map<string, Set<EventCallback>>();
-let eventSource: EventSource | null = null;
+let eventAbort: AbortController | null = null;
+let apiBaseURL = "";
+let bearerToken = "";
 let browserMode = false;
-let csrfToken = "";
 let nativeBrowseEnabled = false;
+
+const storedToken = () =>
+  window.localStorage.getItem("upbrr.apiToken") ||
+  window.sessionStorage.getItem("upbrr.apiToken") ||
+  "";
+
+const persistToken = (token: string, retain: boolean) => {
+  window.sessionStorage.removeItem("upbrr.apiToken");
+  window.localStorage.removeItem("upbrr.apiToken");
+  if (!token) return;
+  if (retain) {
+    window.localStorage.setItem("upbrr.apiToken", token);
+  } else {
+    window.sessionStorage.setItem("upbrr.apiToken", token);
+  }
+};
+
+const setRuntimeConfig = (config: Partial<RuntimeConfig>) => {
+  apiBaseURL = (config.apiBaseURL || "").replace(/\/$/, "");
+  bearerToken = config.bearerToken || bearerToken || storedToken();
+  nativeBrowseEnabled = Boolean(config.nativeBrowseEnabled);
+  installRESTBridge();
+  recreateEventStream();
+};
 
 const isWebUIRuntime = () => {
   const runtime = (window as typeof window & { runtime?: unknown }).runtime;
@@ -18,63 +58,25 @@ const isWebUIRuntime = () => {
   );
 };
 
+const endpoint = (path: string) => `${apiBaseURL}${path}`;
+
 const parseJSONResponse = async <T>(response: Response): Promise<T | null> => {
   const text = await response.text();
-  if (!text.trim()) {
-    return null;
-  }
+  if (!text.trim()) return null;
   return JSON.parse(text) as T;
 };
 
-const addBrowserListener = (eventName: string, callback: EventCallback) => {
-  const isNew = !callbackMap.has(eventName);
-  if (!callbackMap.has(eventName)) {
-    callbackMap.set(eventName, new Set());
-  }
-  const set = callbackMap.get(eventName)!;
-  set.add(callback);
-  ensureEventSource();
-  if (isNew && eventSource) {
-    eventSource.addEventListener(eventName, (event) => {
-      const payload = JSON.parse((event as MessageEvent).data);
-      callbackMap.get(eventName)?.forEach((listener) => listener(payload));
-    });
-  }
-  return () => {
-    set.delete(callback);
-  };
-};
-
-const ensureEventSource = () => {
-  if (!browserMode || eventSource) {
-    return;
-  }
-  eventSource = new EventSource("/api/events", { withCredentials: true });
-  eventSource.onmessage = () => undefined;
-  const attach = (eventName: string) => {
-    eventSource?.addEventListener(eventName, (event) => {
-      const payload = JSON.parse((event as MessageEvent).data);
-      callbackMap.get(eventName)?.forEach((callback) => callback(payload));
-    });
-  };
-  callbackMap.forEach((_value, key) => attach(key));
-};
-
-const recreateEventSource = () => {
-  if (eventSource) {
-    eventSource.close();
-    eventSource = null;
-  }
-  ensureEventSource();
-};
-
-const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
-  const response = await fetch(path, {
-    method: "POST",
-    credentials: "include",
+const requestJSON = async <T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  auth = true,
+): Promise<T> => {
+  const response = await fetch(endpoint(path), {
+    method,
     headers: {
-      "Content-Type": "application/json",
-      ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(auth && bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -88,44 +90,92 @@ const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
   return payload as T;
 };
 
-const getJSON = async <T>(path: string): Promise<T> => {
-  const response = await fetch(path, {
-    method: "GET",
-    credentials: "include",
-  });
-  const payload = await parseJSONResponse<T & { error?: string }>(response);
-  if (!response.ok) {
-    throw new Error(String(payload?.error || response.statusText || "Request failed"));
+const getJSON = <T>(path: string, auth = true) => requestJSON<T>("GET", path, undefined, auth);
+const postJSON = <T>(path: string, body?: unknown, auth = true) =>
+  requestJSON<T>("POST", path, body, auth);
+const putJSON = <T>(path: string, body?: unknown) => requestJSON<T>("PUT", path, body);
+const deleteJSON = <T>(path: string) => requestJSON<T>("DELETE", path);
+
+const addRESTListener = (eventName: string, callback: EventCallback) => {
+  if (!callbackMap.has(eventName)) {
+    callbackMap.set(eventName, new Set());
   }
-  if (payload === null) {
-    throw new Error("Request returned an empty response");
-  }
-  return payload as T;
+  callbackMap.get(eventName)!.add(callback);
+  ensureEventStream();
+  return () => callbackMap.get(eventName)?.delete(callback);
 };
 
-export const initializeBrowserBridge = (token: string, browseEnabled = false) => {
-  browserMode = isWebUIRuntime();
-  nativeBrowseEnabled = browseEnabled;
-  if (!browserMode) {
-    return;
+const ensureEventStream = () => {
+  if (eventAbort || !bearerToken || callbackMap.size === 0) return;
+  eventAbort = new AbortController();
+  void readEventStream(eventAbort.signal);
+};
+
+const readEventStream = async (signal: AbortSignal) => {
+  try {
+    const response = await fetch(endpoint("/api/v1/events"), {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+      signal,
+    });
+    if (!response.ok || !response.body) return;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary >= 0) {
+        dispatchSSE(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+  } catch {
+    // Event streams are best-effort; callers also poll job snapshots.
+  } finally {
+    eventAbort = null;
   }
-  csrfToken = token;
+};
 
-  const call = <T>(method: string, body?: unknown) => postJSON<T>(`/api/app/${method}`, body);
+const dispatchSSE = (chunk: string) => {
+  let eventName = "message";
+  const data: string[] = [];
+  chunk.split(/\r?\n/).forEach((line) => {
+    if (line.startsWith("event:")) eventName = line.slice(6).trim();
+    if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+  });
+  if (data.length === 0) return;
+  const payload = JSON.parse(data.join("\n"));
+  callbackMap.get(eventName)?.forEach((callback) => callback(payload));
+};
 
+const recreateEventStream = () => {
+  if (eventAbort) {
+    eventAbort.abort();
+    eventAbort = null;
+  }
+  ensureEventStream();
+};
+
+const installRESTBridge = () => {
   (globalThis as any).go = {
+    ...(globalThis as any).go,
     guiapp: {
+      ...((globalThis as any).go?.guiapp || {}),
       App: {
-        BrowsePath: () => call<string>("BrowseFile"),
-        BrowseFile: () => call<string>("BrowseFile"),
-        BrowseFolder: () => call<string>("BrowseFolder"),
+        BrowsePath: async () => (await postJSON<string>("/api/v1/files/native/file")) || "",
+        BrowseFile: () => postJSON<string>("/api/v1/files/native/file"),
+        BrowseFolder: () => postJSON<string>("/api/v1/files/native/folder"),
         BrowseDirectory: (path: string, mode: "file" | "folder") =>
-          call("BrowseDirectory", { path, mode }),
-        ListUIStates: () => getJSON("/api/app/UIState"),
-        GetUIState: (id: string) => getJSON(`/api/app/UIState?id=${encodeURIComponent(id)}`),
+          postJSON("/api/v1/files/browse", { path, mode }),
+        ListUIStates: () => getJSON("/api/v1/ui-state"),
+        GetUIState: (id: string) => getJSON(`/api/v1/ui-state/${encodeURIComponent(id)}`),
         SaveUIState: (id: string, label: string, state: unknown) =>
-          call("UIState", { id, label, state }),
-        DetectDiscType: (path: string) => call<string>("DetectDiscType", { Path: path }),
+          postJSON("/api/v1/ui-state", { id, label, state }),
+        DetectDiscType: (path: string) => postJSON<string>("/api/v1/media/disc-type", { path }),
         FetchMetadata: (
           path: string,
           sourceLookupURL: string,
@@ -133,12 +183,12 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           nameOverrides: unknown,
           trackers: string[],
         ) =>
-          call("FetchMetadata", {
-            Path: path,
-            SourceLookupURL: sourceLookupURL,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Trackers: trackers,
+          postJSON("/api/v1/metadata/fetch", {
+            path,
+            sourceLookupURL,
+            overrides,
+            nameOverrides,
+            trackers,
           }),
         ResetMetadata: (
           path: string,
@@ -147,12 +197,12 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           nameOverrides: unknown,
           trackers: string[],
         ) =>
-          call("ResetMetadata", {
-            Path: path,
-            SourceLookupURL: sourceLookupURL,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Trackers: trackers,
+          postJSON("/api/v1/metadata/reset", {
+            path,
+            sourceLookupURL,
+            overrides,
+            nameOverrides,
+            trackers,
           }),
         FetchDescriptionBuilder: (
           path: string,
@@ -161,12 +211,12 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           trackers: string[],
           ignoreDupesFor: string[],
         ) =>
-          call("FetchDescriptionBuilder", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Trackers: trackers,
-            IgnoreDupesFor: ignoreDupesFor,
+          postJSON("/api/v1/description-builder/fetch", {
+            path,
+            overrides,
+            nameOverrides,
+            trackers,
+            ignoreDupesFor,
           }),
         FetchPreparation: (
           path: string,
@@ -175,12 +225,12 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           trackers: string[],
           ignoreDupesFor: string[],
         ) =>
-          call("FetchPreparation", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Trackers: trackers,
-            IgnoreDupesFor: ignoreDupesFor,
+          postJSON("/api/v1/preparation/fetch", {
+            path,
+            overrides,
+            nameOverrides,
+            trackers,
+            ignoreDupesFor,
           }),
         FetchTrackerDryRun: (
           path: string,
@@ -194,50 +244,44 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           debug: boolean,
           runLogLevel: string,
         ) =>
-          call("FetchTrackerDryRun", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Trackers: trackers,
-            IgnoreRuleFailures: ignoreRuleFailures,
-            IgnoreDupesFor: ignoreDupesFor,
-            QuestionnaireAnswers: questionnaireAnswers,
-            DescriptionGroups: descriptionGroups,
-            Debug: debug,
-            RunLogLevel: runLogLevel,
+          postJSON("/api/v1/tracker-dry-run/fetch", {
+            path,
+            overrides,
+            nameOverrides,
+            trackers,
+            ignoreRuleFailures,
+            ignoreDupesFor,
+            questionnaireAnswers,
+            descriptionGroups,
+            debug,
+            runLogLevel,
           }),
         CheckDupes: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
           trackers: string[],
-        ) =>
-          call("CheckDupes", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Trackers: trackers,
-          }),
-        StartDupeCheck: (
+        ) => postJSON("/api/v1/dupes/check", { path, overrides, nameOverrides, trackers }),
+        StartDupeCheck: async (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
           trackers: string[],
-        ) =>
-          call("StartDupeCheck", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Trackers: trackers,
-          }),
-        CancelDupeCheck: (jobID: string) => call("CancelDupeCheck", { JobID: jobID }),
-        GetDupeCheckSnapshot: (jobID: string) => call("GetDupeCheckSnapshot", { JobID: jobID }),
+        ) => {
+          const result = await postJSON<{ jobID: string }>("/api/v1/jobs/dupes", {
+            path,
+            overrides,
+            nameOverrides,
+            trackers,
+          });
+          return result.jobID;
+        },
+        CancelDupeCheck: (jobID: string) =>
+          deleteJSON(`/api/v1/jobs/dupes/${encodeURIComponent(jobID)}`),
+        GetDupeCheckSnapshot: (jobID: string) =>
+          getJSON(`/api/v1/jobs/dupes/${encodeURIComponent(jobID)}`),
         FetchScreenshotPlan: (path: string, overrides: unknown, nameOverrides: unknown) =>
-          call("FetchScreenshotPlan", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-          }),
+          postJSON("/api/v1/screenshots/plan", { path, overrides, nameOverrides }),
         GenerateScreenshots: (
           path: string,
           overrides: unknown,
@@ -245,12 +289,12 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           selections: unknown,
           purpose: string,
         ) =>
-          call("GenerateScreenshots", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Selections: selections,
-            Purpose: purpose,
+          postJSON("/api/v1/screenshots/generate", {
+            path,
+            overrides,
+            nameOverrides,
+            selections,
+            purpose,
           }),
         PreviewScreenshotFrame: (
           path: string,
@@ -258,49 +302,36 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           nameOverrides: unknown,
           timestampSeconds: number,
         ) =>
-          call("PreviewScreenshotFrame", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            TimestampSeconds: timestampSeconds,
+          postJSON("/api/v1/screenshots/preview-frame", {
+            path,
+            overrides,
+            nameOverrides,
+            timestampSeconds,
           }),
         DeleteScreenshot: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
           imagePath: string,
-        ) =>
-          call("DeleteScreenshot", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            ImagePath: imagePath,
-          }),
+        ) => postJSON("/api/v1/screenshots/delete", { path, overrides, nameOverrides, imagePath }),
         SaveFinalScreenshotSelections: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
           images: unknown,
         ) =>
-          call("SaveFinalScreenshotSelections", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Images: images,
+          putJSON("/api/v1/screenshots/final-selections", {
+            path,
+            overrides,
+            nameOverrides,
+            images,
           }),
-        ReadScreenshotImage: (path: string) => call("ReadScreenshotImage", { Path: path }),
+        ReadScreenshotImage: (path: string) =>
+          postJSON<string>("/api/v1/screenshots/read-image", { path }),
         ListUploadCandidates: (path: string, overrides: unknown, nameOverrides: unknown) =>
-          call("ListUploadCandidates", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-          }),
+          postJSON("/api/v1/screenshots/upload-candidates", { path, overrides, nameOverrides }),
         ListUploadedImages: (path: string, overrides: unknown, nameOverrides: unknown) =>
-          call("ListUploadedImages", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-          }),
+          postJSON("/api/v1/screenshots/uploaded-images", { path, overrides, nameOverrides }),
         UploadImages: (
           path: string,
           overrides: unknown,
@@ -308,28 +339,22 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           host: string,
           images: unknown,
         ) =>
-          call("UploadImages", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Host: host,
-            Images: images,
-          }),
+          postJSON("/api/v1/screenshots/upload", { path, overrides, nameOverrides, host, images }),
         DeleteUploadedImage: (path: string, imagePath: string, host: string) =>
-          call("DeleteUploadedImage", { Path: path, ImagePath: imagePath, Host: host }),
+          postJSON("/api/v1/screenshots/delete-uploaded", { path, imagePath, host }),
         DeleteTrackerImageURL: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
           url: string,
         ) =>
-          call("DeleteTrackerImageURL", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            URL: url,
+          postJSON("/api/v1/screenshots/delete-tracker-url", {
+            path,
+            overrides,
+            nameOverrides,
+            url,
           }),
-        RenderDescription: (raw: string) => call("RenderDescription", { Raw: raw }),
+        RenderDescription: (raw: string) => postJSON<string>("/api/v1/description/render", { raw }),
         SaveDescriptionOverride: (
           path: string,
           groupKey: string,
@@ -338,23 +363,24 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           overrides: unknown,
           nameOverrides: unknown,
         ) =>
-          call("SaveDescriptionOverride", {
-            Path: path,
-            GroupKey: groupKey,
-            Raw: raw,
-            Trackers: trackers,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
+          postJSON("/api/v1/description/override", {
+            path,
+            groupKey,
+            raw,
+            trackers,
+            overrides,
+            nameOverrides,
           }),
-        DiscoverPlaylists: (path: string) => call("DiscoverPlaylists", { Path: path }),
+        DiscoverPlaylists: (path: string) => postJSON("/api/v1/playlists/discover", { path }),
         SavePlaylistSelection: (path: string, playlists: string[], useAll: boolean) =>
-          call("SavePlaylistSelection", { Path: path, Playlists: playlists, UseAll: useAll }),
-        LoadPlaylistSelection: (path: string) => call("LoadPlaylistSelection", { Path: path }),
-        GetConfig: () => call("GetConfig"),
-        GetDefaultConfig: () => call("GetDefaultConfig"),
-        SaveConfig: (payload: string) => call("SaveConfig", { Payload: payload }),
+          putJSON("/api/v1/playlists/selection", { path, playlists, useAll }),
+        LoadPlaylistSelection: (path: string) =>
+          postJSON("/api/v1/playlists/selection/get", { path }),
+        GetConfig: () => getJSON<string>("/api/v1/config/current"),
+        GetDefaultConfig: () => getJSON<string>("/api/v1/config/default"),
+        SaveConfig: (payload: string) => putJSON("/api/v1/config/current", { payload }),
         ExportConfig: async () => {
-          const payload = await call<string>("ExportConfig");
+          const payload = await getJSON<string>("/api/v1/config/export");
           const blob = new Blob([payload], { type: "application/json" });
           const url = URL.createObjectURL(blob);
           const anchor = document.createElement("a");
@@ -387,26 +413,43 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             },
           );
           if (!fileData.name) return { message: "", warnings: [] };
-          const resp = await call<{ result: string; warnings: string[] }>("ImportConfig", {
-            FileName: fileData.name,
-            FileContent: fileData.content,
-          });
+          const resp = await postJSON<{ result: string; warnings: string[] }>(
+            "/api/v1/config/import",
+            { fileName: fileData.name, fileContent: fileData.content },
+          );
           return { message: resp.result, warnings: resp.warnings ?? [] };
         },
-        GetLogPath: () => call("GetLogPath"),
-        GetRecentLogs: (limit: number) => call("GetRecentLogs", { Limit: limit }),
-        StartLogStream: () => call("StartLogStream"),
-        StopLogStream: (streamID: string) => call("StopLogStream", { StreamID: streamID }),
-        GetLogExclusions: () => call("GetLogExclusions"),
+        GetWebAuthStatus: () => getJSON("/api/v1/auth/web-status"),
+        CreateWebAuth: async (username: string, password: string) => {
+          const response = await postJSON<AuthStatus>(
+            "/api/v1/auth/bootstrap",
+            { username, password, retainLogin: true },
+            false,
+          );
+          if (response.bearerToken) {
+            bearerToken = response.bearerToken;
+            persistToken(response.bearerToken, true);
+            recreateEventStream();
+          }
+          return getJSON("/api/v1/auth/web-status");
+        },
+        CreateAPIToken: (name: string) => postJSON("/api/v1/tokens", { name }),
+        RevokeAPIToken: (id: string) => deleteJSON(`/api/v1/tokens/${encodeURIComponent(id)}`),
+        GetLogPath: () => getJSON<string>("/api/v1/logs/path"),
+        GetRecentLogs: (limit: number) => postJSON("/api/v1/logs/recent", { limit }),
+        StartLogStream: () => postJSON<string>("/api/v1/logs/streams"),
+        StopLogStream: (streamID: string) =>
+          deleteJSON(`/api/v1/logs/streams/${encodeURIComponent(streamID)}`),
+        GetLogExclusions: () => getJSON<string[]>("/api/v1/logs/exclusions"),
         UpdateLogExclusions: (patterns: string[]) =>
-          call("UpdateLogExclusions", { Patterns: patterns }),
-        ListKnownTrackers: () => call("ListKnownTrackers"),
-        ListHistory: () => call("ListHistory"),
+          putJSON("/api/v1/logs/exclusions", { patterns }),
+        ListKnownTrackers: () => getJSON<string[]>("/api/v1/trackers/known"),
+        ListHistory: () => getJSON("/api/v1/history"),
         GetHistoryOverview: (sourcePath: string) =>
-          call("GetHistoryOverview", { SourcePath: sourcePath }),
+          postJSON("/api/v1/history/overview", { sourcePath }),
         DeleteHistoryRelease: (sourcePath: string) =>
-          call("DeleteHistoryRelease", { SourcePath: sourcePath }),
-        StartTrackerUpload: (
+          postJSON("/api/v1/history/delete", { sourcePath }),
+        StartTrackerUpload: async (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
@@ -417,28 +460,53 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           descriptionGroups: unknown,
           debug: boolean,
           runLogLevel: string,
-        ) =>
-          call("StartTrackerUpload", {
-            Path: path,
-            Overrides: overrides,
-            NameOverrides: nameOverrides,
-            Trackers: trackers,
-            IgnoreRuleFailures: ignoreRuleFailures,
-            IgnoreDupesFor: ignoreDupesFor,
-            QuestionnaireAnswers: questionnaireAnswers,
-            DescriptionGroups: descriptionGroups,
-            Debug: debug,
-            RunLogLevel: runLogLevel,
-          }),
-        CancelTrackerUpload: (jobID: string) => call("CancelTrackerUpload", { JobID: jobID }),
-        RetryFailedTrackerUpload: (jobID: string) =>
-          call("RetryFailedTrackerUpload", { JobID: jobID }),
+        ) => {
+          const result = await postJSON<{ jobID: string }>("/api/v1/jobs/uploads", {
+            path,
+            overrides,
+            nameOverrides,
+            trackers,
+            ignoreRuleFailures,
+            ignoreDupesFor,
+            questionnaireAnswers,
+            descriptionGroups,
+            debug,
+            runLogLevel,
+          });
+          return result.jobID;
+        },
+        CancelTrackerUpload: (jobID: string) =>
+          deleteJSON(`/api/v1/jobs/uploads/${encodeURIComponent(jobID)}`),
+        RetryFailedTrackerUpload: async (jobID: string) => {
+          const result = await postJSON<{ jobID: string }>(
+            `/api/v1/jobs/uploads/${encodeURIComponent(jobID)}/retry`,
+          );
+          return result.jobID;
+        },
         GetTrackerUploadSnapshot: (jobID: string) =>
-          call("GetTrackerUploadSnapshot", { JobID: jobID }),
+          getJSON(`/api/v1/jobs/uploads/${encodeURIComponent(jobID)}`),
+        OpenExternalURL: async (url: string) => {
+          window.open(url, "_blank", "noopener,noreferrer");
+        },
       },
     },
   };
-  recreateEventSource();
+};
+
+export const initializeDesktopBridge = async () => {
+  browserMode = false;
+  const desktopRuntime = (globalThis as any).go?.guiapp?.DesktopRuntime;
+  const config = (await desktopRuntime?.GetRuntimeConfig?.()) as RuntimeConfig | undefined;
+  setRuntimeConfig(config || {});
+};
+
+export const initializeBrowserBridge = (token: string, browseEnabled = false) => {
+  browserMode = isWebUIRuntime();
+  setRuntimeConfig({
+    apiBaseURL: "",
+    bearerToken: token || storedToken(),
+    nativeBrowseEnabled: browseEnabled,
+  });
 };
 
 export const isBrowserMode = () => {
@@ -447,38 +515,59 @@ export const isBrowserMode = () => {
 };
 
 export const isBrowserNativeBrowseAvailable = () => {
-  if (!isBrowserMode()) {
-    return true;
-  }
+  if (!isBrowserMode()) return true;
   return nativeBrowseEnabled;
 };
 
 export const updateBrowserCSRFToken = (token: string) => {
-  csrfToken = token;
-  recreateEventSource();
+  bearerToken = token || bearerToken || storedToken();
+  recreateEventStream();
 };
 
 export const browserAuth = {
   status: async () => {
-    const response = await fetch("/api/auth/status", { credentials: "include" });
-    const payload = await parseJSONResponse<Record<string, unknown> & { error?: string }>(response);
-    if (!response.ok) {
-      throw new Error(String(payload?.error || response.statusText || "Request failed"));
-    }
-    return payload || {};
+    const token = storedToken();
+    if (token) bearerToken = token;
+    const payload = await getJSON<AuthStatus>("/api/v1/auth/status", Boolean(token));
+    initializeBrowserBridge(token, !!payload.nativeBrowseEnabled);
+    return { ...payload, authenticated: Boolean(token && payload.authenticated) };
   },
-  bootstrap: (username: string, password: string, retainLogin: boolean) =>
-    postJSON("/api/auth/bootstrap", { username, password, retainLogin }),
-  login: (username: string, password: string, retainLogin: boolean) =>
-    postJSON("/api/auth/login", { username, password, retainLogin }),
+  bootstrap: async (username: string, password: string, retainLogin: boolean) => {
+    const payload = await postJSON<AuthStatus>(
+      "/api/v1/auth/bootstrap",
+      { username, password, retainLogin },
+      false,
+    );
+    if (payload.bearerToken) {
+      bearerToken = payload.bearerToken;
+      persistToken(payload.bearerToken, retainLogin);
+    }
+    return payload;
+  },
+  login: async (username: string, password: string, retainLogin: boolean) => {
+    const payload = await postJSON<AuthStatus>(
+      "/api/v1/auth/token",
+      { username, password, retainLogin },
+      false,
+    );
+    if (payload.bearerToken) {
+      bearerToken = payload.bearerToken;
+      persistToken(payload.bearerToken, retainLogin);
+    }
+    return payload;
+  },
   saveBrowsePolicy: (browseRoot: string, allowUnrestrictedBrowse: boolean) =>
-    postJSON("/api/auth/browse-policy", { browseRoot, allowUnrestrictedBrowse }),
-  logout: () => postJSON("/api/auth/logout"),
+    putJSON("/api/v1/auth/browse-policy", { browseRoot, allowUnrestrictedBrowse }),
+  logout: async () => {
+    try {
+      if (bearerToken) await postJSON("/api/v1/auth/logout");
+    } finally {
+      bearerToken = "";
+      persistToken("", false);
+      recreateEventStream();
+    }
+  },
 };
 
-export const EventsOn = (eventName: string, callback: EventCallback) => {
-  if (!browserMode) {
-    return wailsEventsOn(eventName, callback as any);
-  }
-  return addBrowserListener(eventName, callback);
-};
+export const EventsOn = (eventName: string, callback: EventCallback) =>
+  addRESTListener(eventName, callback);

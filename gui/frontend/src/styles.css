@@ -969,6 +969,16 @@ h2 {
   display: none;
 }
 
+.tracker-description.rendered .mediainfo__raw > summary {
+  cursor: pointer;
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.tracker-description.rendered .mediainfo__raw > summary::marker {
+  color: var(--muted);
+}
+
 .tracker-description.rendered .comparison__details[open] > summary {
   position: fixed;
   top: 16px;
@@ -1180,16 +1190,6 @@ h2 {
 
 :root.light .tracker-description.rendered .mediainfo__raw pre {
   background: rgba(0, 0, 0, 0.05);
-}
-
-.tracker-description.rendered .mediainfo__raw > summary {
-  cursor: pointer;
-  color: var(--accent-2);
-  font-weight: 600;
-}
-
-.tracker-description.rendered .mediainfo__raw > summary::marker {
-  color: var(--muted);
 }
 
 .lightbox-overlay {

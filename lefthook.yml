@@ -31,6 +31,27 @@ pre-commit:
             run: pnpm exec eslint --cache --no-error-on-unmatched-pattern {staged_files}
             fail_text: "ESLint failed. Fix errors above, or run `pnpm --dir gui/frontend run lint` locally."
 
+    - name: documentation
+      root: "documentation/"
+      group:
+        piped: true
+        jobs:
+          - name: format
+            glob: "**/*.{ts,tsx,js,mjs,css,json,md,mdx,yml,yaml}"
+            run: pnpm exec prettier --write --cache --ignore-unknown {staged_files}
+            stage_fixed: true
+            fail_text: "Documentation Prettier failed. Fix the errors above or bypass with --no-verify."
+
+          - name: lint
+            glob: "**/*.{ts,tsx,js,mjs}"
+            run: pnpm exec eslint --cache --no-error-on-unmatched-pattern {staged_files}
+            fail_text: "Documentation ESLint failed. Run `pnpm --dir documentation run lint` locally."
+
+          - name: style
+            glob: "**/*.css"
+            run: pnpm exec stylelint {staged_files}
+            fail_text: "Documentation Stylelint failed. Run `pnpm --dir documentation run lint:style` locally."
+
     - name: go
       group:
         piped: true
@@ -56,6 +77,19 @@ pre-push:
       glob: "**/*.{ts,tsx}"
       run: pnpm run typecheck
       fail_text: "TypeScript typecheck failed. Run `pnpm --dir gui/frontend run typecheck`."
+
+    - name: documentation
+      root: "documentation/"
+      glob: "**/*.{ts,tsx,js,mjs,css,json,md,mdx,yml,yaml}"
+      run: |
+        pnpm run lint
+        pnpm run lint:style
+        pnpm run typecheck
+        pnpm run format:check
+        pnpm run test:scripts
+        pnpm run docs:check
+        pnpm run build
+      fail_text: "Documentation validation failed. Run the documentation checks locally."
 
     - name: go-lint
       glob: "**/*.go"

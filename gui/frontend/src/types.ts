@@ -269,7 +269,21 @@ export type WebAuthStatus = {
   browseRoot: string;
   allowUnrestrictedBrowse: boolean;
   encryptionEnabled: boolean;
+  apiTokens?: APITokenStatus[];
   message: string;
+};
+
+export type APITokenStatus = {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string;
+  revokedAt: string;
+};
+
+export type CreatedAPIToken = {
+  token: string;
+  record: APITokenStatus;
 };
 
 export type ExternalPreview = {

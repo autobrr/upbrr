@@ -21,7 +21,6 @@ import (
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
-	"github.com/autobrr/upbrr/internal/guiapp"
 	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
@@ -66,6 +65,10 @@ type backendLogStream struct {
 type runOptions struct {
 	Debug       bool
 	RunLogLevel string
+}
+
+type logExclusionsConfig struct {
+	Patterns []string `json:"patterns"`
 }
 
 func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
@@ -845,8 +848,6 @@ func (b *Backend) SaveConfig(payload string) error {
 	return b.applyConfig(*cfg)
 }
 
-const configImportMaxBytes = importer.MaxFileBytes
-
 func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, error) {
 	if b.repo == nil {
 		return "", nil, errors.New("config repository not initialized")
@@ -934,7 +935,7 @@ func (b *Backend) GetLogExclusions() ([]string, error) {
 	if b.repo == nil {
 		return nil, errors.New("config repository not initialized")
 	}
-	var exclusions guiapp.LogExclusions
+	var exclusions logExclusionsConfig
 	err := config.LoadSectionFromDatabase(context.Background(), "log_exclusions", &exclusions, b.repo)
 	if err != nil {
 		if errorsIsNotFound(err) {
@@ -949,7 +950,7 @@ func (b *Backend) UpdateLogExclusions(patterns []string) error {
 	if b.repo == nil {
 		return errors.New("config repository not initialized")
 	}
-	return config.SaveSectionToDatabase(context.Background(), "log_exclusions", guiapp.LogExclusions{
+	return config.SaveSectionToDatabase(context.Background(), "log_exclusions", logExclusionsConfig{
 		Patterns: normalizePatterns(patterns),
 	}, b.repo)
 }

@@ -20,6 +20,7 @@ import { useScreenshots } from "./hooks/useScreenshots";
 import { useUploadImages } from "./hooks/useUploadImages";
 import type {
   ConfigMap,
+  CreatedAPIToken,
   BrowseDirectoryResponse,
   DescriptionBuilderPreview,
   DupeCheckSnapshot,
@@ -336,6 +337,8 @@ declare global {
             GetDefaultConfig: () => Promise<string>;
             GetWebAuthStatus: () => Promise<WebAuthStatus>;
             CreateWebAuth: (username: string, password: string) => Promise<WebAuthStatus>;
+            CreateAPIToken: (name: string) => Promise<CreatedAPIToken>;
+            RevokeAPIToken: (id: string) => Promise<WebAuthStatus>;
             SaveConfig: (payload: string) => Promise<void>;
             ExportConfig: () => Promise<string>;
             ImportConfig: () => Promise<{ message: string; warnings: string[] }>;
@@ -590,6 +593,9 @@ export default function App() {
   const [webAuthPassword, setWebAuthPassword] = useState("");
   const [webAuthConfirm, setWebAuthConfirm] = useState("");
   const [webAuthError, setWebAuthError] = useState("");
+  const [apiTokenName, setAPITokenName] = useState("");
+  const [apiTokenCreating, setAPITokenCreating] = useState(false);
+  const [apiTokenValue, setAPITokenValue] = useState("");
   const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uiStateHydratedRef = useRef(false);
   const uiStateInitialLiveStateCheckedRef = useRef(false);
@@ -3974,6 +3980,67 @@ export default function App() {
     webAuthUsername,
   ]);
 
+  const handleCreateAPIToken = useCallback(async () => {
+    clearSettingsStatus();
+    dismissConfigOpStatus();
+    setWebAuthError("");
+    setAPITokenValue("");
+
+    const createAPIToken = globalThis.go?.guiapp?.App?.CreateAPIToken;
+    if (!createAPIToken) {
+      setWebAuthError("API token creation is unavailable in this build.");
+      return;
+    }
+
+    const trimmedName = apiTokenName.trim();
+    if (!trimmedName) {
+      setWebAuthError("API token name is required.");
+      return;
+    }
+
+    setAPITokenCreating(true);
+    try {
+      const created = await createAPIToken(trimmedName);
+      setAPITokenValue(created.token);
+      setAPITokenName("");
+      await loadWebAuthStatus();
+      markSettingsSaved("API token created. Store it now; it will not be shown again.");
+    } catch (err) {
+      setWebAuthError(String(err));
+    } finally {
+      setAPITokenCreating(false);
+    }
+  }, [
+    apiTokenName,
+    clearSettingsStatus,
+    dismissConfigOpStatus,
+    loadWebAuthStatus,
+    markSettingsSaved,
+  ]);
+
+  const handleRevokeAPIToken = useCallback(
+    async (id: string) => {
+      clearSettingsStatus();
+      dismissConfigOpStatus();
+      setWebAuthError("");
+
+      const revokeAPIToken = globalThis.go?.guiapp?.App?.RevokeAPIToken;
+      if (!revokeAPIToken) {
+        setWebAuthError("API token revocation is unavailable in this build.");
+        return;
+      }
+
+      try {
+        const status = await revokeAPIToken(id);
+        setWebAuthStatus(status);
+        markSettingsSaved("API token revoked.");
+      } catch (err) {
+        setWebAuthError(String(err));
+      }
+    },
+    [clearSettingsStatus, dismissConfigOpStatus, markSettingsSaved],
+  );
+
   useEffect(() => {
     if (activeTab !== "settings") {
       return;
@@ -4139,10 +4206,16 @@ export default function App() {
               webAuthPassword={webAuthPassword}
               webAuthConfirm={webAuthConfirm}
               webAuthError={webAuthError}
+              apiTokenName={apiTokenName}
+              apiTokenCreating={apiTokenCreating}
+              apiTokenValue={apiTokenValue}
               setWebAuthUsername={setWebAuthUsername}
               setWebAuthPassword={setWebAuthPassword}
               setWebAuthConfirm={setWebAuthConfirm}
+              setAPITokenName={setAPITokenName}
               handleCreateWebAuth={handleCreateWebAuth}
+              handleCreateAPIToken={handleCreateAPIToken}
+              handleRevokeAPIToken={handleRevokeAPIToken}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}
               renderMapSection={renderMapSection}

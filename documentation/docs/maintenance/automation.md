@@ -34,9 +34,10 @@ This writes `documentation/.generated/context/upbrr-doc-context.json` with:
 
 - repository metadata
 - CLI flags parsed from `cmd/upbrr/cli_options.go`
-- top-level config sections parsed from `internal/config/defaults/example.yaml`
+- config sections and keys parsed from `internal/config/defaults/example.yaml`
+- tracker implementation inventory from `internal/trackers/impl`
 - current docs page titles and headings
-- selected Go source inventory
+- selected Go source inventory and reference file excerpts
 
 ## Check coverage
 
@@ -48,7 +49,9 @@ pnpm run docs:check
 
 The check refreshes generated context, rejects duplicate docs page titles, and reports CLI flags that are not mentioned in docs yet.
 
-Set `DOCS_STRICT=1` to make undocumented non-alias CLI flags fail the check.
+It also validates generated context shape and rejects malformed docs front matter.
+
+Set `DOCS_STRICT=1` to make undocumented documentable surfaces fail the check. Without strict mode, coverage gaps are advisory.
 
 ## Generate a draft
 
@@ -74,6 +77,14 @@ pnpm run docs:generate -- --provider codex --codex-model gpt-5.3-codex --topic "
 ```
 
 The generator passes `documentation/schemas/doc-draft.schema.json` to `codex exec --output-schema`, stores Codex's final JSON response, validates it, and emits Markdown plus JSON under `documentation/.generated/drafts/`. The schema intentionally uses a strict, simple front matter object so it is accepted by Codex structured output.
+
+To publish a validated draft directly into `documentation/docs`, pass `--apply`:
+
+```bash
+pnpm run docs:generate -- --topic "document CLI queue usage" --apply
+```
+
+Apply mode refuses paths outside `documentation/docs`, refuses to overwrite an existing page unless `--force` is set, and refuses drafts with warnings unless `--allow-warnings` is set.
 
 ## Ollama fallback
 

@@ -29,8 +29,9 @@ const (
 	legacyAuthArgon2KeyLen      = 32
 )
 
-type authRecord = authmaterial.Record
 type authStore = authmaterial.Store
+type authRecordAPIToken = authmaterial.APIToken
+type apiTokenStatus = authmaterial.APITokenStatus
 
 // AuthFileName is the canonical web auth file name stored beside the database.
 const AuthFileName = authmaterial.WebAuthFileName
@@ -50,6 +51,38 @@ func AuthFilePath(dbPath string) string {
 // BootstrapAuthFile creates the canonical auth file beside dbPath.
 func BootstrapAuthFile(dbPath string, username string, password string) error {
 	return authmaterial.BootstrapAuthFile(dbPath, username, password)
+}
+
+func CreateAPIToken(dbPath string, name string) (string, apiTokenStatus, error) {
+	store, err := newAuthStore(dbPath)
+	if err != nil {
+		return "", apiTokenStatus{}, err
+	}
+	created, err := store.CreateAPIToken(name)
+	if err != nil {
+		return "", apiTokenStatus{}, err
+	}
+	return created.Token, apiTokenStatus{
+		ID:        created.Record.ID,
+		Name:      created.Record.Name,
+		CreatedAt: created.Record.CreatedAt,
+	}, nil
+}
+
+func ListAPITokens(dbPath string) ([]apiTokenStatus, error) {
+	store, err := newAuthStore(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	return store.ListAPITokens()
+}
+
+func RevokeAPIToken(dbPath string, id string) error {
+	store, err := newAuthStore(dbPath)
+	if err != nil {
+		return err
+	}
+	return store.RevokeAPIToken(id)
 }
 
 func hashPassword(password string) (string, error) {

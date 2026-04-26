@@ -100,3 +100,52 @@ func TestLoadFromDBPathParsesAllowUnencryptedExport(t *testing.T) {
 		t.Fatal("expected allow_unencrypted_export to be true")
 	}
 }
+
+func TestAPITokenLifecycle(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	store, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	created, err := store.CreateAPIToken("automation")
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	if !strings.HasPrefix(created.Token, "upbrr_"+created.Record.ID+"_") {
+		t.Fatalf("unexpected token format: %q", created.Token)
+	}
+	if strings.Contains(created.Record.Hash, created.Token) {
+		t.Fatal("expected stored token hash not to contain raw token")
+	}
+
+	status, ok, err := store.VerifyAPIToken(created.Token)
+	if err != nil {
+		t.Fatalf("VerifyAPIToken: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected token to verify")
+	}
+	if status.ID != created.Record.ID || status.Name != "automation" {
+		t.Fatalf("unexpected status %#v", status)
+	}
+	if status.LastUsedAt == nil {
+		t.Fatal("expected last-used timestamp after verification")
+	}
+
+	if err := store.RevokeAPIToken(created.Record.ID); err != nil {
+		t.Fatalf("RevokeAPIToken: %v", err)
+	}
+	_, ok, err = store.VerifyAPIToken(created.Token)
+	if err != nil {
+		t.Fatalf("VerifyAPIToken after revoke: %v", err)
+	}
+	if ok {
+		t.Fatal("expected revoked token to fail verification")
+	}
+}

@@ -33,14 +33,21 @@ export default function Home(): ReactElement {
             upbrr
           </Heading>
           <p className={styles.subtitle}>
-            Upload preparation and tracker submission for private-tracker workflows, available as
-            a CLI, Wails desktop app, and embedded web interface.
+            Upload preparation and tracker submission for private-tracker
+            workflows, available as a CLI, Wails desktop app, and embedded web
+            interface.
           </p>
           <div className={styles.actions}>
-            <Link className="button button--primary button--lg" to="/docs/getting-started/quick-start">
+            <Link
+              className="button button--primary button--lg"
+              to="/docs/getting-started/quick-start"
+            >
               Quick start
             </Link>
-            <Link className="button button--secondary button--lg" to="/docs/workflows/upload-workflow">
+            <Link
+              className="button button--secondary button--lg"
+              to="/docs/workflows/upload-workflow"
+            >
               Upload workflow
             </Link>
           </div>

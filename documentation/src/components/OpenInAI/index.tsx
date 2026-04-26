@@ -43,7 +43,9 @@ function normalizeBaseUrl(url: string, baseUrl: string): URL {
 
 function toRawMarkdownUrl(editUrl?: string, source?: string): string | null {
   if (editUrl) {
-    const match = editUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)$/);
+    const match = editUrl.match(
+      /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)$/,
+    );
     if (match) {
       const [, owner, repo, branch, path] = match;
       return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
@@ -88,7 +90,11 @@ async function copyText(value: string): Promise<void> {
   document.body.removeChild(textArea);
 }
 
-function getPrompt(title: string, pageUrl: string, markdownUrl: string | null): string {
+function getPrompt(
+  title: string,
+  pageUrl: string,
+  markdownUrl: string | null,
+): string {
   const lines = [
     "Answer questions about this upbrr docs page.",
     `Title: ${title}`,
@@ -205,7 +211,11 @@ export default function OpenInAI(): ReactNode {
   };
 
   const openProvider = (href: string) => {
-    window.open(`${href}${encodeURIComponent(prompt)}`, "_blank", "noopener,noreferrer");
+    window.open(
+      `${href}${encodeURIComponent(prompt)}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
     setIsOpen(false);
   };
 
@@ -235,7 +245,12 @@ export default function OpenInAI(): ReactNode {
 
       {isOpen && (
         <div className={styles.menu} role="menu" aria-label="AI actions">
-          <button type="button" role="menuitem" className={styles.menuItem} onClick={copyPage}>
+          <button
+            type="button"
+            role="menuitem"
+            className={styles.menuItem}
+            onClick={copyPage}
+          >
             <span className={styles.menuIcon}>
               <CopyIcon />
             </span>
@@ -286,7 +301,13 @@ export default function OpenInAI(): ReactNode {
 
 function CopyIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
       <rect x="9" y="9" width="11" height="11" rx="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
@@ -295,7 +316,13 @@ function CopyIcon() {
 
 function ChevronIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
       <path d="m6 9 6 6 6-6" />
     </svg>
   );
@@ -303,7 +330,13 @@ function ChevronIcon() {
 
 function MarkdownIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
       <rect x="2.5" y="3.5" width="19" height="17" rx="2.5" />
       <path d="M7 15V9l2.4 2.4L11.8 9v6M14.5 13h3M16 11.5V14.5M18 11.5V14.5" />
     </svg>
@@ -312,7 +345,13 @@ function MarkdownIcon() {
 
 function ChatGPTIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      aria-hidden="true"
+    >
       <path d="M12.1 2.4a4.4 4.4 0 0 1 4.38 3.96l2.17 1.25a4.4 4.4 0 0 1 1.6 6l-1.27 2.2a4.4 4.4 0 0 1-4.39 7.63H12.1a4.4 4.4 0 0 1-4.38-3.96L5.55 18.2a4.4 4.4 0 0 1-1.6-6l1.27-2.2A4.4 4.4 0 0 1 9.6 2.4h2.5Z" />
       <path d="m8.9 6.6 6.9 4m-8.2 2.9 6.9 4m0-12-6.9 4m8.2 2.9-6.9 4" />
     </svg>
@@ -321,7 +360,13 @@ function ChatGPTIcon() {
 
 function ClaudeIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
       <circle cx="12" cy="12" r="9.2" />
       <path d="m12 5.8 1.2 3.5h3.7l-3 2.2 1.1 3.6L12 13l-3 2.1 1.1-3.6-3-2.2h3.7Z" />
     </svg>
@@ -330,7 +375,13 @@ function ClaudeIcon() {
 
 function PerplexityIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
       <path d="M12 2.8v18.4M2.8 12h18.4M5.2 5.2l13.6 13.6M18.8 5.2 5.2 18.8" />
       <circle cx="12" cy="12" r="9.2" />
     </svg>
@@ -339,7 +390,13 @@ function PerplexityIcon() {
 
 function ExternalArrowIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
       <path d="M7 17 17 7M9 7h8v8" />
     </svg>
   );

@@ -27,6 +27,11 @@ This generates static content into the `build` directory.
 ## Validation
 
 ```bash
-pnpm typecheck
-pnpm build
+pnpm run lint
+pnpm run lint:style
+pnpm run typecheck
+pnpm run format:check
+pnpm run test:scripts
+pnpm run docs:check
+pnpm run build
 ```

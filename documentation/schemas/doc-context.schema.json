@@ -1,0 +1,155 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "git",
+    "repository",
+    "documentableSurfaces",
+    "docsPages",
+    "references",
+    "sourceInventory"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "branch"],
+      "properties": {
+        "head": { "type": "string" },
+        "branch": { "type": "string" }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "url", "docsUrl"],
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "docsUrl": { "type": "string" }
+      }
+    },
+    "documentableSurfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cliFlags", "configSections", "configKeys", "trackers"],
+      "properties": {
+        "cliFlags": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind", "defaultValue", "help", "sourceFile"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": { "type": "string" },
+              "defaultValue": { "type": "string" },
+              "help": { "type": "string" },
+              "sourceFile": { "type": "string" }
+            }
+          }
+        },
+        "configSections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "sourceFile"],
+            "properties": {
+              "name": { "type": "string" },
+              "sourceFile": { "type": "string" }
+            }
+          }
+        },
+        "configKeys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sourceFile"],
+            "properties": {
+              "path": { "type": "string" },
+              "sourceFile": { "type": "string" }
+            }
+          }
+        },
+        "trackers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "path", "files"],
+            "properties": {
+              "name": { "type": "string" },
+              "path": { "type": "string" },
+              "files": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "docsPages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "title", "headings", "frontMatter", "sourceFile"],
+        "properties": {
+          "path": { "type": "string" },
+          "title": { "type": "string" },
+          "headings": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "frontMatter": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "sourceFile": { "type": "string" }
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "sourceFile", "text"],
+        "properties": {
+          "name": { "type": "string" },
+          "sourceFile": { "type": "string" },
+          "text": { "type": "string" }
+        }
+      }
+    },
+    "sourceInventory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "goFiles", "files"],
+        "properties": {
+          "path": { "type": "string" },
+          "goFiles": { "type": "number" },
+          "files": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

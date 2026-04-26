@@ -1,13 +1,23 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["targetPath", "title", "frontMatter", "markdown", "sourceFiles", "warnings"],
+  "required": [
+    "targetPath",
+    "title",
+    "frontMatter",
+    "markdown",
+    "sourceFiles",
+    "warnings"
+  ],
   "properties": {
     "targetPath": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(documentation/)?docs/.+\\.mdx?$"
     },
     "title": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "frontMatter": {
       "type": "object",
@@ -18,12 +28,14 @@
           "type": "number"
         },
         "title": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       }
     },
     "markdown": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "sourceFiles": {
       "type": "array",

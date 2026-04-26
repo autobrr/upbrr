@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -76,6 +77,12 @@ func exitError(code int, err error) error {
 func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		if err := runServe(os.Args[2:]); err != nil {
+			return exitError(1, err)
+		}
+		return nil
+	}
+	if len(os.Args) > 1 && os.Args[1] == "api-token" {
+		if err := runAPIToken(os.Args[2:]); err != nil {
 			return exitError(1, err)
 		}
 		return nil
@@ -321,6 +328,68 @@ func createCLIAuthFile(stdin io.Reader, stdout io.Writer, dbPath string) error {
 	return nil
 }
 
+func runAPIToken(args []string) error {
+	if len(args) == 0 {
+		return errors.New("api-token requires a command: create, list, or revoke")
+	}
+	command := strings.TrimSpace(args[0])
+	flags := flag.NewFlagSet("api-token "+command, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	configPath := flags.String("config", "", "Path to config file")
+	name := flags.String("name", "", "API token name")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+
+	dbPath, err := resolveExportDBPath(*configPath, strings.TrimSpace(*configPath) != "")
+	if err != nil {
+		return err
+	}
+
+	switch command {
+	case "create":
+		token, status, err := webserver.CreateAPIToken(dbPath, *name)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("created API token %s (%s)\n", status.ID, status.Name)
+		fmt.Printf("token: %s\n", token)
+		fmt.Println("store this token now; it will not be shown again")
+	case "list":
+		tokens, err := webserver.ListAPITokens(dbPath)
+		if err != nil {
+			return err
+		}
+		if len(tokens) == 0 {
+			fmt.Println("no API tokens")
+			return nil
+		}
+		for _, token := range tokens {
+			state := "active"
+			if token.RevokedAt != nil {
+				state = "revoked"
+			}
+			lastUsed := "never"
+			if token.LastUsedAt != nil {
+				lastUsed = token.LastUsedAt.Format(time.RFC3339)
+			}
+			fmt.Printf("%s\t%s\t%s\tcreated=%s\tlast_used=%s\n", token.ID, token.Name, state, token.CreatedAt.Format(time.RFC3339), lastUsed)
+		}
+	case "revoke":
+		remaining := flags.Args()
+		if len(remaining) != 1 {
+			return errors.New("api-token revoke requires a token id")
+		}
+		if err := webserver.RevokeAPIToken(dbPath, remaining[0]); err != nil {
+			return err
+		}
+		fmt.Printf("revoked API token %s\n", strings.TrimSpace(remaining[0]))
+	default:
+		return fmt.Errorf("unknown api-token command %q", command)
+	}
+	return nil
+}
+
 func promptAuthValue(reader *bufio.Reader, stdout io.Writer, label string) (string, error) {
 	if _, err := fmt.Fprint(stdout, label); err != nil {
 		return "", fmt.Errorf("create auth: write prompt: %w", err)
@@ -391,10 +460,15 @@ func runServe(args []string) error {
 		return err
 	}
 
+	assets, err := guiapp.ResolveAssets(nil)
+	if err != nil {
+		return err
+	}
 	server, err := webserver.New(webserver.Options{
 		StartupContext: context.Background(),
 		Config:         cfg,
 		CLIConfig:      webCfg,
+		Assets:         assets,
 	})
 	if err != nil {
 		return err
