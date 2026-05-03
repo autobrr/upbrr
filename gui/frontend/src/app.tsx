@@ -312,6 +312,7 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
               host: string,
               images: ScreenshotImage[],
             ) => Promise<UploadedImageLink[]>;
@@ -1229,6 +1230,13 @@ export default function App() {
     handleDeleteTrackerImageURL,
   } = screenshots;
 
+  const selectedUploadImageTrackers = useMemo(() => {
+    const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
+    return Object.entries(releasePageTrackerSelection)
+      .filter(([name, selected]) => selected && validTrackers.has(name))
+      .map(([name]) => name);
+  }, [releasePageTrackerSelection, trackerUploadItems]);
+
   // Upload images workflow hook
   const uploadImages = useUploadImages({
     path,
@@ -1236,6 +1244,7 @@ export default function App() {
     releaseOverrideState,
     uploadCandidates: screenshots.uploadCandidates,
     configuredImageHosts,
+    selectedTrackers: selectedUploadImageTrackers,
   });
   const {
     refreshUploadedImages,

@@ -16,6 +16,7 @@ interface UploadImagesHookProps {
   releaseOverrideState?: { overrides?: ReleaseNameOverrides };
   uploadCandidates?: ScreenshotPreviewImage[];
   configuredImageHosts?: string[];
+  selectedTrackers?: string[];
 }
 
 export const useUploadImages = ({
@@ -24,6 +25,7 @@ export const useUploadImages = ({
   releaseOverrideState,
   uploadCandidates = [],
   configuredImageHosts = [],
+  selectedTrackers = [],
 }: UploadImagesHookProps) => {
   // State: Host & selection
   const [uploadHost, setUploadHost] = useState<string>("");
@@ -170,11 +172,16 @@ export const useUploadImages = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          selectedTrackers,
           uploadHost,
           selected.map((entry) => entry.image),
         );
+        const uploadedCount = result?.length || 0;
         setUploadedImages(result || []);
-        setUploadProgress({ current: result?.length || 0, total: selected.length });
+        setUploadProgress({
+          current: uploadedCount,
+          total: Math.max(selected.length, uploadedCount),
+        });
         await refreshUploadedImages();
       } catch (err) {
         setUploadImagesError(String(err));
@@ -183,7 +190,14 @@ export const useUploadImages = ({
         setUploadImagesLoading(false);
       }
     },
-    [path, idOverrideState, releaseOverrideState, uploadHost, refreshUploadedImages],
+    [
+      path,
+      idOverrideState,
+      releaseOverrideState,
+      selectedTrackers,
+      uploadHost,
+      refreshUploadedImages,
+    ],
   );
 
   // Delete a single uploaded image record

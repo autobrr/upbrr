@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -145,10 +146,19 @@ func (s *stubRepo) ListScreenshotSlotsByPath(context.Context, string) ([]api.Scr
 	}
 	return s.screenshotSlots, nil
 }
-func (s *stubRepo) UpsertScreenshotSlotVariants(context.Context, string, []api.ScreenshotSlotVariant) error {
+func (s *stubRepo) UpsertScreenshotSlotVariants(_ context.Context, _ string, variants []api.ScreenshotSlotVariant) error {
+	for _, variant := range variants {
+		for idx := range s.screenshotSlots {
+			if s.screenshotSlots[idx].SlotOrder != variant.SlotOrder {
+				continue
+			}
+			s.screenshotSlots[idx].Variants = upsertVariant(s.screenshotSlots[idx].Variants, variant)
+		}
+	}
 	return nil
 }
-func (s *stubRepo) SaveUploadedImages(context.Context, string, string, []api.UploadedImageLink) error {
+func (s *stubRepo) SaveUploadedImages(_ context.Context, _ string, _ string, images []api.UploadedImageLink) error {
+	s.uploads = append(s.uploads, images...)
 	return nil
 }
 func (s *stubRepo) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
@@ -173,6 +183,9 @@ func (s *stubRepo) PurgeContentData(context.Context, string) error              
 type stubImageService struct {
 	uploads map[string][]api.UploadedImageLink
 	errs    map[string]error
+	mu      sync.Mutex
+	calls   []string
+	repo    *stubRepo
 }
 
 func (s *stubImageService) ListCandidates(context.Context, api.PreparedMetadata) ([]api.ScreenshotImage, error) {
@@ -180,6 +193,9 @@ func (s *stubImageService) ListCandidates(context.Context, api.PreparedMetadata)
 }
 
 func (s *stubImageService) Upload(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, host)
+	s.mu.Unlock()
 	if err := s.errs[host]; err != nil {
 		return nil, err
 	}
@@ -188,6 +204,11 @@ func (s *stubImageService) Upload(_ context.Context, meta api.PreparedMetadata, 
 			if strings.TrimSpace(links[idx].UsageScope) == "" {
 				links[idx].UsageScope = usageScope
 			}
+		}
+		if s.repo != nil {
+			s.mu.Lock()
+			s.repo.uploads = append(s.repo.uploads, links...)
+			s.mu.Unlock()
 		}
 		return links, nil
 	}
@@ -202,6 +223,11 @@ func (s *stubImageService) Upload(_ context.Context, meta api.PreparedMetadata, 
 			RawURL:     fmt.Sprintf("https://%s/%d.png", host, idx),
 			WebURL:     fmt.Sprintf("https://%s/%d", host, idx),
 		})
+	}
+	if s.repo != nil {
+		s.mu.Lock()
+		s.repo.uploads = append(s.repo.uploads, results...)
+		s.mu.Unlock()
 	}
 	return results, nil
 }

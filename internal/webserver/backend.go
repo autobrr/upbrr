@@ -727,7 +727,7 @@ func (b *Backend) ListUploadedImages(path string, overrides api.ExternalIDOverri
 	})
 }
 
-func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 	if err := b.requireCore(); err != nil {
 		return nil, err
 	}
@@ -743,6 +743,7 @@ func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, n
 		},
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		Trackers:             append([]string{}, trackers...),
 	}, host, images)
 }
 

@@ -641,6 +641,9 @@ func TestParseCLIOptionsRejectsInvalidImageHost(t *testing.T) {
 	if _, _, _, err := parseCLIOptions([]string{"--imghost", "not-a-host", "movie.mkv"}); err == nil {
 		t.Fatal("expected invalid imghost to fail")
 	}
+	if _, _, _, err := parseCLIOptions([]string{"--imghost", "hdb", "movie.mkv"}); err == nil {
+		t.Fatal("expected tracker-owned hdb imghost to fail")
+	}
 }
 
 func TestBuildCLIRequestInfoHashOverrides(t *testing.T) {

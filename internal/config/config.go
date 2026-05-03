@@ -199,6 +199,7 @@ type TrackerConfig struct {
 	FullMediainfo       bool                   `yaml:"full_mediainfo" json:"FullMediainfo"`
 	UploaderName        string                 `yaml:"uploader_name" json:"UploaderName"`
 	ImgRehost           bool                   `yaml:"img_rehost" json:"ImgRehost"`
+	ImageHost           string                 `yaml:"image_host" json:"ImageHost"`
 	UseSpanishTitle     bool                   `yaml:"use_spanish_title" json:"UseSpanishTitle"`
 	UseItalianTitle     bool                   `yaml:"use_italian_title" json:"UseItalianTitle"`
 	OTPURI              string                 `yaml:"otp_uri" json:"OTPURI"`
@@ -291,11 +292,19 @@ func initTrackerSchema() {
 
 func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 	initTrackerSchema()
+	addGlobal := func(keys map[string]struct{}) map[string]struct{} {
+		keys["image_host"] = struct{}{}
+		return keys
+	}
 	if len(trackerSchema) == 0 {
 		return nil
 	}
 	if keys, ok := trackerSchema[trackerName]; ok {
-		return keys
+		clone := make(map[string]struct{}, len(keys)+1)
+		for key := range keys {
+			clone[key] = struct{}{}
+		}
+		return addGlobal(clone)
 	}
 	return nil
 }
@@ -660,6 +669,23 @@ var trackerImageRehostValidationHosts = map[string][]string{
 	"TVC": {"imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage"},
 }
 
+var supportedTrackerImageHosts = map[string]struct{}{
+	"dalexni":      {},
+	"hdb":          {},
+	"imgbb":        {},
+	"imgbox":       {},
+	"lensdump":     {},
+	"onlyimage":    {},
+	"passtheimage": {},
+	"pixhost":      {},
+	"ptpimg":       {},
+	"ptscreens":    {},
+	"seedpool_cdn": {},
+	"sharex":       {},
+	"utppm":        {},
+	"zipline":      {},
+}
+
 func (c Config) Validate() error {
 	if c.MainSettings.TMDBAPI == "" {
 		return errors.New("config: main_settings.tmdb_api is required")
@@ -709,6 +735,19 @@ func (c Config) Validate() error {
 	}
 
 	for trackerName, trackerCfg := range c.Trackers.Trackers {
+		imageHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
+		if imageHost != "" {
+			if _, ok := supportedTrackerImageHosts[imageHost]; !ok {
+				return fmt.Errorf("config: trackers.%s.image_host %q is not supported", trackerName, trackerCfg.ImageHost)
+			}
+			if imageHost == "hdb" && !strings.EqualFold(strings.TrimSpace(trackerName), "HDB") {
+				return fmt.Errorf("config: trackers.%s.image_host %q is owned by HDB", trackerName, trackerCfg.ImageHost)
+			}
+			hosts := trackerImageRehostValidationHosts[strings.ToUpper(strings.TrimSpace(trackerName))]
+			if len(hosts) > 0 && !stringInListFold(imageHost, hosts) {
+				return fmt.Errorf("config: trackers.%s.image_host %q is not allowed for this tracker", trackerName, trackerCfg.ImageHost)
+			}
+		}
 		if !trackerCfg.ImgRehost {
 			continue
 		}
@@ -719,6 +758,16 @@ func (c Config) Validate() error {
 	}
 
 	return nil
+}
+
+func stringInListFold(value string, values []string) bool {
+	needle := strings.ToLower(strings.TrimSpace(value))
+	for _, item := range values {
+		if strings.ToLower(strings.TrimSpace(item)) == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {

@@ -305,6 +305,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          trackers: string[],
           host: string,
           images: unknown,
         ) =>
@@ -312,6 +313,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            Trackers: trackers,
             Host: host,
             Images: images,
           }),

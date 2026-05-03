@@ -1021,7 +1021,7 @@ func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides,
 	return a.core.ListUploadedImages(ctx, req)
 }
 
-func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 	if a == nil || a.core == nil {
 		return nil, errors.New("app not initialized")
 	}
@@ -1052,6 +1052,7 @@ func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameO
 		},
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		Trackers:             append([]string{}, trackers...),
 	}
 
 	return a.core.UploadImages(ctx, req, host, images)

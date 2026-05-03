@@ -126,6 +126,9 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 	if normalizedScope == "" {
 		normalizedScope = "global"
 	}
+	if owner := trackers.TrackerForOwnedImageHost(normalizedHost); owner != "" && !strings.EqualFold(normalizedScope, trackers.TrackerImageUsageScope(owner)) {
+		return nil, fmt.Errorf("image hosting: host %q is scoped to tracker %s", normalizedHost, owner)
+	}
 	if len(images) == 0 {
 		return nil, internalerrors.ErrInvalidInput
 	}

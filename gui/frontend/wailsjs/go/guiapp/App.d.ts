@@ -112,4 +112,4 @@ export function StopLogStream(arg1:string):Promise<void>;
 
 export function UpdateLogExclusions(arg1:Array<string>):Promise<void>;
 
-export function UploadImages(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:string,arg5:Array<api.ScreenshotImage>):Promise<Array<api.UploadedImageLink>>;
+export function UploadImages(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:string,arg6:Array<api.ScreenshotImage>):Promise<Array<api.UploadedImageLink>>;

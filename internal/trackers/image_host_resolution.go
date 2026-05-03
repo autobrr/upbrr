@@ -49,7 +49,10 @@ func ensureDescriptionImageHostWithData(
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
 ) (descriptionImageHostResolution, error) {
-	policy := applyImageHostOverrides(policyForTracker(tracker, trackerCfg), meta.ImageHostOverrides)
+	policy, err := resolveImageHostPolicy(tracker, trackerCfg, meta.ImageHostOverrides)
+	if err != nil {
+		return descriptionImageHostResolution{}, err
+	}
 	feedback := api.ImageHostFeedback{
 		Status:       "reused",
 		AllowedHosts: append([]string{}, policy.allowed...),

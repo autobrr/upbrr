@@ -130,7 +130,9 @@ export default function UploadImagesPage(props: Props) {
       <header className="upload-images-header">
         <p className="eyebrow">Image Hosting</p>
         <h1>Upload Images</h1>
-        <p className="subtitle">Select the screenshots to upload and choose the host.</p>
+        <p className="subtitle">
+          Select screenshots and upload every host needed by the active trackers.
+        </p>
       </header>
 
       <section className="panel upload-images-controls">
@@ -140,7 +142,7 @@ export default function UploadImagesPage(props: Props) {
         </div>
         <div className="upload-images-controls__row">
           <label className="settings-field">
-            <span>Upload host</span>
+            <span>Default upload host</span>
             <select
               value={uploadHost}
               onChange={(event) => setUploadHost(event.target.value)}
@@ -238,9 +240,8 @@ export default function UploadImagesPage(props: Props) {
                     className={`upload-images-toggle ${selected ? "selected" : ""}`}
                     type="button"
                     onClick={() => pathValue && toggleUploadSelection(pathValue)}
-                    disabled={isUploaded}
                   >
-                    {isUploaded ? "Uploaded" : selected ? "Selected" : "Select"}
+                    {selected ? "Selected" : isUploaded ? "Uploaded" : "Select"}
                   </button>
                   {isUploaded && imgLink ? (
                     <div className="upload-links">

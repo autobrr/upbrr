@@ -53,6 +53,14 @@ func trackerForOwnedHost(host string) string {
 	return trackerOwnedImageHosts[normalized]
 }
 
+func TrackerForOwnedImageHost(host string) string {
+	return trackerForOwnedHost(host)
+}
+
+func TrackerImageUsageScope(tracker string) string {
+	return trackerImageUsageScope(tracker)
+}
+
 func uploadEligibleForTracker(scope string, tracker string) bool {
 	scope = normalizeUsageScope(scope)
 	if scope == globalImageUsageScope {

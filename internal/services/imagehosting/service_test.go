@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -285,6 +286,21 @@ func TestUploadImagesUnsupportedHost(t *testing.T) {
 	_, err := service.Upload(context.Background(), meta, "missing", "global", []api.ScreenshotImage{{Path: "x.png"}})
 	if err == nil {
 		t.Fatal("expected error for unsupported host")
+	}
+}
+
+func TestUploadImagesRejectsTrackerOwnedHostOutsideOwnerScope(t *testing.T) {
+	service := &Service{
+		logger:    api.NopLogger{},
+		uploaders: map[string]uploader{"hdb": &fakeUploader{}},
+	}
+	meta := api.PreparedMetadata{SourcePath: "source"}
+	_, err := service.Upload(context.Background(), meta, "hdb", "global", []api.ScreenshotImage{{Path: "x.png"}})
+	if err == nil {
+		t.Fatal("expected tracker-owned host outside owner scope to fail")
+	}
+	if !strings.Contains(err.Error(), "scoped to tracker HDB") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

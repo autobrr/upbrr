@@ -36,6 +36,8 @@ type trackerUploadResult struct {
 	notImplemented bool
 }
 
+type imageHostPreflight map[string]descriptionImageHostResolution
+
 func NewService(cfg config.Config, logger api.Logger, repo db.MetadataRepository) *Service {
 	return NewServiceWithRegistryAndImages(cfg, logger, repo, nil, nil)
 }
@@ -189,7 +191,8 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 			recordMu.Unlock()
 		}
 
-		results, err := s.uploadTrackersConcurrently(ctx, meta, trackers)
+		preflight := s.preflightDescriptionImageHosts(ctx, meta, trackers)
+		results, err := s.uploadTrackersConcurrently(ctx, meta, trackers, preflight)
 		if err != nil {
 			finalizePending("canceled")
 			return api.UploadSummary{}, err
@@ -240,7 +243,8 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 		return summary, nil
 	}
 
-	results, err := s.uploadTrackersConcurrently(ctx, meta, trackers)
+	preflight := s.preflightDescriptionImageHosts(ctx, meta, trackers)
+	results, err := s.uploadTrackersConcurrently(ctx, meta, trackers, preflight)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -285,7 +289,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 	return summary, nil
 }
 
-func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.PreparedMetadata, trackers []string) ([]trackerUploadResult, error) {
+func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.PreparedMetadata, trackers []string, preflight imageHostPreflight) ([]trackerUploadResult, error) {
 	workerCount := s.maxConcurrentTrackerUploads(len(trackers))
 	results := make([]trackerUploadResult, len(trackers))
 	if workerCount <= 0 {
@@ -316,12 +320,16 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 
 			trackerCfg, _ := trackerConfigFor(s.cfg, tracker)
 			trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
-			resolution, err := ensureDescriptionImageHost(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger)
-			if err != nil {
-				s.logger.Warnf("trackers: description image host resolution failed for %s: %v", tracker, err)
-				result.err = err
-				results[idx] = result
-				continue
+			resolution, ok := preflight[strings.ToUpper(strings.TrimSpace(tracker))]
+			if !ok {
+				var err error
+				resolution, err = ensureDescriptionImageHost(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger)
+				if err != nil {
+					s.logger.Warnf("trackers: description image host resolution failed for %s: %v", tracker, err)
+					result.err = err
+					results[idx] = result
+					continue
+				}
 			}
 			assets, err := ResolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger)
 			if err != nil {
@@ -392,6 +400,104 @@ func (s *Service) maxConcurrentTrackerUploads(total int) int {
 		return total
 	}
 	return limit
+}
+
+func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.PreparedMetadata, trackers []string) imageHostPreflight {
+	if len(trackers) == 0 || s.registry == nil {
+		return nil
+	}
+
+	preloaded, err := preloadDescriptionAssetData(ctx, meta, s.repo)
+	if err != nil {
+		s.logger.Warnf("trackers: image host preflight preload failed for %s: %v", meta.SourcePath, err)
+		preloaded = nil
+	}
+
+	type preflightEntry struct {
+		tracker    string
+		trackerCfg config.TrackerConfig
+		targetKey  string
+	}
+
+	entries := make([]preflightEntry, 0, len(trackers))
+	representatives := make(map[string]preflightEntry)
+	for _, tracker := range trackers {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		if _, ok := s.registry.Lookup(tracker); !ok {
+			continue
+		}
+		trackerCfg, _ := trackerConfigFor(s.cfg, tracker)
+		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
+		targetKey := ""
+		policy, err := resolveImageHostPolicy(tracker, trackerCfg, meta.ImageHostOverrides)
+		if err != nil {
+			s.logger.Warnf("trackers: image host preflight failed for %s: %v", tracker, err)
+			continue
+		}
+		if host := preferredHost(policy); host != "" {
+			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(tracker, host))
+		}
+		entry := preflightEntry{
+			tracker:    tracker,
+			trackerCfg: trackerCfg,
+			targetKey:  targetKey,
+		}
+		entries = append(entries, entry)
+		if targetKey != "" {
+			if _, ok := representatives[targetKey]; !ok {
+				representatives[targetKey] = entry
+			}
+		}
+	}
+
+	resolutions := make(imageHostPreflight, len(entries))
+	var (
+		mu sync.Mutex
+		wg sync.WaitGroup
+	)
+	for _, entry := range representatives {
+		wg.Add(1)
+		go func(entry preflightEntry) {
+			defer wg.Done()
+			resolution, err := ensureDescriptionImageHostWithData(ctx, entry.tracker, meta, s.cfg, entry.trackerCfg, s.repo, s.images, s.logger, nil)
+			if err != nil {
+				s.logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
+				return
+			}
+			mu.Lock()
+			resolutions[strings.ToUpper(strings.TrimSpace(entry.tracker))] = resolution
+			mu.Unlock()
+		}(entry)
+	}
+	wg.Wait()
+
+	if len(representatives) > 0 {
+		refreshed, err := preloadDescriptionAssetData(ctx, meta, s.repo)
+		if err != nil {
+			s.logger.Warnf("trackers: image host preflight reload failed for %s: %v", meta.SourcePath, err)
+		} else {
+			preloaded = refreshed
+		}
+	}
+
+	for _, entry := range entries {
+		key := strings.ToUpper(strings.TrimSpace(entry.tracker))
+		if _, ok := resolutions[key]; ok {
+			continue
+		}
+		resolution, err := ensureDescriptionImageHostWithData(ctx, entry.tracker, meta, s.cfg, entry.trackerCfg, s.repo, s.images, s.logger, preloaded)
+		if err != nil {
+			s.logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
+			continue
+		}
+		resolutions[key] = resolution
+	}
+	return resolutions
 }
 
 func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadata, trackersList []string) (api.PreparationPreview, error) {

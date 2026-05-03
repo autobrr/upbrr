@@ -85,6 +85,8 @@ const imageHostOptions = [
   { value: "utppm", label: "UTPPM" },
 ];
 
+const trackerImageHostOptions = [...imageHostOptions, { value: "hdb", label: "HDB" }];
+
 const imageHostKeyMap: Record<string, string[]> = {
   imgbb: ["ImgBBAPI"],
   ptpimg: ["PTPImgAPI"],
@@ -148,6 +150,10 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   CheckRequests: boolField("CheckRequests", { label: "Check requests", advanced: true }),
   FullMediainfo: boolField("FullMediainfo", { label: "Full mediainfo", advanced: true }),
   ImgRehost: boolField("ImgRehost", { label: "Image rehost", advanced: true }),
+  ImageHost: stringField("ImageHost", {
+    label: "Image host",
+    options: imageHostOptions,
+  }),
   UseSpanishTitle: boolField("UseSpanishTitle", { label: "Use Spanish title", advanced: true }),
   UseItalianTitle: boolField("UseItalianTitle", { label: "Use Italian title", advanced: true }),
   OTPURI: stringField("OTPURI", { label: "OTP URI", sensitive: true, advanced: true }),
@@ -943,6 +949,23 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const renderField = (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => {
     const displayLabel = meta?.label ?? formatLabel(label);
     const typeHint = meta?.type;
+    if (meta?.options && meta.options.length > 0) {
+      return (
+        <label className="settings-field" key={path.join(".")}>
+          <span>{displayLabel}</span>
+          <select
+            value={value === null ? "" : String(value ?? "")}
+            onChange={(event) => updateConfigValue(path, event.target.value)}
+          >
+            {meta.options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    }
     if (typeHint === "boolean" || typeof value === "boolean") {
       return (
         <label className="settings-toggle" key={path.join(".")}>
@@ -1257,12 +1280,21 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
       const trackerFallbackSchema = [
         trackerFieldMeta.LinkDirName,
+        trackerFieldMeta.ImageHost,
         trackerFieldMeta.APIKey,
         trackerFieldMeta.AnnounceURL,
         trackerFieldMeta.Username,
         trackerFieldMeta.Password,
         trackerFieldMeta.Anon,
       ];
+      const trackerSchemaFor = (name: string) => {
+        const imageHostField = {
+          ...trackerFieldMeta.ImageHost,
+          options: name.trim().toUpperCase() === "HDB" ? trackerImageHostOptions : imageHostOptions,
+        };
+        const base = trackerSchemas[name] || trackerFallbackSchema;
+        return [imageHostField, ...base.filter((meta) => meta.key !== "ImageHost")];
+      };
 
       const buildDefault = (meta: FieldMeta) => {
         if (meta.type === "boolean") return false;
@@ -1383,7 +1415,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                   const name = trackerAddSelection.trim();
                   if (!name) return;
                   if (!allEntrySet.has(name)) {
-                    const schema = trackerSchemas[name] || trackerFallbackSchema;
+                    const schema = trackerSchemaFor(name);
                     addConfigKey(["Trackers", "Trackers"], name, buildTrackerDefaults(schema));
                   }
                   setManualTrackerEntries((prev) => ({ ...prev, [name]: true }));
@@ -1401,8 +1433,8 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               <p className="muted">No configured entries yet.</p>
             ) : (
               visibleEntries.map(([key, value]) => {
-                const schema = (trackerSchemas[key] || trackerFallbackSchema).filter(
-                  (meta): meta is FieldMeta => Boolean(meta),
+                const schema = trackerSchemaFor(key).filter((meta): meta is FieldMeta =>
+                  Boolean(meta),
                 );
                 return (
                   <details

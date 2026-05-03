@@ -716,6 +716,7 @@ export type FieldMeta = {
   type?: FieldType;
   advanced?: boolean;
   sensitive?: boolean;
+  options?: Array<{ value: string; label: string }>;
 };
 
 export type ReleaseNameEditState = {
