@@ -14,6 +14,7 @@ func CloneDescriptionBuilderGroups(groups []DescriptionBuilderGroup) []Descripti
 		cloned[idx] = group
 		cloned[idx].Trackers = append([]string(nil), group.Trackers...)
 		cloned[idx].ImageHost.AllowedHosts = append([]string(nil), group.ImageHost.AllowedHosts...)
+		cloned[idx].ImageHost.Warnings = append([]ImageHostWarning(nil), group.ImageHost.Warnings...)
 	}
 	return cloned
 }

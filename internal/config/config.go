@@ -15,6 +15,8 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 )
 
 type Config struct {
@@ -656,36 +658,6 @@ type TorrentClientConfig struct {
 	VerifyWebUICertificate *bool    `yaml:"verify_webui_certificate"`
 }
 
-var trackerImageRehostValidationHosts = map[string][]string{
-	"A4K": {"ptpimg", "onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg"},
-	"BHD": {"ptpimg", "imgbox", "imgbb", "pixhost", "bhd", "bam"},
-	"DC":  {"imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex"},
-	"GPW": {"kshare", "pixhost", "ptpimg", "pterclub", "ilikeshots", "imgbox"},
-	"HDB": {"hdb"},
-	"MTV": {"ptpimg", "imgbox", "imgbb"},
-	"OE":  {"ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
-	"PTP": {"ptpimg", "pixhost"},
-	"STC": {"imgbox", "imgbb"},
-	"TVC": {"imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage"},
-}
-
-var supportedTrackerImageHosts = map[string]struct{}{
-	"dalexni":      {},
-	"hdb":          {},
-	"imgbb":        {},
-	"imgbox":       {},
-	"lensdump":     {},
-	"onlyimage":    {},
-	"passtheimage": {},
-	"pixhost":      {},
-	"ptpimg":       {},
-	"ptscreens":    {},
-	"seedpool_cdn": {},
-	"sharex":       {},
-	"utppm":        {},
-	"zipline":      {},
-}
-
 func (c Config) Validate() error {
 	if c.MainSettings.TMDBAPI == "" {
 		return errors.New("config: main_settings.tmdb_api is required")
@@ -737,37 +709,27 @@ func (c Config) Validate() error {
 	for trackerName, trackerCfg := range c.Trackers.Trackers {
 		imageHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
 		if imageHost != "" {
-			if _, ok := supportedTrackerImageHosts[imageHost]; !ok {
+			if !imagehostpolicy.IsUploadHost(imageHost) {
 				return fmt.Errorf("config: trackers.%s.image_host %q is not supported", trackerName, trackerCfg.ImageHost)
 			}
-			if imageHost == "hdb" && !strings.EqualFold(strings.TrimSpace(trackerName), "HDB") {
-				return fmt.Errorf("config: trackers.%s.image_host %q is owned by HDB", trackerName, trackerCfg.ImageHost)
+			if owner := imagehostpolicy.OwnerForHost(imageHost); owner != "" && !strings.EqualFold(strings.TrimSpace(trackerName), owner) {
+				return fmt.Errorf("config: trackers.%s.image_host %q is owned by %s", trackerName, trackerCfg.ImageHost, owner)
 			}
-			hosts := trackerImageRehostValidationHosts[strings.ToUpper(strings.TrimSpace(trackerName))]
-			if len(hosts) > 0 && !stringInListFold(imageHost, hosts) {
+			policy := imagehostpolicy.ForTracker(trackerName, trackerCfg.ImgRehost)
+			if len(policy.AllowedHosts) > 0 && !imagehostpolicy.HostAllowed(imageHost, policy.AllowedHosts) {
 				return fmt.Errorf("config: trackers.%s.image_host %q is not allowed for this tracker", trackerName, trackerCfg.ImageHost)
 			}
 		}
 		if !trackerCfg.ImgRehost {
 			continue
 		}
-		hosts := trackerImageRehostValidationHosts[strings.ToUpper(strings.TrimSpace(trackerName))]
-		if len(hosts) == 0 {
+		policy := imagehostpolicy.ForTracker(trackerName, true)
+		if len(policy.AllowedHosts) == 0 {
 			return fmt.Errorf("config: trackers.%s.img_rehost requires a tracker image-host policy, but none is defined", trackerName)
 		}
 	}
 
 	return nil
-}
-
-func stringInListFold(value string, values []string) bool {
-	needle := strings.ToLower(strings.TrimSpace(value))
-	for _, item := range values {
-		if strings.ToLower(strings.TrimSpace(item)) == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
@@ -780,8 +742,8 @@ func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
 		if !trackerCfg.ImgRehost {
 			continue
 		}
-		hosts := trackerImageRehostValidationHosts[strings.ToUpper(strings.TrimSpace(trackerName))]
-		if len(hosts) != 0 {
+		policy := imagehostpolicy.ForTracker(trackerName, true)
+		if len(policy.AllowedHosts) != 0 {
 			continue
 		}
 		trackerCfg.ImgRehost = false

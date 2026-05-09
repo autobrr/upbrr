@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -877,20 +878,20 @@ func (c *Core) ListUploadedImages(ctx context.Context, req api.Request) ([]api.U
 	return c.repo.ListUploadedImagesByPath(ctx, uniquePaths[0])
 }
 
-func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	if len(req.Paths) == 0 {
-		return nil, internalerrors.ErrInvalidInput
+		return api.UploadImagesResult{}, internalerrors.ErrInvalidInput
 	}
 	if c.services.Images == nil {
-		return nil, errors.New("core: image hosting service not configured")
+		return api.UploadImagesResult{}, errors.New("core: image hosting service not configured")
 	}
 	if len(images) == 0 {
-		return nil, internalerrors.ErrInvalidInput
+		return api.UploadImagesResult{}, internalerrors.ErrInvalidInput
 	}
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return nil, err
+		return api.UploadImagesResult{}, err
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -902,13 +903,13 @@ func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, i
 		uniquePaths = append(uniquePaths, path)
 	}
 	if len(uniquePaths) != 1 {
-		return nil, internalerrors.ErrInvalidInput
+		return api.UploadImagesResult{}, internalerrors.ErrInvalidInput
 	}
 
 	var meta api.PreparedMetadata
 	if req.Mode == api.ModeGUI {
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
-			return nil, err
+			return api.UploadImagesResult{}, err
 		} else if ok {
 			meta = cached
 		} else {
@@ -917,7 +918,7 @@ func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, i
 	} else {
 		options, err := c.applyDefaultOptions(req.Options)
 		if err != nil {
-			return nil, err
+			return api.UploadImagesResult{}, err
 		}
 		singleReq := req
 		singleReq.Paths = []string{uniquePaths[0]}
@@ -925,14 +926,14 @@ func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, i
 
 		preparedMeta, err := c.services.Metadata.Prepare(ctx, singleReq)
 		if err != nil {
-			return nil, err
+			return api.UploadImagesResult{}, err
 		}
 		meta = preparedMeta
 	}
 
 	targets, err := c.resolveImageUploadTargets(req, host)
 	if err != nil {
-		return nil, err
+		return api.UploadImagesResult{}, err
 	}
 	return c.uploadImagesToTargets(ctx, meta, targets, images)
 }
@@ -952,18 +953,20 @@ func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]tracke
 	}
 
 	targets := make([]trackers.ImageUploadTarget, 0, len(trackerTargets)+1)
-	seen := make(map[string]struct{}, len(trackerTargets)+1)
+	seen := make(map[string]int, len(trackerTargets)+1)
 	addTarget := func(target trackers.ImageUploadTarget) {
-		target.Host = strings.ToLower(strings.TrimSpace(target.Host))
-		target.UsageScope = normalizeImageUploadUsageScope(target.UsageScope)
+		target = normalizeImageUploadTarget(target)
 		if target.Host == "" {
 			return
 		}
 		key := target.Host + "\x00" + target.UsageScope
-		if _, ok := seen[key]; ok {
+		if idx, ok := seen[key]; ok {
+			for _, tracker := range target.Trackers {
+				targets[idx].Trackers = appendUniqueNormalizedTracker(targets[idx].Trackers, tracker)
+			}
 			return
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(targets)
 		targets = append(targets, target)
 	}
 
@@ -979,12 +982,12 @@ func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]tracke
 	return targets, nil
 }
 
-func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetadata, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetadata, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	type uploadResult struct {
-		index int
-		host  string
-		links []api.UploadedImageLink
-		err   error
+		index  int
+		target trackers.ImageUploadTarget
+		links  []api.UploadedImageLink
+		err    error
 	}
 
 	resultCh := make(chan uploadResult, len(targets))
@@ -995,10 +998,10 @@ func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetad
 			defer wg.Done()
 			uploaded, err := c.uploadImagesToTarget(ctx, meta, target, images)
 			resultCh <- uploadResult{
-				index: idx,
-				host:  strings.ToLower(strings.TrimSpace(target.Host)),
-				links: uploaded,
-				err:   err,
+				index:  idx,
+				target: normalizeImageUploadTarget(target),
+				links:  uploaded,
+				err:    err,
 			}
 		}(idx, target)
 	}
@@ -1011,21 +1014,55 @@ func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetad
 	}
 
 	results := make([]api.UploadedImageLink, 0, len(images)*len(targets))
-	failures := make([]string, 0)
+	failures := make([]api.UploadImageHostFailure, 0)
+	failureMessages := make([]string, 0)
 	for _, result := range ordered {
 		results = append(results, result.links...)
 		if result.err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", result.host, result.err))
+			failure := api.UploadImageHostFailure{
+				Host:       result.target.Host,
+				UsageScope: result.target.UsageScope,
+				Trackers:   slices.Clone(result.target.Trackers),
+				Message:    result.err.Error(),
+			}
+			failures = append(failures, failure)
+			failureMessages = append(failureMessages, fmt.Sprintf("%s: %v", result.target.Host, result.err))
 		}
 	}
 	if len(failures) == 0 {
-		return results, nil
+		return api.UploadImagesResult{Links: results}, nil
 	}
+	result := api.UploadImagesResult{Links: results, Failures: failures}
 	if len(results) > 0 {
-		c.logger.Warnf("core: image uploads completed with %d host failures and %d successful links: %s", len(failures), len(results), strings.Join(failures, "; "))
-		return results, nil
+		c.logger.Warnf("core: image uploads completed with %d host failures and %d successful links: %s", len(failures), len(results), strings.Join(failureMessages, "; "))
+		return result, nil
 	}
-	return nil, fmt.Errorf("core: image uploads failed for all hosts: %s", strings.Join(failures, "; "))
+	c.logger.Warnf("core: image uploads failed for all hosts: %s", strings.Join(failureMessages, "; "))
+	return result, nil
+}
+
+func normalizeImageUploadTarget(target trackers.ImageUploadTarget) trackers.ImageUploadTarget {
+	target.Host = strings.ToLower(strings.TrimSpace(target.Host))
+	target.UsageScope = normalizeImageUploadUsageScope(target.UsageScope)
+	trackersList := make([]string, 0, len(target.Trackers))
+	for _, tracker := range target.Trackers {
+		trackersList = appendUniqueNormalizedTracker(trackersList, tracker)
+	}
+	target.Trackers = trackersList
+	return target
+}
+
+func appendUniqueNormalizedTracker(trackersList []string, tracker string) []string {
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if name == "" {
+		return trackersList
+	}
+	for _, existing := range trackersList {
+		if existing == name {
+			return trackersList
+		}
+	}
+	return append(trackersList, name)
 }
 
 func (c *Core) uploadImagesToTarget(ctx context.Context, meta api.PreparedMetadata, target trackers.ImageUploadTarget, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {

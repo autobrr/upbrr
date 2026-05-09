@@ -403,6 +403,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         UpdateLogExclusions: (patterns: string[]) =>
           call("UpdateLogExclusions", { Patterns: patterns }),
         ListKnownTrackers: () => call("ListKnownTrackers"),
+        GetImageHostPolicyMetadata: () => call("GetImageHostPolicyMetadata"),
         ListHistory: () => call("ListHistory"),
         GetHistoryOverview: (sourcePath: string) =>
           call("GetHistoryOverview", { SourcePath: sourcePath }),

@@ -112,6 +112,23 @@
   color: var(--text-muted);
 }
 
+.upload-image-warning {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde68a;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+:root.light .upload-image-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #92400e;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
 .upload-badges {
   display: flex;
   align-items: center;

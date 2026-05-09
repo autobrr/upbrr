@@ -6,6 +6,8 @@ package core
 import (
 	"context"
 	"errors"
+	"slices"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -34,6 +36,8 @@ func (s *stubImageHosting) ListCandidates(ctx context.Context, meta api.Prepared
 	if s.err != nil {
 		return nil, s.err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.lastMeta = meta
 	return s.candidates, nil
 }
@@ -80,11 +84,11 @@ func TestUploadImagesWithoutCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(result))
+	if len(result.Links) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result.Links))
 	}
-	if result[0].Host != "imgbox" {
-		t.Fatalf("expected host imgbox, got %s", result[0].Host)
+	if result.Links[0].Host != "imgbox" {
+		t.Fatalf("expected host imgbox, got %s", result.Links[0].Host)
 	}
 }
 
@@ -205,8 +209,8 @@ func TestUploadImagesUploadsApplicableTrackerHosts(t *testing.T) {
 	if calledHosts["ptpimg"] != "global" {
 		t.Fatalf("expected configured PTP host ptpimg, got %#v", imageService.calls)
 	}
-	if len(result) != 2 {
-		t.Fatalf("expected result from both hosts, got %d", len(result))
+	if len(result.Links) != 2 {
+		t.Fatalf("expected result from both hosts, got %d", len(result.Links))
 	}
 }
 
@@ -249,7 +253,7 @@ func TestUploadImagesDoesNotUseBuiltInTrackerPreferredHosts(t *testing.T) {
 	if imageService.calls[0].host != "imgbox" {
 		t.Fatalf("expected selected host imgbox, got %#v", imageService.calls[0])
 	}
-	if len(result) != 1 || result[0].Host != "imgbox" {
+	if len(result.Links) != 1 || result.Links[0].Host != "imgbox" {
 		t.Fatalf("expected imgbox result only, got %#v", result)
 	}
 }
@@ -259,7 +263,6 @@ func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	bothStarted := make(chan struct{})
-	var once sync.Once
 	var startedMu sync.Mutex
 	started := 0
 	imageService := &stubImageHosting{
@@ -267,7 +270,7 @@ func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
 			startedMu.Lock()
 			started++
 			if started == 2 {
-				once.Do(func() { close(bothStarted) })
+				close(bothStarted)
 			}
 			startedMu.Unlock()
 
@@ -285,6 +288,8 @@ func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"PTP": {ImageHost: "ptpimg"},
+					"MTV": {ImageHost: "ptpimg"},
+					"STC": {},
 				},
 			},
 		},
@@ -298,17 +303,17 @@ func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
 	result, err := core.UploadImages(context.Background(), api.Request{
 		Paths:    []string{"/tmp/source"},
 		Mode:     api.ModeGUI,
-		Trackers: []string{"PTP"},
+		Trackers: []string{"PTP", "MTV", "STC"},
 	}, "imgbox", images)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if len(result) != 2 {
+	if len(result.Links) != 2 {
 		t.Fatalf("expected both concurrent uploads to succeed, got %#v", result)
 	}
 }
 
-func TestUploadImagesReturnsSuccessfulHostsWhenOneHostFails(t *testing.T) {
+func TestUploadImagesReturnsHostFailuresWithSuccessfulLinks(t *testing.T) {
 	t.Parallel()
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
@@ -326,6 +331,8 @@ func TestUploadImagesReturnsSuccessfulHostsWhenOneHostFails(t *testing.T) {
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"PTP": {ImageHost: "ptpimg"},
+					"MTV": {ImageHost: "ptpimg"},
+					"STC": {},
 				},
 			},
 		},
@@ -339,13 +346,26 @@ func TestUploadImagesReturnsSuccessfulHostsWhenOneHostFails(t *testing.T) {
 	result, err := core.UploadImages(context.Background(), api.Request{
 		Paths:    []string{"/tmp/source"},
 		Mode:     api.ModeGUI,
-		Trackers: []string{"PTP"},
+		Trackers: []string{"PTP", "MTV", "STC"},
 	}, "imgbox", images)
 	if err != nil {
 		t.Fatalf("expected partial host failure to return successful links, got %v", err)
 	}
-	if len(result) != 1 || result[0].Host != "imgbox" {
+	if len(result.Links) != 1 || result.Links[0].Host != "imgbox" {
 		t.Fatalf("expected only successful imgbox upload, got %#v", result)
+	}
+	if len(result.Failures) != 1 {
+		t.Fatalf("expected one host failure, got %#v", result.Failures)
+	}
+	failure := result.Failures[0]
+	if failure.Host != "ptpimg" || failure.Message != "ptpimg unavailable" {
+		t.Fatalf("expected ptpimg failure, got %#v", failure)
+	}
+	expectedTrackers := []string{"PTP", "MTV"}
+	sort.Strings(failure.Trackers)
+	sort.Strings(expectedTrackers)
+	if !slices.Equal(failure.Trackers, expectedTrackers) {
+		t.Fatalf("expected failure to block only linked trackers, got %#v", failure.Trackers)
 	}
 }
 

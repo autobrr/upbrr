@@ -23,6 +23,7 @@ type descriptionImageHostResolution struct {
 	screenshots []api.ScreenshotImage
 	feedback    api.ImageHostFeedback
 	usageScope  string
+	blocking    bool
 }
 
 func ensureDescriptionImageHost(
@@ -125,11 +126,18 @@ func ensureDescriptionImageHostWithData(
 	}
 
 	var lastErr error
-	for _, host := range policy.preferred {
-		usageScope := usageScopeForHost(tracker, host)
+	for _, host := range uploadAttemptHosts(policy) {
+		usageScope := usageScopeForHost(host)
 		uploaded, err := images.Upload(ctx, meta, host, usageScope, sourceImages)
 		if err != nil {
 			lastErr = err
+			if len(uploaded) > 0 {
+				cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
+			}
+			feedback.Warnings = append(feedback.Warnings, api.ImageHostWarning{
+				Host:    host,
+				Message: err.Error(),
+			})
 			if logger != nil {
 				logger.Warnf("trackers: image host upload failed tracker=%s host=%s: %v", tracker, host, err)
 			}
@@ -147,6 +155,14 @@ func ensureDescriptionImageHostWithData(
 		}
 		if len(screenshots) == 0 {
 			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
+			message := "upload did not produce usable screenshots"
+			feedback.Warnings = append(feedback.Warnings, api.ImageHostWarning{
+				Host:    host,
+				Message: message,
+			})
+			if logger != nil {
+				logger.Warnf("trackers: image host upload produced no usable screenshots tracker=%s host=%s", tracker, host)
+			}
 			continue
 		}
 		if err := upsertScreenshotVariantsFromUploads(ctx, repo, meta.SourcePath, slots, uploaded); err != nil {
@@ -159,20 +175,24 @@ func ensureDescriptionImageHostWithData(
 		feedback.SelectedHost = host
 		feedback.Reuploaded = true
 		if usageScope == globalImageUsageScope {
-			feedback.Message = fmt.Sprintf("Uploaded screenshots to %s for %s image-host requirements.", host, tracker)
+			feedback.Message = uploadSuccessMessage(tracker, host, "", feedback.Warnings)
 		} else {
-			feedback.Message = fmt.Sprintf("Uploaded tracker-scoped screenshots to %s for %s.", host, tracker)
+			feedback.Message = uploadSuccessMessage(tracker, host, usageScope, feedback.Warnings)
 		}
 		return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
 	}
 
 	feedback.Status = "warning"
-	if lastErr != nil {
-		feedback.Message = fmt.Sprintf("%s could not upload screenshots to an allowed host (%s): %v", tracker, strings.Join(policy.allowed, ", "), lastErr)
-	} else {
-		feedback.Message = fmt.Sprintf("%s could not find an allowed screenshot host (%s).", tracker, strings.Join(policy.allowed, ", "))
+	attemptHosts := strings.Join(uploadAttemptHosts(policy), ", ")
+	if attemptHosts == "" {
+		attemptHosts = "none"
 	}
-	return descriptionImageHostResolution{feedback: feedback}, nil
+	if lastErr != nil {
+		feedback.Message = fmt.Sprintf("%s could not upload screenshots to an allowed upload host (%s): %v", tracker, attemptHosts, lastErr)
+	} else {
+		feedback.Message = fmt.Sprintf("%s could not find an allowed screenshot host to upload to (%s).", tracker, attemptHosts)
+	}
+	return descriptionImageHostResolution{feedback: feedback, blocking: true}, nil
 }
 
 func cleanupUploadedImages(ctx context.Context, repo api.MetadataRepository, sourcePath string, uploaded []api.UploadedImageLink, logger api.Logger) {
@@ -215,6 +235,70 @@ func buildReuseMessage(tracker string, host string, usageScope string, fallback 
 		return fmt.Sprintf("Using allowed fallback host %s for %s.", host, tracker)
 	}
 	return fmt.Sprintf("Using %s screenshots for %s.", host, tracker)
+}
+
+func uploadSuccessMessage(tracker string, host string, usageScope string, warnings []api.ImageHostWarning) string {
+	failedHosts := failedImageHostNames(warnings)
+	if normalizeUsageScope(usageScope) == trackerImageUsageScope(tracker) {
+		if len(failedHosts) > 0 {
+			return fmt.Sprintf("Uploaded tracker-scoped screenshots to %s for %s after %s failed.", host, tracker, strings.Join(failedHosts, ", "))
+		}
+		return fmt.Sprintf("Uploaded tracker-scoped screenshots to %s for %s.", host, tracker)
+	}
+	if len(failedHosts) > 0 {
+		return fmt.Sprintf("Uploaded screenshots to fallback host %s for %s after %s failed.", host, tracker, strings.Join(failedHosts, ", "))
+	}
+	return fmt.Sprintf("Uploaded screenshots to %s for %s image-host requirements.", host, tracker)
+}
+
+func failedImageHostNames(warnings []api.ImageHostWarning) []string {
+	if len(warnings) == 0 {
+		return nil
+	}
+	hosts := make([]string, 0, len(warnings))
+	seen := make(map[string]struct{}, len(warnings))
+	for _, warning := range warnings {
+		host := strings.ToLower(strings.TrimSpace(warning.Host))
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+func uploadAttemptHosts(policy imageHostPolicy) []string {
+	if len(policy.preferred) == 0 {
+		return nil
+	}
+	allowedUploads := make(map[string]struct{}, len(policy.uploadHosts))
+	for _, host := range policy.uploadHosts {
+		normalized := strings.ToLower(strings.TrimSpace(host))
+		if normalized != "" {
+			allowedUploads[normalized] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(policy.preferred))
+	seen := make(map[string]struct{}, len(policy.preferred))
+	for _, host := range policy.preferred {
+		normalized := strings.ToLower(strings.TrimSpace(host))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := allowedUploads[normalized]; !ok {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
 }
 
 func resolveTrackerScreenshotsForAllowedHost(urls []string, policy imageHostPolicy) ([]api.ScreenshotImage, string) {

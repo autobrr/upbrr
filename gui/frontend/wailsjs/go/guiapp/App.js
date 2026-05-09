@@ -102,6 +102,10 @@ export function GetHistoryOverview(arg1) {
   return window['go']['guiapp']['App']['GetHistoryOverview'](arg1);
 }
 
+export function GetImageHostPolicyMetadata() {
+  return window['go']['guiapp']['App']['GetImageHostPolicyMetadata']();
+}
+
 export function GetLogExclusions() {
   return window['go']['guiapp']['App']['GetLogExclusions']();
 }

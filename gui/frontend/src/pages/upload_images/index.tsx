@@ -3,7 +3,12 @@
 
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { ScreenshotLinkedImage, ScreenshotPreviewImage, UploadedImageLink } from "../../types";
+import type {
+  ScreenshotLinkedImage,
+  ScreenshotPreviewImage,
+  UploadedImageLink,
+  UploadImageHostFailure,
+} from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 import "./styles.css";
 
@@ -20,6 +25,7 @@ type Props = Readonly<{
   setAllUploadSelections: (value: boolean) => void;
   handleUploadImages: (selected: ScreenshotPreviewImage[]) => void;
   uploadImagesError: string;
+  uploadImageFailures: UploadImageHostFailure[];
   uploadCandidates: ScreenshotPreviewImage[];
   uploadSelections: Record<string, boolean>;
   toggleUploadSelection: (imagePath: string) => void;
@@ -44,6 +50,7 @@ export default function UploadImagesPage(props: Props) {
     setAllUploadSelections,
     handleUploadImages,
     uploadImagesError,
+    uploadImageFailures,
     uploadCandidates,
     uploadSelections,
     toggleUploadSelection,
@@ -97,6 +104,7 @@ export default function UploadImagesPage(props: Props) {
         SourcePath: "",
         ImagePath: link.Path,
         Host: hostKey,
+        UsageScope: "global",
         ImgURL: link.URL,
         RawURL: link.URL,
         WebURL: link.URL,
@@ -131,7 +139,7 @@ export default function UploadImagesPage(props: Props) {
         <p className="eyebrow">Image Hosting</p>
         <h1>Upload Images</h1>
         <p className="subtitle">
-          Select screenshots and upload every host needed by the active trackers.
+          Select screenshots and upload to every host needed by the active trackers.
         </p>
       </header>
 
@@ -195,6 +203,20 @@ export default function UploadImagesPage(props: Props) {
           </div>
         ) : null}
         {uploadImagesError ? <p className="error">{uploadImagesError}</p> : null}
+        {uploadImageFailures.length > 0 ? (
+          <div className="upload-images-failures">
+            {uploadImageFailures.map((failure, index) => {
+              const trackers = (failure.Trackers || []).filter(Boolean);
+              const trackerLabel = trackers.length > 0 ? ` Blocks: ${trackers.join(", ")}.` : "";
+              return (
+                <p className="error" key={`${failure.Host || "host"}-${index}`}>
+                  {failure.Host || "Image host"} failed: {failure.Message || "upload failed"}.
+                  {trackerLabel}
+                </p>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       {uploadCandidateCount === 0 ? (
@@ -241,7 +263,7 @@ export default function UploadImagesPage(props: Props) {
                     type="button"
                     onClick={() => pathValue && toggleUploadSelection(pathValue)}
                   >
-                    {selected ? "Selected" : isUploaded ? "Uploaded" : "Select"}
+                    {selected ? "Selected" : "Select"}
                   </button>
                   {isUploaded && imgLink ? (
                     <div className="upload-links">

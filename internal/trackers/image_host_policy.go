@@ -8,48 +8,25 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type imageHostPolicy struct {
-	allowed   []string
-	preferred []string
-	required  bool
+	allowed     []string
+	uploadHosts []string
+	preferred   []string
+	required    bool
 }
 
 type ImageUploadTarget struct {
 	Host       string
 	UsageScope string
+	Trackers   []string
 }
 
 func policyForTracker(tracker string, trackerCfg config.TrackerConfig) imageHostPolicy {
-	switch strings.ToUpper(strings.TrimSpace(tracker)) {
-	case "A4K":
-		return newImageHostPolicy(true, "ptpimg", "onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg")
-	case "BHD":
-		return newImageHostPolicy(true, "ptpimg", "imgbox", "imgbb", "pixhost", "bhd", "bam")
-	case "DC":
-		return newImageHostPolicy(true, "imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex")
-	case "GPW":
-		return newImageHostPolicy(true, "kshare", "pixhost", "ptpimg", "pterclub", "ilikeshots", "imgbox")
-	case "HDB":
-		if trackerCfg.ImgRehost {
-			return newImageHostPolicy(true, "hdb")
-		}
-		return imageHostPolicy{}
-	case "MTV":
-		return newImageHostPolicy(true, "ptpimg", "imgbox", "imgbb")
-	case "OE":
-		return newImageHostPolicy(true, "ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage")
-	case "PTP":
-		return newImageHostPolicy(true, "ptpimg", "pixhost")
-	case "STC":
-		return newImageHostPolicy(true, "imgbox", "imgbb")
-	case "TVC":
-		return newImageHostPolicy(true, "imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage")
-	default:
-		return imageHostPolicy{}
-	}
+	return policyFromShared(imagehostpolicy.ForTracker(tracker, trackerCfg.ImgRehost))
 }
 
 func applyImageHostOverrides(tracker string, policy imageHostPolicy, overrides api.ImageHostOverrides) (imageHostPolicy, error) {
@@ -63,23 +40,16 @@ func applyImageHostOverrides(tracker string, policy imageHostPolicy, overrides a
 	if owner := trackerForOwnedHost(host); owner != "" && !strings.EqualFold(owner, tracker) {
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is owned by %s", strings.TrimSpace(tracker), host, owner)
 	}
+	if !supportedUploadImageHost(host) {
+		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is unsupported", strings.TrimSpace(tracker), host)
+	}
 	if len(policy.allowed) == 0 {
 		return newImageHostPolicy(true, host), nil
 	}
-	for _, allowed := range policy.allowed {
-		if allowed != host {
-			continue
-		}
-		preferred := []string{host}
-		for _, existing := range policy.preferred {
-			if existing == host {
-				continue
-			}
-			preferred = append(preferred, existing)
-		}
-		policy.preferred = preferred
-		return policy, nil
+	if !hostAllowed(host, policy.allowed) {
+		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is not allowed (allowed: %s)", strings.TrimSpace(tracker), host, strings.Join(policy.allowed, ", "))
 	}
+	policy.preferred = prependHost(host, policy.preferred)
 	return policy, nil
 }
 
@@ -98,12 +68,16 @@ func resolveImageHostPolicy(tracker string, trackerCfg config.TrackerConfig, ove
 	if len(policy.allowed) > 0 && !hostAllowed(host, policy.allowed) {
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s configured image_host %q is not allowed", strings.TrimSpace(tracker), trackerCfg.ImageHost)
 	}
-	return forceImageHostPolicy(policy, host), nil
+	if len(policy.allowed) == 0 {
+		return newImageHostPolicy(true, host), nil
+	}
+	policy.preferred = prependHost(host, policy.preferred)
+	return policy, nil
 }
 
 func RequiredImageUploadTargets(appCfg config.Config, trackerNames []string, overrides api.ImageHostOverrides) ([]ImageUploadTarget, error) {
 	targets := make([]ImageUploadTarget, 0, len(trackerNames))
-	seen := make(map[string]struct{}, len(trackerNames))
+	seen := make(map[string]int, len(trackerNames))
 	for _, tracker := range trackerNames {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
 		if name == "" {
@@ -118,15 +92,19 @@ func RequiredImageUploadTargets(appCfg config.Config, trackerNames []string, ove
 		if host == "" {
 			continue
 		}
-		scope := usageScopeForHost(name, host)
+		scope := usageScopeForHost(host)
+		// Use a null-byte separator to build an unambiguous host+scope dedupe key.
+		// Host/scope values are expected not to contain \x00, avoiding concat collisions.
 		key := host + "\x00" + scope
-		if _, ok := seen[key]; ok {
+		if idx, ok := seen[key]; ok {
+			targets[idx].Trackers = appendUniqueTracker(targets[idx].Trackers, name)
 			continue
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(targets)
 		targets = append(targets, ImageUploadTarget{
 			Host:       host,
 			UsageScope: scope,
+			Trackers:   []string{name},
 		})
 	}
 	return targets, nil
@@ -134,7 +112,7 @@ func RequiredImageUploadTargets(appCfg config.Config, trackerNames []string, ove
 
 func ConfiguredImageUploadTargets(appCfg config.Config, trackerNames []string) ([]ImageUploadTarget, error) {
 	targets := make([]ImageUploadTarget, 0, len(trackerNames))
-	seen := make(map[string]struct{}, len(trackerNames))
+	seen := make(map[string]int, len(trackerNames))
 	for _, tracker := range trackerNames {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
 		if name == "" {
@@ -152,15 +130,19 @@ func ConfiguredImageUploadTargets(appCfg config.Config, trackerNames []string) (
 		if host == "" {
 			continue
 		}
-		scope := usageScopeForHost(name, host)
+		scope := usageScopeForHost(host)
+		// Use a null-byte separator to build an unambiguous host+scope dedupe key.
+		// Host/scope values are expected not to contain \x00, avoiding concat collisions.
 		key := host + "\x00" + scope
-		if _, ok := seen[key]; ok {
+		if idx, ok := seen[key]; ok {
+			targets[idx].Trackers = appendUniqueTracker(targets[idx].Trackers, name)
 			continue
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(targets)
 		targets = append(targets, ImageUploadTarget{
 			Host:       host,
 			UsageScope: scope,
+			Trackers:   []string{name},
 		})
 	}
 	return targets, nil
@@ -181,25 +163,8 @@ func trackerConfigForImageHostPolicy(appCfg config.Config, tracker string) confi
 	return config.TrackerConfig{}
 }
 
-func forceImageHostPolicy(policy imageHostPolicy, host string) imageHostPolicy {
-	normalized := strings.ToLower(strings.TrimSpace(host))
-	if normalized == "" {
-		return policy
-	}
-	return imageHostPolicy{
-		allowed:   []string{normalized},
-		preferred: []string{normalized},
-		required:  true,
-	}
-}
-
 func supportedUploadImageHost(host string) bool {
-	switch strings.ToLower(strings.TrimSpace(host)) {
-	case "dalexni", "hdb", "imgbb", "imgbox", "lensdump", "onlyimage", "passtheimage", "pixhost", "ptpimg", "ptscreens", "seedpool_cdn", "sharex", "utppm", "zipline":
-		return true
-	default:
-		return false
-	}
+	return imagehostpolicy.IsUploadHost(host)
 }
 
 func newImageHostPolicy(required bool, hosts ...string) imageHostPolicy {
@@ -217,8 +182,55 @@ func newImageHostPolicy(required bool, hosts ...string) imageHostPolicy {
 		normalized = append(normalized, trimmed)
 	}
 	return imageHostPolicy{
-		allowed:   normalized,
-		preferred: append([]string{}, normalized...),
-		required:  required,
+		allowed:     normalized,
+		uploadHosts: uploadHostsFor(normalized),
+		preferred:   uploadHostsFor(normalized),
+		required:    required,
 	}
+}
+
+func policyFromShared(policy imagehostpolicy.Policy) imageHostPolicy {
+	return imageHostPolicy{
+		allowed:     append([]string(nil), policy.AllowedHosts...),
+		uploadHosts: append([]string(nil), policy.UploadHosts...),
+		preferred:   append([]string(nil), policy.PreferredHosts...),
+		required:    policy.Required,
+	}
+}
+
+func uploadHostsFor(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		if supportedUploadImageHost(host) {
+			out = append(out, strings.ToLower(strings.TrimSpace(host)))
+		}
+	}
+	return out
+}
+
+func prependHost(host string, hosts []string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(host))
+	if normalized == "" {
+		return hosts
+	}
+	preferred := []string{normalized}
+	for _, existing := range hosts {
+		if strings.EqualFold(existing, normalized) {
+			continue
+		}
+		preferred = append(preferred, existing)
+	}
+	return preferred
+}
+
+func appendUniqueTracker(trackers []string, tracker string) []string {
+	if tracker == "" {
+		return trackers
+	}
+	for _, existing := range trackers {
+		if existing == tracker {
+			return trackers
+		}
+	}
+	return append(trackers, tracker)
 }

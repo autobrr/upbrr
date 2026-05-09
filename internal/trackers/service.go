@@ -331,6 +331,16 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 					continue
 				}
 			}
+			if resolution.blocking {
+				message := strings.TrimSpace(resolution.feedback.Message)
+				if message == "" {
+					message = "image-host requirements could not be met"
+				}
+				s.logger.Warnf("trackers: skipping %s due to image host failure: %s", tracker, message)
+				result.err = errors.New(message)
+				results[idx] = result
+				continue
+			}
 			assets, err := ResolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger)
 			if err != nil {
 				result.err = err
@@ -440,7 +450,7 @@ func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.P
 			continue
 		}
 		if host := preferredHost(policy); host != "" {
-			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(tracker, host))
+			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(host))
 		}
 		entry := preflightEntry{
 			tracker:    tracker,
@@ -461,10 +471,14 @@ func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.P
 		wg sync.WaitGroup
 	)
 	for _, entry := range representatives {
+		preloadedCopy := clonePreloadedDescriptionAssetData(preloaded)
 		wg.Add(1)
-		go func(entry preflightEntry) {
+		go func(entry preflightEntry, preloadedCopy *preloadedDescriptionAssetData) {
 			defer wg.Done()
-			resolution, err := ensureDescriptionImageHostWithData(ctx, entry.tracker, meta, s.cfg, entry.trackerCfg, s.repo, s.images, s.logger, nil)
+			if ctx.Err() != nil {
+				return
+			}
+			resolution, err := ensureDescriptionImageHostWithData(ctx, entry.tracker, meta, s.cfg, entry.trackerCfg, s.repo, s.images, s.logger, preloadedCopy)
 			if err != nil {
 				s.logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
 				return
@@ -472,7 +486,7 @@ func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.P
 			mu.Lock()
 			resolutions[strings.ToUpper(strings.TrimSpace(entry.tracker))] = resolution
 			mu.Unlock()
-		}(entry)
+		}(entry, preloadedCopy)
 	}
 	wg.Wait()
 
@@ -722,6 +736,13 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			s.logger.Warnf("trackers: dry-run image host resolution failed for %s: %v", tracker, err)
 			entry.Status = "error"
 			entry.Message = err.Error()
+			results = append(results, entry)
+			continue
+		}
+		if resolution.blocking {
+			entry.Status = "blocked"
+			entry.Message = resolution.feedback.Message
+			entry.ImageHost = resolution.feedback
 			results = append(results, entry)
 			continue
 		}

@@ -475,6 +475,9 @@ func TestPrintDryRunSummary(t *testing.T) {
 				ImageHost: api.ImageHostFeedback{
 					Reuploaded: true,
 					Message:    "reuploaded to imgbox",
+					Warnings: []api.ImageHostWarning{
+						{Host: "ptpimg", Message: "temporary failure"},
+					},
 				},
 			},
 			contains: []string{
@@ -482,6 +485,7 @@ func TestPrintDryRunSummary(t *testing.T) {
 				"Tracker release name: Movie.2024.1080p",
 				"Payload fields: category, name",
 				"Images: reuploaded to imgbox",
+				"Image host warning: ptpimg failed: temporary failure",
 			},
 		},
 		{

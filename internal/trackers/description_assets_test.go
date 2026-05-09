@@ -18,6 +18,7 @@ import (
 )
 
 type stubRepo struct {
+	mu                  sync.Mutex
 	trackerRecords      []api.TrackerMetadata
 	trackerRecordsErr   error
 	trackerRecordsCalls int
@@ -61,6 +62,8 @@ func (s *stubRepo) SaveReleaseNameOverrides(context.Context, string, api.Release
 }
 func (s *stubRepo) DeleteReleaseNameOverrides(context.Context, string) error { return nil }
 func (s *stubRepo) GetDescriptionOverride(_ context.Context, _ string, groupKey string) (api.DescriptionOverride, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.overrideCalls++
 	if s.descriptionOverride == "" {
 		return api.DescriptionOverride{}, internalerrors.ErrNotFound
@@ -75,6 +78,8 @@ func (s *stubRepo) GetDescriptionOverride(_ context.Context, _ string, groupKey 
 	return api.DescriptionOverride{SourcePath: "/tmp/source", GroupKey: s.overrideGroupKey, Description: s.descriptionOverride}, nil
 }
 func (s *stubRepo) ListDescriptionOverridesByPath(context.Context, string) ([]api.DescriptionOverride, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.overrideCalls++
 	if s.descriptionOverride == "" {
 		return nil, internalerrors.ErrNotFound
@@ -95,6 +100,8 @@ func (s *stubRepo) ListPendingUploads(context.Context) ([]api.UploadRecord, erro
 	return nil, nil
 }
 func (s *stubRepo) CreateUploadRecord(_ context.Context, record api.UploadRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.createdUploads = append(s.createdUploads, record)
 	return nil
 }
@@ -113,11 +120,13 @@ func (s *stubRepo) GetTrackerTimestamp(context.Context, string) (time.Time, erro
 func (s *stubRepo) SaveTrackerTimestamp(context.Context, api.TrackerTimestamp) error { return nil }
 func (s *stubRepo) SaveTrackerMetadata(context.Context, api.TrackerMetadata) error   { return nil }
 func (s *stubRepo) ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.trackerRecordsCalls++
 	if s.trackerRecordsErr != nil {
 		return nil, s.trackerRecordsErr
 	}
-	return s.trackerRecords, nil
+	return cloneTrackerMetadata(s.trackerRecords), nil
 }
 func (s *stubRepo) SaveScreenshot(context.Context, api.Screenshot) error { return nil }
 func (s *stubRepo) ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error) {
@@ -128,25 +137,33 @@ func (s *stubRepo) SaveFinalSelections(context.Context, string, []api.Screenshot
 	return nil
 }
 func (s *stubRepo) ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.selectionsCalls++
 	if s.selectionsErr != nil {
 		return nil, s.selectionsErr
 	}
-	return s.selections, nil
+	return append([]api.ScreenshotFinalSelection(nil), s.selections...), nil
 }
 func (s *stubRepo) DeleteFinalSelection(context.Context, string) error { return nil }
 func (s *stubRepo) ReplaceScreenshotSlots(_ context.Context, _ string, slots []api.ScreenshotSlot) error {
-	s.screenshotSlots = append([]api.ScreenshotSlot(nil), slots...)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.screenshotSlots = cloneScreenshotSlots(slots)
 	return nil
 }
 func (s *stubRepo) ListScreenshotSlotsByPath(context.Context, string) ([]api.ScreenshotSlot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.screenshotSlotCalls++
 	if s.screenshotSlotsErr != nil {
 		return nil, s.screenshotSlotsErr
 	}
-	return s.screenshotSlots, nil
+	return cloneScreenshotSlots(s.screenshotSlots), nil
 }
 func (s *stubRepo) UpsertScreenshotSlotVariants(_ context.Context, _ string, variants []api.ScreenshotSlotVariant) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, variant := range variants {
 		for idx := range s.screenshotSlots {
 			if s.screenshotSlots[idx].SlotOrder != variant.SlotOrder {
@@ -158,17 +175,23 @@ func (s *stubRepo) UpsertScreenshotSlotVariants(_ context.Context, _ string, var
 	return nil
 }
 func (s *stubRepo) SaveUploadedImages(_ context.Context, _ string, _ string, images []api.UploadedImageLink) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.uploads = append(s.uploads, images...)
 	return nil
 }
 func (s *stubRepo) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.uploadsCalls++
 	if s.uploadsErr != nil {
 		return nil, s.uploadsErr
 	}
-	return s.uploads, nil
+	return append([]api.UploadedImageLink(nil), s.uploads...), nil
 }
 func (s *stubRepo) DeleteUploadedImage(_ context.Context, _ string, imagePath string, host string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.deletedUploads = append(s.deletedUploads, host+":"+imagePath)
 	return nil
 }
@@ -195,20 +218,23 @@ func (s *stubImageService) ListCandidates(context.Context, api.PreparedMetadata)
 func (s *stubImageService) Upload(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 	s.mu.Lock()
 	s.calls = append(s.calls, host)
+	err := s.errs[host]
+	links, ok := s.uploads[host]
+	links = append([]api.UploadedImageLink(nil), links...)
 	s.mu.Unlock()
-	if err := s.errs[host]; err != nil {
+	if err != nil {
 		return nil, err
 	}
-	if links, ok := s.uploads[host]; ok {
+	if ok {
 		for idx := range links {
 			if strings.TrimSpace(links[idx].UsageScope) == "" {
 				links[idx].UsageScope = usageScope
 			}
 		}
 		if s.repo != nil {
-			s.mu.Lock()
+			s.repo.mu.Lock()
 			s.repo.uploads = append(s.repo.uploads, links...)
-			s.mu.Unlock()
+			s.repo.mu.Unlock()
 		}
 		return links, nil
 	}
@@ -225,9 +251,9 @@ func (s *stubImageService) Upload(_ context.Context, meta api.PreparedMetadata, 
 		})
 	}
 	if s.repo != nil {
-		s.mu.Lock()
+		s.repo.mu.Lock()
 		s.repo.uploads = append(s.repo.uploads, results...)
-		s.mu.Unlock()
+		s.repo.mu.Unlock()
 	}
 	return results, nil
 }
@@ -1011,6 +1037,87 @@ func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
 		if screenshot.Host != "ptpimg" {
 			t.Fatalf("expected all rehosted screenshots to use ptpimg, got %#v", resolution.screenshots)
 		}
+	}
+}
+
+func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testing.T) {
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	images := &stubImageService{
+		errs: map[string]error{"ptpimg": errors.New("ptpimg unavailable")},
+	}
+
+	resolution, err := ensureDescriptionImageHost(
+		context.Background(),
+		"PTP",
+		meta,
+		config.Config{},
+		config.TrackerConfig{ImageHost: "ptpimg"},
+		repo,
+		images,
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolution.blocking {
+		t.Fatalf("expected fallback success not to block")
+	}
+	if resolution.feedback.SelectedHost != "pixhost" {
+		t.Fatalf("expected pixhost fallback, got %#v", resolution.feedback)
+	}
+	if len(resolution.feedback.Warnings) != 1 || resolution.feedback.Warnings[0].Host != "ptpimg" {
+		t.Fatalf("expected ptpimg warning, got %#v", resolution.feedback.Warnings)
+	}
+	if len(images.calls) != 2 || images.calls[0] != "ptpimg" || images.calls[1] != "pixhost" {
+		t.Fatalf("expected ptpimg then pixhost calls, got %#v", images.calls)
+	}
+}
+
+func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	images := &stubImageService{
+		errs: map[string]error{
+			"ptpimg":  errors.New("ptpimg unavailable"),
+			"pixhost": errors.New("pixhost unavailable"),
+		},
+	}
+
+	resolution, err := ensureDescriptionImageHost(
+		context.Background(),
+		"PTP",
+		meta,
+		config.Config{},
+		config.TrackerConfig{},
+		repo,
+		images,
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resolution.blocking {
+		t.Fatalf("expected all failed upload hosts to block")
+	}
+	if resolution.feedback.Status != "warning" {
+		t.Fatalf("expected warning feedback, got %#v", resolution.feedback)
+	}
+	if len(resolution.feedback.Warnings) != 2 {
+		t.Fatalf("expected one warning per failed host, got %#v", resolution.feedback.Warnings)
+	}
+	if len(resolution.screenshots) != 0 {
+		t.Fatalf("expected no screenshots after all hosts fail, got %#v", resolution.screenshots)
 	}
 }
 

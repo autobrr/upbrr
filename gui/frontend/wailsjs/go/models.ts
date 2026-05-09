@@ -62,6 +62,7 @@ export namespace api {
 	    AllowedHosts: string[];
 	    Reuploaded: boolean;
 	    Message: string;
+	    Warnings: ImageHostWarning[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ImageHostFeedback(source);
@@ -73,6 +74,39 @@ export namespace api {
 	        this.SelectedHost = source["SelectedHost"];
 	        this.AllowedHosts = source["AllowedHosts"];
 	        this.Reuploaded = source["Reuploaded"];
+	        this.Message = source["Message"];
+	        this.Warnings = this.convertValues(source["Warnings"], ImageHostWarning);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ImageHostWarning {
+	    Host: string;
+	    Message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImageHostWarning(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Host = source["Host"];
 	        this.Message = source["Message"];
 	    }
 	}
@@ -1396,6 +1430,56 @@ export namespace api {
 		    return a;
 		}
 	}
+	export class UploadImageHostFailure {
+	    Host: string;
+	    UsageScope: string;
+	    Trackers: string[];
+	    Message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UploadImageHostFailure(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Host = source["Host"];
+	        this.UsageScope = source["UsageScope"];
+	        this.Trackers = source["Trackers"];
+	        this.Message = source["Message"];
+	    }
+	}
+	export class UploadImagesResult {
+	    Links: UploadedImageLink[];
+	    Failures: UploadImageHostFailure[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UploadImagesResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Links = this.convertValues(source["Links"], UploadedImageLink);
+	        this.Failures = this.convertValues(source["Failures"], UploadImageHostFailure);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ScreenshotFinalSelection {
 	    SourcePath: string;
 	    ImagePath: string;
@@ -2631,4 +2715,3 @@ export namespace logging {
 	}
 
 }
-

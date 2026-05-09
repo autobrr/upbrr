@@ -29,6 +29,7 @@ import type {
   ExternalIDs,
   HistoryEntry,
   HistoryOverview,
+  ImageHostPolicyMetadata,
   MetadataPreview,
   MetadataProgressUpdate,
   PreparationPreview,
@@ -49,6 +50,7 @@ import type {
   UIStateRecord,
   WebAuthStatus,
   UploadedImageLink,
+  UploadImagesResult,
 } from "./types";
 import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
 
@@ -315,7 +317,7 @@ declare global {
               trackers: string[],
               host: string,
               images: ScreenshotImage[],
-            ) => Promise<UploadedImageLink[]>;
+            ) => Promise<UploadImagesResult>;
             DeleteUploadedImage: (path: string, imagePath: string, host: string) => Promise<void>;
             RenderDescription: (raw: string) => Promise<string>;
             SaveDescriptionOverride: (
@@ -347,6 +349,7 @@ declare global {
             GetLogExclusions: () => Promise<string[]>;
             UpdateLogExclusions: (patterns: string[]) => Promise<void>;
             ListKnownTrackers: () => Promise<string[]>;
+            GetImageHostPolicyMetadata: () => Promise<ImageHostPolicyMetadata>;
             ListHistory: () => Promise<HistoryEntry[]>;
             GetHistoryOverview: (sourcePath: string) => Promise<HistoryOverview>;
             DeleteHistoryRelease: (sourcePath: string) => Promise<void>;
@@ -4259,6 +4262,7 @@ export default function App() {
               setAllUploadSelections={uploadImages.setAllUploadSelections}
               handleUploadImages={uploadImages.handleUploadImages}
               uploadImagesError={uploadImages.uploadImagesError}
+              uploadImageFailures={uploadImages.uploadImageFailures}
               uploadCandidates={screenshots.uploadCandidates}
               uploadSelections={uploadImages.uploadSelections}
               toggleUploadSelection={uploadImages.toggleUploadSelection}
