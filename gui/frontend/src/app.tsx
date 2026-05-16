@@ -29,6 +29,7 @@ import type {
   ExternalIDs,
   HistoryEntry,
   HistoryOverview,
+  ImageHostPolicyMetadata,
   MetadataPreview,
   MetadataProgressUpdate,
   PreparationPreview,
@@ -49,6 +50,7 @@ import type {
   UIStateRecord,
   WebAuthStatus,
   UploadedImageLink,
+  UploadImagesResult,
 } from "./types";
 import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
 
@@ -312,9 +314,10 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
               host: string,
               images: ScreenshotImage[],
-            ) => Promise<UploadedImageLink[]>;
+            ) => Promise<UploadImagesResult>;
             DeleteUploadedImage: (path: string, imagePath: string, host: string) => Promise<void>;
             RenderDescription: (raw: string) => Promise<string>;
             SaveDescriptionOverride: (
@@ -346,6 +349,7 @@ declare global {
             GetLogExclusions: () => Promise<string[]>;
             UpdateLogExclusions: (patterns: string[]) => Promise<void>;
             ListKnownTrackers: () => Promise<string[]>;
+            GetImageHostPolicyMetadata: () => Promise<ImageHostPolicyMetadata>;
             ListHistory: () => Promise<HistoryEntry[]>;
             GetHistoryOverview: (sourcePath: string) => Promise<HistoryOverview>;
             DeleteHistoryRelease: (sourcePath: string) => Promise<void>;
@@ -1229,6 +1233,13 @@ export default function App() {
     handleDeleteTrackerImageURL,
   } = screenshots;
 
+  const selectedUploadImageTrackers = useMemo(() => {
+    const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
+    return Object.entries(releasePageTrackerSelection)
+      .filter(([name, selected]) => selected && validTrackers.has(name))
+      .map(([name]) => name);
+  }, [releasePageTrackerSelection, trackerUploadItems]);
+
   // Upload images workflow hook
   const uploadImages = useUploadImages({
     path,
@@ -1236,6 +1247,7 @@ export default function App() {
     releaseOverrideState,
     uploadCandidates: screenshots.uploadCandidates,
     configuredImageHosts,
+    selectedTrackers: selectedUploadImageTrackers,
   });
   const {
     refreshUploadedImages,
@@ -4250,6 +4262,7 @@ export default function App() {
               setAllUploadSelections={uploadImages.setAllUploadSelections}
               handleUploadImages={uploadImages.handleUploadImages}
               uploadImagesError={uploadImages.uploadImagesError}
+              uploadImageFailures={uploadImages.uploadImageFailures}
               uploadCandidates={screenshots.uploadCandidates}
               uploadSelections={uploadImages.uploadSelections}
               toggleUploadSelection={uploadImages.toggleUploadSelection}

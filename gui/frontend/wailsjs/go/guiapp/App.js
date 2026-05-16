@@ -102,6 +102,10 @@ export function GetHistoryOverview(arg1) {
   return window['go']['guiapp']['App']['GetHistoryOverview'](arg1);
 }
 
+export function GetImageHostPolicyMetadata() {
+  return window['go']['guiapp']['App']['GetImageHostPolicyMetadata']();
+}
+
 export function GetLogExclusions() {
   return window['go']['guiapp']['App']['GetLogExclusions']();
 }
@@ -218,6 +222,6 @@ export function UpdateLogExclusions(arg1) {
   return window['go']['guiapp']['App']['UpdateLogExclusions'](arg1);
 }
 
-export function UploadImages(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['guiapp']['App']['UploadImages'](arg1, arg2, arg3, arg4, arg5);
+export function UploadImages(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['guiapp']['App']['UploadImages'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

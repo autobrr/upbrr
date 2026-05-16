@@ -305,6 +305,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          trackers: string[],
           host: string,
           images: unknown,
         ) =>
@@ -312,6 +313,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            Trackers: trackers,
             Host: host,
             Images: images,
           }),
@@ -401,6 +403,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         UpdateLogExclusions: (patterns: string[]) =>
           call("UpdateLogExclusions", { Patterns: patterns }),
         ListKnownTrackers: () => call("ListKnownTrackers"),
+        GetImageHostPolicyMetadata: () => call("GetImageHostPolicyMetadata"),
         ListHistory: () => call("ListHistory"),
         GetHistoryOverview: (sourcePath: string) =>
           call("GetHistoryOverview", { SourcePath: sourcePath }),

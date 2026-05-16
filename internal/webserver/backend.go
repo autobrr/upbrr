@@ -23,6 +23,7 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guiapp"
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
@@ -201,7 +202,7 @@ func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL s
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackersList,
+		Trackers:        append([]string{}, trackersList...),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
@@ -306,7 +307,7 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackersList,
+		Trackers:        append([]string{}, trackersList...),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
@@ -329,7 +330,7 @@ func (b *Backend) CheckDupes(path string, overrides api.ExternalIDOverrides, nam
 	req := api.Request{
 		Paths:    []string{strings.TrimSpace(path)},
 		Mode:     api.ModeGUI,
-		Trackers: trackersList,
+		Trackers: append([]string{}, trackersList...),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
 			OnlyID:     b.cfg.Metadata.OnlyID,
@@ -350,7 +351,7 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 	req := api.Request{
 		Paths:          []string{strings.TrimSpace(path)},
 		Mode:           api.ModeGUI,
-		Trackers:       trackersList,
+		Trackers:       append([]string{}, trackersList...),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
@@ -394,7 +395,7 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 		Paths:                       []string{strings.TrimSpace(path)},
 		Mode:                        api.ModeGUI,
 		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
-		Trackers:                    trackersList,
+		Trackers:                    append([]string{}, trackersList...),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   ignoreRuleFailures,
 		Options:                     buildRunUploadOptions(b.cfg, runOpts),
@@ -427,7 +428,7 @@ func (b *Backend) FetchDescriptionBuilder(path string, overrides api.ExternalIDO
 	req := api.Request{
 		Paths:          []string{strings.TrimSpace(path)},
 		Mode:           api.ModeGUI,
-		Trackers:       trackersList,
+		Trackers:       append([]string{}, trackersList...),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
@@ -727,9 +728,9 @@ func (b *Backend) ListUploadedImages(path string, overrides api.ExternalIDOverri
 	})
 }
 
-func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	if err := b.requireCore(); err != nil {
-		return nil, err
+		return api.UploadImagesResult{}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
@@ -743,6 +744,7 @@ func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, n
 		},
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		Trackers:             append([]string{}, trackersList...),
 	}, host, images)
 }
 
@@ -887,6 +889,10 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 
 func (b *Backend) ListKnownTrackers() ([]string, error) {
 	return trackers.KnownTrackers(), nil
+}
+
+func (b *Backend) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {
+	return imagehostpolicy.PolicyMetadata(), nil
 }
 
 func (b *Backend) ListHistory() ([]api.HistoryEntry, error) {

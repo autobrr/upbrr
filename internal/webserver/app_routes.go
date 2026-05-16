@@ -499,6 +499,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			Path          string
 			Overrides     api.ExternalIDOverrides
 			NameOverrides api.ReleaseNameOverrides
+			Trackers      []string
 			Host          string
 			Images        []api.ScreenshotImage
 		}
@@ -506,7 +507,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.UploadImages(req.Path, req.Overrides, req.NameOverrides, req.Host, req.Images)
+		value, err := s.backend.UploadImages(req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.Host, req.Images)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -597,6 +598,15 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/app/ListKnownTrackers", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		value, err := s.backend.ListKnownTrackers()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
+	mux.HandleFunc("/api/app/GetImageHostPolicyMetadata", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		value, err := s.backend.GetImageHostPolicyMetadata()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return

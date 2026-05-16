@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -338,7 +339,7 @@ func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.E
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackers,
+		Trackers:        slices.Clone(trackers),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
@@ -484,7 +485,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackers,
+		Trackers:        slices.Clone(trackers),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
@@ -601,7 +602,7 @@ func (a *App) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOve
 	req := api.Request{
 		Paths:    []string{trimmedPath},
 		Mode:     api.ModeGUI,
-		Trackers: trackers,
+		Trackers: slices.Clone(trackers),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
 			OnlyID:     a.cfg.Metadata.OnlyID,
@@ -633,7 +634,7 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 	req := api.Request{
 		Paths:          []string{trimmedPath},
 		Mode:           api.ModeGUI,
-		Trackers:       trackers,
+		Trackers:       slices.Clone(trackers),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
@@ -692,7 +693,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		Paths:                       []string{trimmedPath},
 		Mode:                        api.ModeGUI,
 		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
-		Trackers:                    trackers,
+		Trackers:                    slices.Clone(trackers),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   ignoreRuleFailures,
 		Options:                     buildRunUploadOptions(a.cfg, runOpts),
@@ -736,7 +737,7 @@ func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverr
 	req := api.Request{
 		Paths:          []string{path},
 		Mode:           api.ModeGUI,
-		Trackers:       trackers,
+		Trackers:       slices.Clone(trackers),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
@@ -786,7 +787,7 @@ func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, 
 		DescriptionOverrideGroup: strings.TrimSpace(groupKey),
 	}
 
-	req.Trackers = append([]string{}, trackers...)
+	req.Trackers = slices.Clone(trackers)
 	req.ExternalIDOverrides = overrides
 	req.ReleaseNameOverrides = nameOverrides
 
@@ -1021,18 +1022,18 @@ func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides,
 	return a.core.ListUploadedImages(ctx, req)
 }
 
-func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	if a == nil || a.core == nil {
-		return nil, errors.New("app not initialized")
+		return api.UploadImagesResult{}, errors.New("app not initialized")
 	}
 	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("path is required")
+		return api.UploadImagesResult{}, errors.New("path is required")
 	}
 	if strings.TrimSpace(host) == "" {
-		return nil, errors.New("host is required")
+		return api.UploadImagesResult{}, errors.New("host is required")
 	}
 	if len(images) == 0 {
-		return nil, errors.New("no images selected")
+		return api.UploadImagesResult{}, errors.New("no images selected")
 	}
 
 	ctx := a.ctx
@@ -1052,6 +1053,7 @@ func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameO
 		},
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		Trackers:             slices.Clone(trackers),
 	}
 
 	return a.core.UploadImages(ctx, req, host, images)
@@ -1288,6 +1290,14 @@ func (a *App) ListKnownTrackers() ([]string, error) {
 	}
 
 	return trackers.KnownTrackers(), nil
+}
+
+func (a *App) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {
+	if a == nil {
+		return imagehostpolicy.Metadata{}, errors.New("app not initialized")
+	}
+
+	return imagehostpolicy.PolicyMetadata(), nil
 }
 
 func (a *App) SaveConfig(payload string) error {

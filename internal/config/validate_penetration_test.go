@@ -6,6 +6,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 )
 
 // Validate is the CLI's fail-fast check. These tests target every failure
@@ -235,12 +237,16 @@ func TestValidateQuiRequiresProxy(t *testing.T) {
 func TestValidateAllImageRehostPoliciesAccepted(t *testing.T) {
 	t.Parallel()
 
-	for policy := range trackerImageRehostValidationHosts {
+	for trackerName := range imagehostpolicy.KnownTrackerPolicies() {
 		cfg := withBase(func(c *Config) {
-			c.Trackers.Trackers = map[string]TrackerConfig{policy: {ImgRehost: true}}
+			trackerCfg := TrackerConfig{ImgRehost: true}
+			if strings.EqualFold(trackerName, "THR") {
+				trackerCfg.ImgAPI = "secret"
+			}
+			c.Trackers.Trackers = map[string]TrackerConfig{trackerName: trackerCfg}
 		})
 		if err := cfg.Validate(); err != nil {
-			t.Errorf("policy %s img_rehost should validate: %v", policy, err)
+			t.Errorf("tracker %s img_rehost should validate: %v", trackerName, err)
 		}
 	}
 }

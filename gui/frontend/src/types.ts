@@ -454,7 +454,13 @@ export type ImageHostFeedback = {
   Status: string;
   SelectedHost: string;
   AllowedHosts: string[];
+  Warnings?: ImageHostWarning[];
   Reuploaded: boolean;
+  Message: string;
+};
+
+export type ImageHostWarning = {
+  Host: string;
   Message: string;
 };
 
@@ -535,11 +541,24 @@ export type UploadedImageLink = {
   SourcePath: string;
   ImagePath: string;
   Host: string;
+  UsageScope: string;
   ImgURL: string;
   RawURL: string;
   WebURL: string;
   SizeBytes: number;
   UploadedAt: string;
+};
+
+export type UploadImageHostFailure = {
+  Host: string;
+  UsageScope: string;
+  Trackers: string[];
+  Message: string;
+};
+
+export type UploadImagesResult = {
+  Links: UploadedImageLink[];
+  Failures: UploadImageHostFailure[];
 };
 
 export type HistoryEntry = {
@@ -709,6 +728,11 @@ export type TrackerDryRunPreview = {
 
 export type ConfigValue = string | number | boolean | null | ConfigMap | ConfigValue[];
 export type ConfigMap = { [key: string]: ConfigValue };
+export type ImageHostPolicyMetadata = {
+  UploadHosts?: string[];
+  TrackerUploadHosts?: Record<string, string[]>;
+  OwnedHosts?: Record<string, string>;
+};
 export type FieldType = "string" | "number" | "boolean";
 export type FieldMeta = {
   key: string;
@@ -716,6 +740,7 @@ export type FieldMeta = {
   type?: FieldType;
   advanced?: boolean;
   sensitive?: boolean;
+  options?: Array<{ value: string; label: string }>;
 };
 
 export type ReleaseNameEditState = {
