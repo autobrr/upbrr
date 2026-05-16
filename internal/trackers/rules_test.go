@@ -162,6 +162,74 @@ func TestEvaluateRulesBHDRequiresValidMISettings(t *testing.T) {
 	}
 }
 
+func TestEvaluateRulesBHDRejectsInvalidContainerForUploadTypes(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ValidMediaInfoSettings: true,
+		Type:                   "REMUX",
+		Container:              "avi",
+	}
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "extra_check" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+
+	meta.Container = "mkv"
+	failures = EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures for MKV, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesBLUContainerRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		meta      api.PreparedMetadata
+		wantBlock bool
+	}{
+		{
+			name:      "non disc defaults to mkv",
+			meta:      api.PreparedMetadata{Type: "WEBDL", Container: "avi"},
+			wantBlock: true,
+		},
+		{
+			name:      "hdtv allows ts",
+			meta:      api.PreparedMetadata{Type: "HDTV", Container: "ts"},
+			wantBlock: false,
+		},
+		{
+			name:      "dolby vision webdl allows mp4",
+			meta:      api.PreparedMetadata{Type: "WEBDL", Container: "mp4", WebDV: true},
+			wantBlock: false,
+		},
+		{
+			name:      "disc skips container rule",
+			meta:      api.PreparedMetadata{DiscType: "BDMV", Type: "WEBDL", Container: "avi"},
+			wantBlock: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			failures := EvaluateRules(context.Background(), "BLU", tc.meta, nil)
+			if tc.wantBlock && len(failures) == 0 {
+				t.Fatalf("expected BLU container failure")
+			}
+			if !tc.wantBlock && len(failures) != 0 {
+				t.Fatalf("expected no BLU container failures, got %#v", failures)
+			}
+		})
+	}
+}
+
 func TestEvaluateRulesNBLRequiresTV(t *testing.T) {
 	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "movie"}}
 	failures := EvaluateRules(context.Background(), "NBL", meta, nil)

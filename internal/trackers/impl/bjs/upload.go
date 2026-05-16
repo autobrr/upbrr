@@ -245,6 +245,9 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 	if meta.Anime && category == "TV" {
 		fields["adulto"] = resolveAdult(meta)
 	}
+	if strings.TrimSpace(meta.Repack) != "" {
+		fields["repack"] = "on"
+	}
 	if resolvePoster(meta) != "" {
 		fields["image"] = resolvePoster(meta)
 	}
@@ -687,7 +690,7 @@ func resolveAdult(meta api.PreparedMetadata) string {
 
 func resolveDirectors(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Directors) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Directors, ", ")
+		return firstTrimmed(meta.ExternalMetadata.TMDB.Directors)
 	}
 	if meta.ExternalMetadata.IMDB != nil {
 		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Directors))
@@ -697,7 +700,7 @@ func resolveDirectors(meta api.PreparedMetadata) string {
 			}
 		}
 		if len(names) > 0 {
-			return strings.Join(names, ", ")
+			return names[0]
 		}
 	}
 	return ""
@@ -705,7 +708,7 @@ func resolveDirectors(meta api.PreparedMetadata) string {
 
 func resolveCreators(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Creators) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Creators, ", ")
+		return firstTrimmed(meta.ExternalMetadata.TMDB.Creators)
 	}
 	if meta.ExternalMetadata.IMDB != nil {
 		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Creators))
@@ -714,14 +717,16 @@ func resolveCreators(meta api.PreparedMetadata) string {
 				names = append(names, strings.TrimSpace(p.Name))
 			}
 		}
-		return strings.Join(names, ", ")
+		if len(names) > 0 {
+			return names[0]
+		}
 	}
 	return ""
 }
 
 func resolveCast(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Cast) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Cast, ", ")
+		return strings.Join(firstNTrimmed(meta.ExternalMetadata.TMDB.Cast, 5), ", ")
 	}
 	if meta.ExternalMetadata.IMDB != nil {
 		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Stars))
@@ -730,7 +735,7 @@ func resolveCast(meta api.PreparedMetadata) string {
 				names = append(names, strings.TrimSpace(p.Name))
 			}
 		}
-		return strings.Join(names, ", ")
+		return strings.Join(firstNTrimmed(names, 5), ", ")
 	}
 	return ""
 }
@@ -782,6 +787,38 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstTrimmed(values []string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func firstNTrimmed(values []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]string, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
 }
 
 func matchValue(values []string, idx int) string {

@@ -57,3 +57,34 @@ func TestResolveRuntimePrefersBDInfoLengthForBDMV(t *testing.T) {
 		t.Fatalf("expected BDInfo runtime 100 minutes, got %d", got)
 	}
 }
+
+func TestBuildFieldsLimitsDirectorCreatorAndSetsRepack(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Repack: "REPACK",
+		ExternalIDs: api.ExternalIDs{
+			Category: "TV",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				Creators:      []string{"Creator One", "Creator Two"},
+				Directors:     []string{"Director One", "Director Two"},
+				OriginCountry: []string{"BR"},
+				Title:         "Title",
+			},
+			IMDB: &api.IMDBMetadata{Year: 2026},
+		},
+	}
+
+	fields := buildFields(meta, "description", "auth", nil)
+	if got := fields["diretor"]; got != "Creator One" {
+		t.Fatalf("expected first creator only, got %q", got)
+	}
+	if got := fields["diretorserie"]; got != "Director One" {
+		t.Fatalf("expected first director only, got %q", got)
+	}
+	if got := fields["repack"]; got != "on" {
+		t.Fatalf("expected repack flag, got %q", got)
+	}
+}

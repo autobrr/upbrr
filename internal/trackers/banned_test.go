@@ -52,6 +52,21 @@ func TestBannedGroupCheckerDPBuiltins(t *testing.T) {
 	}
 }
 
+func TestBannedGroupCheckerBHDBuiltins(t *testing.T) {
+	t.Parallel()
+
+	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	for _, group := range []string{"ProRes", "MezRips", "Flights", "BiTOR", "iVy", "QxR", "SyncUP", "OFT", "TGS"} {
+		banned, err := checker.IsBanned("BHD", group)
+		if err != nil {
+			t.Fatalf("check %s: %v", group, err)
+		}
+		if !banned {
+			t.Fatalf("expected %s to be banned on BHD", group)
+		}
+	}
+}
+
 func TestBannedGroupCheckerDPDoesNotIncludeRemovedHDT(t *testing.T) {
 	t.Parallel()
 

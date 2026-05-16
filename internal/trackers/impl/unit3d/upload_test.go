@@ -756,6 +756,21 @@ func TestBuildUnit3DNameACM(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DNameULCXRemovesHybridFromWebDV(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName: "Movie 2026 Hybrid 1080p WEB-DL DDP5.1 DV H.265-GRP",
+		Type:        "WEBDL",
+		Edition:     "Hybrid",
+		WebDV:       true,
+	}
+	got := buildUnit3DName("ULCX", meta)
+	if strings.Contains(got, "Hybrid") {
+		t.Fatalf("expected Hybrid removed for ULCX WEB-DL WebDV, got %q", got)
+	}
+}
+
 func TestResolveUnit3DCategoryIDForTrackerTIKForeignMovie(t *testing.T) {
 	meta := api.PreparedMetadata{
 		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},

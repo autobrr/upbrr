@@ -32,6 +32,7 @@ var trackerRuleFactories = map[string]func() RuleSet{
 	"ANT":    rulesANT,
 	"A4K":    rulesA4K,
 	"BHD":    rulesBHD,
+	"BLU":    rulesBLU,
 	"DP":     rulesDP,
 	"HHD":    rulesHHD,
 	"LST":    rulesLST,
@@ -85,7 +86,14 @@ func rulesA4K() RuleSet {
 }
 
 func rulesBHD() RuleSet {
-	return RuleSet{RequireValidMISetting: true}
+	return RuleSet{
+		RequireValidMISetting: true,
+		ExtraCheck:            checkBHDRequirements,
+	}
+}
+
+func rulesBLU() RuleSet {
+	return RuleSet{ExtraCheck: checkBLUContainer}
 }
 
 func rulesHHD() RuleSet {
