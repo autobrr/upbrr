@@ -1230,8 +1230,8 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	}
 	year := parseYearFromDate(details.FirstAired)
 	yearFromAlias := false
-	if slugYear := parseYearFromSlug(details.Slug); slugYear > 0 {
-		year = slugYear
+	if details.SeriesYear > 0 {
+		year = details.SeriesYear
 		yearFromAlias = true
 	}
 	name := metautil.FirstNonEmptyTrimmed(details.Name, fallbackName)
@@ -1521,8 +1521,10 @@ func (s *Service) applyTVEpisodeMetadata(
 						external.TVDB = &api.TVDBMetadata{TVDBID: ids.TVDBID}
 					}
 					external.TVDB.Name = aliasName
-					external.TVDB.Year = aliasYear
-					external.TVDB.YearFromAlias = true
+					if aliasYear > 0 {
+						external.TVDB.Year = aliasYear
+						external.TVDB.YearFromAlias = true
+					}
 				}
 			}
 			if !meta.TVPack {
@@ -1728,18 +1730,6 @@ func parseYearFromDate(value string) int {
 	return year
 }
 
-func parseYearFromSlug(value string) int {
-	match := tvdbAliasYearPattern.FindStringSubmatch(strings.TrimSpace(value))
-	if len(match) != 2 {
-		return 0
-	}
-	year, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0
-	}
-	return year
-}
-
 func isGenericEpisodeTitle(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -1769,18 +1759,20 @@ func parseTVDBAliasNameYear(alias string) (string, int, bool) {
 	if trimmed == "" {
 		return "", 0, false
 	}
+	name := trimmed
+	year := 0
 	match := tvdbAliasYearPattern.FindStringSubmatch(trimmed)
-	if len(match) != 2 {
-		return "", 0, false
-	}
-	year, err := strconv.Atoi(match[1])
-	if err != nil {
-		return "", 0, false
+	if len(match) == 2 {
+		parsed, err := strconv.Atoi(match[1])
+		if err != nil {
+			return "", 0, false
+		}
+		year = parsed
+		name = tvdbAliasYearCleanup.ReplaceAllString(trimmed, " ")
+		name = strings.ReplaceAll(name, "(", " ")
+		name = strings.ReplaceAll(name, ")", " ")
 	}
 
-	name := tvdbAliasYearCleanup.ReplaceAllString(trimmed, " ")
-	name = strings.ReplaceAll(name, "(", " ")
-	name = strings.ReplaceAll(name, ")", " ")
 	name = strings.Join(strings.Fields(name), " ")
 	if name == "" {
 		return "", 0, false

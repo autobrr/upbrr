@@ -1406,10 +1406,10 @@ func TestApplyTVEpisodeMetadataTVDBAliasYearApplied(t *testing.T) {
 	}
 }
 
-func TestApplyTVEpisodeMetadataTVDBSlugFallbackAliasYearApplied(t *testing.T) {
+func TestApplyTVEpisodeMetadataTVDBTitleOnlyAliasAppliedWithoutYear(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{}
-	tvdbClient := &stubTVDB{specificAlias: "Cats Eye (2025)"}
+	tvdbClient := &stubTVDB{specificAlias: "Cats Eye"}
 
 	meta := api.PreparedMetadata{
 		SourcePath: "/media/Cats.Eye.S01E01.mkv",
@@ -1427,10 +1427,13 @@ func TestApplyTVEpisodeMetadataTVDBSlugFallbackAliasYearApplied(t *testing.T) {
 	_ = svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, tvdbClient, &stubTVmaze{})
 
 	if external.TVDB.Name != "Cats Eye" {
-		t.Fatalf("expected cleaned slug-fallback alias title, got %q", external.TVDB.Name)
+		t.Fatalf("expected title-only alias, got %q", external.TVDB.Name)
 	}
-	if external.TVDB.Year != 2025 {
-		t.Fatalf("expected alias year 2025, got %d", external.TVDB.Year)
+	if external.TVDB.Year != 0 {
+		t.Fatalf("expected no alias year, got %d", external.TVDB.Year)
+	}
+	if external.TVDB.YearFromAlias {
+		t.Fatalf("expected title-only alias not to mark YearFromAlias")
 	}
 }
 
@@ -1634,7 +1637,7 @@ func TestResolveExternalIDsTVDBNoEnglishRefetch(t *testing.T) {
 	}
 }
 
-func TestResolveExternalIDsTVDBSlugYearUsedForNamingYear(t *testing.T) {
+func TestResolveExternalIDsTVDBSlugYearNotUsedForNamingYear(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{}
 	imdbClient := &stubIMDB{}
@@ -1673,11 +1676,59 @@ func TestResolveExternalIDsTVDBSlugYearUsedForNamingYear(t *testing.T) {
 	if result.ExternalMetadata.TVDB == nil {
 		t.Fatalf("expected tvdb metadata")
 	}
+	if result.ExternalMetadata.TVDB.Year != 2010 {
+		t.Fatalf("expected first-aired tvdb year 2010, got %d", result.ExternalMetadata.TVDB.Year)
+	}
+	if result.ExternalMetadata.TVDB.YearFromAlias {
+		t.Fatalf("expected slug-derived year not to mark YearFromAlias")
+	}
+}
+
+func TestResolveExternalIDsTVDBExplicitSeriesYearUsedForNamingYear(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{}
+	imdbClient := &stubIMDB{}
+	tvdbClient := &stubTVDB{
+		seriesMetadata: tvdb.SeriesMetadata{
+			TVDBID:           200,
+			Name:             "Cats Eye",
+			NameEnglish:      "Cats Eye",
+			SeriesYear:       2025,
+			Slug:             "cats-eye-2025",
+			FirstAired:       "2010-10-01",
+			OriginalLanguage: "jpn",
+			HasEnglish:       true,
+		},
+	}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	meta := api.PreparedMetadata{
+		SourcePath:        "/media/Cats.Eye.S01E01.mkv",
+		MediaInfoCategory: "TV",
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			TVDBID: intPtr(200),
+		},
+	}
+
+	result, err := svc.ResolveExternalIDs(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if result.ExternalMetadata.TVDB == nil {
+		t.Fatalf("expected tvdb metadata")
+	}
 	if result.ExternalMetadata.TVDB.Year != 2025 {
-		t.Fatalf("expected slug-derived tvdb year 2025, got %d", result.ExternalMetadata.TVDB.Year)
+		t.Fatalf("expected explicit tvdb series year 2025, got %d", result.ExternalMetadata.TVDB.Year)
 	}
 	if !result.ExternalMetadata.TVDB.YearFromAlias {
-		t.Fatalf("expected YearFromAlias true for slug-derived year")
+		t.Fatalf("expected explicit series year to mark YearFromAlias")
 	}
 }
 
