@@ -75,6 +75,14 @@ func resolveImageHostPolicy(tracker string, trackerCfg config.TrackerConfig, ove
 	return policy, nil
 }
 
+func PreferredImageUploadHost(tracker string, trackerCfg config.TrackerConfig, overrides api.ImageHostOverrides) (string, error) {
+	policy, err := resolveImageHostPolicy(tracker, trackerCfg, overrides)
+	if err != nil {
+		return "", err
+	}
+	return preferredHost(policy), nil
+}
+
 func RequiredImageUploadTargets(appCfg config.Config, trackerNames []string, overrides api.ImageHostOverrides) ([]ImageUploadTarget, error) {
 	targets := make([]ImageUploadTarget, 0, len(trackerNames))
 	seen := make(map[string]int, len(trackerNames))
