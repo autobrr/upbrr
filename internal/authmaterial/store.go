@@ -38,12 +38,14 @@ const (
 )
 
 type Record struct {
-	Username               string          `json:"username"`
-	PasswordHash           string          `json:"password_hash"`
-	EncryptionKeySeed      string          `json:"encryption_key_seed,omitempty"`
-	AllowUnencryptedExport bool            `json:"allow_unencrypted_export,omitempty"`
-	PendingUpgrade         *PendingUpgrade `json:"pending_upgrade,omitempty"`
-	CreatedAt              time.Time       `json:"created_at"`
+	Username                string          `json:"username"`
+	PasswordHash            string          `json:"password_hash"`
+	EncryptionKeySeed       string          `json:"encryption_key_seed,omitempty"`
+	AllowUnencryptedExport  bool            `json:"allow_unencrypted_export,omitempty"`
+	BrowseRoot              string          `json:"browse_root,omitempty"`
+	AllowUnrestrictedBrowse bool            `json:"allow_unrestricted_browse,omitempty"`
+	PendingUpgrade          *PendingUpgrade `json:"pending_upgrade,omitempty"`
+	CreatedAt               time.Time       `json:"created_at"`
 }
 
 type PendingUpgrade struct {
@@ -157,6 +159,8 @@ func (s *Store) UpdateRecord(updated Record) error {
 		record.PasswordHash = strings.TrimSpace(updated.PasswordHash)
 		record.EncryptionKeySeed = strings.TrimSpace(updated.EncryptionKeySeed)
 		record.AllowUnencryptedExport = updated.AllowUnencryptedExport
+		record.BrowseRoot = strings.TrimSpace(updated.BrowseRoot)
+		record.AllowUnrestrictedBrowse = updated.AllowUnrestrictedBrowse
 		record.PendingUpgrade = updated.PendingUpgrade
 		return nil
 	})
@@ -169,7 +173,9 @@ func (s *Store) BeginPendingUpgrade(current Record, target Record) error {
 		}
 		if strings.TrimSpace(record.PasswordHash) != strings.TrimSpace(current.PasswordHash) ||
 			strings.TrimSpace(record.EncryptionKeySeed) != strings.TrimSpace(current.EncryptionKeySeed) ||
-			record.AllowUnencryptedExport != current.AllowUnencryptedExport {
+			record.AllowUnencryptedExport != current.AllowUnencryptedExport ||
+			strings.TrimSpace(record.BrowseRoot) != strings.TrimSpace(current.BrowseRoot) ||
+			record.AllowUnrestrictedBrowse != current.AllowUnrestrictedBrowse {
 			return errors.New("web auth: auth record changed during upgrade")
 		}
 

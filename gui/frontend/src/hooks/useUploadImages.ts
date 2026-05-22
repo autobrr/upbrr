@@ -5,6 +5,7 @@ import { useState, useCallback, useMemo, useEffect } from "react";
 import type {
   ScreenshotPreviewImage,
   UploadedImageLink,
+  UploadImageHostFailure,
   ExternalIDOverrides,
   ReleaseNameOverrides,
 } from "../types";
@@ -16,6 +17,7 @@ interface UploadImagesHookProps {
   releaseOverrideState?: { overrides?: ReleaseNameOverrides };
   uploadCandidates?: ScreenshotPreviewImage[];
   configuredImageHosts?: string[];
+  selectedTrackers?: string[];
 }
 
 export const useUploadImages = ({
@@ -24,6 +26,7 @@ export const useUploadImages = ({
   releaseOverrideState,
   uploadCandidates = [],
   configuredImageHosts = [],
+  selectedTrackers = [],
 }: UploadImagesHookProps) => {
   // State: Host & selection
   const [uploadHost, setUploadHost] = useState<string>("");
@@ -32,6 +35,7 @@ export const useUploadImages = ({
   // State: Upload progress & results
   const [uploadImagesLoading, setUploadImagesLoading] = useState(false);
   const [uploadImagesError, setUploadImagesError] = useState("");
+  const [uploadImageFailures, setUploadImageFailures] = useState<UploadImageHostFailure[]>([]);
   const [uploadedImages, setUploadedImages] = useState<UploadedImageLink[]>([]);
   const [uploadedImageRecords, setUploadedImageRecords] = useState<UploadedImageLink[]>([]);
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number }>({
@@ -144,6 +148,7 @@ export const useUploadImages = ({
   const handleUploadImages = useCallback(
     async (selected: ScreenshotPreviewImage[]) => {
       setUploadImagesError("");
+      setUploadImageFailures([]);
       const uploader = globalThis.go?.guiapp?.App?.UploadImages;
       if (!uploader) {
         setUploadImagesError("Image uploading is unavailable in this build.");
@@ -170,20 +175,53 @@ export const useUploadImages = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          selectedTrackers,
           uploadHost,
           selected.map((entry) => entry.image),
         );
-        setUploadedImages(result || []);
-        setUploadProgress({ current: result?.length || 0, total: selected.length });
+        const links = result?.Links || [];
+        const failures = result?.Failures || [];
+        const uploadedCount = new Set(links.map((link) => link.ImagePath).filter(Boolean)).size;
+        setUploadedImages(links);
+        setUploadImageFailures(failures);
+        if (failures.length > 0) {
+          const failedHosts = Array.from(
+            new Set(failures.map((failure) => failure.Host || "unknown host")),
+          ).join(", ");
+          setUploadImagesError(`Image upload failed for ${failedHosts}.`);
+        }
+        if (uploadedCount !== selected.length) {
+          console.error("Upload count mismatch", {
+            expectedCount: selected.length,
+            uploadedCount,
+          });
+          if (failures.length === 0) {
+            setUploadImagesError(
+              `Upload completed with an unexpected result count (expected ${selected.length}, got ${uploadedCount}).`,
+            );
+          }
+        }
+        setUploadProgress({
+          current: uploadedCount,
+          total: selected.length,
+        });
         await refreshUploadedImages();
       } catch (err) {
         setUploadImagesError(String(err));
+        setUploadImageFailures([]);
         setUploadProgress({ current: 0, total: selected.length });
       } finally {
         setUploadImagesLoading(false);
       }
     },
-    [path, idOverrideState, releaseOverrideState, uploadHost, refreshUploadedImages],
+    [
+      path,
+      idOverrideState,
+      releaseOverrideState,
+      selectedTrackers,
+      uploadHost,
+      refreshUploadedImages,
+    ],
   );
 
   // Delete a single uploaded image record
@@ -232,6 +270,7 @@ export const useUploadImages = ({
     setUploadSelections({});
     setUploadImagesLoading(false);
     setUploadImagesError("");
+    setUploadImageFailures([]);
     setUploadedImages([]);
     setUploadedImageRecords([]);
     setUploadProgress({ current: 0, total: 0 });
@@ -243,6 +282,7 @@ export const useUploadImages = ({
     uploadSelections,
     uploadImagesLoading,
     uploadImagesError,
+    uploadImageFailures,
     uploadedImages,
     uploadedImageRecords,
     uploadedRecordByPath,

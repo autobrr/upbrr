@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -250,6 +251,44 @@ func TestBuildUploadDryRunUsesBuilder(t *testing.T) {
 	}
 }
 
+func TestBuildUploadDryRunBlocksWhenImageHostFallbacksFail(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubDryRunDefinition{name: "PTP"}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	images := &stubImageService{
+		errs: map[string]error{
+			"ptpimg":  errors.New("ptpimg unavailable"),
+			"pixhost": errors.New("pixhost unavailable"),
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(config.Config{}, nil, repo, registry, images)
+
+	entries, err := svc.BuildUploadDryRun(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"}, []string{"PTP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.Status != "blocked" {
+		t.Fatalf("expected blocked dry run, got %#v", entry)
+	}
+	if entry.ImageHost.Status != "warning" || len(entry.ImageHost.Warnings) != 2 {
+		t.Fatalf("expected image host warnings to be attached, got %#v", entry.ImageHost)
+	}
+}
+
 func TestBuildUploadDryRunIncludesRuleFailedTrackersWhenOverrideEnabled(t *testing.T) {
 	t.Parallel()
 
@@ -347,6 +386,64 @@ func TestUploadAggregatesUploadedTorrentArtifacts(t *testing.T) {
 	}
 	if summary.UploadedTorrents[0].DownloadURL != "https://aither.cc/torrent/download/374352.382" {
 		t.Fatalf("unexpected download URL: %q", summary.UploadedTorrents[0].DownloadURL)
+	}
+}
+
+func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubUploadArtifactDefinition{name: "PTP"},
+		stubUploadArtifactDefinition{name: "STC"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	images := &stubImageService{repo: repo}
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			DefaultTrackers: config.CSVList{"PTP", "STC"},
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {ImageHost: "ptpimg"},
+				"STC": {ImageHost: "imgbox"},
+			},
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+
+	summary, err := svc.Upload(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"})
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if summary.Uploaded != 2 {
+		t.Fatalf("expected 2 tracker uploads, got %d", summary.Uploaded)
+	}
+	firstRunCalls := append([]string{}, images.calls...)
+	sort.Strings(firstRunCalls)
+	if got := strings.Join(firstRunCalls, ","); got != "imgbox,ptpimg" {
+		t.Fatalf("expected one upload per configured host, got %q", got)
+	}
+
+	summary, err = svc.Upload(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"})
+	if err != nil {
+		t.Fatalf("unexpected second upload error: %v", err)
+	}
+	if summary.Uploaded != 2 {
+		t.Fatalf("expected 2 tracker uploads on second run, got %d", summary.Uploaded)
+	}
+	secondRunCalls := append([]string{}, images.calls...)
+	sort.Strings(secondRunCalls)
+	if got := strings.Join(secondRunCalls, ","); got != "imgbox,ptpimg" {
+		t.Fatalf("expected existing host variants to be reused on second run, got calls %q", got)
 	}
 }
 

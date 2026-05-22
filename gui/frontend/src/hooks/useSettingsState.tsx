@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { ConfigMap, ConfigValue, FieldMeta } from "../types";
+import type { ConfigMap, ConfigValue, FieldMeta, ImageHostPolicyMetadata } from "../types";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
@@ -85,6 +85,17 @@ const imageHostOptions = [
   { value: "utppm", label: "UTPPM" },
 ];
 
+const trackerImageHostOptions = [...imageHostOptions, { value: "hdb", label: "HDB" }];
+const imageHostOptionLabels = new Map(
+  trackerImageHostOptions.map((option) => [option.value, option.label]),
+);
+const defaultOwnedImageHosts: Record<string, string> = { hdb: "HDB" };
+const normalizeImageHostValue = (value: string) => value.trim().toLowerCase();
+const imageHostOptionFor = (host: string) => {
+  const value = normalizeImageHostValue(host);
+  return { value, label: imageHostOptionLabels.get(value) ?? value };
+};
+
 const imageHostKeyMap: Record<string, string[]> = {
   imgbb: ["ImgBBAPI"],
   ptpimg: ["PTPImgAPI"],
@@ -148,6 +159,10 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   CheckRequests: boolField("CheckRequests", { label: "Check requests", advanced: true }),
   FullMediainfo: boolField("FullMediainfo", { label: "Full mediainfo", advanced: true }),
   ImgRehost: boolField("ImgRehost", { label: "Image rehost", advanced: true }),
+  ImageHost: stringField("ImageHost", {
+    label: "Image host",
+    options: imageHostOptions,
+  }),
   UseSpanishTitle: boolField("UseSpanishTitle", { label: "Use Spanish title", advanced: true }),
   UseItalianTitle: boolField("UseItalianTitle", { label: "Use Italian title", advanced: true }),
   OTPURI: stringField("OTPURI", { label: "OTP URI", sensitive: true, advanced: true }),
@@ -623,6 +638,8 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const [configData, setConfigData] = useState<ConfigMap | null>(null);
   const [defaultConfig, setDefaultConfig] = useState<ConfigMap | null>(null);
   const [knownTrackers, setKnownTrackers] = useState<string[]>([]);
+  const [imageHostPolicyMetadata, setImageHostPolicyMetadata] =
+    useState<ImageHostPolicyMetadata | null>(null);
   const [knownTrackersLoading, setKnownTrackersLoading] = useState(false);
   const [trackerAddSelection, setTrackerAddSelection] = useState("");
   const [manualTrackerEntries, setManualTrackerEntries] = useState<Record<string, boolean>>({});
@@ -700,6 +717,44 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     const option = imageHostOptions.find((entry) => entry.value === value);
     return option ? option.label : value;
   };
+
+  const buildImageHostOptions = useCallback((hosts: string[]) => {
+    const allowed = new Set(
+      hosts.map((host) => normalizeImageHostValue(host)).filter((host) => host.length > 0),
+    );
+    const ordered = imageHostOptions.filter(
+      (option) => option.value === "" || allowed.has(option.value),
+    );
+    const known = new Set(ordered.map((option) => option.value));
+    const extras = Array.from(allowed)
+      .filter((host) => !known.has(host))
+      .sort((left, right) => left.localeCompare(right))
+      .map(imageHostOptionFor);
+    return [...ordered, ...extras];
+  }, []);
+
+  const trackerOptionsForImageHost = useCallback(
+    (trackerName: string) => {
+      const trackerKey = trackerName.trim().toUpperCase();
+      if (!imageHostPolicyMetadata) {
+        return trackerKey === "HDB" ? trackerImageHostOptions : imageHostOptions;
+      }
+
+      const policyHosts = imageHostPolicyMetadata.TrackerUploadHosts?.[trackerKey];
+      const fallbackHosts =
+        imageHostPolicyMetadata.UploadHosts?.map((host) => normalizeImageHostValue(host)) ??
+        imageHostOptions.filter((option) => option.value).map((option) => option.value);
+      const ownerByHost = imageHostPolicyMetadata.OwnedHosts ?? defaultOwnedImageHosts;
+      const hosts = (policyHosts ?? fallbackHosts).filter((host) => {
+        const normalizedHost = normalizeImageHostValue(host);
+        const owner = ownerByHost[normalizedHost];
+        return !owner || owner.trim().toUpperCase() === trackerKey;
+      });
+
+      return buildImageHostOptions(hosts);
+    },
+    [buildImageHostOptions, imageHostPolicyMetadata],
+  );
 
   const updateConfigValue = (path: string[], value: ConfigValue) => {
     setConfigData((prev) => {
@@ -836,6 +891,19 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
   }, [knownTrackersLoading]);
 
+  const loadImageHostPolicyMetadata = useCallback(async () => {
+    const getMetadata = globalThis.go?.guiapp?.App?.GetImageHostPolicyMetadata;
+    if (!getMetadata) return;
+    try {
+      const result = await getMetadata();
+      if (result && typeof result === "object") {
+        setImageHostPolicyMetadata(result);
+      }
+    } catch (err) {
+      setSettingsError(String(err));
+    }
+  }, []);
+
   const handleSaveSettings = async () => {
     clearSettingsStatus();
     const saveConfig = globalThis.go?.guiapp?.App?.SaveConfig;
@@ -886,6 +954,12 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       loadKnownTrackers();
     }
   }, [activeTab, knownTrackers.length, knownTrackersLoading, loadKnownTrackers]);
+
+  useEffect(() => {
+    if (activeTab === "settings" && !imageHostPolicyMetadata) {
+      loadImageHostPolicyMetadata();
+    }
+  }, [activeTab, imageHostPolicyMetadata, loadImageHostPolicyMetadata]);
 
   useEffect(() => {
     if ((activeTab === "screenshots" || activeTab === "upload_images") && !configData) {
@@ -943,6 +1017,23 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const renderField = (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => {
     const displayLabel = meta?.label ?? formatLabel(label);
     const typeHint = meta?.type;
+    if (meta?.options && meta.options.length > 0) {
+      return (
+        <label className="settings-field" key={path.join(".")}>
+          <span>{displayLabel}</span>
+          <select
+            value={value === null ? "" : String(value ?? "")}
+            onChange={(event) => updateConfigValue(path, event.target.value)}
+          >
+            {meta.options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    }
     if (typeHint === "boolean" || typeof value === "boolean") {
       return (
         <label className="settings-toggle" key={path.join(".")}>
@@ -1257,12 +1348,21 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
       const trackerFallbackSchema = [
         trackerFieldMeta.LinkDirName,
+        trackerFieldMeta.ImageHost,
         trackerFieldMeta.APIKey,
         trackerFieldMeta.AnnounceURL,
         trackerFieldMeta.Username,
         trackerFieldMeta.Password,
         trackerFieldMeta.Anon,
       ];
+      const trackerSchemaFor = (name: string) => {
+        const imageHostField = {
+          ...trackerFieldMeta.ImageHost,
+          options: trackerOptionsForImageHost(name),
+        };
+        const base = trackerSchemas[name] || trackerFallbackSchema;
+        return [imageHostField, ...base.filter((meta) => meta.key !== "ImageHost")];
+      };
 
       const buildDefault = (meta: FieldMeta) => {
         if (meta.type === "boolean") return false;
@@ -1383,7 +1483,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                   const name = trackerAddSelection.trim();
                   if (!name) return;
                   if (!allEntrySet.has(name)) {
-                    const schema = trackerSchemas[name] || trackerFallbackSchema;
+                    const schema = trackerSchemaFor(name);
                     addConfigKey(["Trackers", "Trackers"], name, buildTrackerDefaults(schema));
                   }
                   setManualTrackerEntries((prev) => ({ ...prev, [name]: true }));
@@ -1401,8 +1501,8 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               <p className="muted">No configured entries yet.</p>
             ) : (
               visibleEntries.map(([key, value]) => {
-                const schema = (trackerSchemas[key] || trackerFallbackSchema).filter(
-                  (meta): meta is FieldMeta => Boolean(meta),
+                const schema = trackerSchemaFor(key).filter((meta): meta is FieldMeta =>
+                  Boolean(meta),
                 );
                 return (
                   <details

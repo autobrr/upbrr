@@ -3,13 +3,13 @@
 
 package trackers
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
+)
 
 const globalImageUsageScope = "global"
-
-var trackerOwnedImageHosts = map[string]string{
-	"hdb": "HDB",
-}
 
 func normalizeUsageScope(scope string) string {
 	trimmed := strings.TrimSpace(scope)
@@ -37,20 +37,26 @@ func trackerImageUsageScope(tracker string) string {
 	return "tracker:" + trimmed
 }
 
-func usageScopeForHost(tracker string, host string) string {
+func usageScopeForHost(host string) string {
 	owner := trackerForOwnedHost(host)
 	if owner == "" {
 		return globalImageUsageScope
-	}
-	if strings.EqualFold(owner, tracker) {
-		return trackerImageUsageScope(owner)
 	}
 	return trackerImageUsageScope(owner)
 }
 
 func trackerForOwnedHost(host string) string {
-	normalized := strings.ToLower(strings.TrimSpace(host))
-	return trackerOwnedImageHosts[normalized]
+	return imagehostpolicy.OwnerForHost(host)
+}
+
+// TrackerForOwnedImageHost returns the owning tracker name for the provided image host string, or an empty string when unowned.
+func TrackerForOwnedImageHost(host string) string {
+	return trackerForOwnedHost(host)
+}
+
+// TrackerImageUsageScope returns the normalized image usage scope string for the provided tracker name.
+func TrackerImageUsageScope(tracker string) string {
+	return trackerImageUsageScope(tracker)
 }
 
 func uploadEligibleForTracker(scope string, tracker string) bool {

@@ -18,6 +18,7 @@ type UploadRequest struct {
 	AppConfig     config.Config
 	Logger        api.Logger
 	Repo          db.MetadataRepository
+	Images        api.ImageHostingService
 	Assets        *DescriptionAssets
 }
 

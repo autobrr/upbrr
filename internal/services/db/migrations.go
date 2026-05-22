@@ -54,6 +54,7 @@ var migrationRegistry = []migrationStep{
 	{id: "2026_04_normalize_description_overrides", dependsOn: []string{"2026_04_add_screenshot_slot_tables"}, apply: migrateNormalizeDescriptionOverrides},
 	{id: "2026_04_add_tracker_cookies", dependsOn: []string{"2026_04_normalize_description_overrides"}, apply: migrateAddTrackerCookies},
 	{id: "2026_04_add_release_category", dependsOn: []string{"2026_04_add_tracker_cookies"}, apply: migrateAddReleaseCategory},
+	{id: "2026_04_add_ui_state", dependsOn: []string{"2026_04_add_release_category"}, apply: migrateAddUIState},
 }
 
 var legacyVersionToMigrationIDs = map[int][]string{
@@ -309,6 +310,19 @@ func migrateAddReleaseCategory(ctx context.Context, exec migrationExecutor) erro
 	}
 	return nil
 }
+
+func migrateAddUIState(ctx context.Context, exec migrationExecutor) error {
+	_, err := exec.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS ui_states (
+			id TEXT PRIMARY KEY,
+			label TEXT NOT NULL DEFAULT "",
+			data TEXT NOT NULL DEFAULT "{}",
+			updated_at TEXT NOT NULL
+		)
+	`)
+	return err
+}
+
 func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName string, columnName string) (bool, error) {
 	rows, err := exec.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {
@@ -746,6 +760,14 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 		CREATE TABLE IF NOT EXISTS config_settings (
 			section TEXT PRIMARY KEY,
 			data TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)
+		`,
+		`
+		CREATE TABLE IF NOT EXISTS ui_states (
+			id TEXT PRIMARY KEY,
+			label TEXT NOT NULL DEFAULT '',
+			data TEXT NOT NULL DEFAULT '{}',
 			updated_at TEXT NOT NULL
 		)
 		`,

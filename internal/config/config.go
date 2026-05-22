@@ -15,6 +15,8 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 )
 
 type Config struct {
@@ -199,6 +201,7 @@ type TrackerConfig struct {
 	FullMediainfo       bool                   `yaml:"full_mediainfo" json:"FullMediainfo"`
 	UploaderName        string                 `yaml:"uploader_name" json:"UploaderName"`
 	ImgRehost           bool                   `yaml:"img_rehost" json:"ImgRehost"`
+	ImageHost           string                 `yaml:"image_host" json:"ImageHost"`
 	UseSpanishTitle     bool                   `yaml:"use_spanish_title" json:"UseSpanishTitle"`
 	UseItalianTitle     bool                   `yaml:"use_italian_title" json:"UseItalianTitle"`
 	OTPURI              string                 `yaml:"otp_uri" json:"OTPURI"`
@@ -291,11 +294,19 @@ func initTrackerSchema() {
 
 func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 	initTrackerSchema()
+	addGlobal := func(keys map[string]struct{}) map[string]struct{} {
+		keys["image_host"] = struct{}{}
+		return keys
+	}
 	if len(trackerSchema) == 0 {
 		return nil
 	}
 	if keys, ok := trackerSchema[trackerName]; ok {
-		return keys
+		clone := make(map[string]struct{}, len(keys)+1)
+		for key := range keys {
+			clone[key] = struct{}{}
+		}
+		return addGlobal(clone)
 	}
 	return nil
 }
@@ -647,19 +658,6 @@ type TorrentClientConfig struct {
 	VerifyWebUICertificate *bool    `yaml:"verify_webui_certificate"`
 }
 
-var trackerImageRehostValidationHosts = map[string][]string{
-	"A4K": {"ptpimg", "onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg"},
-	"BHD": {"ptpimg", "imgbox", "imgbb", "pixhost", "bhd", "bam"},
-	"DC":  {"imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex"},
-	"GPW": {"kshare", "pixhost", "ptpimg", "pterclub", "ilikeshots", "imgbox"},
-	"HDB": {"hdb"},
-	"MTV": {"ptpimg", "imgbox", "imgbb"},
-	"OE":  {"ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
-	"PTP": {"ptpimg", "pixhost"},
-	"STC": {"imgbox", "imgbb"},
-	"TVC": {"imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage"},
-}
-
 func (c Config) Validate() error {
 	if c.MainSettings.TMDBAPI == "" {
 		return errors.New("config: main_settings.tmdb_api is required")
@@ -709,11 +707,24 @@ func (c Config) Validate() error {
 	}
 
 	for trackerName, trackerCfg := range c.Trackers.Trackers {
+		imageHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
+		if imageHost != "" {
+			if !imagehostpolicy.IsUploadHost(imageHost) {
+				return fmt.Errorf("config: trackers.%s.image_host %q is not supported", trackerName, trackerCfg.ImageHost)
+			}
+			if owner := imagehostpolicy.OwnerForHost(imageHost); owner != "" && !strings.EqualFold(strings.TrimSpace(trackerName), owner) {
+				return fmt.Errorf("config: trackers.%s.image_host %q is owned by %s", trackerName, trackerCfg.ImageHost, owner)
+			}
+			policy := imagehostpolicy.ForTracker(trackerName, trackerCfg.ImgRehost, trackerCfg.ImgAPI)
+			if len(policy.AllowedHosts) > 0 && !imagehostpolicy.HostAllowed(imageHost, policy.AllowedHosts) {
+				return fmt.Errorf("config: trackers.%s.image_host %q is not allowed for this tracker", trackerName, trackerCfg.ImageHost)
+			}
+		}
 		if !trackerCfg.ImgRehost {
 			continue
 		}
-		hosts := trackerImageRehostValidationHosts[strings.ToUpper(strings.TrimSpace(trackerName))]
-		if len(hosts) == 0 {
+		policy := imagehostpolicy.ForTracker(trackerName, true, trackerCfg.ImgAPI)
+		if len(policy.AllowedHosts) == 0 {
 			return fmt.Errorf("config: trackers.%s.img_rehost requires a tracker image-host policy, but none is defined", trackerName)
 		}
 	}
@@ -731,8 +742,8 @@ func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
 		if !trackerCfg.ImgRehost {
 			continue
 		}
-		hosts := trackerImageRehostValidationHosts[strings.ToUpper(strings.TrimSpace(trackerName))]
-		if len(hosts) != 0 {
+		policy := imagehostpolicy.ForTracker(trackerName, true, trackerCfg.ImgAPI)
+		if len(policy.AllowedHosts) != 0 {
 			continue
 		}
 		trackerCfg.ImgRehost = false
