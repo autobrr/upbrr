@@ -120,6 +120,29 @@ func TestApplyRequestToPreparedMetaClearsDupeBlocksForIgnoredTrackers(t *testing
 	}
 }
 
+func TestApplyDupeSummaryBlocksSkippedAndFailedTrackers(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{}
+	applyDupeSummaryToPreparedMeta(&meta, api.DupeCheckSummary{
+		Results: []api.DupeCheckResult{
+			{Tracker: "BTN", Skipped: true, SkipReason: "BTN only supports TV dupe search"},
+			{Tracker: "RTF", Status: "failed", Error: "dupe search failed"},
+			{Tracker: "OE", Status: "completed"},
+		},
+	})
+
+	if got := meta.BlockedTrackers["BTN"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
+		t.Fatalf("expected BTN skipped dupe block, got %#v", meta.BlockedTrackers)
+	}
+	if got := meta.BlockedTrackers["RTF"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
+		t.Fatalf("expected RTF failed dupe block, got %#v", meta.BlockedTrackers)
+	}
+	if _, ok := meta.BlockedTrackers["OE"]; ok {
+		t.Fatalf("expected completed OE dupe check not to block, got %#v", meta.BlockedTrackers)
+	}
+}
+
 func TestApplyRequestToPreparedMetaPreservesCachedDescriptionGroupsWhenRequestOmitted(t *testing.T) {
 	t.Parallel()
 

@@ -933,14 +933,14 @@ func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, i
 		meta = preparedMeta
 	}
 
-	targets, err := c.resolveImageUploadTargets(req, host)
+	targets, err := c.resolveImageUploadTargets(req, meta, host)
 	if err != nil {
 		return api.UploadImagesResult{}, err
 	}
 	return c.uploadImagesToTargetsWithFallback(ctx, meta, host, targets, images)
 }
 
-func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]trackers.ImageUploadTarget, error) {
+func (c *Core) resolveImageUploadTargets(req api.Request, meta api.PreparedMetadata, host string) ([]trackers.ImageUploadTarget, error) {
 	normalizedHost := strings.ToLower(strings.TrimSpace(host))
 	if normalizedHost == "" {
 		return nil, internalerrors.ErrInvalidInput
@@ -949,6 +949,7 @@ func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]tracke
 	trackerCfg := c.cfg
 	trackerCfg.Trackers.DefaultTrackers = nil
 	resolvedTrackers := trackers.ResolveTrackers(trackerCfg, req.Trackers, req.TrackersRemove, c.logger)
+	resolvedTrackers = c.filterImageUploadTrackers(resolvedTrackers, meta)
 	targets, err := trackers.NeededImageUploadTargets(c.cfg, resolvedTrackers, normalizedHost)
 	if err != nil {
 		return nil, err
@@ -968,6 +969,58 @@ func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]tracke
 		return nil, fmt.Errorf("core: image host %q is tracker-scoped but no active tracker can use it", normalizedHost)
 	}
 	return normalized, nil
+}
+
+func (c *Core) filterImageUploadTrackers(trackerNames []string, meta api.PreparedMetadata) []string {
+	filtered := make([]string, 0, len(trackerNames))
+	for _, tracker := range trackerNames {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		blockedReasons := blockedReasonsForTracker(meta.BlockedTrackers, name)
+		ruleFailures := ruleFailuresForTracker(meta.TrackerRuleFailures, name)
+		if len(blockedReasons) > 0 || (!meta.IgnoreTrackerRuleFailures && len(ruleFailures) > 0) {
+			if c.logger != nil {
+				c.logger.Debugf("core: excluding blocked image upload tracker tracker=%s blocked_reasons=%v rule_failures=%d", name, blockedReasons, len(ruleFailures))
+			}
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered
+}
+
+func blockedReasonsForTracker(blocked map[string][]api.TrackerBlockReason, tracker string) []api.TrackerBlockReason {
+	if len(blocked) == 0 {
+		return nil
+	}
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if reasons, ok := blocked[name]; ok {
+		return reasons
+	}
+	for key, reasons := range blocked {
+		if strings.EqualFold(strings.TrimSpace(key), name) {
+			return reasons
+		}
+	}
+	return nil
+}
+
+func ruleFailuresForTracker(failures map[string][]api.RuleFailure, tracker string) []api.RuleFailure {
+	if len(failures) == 0 {
+		return nil
+	}
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if trackerFailures, ok := failures[name]; ok {
+		return trackerFailures
+	}
+	for key, trackerFailures := range failures {
+		if strings.EqualFold(strings.TrimSpace(key), name) {
+			return trackerFailures
+		}
+	}
+	return nil
 }
 
 func (c *Core) resolveFallbackImageUploadTargets(host string, trackerNames []string, excludedHosts []string) ([]trackers.ImageUploadTarget, error) {

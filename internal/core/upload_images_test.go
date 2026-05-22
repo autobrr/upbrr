@@ -303,6 +303,61 @@ func TestUploadImagesUsesSelectedHostWhenApprovedForTracker(t *testing.T) {
 	}
 }
 
+func TestUploadImagesFiltersCachedBlockedTrackers(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	imageService := &stubImageHosting{
+		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"HDB": {ImageHost: "hdb"},
+					"NBL": {},
+					"OE":  {},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeDupeCache("/tmp/source", "", api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"HDB": {api.TrackerBlockReasonDupe},
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"NBL": {{Rule: "require_tv_only", Reason: "category movie is not tv"}},
+		},
+	})
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"HDB", "NBL", "OE"},
+	}, "imgbb", images)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(imageService.calls) != 1 {
+		t.Fatalf("expected upload only for unblocked tracker, got %d calls: %#v", len(imageService.calls), imageService.calls)
+	}
+	if imageService.calls[0].host != "imgbb" {
+		t.Fatalf("expected only selected global host for OE, got %#v", imageService.calls[0])
+	}
+	if len(result.Links) != 1 || result.Links[0].Host != "imgbb" {
+		t.Fatalf("expected imgbb result only, got %#v", result)
+	}
+}
+
 func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
 	t.Parallel()
 
