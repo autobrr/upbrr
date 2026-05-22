@@ -124,6 +124,11 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs := flag.NewFlagSet("upbrr", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stdout, "Usage: upbrr [options] <path...>\n\nOptions:\n")
+		fs.PrintDefaults()
+	}
+
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 	fs.BoolVar(&opts.ShowVersion, "version", false, "Show version and exit")
 	fs.StringVar(&opts.QueueName, "queue", "", "Process an entire folder queue")
@@ -267,6 +272,10 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.Channel, "channel", "", "Override SPD channel")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(os.Stdout)
+			fs.Usage()
+		}
 		return cliOptions{}, nil, nil, err
 	}
 
@@ -424,9 +433,18 @@ func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stdout, "Usage: upbrr serve [options]\n\nOptions:\n")
+		fs.PrintDefaults()
+	}
+
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(os.Stdout)
+			fs.Usage()
+		}
 		return serveOptions{}, nil, err
 	}
 

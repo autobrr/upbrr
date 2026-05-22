@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -83,6 +84,9 @@ func run() error {
 
 	opts, visitedFlags, paths, err := parseCLIOptions(os.Args[1:])
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return exitError(2, err)
 	}
 
@@ -369,6 +373,9 @@ func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer,
 func runServe(args []string) error {
 	opts, visitedFlags, err := parseServeOptions(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 

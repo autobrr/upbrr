@@ -218,3 +218,71 @@ func TestRunExportConfigPlaintextExportsPlainSecrets(t *testing.T) {
 		t.Fatalf("expected plaintext export without encrypted envelopes, got %s", exported)
 	}
 }
+
+func TestRunHelpRequestedExitsCleanly(t *testing.T) {
+	oldArgs := os.Args
+	oldStdout := os.Stdout
+	defer func() {
+		os.Args = oldArgs
+		os.Stdout = oldStdout
+	}()
+
+	tmpDir := t.TempDir()
+	stdoutPath := filepath.Join(tmpDir, "stdout.txt")
+	stdoutFile, err := os.Create(stdoutPath)
+	if err != nil {
+		t.Fatalf("create stdout fixture: %v", err)
+	}
+	defer stdoutFile.Close()
+	os.Stdout = stdoutFile
+
+	os.Args = []string{"upbrr", "-h"}
+	if err := run(); err != nil {
+		t.Fatalf("expected run with -h to return nil, got %v", err)
+	}
+
+	stdoutFile.Close()
+	raw, err := os.ReadFile(stdoutPath)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+
+	output := string(raw)
+	if !strings.Contains(output, "Usage: upbrr [options]") {
+		t.Fatalf("expected output to contain Usage instructions, got %s", output)
+	}
+}
+
+func TestRunServeHelpRequestedExitsCleanly(t *testing.T) {
+	oldArgs := os.Args
+	oldStdout := os.Stdout
+	defer func() {
+		os.Args = oldArgs
+		os.Stdout = oldStdout
+	}()
+
+	tmpDir := t.TempDir()
+	stdoutPath := filepath.Join(tmpDir, "stdout.txt")
+	stdoutFile, err := os.Create(stdoutPath)
+	if err != nil {
+		t.Fatalf("create stdout fixture: %v", err)
+	}
+	defer stdoutFile.Close()
+	os.Stdout = stdoutFile
+
+	os.Args = []string{"upbrr", "serve", "-h"}
+	if err := run(); err != nil {
+		t.Fatalf("expected run with serve -h to return nil, got %v", err)
+	}
+
+	stdoutFile.Close()
+	raw, err := os.ReadFile(stdoutPath)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+
+	output := string(raw)
+	if !strings.Contains(output, "Usage: upbrr serve [options]") {
+		t.Fatalf("expected output to contain Usage instructions, got %s", output)
+	}
+}
