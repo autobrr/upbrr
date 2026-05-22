@@ -355,6 +355,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 				AppConfig:     s.cfg,
 				Logger:        s.logger,
 				Repo:          s.repo,
+				Images:        s.images,
 				Assets:        &assets,
 			})
 			if err != nil {
@@ -761,6 +762,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			AppConfig:     s.cfg,
 			Logger:        s.logger,
 			Repo:          s.repo,
+			Images:        s.images,
 			Assets:        &assets,
 		})
 		if err != nil {

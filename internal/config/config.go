@@ -715,7 +715,7 @@ func (c Config) Validate() error {
 			if owner := imagehostpolicy.OwnerForHost(imageHost); owner != "" && !strings.EqualFold(strings.TrimSpace(trackerName), owner) {
 				return fmt.Errorf("config: trackers.%s.image_host %q is owned by %s", trackerName, trackerCfg.ImageHost, owner)
 			}
-			policy := imagehostpolicy.ForTracker(trackerName, trackerCfg.ImgRehost)
+			policy := imagehostpolicy.ForTracker(trackerName, trackerCfg.ImgRehost, trackerCfg.ImgAPI)
 			if len(policy.AllowedHosts) > 0 && !imagehostpolicy.HostAllowed(imageHost, policy.AllowedHosts) {
 				return fmt.Errorf("config: trackers.%s.image_host %q is not allowed for this tracker", trackerName, trackerCfg.ImageHost)
 			}
@@ -723,7 +723,7 @@ func (c Config) Validate() error {
 		if !trackerCfg.ImgRehost {
 			continue
 		}
-		policy := imagehostpolicy.ForTracker(trackerName, true)
+		policy := imagehostpolicy.ForTracker(trackerName, true, trackerCfg.ImgAPI)
 		if len(policy.AllowedHosts) == 0 {
 			return fmt.Errorf("config: trackers.%s.img_rehost requires a tracker image-host policy, but none is defined", trackerName)
 		}
@@ -742,7 +742,7 @@ func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
 		if !trackerCfg.ImgRehost {
 			continue
 		}
-		policy := imagehostpolicy.ForTracker(trackerName, true)
+		policy := imagehostpolicy.ForTracker(trackerName, true, trackerCfg.ImgAPI)
 		if len(policy.AllowedHosts) != 0 {
 			continue
 		}

@@ -26,7 +26,7 @@ type ImageUploadTarget struct {
 }
 
 func policyForTracker(tracker string, trackerCfg config.TrackerConfig) imageHostPolicy {
-	return policyFromShared(imagehostpolicy.ForTracker(tracker, trackerCfg.ImgRehost))
+	return policyFromShared(imagehostpolicy.ForTracker(tracker, trackerCfg.ImgRehost, trackerCfg.ImgAPI))
 }
 
 func applyImageHostOverrides(tracker string, policy imageHostPolicy, overrides api.ImageHostOverrides) (imageHostPolicy, error) {
@@ -73,6 +73,14 @@ func resolveImageHostPolicy(tracker string, trackerCfg config.TrackerConfig, ove
 	}
 	policy.preferred = prependHost(host, policy.preferred)
 	return policy, nil
+}
+
+func PreferredImageUploadHost(tracker string, trackerCfg config.TrackerConfig, overrides api.ImageHostOverrides) (string, error) {
+	policy, err := resolveImageHostPolicy(tracker, trackerCfg, overrides)
+	if err != nil {
+		return "", err
+	}
+	return preferredHost(policy), nil
 }
 
 func RequiredImageUploadTargets(appCfg config.Config, trackerNames []string, overrides api.ImageHostOverrides) ([]ImageUploadTarget, error) {

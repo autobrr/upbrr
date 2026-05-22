@@ -518,6 +518,9 @@ func evaluateLanguageRule(meta api.PreparedMetadata, rule *additional.LanguageRu
 	if rule == nil {
 		return true, ""
 	}
+	if rule.ApplyIfNonBDMV && strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		return true, ""
+	}
 	if rule.ApplyIfNonDisc && isDiscType(meta.DiscType) {
 		return true, ""
 	}

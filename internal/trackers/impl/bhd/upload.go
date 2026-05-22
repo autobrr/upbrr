@@ -133,6 +133,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if req.Meta.ExternalIDs.TMDBID == 0 {
 		return uploadState{}, errors.New("trackers: BHD missing tmdb id")
 	}
+	if err := validateBHDContainer(req.Meta); err != nil {
+		return uploadState{}, err
+	}
 
 	var err error
 	var assets trackers.DescriptionAssets
@@ -368,6 +371,17 @@ func resolveCategoryID(meta api.PreparedMetadata) string {
 		return "2"
 	}
 	return "1"
+}
+
+func validateBHDContainer(meta api.PreparedMetadata) error {
+	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
+	case "REMUX", "ENCODE", "WEBDL", "WEBRIP":
+		container := strings.ToLower(strings.TrimSpace(meta.Container))
+		if container != "" && container != "mkv" && container != "mp4" {
+			return fmt.Errorf("trackers: BHD container %q is not allowed for %s: only MKV and MP4 are permitted", meta.Container, meta.Type)
+		}
+	}
+	return nil
 }
 
 func resolveSource(source string) string {

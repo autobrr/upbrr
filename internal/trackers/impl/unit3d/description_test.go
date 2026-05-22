@@ -293,6 +293,37 @@ func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DDescriptionAddsSHRIIslandReleaseNotes(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Group: "island"},
+	}
+
+	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Release Shareisland 🏴‍☠️") {
+		t.Fatalf("expected Shareisland notes, got %q", result)
+	}
+	if !strings.Contains(result, "Base description") {
+		t.Fatalf("expected base description to be preserved, got %q", result)
+	}
+}
+
+func TestBuildUnit3DDescriptionSkipsSHRIIslandReleaseNotesForOtherGroups(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Group: "other"},
+	}
+
+	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result, "Release Shareisland") {
+		t.Fatalf("did not expect Shareisland notes, got %q", result)
+	}
+}
+
 func TestBuildUnit3DDescriptionSkipsDuplicateTemplateAndKeptContent(t *testing.T) {
 	block := `[center]
 [url=https://ptpimg.me/8ca234.png][img=350]https://ptpimg.me/8ca234.png[/img][/url]

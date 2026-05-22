@@ -34,21 +34,28 @@ func TestSelectBestSeries(t *testing.T) {
 	}
 }
 
-func TestSpecificYearAlias(t *testing.T) {
-	aliases := []Alias{
-		{Name: "Titre FR", Language: "fra"},
-		{Name: "Cats Eye", Language: "eng"},
+func TestSpecificSeriesAliasDoesNotUseSlugFallback(t *testing.T) {
+	data := EpisodesData{
+		Aliases: []Alias{
+			{Name: "Titre FR", Language: "fra"},
+			{Name: "Cats Eye", Language: "eng"},
+		},
+		Slug: "cats-eye-2025",
 	}
-	if got := specificYearAlias(aliases, "cats-eye-2025"); got != "Cats Eye (2025)" {
-		t.Fatalf("expected slug fallback alias, got %q", got)
+	if got := specificSeriesAlias(data); got != "" {
+		t.Fatalf("expected no slug fallback alias, got %q", got)
 	}
 
 	aliasesWithYear := []Alias{
 		{Name: "Cats Eye", Language: "eng"},
 		{Name: "Cats Eye (2024)", Language: "eng"},
 	}
-	if got := specificYearAlias(aliasesWithYear, "cats-eye-2025"); got != "Cats Eye (2024)" {
+	if got := specificSeriesAlias(EpisodesData{Aliases: aliasesWithYear, Slug: "cats-eye-2025"}); got != "Cats Eye (2024)" {
 		t.Fatalf("expected explicit alias year to win, got %q", got)
+	}
+
+	if got := specificSeriesAlias(EpisodesData{SeriesTitle: "Cats Eye", SeriesYear: 2025}); got != "Cats Eye (2025)" {
+		t.Fatalf("expected explicit series title/year, got %q", got)
 	}
 }
 
@@ -252,6 +259,70 @@ func TestGetEpisodesExtractsScheduleHints(t *testing.T) {
 	}
 	if len(data.AirsDays) != 2 || data.AirsDays[0] != "Monday" || data.AirsDays[1] != "Wednesday" {
 		t.Fatalf("expected parsed airs days, got %#v", data.AirsDays)
+	}
+}
+
+func TestGetEpisodesUsesTranslationSeriesMetadataWithoutSlugFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
+		case "/series/12/episodes/default":
+			_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":1,"seasonNumber":1,"number":1,"name":"Pilot"}],"slug":"cats-eye-2025"}}`))
+		case "/series/12/extended":
+			_, _ = w.Write([]byte(`{"data":{"name":"キャッツ・アイ","slug":"cats-eye-2025","aliases":[{"name":"Cats Eye","language":"eng"}]}}`))
+		case "/series/12/translations/eng":
+			_, _ = w.Write([]byte(`{"data":{"name":"Cat's Eye","aliases":["Cats Eye"]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", "")
+	client.baseURL = server.URL
+
+	data, alias, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if alias != "Cat's Eye" {
+		t.Fatalf("expected translated title without slug year, got %q", alias)
+	}
+	if data.SeriesYear != 0 {
+		t.Fatalf("expected no series year from slug while english aliases exist, got %d", data.SeriesYear)
+	}
+}
+
+func TestGetEpisodesUsesExplicitTranslationAliasYear(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
+		case "/series/12/episodes/default":
+			_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":1,"seasonNumber":1,"number":1,"name":"Pilot"}],"slug":"cats-eye-2025"}}`))
+		case "/series/12/extended":
+			_, _ = w.Write([]byte(`{"data":{"name":"キャッツ・アイ","slug":"cats-eye-2025","aliases":[{"name":"Cats Eye","language":"eng"}]}}`))
+		case "/series/12/translations/eng":
+			_, _ = w.Write([]byte(`{"data":{"name":"Cat's Eye","aliases":["Cat's Eye (2025)"]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", "")
+	client.baseURL = server.URL
+
+	data, alias, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if alias != "Cat's Eye (2025)" {
+		t.Fatalf("expected explicit translation alias year, got %q", alias)
+	}
+	if data.SeriesYear != 2025 {
+		t.Fatalf("expected explicit series year 2025, got %d", data.SeriesYear)
 	}
 }
 

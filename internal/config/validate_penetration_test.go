@@ -239,7 +239,11 @@ func TestValidateAllImageRehostPoliciesAccepted(t *testing.T) {
 
 	for trackerName := range imagehostpolicy.KnownTrackerPolicies() {
 		cfg := withBase(func(c *Config) {
-			c.Trackers.Trackers = map[string]TrackerConfig{trackerName: {ImgRehost: true}}
+			trackerCfg := TrackerConfig{ImgRehost: true}
+			if strings.EqualFold(trackerName, "THR") {
+				trackerCfg.ImgAPI = "secret"
+			}
+			c.Trackers.Trackers = map[string]TrackerConfig{trackerName: trackerCfg}
 		})
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("tracker %s img_rehost should validate: %v", trackerName, err)

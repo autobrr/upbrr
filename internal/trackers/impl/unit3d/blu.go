@@ -6,7 +6,6 @@ package unit3d
 import (
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -15,9 +14,6 @@ func siteBLUProfile() unit3DSiteProfile {
 		resolveTypeID:       resolveUnit3DBLUTypeID,
 		resolveResolutionID: resolveUnit3DBLUResolutionID,
 		resolveCategoryID:   resolveUnit3DBLUCategoryID,
-		applyAdditionalPayload: func(req trackers.UploadRequest, data map[string]string) {
-			data["modq"] = boolFlag(req.TrackerConfig.ModQ)
-		},
 	}
 }
 

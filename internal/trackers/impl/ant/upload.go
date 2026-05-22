@@ -18,8 +18,10 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -32,11 +34,11 @@ var antEmptyURLPattern = regexp.MustCompile(`(?is)\[url=[^\]]*]\s*\[/url\]`)
 
 var antBannedReleaseGroups = map[string]struct{}{
 	"3LTON": {}, "4yEo": {}, "ADE": {}, "AFG": {}, "AniHLS": {}, "AnimeRG": {}, "AniURL": {}, "AROMA": {}, "aXXo": {}, "Brrip": {},
-	"CHD": {}, "CM8": {}, "CrEwSaDe": {}, "d3g": {}, "DDR": {}, "DNL": {}, "DeadFish": {}, "ELiTE": {}, "eSc": {}, "FaNGDiNG0": {},
-	"FGT": {}, "Flights": {}, "FRDS": {}, "FUM": {}, "HAiKU": {}, "HD2DVD": {}, "HDS": {}, "HDTime": {}, "Hi10": {}, "ION10": {},
+	"CHD": {}, "CM8": {}, "CrEwSaDe": {}, "d3g": {}, "DDR": {}, "DNL": {}, "DeadFish": {}, "ELiTE": {}, "eSc": {}, "EVO": {}, "FaNGDiNG0": {},
+	"FGT": {}, "FRDS": {}, "FUM": {}, "HAiKU": {}, "HD2DVD": {}, "HDS": {}, "HDTime": {}, "Hi10": {}, "ION10": {},
 	"iPlanet": {}, "JIVE": {}, "KiNGDOM": {}, "Leffe": {}, "LiGaS": {}, "LOAD": {}, "MeGusta": {}, "MkvCage": {}, "mHD": {}, "mSD": {},
 	"NhaNc3": {}, "nHD": {}, "NOIVTC": {}, "nSD": {}, "Oj": {}, "Ozlem": {}, "PiRaTeS": {}, "PRoDJi": {}, "RAPiDCOWS": {}, "RARBG": {},
-	"RetroPeeps": {}, "RDN": {}, "REsuRRecTioN": {}, "RMTeam": {}, "SANTi": {}, "SicFoI": {}, "SPASM": {}, "SPDVD": {}, "STUTTERSHIT": {}, "TBS": {},
+	"RetroPeeps": {}, "RDN": {}, "REsuRRecTioN": {}, "RMTeam": {}, "SANTi": {}, "SicFoI": {}, "SPASM": {}, "SM737": {}, "SPDVD": {}, "STUTTERSHIT": {}, "TBS": {},
 	"Telly": {}, "TM": {}, "UPiNSMOKE": {}, "URANiME": {}, "WAF": {}, "xRed": {}, "XS": {}, "YIFY": {}, "YTS": {}, "Zeus": {}, "ZKBL": {}, "ZmN": {}, "ZMNT": {},
 }
 
@@ -178,7 +180,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	adultContent := detectAdult(req.Meta)
 	safeScreens := resolveAdultScreensAllowed(answers, adultContent)
 	screenshots := resolveScreenshotPayload(descriptionAssets.Screenshots, safeScreens)
-	mediaInfo, err := resolveMediaInfo(req.Meta)
+	mediaFields, err := resolveMediaFields(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, err
 	}
@@ -189,18 +191,17 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		"tmdbid":       strconv.Itoa(req.Meta.ExternalIDs.TMDBID),
 		"type":         strconv.Itoa(typeID),
 		"audioformat":  audio,
-		"mediainfo":    mediaInfo,
 		"release_desc": description,
 		"screenshots":  screenshots,
+	}
+	for key, value := range mediaFields {
+		fields[key] = value
 	}
 	if len(flags) > 0 {
 		fields["flags[]"] = strings.Join(flags, ",")
 	}
 	if req.Meta.Scene {
 		fields["censored"] = "1"
-	}
-	if strings.EqualFold(strings.TrimSpace(req.Meta.DiscType), "BDMV") {
-		fields["media"] = "BluRay"
 	}
 	if tags != "" {
 		fields["tags"] = tags
@@ -252,15 +253,59 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	return finalized, nil
 }
 
-func resolveMediaInfo(meta api.PreparedMetadata) (string, error) {
+func resolveMediaFields(meta api.PreparedMetadata, dbPath string) (map[string]string, error) {
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		bdinfo, err := resolveBDInfo(meta, dbPath)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(bdinfo) == "" {
+			return nil, errors.New("trackers: ANT missing BDInfo text")
+		}
+		return map[string]string{
+			"bdinfo":         bdinfo,
+			"container_type": "m2ts",
+		}, nil
+	}
+
 	if strings.TrimSpace(meta.MediaInfoTextPath) == "" {
-		return "", errors.New("trackers: ANT missing mediainfo text")
+		return nil, errors.New("trackers: ANT missing mediainfo text")
 	}
 	payload, err := os.ReadFile(strings.TrimSpace(meta.MediaInfoTextPath))
 	if err != nil {
-		return "", fmt.Errorf("trackers: ANT read mediainfo: %w", err)
+		return nil, fmt.Errorf("trackers: ANT read mediainfo: %w", err)
+	}
+	return map[string]string{"mediainfo": string(payload)}, nil
+}
+
+func resolveBDInfo(meta api.PreparedMetadata, dbPath string) (string, error) {
+	if summary, ok := meta.BDInfo["summary"].(string); ok && strings.TrimSpace(summary) != "" {
+		return summary, nil
+	}
+
+	path, err := resolveBDInfoPath(meta, dbPath)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("trackers: ANT read BDInfo: %w", err)
 	}
 	return string(payload), nil
+}
+
+func resolveBDInfoPath(meta api.PreparedMetadata, dbPath string) (string, error) {
+	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
+		return "", nil
+	}
+	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	if err != nil {
+		return "", err
+	}
+	return paths.PrimaryBDMVSummaryPath(tmpRoot, meta)
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata, state uploadState) *api.TrackerQuestionnaire {
@@ -412,7 +457,7 @@ func resolveAudioFormat(meta api.PreparedMetadata) string {
 func resolveFlags(meta api.PreparedMetadata) []string {
 	flags := make([]string, 0, 12)
 	edition := strings.ReplaceAll(meta.Edition, "'", "")
-	for _, candidate := range []string{"Directors", "Extended", "Uncut", "Unrated", "4KRemaster"} {
+	for _, candidate := range []string{"Directors", "Extended", "Uncut", "Unrated", "4KRemaster", "IMAX"} {
 		if strings.Contains(edition, candidate) {
 			flags = append(flags, candidate)
 		}
@@ -435,7 +480,7 @@ func resolveFlags(meta api.PreparedMetadata) []string {
 	if strings.Contains(strings.ToUpper(meta.HDR), "DV") {
 		flags = append(flags, "DV")
 	}
-	if strings.Contains(strings.ToUpper(meta.Distributor), "CRITERION") {
+	if strings.Contains(strings.ToUpper(meta.Distributor), "CRITERION") || strings.Contains(strings.ToUpper(meta.Edition), "CRITERION") {
 		flags = append(flags, "Criterion")
 	}
 	if strings.Contains(strings.ToUpper(meta.Type), "REMUX") {

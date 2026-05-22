@@ -23,6 +23,10 @@ type videoInfo struct {
 	SourcePath      string
 	DurationSeconds float64
 	FrameRate       float64
+	Width           int
+	Height          int
+	WidthScale      float64
+	HeightScale     float64
 }
 
 type mediaInfoDoc struct {
@@ -45,6 +49,7 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 	doc, _ := loadMediaInfoDoc(meta.MediaInfoJSONPath)
 	info.DurationSeconds = mediaInfoDurationSeconds(doc)
 	info.FrameRate = mediaInfoFrameRate(doc)
+	info.Width, info.Height, info.WidthScale, info.HeightScale = mediaInfoVideoGeometry(doc)
 	if info.FrameRate <= 0 {
 		info.FrameRate = 24.0
 	}
@@ -169,6 +174,78 @@ func mediaInfoFrameRate(doc mediaInfoDoc) float64 {
 	return 0
 }
 
+func mediaInfoVideoGeometry(doc mediaInfoDoc) (int, int, float64, float64) {
+	widthScale := 1.0
+	heightScale := 1.0
+	for _, track := range doc.Media.Track {
+		trackType := strings.ToLower(trackString(track, "@type"))
+		if trackType != "video" {
+			continue
+		}
+		width := parseDimensionInt(trackString(track, "Width"))
+		height := parseDimensionInt(trackString(track, "Height"))
+		if width <= 0 || height <= 0 {
+			return width, height, widthScale, heightScale
+		}
+		par := parseAspectFloat(trackString(track, "PixelAspectRatio"))
+		if par <= 0 {
+			par = 1.0
+		}
+		dar := parseAspectFloat(trackString(track, "DisplayAspectRatio"))
+		if dar <= 0 {
+			dar = 16.0 / 9.0
+		}
+
+		switch {
+		case par == 1:
+			return width, height, widthScale, heightScale
+		case par < 1:
+			scaledHeight := dar * float64(height)
+			if scaledHeight > 0 {
+				heightScale = float64(width) / scaledHeight
+			}
+		default:
+			widthScale = par
+		}
+		return width, height, widthScale, heightScale
+	}
+	return 0, 0, widthScale, heightScale
+}
+
+func parseAspectFloat(value string) float64 {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0
+	}
+	if strings.Contains(trimmed, ":") {
+		parts := strings.SplitN(trimmed, ":", 2)
+		left := parseFloat(parts[0])
+		right := parseFloat(parts[1])
+		if left > 0 && right > 0 {
+			return left / right
+		}
+		return 0
+	}
+	return parseFloat(trimmed)
+}
+
+func parseDimensionInt(value string) int {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0
+	}
+	digits := strings.Builder{}
+	for _, r := range trimmed {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	if digits.Len() == 0 {
+		return 0
+	}
+	return int(parseFloat(digits.String()))
+}
+
 func parseDurationValue(value string) float64 {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -211,7 +288,11 @@ func parseDurationSeconds(value string) float64 {
 
 func parseFloat(value string) float64 {
 	trimmed := strings.TrimSpace(strings.ReplaceAll(value, ",", ""))
-	trimmed = strings.Fields(trimmed)[0]
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return 0
+	}
+	trimmed = fields[0]
 	parsed, err := strconv.ParseFloat(trimmed, 64)
 	if err != nil {
 		return 0

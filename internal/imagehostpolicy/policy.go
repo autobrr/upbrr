@@ -31,6 +31,7 @@ var trackerAllowedHosts = map[string][]string{
 	"OE":  {"ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
 	"PTP": {"ptpimg", "pixhost"},
 	"STC": {"imgbox", "imgbb"},
+	"THR": {"thr"},
 	"TVC": {"imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage"},
 }
 
@@ -47,17 +48,22 @@ var uploadHosts = map[string]struct{}{
 	"ptscreens":    {},
 	"seedpool_cdn": {},
 	"sharex":       {},
+	"thr":          {},
 	"utppm":        {},
 	"zipline":      {},
 }
 
 var ownedHosts = map[string]string{
 	"hdb": "HDB",
+	"thr": "THR",
 }
 
-func ForTracker(tracker string, imgRehost bool) Policy {
+func ForTracker(tracker string, imgRehost bool, imgAPI string) Policy {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
 	if name == "HDB" && !imgRehost {
+		return Policy{}
+	}
+	if name == "THR" && strings.TrimSpace(imgAPI) == "" {
 		return Policy{}
 	}
 	allowed, ok := trackerAllowedHosts[name]

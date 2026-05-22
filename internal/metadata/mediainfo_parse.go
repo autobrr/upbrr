@@ -135,7 +135,7 @@ func extractDVDMediaInfo(meta api.PreparedMetadata) api.DVDMediaInfo {
 	}
 
 	scanType := strings.TrimSpace(trackString(videoTrack, "ScanType"))
-	if (scanType == "" || strings.EqualFold(scanType, "Progressive")) && mediaInfoText != "" {
+	if scanType == "" && mediaInfoText != "" {
 		if scanText := regexString(scanTypeRegex, mediaInfoText); scanText != "" {
 			scanType = strings.TrimSpace(scanText)
 		}

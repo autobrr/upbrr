@@ -59,6 +59,7 @@ func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uplo
 		"passtheimage": &passTheImageUploader{apiKey: cfg.ImageHosting.PassTheImageAPI, client: client},
 		"seedpool_cdn": &seedpoolUploader{apiKey: cfg.ImageHosting.SeedpoolCDNAPI, client: client},
 		"sharex":       &shareXUploader{apiKey: cfg.ImageHosting.ShareXAPIKey, url: cfg.ImageHosting.ShareXURL, client: client},
+		"thr":          &thrUploader{apiKey: cfg.Trackers.Trackers["THR"].ImgAPI, client: client},
 		"utppm":        &utppmUploader{apiKey: cfg.ImageHosting.UTPPMAPI, client: client},
 	}
 }
@@ -715,6 +716,47 @@ func (u *utppmUploader) Upload(ctx context.Context, imagePath string) (uploadRes
 		RawURL: response.Image.URL,
 		WebURL: response.Image.URLViewer,
 	}, nil
+}
+
+type thrUploader struct {
+	apiKey string
+	client *http.Client
+}
+
+func (u *thrUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
+	if strings.TrimSpace(u.apiKey) == "" {
+		return uploadResult{}, errors.New("image hosting: thr api key missing")
+	}
+	body, status, err := postMultipart(ctx, u.client, "https://img2.torrenthr.org/api/1/upload", map[string]string{
+		"key": strings.TrimSpace(u.apiKey),
+	}, "source", imagePath, nil)
+	if err != nil {
+		return uploadResult{}, err
+	}
+	if status != http.StatusOK {
+		return uploadResult{}, fmt.Errorf("thr upload failed with status %d", status)
+	}
+
+	var response struct {
+		Image struct {
+			URL string `json:"url"`
+		} `json:"image"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return uploadResult{}, fmt.Errorf("thr invalid response: %w", err)
+	}
+	imageURL := strings.TrimSpace(response.Image.URL)
+	if imageURL == "" {
+		message := strings.TrimSpace(response.Error.Message)
+		if message == "" {
+			message = "thr upload failed"
+		}
+		return uploadResult{}, fmt.Errorf("thr upload failed: %s", message)
+	}
+	return uploadResult{ImgURL: imageURL, RawURL: imageURL, WebURL: imageURL}, nil
 }
 
 type ptpImgUploader struct {
