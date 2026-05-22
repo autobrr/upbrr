@@ -14,10 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -91,6 +94,17 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 			return api.PreparedMetadata{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
 		}
 	}
+	// For non-DVD content, if rls did not parse a resolution from the filename,
+	// fall back to deriving it from the MediaInfo video track dimensions —
+	// matching the Python get_resolution() behaviour.
+	if strings.TrimSpace(meta.Release.Resolution) == "" && !strings.EqualFold(meta.DiscType, "DVD") {
+		if res := resolutionFromMediaInfo(miDoc, meta.SourcePath); res != "" {
+			meta.Release.Resolution = res
+			if s.logger != nil {
+				s.logger.Debugf("metadata: resolution derived from mediainfo %q", res)
+			}
+		}
+	}
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details source=%q type=%q resolution=%q", meta.Source, meta.Type, meta.Release.Resolution)
 	}
@@ -151,17 +165,8 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	}
 
 	applyMetadataOverrides(&meta)
-
-	nameRequest := releaseNameRequestFromMeta(meta, s.logger)
-	nameRequest = applyReleaseNameOverrides(nameRequest, meta.ReleaseNameOverrides, s.logger)
-	nameResult := BuildReleaseName(nameRequest, s.logger)
-	meta.ReleaseNameNoTag = nameResult.NameNoTag
-	meta.ReleaseName = nameResult.Name
-	meta.ReleaseNameClean = nameResult.CleanName
-	meta.ReleaseNameMissing = append([]string{}, nameResult.MissingFields...)
-	if s.logger != nil && nameResult.Name != "" {
-		s.logger.Tracef("metadata: release name resolved %q", nameResult.Name)
-	}
+	ApplyRequestScopedAudioPolicy(&meta, s.cfg, s.logger)
+	RebuildReleaseName(&meta, s.logger)
 
 	meta, err = s.applyTrackerRules(ctx, meta)
 	if err != nil {
@@ -172,6 +177,31 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		return api.PreparedMetadata{}, err
 	}
 
+	return meta, nil
+}
+
+func (s *Service) RefreshPreparedMetadata(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	if s == nil {
+		return meta, nil
+	}
+	refreshService := *s
+
+	meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonAudio)
+	meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonClaim)
+	meta.TrackerRuleFailures = removeTrackerRule(meta.TrackerRuleFailures, trackerClaimRuleActive)
+
+	ApplyRequestScopedAudioPolicy(&meta, refreshService.cfg, refreshService.logger)
+	RebuildReleaseName(&meta, refreshService.logger)
+
+	var err error
+	meta, err = refreshService.applyTrackerRules(ctx, meta)
+	if err != nil {
+		return api.PreparedMetadata{}, err
+	}
+	meta, err = refreshService.applyTrackerClaims(ctx, meta)
+	if err != nil {
+		return api.PreparedMetadata{}, err
+	}
 	return meta, nil
 }
 
@@ -288,7 +318,11 @@ func containerFromMeta(meta api.PreparedMetadata) string {
 func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discparse.BDInfo) (string, string, bool) {
 	if bdinfo != nil && len(bdinfo.Audio) > 0 {
 		track := bdinfo.Audio[0]
-		codec := strings.TrimSpace(track.Codec)
+		codec := normalizeAudioFormat(map[string]any{
+			"Format_Commercial": track.Codec,
+			"Format":            track.Codec,
+		})
+		codec = strings.TrimSpace(codec)
 		if track.Atmos != "" && !strings.Contains(strings.ToLower(codec), "atmos") {
 			codec = strings.TrimSpace(codec + " Atmos")
 		}
@@ -307,9 +341,10 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	track := selectPrimaryAudioTrack(audioTracks)
 	format := normalizeAudioFormat(track)
 	additional := trackString(track, "Format_AdditionalFeatures", "Format_AdditionalFeatures_String", "Format_AdditionalFeatures_Original")
+	formatSettings := normalizeAudioFormatSettings(trackString(track, "Format_Settings"))
 	format = applyDTSAudioAdditional(format, additional)
 	channels := determineChannelCount(
-		trackString(track, "Channels", "Channel_s_", "Channel_s__Original"),
+		trackString(track, "Channels_Original", "Channels", "Channel_s_", "Channel_s__Original"),
 		trackString(track, "ChannelLayout", "ChannelLayout_Original", "ChannelPositions", "ChannelPositions_Original"),
 		additional,
 		trackString(track, "Format", "Format_String"),
@@ -332,6 +367,9 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	if strings.EqualFold(format, "DD") && channels == "7.1" {
 		format = "DD+"
 	}
+	if formatSettings == "EX" && channels != "5.1" {
+		formatSettings = ""
+	}
 	if !strings.Contains(strings.ToLower(format), "atmos") && strings.Contains(firstAudioTitle, "auro3d") {
 		format = strings.TrimSpace(format + " Auro3D")
 	}
@@ -343,7 +381,373 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 			break
 		}
 	}
-	return strings.TrimSpace(format + " " + channels), channels, commentary
+	prefix := ""
+	if strings.TrimSpace(meta.DiscType) == "" {
+		prefix = audioLanguagePrefix(meta, audioTracks)
+	}
+	return strings.Join(strings.Fields(strings.Join([]string{prefix, format, formatSettings, channels}, " ")), " "), channels, commentary
+}
+
+func normalizeAudioFormatSettings(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if strings.EqualFold(trimmed, "Explicit") {
+		return ""
+	}
+	if strings.EqualFold(trimmed, "Dolby Surround EX") {
+		return "EX"
+	}
+	return ""
+}
+
+func audioLanguagePrefix(meta api.PreparedMetadata, tracks []map[string]any) string {
+	filtered := make([]map[string]any, 0, len(tracks))
+	for _, track := range tracks {
+		if isCommentaryOrCompatibilityAudioValue(trackString(track, "Title", "title")) {
+			continue
+		}
+		filtered = append(filtered, track)
+	}
+	if len(filtered) == 0 {
+		return ""
+	}
+
+	languages := make([]string, 0, len(filtered))
+	for _, track := range filtered {
+		languages = append(languages, trackString(track, "Language", "Language_String", "Language_String2", "Language_String3"))
+	}
+	return audioLanguagePrefixFromLanguages(meta, languages)
+}
+
+func audioLanguagePrefixFromLanguages(meta api.PreparedMetadata, languages []string) string {
+	if len(languages) == 0 {
+		return ""
+	}
+
+	original := canonicalAudioLanguage(originalAudioLanguage(meta))
+	if original == "" || original == "unknown" {
+		return ""
+	}
+
+	hasEnglish := false
+	hasOriginal := false
+	hasOther := false
+	for _, value := range languages {
+		language := canonicalAudioLanguage(value)
+		if language == "" || language == "unknown" {
+			continue
+		}
+		if language == "english" {
+			hasEnglish = true
+		}
+		if language == original {
+			hasOriginal = true
+		}
+		if language != "english" && language != original {
+			hasOther = true
+		}
+	}
+
+	if len(languages) > 1 && ((hasEnglish && (hasOriginal || hasOther)) || (hasOriginal && hasOther)) {
+		return "Dual-Audio"
+	}
+	if hasEnglish && !hasOriginal && original != "english" {
+		return "Dubbed"
+	}
+	return ""
+}
+
+func originalAudioLanguage(meta api.PreparedMetadata) string {
+	switch {
+	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage) != "":
+		return meta.ExternalMetadata.TMDB.OriginalLanguage
+	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.OriginalLanguage) != "":
+		return meta.ExternalMetadata.IMDB.OriginalLanguage
+	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.OriginalLanguage) != "":
+		return meta.ExternalMetadata.TVDB.OriginalLanguage
+	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Language) != "":
+		return meta.ExternalMetadata.TVmaze.Language
+	default:
+		return ""
+	}
+}
+
+func canonicalAudioLanguage(value string) string {
+	token := strings.ToLower(strings.TrimSpace(value))
+	if token == "" {
+		return ""
+	}
+	for _, separator := range []string{"-", "_", ",", " "} {
+		if index := strings.Index(token, separator); index >= 0 {
+			token = token[:index]
+			break
+		}
+	}
+	switch token {
+	case "en", "eng", "english":
+		return "english"
+	case "zh", "zho", "chi", "cn", "cmn", "chinese", "mandarin":
+		return "chinese"
+	case "no", "nor", "nb", "nob", "norwegian":
+		return "norwegian"
+	case "zxx", "xx", "und":
+		return "unknown"
+	}
+	if normalized := strings.ToLower(strings.TrimSpace(languageutil.NormalizeLanguageDisplay(value))); normalized != "" {
+		return normalized
+	}
+	return token
+}
+
+func isCommentaryOrCompatibilityAudioValue(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(lower, "commentary") || strings.Contains(lower, "compatibility")
+}
+
+func ApplyRequestScopedAudioPolicy(meta *api.PreparedMetadata, cfg config.Config, logger api.Logger) {
+	if meta == nil {
+		return
+	}
+
+	meta.Audio = applyAudioLanguagePrefix(meta.Audio, *meta)
+	meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonAudio)
+	meta.TrackerRuleFailures = removeTrackerRule(meta.TrackerRuleFailures, "audio_bloat")
+	applyAudioBloatPolicy(meta, trackers.ResolveTrackersWithDefaults(cfg, meta.Trackers, meta.TrackersRemove, logger), logger)
+}
+
+func RebuildReleaseName(meta *api.PreparedMetadata, logger api.Logger) {
+	if meta == nil {
+		return
+	}
+
+	nameRequest := releaseNameRequestFromMeta(*meta, logger)
+	nameRequest = applyReleaseNameOverrides(nameRequest, meta.ReleaseNameOverrides, logger)
+	nameResult := BuildReleaseName(nameRequest, logger)
+	meta.ReleaseNameNoTag = nameResult.NameNoTag
+	meta.ReleaseName = nameResult.Name
+	meta.ReleaseNameClean = nameResult.CleanName
+	meta.ReleaseNameMissing = append([]string{}, nameResult.MissingFields...)
+	if logger != nil && nameResult.Name != "" {
+		logger.Tracef("metadata: release name resolved %q", nameResult.Name)
+	}
+}
+
+func applyAudioLanguagePrefix(audio string, meta api.PreparedMetadata) string {
+	base := strings.TrimSpace(audio)
+	for _, prefix := range []string{"Dual-Audio", "Dubbed"} {
+		if strings.EqualFold(base, prefix) {
+			base = ""
+			break
+		}
+		if strings.HasPrefix(base, prefix+" ") {
+			base = strings.TrimSpace(strings.TrimPrefix(base, prefix+" "))
+			break
+		}
+	}
+
+	if strings.TrimSpace(meta.DiscType) != "" {
+		return base
+	}
+
+	filteredLanguages := make([]string, 0, len(meta.AudioLanguages))
+	for _, language := range meta.AudioLanguages {
+		if isCommentaryOrCompatibilityAudioValue(language) {
+			continue
+		}
+		filteredLanguages = append(filteredLanguages, language)
+	}
+
+	prefix := audioLanguagePrefixFromLanguages(meta, filteredLanguages)
+	if prefix == "" || base == "" {
+		return base
+	}
+	return strings.TrimSpace(prefix + " " + base)
+}
+
+func applyAudioBloatPolicy(meta *api.PreparedMetadata, candidateTrackers []string, logger api.Logger) {
+	if meta == nil || strings.TrimSpace(meta.DiscType) != "" {
+		return
+	}
+
+	blocked, warned := resolveAudioBloatPolicy(*meta, candidateTrackers)
+	if len(blocked) == 0 && len(warned) == 0 {
+		return
+	}
+
+	for tracker, languages := range blocked {
+		meta.BlockedTrackers = addMetadataTrackerBlockReason(meta.BlockedTrackers, tracker, api.TrackerBlockReasonAudio)
+		meta.TrackerRuleFailures = addMetadataTrackerRuleFailure(meta.TrackerRuleFailures, tracker, api.RuleFailure{
+			Rule:   "audio_bloat",
+			Reason: audioBloatReason(languages, true),
+		})
+		if logger != nil {
+			logger.Warnf("metadata: removed tracker %s due to audio bloat languages=%v", tracker, languages)
+		}
+	}
+	for tracker, languages := range warned {
+		if logger != nil {
+			logger.Warnf("metadata: audio may be considered bloated on %s languages=%v", tracker, languages)
+		}
+	}
+}
+
+func resolveAudioBloatPolicy(meta api.PreparedMetadata, candidateTrackers []string) (map[string][]string, map[string][]string) {
+	original := canonicalAudioLanguage(originalAudioLanguage(meta))
+	if original == "" || original == "unknown" {
+		return nil, nil
+	}
+
+	languages := make([]string, 0, len(meta.AudioLanguages))
+	seenLanguages := make(map[string]struct{}, len(meta.AudioLanguages))
+	hasEnglish := false
+	hasOther := false
+	for _, value := range meta.AudioLanguages {
+		canonical := canonicalAudioLanguage(value)
+		if canonical == "" || canonical == "unknown" {
+			continue
+		}
+		if _, ok := seenLanguages[canonical]; ok {
+			continue
+		}
+		seenLanguages[canonical] = struct{}{}
+		languages = append(languages, canonical)
+		if canonical == "english" {
+			hasEnglish = true
+		}
+		if canonical != "english" && canonical != original {
+			hasOther = true
+		}
+	}
+	if len(languages) == 0 || !hasOther {
+		return nil, nil
+	}
+
+	resolvedTrackers := uniqueUpperTrackers(candidateTrackers)
+	if len(resolvedTrackers) == 0 {
+		return nil, nil
+	}
+
+	bloatAllowed := map[string]struct{}{
+		"ASC": {}, "BJS": {}, "BT": {}, "DC": {}, "FF": {}, "TL": {},
+	}
+	trackerAllowedLanguages := map[string][]string{
+		"AITHER": {"english"},
+		"ANT":    {"english"},
+		"SPD":    {"romanian"},
+	}
+	hardBlockedForEnglishOriginal := map[string]struct{}{
+		"ANT": {}, "BHD": {}, "MTV": {},
+	}
+	isEnglishOriginalWithNonEnglish := original == "english" && hasEnglish && hasOther
+
+	blocked := make(map[string][]string)
+	warned := make(map[string][]string)
+	for _, language := range languages {
+		if language == "english" || language == original {
+			continue
+		}
+		for _, tracker := range resolvedTrackers {
+			if _, ok := bloatAllowed[tracker]; ok {
+				continue
+			}
+			if allowed, ok := trackerAllowedLanguages[tracker]; ok && containsCanonicalLanguage(allowed, language) {
+				continue
+			}
+			if isEnglishOriginalWithNonEnglish {
+				if _, ok := hardBlockedForEnglishOriginal[tracker]; ok {
+					blocked[tracker] = appendUniqueString(blocked[tracker], languageutil.NormalizeLanguageDisplay(language))
+					continue
+				}
+			}
+			warned[tracker] = appendUniqueString(warned[tracker], languageutil.NormalizeLanguageDisplay(language))
+		}
+	}
+	if len(blocked) == 0 {
+		blocked = nil
+	}
+	if len(warned) == 0 {
+		warned = nil
+	}
+	return blocked, warned
+}
+
+func appendUniqueString(values []string, value string) []string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return values
+	}
+	for _, existing := range values {
+		if strings.EqualFold(strings.TrimSpace(existing), trimmed) {
+			return values
+		}
+	}
+	return append(values, trimmed)
+}
+
+func removeTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, reason api.TrackerBlockReason) map[string][]api.TrackerBlockReason {
+	if len(blocked) == 0 {
+		return blocked
+	}
+
+	filtered := make(map[string][]api.TrackerBlockReason, len(blocked))
+	for tracker, reasons := range blocked {
+		kept := make([]api.TrackerBlockReason, 0, len(reasons))
+		for _, existing := range reasons {
+			if existing == reason {
+				continue
+			}
+			kept = append(kept, existing)
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		filtered[tracker] = append([]api.TrackerBlockReason{}, kept...)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+func removeTrackerRule(failures map[string][]api.RuleFailure, rule string) map[string][]api.RuleFailure {
+	if len(failures) == 0 {
+		return failures
+	}
+
+	filtered := make(map[string][]api.RuleFailure, len(failures))
+	for tracker, trackerFailures := range failures {
+		kept := make([]api.RuleFailure, 0, len(trackerFailures))
+		for _, failure := range trackerFailures {
+			if strings.EqualFold(strings.TrimSpace(failure.Rule), strings.TrimSpace(rule)) {
+				continue
+			}
+			kept = append(kept, failure)
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		filtered[tracker] = kept
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+func containsCanonicalLanguage(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
+func audioBloatReason(languages []string, hardBlocked bool) string {
+	parts := strings.Join(languages, ", ")
+	if hardBlocked {
+		return fmt.Sprintf("audio languages %s are not allowed for this tracker on bloated releases", parts)
+	}
+	return fmt.Sprintf("audio languages %s may be considered bloated", parts)
 }
 
 // selectPrimaryAudioTrack filters out compatibility tracks before selection.
@@ -706,6 +1110,24 @@ func threeDFromBDInfo(info *discparse.BDInfo) string {
 func sourceAndType(meta api.PreparedMetadata, doc mediaInfoDoc) (string, string) {
 	source := strings.TrimSpace(meta.Release.Source)
 	typeValue := strings.TrimSpace(meta.Release.Type)
+	if typeValue == "" || isCategoryType(typeValue) {
+		if inferred := inferReleaseTypeFromSource(source); inferred != "" {
+			typeValue = inferred
+		}
+	}
+	if typeValue == "" || isCategoryType(typeValue) {
+		if inferred := inferReleaseTypeFromName(meta.SourcePath); inferred != "" {
+			typeValue = inferred
+		}
+	}
+	if typeValue == "" && (strings.EqualFold(meta.DiscType, "BDMV") || strings.EqualFold(meta.DiscType, "DVD") || strings.EqualFold(meta.DiscType, "HDDVD")) {
+		typeValue = "DISC"
+	}
+	if source == "" || !isKnownReleaseSource(source) {
+		if inferred := inferReleaseSourceFromName(meta.SourcePath, typeValue); inferred != "" {
+			source = inferred
+		}
+	}
 	if strings.EqualFold(meta.DiscType, "BDMV") {
 		switch typeValue {
 		case "DISC":
@@ -729,14 +1151,25 @@ func sourceAndType(meta api.PreparedMetadata, doc mediaInfoDoc) (string, string)
 			source = "HDDVD"
 		}
 	}
-	if strings.EqualFold(source, "Web") && typeValue == "ENCODE" {
+	switch normalizeReleaseType(typeValue) {
+	case "WEBDL":
+		typeValue = "WEBDL"
+		source = "Web"
+	case "WEBRIP":
 		typeValue = "WEBRIP"
+		source = "Web"
 	}
-	if typeValue == "WEBDL" || typeValue == "WEBRIP" {
+	if webType := webReleaseTypeFromSignals(typeValue, source, meta.SourcePath); webType != "" {
+		typeValue = webType
 		source = "Web"
 	}
 	if strings.EqualFold(source, "Ultra HDTV") {
 		source = "UHDTV"
+	}
+	// Python get_type() falls back to "ENCODE" for any release that does not
+	// match a known keyword and is not a disc. Apply the same default here.
+	if typeValue == "" && !strings.EqualFold(meta.DiscType, "BDMV") && !strings.EqualFold(meta.DiscType, "DVD") && !strings.EqualFold(meta.DiscType, "HDDVD") {
+		typeValue = "ENCODE"
 	}
 	return source, typeValue
 }
@@ -764,7 +1197,12 @@ func uhdFromMeta(meta api.PreparedMetadata) string {
 	if strings.Contains(upperPath, "UHD") {
 		return "UHD"
 	}
-	if meta.Type == "DISC" || meta.Type == "REMUX" || meta.Type == "ENCODE" || meta.Type == "WEBRIP" {
+	for _, value := range meta.Release.Other {
+		if strings.EqualFold(strings.TrimSpace(value), "Ultra HD") {
+			return "UHD"
+		}
+	}
+	if meta.Type == "DISC" || meta.Type == "REMUX" || meta.Type == "ENCODE" && !isWebSourceValue(meta.Source) && !isWebSourceValue(meta.Release.Source) {
 		if strings.EqualFold(meta.Release.Resolution, "2160p") {
 			return "UHD"
 		}

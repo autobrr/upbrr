@@ -48,6 +48,7 @@ func TestEvaluateRulesLanguageRuleOriginalFallback(t *testing.T) {
 		AudioLanguages:         []string{"Japanese"},
 		SubtitleLanguages:      []string{"English"},
 		ValidMediaInfoSettings: true,
+		Container:              "mkv",
 		Release:                api.ReleaseInfo{Resolution: "720p"},
 		ExternalMetadata: api.ExternalMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
@@ -56,6 +57,53 @@ func TestEvaluateRulesLanguageRuleOriginalFallback(t *testing.T) {
 	failures := EvaluateRules(context.Background(), "LUME", meta, nil)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesLUMERequiresMKVForNonDisc(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Container:              "mp4",
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+		ValidMediaInfoSettings: true,
+		Release:                api.ReleaseInfo{Resolution: "720p"},
+	}
+	failures := EvaluateRules(context.Background(), "LUME", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "extra_check" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+	if failures[0].Reason != "LUME only allows MKV containers for non-disc uploads." {
+		t.Fatalf("unexpected failure reason: %s", failures[0].Reason)
+	}
+}
+
+func TestEvaluateRulesLUMEAllowsMKVForNonDisc(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Container:              "mkv",
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+		ValidMediaInfoSettings: true,
+		Release:                api.ReleaseInfo{Resolution: "720p"},
+	}
+	failures := EvaluateRules(context.Background(), "LUME", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesLUMESkipsContainerRuleForDisc(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DiscType:               "BDMV",
+		Container:              "mp4",
+		ValidMediaInfoSettings: true,
+		Release:                api.ReleaseInfo{Resolution: "480p"},
+	}
+	failures := EvaluateRules(context.Background(), "LUME", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected disc upload to skip LUME container and resolution rules, got %#v", failures)
 	}
 }
 
@@ -97,6 +145,91 @@ func TestEvaluateRulesANTAllowsMovie(t *testing.T) {
 	}
 }
 
+func TestEvaluateRulesBHDRequiresValidMISettings(t *testing.T) {
+	meta := api.PreparedMetadata{ValidMediaInfoSettings: false}
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "require_valid_mi_setting" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+
+	meta.ValidMediaInfoSettings = true
+	failures = EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesBHDRejectsInvalidContainerForUploadTypes(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ValidMediaInfoSettings: true,
+		Type:                   "REMUX",
+		Container:              "avi",
+	}
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "extra_check" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+
+	meta.Container = "mkv"
+	failures = EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures for MKV, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesBLUContainerRules(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		meta      api.PreparedMetadata
+		wantBlock bool
+	}{
+		{
+			name:      "non disc defaults to mkv",
+			meta:      api.PreparedMetadata{Type: "WEBDL", Container: "avi"},
+			wantBlock: true,
+		},
+		{
+			name:      "hdtv allows ts",
+			meta:      api.PreparedMetadata{Type: "HDTV", Container: "ts"},
+			wantBlock: false,
+		},
+		{
+			name:      "dolby vision webdl allows mp4",
+			meta:      api.PreparedMetadata{Type: "WEBDL", Container: "mp4", WebDV: true},
+			wantBlock: false,
+		},
+		{
+			name:      "disc skips container rule",
+			meta:      api.PreparedMetadata{DiscType: "BDMV", Type: "WEBDL", Container: "avi"},
+			wantBlock: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			failures := EvaluateRules(context.Background(), "BLU", tc.meta, nil)
+			if tc.wantBlock && len(failures) == 0 {
+				t.Fatalf("expected BLU container failure")
+			}
+			if !tc.wantBlock && len(failures) != 0 {
+				t.Fatalf("expected no BLU container failures, got %#v", failures)
+			}
+		})
+	}
+}
+
 func TestEvaluateRulesNBLRequiresTV(t *testing.T) {
 	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "movie"}}
 	failures := EvaluateRules(context.Background(), "NBL", meta, nil)
@@ -132,6 +265,45 @@ func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
 	failures := EvaluateRules(context.Background(), "NBL", meta, nil)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesNBLSkipsLanguageRuleForBDMVOnly(t *testing.T) {
+	bdmv := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "tv"},
+		DiscType:    "BDMV",
+	}
+	if failures := EvaluateRules(context.Background(), "NBL", bdmv, nil); len(failures) != 0 {
+		t.Fatalf("expected BDMV to skip NBL language rule, got %#v", failures)
+	}
+
+	dvd := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "tv"},
+		DiscType:    "DVD",
+	}
+	failures := EvaluateRules(context.Background(), "NBL", dvd, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected DVD to require NBL language data, got %#v", failures)
+	}
+	if failures[0].Rule != "language_rule" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+}
+
+func TestEvaluateRulesDPDoesNotSpecialCaseFGTEncodes(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Tag:               "-FGT",
+		Type:              "ENCODE",
+		AudioLanguages:    []string{"English"},
+		SubtitleLanguages: []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "DP", meta, nil)
+	for _, failure := range failures {
+		if failure.Rule == "block_group" {
+			t.Fatalf("expected FGT to be handled as a banned group, got rule failure %#v", failures)
+		}
 	}
 }
 

@@ -5,8 +5,90 @@ package api
 
 import (
 	"context"
+	"database/sql/driver"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
+
+type Category string
+
+const (
+	CategoryUnknown Category = ""
+	CategoryMovie   Category = "MOVIE"
+	CategoryTV      Category = "TV"
+)
+
+func NormalizeCategory(value string) Category {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return CategoryUnknown
+	}
+
+	upper := strings.ToUpper(trimmed)
+	switch upper {
+	case string(CategoryMovie), "FILM":
+		return CategoryMovie
+	case string(CategoryTV), "SHOW", "SERIES", "TVSHOW", "TV-SHOW", "EPISODE":
+		return CategoryTV
+	}
+	if strings.Contains(upper, "MOVIE") {
+		return CategoryMovie
+	}
+	if strings.Contains(upper, "TV") || strings.Contains(upper, "SERIES") || strings.Contains(upper, "EPISODE") {
+		return CategoryTV
+	}
+	return Category(trimmed)
+}
+
+func (c Category) Canonical() Category {
+	return NormalizeCategory(string(c))
+}
+
+func (c Category) IsValid() bool {
+	switch c.Canonical() {
+	case CategoryMovie, CategoryTV:
+		return true
+	case CategoryUnknown:
+		return false
+	default:
+		return false
+	}
+}
+
+func (c Category) Value() (driver.Value, error) {
+	canonical := c.Canonical()
+	switch canonical {
+	case CategoryMovie, CategoryTV:
+		return string(canonical), nil
+	case CategoryUnknown:
+		return strings.TrimSpace(string(c)), nil
+	default:
+		return strings.TrimSpace(string(c)), nil
+	}
+}
+
+func (c *Category) Scan(src any) error {
+	if c == nil {
+		return errors.New("api: scan category: nil destination")
+	}
+	if src == nil {
+		*c = CategoryUnknown
+		return nil
+	}
+
+	switch value := src.(type) {
+	case string:
+		*c = Category(strings.TrimSpace(value))
+		return nil
+	case []byte:
+		*c = Category(strings.TrimSpace(string(value)))
+		return nil
+	default:
+		return fmt.Errorf("api: scan category: unsupported type %T", src)
+	}
+}
 
 type FileMetadata struct {
 	Path       string
@@ -19,6 +101,12 @@ type FileMetadata struct {
 	Scene      bool
 	SceneName  string
 	SceneIMDB  int
+	// Category is the normalized movie/TV content category that drives upload
+	// logic. It is seeded from release parsing but should be overridden by a
+	// supported TrackerMetadata.Category when that value is available, since a
+	// site-reported movie/TV category is the authoritative classification for
+	// the upload.
+	Category   Category
 	Type       string
 	Artist     string
 	Title      string
@@ -47,15 +135,19 @@ type FileMetadata struct {
 }
 
 type TrackerMetadata struct {
-	SourcePath  string
-	Tracker     string
-	TrackerID   string
-	InfoHash    string
-	TMDBID      int
-	IMDBID      int
-	TVDBID      int
-	MALID       int
-	Category    string
+	SourcePath string
+	Tracker    string
+	TrackerID  string
+	InfoHash   string
+	TMDBID     int
+	IMDBID     int
+	TVDBID     int
+	MALID      int
+	// Category is the site-reported movie/TV content category from the tracker
+	// API. Supported values take precedence over MediaInfoCategory and
+	// Release.Category when resolving ExternalIDs.Category for upload
+	// classification; unsupported categories are ignored.
+	Category    Category
 	Description string
 	ImageURLs   []string
 	Filename    string

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -30,11 +31,17 @@ type SceneDetector interface {
 
 // SceneResult captures scene metadata from external sources.
 type SceneResult struct {
-	IsScene   bool
-	SceneName string
-	IMDBID    int
-	NFOPath   string
-	NFONew    bool
+	IsScene         bool
+	SceneName       string
+	TMDBID          int
+	IMDBID          int
+	TVDBID          int
+	TVmazeID        int
+	MALID           int
+	Service         string
+	ServiceLongName string
+	NFOPath         string
+	NFONew          bool
 }
 
 type srrdbDetector struct {
@@ -91,10 +98,16 @@ func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (
 	}
 
 	result := payload.Results[0]
-	imdbID := 0
-	if result.IMDBID != "" {
-		if parsed, err := strconv.Atoi(result.IMDBID); err == nil {
-			imdbID = parsed
+	tmdbID := 0
+	imdbID := parseSRRDBIMDbID(result.IMDBID)
+	tvdbID := 0
+	tvmazeID := 0
+	malID := 0
+	service := ""
+	serviceLongName := ""
+	if imdbID == 0 {
+		if details, err := d.fetchIMDB(ctx, result.Release); err == nil {
+			imdbID = details.firstIMDbID()
 		}
 	}
 
@@ -104,15 +117,32 @@ func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (
 		if path, downloaded, err := d.fetchNFO(ctx, result.Release); err == nil {
 			nfoPath = path
 			nfoNew = downloaded
+			if nfoIDs, readErr := parseNFOExternalIDs(path); readErr == nil {
+				tmdbID = nfoIDs.TMDBID
+				if imdbID == 0 {
+					imdbID = nfoIDs.IMDBID
+				}
+				tvdbID = nfoIDs.TVDBID
+				tvmazeID = nfoIDs.TVmazeID
+				malID = nfoIDs.MALID
+				service = nfoIDs.Service
+				serviceLongName = nfoIDs.ServiceLongName
+			}
 		}
 	}
 
 	return SceneResult{
-		IsScene:   true,
-		SceneName: strings.TrimSpace(result.Release),
-		IMDBID:    imdbID,
-		NFOPath:   nfoPath,
-		NFONew:    nfoNew,
+		IsScene:         true,
+		SceneName:       strings.TrimSpace(result.Release),
+		TMDBID:          tmdbID,
+		IMDBID:          imdbID,
+		TVDBID:          tvdbID,
+		TVmazeID:        tvmazeID,
+		MALID:           malID,
+		Service:         service,
+		ServiceLongName: serviceLongName,
+		NFOPath:         nfoPath,
+		NFONew:          nfoNew,
 	}, nil
 }
 
@@ -129,6 +159,97 @@ type srrdbDetailsResponse struct {
 	Files []struct {
 		Name string `json:"name"`
 	} `json:"files"`
+}
+
+type srrdbIMDBResponse struct {
+	Releases []struct {
+		IMDB string `json:"imdb"`
+	} `json:"releases"`
+}
+
+type nfoExternalIDs struct {
+	TMDBID          int
+	IMDBID          int
+	TVDBID          int
+	TVmazeID        int
+	MALID           int
+	Service         string
+	ServiceLongName string
+}
+
+var nfoURLPattern = regexp.MustCompile(`https?://[^\s<>"']+`)
+
+func (r srrdbIMDBResponse) firstIMDbID() int {
+	for _, release := range r.Releases {
+		if id := parseSRRDBIMDbID(release.IMDB); id != 0 {
+			return id
+		}
+	}
+	return 0
+}
+
+func parseSRRDBIMDbID(raw string) int {
+	trimmed := strings.TrimSpace(raw)
+	trimmed = strings.TrimPrefix(strings.ToLower(trimmed), "tt")
+	if trimmed == "" {
+		return 0
+	}
+	parsed, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func parseNFOExternalIDs(path string) (nfoExternalIDs, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nfoExternalIDs{}, err
+	}
+	return parseNFOExternalIDsText(string(data)), nil
+}
+
+func parseNFOExternalIDsText(text string) nfoExternalIDs {
+	var ids nfoExternalIDs
+	if service, longName := parseNFOService(text); service != "" {
+		ids.Service = service
+		ids.ServiceLongName = longName
+	}
+	for _, raw := range nfoURLPattern.FindAllString(text, -1) {
+		resolution, err := resolveSourceLookupURL(strings.TrimRight(raw, ".,;:)"))
+		if err != nil {
+			continue
+		}
+		if ids.TMDBID == 0 {
+			ids.TMDBID = resolution.TMDBID
+		}
+		if ids.IMDBID == 0 {
+			ids.IMDBID = resolution.IMDBID
+		}
+		if ids.TVDBID == 0 {
+			ids.TVDBID = resolution.TVDBID
+		}
+		if ids.TVmazeID == 0 {
+			ids.TVmazeID = resolution.TVmazeID
+		}
+		if ids.MALID == 0 {
+			ids.MALID = resolution.MALID
+		}
+	}
+	return ids
+}
+
+func parseNFOService(text string) (string, string) {
+	for _, line := range strings.Split(text, "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "Source") {
+			continue
+		}
+		if service, longName := resolveServiceValue(value); service != "" {
+			return service, longName
+		}
+	}
+	return "", ""
 }
 
 func sceneBase(meta api.PreparedMetadata) string {
@@ -244,6 +365,31 @@ func (d *srrdbDetector) fetchDetails(ctx context.Context, release string) (srrdb
 		if data, err := json.Marshal(payload); err == nil {
 			_ = os.WriteFile(cachePath, data, 0o600)
 		}
+	}
+	return payload, nil
+}
+
+func (d *srrdbDetector) fetchIMDB(ctx context.Context, release string) (srrdbIMDBResponse, error) {
+	trimmed := strings.TrimSpace(release)
+	if trimmed == "" {
+		return srrdbIMDBResponse{}, nil
+	}
+	endpoint := fmt.Sprintf("%s/v1/imdb/%s", strings.TrimRight(d.baseURL, "/"), url.PathEscape(trimmed))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return srrdbIMDBResponse{}, fmt.Errorf("scene: build imdb request: %w", err)
+	}
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return srrdbIMDBResponse{}, fmt.Errorf("scene: imdb request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return srrdbIMDBResponse{}, nil
+	}
+	var payload srrdbIMDBResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return srrdbIMDBResponse{}, fmt.Errorf("scene: decode imdb: %w", err)
 	}
 	return payload, nil
 }

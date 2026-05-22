@@ -6,6 +6,8 @@ package webserver
 import (
 	"errors"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -265,6 +267,72 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
+	mux.HandleFunc("/api/app/UIState", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		switch r.Method {
+		case http.MethodGet:
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if id == "" {
+				value, err := s.backend.ListUIStates()
+				if err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+					return
+				}
+				writeJSON(w, http.StatusOK, value)
+				return
+			}
+			value, err := s.backend.GetUIState(id)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, value)
+		case http.MethodPost:
+			var req api.SaveUIStateRequest
+			if err := decodeJSON(r, &req); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if strings.TrimSpace(req.ID) == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
+				return
+			}
+			if err := s.backend.SaveUIState(req.ID, req.Label, req.State); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	}))
+
+	mux.HandleFunc("/api/app/BrowseDirectory", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req api.BrowseDirectoryRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		policy, err := s.webBrowsePolicy()
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if !policy.AllowUnrestricted && len(policy.Roots) == 0 {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "web browse root is not configured"})
+			return
+		}
+		value, err := s.backend.BrowseDirectoryWithinRoots(req.Path, req.Mode, policy.Roots)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
 	mux.HandleFunc("/api/app/FetchScreenshotPlan", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		var req struct {
 			Path          string
@@ -431,6 +499,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			Path          string
 			Overrides     api.ExternalIDOverrides
 			NameOverrides api.ReleaseNameOverrides
+			Trackers      []string
 			Host          string
 			Images        []api.ScreenshotImage
 		}
@@ -438,7 +507,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.UploadImages(req.Path, req.Overrides, req.NameOverrides, req.Host, req.Images)
+		value, err := s.backend.UploadImages(req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.Host, req.Images)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -529,6 +598,15 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/app/ListKnownTrackers", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		value, err := s.backend.ListKnownTrackers()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
+	mux.HandleFunc("/api/app/GetImageHostPolicyMetadata", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		value, err := s.backend.GetImageHostPolicyMetadata()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
@@ -747,6 +825,32 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, value)
 	}))
+}
+
+type webBrowsePolicy struct {
+	Roots             []string
+	AllowUnrestricted bool
+}
+
+func (s *Server) webBrowsePolicy() (webBrowsePolicy, error) {
+	if s == nil || s.auth == nil {
+		return webBrowsePolicy{}, nil
+	}
+	record, err := s.auth.Load()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return webBrowsePolicy{}, nil
+		}
+		return webBrowsePolicy{}, err
+	}
+	if record.AllowUnrestrictedBrowse {
+		return webBrowsePolicy{AllowUnrestricted: true}, nil
+	}
+	roots, err := normalizeBrowsePolicyRoots(splitBrowsePolicyRoots(record.BrowseRoot))
+	if err != nil {
+		return webBrowsePolicy{}, err
+	}
+	return webBrowsePolicy{Roots: roots}, nil
 }
 
 func writeAppError(w http.ResponseWriter, err error) {

@@ -18,6 +18,7 @@ var (
 	namingTVNameHintPattern     = regexp.MustCompile(`(?i)\bS\d{1,2}(?:E\d{1,3})?\b|\b\d{1,2}x\d{2,3}\b|\b(?:season|series)\s*\d+\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`)
 	namingSubsPleaseHintPattern = regexp.MustCompile(`(?i)subsplease`)
 	namingAnimeEpisodeHint      = regexp.MustCompile(`(?i)-\s*\d{1,3}\s*\(1080p\)`)
+	namingWebDLFilenamePattern  = regexp.MustCompile(`(?i)(^|[ ._-])web([ ._-]|$)|web-?dl`)
 )
 
 func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.ReleaseNameResult {
@@ -25,7 +26,7 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		logger = api.NopLogger{}
 	}
 
-	category := strings.ToUpper(strings.TrimSpace(req.Category))
+	category := normalizeNamingCategory(req.Category)
 	typeValue := strings.ToUpper(strings.TrimSpace(req.Type))
 	typeValue = normalizeReleaseTypeForCategory(category, typeValue, strings.TrimSpace(req.Source), "")
 	matchType := normalizeReleaseType(typeValue)
@@ -197,9 +198,12 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 		logger = api.NopLogger{}
 	}
 
-	category := strings.ToUpper(strings.TrimSpace(meta.ExternalIDs.Category))
+	category := normalizeNamingCategory(meta.ExternalIDs.Category)
 	if category == "" {
-		category = strings.ToUpper(strings.TrimSpace(meta.MediaInfoCategory))
+		category = normalizeNamingCategory(meta.MediaInfoCategory)
+	}
+	if category == "" {
+		category = normalizeNamingCategory(meta.Release.Category)
 	}
 	if category == "" {
 		category = normalizeCategoryFromType(meta.Type)
@@ -350,6 +354,9 @@ func resolveReleaseNameTitle(category string, meta api.PreparedMetadata) (string
 
 func inferReleaseTypeFromName(path string) string {
 	base := strings.ToUpper(pathutil.Base(path))
+	if webType := inferWebReleaseTypeFromFilename(pathutil.Base(path)); webType != "" {
+		return webType
+	}
 	compact := strings.NewReplacer(".", "", "-", "", "_", "", " ", "").Replace(base)
 	switch {
 	case strings.Contains(compact, "REMUX"):
@@ -440,12 +447,16 @@ func removeHybrid(edition string) string {
 	return strings.TrimSpace(strings.Join(cleaned, " "))
 }
 
-func normalizeCategoryFromType(value string) string {
+func normalizeNamingCategory(value string) string {
 	upper := strings.ToUpper(strings.TrimSpace(value))
 	if upper == "MOVIE" || upper == "TV" {
 		return upper
 	}
 	return ""
+}
+
+func normalizeCategoryFromType(value string) string {
+	return normalizeNamingCategory(value)
 }
 
 func inferCategoryFromMetadata(meta api.PreparedMetadata) string {
@@ -454,6 +465,9 @@ func inferCategoryFromMetadata(meta api.PreparedMetadata) string {
 	}
 	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
 		return "TV"
+	}
+	if category := normalizeNamingCategory(meta.Release.Category); category != "" {
+		return category
 	}
 	if strings.TrimSpace(meta.DailyEpisodeDate) != "" {
 		return "TV"
@@ -496,6 +510,9 @@ func normalizeReleaseType(value string) string {
 
 func normalizeReleaseTypeForCategory(category string, typeValue string, source string, sourcePath string) string {
 	normalizedType := normalizeReleaseType(typeValue)
+	if webType := webReleaseTypeFromSignals(normalizedType, source, sourcePath); webType != "" {
+		return webType
+	}
 	if !strings.EqualFold(strings.TrimSpace(category), "TV") {
 		return normalizedType
 	}
@@ -523,6 +540,42 @@ func normalizeReleaseTypeForCategory(category string, typeValue string, source s
 	return normalizedType
 }
 
+func webReleaseTypeFromSignals(typeValue string, source string, sourcePath string) string {
+	normalizedType := normalizeReleaseType(typeValue)
+	switch normalizedType {
+	case "WEBDL", "WEBRIP":
+		return normalizedType
+	case "", "ENCODE", "EP", "EPS", "EPISODE", "SERIES", "SEASON", "SEASONPACK", "TV", "TVSHOW":
+	default:
+		return ""
+	}
+
+	if inferred := inferReleaseTypeFromSource(source); inferred == "WEBDL" || inferred == "WEBRIP" {
+		return inferred
+	}
+	if inferred := inferReleaseTypeFromName(sourcePath); inferred == "WEBDL" || inferred == "WEBRIP" {
+		return inferred
+	}
+	if isWebSourceValue(source) {
+		return "WEBDL"
+	}
+	return ""
+}
+
+func inferWebReleaseTypeFromFilename(filename string) string {
+	lower := strings.ToLower(strings.TrimSpace(filename))
+	if lower == "" {
+		return ""
+	}
+	if namingWebDLFilenamePattern.MatchString(lower) {
+		return "WEBDL"
+	}
+	if strings.Contains(lower, "webrip") {
+		return "WEBRIP"
+	}
+	return ""
+}
+
 func inferReleaseTypeFromSource(source string) string {
 	upper := strings.ToUpper(strings.TrimSpace(source))
 	upper = strings.ReplaceAll(upper, "-", "")
@@ -537,4 +590,12 @@ func inferReleaseTypeFromSource(source string) string {
 		return "HDTV"
 	}
 	return ""
+}
+
+func isWebSourceValue(source string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(source))
+	upper = strings.ReplaceAll(upper, "-", "")
+	upper = strings.ReplaceAll(upper, " ", "")
+	upper = strings.ReplaceAll(upper, "_", "")
+	return upper == "WEB" || upper == "WEBDL" || upper == "WEBRIP"
 }

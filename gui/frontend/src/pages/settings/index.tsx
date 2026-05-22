@@ -4,6 +4,7 @@
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ConfigMap, ConfigValue, FieldMeta, WebAuthStatus } from "../../types";
+import "./styles.css";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
 
@@ -54,7 +55,12 @@ type Props = {
   renderMapSection: (
     sectionKey: string,
     sectionValue: ConfigMap,
-    options?: { entriesKey?: string; defaultKey?: string; fieldMeta?: Record<string, FieldMeta>; advancedOpen?: boolean }
+    options?: {
+      entriesKey?: string;
+      defaultKey?: string;
+      fieldMeta?: Record<string, FieldMeta>;
+      advancedOpen?: boolean;
+    },
   ) => JSX.Element;
   renderField: (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => JSX.Element;
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
@@ -100,7 +106,7 @@ export default function SettingsPage(props: Props) {
     renderTrackerSection,
     renderMapSection,
     renderField,
-    sectionFieldMeta
+    sectionFieldMeta,
   } = props;
 
   const [warningsExpanded, setWarningsExpanded] = useState(false);
@@ -119,12 +125,15 @@ export default function SettingsPage(props: Props) {
         <div className="settings-header">
           <div className="settings-meta">
             <p className="label">Configuration</p>
-            <p className="helper">
-              Invalid changes will be rejected with a validation error.
-            </p>
+            <p className="helper">Invalid changes will be rejected with a validation error.</p>
           </div>
           <div className="settings-actions">
-            <button className="ghost" type="button" onClick={loadSettings} disabled={settingsLoading}>
+            <button
+              className="ghost"
+              type="button"
+              onClick={loadSettings}
+              disabled={settingsLoading}
+            >
               Reload
             </button>
             <button
@@ -158,11 +167,47 @@ export default function SettingsPage(props: Props) {
           <div className={`config-status-banner config-status-banner--${configOpStatus.type}`}>
             <div className="config-status-banner__icon">
               {configOpStatus.type === "success" ? (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="currentColor" opacity=".15"/><path d="M6.5 10.5 8.5 12.5 13.5 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5"/></svg>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"
+                    fill="currentColor"
+                    opacity=".15"
+                  />
+                  <path
+                    d="M6.5 10.5 8.5 12.5 13.5 7.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
               ) : configOpStatus.type === "warning" ? (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="currentColor" opacity=".15"/><path d="M10 7v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="10" cy="13.5" r=".75" fill="currentColor"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5"/></svg>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"
+                    fill="currentColor"
+                    opacity=".15"
+                  />
+                  <path d="M10 7v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  <circle cx="10" cy="13.5" r=".75" fill="currentColor" />
+                  <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
               ) : (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" fill="currentColor" opacity=".15"/><path d="M12.5 7.5 7.5 12.5M7.5 7.5l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5"/></svg>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path
+                    d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"
+                    fill="currentColor"
+                    opacity=".15"
+                  />
+                  <path
+                    d="M12.5 7.5 7.5 12.5M7.5 7.5l5 5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                  <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
               )}
             </div>
             <div className="config-status-banner__body">
@@ -175,7 +220,8 @@ export default function SettingsPage(props: Props) {
                     className="config-status-banner__toggle"
                     onClick={() => setWarningsExpanded((prev) => !prev)}
                   >
-                    {warningsExpanded ? "Hide" : "Show"} {configOpStatus.warnings.length} warning{configOpStatus.warnings.length !== 1 ? "s" : ""}
+                    {warningsExpanded ? "Hide" : "Show"} {configOpStatus.warnings.length} warning
+                    {configOpStatus.warnings.length !== 1 ? "s" : ""}
                   </button>
                   {warningsExpanded ? (
                     <ul className="config-status-banner__warning-list">
@@ -187,8 +233,20 @@ export default function SettingsPage(props: Props) {
                 </div>
               ) : null}
             </div>
-            <button type="button" className="config-status-banner__dismiss" onClick={dismissConfigOpStatus} aria-label="Dismiss">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10.5 3.5 3.5 10.5M3.5 3.5l7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            <button
+              type="button"
+              className="config-status-banner__dismiss"
+              onClick={dismissConfigOpStatus}
+              aria-label="Dismiss"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M10.5 3.5 3.5 10.5M3.5 3.5l7 7"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
             </button>
           </div>
         ) : null}
@@ -218,8 +276,16 @@ export default function SettingsPage(props: Props) {
                     to enable encrypted secret storage for future saves and exports.
                   </p>
                   <div className="settings-auth-status">
-                    <span className={`settings-auth-badge ${webAuthStatus?.usable ? "is-ready" : webAuthStatus?.exists ? "is-warning" : "is-idle"}`}>
-                      {webAuthLoading ? "Checking..." : webAuthStatus?.usable ? "Encryption enabled" : webAuthStatus?.exists ? "Auth file invalid" : "Plaintext fallback active"}
+                    <span
+                      className={`settings-auth-badge ${webAuthStatus?.usable ? "is-ready" : webAuthStatus?.exists ? "is-warning" : "is-idle"}`}
+                    >
+                      {webAuthLoading
+                        ? "Checking..."
+                        : webAuthStatus?.usable
+                          ? "Encryption enabled"
+                          : webAuthStatus?.exists
+                            ? "Auth file invalid"
+                            : "Plaintext fallback active"}
                     </span>
                     {webAuthStatus?.path ? (
                       <p className="muted">Path: {webAuthStatus.path}</p>
@@ -229,6 +295,12 @@ export default function SettingsPage(props: Props) {
                     ) : null}
                     {webAuthStatus?.usable && webAuthStatus.username ? (
                       <p className="muted">Configured user: {webAuthStatus.username}</p>
+                    ) : null}
+                    {webAuthStatus?.browseRoot ? (
+                      <p className="muted">Web browse root: {webAuthStatus.browseRoot}</p>
+                    ) : null}
+                    {webAuthStatus?.allowUnrestrictedBrowse ? (
+                      <p className="muted">Web browse access: Unrestricted</p>
                     ) : null}
                   </div>
                   {webAuthStatus?.canCreate ? (
@@ -293,7 +365,7 @@ export default function SettingsPage(props: Props) {
                       onChange={(event) =>
                         setSettingsAdvanced((prev) => ({
                           ...prev,
-                          [settingsSection]: event.target.checked
+                          [settingsSection]: event.target.checked,
                         }))
                       }
                     />
@@ -302,9 +374,14 @@ export default function SettingsPage(props: Props) {
                 ) : null}
                 {settingsSection === "image_hosting" ? (
                   renderImageHostingSection()
-                ) : settingsSection === "trackers" && configData.Trackers && typeof configData.Trackers === "object" && !Array.isArray(configData.Trackers) ? (
+                ) : settingsSection === "trackers" &&
+                  configData.Trackers &&
+                  typeof configData.Trackers === "object" &&
+                  !Array.isArray(configData.Trackers) ? (
                   renderTrackerSection(advancedOpen)
-                ) : settingsSection === "torrent_clients" && configData.TorrentClients && typeof configData.TorrentClients === "object" ? (
+                ) : settingsSection === "torrent_clients" &&
+                  configData.TorrentClients &&
+                  typeof configData.TorrentClients === "object" ? (
                   renderMapSection("TorrentClients", configData.TorrentClients as ConfigMap)
                 ) : (
                   <div className="settings-grid">
@@ -312,7 +389,11 @@ export default function SettingsPage(props: Props) {
                       const section = settingsSections.find((item) => item.key === settingsSection);
                       if (!section) return null;
                       const sectionData = configData[section.jsonKey];
-                      if (!sectionData || typeof sectionData !== "object" || Array.isArray(sectionData)) {
+                      if (
+                        !sectionData ||
+                        typeof sectionData !== "object" ||
+                        Array.isArray(sectionData)
+                      ) {
                         return null;
                       }
                       const meta = sectionFieldMeta[section.jsonKey] || {};
@@ -323,7 +404,7 @@ export default function SettingsPage(props: Props) {
                           return true;
                         })
                         .map(([key, value]) =>
-                          renderField(key, value, [section.jsonKey, key], meta[key])
+                          renderField(key, value, [section.jsonKey, key], meta[key]),
                         );
                     })()}
                   </div>
@@ -353,7 +434,12 @@ export default function SettingsPage(props: Props) {
             <div className="import-confirm-dialog__icon">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
                 <path d="M12 3 1.5 21h21L12 3Z" fill="currentColor" opacity=".12" />
-                <path d="M12 3 1.5 21h21L12 3Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                <path
+                  d="M12 3 1.5 21h21L12 3Z"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
                 <path d="M12 10v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                 <circle cx="12" cy="18" r="1" fill="currentColor" />
               </svg>
@@ -367,8 +453,8 @@ export default function SettingsPage(props: Props) {
                 This action cannot be undone.
               </p>
               <p className="import-confirm-dialog__hint">
-                We strongly recommend exporting your current configuration first so you can restore it
-                if the imported file isn&apos;t what you expected.
+                We strongly recommend exporting your current configuration first so you can restore
+                it if the imported file isn&apos;t what you expected.
               </p>
             </div>
             <div className="import-confirm-dialog__actions">

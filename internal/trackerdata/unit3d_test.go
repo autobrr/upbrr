@@ -4,10 +4,15 @@
 package trackerdata
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestIsUnit3DTracker(t *testing.T) {
@@ -123,6 +128,68 @@ func TestParseNumberToInt64(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("value mismatch for %q: got %d want %d", tc.value.String(), got, tc.want)
 		}
+	}
+}
+
+func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
+	t.Parallel()
+
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if got := r.URL.Query().Get("api_token"); got != "secret" {
+			t.Fatalf("api token mismatch: %q", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/torrents/filter":
+			_, _ = w.Write([]byte(`{"data":[{"id":101,"attributes":{"name":"Existing.Release","size":123,"files":[{"name":"existing.mkv"}],"details_link":"https://example.test/torrents/101","download_link":"https://example.test/download/101","type":"WEBDL","resolution":"1080p","internal":true}}]}`))
+		case "/api/torrents/pending":
+			_, _ = w.Write([]byte(`{"data":[{"id":202,"tmdb_id":42,"name":"Pending.Release","size":456,"files":[{"name":"pending.mkv"}],"download_link":"https://example.test/download/202","type":"REMUX","resolution":"2160p"},{"id":203,"tmdb_id":99,"name":"Wrong.Movie","size":789}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"CBR": {
+					APIKey:      "secret",
+					AnnounceURL: server.URL + "/announce",
+				},
+			},
+		},
+	}, api.NopLogger{}, server.Client())
+
+	params := url.Values{}
+	params.Set("tmdbId", "42")
+	entries, warning, err := client.SearchTorrents(context.Background(), "CBR", params, false)
+	if err != nil {
+		t.Fatalf("search torrents: %v", err)
+	}
+	if warning != "" {
+		t.Fatalf("unexpected warning: %s", warning)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entry count mismatch: got %d entries %#v", len(entries), entries)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("request count mismatch: got %d paths %#v", len(paths), paths)
+	}
+	if paths[0] != "/api/torrents/filter" || paths[1] != "/api/torrents/pending" {
+		t.Fatalf("unexpected request paths: %#v", paths)
+	}
+	if entries[0].Name != "Existing.Release" || entries[0].Link != "https://example.test/torrents/101" {
+		t.Fatalf("unexpected filter entry: %#v", entries[0])
+	}
+	if entries[1].Name != "Pending.Release" || entries[1].Link != server.URL+"/torrents/pending" {
+		t.Fatalf("unexpected pending entry: %#v", entries[1])
+	}
+	if entries[1].ID != "202" || entries[1].SizeBytes != 456 || entries[1].Files[0] != "pending.mkv" {
+		t.Fatalf("unexpected pending fields: %#v", entries[1])
 	}
 }
 

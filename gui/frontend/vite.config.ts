@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: "dist",
-    emptyOutDir: true
+    emptyOutDir: true,
   },
   server: {
     port: 5173,
@@ -17,8 +17,8 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:7480",
         changeOrigin: true,
-        secure: false
-      }
-    }
-  }
+        secure: false,
+      },
+    },
+  },
 });

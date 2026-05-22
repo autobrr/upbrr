@@ -23,6 +23,7 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guiapp"
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
@@ -87,6 +88,11 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		return nil, err
 	}
 	if err := repo.MigrateContext(ctx); err != nil {
+		_ = repo.Close()
+		_ = logger.Close()
+		return nil, err
+	}
+	if err := repo.ClearUIState(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
 		return nil, err
@@ -196,7 +202,7 @@ func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL s
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackersList,
+		Trackers:        append([]string{}, trackersList...),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
@@ -271,12 +277,13 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 	if err == nil {
 		releaseBase := paths.ReleaseTempBase(api.PreparedMetadata{
 			Release: api.ReleaseInfo{
-				Title:  stored.Title,
-				Alt:    stored.Alt,
-				Year:   stored.Year,
-				Source: stored.Source,
-				Type:   stored.Type,
-				Group:  stored.Group,
+				Title:    stored.Title,
+				Alt:      stored.Alt,
+				Year:     stored.Year,
+				Category: string(stored.Category),
+				Source:   stored.Source,
+				Type:     stored.Type,
+				Group:    stored.Group,
 			},
 		}, trimmedPath)
 		tmpDirs[filepath.Join(tmpRoot, releaseBase)] = struct{}{}
@@ -300,7 +307,7 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackersList,
+		Trackers:        append([]string{}, trackersList...),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
@@ -323,7 +330,7 @@ func (b *Backend) CheckDupes(path string, overrides api.ExternalIDOverrides, nam
 	req := api.Request{
 		Paths:    []string{strings.TrimSpace(path)},
 		Mode:     api.ModeGUI,
-		Trackers: trackersList,
+		Trackers: append([]string{}, trackersList...),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
 			OnlyID:     b.cfg.Metadata.OnlyID,
@@ -344,7 +351,7 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 	req := api.Request{
 		Paths:          []string{strings.TrimSpace(path)},
 		Mode:           api.ModeGUI,
-		Trackers:       trackersList,
+		Trackers:       append([]string{}, trackersList...),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
@@ -388,7 +395,7 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 		Paths:                       []string{strings.TrimSpace(path)},
 		Mode:                        api.ModeGUI,
 		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
-		Trackers:                    trackersList,
+		Trackers:                    append([]string{}, trackersList...),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   ignoreRuleFailures,
 		Options:                     buildRunUploadOptions(b.cfg, runOpts),
@@ -421,7 +428,7 @@ func (b *Backend) FetchDescriptionBuilder(path string, overrides api.ExternalIDO
 	req := api.Request{
 		Paths:          []string{strings.TrimSpace(path)},
 		Mode:           api.ModeGUI,
-		Trackers:       trackersList,
+		Trackers:       append([]string{}, trackersList...),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
 		Options: api.UploadOptions{
 			Screens:    b.cfg.ScreenshotHandling.Screens,
@@ -484,6 +491,67 @@ func (b *Backend) LoadPlaylistSelection(path string) (api.PlaylistSelection, err
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	return b.core.LoadPlaylistSelection(ctx, path)
+}
+
+func (b *Backend) ListUIStates() (api.UIStateList, error) {
+	if b == nil || b.repo == nil {
+		return api.UIStateList{}, errors.New("config repository not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	states, err := b.repo.ListUIStates(ctx)
+	if err != nil {
+		return api.UIStateList{}, err
+	}
+	return api.UIStateList{States: states}, nil
+}
+
+func (b *Backend) GetUIState(id string) (api.UIStateRecord, error) {
+	if b == nil || b.repo == nil {
+		return api.UIStateRecord{}, errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(id) == "" {
+		return api.UIStateRecord{}, errors.New("id is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return b.repo.LoadUIState(ctx, id)
+}
+
+func (b *Backend) SaveUIState(id string, label string, state api.UIState) error {
+	if b == nil || b.repo == nil {
+		return errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(id) == "" {
+		return errors.New("id is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return b.repo.SaveUIState(ctx, id, label, state)
+}
+
+func (b *Backend) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResponse, error) {
+	if b == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(b.cfg.MainSettings.DBPath)
+	return guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback)
+}
+
+func (b *Backend) BrowseDirectoryWithinRoot(path string, mode string, root string) (api.BrowseDirectoryResponse, error) {
+	if b == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(b.cfg.MainSettings.DBPath)
+	return guishared.BrowseDirectoryWithinRoot(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, root)
+}
+
+func (b *Backend) BrowseDirectoryWithinRoots(path string, mode string, roots []string) (api.BrowseDirectoryResponse, error) {
+	if b == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(b.cfg.MainSettings.DBPath)
+	return guishared.BrowseDirectoryWithinRoots(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, roots)
 }
 
 func (b *Backend) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.ScreenshotPlan, error) {
@@ -660,9 +728,9 @@ func (b *Backend) ListUploadedImages(path string, overrides api.ExternalIDOverri
 	})
 }
 
-func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	if err := b.requireCore(); err != nil {
-		return nil, err
+		return api.UploadImagesResult{}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
@@ -676,6 +744,7 @@ func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, n
 		},
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		Trackers:             append([]string{}, trackersList...),
 	}, host, images)
 }
 
@@ -820,6 +889,10 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 
 func (b *Backend) ListKnownTrackers() ([]string, error) {
 	return trackers.KnownTrackers(), nil
+}
+
+func (b *Backend) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {
+	return imagehostpolicy.PolicyMetadata(), nil
 }
 
 func (b *Backend) ListHistory() ([]api.HistoryEntry, error) {

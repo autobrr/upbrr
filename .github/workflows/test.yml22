@@ -1,0 +1,123 @@
+name: test
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commit-messages:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # SHAs are passed through env vars rather than interpolated into the shell string
+      # so that GitHub Actions' command-injection scanner (CodeQL actions/command-injection)
+      # sees sanitized input. This is the documented hardening pattern.
+      - name: Validate commits in PR range
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: go run ./cmd/commitmsgcheck --from "$BASE_SHA" --to "$HEAD_SHA"
+
+  test-go:
+    name: Go tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Go tests
+        run: go test -v -timeout 20m ./...
+
+  test-frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: gui/frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: gui/frontend
+        run: pnpm install --frozen-lockfile
+
+      # Prettier keeps its own per-file cache keyed on Prettier's version and the
+      # effective config, so the Actions cache key only needs to change when one of
+      # those changes. Hashing the config files (not source) keeps the key stable
+      # across PRs, giving a high hit rate on the primary key.
+      - name: Restore Prettier cache
+        id: prettier-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: gui/frontend/node_modules/.cache/prettier
+          key: prettier-${{ runner.os }}-${{ hashFiles('gui/frontend/package.json', 'gui/frontend/pnpm-lock.yaml', 'gui/frontend/.prettierrc*', 'gui/frontend/prettier.config.*') }}
+          restore-keys: |
+            prettier-${{ runner.os }}-
+
+      - name: Run frontend lint
+        working-directory: gui/frontend
+        run: pnpm run lint
+
+      - name: Run frontend dead-code lint
+        working-directory: gui/frontend
+        run: pnpm run lint:dead
+
+      - name: Run frontend typecheck
+        working-directory: gui/frontend
+        run: pnpm run typecheck
+
+      - name: Check frontend formatting
+        working-directory: gui/frontend
+        run: pnpm run format:check
+
+      # Save only when the primary key wasn't an exact restore-hit so we don't retry
+      # writing to an existing cache entry (no-op warning). `always()` lets the cache
+      # persist even when `format:check` found diffs — the cache contents are valid
+      # regardless of pass/fail. This follows the documented split-restore/save pattern
+      # in actions/cache's README.
+      - name: Save Prettier cache
+        if: always() && steps.prettier-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: gui/frontend/node_modules/.cache/prettier
+          key: ${{ steps.prettier-cache.outputs.cache-primary-key }}

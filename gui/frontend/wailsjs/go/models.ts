@@ -1,11 +1,68 @@
 export namespace api {
 	
+	export class BrowseDirectoryEntry {
+	    name: string;
+	    path: string;
+	    isDir: boolean;
+	    size: number;
+	    modifiedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BrowseDirectoryEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.isDir = source["isDir"];
+	        this.size = source["size"];
+	        this.modifiedAt = source["modifiedAt"];
+	    }
+	}
+	export class BrowseDirectoryResponse {
+	    currentPath: string;
+	    parentPath: string;
+	    mode: string;
+	    entries: BrowseDirectoryEntry[];
+	
+	    static createFrom(source: any = {}) {
+	        return new BrowseDirectoryResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.currentPath = source["currentPath"];
+	        this.parentPath = source["parentPath"];
+	        this.mode = source["mode"];
+	        this.entries = this.convertValues(source["entries"], BrowseDirectoryEntry);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ImageHostFeedback {
 	    Status: string;
 	    SelectedHost: string;
 	    AllowedHosts: string[];
 	    Reuploaded: boolean;
 	    Message: string;
+	    Warnings: ImageHostWarning[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ImageHostFeedback(source);
@@ -17,6 +74,39 @@ export namespace api {
 	        this.SelectedHost = source["SelectedHost"];
 	        this.AllowedHosts = source["AllowedHosts"];
 	        this.Reuploaded = source["Reuploaded"];
+	        this.Message = source["Message"];
+	        this.Warnings = this.convertValues(source["Warnings"], ImageHostWarning);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ImageHostWarning {
+	    Host: string;
+	    Message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImageHostWarning(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Host = source["Host"];
 	        this.Message = source["Message"];
 	    }
 	}
@@ -1121,6 +1211,7 @@ export namespace api {
 	    Scene: boolean;
 	    SceneName: string;
 	    SceneIMDB: number;
+	    Category: string;
 	    Type: string;
 	    Artist: string;
 	    Title: string;
@@ -1163,6 +1254,7 @@ export namespace api {
 	        this.Scene = source["Scene"];
 	        this.SceneName = source["SceneName"];
 	        this.SceneIMDB = source["SceneIMDB"];
+	        this.Category = source["Category"];
 	        this.Type = source["Type"];
 	        this.Artist = source["Artist"];
 	        this.Title = source["Title"];
@@ -1318,6 +1410,56 @@ export namespace api {
 	        this.WebURL = source["WebURL"];
 	        this.SizeBytes = source["SizeBytes"];
 	        this.UploadedAt = this.convertValues(source["UploadedAt"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class UploadImageHostFailure {
+	    Host: string;
+	    UsageScope: string;
+	    Trackers: string[];
+	    Message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UploadImageHostFailure(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Host = source["Host"];
+	        this.UsageScope = source["UsageScope"];
+	        this.Trackers = source["Trackers"];
+	        this.Message = source["Message"];
+	    }
+	}
+	export class UploadImagesResult {
+	    Links: UploadedImageLink[];
+	    Failures: UploadImageHostFailure[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UploadImagesResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Links = this.convertValues(source["Links"], UploadedImageLink);
+	        this.Failures = this.convertValues(source["Failures"], UploadImageHostFailure);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -2272,6 +2414,55 @@ export namespace api {
 	
 	
 	
+	export class UIStateRecord {
+	    id: string;
+	    label: string;
+	    updatedAt: string;
+	    state: Record<string, any>;
+	
+	    static createFrom(source: any = {}) {
+	        return new UIStateRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.updatedAt = source["updatedAt"];
+	        this.state = source["state"];
+	    }
+	}
+	export class UIStateList {
+	    states: UIStateRecord[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UIStateList(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.states = this.convertValues(source["states"], UIStateRecord);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	
 
 }
@@ -2457,6 +2648,8 @@ export namespace guiapp {
 	    canCreate: boolean;
 	    username: string;
 	    allowUnencryptedExport: boolean;
+	    browseRoot: string;
+	    allowUnrestrictedBrowse: boolean;
 	    encryptionEnabled: boolean;
 	    message: string;
 	
@@ -2472,6 +2665,8 @@ export namespace guiapp {
 	        this.canCreate = source["canCreate"];
 	        this.username = source["username"];
 	        this.allowUnencryptedExport = source["allowUnencryptedExport"];
+	        this.browseRoot = source["browseRoot"];
+	        this.allowUnrestrictedBrowse = source["allowUnrestrictedBrowse"];
 	        this.encryptionEnabled = source["encryptionEnabled"];
 	        this.message = source["message"];
 	    }
@@ -2520,4 +2715,3 @@ export namespace logging {
 	}
 
 }
-

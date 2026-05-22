@@ -31,6 +31,22 @@
   margin-bottom: 9px;
 }
 
+.builder-image-warning {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde68a;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+:root.light .builder-image-warning {
+  color: #92400e;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
 .builder-textarea {
   width: 100%;
   min-height: 187px;

@@ -20,7 +20,7 @@ const PlaylistSelectionPage = ({
   onConfirm,
   preparing,
   progressLines,
-  progressError
+  progressError,
 }: PlaylistSelectionPageProps) => {
   const [loading, setLoading] = useState(true);
   const [playlists, setPlaylists] = useState<PlaylistInfo[]>([]);
@@ -170,7 +170,8 @@ const PlaylistSelectionPage = ({
                   <span className="playlist-selection-name">{playlist.file}</span>
                 </label>
                 <span className="playlist-selection-details">
-                  {formatDuration(playlist.duration)} • {fileCount} files • {formatBytes(totalSize)} • Score: {playlist.score.toFixed(2)}
+                  {formatDuration(playlist.duration)} • {fileCount} files • {formatBytes(totalSize)}{" "}
+                  • Score: {playlist.score.toFixed(2)}
                 </span>
               </div>
             );
@@ -186,11 +187,7 @@ const PlaylistSelectionPage = ({
             >
               {useAll ? "Deselect All" : `Select All Top ${displayCount}`}
             </button>
-            <button
-              onClick={handleAutoSelect}
-              className="btn-secondary"
-              disabled={saving}
-            >
+            <button onClick={handleAutoSelect} className="btn-secondary" disabled={saving}>
               Auto-Select Best
             </button>
           </div>

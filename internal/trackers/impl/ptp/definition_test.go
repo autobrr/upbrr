@@ -224,6 +224,88 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}
 }
 
+func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "ua.db")
+	sourcePath := filepath.Join(tmp, "Movie.mkv")
+	if err := os.WriteFile(sourcePath, []byte("movie"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	posterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("poster-bytes"))
+	}))
+	defer posterServer.Close()
+
+	images := &stubPTPImageHosting{
+		uploaded: []api.UploadedImageLink{{
+			Host:   "ptpimg",
+			RawURL: "https://ptpimg.me/rehosted.png",
+		}},
+	}
+	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			SourcePath: sourcePath,
+		},
+		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		Logger:    api.NopLogger{},
+		Images:    images,
+	}, posterServer.URL+"/poster")
+
+	if got != "https://ptpimg.me/rehosted.png" {
+		t.Fatalf("expected rehosted poster URL, got %q", got)
+	}
+	if images.host != "ptpimg" {
+		t.Fatalf("expected ptpimg upload host, got %q", images.host)
+	}
+	if len(images.images) != 1 {
+		t.Fatalf("expected one uploaded poster, got %d", len(images.images))
+	}
+	posterPath := images.images[0].Path
+	if filepath.Base(posterPath) != "PTP_POSTER.png" {
+		t.Fatalf("expected content-type poster extension, got %q", filepath.Base(posterPath))
+	}
+	body, err := os.ReadFile(posterPath)
+	if err != nil {
+		t.Fatalf("read poster: %v", err)
+	}
+	if string(body) != "poster-bytes" {
+		t.Fatalf("unexpected poster body %q", string(body))
+	}
+}
+
+func TestRehostPosterToSelectedHostSkipsSelectedHost(t *testing.T) {
+	images := &stubPTPImageHosting{}
+	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
+		Images: images,
+	}, "https://ptpimg.me/existing.jpg")
+	if got != "https://ptpimg.me/existing.jpg" {
+		t.Fatalf("expected original poster URL, got %q", got)
+	}
+	if len(images.images) != 0 {
+		t.Fatalf("expected no upload for selected host poster")
+	}
+}
+
+type stubPTPImageHosting struct {
+	host     string
+	scope    string
+	images   []api.ScreenshotImage
+	uploaded []api.UploadedImageLink
+}
+
+func (s *stubPTPImageHosting) ListCandidates(context.Context, api.PreparedMetadata) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (s *stubPTPImageHosting) Upload(_ context.Context, _ api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+	s.host = host
+	s.scope = usageScope
+	s.images = append([]api.ScreenshotImage(nil), images...)
+	return s.uploaded, nil
+}
+
 func createTestTorrent(t *testing.T, sourcePath string, torrentPath string) {
 	t.Helper()
 

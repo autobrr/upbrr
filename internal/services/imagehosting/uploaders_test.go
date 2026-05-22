@@ -148,6 +148,95 @@ func TestParseHDBUploadResultsMultipleMatches(t *testing.T) {
 	}
 }
 
+func TestTHRUploaderPostsSourceAndKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://img2.torrenthr.org/api/1/upload" {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			fields := map[string]string{}
+			fileFields := []string{}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read multipart part: %v", err)
+				}
+				body, err := io.ReadAll(part)
+				if err != nil {
+					t.Fatalf("read part body: %v", err)
+				}
+				if part.FileName() == "" {
+					fields[part.FormName()] = string(body)
+					continue
+				}
+				fileFields = append(fileFields, part.FormName())
+			}
+			if fields["key"] != "secret" {
+				t.Fatalf("expected key field, got %q", fields["key"])
+			}
+			if len(fileFields) != 1 || fileFields[0] != "source" {
+				t.Fatalf("expected source file field, got %v", fileFields)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"image":{"url":"https://img2.torrenthr.org/images/shot.png"}}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&thrUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.RawURL != "https://img2.torrenthr.org/images/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+}
+
+func TestTHRUploaderRequiresImageURL(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"image":{},"error":{"message":"bad image"}}`)),
+			}, nil
+		}),
+	}
+
+	_, err := (&thrUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err == nil {
+		t.Fatal("expected missing URL error")
+	}
+	if !strings.Contains(err.Error(), "bad image") {
+		t.Fatalf("expected response error message, got %v", err)
+	}
+}
+
 func TestReadAndCloseResponseBodyClosesBody(t *testing.T) {
 	body := &trackingReadCloser{reader: strings.NewReader("partial response")}
 	resp := &http.Response{

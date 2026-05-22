@@ -14,15 +14,21 @@
 - When the checker flags a log line, fix the log message or level at the source instead of weakening the checker, bypassing it, or shifting the message to an equally noisy level.
 - Respect the current golangci-lint exclusions and formatter settings instead of reintroducing churn in files already covered by scoped exceptions.
 - For frontend changes, keep TypeScript and ESLint clean without weakening existing rules or bypassing type errors.
+- For frontend CSS changes, keep Stylelint clean and avoid leaving dead selectors, files, exports, or dependencies. The frontend dead-code check uses `knip.ts` and includes `src/**/*.{ts,tsx,css}`, with CSS parsed through Knip's CSS compiler hook.
+- When creating commits, use the repository's Conventional Commit policy enforced by `cmd/commitmsgcheck`: `type(scope): subject`, optional scope, lower-case imperative subject, no trailing period, max 115 characters. Allowed types are `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, and `revert`.
+- Treat `lefthook.yml` as the local preflight contract. Do not bypass hooks or validation unless the user explicitly asks for it or the bypass is only for a temporary local WIP action that will be validated before handoff.
 
 ## Validation
 
 - Run the relevant CI-aligned checks after changes.
+- PR validation includes commit-message validation, full Go tests, golangci-lint, logpolicy, and frontend lint/stylelint/type/format/dead-code checks as applicable. Use `lefthook.yml`, `CONTRIBUTING.md`, `gui/frontend/package.json`, and `.github/workflows/*` as the source of truth when deciding the exact check set.
 - For Go changes, run the narrowest relevant Go tests first, such as a package-scoped go test invocation for the affected area. When changes touch shared behavior, multiple packages, or cross-surface flows, expand to broader coverage up to: go test -v -timeout 20m ./...
-- For Go changes, run: golangci-lint run --timeout=5m
+- For Go changes, run: golangci-lint run --timeout=5m ./...
 - For logging-related Go changes, or any change that adds, removes, or edits log lines under `internal`, also run: go run ./cmd/logpolicy
+- When preparing or checking commits, validate commit messages with `go run ./cmd/commitmsgcheck <commit-msg-file>` or, for a PR/range, `go run ./cmd/commitmsgcheck --from <base> --to <head>`.
+- If Lefthook is installed and the task includes staged changes or a push, use the matching hook as a quick local preflight where practical: `lefthook run pre-commit` or `lefthook run pre-push`.
 - Prefer the smallest relevant frontend validation for the files you changed, but keep lint and typecheck clean for the affected frontend surface. When frontend changes are broad, shared, or configuration-related, run the full gui/frontend checks called out below.
-- For gui/frontend changes, use gui/frontend as the working directory. Run pnpm install --frozen-lockfile whenever frontend dependencies or lockfiles may affect the change; otherwise run pnpm run lint and pnpm run typecheck
+- For gui/frontend changes, use gui/frontend as the working directory. Run pnpm install --frozen-lockfile whenever frontend dependencies or lockfiles may affect the change; otherwise run pnpm run lint, pnpm run lint:dead, pnpm run typecheck, and pnpm run format:check. When CSS changes, also run pnpm run lint:style.
 - For gui/frontend build logic, embedded assets, or Vite/TypeScript config changes, also run: pnpm run build
 - For Wails runtime/backend changes, validate with go run ./gui when practical. For GUI packaging, embedded assets, Wails config, or desktop integration changes, run pnpm run build in gui/frontend and the nearest relevant wails build validation
 - For packaging, release, Dockerfile, build-script, or cross-platform changes, review .github/workflows/build-binaries.yml and validate the directly affected local path you can exercise, such as scripts/build.sh, scripts/build.ps1, a CLI build, a GUI build, or a Docker build

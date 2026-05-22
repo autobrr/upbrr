@@ -85,8 +85,8 @@ func (c *preparedMetaTestCore) ListUploadedImages(context.Context, api.Request) 
 	return nil, nil
 }
 
-func (c *preparedMetaTestCore) UploadImages(context.Context, api.Request, string, []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
-	return nil, nil
+func (c *preparedMetaTestCore) UploadImages(context.Context, api.Request, string, []api.ScreenshotImage) (api.UploadImagesResult, error) {
+	return api.UploadImagesResult{}, nil
 }
 
 func (c *preparedMetaTestCore) DeleteUploadedImage(context.Context, api.Request, string, string) error {

@@ -3,8 +3,14 @@
 
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { ScreenshotLinkedImage, ScreenshotPreviewImage, UploadedImageLink } from "../../types";
+import type {
+  ScreenshotLinkedImage,
+  ScreenshotPreviewImage,
+  UploadedImageLink,
+  UploadImageHostFailure,
+} from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
+import "./styles.css";
 
 type UploadedByHost = { host: string; items: UploadedImageLink[] };
 
@@ -19,6 +25,7 @@ type Props = Readonly<{
   setAllUploadSelections: (value: boolean) => void;
   handleUploadImages: (selected: ScreenshotPreviewImage[]) => void;
   uploadImagesError: string;
+  uploadImageFailures: UploadImageHostFailure[];
   uploadCandidates: ScreenshotPreviewImage[];
   uploadSelections: Record<string, boolean>;
   toggleUploadSelection: (imagePath: string) => void;
@@ -43,6 +50,7 @@ export default function UploadImagesPage(props: Props) {
     setAllUploadSelections,
     handleUploadImages,
     uploadImagesError,
+    uploadImageFailures,
     uploadCandidates,
     uploadSelections,
     toggleUploadSelection,
@@ -96,11 +104,12 @@ export default function UploadImagesPage(props: Props) {
         SourcePath: "",
         ImagePath: link.Path,
         Host: hostKey,
+        UsageScope: "global",
         ImgURL: link.URL,
         RawURL: link.URL,
         WebURL: link.URL,
         SizeBytes: 0,
-        UploadedAt: ""
+        UploadedAt: "",
       };
       bucket.push(uploadedFormat);
       grouped.set(hostKey, bucket);
@@ -113,8 +122,12 @@ export default function UploadImagesPage(props: Props) {
     return Array.from(grouped.entries())
       .map(([host, items]) => ({ host, items }))
       .sort((left, right) => {
-        const leftRank = hostIndex.has(left.host) ? hostIndex.get(left.host)! : Number.MAX_SAFE_INTEGER;
-        const rightRank = hostIndex.has(right.host) ? hostIndex.get(right.host)! : Number.MAX_SAFE_INTEGER;
+        const leftRank = hostIndex.has(left.host)
+          ? hostIndex.get(left.host)!
+          : Number.MAX_SAFE_INTEGER;
+        const rightRank = hostIndex.has(right.host)
+          ? hostIndex.get(right.host)!
+          : Number.MAX_SAFE_INTEGER;
         if (leftRank !== rightRank) return leftRank - rightRank;
         return left.host.localeCompare(right.host);
       });
@@ -126,7 +139,7 @@ export default function UploadImagesPage(props: Props) {
         <p className="eyebrow">Image Hosting</p>
         <h1>Upload Images</h1>
         <p className="subtitle">
-          Select the screenshots to upload and choose the host.
+          Select screenshots and upload to every host needed by the active trackers.
         </p>
       </header>
 
@@ -137,7 +150,7 @@ export default function UploadImagesPage(props: Props) {
         </div>
         <div className="upload-images-controls__row">
           <label className="settings-field">
-            <span>Upload host</span>
+            <span>Default upload host</span>
             <select
               value={uploadHost}
               onChange={(event) => setUploadHost(event.target.value)}
@@ -190,6 +203,20 @@ export default function UploadImagesPage(props: Props) {
           </div>
         ) : null}
         {uploadImagesError ? <p className="error">{uploadImagesError}</p> : null}
+        {uploadImageFailures.length > 0 ? (
+          <div className="upload-images-failures">
+            {uploadImageFailures.map((failure, index) => {
+              const trackers = (failure.Trackers || []).filter(Boolean);
+              const trackerLabel = trackers.length > 0 ? ` Blocks: ${trackers.join(", ")}.` : "";
+              return (
+                <p className="error" key={`${failure.Host || "host"}-${index}`}>
+                  {failure.Host || "Image host"} failed: {failure.Message || "upload failed"}.
+                  {trackerLabel}
+                </p>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       {uploadCandidateCount === 0 ? (
@@ -235,13 +262,19 @@ export default function UploadImagesPage(props: Props) {
                     className={`upload-images-toggle ${selected ? "selected" : ""}`}
                     type="button"
                     onClick={() => pathValue && toggleUploadSelection(pathValue)}
-                    disabled={isUploaded}
                   >
-                    {isUploaded ? "Uploaded" : selected ? "Selected" : "Select"}
+                    {selected ? "Selected" : "Select"}
                   </button>
                   {isUploaded && imgLink ? (
                     <div className="upload-links">
-                      <a className="upload-link" href={imgLink} target="_blank" rel="noreferrer" title="View image" onClick={handleExternalLinkClick}>
+                      <a
+                        className="upload-link"
+                        href={imgLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="View image"
+                        onClick={handleExternalLinkClick}
+                      >
                         🔗
                       </a>
                     </div>
@@ -257,7 +290,10 @@ export default function UploadImagesPage(props: Props) {
         <section className="panel upload-images-results">
           <div className="screens-gallery__header">
             <h2>Previously Uploaded Images</h2>
-            <p className="muted">Images from previous uploads and tracker descriptions. Click delete to remove from database.</p>
+            <p className="muted">
+              Images from previous uploads and tracker descriptions. Click delete to remove from
+              database.
+            </p>
           </div>
           <div className="upload-images-results__hosts">
             {previouslyUploadedByHost.map((group) => (
@@ -265,21 +301,42 @@ export default function UploadImagesPage(props: Props) {
                 <h3 className="upload-images-host__title">{resolveImageHostLabel(group.host)}</h3>
                 <div className="upload-images-results__grid">
                   {group.items.map((img, index) => (
-                    <div className="upload-images-result" key={`prev-uploaded-${img.ImagePath}-${img.Host}-${index}`}>
+                    <div
+                      className="upload-images-result"
+                      key={`prev-uploaded-${img.ImagePath}-${img.Host}-${index}`}
+                    >
                       <p className="label">Image</p>
                       <p className="value mono">{img.ImagePath || "Unknown"}</p>
                       {img.ImgURL ? (
-                        <a className="tracker-link" href={img.ImgURL} target="_blank" rel="noreferrer" onClick={handleExternalLinkClick}>
+                        <a
+                          className="tracker-link"
+                          href={img.ImgURL}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={handleExternalLinkClick}
+                        >
                           View image
                         </a>
                       ) : null}
                       {img.RawURL ? (
-                        <a className="tracker-link" href={img.RawURL} target="_blank" rel="noreferrer" onClick={handleExternalLinkClick}>
+                        <a
+                          className="tracker-link"
+                          href={img.RawURL}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={handleExternalLinkClick}
+                        >
                           Raw URL
                         </a>
                       ) : null}
                       {img.WebURL ? (
-                        <a className="tracker-link" href={img.WebURL} target="_blank" rel="noreferrer" onClick={handleExternalLinkClick}>
+                        <a
+                          className="tracker-link"
+                          href={img.WebURL}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={handleExternalLinkClick}
+                        >
                           Web URL
                         </a>
                       ) : null}
@@ -313,24 +370,44 @@ export default function UploadImagesPage(props: Props) {
                 <p className="label">Host</p>
                 <p className="value mono">{image.Host || uploadHost}</p>
                 {image.ImgURL ? (
-                  <a className="tracker-link" href={image.ImgURL} target="_blank" rel="noreferrer" onClick={handleExternalLinkClick}>
+                  <a
+                    className="tracker-link"
+                    href={image.ImgURL}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={handleExternalLinkClick}
+                  >
                     View image
                   </a>
                 ) : null}
                 {image.RawURL ? (
-                  <a className="tracker-link" href={image.RawURL} target="_blank" rel="noreferrer" onClick={handleExternalLinkClick}>
+                  <a
+                    className="tracker-link"
+                    href={image.RawURL}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={handleExternalLinkClick}
+                  >
                     Raw URL
                   </a>
                 ) : null}
                 {image.WebURL ? (
-                  <a className="tracker-link" href={image.WebURL} target="_blank" rel="noreferrer" onClick={handleExternalLinkClick}>
+                  <a
+                    className="tracker-link"
+                    href={image.WebURL}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={handleExternalLinkClick}
+                  >
                     Web URL
                   </a>
                 ) : null}
                 <button
                   className="danger"
                   type="button"
-                  onClick={() => handleDeleteUploadedImage(image.ImagePath, image.Host || uploadHost)}
+                  onClick={() =>
+                    handleDeleteUploadedImage(image.ImagePath, image.Host || uploadHost)
+                  }
                 >
                   Delete
                 </button>

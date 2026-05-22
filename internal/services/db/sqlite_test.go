@@ -939,6 +939,80 @@ func TestSQLiteMigrationLegacyV8BridgeIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestSQLiteMigrationBridgesLegacyV8AndAppliesReleaseCategory(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	if err := createBaselineSchema(ctx, rawDB); err != nil {
+		t.Fatalf("create baseline schema: %v", err)
+	}
+	if err := migrateAddDVDMediaInfo(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v2: %v", err)
+	}
+	if err := migrateAddReleaseOverrideUseSeasonEpisode(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v3: %v", err)
+	}
+	if err := migrateAddHistoryIndexes(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v4: %v", err)
+	}
+	if err := migrateBackfillUploadedImageUsageScope(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v5: %v", err)
+	}
+	if err := migrateAddScreenshotSlotTables(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v6: %v", err)
+	}
+	if err := migrateNormalizeDescriptionOverrides(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v7: %v", err)
+	}
+	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v8: %v", err)
+	}
+	if _, err := rawDB.Exec(`PRAGMA user_version = 8`); err != nil {
+		t.Fatalf("set legacy user_version: %v", err)
+	}
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("migrate bridged legacy v8 db: %v", err)
+	}
+
+	if ok, err := tableColumnExists(ctx, rawDB, "file_metadata", "release_category"); err != nil {
+		t.Fatalf("check release_category column: %v", err)
+	} else if !ok {
+		t.Fatal("expected release_category column to be added after bridging legacy v8 db")
+	}
+
+	ids := readSchemaMigrationIDs(t, rawDB)
+	expected := []string{"2026_04_add_tracker_cookies", "2026_04_add_release_category"}
+	for _, id := range expected {
+		found := false
+		for _, got := range ids {
+			if got == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected migration %q to be recorded after v8 bridge, got %v", id, ids)
+		}
+	}
+
+	var userVersion int
+	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("read user_version after v8 bridge: %v", err)
+	}
+	if userVersion != legacyCompatibilitySchemaVersion {
+		t.Fatalf("expected compatibility user_version %d after v8 bridge, got %d", legacyCompatibilitySchemaVersion, userVersion)
+	}
+}
+
 func TestSQLiteMigrationKeepsLegacyRollbackCompatibilityStamp(t *testing.T) {
 	t.Parallel()
 

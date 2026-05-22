@@ -27,7 +27,7 @@ export const normalizeOverrides = (overrides: ExternalIDOverrides): ExternalIDOv
  * Normalize release name overrides by filtering out null/undefined values
  */
 export const normalizeReleaseOverrides = (
-  overrides: ReleaseNameOverrides
+  overrides: ReleaseNameOverrides,
 ): ReleaseNameOverrides => {
   const payload: ReleaseNameOverrides = {};
   if (overrides.Category !== null && overrides.Category !== undefined) {

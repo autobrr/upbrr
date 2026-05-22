@@ -115,7 +115,7 @@ type Core interface {
 	SaveFinalScreenshotSelections(ctx context.Context, req Request, images []ScreenshotImage) error
 	ListUploadCandidates(ctx context.Context, req Request) ([]ScreenshotImage, error)
 	ListUploadedImages(ctx context.Context, req Request) ([]UploadedImageLink, error)
-	UploadImages(ctx context.Context, req Request, host string, images []ScreenshotImage) ([]UploadedImageLink, error)
+	UploadImages(ctx context.Context, req Request, host string, images []ScreenshotImage) (UploadImagesResult, error)
 	DeleteUploadedImage(ctx context.Context, req Request, imagePath string, host string) error
 	DiscoverPlaylists(ctx context.Context, sourcePath string) ([]PlaylistInfo, error)
 	SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error

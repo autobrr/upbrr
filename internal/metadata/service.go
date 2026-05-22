@@ -501,14 +501,39 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		}
 		meta.Scene = result.IsScene
 		meta.SceneName = result.SceneName
+		meta.SceneTMDBID = result.TMDBID
 		meta.SceneIMDB = result.IMDBID
+		meta.SceneTVDBID = result.TVDBID
+		meta.SceneTVmazeID = result.TVmazeID
+		meta.SceneMALID = result.MALID
+		if meta.Service == "" {
+			meta.Service = strings.TrimSpace(result.Service)
+		}
+		if meta.ServiceLongName == "" {
+			meta.ServiceLongName = strings.TrimSpace(result.ServiceLongName)
+		}
 		meta.SceneNFOPath = result.NFOPath
 		meta.SceneNFONew = result.NFONew
 		if meta.Scene {
 			s.logger.Debugf("metadata: scene release detected")
 		}
+		if meta.SceneTMDBID > 0 {
+			s.logger.Debugf("metadata: scene tmdb detected %d", meta.SceneTMDBID)
+		}
 		if meta.SceneIMDB > 0 {
 			s.logger.Debugf("metadata: scene imdb detected %d", meta.SceneIMDB)
+		}
+		if meta.SceneTVDBID > 0 {
+			s.logger.Debugf("metadata: scene tvdb detected %d", meta.SceneTVDBID)
+		}
+		if meta.SceneTVmazeID > 0 {
+			s.logger.Debugf("metadata: scene tvmaze detected %d", meta.SceneTVmazeID)
+		}
+		if meta.SceneMALID > 0 {
+			s.logger.Debugf("metadata: scene mal detected %d", meta.SceneMALID)
+		}
+		if meta.Service != "" && strings.TrimSpace(result.Service) != "" {
+			s.logger.Debugf("metadata: scene service detected %q", meta.Service)
 		}
 		if meta.SceneNFOPath != "" {
 			if meta.SceneNFONew {
@@ -518,9 +543,10 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 			}
 		}
 	}
-	if release.Title != "" || release.Alt != "" || release.Subtitle != "" || release.Artist != "" || release.Year != 0 || release.Month != 0 || release.Day != 0 || release.Source != "" || release.Resolution != "" || release.Ext != "" || release.Site != "" || release.Genre != "" || release.Channels != "" || release.Collection != "" || release.Region != "" || release.Size != "" || release.Group != "" || release.Disc != "" || release.Type != "" || len(release.Codec) > 0 || len(release.Audio) > 0 || len(release.HDR) > 0 || len(release.Language) > 0 {
+	if release.Title != "" || release.Alt != "" || release.Subtitle != "" || release.Artist != "" || release.Year != 0 || release.Month != 0 || release.Day != 0 || release.Source != "" || release.Resolution != "" || release.Ext != "" || release.Site != "" || release.Genre != "" || release.Channels != "" || release.Collection != "" || release.Region != "" || release.Size != "" || release.Group != "" || release.Disc != "" || release.Type != "" || release.Category != "" || len(release.Codec) > 0 || len(release.Audio) > 0 || len(release.HDR) > 0 || len(release.Language) > 0 {
 		s.logger.Debugf(
-			"metadata: release parsed type=%q artist=%q title=%q subtitle=%q alt=%q year=%d month=%d day=%d source=%q resolution=%q codec=%v audio=%v hdr=%v ext=%q language=%v site=%q genre=%q channels=%q collection=%q region=%q size=%q group=%q disc=%q",
+			"metadata: release parsed category=%q type=%q artist=%q title=%q subtitle=%q alt=%q year=%d month=%d day=%d source=%q resolution=%q codec=%v audio=%v hdr=%v ext=%q language=%v site=%q genre=%q channels=%q collection=%q region=%q size=%q group=%q disc=%q",
+			release.Category,
 			release.Type,
 			release.Artist,
 			release.Title,
@@ -640,6 +666,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		Scene:      meta.Scene,
 		SceneName:  meta.SceneName,
 		SceneIMDB:  meta.SceneIMDB,
+		Category:   api.NormalizeCategory(meta.Release.Category),
 		Type:       meta.Release.Type,
 		Artist:     meta.Release.Artist,
 		Title:      meta.Release.Title,

@@ -1,6 +1,7 @@
 gui/frontend/node_modules/
 gui/frontend/dist/
 gui/frontend/package.json.md5
+gui/frontend/tsconfig.tsbuildinfo
 gui/build/bin/
 internal/webserver/assets/
 internal/guiapp/assets/*
@@ -9,11 +10,23 @@ dist/
 .trunk/
 *.exe
 /scripts/__pycache__/
+
+# Lefthook
+.lefthook-local.yml
+.lefthook/
+
+# Lint / formatter caches
+gui/frontend/.eslintcache
+gui/frontend/node_modules/.cache/prettier/
+
+# App Configs
 /config/*.yaml
 /config/*.yml
 /config.converted.yaml
 /config.converted.yml
 /config-export.yaml
+
+#Claude user local settings
 .claude/settings.local.json
 .claude/CLAUDE.local.md
 CLAUDE.local.md

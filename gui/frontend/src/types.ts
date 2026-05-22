@@ -266,6 +266,8 @@ export type WebAuthStatus = {
   canCreate: boolean;
   username: string;
   allowUnencryptedExport: boolean;
+  browseRoot: string;
+  allowUnrestrictedBrowse: boolean;
   encryptionEnabled: boolean;
   message: string;
 };
@@ -452,7 +454,13 @@ export type ImageHostFeedback = {
   Status: string;
   SelectedHost: string;
   AllowedHosts: string[];
+  Warnings?: ImageHostWarning[];
   Reuploaded: boolean;
+  Message: string;
+};
+
+export type ImageHostWarning = {
+  Host: string;
   Message: string;
 };
 
@@ -533,11 +541,24 @@ export type UploadedImageLink = {
   SourcePath: string;
   ImagePath: string;
   Host: string;
+  UsageScope: string;
   ImgURL: string;
   RawURL: string;
   WebURL: string;
   SizeBytes: number;
   UploadedAt: string;
+};
+
+export type UploadImageHostFailure = {
+  Host: string;
+  UsageScope: string;
+  Trackers: string[];
+  Message: string;
+};
+
+export type UploadImagesResult = {
+  Links: UploadedImageLink[];
+  Failures: UploadImageHostFailure[];
 };
 
 export type HistoryEntry = {
@@ -596,13 +617,39 @@ export type HistoryOverview = {
   ExternalIDs: ExternalIDs;
   ExternalMetadata: Record<string, unknown>;
   ReleaseNameOverrides: ReleaseNameOverrides;
-  DescriptionOverride: { SourcePath: string; GroupKey: string; Description: string; UpdatedAt: string };
-  DescriptionOverrides: Array<{ SourcePath: string; GroupKey: string; Description: string; UpdatedAt: string }>;
-  PlaylistSelection: { SourcePath: string; SelectedPlaylists: string[]; UseAll: boolean; UpdatedAt: string };
+  DescriptionOverride: {
+    SourcePath: string;
+    GroupKey: string;
+    Description: string;
+    UpdatedAt: string;
+  };
+  DescriptionOverrides: Array<{
+    SourcePath: string;
+    GroupKey: string;
+    Description: string;
+    UpdatedAt: string;
+  }>;
+  PlaylistSelection: {
+    SourcePath: string;
+    SelectedPlaylists: string[];
+    UseAll: boolean;
+    UpdatedAt: string;
+  };
   TrackerMetadata: HistoryTrackerMetadata[];
   TrackerRuleFailures: HistoryRuleFailure[];
-  Screenshots: Array<{ SourcePath: string; ImagePath: string; Purpose: string; CapturedAt: string }>;
-  FinalSelections: Array<{ SourcePath: string; ImagePath: string; Order: number; Source: string; SelectedAt: string }>;
+  Screenshots: Array<{
+    SourcePath: string;
+    ImagePath: string;
+    Purpose: string;
+    CapturedAt: string;
+  }>;
+  FinalSelections: Array<{
+    SourcePath: string;
+    ImagePath: string;
+    Order: number;
+    Source: string;
+    SelectedAt: string;
+  }>;
   UploadedImages: UploadedImageLink[];
   UploadHistory: HistoryUploadRecord[];
 };
@@ -681,6 +728,11 @@ export type TrackerDryRunPreview = {
 
 export type ConfigValue = string | number | boolean | null | ConfigMap | ConfigValue[];
 export type ConfigMap = { [key: string]: ConfigValue };
+export type ImageHostPolicyMetadata = {
+  UploadHosts?: string[];
+  TrackerUploadHosts?: Record<string, string[]>;
+  OwnedHosts?: Record<string, string>;
+};
 export type FieldType = "string" | "number" | "boolean";
 export type FieldMeta = {
   key: string;
@@ -688,6 +740,7 @@ export type FieldMeta = {
   type?: FieldType;
   advanced?: boolean;
   sensitive?: boolean;
+  options?: Array<{ value: string; label: string }>;
 };
 
 export type ReleaseNameEditState = {
@@ -740,6 +793,13 @@ export type ReleaseNameTouchedState = {
   region: boolean;
 };
 
+export type ReleaseNameIDEditState = {
+  tmdb: string;
+  imdb: string;
+  tvdb: string;
+  tvmaze: string;
+};
+
 export type DetailItem = {
   label: string;
   value: string;
@@ -771,4 +831,78 @@ export type PlaylistSelection = {
   SelectedPlaylists: string[];
   UseAll: boolean;
   UpdatedAt: string;
+};
+
+export type BrowseDirectoryEntry = {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  modifiedAt: string;
+};
+
+export type BrowseDirectoryResponse = {
+  currentPath: string;
+  parentPath: string;
+  mode: "file" | "folder";
+  entries: BrowseDirectoryEntry[];
+};
+
+export type BrowseDirectoryRequest = {
+  path: string;
+  mode: "file" | "folder";
+};
+
+export type UIState = {
+  path?: string;
+  sourceLookupURL?: string;
+  activeTab?: string;
+  preview?: MetadataPreview;
+  idEdits?: ReleaseNameIDEditState;
+  releaseEdits?: ReleaseNameEditState;
+  releaseTouched?: ReleaseNameTouchedState;
+  showExternalIDInputUI?: boolean;
+  selectedProvider?: string;
+  releasePageTrackerSelection?: Record<string, boolean>;
+  uploadToggles?: Record<string, boolean>;
+  overrideRuleBlocks?: boolean;
+  runDebug?: boolean;
+  runLogLevel?: string;
+  runLogLevelTouched?: boolean;
+  dupeSummary?: DupeCheckSummary;
+  dupeChecked?: boolean;
+  dupeIgnore?: Record<string, boolean>;
+  dupeTrackerFlags?: Record<string, boolean>;
+  dupeCheckJobID?: string;
+  dupeCheckSnapshot?: DupeCheckSnapshot | null;
+  prepPreview?: PreparationPreview;
+  screenshotPlan?: ScreenshotPlan | null;
+  screenshotSelections?: ScreenshotSelection[];
+  screenshotsEnabled?: boolean;
+  showFrameSelections?: boolean;
+  previewImages?: ScreenshotPreviewImage[];
+  existingImages?: ScreenshotPreviewImage[];
+  existingTrackerImages?: ScreenshotPreviewImage[];
+  finalImages?: ScreenshotPreviewImage[];
+  finalResult?: ScreenshotResult | null;
+  deletedTrackerImages?: string[];
+  uploadHost?: string;
+  uploadSelections?: Record<string, boolean>;
+  uploadedImages?: UploadedImageLink[];
+  uploadedImageRecords?: UploadedImageLink[];
+  trackerUploadJobID?: string;
+  trackerUploadSnapshot?: TrackerUploadSnapshot | null;
+  trackerDryRunPreview?: TrackerDryRunPreview;
+  trackerQuestionnaireAnswers?: Record<string, Record<string, string>>;
+};
+
+export type UIStateRecord = {
+  id: string;
+  label: string;
+  updatedAt: string;
+  state: UIState;
+};
+
+export type UIStateList = {
+  states: UIStateRecord[];
 };
