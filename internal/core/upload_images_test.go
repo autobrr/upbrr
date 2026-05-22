@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"sync"
@@ -363,8 +364,9 @@ func TestUploadImagesReturnsHostFailuresWithSuccessfulLinks(t *testing.T) {
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	imageService := &stubImageHosting{
 		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
-			if host == "ptpimg" {
-				return nil, errors.New("ptpimg unavailable")
+			switch host {
+			case "ptpimg", "pixhost":
+				return nil, fmt.Errorf("%s unavailable", host)
 			}
 			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
 		},
@@ -402,14 +404,64 @@ func TestUploadImagesReturnsHostFailuresWithSuccessfulLinks(t *testing.T) {
 		t.Fatalf("expected one host failure, got %#v", result.Failures)
 	}
 	failure := result.Failures[0]
-	if failure.Host != "ptpimg" || failure.Message != "ptpimg unavailable" {
-		t.Fatalf("expected ptpimg failure, got %#v", failure)
+	if failure.Host != "pixhost" || failure.Message != "pixhost unavailable" {
+		t.Fatalf("expected exhausted pixhost fallback failure, got %#v", failure)
 	}
-	expectedTrackers := []string{"PTP", "MTV"}
+	expectedTrackers := []string{"PTP"}
 	sort.Strings(failure.Trackers)
 	sort.Strings(expectedTrackers)
 	if !slices.Equal(failure.Trackers, expectedTrackers) {
 		t.Fatalf("expected failure to block only linked trackers, got %#v", failure.Trackers)
+	}
+}
+
+func TestUploadImagesFallsBackWhenSelectedHostFails(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	var calls []string
+	imageService := &stubImageHosting{
+		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			calls = append(calls, host)
+			if host == "imgbb" {
+				return nil, errors.New("imgbb unavailable")
+			}
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"MTV": {},
+					"STC": {},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"MTV", "STC"},
+	}, "imgbb", images)
+	if err != nil {
+		t.Fatalf("expected fallback upload to succeed, got %v", err)
+	}
+	if len(result.Failures) != 0 {
+		t.Fatalf("expected selected host failure to be recovered by fallback, got %#v", result.Failures)
+	}
+	if len(result.Links) != 1 || result.Links[0].Host != "imgbox" {
+		t.Fatalf("expected fallback imgbox link, got %#v", result)
+	}
+	if !slices.Equal(calls, []string{"imgbb", "imgbox"}) {
+		t.Fatalf("expected selected host then fallback host, got %v", calls)
 	}
 }
 

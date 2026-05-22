@@ -25,6 +25,11 @@ type ImageUploadTarget struct {
 	Trackers   []string
 }
 
+type imageUploadPolicyTarget struct {
+	tracker string
+	policy  imageHostPolicy
+}
+
 func policyForTracker(tracker string, trackerCfg config.TrackerConfig) imageHostPolicy {
 	return policyFromShared(imagehostpolicy.ForTracker(tracker, trackerCfg.ImgRehost, trackerCfg.ImgAPI))
 }
@@ -157,6 +162,21 @@ func ConfiguredImageUploadTargets(appCfg config.Config, trackerNames []string) (
 }
 
 func NeededImageUploadTargets(appCfg config.Config, trackerNames []string, selectedHost string) ([]ImageUploadTarget, error) {
+	return neededImageUploadTargets(appCfg, trackerNames, selectedHost, nil)
+}
+
+func NeededImageUploadTargetsExcluding(appCfg config.Config, trackerNames []string, selectedHost string, excludedHosts []string) ([]ImageUploadTarget, error) {
+	excluded := make(map[string]struct{}, len(excludedHosts))
+	for _, host := range excludedHosts {
+		normalized := strings.ToLower(strings.TrimSpace(host))
+		if normalized != "" {
+			excluded[normalized] = struct{}{}
+		}
+	}
+	return neededImageUploadTargets(appCfg, trackerNames, selectedHost, excluded)
+}
+
+func neededImageUploadTargets(appCfg config.Config, trackerNames []string, selectedHost string, excludedHosts map[string]struct{}) ([]ImageUploadTarget, error) {
 	selectedHost = strings.ToLower(strings.TrimSpace(selectedHost))
 	targets := make([]ImageUploadTarget, 0, len(trackerNames)+1)
 	seen := make(map[string]int, len(trackerNames)+1)
@@ -164,6 +184,9 @@ func NeededImageUploadTargets(appCfg config.Config, trackerNames []string, selec
 	addTarget := func(host string, tracker string) {
 		host = strings.ToLower(strings.TrimSpace(host))
 		if host == "" {
+			return
+		}
+		if _, excluded := excludedHosts[host]; excluded {
 			return
 		}
 		name := strings.ToUpper(strings.TrimSpace(tracker))
@@ -181,6 +204,7 @@ func NeededImageUploadTargets(appCfg config.Config, trackerNames []string, selec
 		})
 	}
 
+	flexibleTargets := make([]imageUploadPolicyTarget, 0, len(trackerNames))
 	for _, tracker := range trackerNames {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
 		if name == "" {
@@ -192,26 +216,135 @@ func NeededImageUploadTargets(appCfg config.Config, trackerNames []string, selec
 			if err != nil {
 				return nil, err
 			}
-			addTarget(preferredHost(policy), name)
+			if host := preferredHost(policy); host != "" {
+				if _, excluded := excludedHosts[host]; !excluded {
+					addTarget(host, name)
+					continue
+				}
+			}
+			flexibleTargets = append(flexibleTargets, imageUploadPolicyTarget{tracker: name, policy: policy})
 			continue
 		}
 
 		policy := policyForTracker(name, trackerCfg)
-		if selectedHostUsableForPolicy(name, selectedHost, policy) {
-			addTarget(selectedHost, name)
-			continue
-		}
-		addTarget(preferredHost(policy), name)
+		flexibleTargets = append(flexibleTargets, imageUploadPolicyTarget{tracker: name, policy: policy})
 	}
 
+	assignFlexibleImageUploadTargets(flexibleTargets, selectedHost, excludedHosts, targets, addTarget)
+
 	if len(targets) == 0 && selectedHost != "" && trackerForOwnedHost(selectedHost) == "" {
+		if _, excluded := excludedHosts[selectedHost]; excluded {
+			return targets, nil
+		}
 		targets = append(targets, ImageUploadTarget{Host: selectedHost, UsageScope: globalImageUsageScope})
 	}
 
 	return targets, nil
 }
 
-func selectedHostUsableForPolicy(tracker string, host string, policy imageHostPolicy) bool {
+func assignFlexibleImageUploadTargets(flexibleTargets []imageUploadPolicyTarget, selectedHost string, excludedHosts map[string]struct{}, targets []ImageUploadTarget, addTarget func(string, string)) {
+	unassigned := make([]imageUploadPolicyTarget, 0, len(flexibleTargets))
+	for _, target := range flexibleTargets {
+		if host, ok := existingImageUploadTargetHost(target.tracker, target.policy, targets); ok {
+			addTarget(host, target.tracker)
+			continue
+		}
+		unassigned = append(unassigned, target)
+	}
+
+	for len(unassigned) > 0 {
+		host := bestImageUploadTargetHost(unassigned, selectedHost, excludedHosts)
+		if host == "" {
+			break
+		}
+		next := unassigned[:0]
+		for _, target := range unassigned {
+			if imageHostUsableForPolicy(target.tracker, host, target.policy) {
+				addTarget(host, target.tracker)
+				continue
+			}
+			next = append(next, target)
+		}
+		unassigned = next
+	}
+}
+
+func existingImageUploadTargetHost(tracker string, policy imageHostPolicy, targets []ImageUploadTarget) (string, bool) {
+	for _, target := range targets {
+		if imageHostUsableForPolicy(tracker, target.Host, policy) {
+			return target.Host, true
+		}
+	}
+	return "", false
+}
+
+func bestImageUploadTargetHost(targets []imageUploadPolicyTarget, selectedHost string, excludedHosts map[string]struct{}) string {
+	rankings := make(map[string]imageUploadHostRanking, len(targets))
+	for _, target := range targets {
+		for _, host := range candidateImageUploadTargetHosts(target.tracker, target.policy, selectedHost, excludedHosts) {
+			ranking := rankings[host]
+			ranking.host = host
+			ranking.count++
+			ranking.preference += preferredHostOrder(host, target.policy.preferred)
+			if host == selectedHost {
+				ranking.selected = true
+			}
+			rankings[host] = ranking
+		}
+	}
+
+	var best imageUploadHostRanking
+	for _, ranking := range rankings {
+		if betterImageUploadHostRanking(ranking, best) {
+			best = ranking
+		}
+	}
+	return best.host
+}
+
+type imageUploadHostRanking struct {
+	host       string
+	count      int
+	preference int
+	selected   bool
+}
+
+func betterImageUploadHostRanking(candidate imageUploadHostRanking, current imageUploadHostRanking) bool {
+	if candidate.host == "" {
+		return false
+	}
+	if current.host == "" {
+		return true
+	}
+	if candidate.count != current.count {
+		return candidate.count > current.count
+	}
+	if candidate.selected != current.selected {
+		return candidate.selected
+	}
+	if candidate.preference != current.preference {
+		return candidate.preference < current.preference
+	}
+	return candidate.host < current.host
+}
+
+func candidateImageUploadTargetHosts(tracker string, policy imageHostPolicy, selectedHost string, excludedHosts map[string]struct{}) []string {
+	hosts := make([]string, 0, len(policy.preferred)+1)
+	if _, excluded := excludedHosts[selectedHost]; !excluded && imageHostUsableForPolicy(tracker, selectedHost, policy) {
+		hosts = append(hosts, selectedHost)
+	}
+	for _, host := range policy.preferred {
+		if _, excluded := excludedHosts[strings.ToLower(strings.TrimSpace(host))]; excluded {
+			continue
+		}
+		if imageHostUsableForPolicy(tracker, host, policy) {
+			hosts = appendUniqueHost(hosts, host)
+		}
+	}
+	return hosts
+}
+
+func imageHostUsableForPolicy(tracker string, host string, policy imageHostPolicy) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" || !supportedUploadImageHost(host) {
 		return false
@@ -307,4 +440,17 @@ func appendUniqueTracker(trackers []string, tracker string) []string {
 		}
 	}
 	return append(trackers, tracker)
+}
+
+func appendUniqueHost(hosts []string, host string) []string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return hosts
+	}
+	for _, existing := range hosts {
+		if existing == host {
+			return hosts
+		}
+	}
+	return append(hosts, host)
 }

@@ -126,3 +126,21 @@ func TestResolveImageHostPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestNeededImageUploadTargetsChoosesSharedApprovedHost(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{}, []string{"STC", "GPW"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one shared target, got %#v", targets)
+	}
+	if targets[0].Host != "imgbox" {
+		t.Fatalf("expected imgbox to satisfy both trackers, got %#v", targets[0])
+	}
+	if got, want := targets[0].Trackers, []string{"STC", "GPW"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("expected trackers %v, got %v", want, got)
+	}
+}

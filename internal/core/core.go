@@ -937,7 +937,7 @@ func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, i
 	if err != nil {
 		return api.UploadImagesResult{}, err
 	}
-	return c.uploadImagesToTargets(ctx, meta, targets, images)
+	return c.uploadImagesToTargetsWithFallback(ctx, meta, host, targets, images)
 }
 
 func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]trackers.ImageUploadTarget, error) {
@@ -968,6 +968,188 @@ func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]tracke
 		return nil, fmt.Errorf("core: image host %q is tracker-scoped but no active tracker can use it", normalizedHost)
 	}
 	return normalized, nil
+}
+
+func (c *Core) resolveFallbackImageUploadTargets(host string, trackerNames []string, excludedHosts []string) ([]trackers.ImageUploadTarget, error) {
+	normalizedHost := strings.ToLower(strings.TrimSpace(host))
+	if normalizedHost == "" || len(trackerNames) == 0 {
+		return nil, nil
+	}
+	targets, err := trackers.NeededImageUploadTargetsExcluding(c.cfg, trackerNames, normalizedHost, excludedHosts)
+	if err != nil {
+		return nil, err
+	}
+	normalized := make([]trackers.ImageUploadTarget, 0, len(targets))
+	for _, target := range targets {
+		target = normalizeImageUploadTarget(target)
+		if target.Host == "" {
+			continue
+		}
+		normalized = append(normalized, target)
+	}
+	return normalized, nil
+}
+
+func (c *Core) uploadImagesToTargetsWithFallback(ctx context.Context, meta api.PreparedMetadata, host string, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
+	allLinks := make([]api.UploadedImageLink, 0, len(images)*len(targets))
+	failedHosts := make(map[string]struct{}, len(targets))
+	currentTargets := targets
+	var failures []api.UploadImageHostFailure
+
+	for len(currentTargets) > 0 {
+		result, err := c.uploadImagesToTargets(ctx, meta, currentTargets, images)
+		if err != nil {
+			return api.UploadImagesResult{}, err
+		}
+		allLinks = append(allLinks, result.Links...)
+		if len(result.Failures) == 0 {
+			return api.UploadImagesResult{Links: allLinks}, nil
+		}
+
+		failures = result.Failures
+		for _, failure := range result.Failures {
+			host := strings.ToLower(strings.TrimSpace(failure.Host))
+			if host != "" {
+				failedHosts[host] = struct{}{}
+			}
+		}
+
+		blockedTrackers := uploadFailureTrackers(failures)
+		fallbackTargets, err := c.resolveFallbackImageUploadTargets(host, blockedTrackers, sortedMapKeys(failedHosts))
+		if err != nil {
+			return api.UploadImagesResult{}, err
+		}
+
+		var recoveredTrackers []string
+		nextTargets := make([]trackers.ImageUploadTarget, 0, len(fallbackTargets))
+		for _, target := range fallbackTargets {
+			if uploadedLinksCoverTarget(allLinks, target, len(images)) {
+				recoveredTrackers = append(recoveredTrackers, target.Trackers...)
+				continue
+			}
+			nextTargets = append(nextTargets, target)
+		}
+		failures = filterUploadFailuresForRecoveredTrackers(failures, recoveredTrackers)
+		if len(nextTargets) == 0 {
+			if len(failures) == 0 {
+				return api.UploadImagesResult{Links: allLinks}, nil
+			}
+			return api.UploadImagesResult{Links: allLinks, Failures: failures}, nil
+		}
+
+		c.logger.Warnf("core: retrying image uploads after host failures failed_hosts=%s fallback_hosts=%s trackers=%v", strings.Join(sortedMapKeys(failedHosts), ","), strings.Join(uploadTargetHosts(nextTargets), ","), uploadTargetTrackers(nextTargets))
+		currentTargets = nextTargets
+	}
+
+	return api.UploadImagesResult{Links: allLinks, Failures: failures}, nil
+}
+
+func uploadFailureTrackers(failures []api.UploadImageHostFailure) []string {
+	trackersList := make([]string, 0)
+	for _, failure := range failures {
+		for _, tracker := range failure.Trackers {
+			trackersList = appendUniqueNormalizedTracker(trackersList, tracker)
+		}
+	}
+	return trackersList
+}
+
+func filterUploadFailuresForRecoveredTrackers(failures []api.UploadImageHostFailure, recoveredTrackers []string) []api.UploadImageHostFailure {
+	if len(failures) == 0 || len(recoveredTrackers) == 0 {
+		return failures
+	}
+	recovered := make(map[string]struct{}, len(recoveredTrackers))
+	for _, tracker := range recoveredTrackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name != "" {
+			recovered[name] = struct{}{}
+		}
+	}
+
+	filtered := make([]api.UploadImageHostFailure, 0, len(failures))
+	for _, failure := range failures {
+		remainingTrackers := make([]string, 0, len(failure.Trackers))
+		for _, tracker := range failure.Trackers {
+			name := strings.ToUpper(strings.TrimSpace(tracker))
+			if name == "" {
+				continue
+			}
+			if _, ok := recovered[name]; ok {
+				continue
+			}
+			remainingTrackers = appendUniqueNormalizedTracker(remainingTrackers, name)
+		}
+		if len(failure.Trackers) > 0 && len(remainingTrackers) == 0 {
+			continue
+		}
+		failure.Trackers = remainingTrackers
+		filtered = append(filtered, failure)
+	}
+	return filtered
+}
+
+func uploadedLinksCoverTarget(links []api.UploadedImageLink, target trackers.ImageUploadTarget, expectedImages int) bool {
+	if expectedImages == 0 {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(target.Host))
+	scope := normalizeImageUploadUsageScope(target.UsageScope)
+	seenPaths := make(map[string]struct{}, expectedImages)
+	for _, link := range links {
+		if !strings.EqualFold(strings.TrimSpace(link.Host), host) {
+			continue
+		}
+		if normalizeImageUploadUsageScope(link.UsageScope) != scope {
+			continue
+		}
+		path := normalizedUploadImagePath(link.ImagePath)
+		if path == "" {
+			continue
+		}
+		seenPaths[path] = struct{}{}
+	}
+	return len(seenPaths) >= expectedImages
+}
+
+func uploadTargetHosts(targets []trackers.ImageUploadTarget) []string {
+	hosts := make([]string, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		host := strings.ToLower(strings.TrimSpace(target.Host))
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+	slices.Sort(hosts)
+	return hosts
+}
+
+func uploadTargetTrackers(targets []trackers.ImageUploadTarget) []string {
+	trackersList := make([]string, 0)
+	for _, target := range targets {
+		for _, tracker := range target.Trackers {
+			trackersList = appendUniqueNormalizedTracker(trackersList, tracker)
+		}
+	}
+	slices.Sort(trackersList)
+	return trackersList
+}
+
+func sortedMapKeys(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetadata, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
