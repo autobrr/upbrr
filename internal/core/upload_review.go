@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -66,11 +68,27 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 	singleReq.ExternalIDOverrides = mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, uniquePaths[0]))
 
 	signature := overrideSignature(singleReq.ExternalIDOverrides, singleReq.ReleaseNameOverrides, singleReq.MetadataOverrides, singleReq.TrackerConfigOverrides, singleReq.TrackerSiteOverrides, singleReq.ClientOverrides, singleReq.TorrentOverrides, singleReq.ImageHostOverrides, singleReq.ScreenshotOverrides)
-	meta, ok := c.getDupeCache(uniquePaths[0], signature)
+	var (
+		meta api.PreparedMetadata
+		ok   bool
+	)
+	if req.Mode == api.ModeGUI {
+		meta, ok, err = c.resolveGUICachedPreparedMeta(ctx, singleReq, uniquePaths[0])
+		if err != nil {
+			return api.UploadReview{}, err
+		}
+	} else {
+		meta, ok = c.getDupeCache(uniquePaths[0], signature)
+		if ok {
+			meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, singleReq)
+			if err != nil {
+				return api.UploadReview{}, err
+			}
+		}
+	}
 	if !ok {
 		return api.UploadReview{}, fmt.Errorf("core: upload review requires prepared metadata for %s", uniquePaths[0])
 	}
-	meta = applyRequestToPreparedMeta(meta, singleReq)
 
 	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, singleReq.Trackers, singleReq.TrackersRemove, c.logger)
 
@@ -191,7 +209,16 @@ func formatBlockedReasons(reasons []api.TrackerBlockReason) string {
 	return strings.Join(labels, ", ")
 }
 
-func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request) api.PreparedMetadata {
+func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger) api.PreparedMetadata {
+	return applyRequestToPreparedMetaWithDerivedFields(meta, req, cfg, logger, true)
+}
+
+func applyRequestToPreparedMetaBeforeRefresh(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger) api.PreparedMetadata {
+	return applyRequestToPreparedMetaWithDerivedFields(meta, req, cfg, logger, false)
+}
+
+func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger, rebuildDerivedFields bool) api.PreparedMetadata {
+	meta = deepCopyPreparedMetadata(meta)
 	meta.Mode = req.Mode
 	meta.Options = req.Options
 	meta.Paths = append([]string{}, req.Paths...)
@@ -215,6 +242,10 @@ func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request) api.
 	meta.ReleaseNameOverrides = req.ReleaseNameOverrides
 	meta.TrackerQuestionnaireAnswers = cloneTrackerQuestionnaireAnswers(req.TrackerQuestionnaireAnswers)
 	applyMetadataOverridesToPreparedMeta(&meta)
+	if rebuildDerivedFields {
+		metadata.ApplyRequestScopedAudioPolicy(&meta, cfg, logger)
+		metadata.RebuildReleaseName(&meta, logger)
+	}
 	applyTorrentOverridesToPreparedMeta(&meta)
 	meta.TrackerRuleFailures = filterTrackerRuleFailures(meta.TrackerRuleFailures, req.IgnoreTrackerRuleFailuresFor)
 	if req.SkipDupeCheck {
@@ -223,6 +254,20 @@ func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request) api.
 		meta.BlockedTrackers = removeTrackerBlockReasonForTrackers(meta.BlockedTrackers, api.TrackerBlockReasonDupe, req.IgnoreDupesFor)
 	}
 	return meta
+}
+
+func (c *Core) applyRequestToCachedPreparedMeta(ctx context.Context, meta api.PreparedMetadata, req api.Request) (api.PreparedMetadata, error) {
+	if c.services.Metadata == nil {
+		meta = applyRequestToPreparedMeta(meta, req, c.cfg, c.logger)
+		return meta, nil
+	}
+	meta = applyRequestToPreparedMetaBeforeRefresh(meta, req, c.cfg, c.logger)
+	refreshed, err := c.services.Metadata.RefreshPreparedMetadata(ctx, meta)
+	if err != nil {
+		return api.PreparedMetadata{}, err
+	}
+	refreshed.TrackerRuleFailures = filterTrackerRuleFailures(refreshed.TrackerRuleFailures, req.IgnoreTrackerRuleFailuresFor)
+	return refreshed, nil
 }
 
 func applyMetadataOverridesToPreparedMeta(meta *api.PreparedMetadata) {

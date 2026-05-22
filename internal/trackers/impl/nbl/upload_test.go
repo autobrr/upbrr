@@ -3,7 +3,44 @@
 
 package nbl
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+func TestPrepareUploadStateUsesNumericIgnoreDupes(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	mediaInfoPath := filepath.Join(tmp, "mediainfo.txt")
+	if err := os.WriteFile(torrentPath, []byte("torrent"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	state, err := prepareUploadState(context.Background(), trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+		},
+		TrackerConfig: config.TrackerConfig{APIKey: "api-key"},
+	})
+	if err != nil {
+		t.Fatalf("prepare upload state: %v", err)
+	}
+	if got := state.fields["ignoredupes"]; got != "1" {
+		t.Fatalf("expected ignoredupes=1, got %q", got)
+	}
+}
 
 func TestExtractUploadLinkAndIDFromRootLink(t *testing.T) {
 	t.Parallel()

@@ -169,12 +169,10 @@
 .upload-images-result .value,
 .upload-images-result .value.mono {
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .upload-images-result .tracker-link {
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 :root.light .upload-images-result {
@@ -210,18 +208,13 @@
 }
 
 .upload-progress-bar::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.3),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
   animation: shimmer 1.5s infinite;
 }
 
@@ -249,4 +242,3 @@
 :root.light .upload-progress-text {
   color: #6b7280;
 }
-

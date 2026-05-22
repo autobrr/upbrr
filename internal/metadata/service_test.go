@@ -141,6 +141,53 @@ func TestResolveServiceDarkroom(t *testing.T) {
 	}
 }
 
+func TestResolveServiceValue(t *testing.T) {
+	t.Parallel()
+
+	service, longName := resolveServiceValue("ITUNES")
+	if service != "iT" {
+		t.Fatalf("expected iT service, got %q", service)
+	}
+	if longName == "" {
+		t.Fatalf("expected service long name")
+	}
+
+	service, _ = resolveServiceValue("AMAZON")
+	if service != "AMZN" {
+		t.Fatalf("expected AMZN service, got %q", service)
+	}
+}
+
+func TestPrepareAppliesSceneServiceFromNFO(t *testing.T) {
+	base := t.TempDir()
+	path := filepath.Join(base, "Greenland.2.Migration.2026.HDR.2160p.WEB.h265-ETHEL.mkv")
+	if err := os.WriteFile(path, []byte("video"), 0o644); err != nil {
+		t.Fatalf("write video failed: %v", err)
+	}
+
+	repo := &stubRepo{}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo,
+		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, Service: "iT", ServiceLongName: "iTunes"}}),
+		WithConfig(cfg),
+	)
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths: []string{path},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if meta.Service != "iT" {
+		t.Fatalf("expected iT service from scene nfo, got %q", meta.Service)
+	}
+	if meta.ServiceLongName != "iTunes" {
+		t.Fatalf("expected iTunes long name from scene nfo, got %q", meta.ServiceLongName)
+	}
+}
+
 func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 	base := t.TempDir()
 	sourcePath := filepath.Join(base, "disc")
@@ -685,6 +732,14 @@ type stubSceneDetector struct{}
 
 func (stubSceneDetector) Detect(context.Context, api.PreparedMetadata) (SceneResult, error) {
 	return SceneResult{}, nil
+}
+
+type staticSceneDetector struct {
+	result SceneResult
+}
+
+func (s staticSceneDetector) Detect(context.Context, api.PreparedMetadata) (SceneResult, error) {
+	return s.result, nil
 }
 
 func (s *stubRepo) GetByPath(context.Context, string) (db.FileMetadata, error) {

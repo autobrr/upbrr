@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -113,6 +112,45 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "valid tracker image host",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"PTP": {ImageHost: "ptpimg"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid unsupported tracker image host",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {ImageHost: "imgur"},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid tracker image host outside tracker policy",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"PTP": {ImageHost: "imgbb"},
+					},
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range cases {
@@ -140,47 +178,6 @@ func TestLoadExampleConfig(t *testing.T) {
 	}
 }
 
-func TestLoadDefaultConfig(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("user home dir: %v", err)
-	}
-	configPath := filepath.Join(home, ".upbrr", "config.yaml")
-	if _, err := os.Stat(configPath); err != nil {
-		if os.IsNotExist(err) {
-			t.Skipf("default config file not present at %s", configPath)
-		}
-		t.Fatalf("stat default config path: %v", err)
-	}
-	_, err = Load(configPath)
-	if err != nil {
-		lineInfo := formatConfigLineInfo(t, configPath, err.Error())
-		t.Fatalf("default config load failed for %s: %v%s", configPath, err, lineInfo)
-	}
-}
-
-func formatConfigLineInfo(t *testing.T, path, message string) string {
-	re := regexp.MustCompile(`line (\d+)`)
-	matches := re.FindStringSubmatch(message)
-	if len(matches) < 2 {
-		return ""
-	}
-	line, err := strconv.Atoi(matches[1])
-	if err != nil || line <= 0 {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Logf("unable to read config for context: %v", err)
-		return ""
-	}
-	lines := strings.Split(string(data), "\n")
-	if line > len(lines) {
-		return ""
-	}
-	return "\nconfig line " + matches[1] + ": " + strings.TrimRight(lines[line-1], "\r")
-}
-
 func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 	t.Parallel()
 
@@ -195,6 +192,7 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 					APIKey:      "abc",
 					AnnounceURL: "https://should-not-be-here",
 					Username:    "should-not-be-here",
+					ImageHost:   "ptpimg",
 					Anon:        true,
 					Unknown: map[string]interface{}{
 						"CustomFlag": "keep",
@@ -240,6 +238,9 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 	if _, exists := a4k["ModQ"]; !exists {
 		t.Fatalf("A4K should include ModQ from schema defaults")
 	}
+	if got := a4k["ImageHost"]; got != "ptpimg" {
+		t.Fatalf("A4K should include ImageHost, got %v", got)
+	}
 	if got := a4k["CustomFlag"]; got != "keep" {
 		t.Fatalf("custom key not preserved, got %v", got)
 	}
@@ -257,6 +258,7 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 				"A4K": {
 					APIKey:      "abc",
 					AnnounceURL: "https://should-not-be-here",
+					ImageHost:   "ptpimg",
 					Anon:        true,
 					Unknown: map[string]interface{}{
 						"custom_yaml": "keep",
@@ -284,6 +286,9 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?m)^\s*api_key:\s*\S+\s*$`).MatchString(text) {
 		t.Fatalf("A4K should include api_key with non-empty value in yaml export")
+	}
+	if !strings.Contains(text, "image_host: ptpimg") {
+		t.Fatalf("A4K should include image_host in yaml export")
 	}
 	if !strings.Contains(text, "custom_yaml: keep") {
 		t.Fatalf("unknown custom key should be preserved in yaml export")

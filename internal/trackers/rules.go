@@ -342,6 +342,9 @@ func resolveCategory(meta api.PreparedMetadata) string {
 			return value
 		}
 	}
+	if value := strings.ToLower(strings.TrimSpace(meta.Release.Category)); value != "" {
+		return value
+	}
 	return ""
 }
 
@@ -513,6 +516,9 @@ func containsAny(values []string, targets []string) bool {
 
 func evaluateLanguageRule(meta api.PreparedMetadata, rule *additional.LanguageRule, logger api.Logger) (bool, string) {
 	if rule == nil {
+		return true, ""
+	}
+	if rule.ApplyIfNonBDMV && strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		return true, ""
 	}
 	if rule.ApplyIfNonDisc && isDiscType(meta.DiscType) {

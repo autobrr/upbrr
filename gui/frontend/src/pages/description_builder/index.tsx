@@ -4,6 +4,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { DescriptionBuilderPreview } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
+import "./styles.css";
 
 type Props = {
   path: string;
@@ -14,8 +15,10 @@ type Props = {
   builderLoading: boolean;
   builderSaving: boolean;
   builderRenderLoading: boolean;
+  builderRefreshing: boolean;
   builderError: string;
   builderSaved: string;
+  refreshDescriptionBuilder: () => void;
   setBuilderRawByGroup: Dispatch<SetStateAction<Record<string, string>>>;
   setBuilderDirtyByGroup: Dispatch<SetStateAction<Record<string, boolean>>>;
   setBuilderExpandedGroups: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -50,14 +53,16 @@ export default function DescriptionBuilderPage(props: Props) {
     builderLoading,
     builderSaving,
     builderRenderLoading,
+    builderRefreshing,
     builderError,
     builderSaved,
+    refreshDescriptionBuilder,
     setBuilderRawByGroup,
     setBuilderDirtyByGroup,
     setBuilderExpandedGroups,
     resetBuilderDescription,
     renderBuilderDescription,
-    saveBuilderDescription
+    saveBuilderDescription,
   } = props;
 
   const groups = builderPreview.Groups || [];
@@ -68,7 +73,8 @@ export default function DescriptionBuilderPage(props: Props) {
         <p className="eyebrow">Description Builder</p>
         <h1>Customize Description</h1>
         <p className="subtitle">
-          Edit tracker-group raw descriptions here. Tracker-specific formatting is applied from this builder.
+          Edit tracker-group raw descriptions here. Tracker-specific formatting is applied from this
+          builder.
         </p>
       </header>
 
@@ -77,6 +83,14 @@ export default function DescriptionBuilderPage(props: Props) {
           <p className="label">Source path</p>
           <p className="value dupe-path">{path || "No path selected"}</p>
         </div>
+        <button
+          className="ghost"
+          type="button"
+          onClick={refreshDescriptionBuilder}
+          disabled={builderLoading || builderSaving || builderRenderLoading || !path.trim()}
+        >
+          {builderRefreshing ? "Refreshing..." : "Refresh descriptions"}
+        </button>
       </section>
 
       {builderError ? <p className="error">{builderError}</p> : null}
@@ -87,7 +101,9 @@ export default function DescriptionBuilderPage(props: Props) {
           <div className="builder-preview__header">
             <h2>Building Descriptions</h2>
           </div>
-          <p className="muted">Preparing tracker-group descriptions and image-host adjustments...</p>
+          <p className="muted">
+            Preparing tracker-group descriptions and image-host adjustments...
+          </p>
         </section>
       ) : groups.length === 0 ? (
         <section className="panel builder-preview">
@@ -103,6 +119,7 @@ export default function DescriptionBuilderPage(props: Props) {
           const renderedHTML = builderRenderedByGroup[groupKey] ?? seededRendered;
           const expanded = builderExpandedGroups[groupKey] ?? false;
           const label = groupLabel(groupKey, group.Trackers || []);
+          const imageHostWarnings = group.ImageHost?.Warnings || [];
 
           return (
             <section className="panel builder-preview" key={reactKey}>
@@ -110,11 +127,27 @@ export default function DescriptionBuilderPage(props: Props) {
                 <div>
                   <h2>{label}</h2>
                   <p className="muted">
-                    {group.HasOverride ? "Saved override active for this group." : "Using generated raw description."}
+                    {group.HasOverride
+                      ? "Saved override active for this group."
+                      : "Using generated raw description."}
                   </p>
                   {group.ImageHost?.Reuploaded && group.ImageHost?.Message ? (
                     <p className="muted">{group.ImageHost.Message}</p>
                   ) : null}
+                  {group.ImageHost?.Status === "warning" && group.ImageHost?.Message ? (
+                    <p className="builder-image-warning">{group.ImageHost.Message}</p>
+                  ) : null}
+                  {imageHostWarnings.map((warning, index) => {
+                    const host = String(warning.Host || "").trim();
+                    const message = String(warning.Message || "").trim();
+                    if (!host && !message) return null;
+                    return (
+                      <p className="builder-image-warning" key={`${host || "host"}-${index}`}>
+                        {host ? `${host} failed` : "Image host warning"}
+                        {message ? `: ${message}` : ""}
+                      </p>
+                    );
+                  })}
                 </div>
                 <button
                   className="ghost"
@@ -122,7 +155,7 @@ export default function DescriptionBuilderPage(props: Props) {
                   onClick={() =>
                     setBuilderExpandedGroups((prev) => ({
                       ...prev,
-                      [groupKey]: !expanded
+                      [groupKey]: !expanded,
                     }))
                   }
                 >
@@ -162,7 +195,9 @@ export default function DescriptionBuilderPage(props: Props) {
                   <section className="panel builder-editor">
                     <div className="builder-editor__header">
                       <h2>Raw Description</h2>
-                      <p className="muted">This saved raw description is the upload source of truth for {label}.</p>
+                      <p className="muted">
+                        This saved raw description is the upload source of truth for {label}.
+                      </p>
                     </div>
                     <textarea
                       className="builder-textarea"

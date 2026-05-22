@@ -475,6 +475,9 @@ func TestPrintDryRunSummary(t *testing.T) {
 				ImageHost: api.ImageHostFeedback{
 					Reuploaded: true,
 					Message:    "reuploaded to imgbox",
+					Warnings: []api.ImageHostWarning{
+						{Host: "ptpimg", Message: "temporary failure"},
+					},
 				},
 			},
 			contains: []string{
@@ -482,6 +485,7 @@ func TestPrintDryRunSummary(t *testing.T) {
 				"Tracker release name: Movie.2024.1080p",
 				"Payload fields: category, name",
 				"Images: reuploaded to imgbox",
+				"Image host warning: ptpimg failed: temporary failure",
 			},
 		},
 		{
@@ -640,6 +644,9 @@ func TestParseCLIOptionsRejectsInvalidTIKDiscType(t *testing.T) {
 func TestParseCLIOptionsRejectsInvalidImageHost(t *testing.T) {
 	if _, _, _, err := parseCLIOptions([]string{"--imghost", "not-a-host", "movie.mkv"}); err == nil {
 		t.Fatal("expected invalid imghost to fail")
+	}
+	if _, _, _, err := parseCLIOptions([]string{"--imghost", "hdb", "movie.mkv"}); err == nil {
+		t.Fatal("expected tracker-owned hdb imghost to fail")
 	}
 }
 

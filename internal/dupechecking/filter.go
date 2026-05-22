@@ -17,6 +17,7 @@ import (
 var seasonPattern = regexp.MustCompile(`(?i)[s](\d{1,2})`)
 var episodePattern = regexp.MustCompile(`(?i)[e](\d{1,3})`)
 var dailyEpisodePattern = regexp.MustCompile(`(?i)\b((?:19|20)\d{2})[.\-_/\s](\d{1,2})[.\-_/\s](\d{1,2})\b`)
+var otwEpisodePattern = regexp.MustCompile(`(?i)e\d{2}`)
 
 func FilterDupes(dupes []api.DupeEntry, meta api.PreparedMetadata, tracker string, cfg config.Config, logger api.Logger) ([]api.DupeEntry, api.DupeMatch) {
 	match := api.DupeMatch{}
@@ -197,6 +198,9 @@ func FilterDupes(dupes []api.DupeEntry, meta api.PreparedMetadata, tracker strin
 		}
 
 		skipResolutionCheck := isDVD || strings.Contains(strings.ToUpper(targetSource), "DVD") || isDVDRIP
+		if isOTWSameSeasonEpisodeResolutionMismatch(meta, tracker, each, targetSeason, targetEpisode, targetResolution) {
+			return true
+		}
 		if !skipResolutionCheck {
 			if targetResolution != "" && !strings.Contains(each, targetResolution) {
 				return true
@@ -450,6 +454,12 @@ func resolveSeasonEpisode(meta api.PreparedMetadata) (string, string) {
 			episode = normalizeEpisodeValue(strconv.Itoa(meta.EpisodeInt))
 		}
 	}
+	if episode == "" {
+		episode = strings.TrimSpace(meta.DailyEpisodeDate)
+		if episode == "" && meta.ReleaseNameOverrides.ManualDate != nil {
+			episode = strings.TrimSpace(*meta.ReleaseNameOverrides.ManualDate)
+		}
+	}
 	if season == "" || episode == "" {
 		parsedSeason, parsedEpisode := parseSeasonEpisode(meta.ReleaseName)
 		if season == "" {
@@ -520,6 +530,40 @@ func isSeasonEpisodeMatch(filename string, targetSeason string, targetEpisode st
 		}
 	}
 	return false, false
+}
+
+func isOTWSameSeasonEpisodeResolutionMismatch(meta api.PreparedMetadata, tracker string, name string, targetSeason string, targetEpisode string, targetResolution string) bool {
+	if !strings.EqualFold(tracker, "OTW") || meta.TVPack || !strings.EqualFold(meta.ExternalIDs.Category, "TV") {
+		return false
+	}
+	if strings.TrimSpace(targetEpisode) == "" || strings.TrimSpace(targetResolution) == "" {
+		return false
+	}
+
+	targetSeasonValue, ok := seasonNumber(targetSeason)
+	if !ok {
+		return false
+	}
+	dupeSeasonValue, ok := seasonNumber(name)
+	if !ok || dupeSeasonValue != targetSeasonValue {
+		return false
+	}
+	if !otwEpisodePattern.MatchString(name) {
+		return false
+	}
+	return !strings.Contains(strings.ToLower(name), strings.ToLower(targetResolution))
+}
+
+func seasonNumber(value string) (int, bool) {
+	match := seasonPattern.FindStringSubmatch(value)
+	if len(match) <= 1 {
+		return 0, false
+	}
+	season, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, false
+	}
+	return season, true
 }
 
 func leftPad(value int, width int) string {

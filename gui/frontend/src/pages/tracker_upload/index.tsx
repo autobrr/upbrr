@@ -3,7 +3,13 @@
 
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { MetadataPreview, TrackerDryRunPreview, TrackerUploadItem, TrackerUploadSnapshot } from "../../types";
+import type {
+  MetadataPreview,
+  TrackerDryRunPreview,
+  TrackerUploadItem,
+  TrackerUploadSnapshot,
+} from "../../types";
+import "./styles.css";
 
 type Props = {
   trackerUploadItems: TrackerUploadItem[];
@@ -57,12 +63,12 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     onRunDryRun,
     onStartUpload,
     onCancelUpload,
-    onRetryFailed
+    onRetryFailed,
   } = props;
 
   const visibleTrackers = useMemo(
     () => trackerUploadItems.filter((tracker) => releasePageTrackerSelection[tracker.name]),
-    [trackerUploadItems, releasePageTrackerSelection]
+    [trackerUploadItems, releasePageTrackerSelection],
   );
 
   const selectedTrackerCount = useMemo(
@@ -74,7 +80,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
         if (ruleSkippedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
         return true;
       }).length,
-    [visibleTrackers, uploadToggles, dupedTrackerSet, ruleSkippedTrackerSet, overrideRuleBlocks]
+    [visibleTrackers, uploadToggles, dupedTrackerSet, ruleSkippedTrackerSet, overrideRuleBlocks],
   );
 
   const trackerStatusMap = useMemo(() => {
@@ -83,7 +89,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
       if (!entry?.tracker) return;
       next[entry.tracker] = {
         status: String(entry.status || "").toLowerCase(),
-        message: entry.message || ""
+        message: entry.message || "",
       };
     });
     return next;
@@ -94,7 +100,9 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
   const dryRunMap = useMemo(() => {
     const next: Record<string, (typeof dryRunPreview.Trackers)[number]> = {};
     (dryRunPreview?.Trackers || []).forEach((entry) => {
-      const key = String(entry?.Tracker || "").toLowerCase().trim();
+      const key = String(entry?.Tracker || "")
+        .toLowerCase()
+        .trim();
       if (!key) return;
       next[key] = entry;
     });
@@ -104,7 +112,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
   const renderQuestionnaireField = (
     trackerName: string,
     field: NonNullable<(typeof dryRunPreview.Trackers)[number]["Questionnaire"]>["Fields"][number],
-    value: string
+    value: string,
   ) => {
     if (field.Kind === "textarea") {
       return (
@@ -147,7 +155,11 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
             type="checkbox"
             checked={checked}
             onChange={(event) =>
-              onQuestionnaireAnswerChange(trackerName, field.Key, event.target.checked ? "true" : "false")
+              onQuestionnaireAnswerChange(
+                trackerName,
+                field.Key,
+                event.target.checked ? "true" : "false",
+              )
             }
           />
           <span>{field.Placeholder || "Enabled"}</span>
@@ -173,9 +185,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
       <header className="upload-header">
         <p className="eyebrow">Tracker Upload</p>
         <h1>Upload Targets</h1>
-        <p className="subtitle">
-          Toggle trackers and review naming changes before upload.
-        </p>
+        <p className="subtitle">Toggle trackers and review naming changes before upload.</p>
         <div className="upload-actions">
           <label className="upload-toggle upload-toggle--labelled">
             <input
@@ -222,16 +232,16 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
           <p className="upload-summary-text">
             Selected: {selectedTrackerCount} · Uploaded: {uploadSnapshot?.uploadedCount || 0}
           </p>
-          {uploadStatus ? <p className="upload-summary-text">Job status: {uploadStatus.replaceAll("_", " ")}</p> : null}
+          {uploadStatus ? (
+            <p className="upload-summary-text">Job status: {uploadStatus.replaceAll("_", " ")}</p>
+          ) : null}
         </div>
         {uploadError ? <p className="error-text">{uploadError}</p> : null}
         {dryRunError ? <p className="error-text">{dryRunError}</p> : null}
       </header>
 
       {visibleTrackers.length === 0 ? (
-        <p className="muted">
-          No tracker entries with credentials or details were found.
-        </p>
+        <p className="muted">No tracker entries with credentials or details were found.</p>
       ) : (
         <div className="upload-grid">
           {visibleTrackers.map((tracker) => {
@@ -240,12 +250,17 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
             const ruleSkipReason = ruleSkipReasons[tracker.name.toLowerCase()] || "";
             const hasRuleSkip = ruleSkippedTrackerSet.has(tracker.name.toLowerCase());
             const selected = Boolean(uploadToggles[tracker.name]);
-            const enabled = selected && (!hasDupes || overrideRuleBlocks) && (!hasRuleSkip || overrideRuleBlocks);
+            const enabled =
+              selected && (!hasDupes || overrideRuleBlocks) && (!hasRuleSkip || overrideRuleBlocks);
             const showBadges = hasRuleSkip || hasDupes;
             const trackerStatus = trackerStatusMap[tracker.name];
             const dryRun = dryRunMap[normalizedTrackerName];
+            const imageHost = dryRun?.ImageHost;
+            const imageHostWarnings = imageHost?.Warnings || [];
+            const imageHostStatus = String(imageHost?.Status || "").toLowerCase();
             const questionnaire = dryRun?.Questionnaire;
-            const questionnaireAnswers = trackerQuestionnaireAnswers[tracker.name.toUpperCase().trim()] || {};
+            const questionnaireAnswers =
+              trackerQuestionnaireAnswers[tracker.name.toUpperCase().trim()] || {};
             let statusLabel = trackerStatus?.status || "";
             if (!statusLabel) {
               if ((hasDupes && !overrideRuleBlocks) || (hasRuleSkip && !overrideRuleBlocks)) {
@@ -261,23 +276,33 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                 <div className="upload-card__header">
                   <div className="upload-title-row">
                     <p className="value upload-title">{tracker.name}</p>
-                    <span className={`upload-status-pill upload-status-pill--${statusLabel.replaceAll("_", "-")}`}>
+                    <span
+                      className={`upload-status-pill upload-status-pill--${statusLabel.replaceAll("_", "-")}`}
+                    >
                       {statusLabel.replaceAll("_", " ")}
                     </span>
                     {showBadges ? (
                       <div className="upload-badges">
                         {hasRuleSkip ? (
-                          <span className="tracker-rule-badge" title={ruleSkipReason || "Rule check failed"}>
+                          <span
+                            className="tracker-rule-badge"
+                            title={ruleSkipReason || "Rule check failed"}
+                          >
                             {overrideRuleBlocks ? "Rule override" : "Rule check failed"}
                           </span>
                         ) : null}
                         {hasDupes ? (
-                          <span className="tracker-dupe-badge">{overrideRuleBlocks ? "Dupe override" : "Dupes found"}</span>
+                          <span className="tracker-dupe-badge">
+                            {overrideRuleBlocks ? "Dupe override" : "Dupes found"}
+                          </span>
                         ) : null}
                       </div>
                     ) : null}
                   </div>
-                  <label className="upload-toggle" aria-label={`Toggle upload target for ${tracker.name}`}>
+                  <label
+                    className="upload-toggle"
+                    aria-label={`Toggle upload target for ${tracker.name}`}
+                  >
                     <input
                       type="checkbox"
                       aria-label={`Enable upload for ${tracker.name}`}
@@ -286,7 +311,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                       onChange={(event) =>
                         setUploadToggles((prev) => ({
                           ...prev,
-                          [tracker.name]: event.target.checked
+                          [tracker.name]: event.target.checked,
                         }))
                       }
                     />
@@ -294,13 +319,38 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                   </label>
                 </div>
 
-                {trackerStatus?.message ? <p className="upload-status-message">{trackerStatus.message}</p> : null}
+                {trackerStatus?.message ? (
+                  <p className="upload-status-message">{trackerStatus.message}</p>
+                ) : null}
                 {hasDupes && !overrideRuleBlocks ? (
-                  <p className="upload-status-message">Dupes found. Enable override blocks to upload anyway.</p>
+                  <p className="upload-status-message">
+                    Dupes found. Enable override blocks to upload anyway.
+                  </p>
                 ) : null}
                 {hasRuleSkip && !overrideRuleBlocks ? (
-                  <p className="upload-status-message">{ruleSkipReason || "Rule check failed. Enable override blocks to upload anyway."}</p>
+                  <p className="upload-status-message">
+                    {ruleSkipReason ||
+                      "Rule check failed. Enable override blocks to upload anyway."}
+                  </p>
                 ) : null}
+                {imageHost?.Message &&
+                (imageHostWarnings.length > 0 || imageHostStatus === "warning") ? (
+                  <p className="upload-image-warning">{imageHost.Message}</p>
+                ) : null}
+                {imageHostWarnings.map((warning, index) => {
+                  const host = String(warning.Host || "").trim();
+                  const message = String(warning.Message || "").trim();
+                  if (!host && !message) return null;
+                  return (
+                    <p
+                      className="upload-image-warning"
+                      key={`${tracker.name}-${host || "host"}-${index}`}
+                    >
+                      {host ? `${host} failed` : "Image host warning"}
+                      {message ? `: ${message}` : ""}
+                    </p>
+                  );
+                })}
 
                 <details className="upload-details">
                   <summary>Dry run data</summary>
@@ -370,7 +420,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                                   {renderQuestionnaireField(
                                     tracker.name,
                                     field,
-                                    questionnaireAnswers[field.Key] ?? field.Value ?? ""
+                                    questionnaireAnswers[field.Key] ?? field.Value ?? "",
                                   )}
                                   {field.Help ? <p className="muted">{field.Help}</p> : null}
                                 </label>
@@ -391,9 +441,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                     <div className="upload-details__body">
                       <div className="upload-detail">
                         <p className="label">Release name</p>
-                        <p className="value mono">
-                          {preview.ReleaseName || "No release name yet"}
-                        </p>
+                        <p className="value mono">{preview.ReleaseName || "No release name yet"}</p>
                       </div>
                       <div className="upload-changes">
                         {namingOverrides.map(([key, value]) => (

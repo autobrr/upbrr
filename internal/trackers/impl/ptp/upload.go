@@ -183,7 +183,12 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	if err != nil {
 		return uploadState{}, err
 	}
-	fields, err := buildUploadFields(req.Meta, description, groupID, questionnaireAnswers(req.Meta, "PTP"))
+	answers := questionnaireAnswers(req.Meta, "PTP")
+	poster := firstNonEmpty(strings.TrimSpace(answers["poster"]), resolvePoster(req.Meta))
+	if !dryRun {
+		poster = rehostPosterToSelectedHost(ctx, req, poster)
+	}
+	fields, err := buildUploadFields(req.Meta, description, groupID, answers, poster)
 	if err != nil {
 		return uploadState{}, err
 	}
@@ -360,7 +365,133 @@ func lookupGroupID(ctx context.Context, baseURL string, trackerConfig config.Tra
 	return stringFromAny(payload["GroupId"]), nil
 }
 
-func buildUploadFields(meta api.PreparedMetadata, description string, groupID string, answers map[string]string) (map[string]string, error) {
+func rehostPosterToSelectedHost(ctx context.Context, req trackers.UploadRequest, imageURL string) string {
+	trimmedURL := strings.TrimSpace(imageURL)
+	if trimmedURL == "" {
+		return ""
+	}
+	if req.Images == nil {
+		return trimmedURL
+	}
+	if req.Meta.ImageHostOverrides.SkipUpload != nil && *req.Meta.ImageHostOverrides.SkipUpload {
+		return trimmedURL
+	}
+
+	selectedHost, err := trackers.PreferredImageUploadHost("PTP", req.TrackerConfig, req.Meta.ImageHostOverrides)
+	if err != nil {
+		logPosterRehostFailure(req.Logger, "", err)
+		return trimmedURL
+	}
+	selectedHost = strings.ToLower(strings.TrimSpace(selectedHost))
+	if selectedHost == "" {
+		return trimmedURL
+	}
+	if strings.EqualFold(strings.TrimSpace(imagehost.ExtractHost(trimmedURL)), selectedHost) {
+		return trimmedURL
+	}
+
+	posterPath, err := downloadPoster(ctx, req.Meta, req.AppConfig.MainSettings.DBPath, trimmedURL)
+	if err != nil {
+		logPosterRehostFailure(req.Logger, selectedHost, err)
+		return trimmedURL
+	}
+	uploaded, err := req.Images.Upload(ctx, req.Meta, selectedHost, "global", []api.ScreenshotImage{{Path: posterPath}})
+	if err != nil {
+		logPosterRehostFailure(req.Logger, selectedHost, err)
+		return trimmedURL
+	}
+	if len(uploaded) == 0 {
+		logPosterRehostFailure(req.Logger, selectedHost, errors.New("upload returned no links"))
+		return trimmedURL
+	}
+	uploadedURL := firstNonEmpty(uploaded[0].RawURL, uploaded[0].ImgURL, uploaded[0].WebURL)
+	if strings.TrimSpace(uploadedURL) == "" {
+		logPosterRehostFailure(req.Logger, selectedHost, errors.New("upload returned blank link"))
+		return trimmedURL
+	}
+	if req.Logger != nil {
+		req.Logger.Infof("trackers: PTP poster rehosted to %s", selectedHost)
+	}
+	return strings.TrimSpace(uploadedURL)
+}
+
+func downloadPoster(ctx context.Context, meta api.PreparedMetadata, dbPath string, imageURL string) (string, error) {
+	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	if err != nil {
+		return "", err
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	if err != nil {
+		return "", err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("poster request: %w", err)
+	}
+	httpReq.Header.Set("User-Agent", ptpUserAgent)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("poster download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("poster download status=%d", resp.StatusCode)
+	}
+
+	const maxPosterBytes = 25 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPosterBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("poster read: %w", err)
+	}
+	if len(body) == 0 {
+		return "", errors.New("poster download returned empty body")
+	}
+	if len(body) > maxPosterBytes {
+		return "", errors.New("poster exceeds maximum size")
+	}
+
+	posterPath := filepath.Join(tmpDir, "PTP_POSTER"+posterExtension(imageURL, resp.Header.Get("Content-Type")))
+	if err := os.WriteFile(posterPath, body, 0o600); err != nil {
+		return "", fmt.Errorf("poster write: %w", err)
+	}
+	return posterPath, nil
+}
+
+func posterExtension(imageURL string, contentType string) string {
+	if parsed, err := url.Parse(imageURL); err == nil {
+		switch ext := strings.ToLower(filepath.Ext(parsed.Path)); ext {
+		case ".jpg", ".jpeg", ".png", ".webp":
+			return ext
+		}
+	}
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch mediaType {
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "image/jpeg":
+		return ".jpg"
+	default:
+		return ".jpg"
+	}
+}
+
+func logPosterRehostFailure(logger api.Logger, host string, err error) {
+	if logger == nil || err == nil {
+		return
+	}
+	if strings.TrimSpace(host) == "" {
+		logger.Warnf("trackers: PTP poster rehost failed: %v", err)
+		return
+	}
+	logger.Warnf("trackers: PTP poster rehost to %s failed: %v", strings.TrimSpace(host), err)
+}
+
+func buildUploadFields(meta api.PreparedMetadata, description string, groupID string, answers map[string]string, poster string) (map[string]string, error) {
 	resolution, otherResolution := resolveResolution(meta)
 	fields := map[string]string{
 		"submit":          "true",
@@ -409,7 +540,7 @@ func buildUploadFields(meta api.PreparedMetadata, description string, groupID st
 	}
 	fields["title"] = title
 	fields["year"] = year
-	fields["image"] = firstNonEmpty(strings.TrimSpace(answers["poster"]), resolvePoster(meta))
+	fields["image"] = strings.TrimSpace(poster)
 	fields["tags"] = firstNonEmpty(strings.TrimSpace(answers["tags"]), resolveTags(meta))
 	fields["album_desc"] = firstNonEmpty(strings.TrimSpace(answers["album_desc"]), resolveOverview(meta))
 	fields["trailer"] = firstNonEmpty(strings.TrimSpace(answers["trailer"]), resolveTrailer(meta))

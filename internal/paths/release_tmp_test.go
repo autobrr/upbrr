@@ -38,6 +38,20 @@ func TestReleaseTempBaseFallsBackToReleaseInfoWhenSourceMissing(t *testing.T) {
 	}
 }
 
+func TestReleaseTempBaseSkipsDuplicateTypeAndSource(t *testing.T) {
+	release := api.ReleaseInfo{
+		Title:  "Movie.Title",
+		Year:   2024,
+		Source: "WEB-DL",
+		Type:   "WEB-DL",
+		Group:  "GRP",
+	}
+	base := ReleaseTempBase(api.PreparedMetadata{Release: release}, "")
+	if base != "Movie.Title.2024.WEB-DL-GRP" {
+		t.Fatalf("unexpected base name: %s", base)
+	}
+}
+
 func TestReleaseTempBaseUsesFolderNameForDirectorySource(t *testing.T) {
 	base := ReleaseTempBase(api.PreparedMetadata{}, "C:/Media/Movie.Title.2024")
 	if base != "Movie.Title.2024" {

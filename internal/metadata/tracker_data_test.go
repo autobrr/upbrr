@@ -78,6 +78,36 @@ func trackerRecordFor(trackerData []api.TrackerMetadata, tracker string) (api.Tr
 	return api.TrackerMetadata{}, false
 }
 
+func TestTrackerLookupFileNameHonorsSkipWithoutTrackerID(t *testing.T) {
+	meta := api.PreparedMetadata{
+		SourcePath: `D:\Movies\From.S04E01.2160p.WEB.h265-ETHEL.mkv`,
+	}
+
+	if got := trackerLookupFileName(meta, "", true); got != "" {
+		t.Fatalf("expected filename lookup to be skipped, got %q", got)
+	}
+}
+
+func TestTrackerLookupFileNameKeepsFilenameWhenDefaultEnabled(t *testing.T) {
+	meta := api.PreparedMetadata{
+		SourcePath: `D:\Movies\From.S04E01.2160p.WEB.h265-ETHEL.mkv`,
+	}
+
+	if got := trackerLookupFileName(meta, "", false); got != "From.S04E01.2160p.WEB.h265-ETHEL.mkv" {
+		t.Fatalf("expected filename lookup to remain enabled by default, got %q", got)
+	}
+}
+
+func TestTrackerLookupFileNameKeepsFilenameWithTrackerID(t *testing.T) {
+	meta := api.PreparedMetadata{
+		SourcePath: `D:\Movies\From.S04E01.2160p.WEB.h265-ETHEL.mkv`,
+	}
+
+	if got := trackerLookupFileName(meta, "12345", true); got != "From.S04E01.2160p.WEB.h265-ETHEL.mkv" {
+		t.Fatalf("expected filename to remain available with tracker id, got %q", got)
+	}
+}
+
 func TestEnrichTrackerDataStopsAfterFirstPriorityIDWinner(t *testing.T) {
 	repo := &fakeRepo{}
 	lookup := &stubTrackerLookup{

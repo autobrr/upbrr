@@ -20,3 +20,15 @@ func TestExtractMediaInfoLanguagesSkipsCommentary(t *testing.T) {
 		t.Fatalf("unexpected subtitle languages: %#v", subs)
 	}
 }
+
+func TestExtractMediaInfoLanguagesSkipsCompatibility(t *testing.T) {
+	doc := mediaInfoDoc{}
+	doc.Media.Track = []map[string]any{
+		{"@type": "Audio", "Language": "en", "Title": "Compatibility Track"},
+		{"@type": "Audio", "Language": "ja"},
+	}
+	audio, _ := extractMediaInfoLanguages(doc)
+	if len(audio) != 1 || audio[0] != "Japanese" {
+		t.Fatalf("unexpected audio languages: %#v", audio)
+	}
+}

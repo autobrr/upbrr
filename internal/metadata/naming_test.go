@@ -39,6 +39,30 @@ func TestBuildReleaseNameMovieWebDL(t *testing.T) {
 	}
 }
 
+func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
+	result := BuildReleaseName(api.ReleaseNameRequest{
+		Category:    "MOVIE",
+		Type:        "ENCODE",
+		Title:       "Greenland 2: Migration",
+		Year:        2026,
+		Resolution:  "2160p",
+		Service:     "iT",
+		Source:      "WEB",
+		Audio:       "DD+ Atmos 5.1",
+		HDR:         "HDR10+",
+		VideoEncode: "x265",
+		Tag:         "-ETHEL",
+	}, api.NopLogger{})
+
+	expectedName := "Greenland 2: Migration 2026 2160p iT WEB-DL DD+ Atmos 5.1 HDR10+ x265-ETHEL"
+	if result.Name != expectedName {
+		t.Fatalf("expected name %q, got %q", expectedName, result.Name)
+	}
+	if strings.Contains(result.NameNoTag, "UHD") {
+		t.Fatalf("expected no UHD in WEB-DL name, got %q", result.NameNoTag)
+	}
+}
+
 func TestBuildReleaseNameHybridEdition(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category:    "MOVIE",
@@ -152,6 +176,43 @@ func TestReleaseNameRequestFromMetaFallsBackMovieCategory(t *testing.T) {
 	result := BuildReleaseName(req, api.NopLogger{})
 	if result.NameNoTag == "" {
 		t.Fatalf("expected release name to be built")
+	}
+}
+
+func TestReleaseNameRequestFromMetaIgnoresUnsupportedReleaseCategory(t *testing.T) {
+	testCases := []struct {
+		category string
+	}{
+		{"MUSIC"},
+		{"AUDIO"},
+		{"EBOOK"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.category, func(t *testing.T) {
+			meta := api.PreparedMetadata{
+				SourcePath: `D:\Movies\1982 - Fitzcarraldo [DVD9.PAL]`,
+				DiscType:   "DVD",
+				Type:       "DISC",
+				Source:     "DVD",
+				Release: api.ReleaseInfo{
+					Category: tc.category,
+					Title:    "Fitzcarraldo",
+					Year:     1982,
+					Size:     "DVD9",
+				},
+			}
+
+			req := releaseNameRequestFromMeta(meta, api.NopLogger{})
+			if req.Category != "MOVIE" {
+				t.Fatalf("expected unsupported release category to fall back to MOVIE, got %q", req.Category)
+			}
+
+			result := BuildReleaseName(req, api.NopLogger{})
+			if result.NameNoTag == "" {
+				t.Fatalf("expected release name to be built after category fallback")
+			}
+		})
 	}
 }
 

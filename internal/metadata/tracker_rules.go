@@ -24,7 +24,7 @@ func (s *Service) applyTrackerRules(ctx context.Context, meta api.PreparedMetada
 		return meta, nil
 	}
 
-	ruleFailures := make(map[string][]api.RuleFailure)
+	ruleFailures := cloneTrackerRuleFailures(meta.TrackerRuleFailures)
 	for _, tracker := range resolved {
 		select {
 		case <-ctx.Done():
@@ -32,19 +32,28 @@ func (s *Service) applyTrackerRules(ctx context.Context, meta api.PreparedMetada
 		default:
 		}
 
+		name := strings.ToUpper(strings.TrimSpace(tracker))
 		failures := trackers.EvaluateRules(ctx, tracker, meta, s.logger)
 		if failures == nil {
+			if combined := ruleFailures[name]; len(combined) > 0 && s.repo != nil {
+				if err := s.persistRuleFailures(ctx, meta.SourcePath, tracker, combined); err != nil {
+					return api.PreparedMetadata{}, err
+				}
+			}
 			continue
 		}
 		if len(failures) > 0 {
-			name := strings.ToUpper(strings.TrimSpace(tracker))
-			ruleFailures[name] = failures
+			ruleFailures[name] = append([]api.RuleFailure{}, failures...)
 			if s.logger != nil {
 				for _, failure := range failures {
 					s.logger.Warnf("metadata: tracker rule failed tracker=%s rule=%s reason=%s", name, failure.Rule, failure.Reason)
 				}
 			}
-		} else if s.logger != nil {
+		} else {
+			delete(ruleFailures, name)
+		}
+
+		if len(failures) == 0 && s.logger != nil {
 			s.logger.Debugf("metadata: tracker rules ok for %s", tracker)
 		}
 
@@ -61,6 +70,17 @@ func (s *Service) applyTrackerRules(ctx context.Context, meta api.PreparedMetada
 		meta.TrackerRuleFailures = nil
 	}
 	return meta, nil
+}
+
+func cloneTrackerRuleFailures(input map[string][]api.RuleFailure) map[string][]api.RuleFailure {
+	if len(input) == 0 {
+		return make(map[string][]api.RuleFailure)
+	}
+	cloned := make(map[string][]api.RuleFailure, len(input))
+	for tracker, failures := range input {
+		cloned[tracker] = append([]api.RuleFailure{}, failures...)
+	}
+	return cloned
 }
 
 func (s *Service) persistRuleFailures(ctx context.Context, sourcePath string, tracker string, failures []api.RuleFailure) error {

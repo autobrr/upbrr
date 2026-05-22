@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +22,75 @@ import (
 
 func ptr[T any](v T) *T {
 	return &v
+}
+
+func TestBuildDescriptionBuilderGroupAddsBHDMediaInfoPreviewOnly(t *testing.T) {
+	t.Parallel()
+
+	mediaInfoPath := filepath.Join(t.TempDir(), "MEDIAINFO.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte(coreDescriptionBuilderMediaInfoSample()), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	group := buildDescriptionBuilderGroup(api.PreparationDescription{
+		GroupKey:        "bhd",
+		Trackers:        []string{"BHD"},
+		RawDescription:  "",
+		Description:     "Generated BHD description",
+		DescriptionHTML: descriptionHTMLForTest("Generated BHD description"),
+	}, nil, api.PreparedMetadata{MediaInfoTextPath: mediaInfoPath}, api.NopLogger{})
+
+	if group.RawDescription != "Generated BHD description" {
+		t.Fatalf("expected raw description unchanged, got %q", group.RawDescription)
+	}
+	if !strings.Contains(group.RawDescriptionHTML, `class="mediainfo"`) {
+		t.Fatalf("expected BHD mediainfo preview html, got %q", group.RawDescriptionHTML)
+	}
+	if !strings.Contains(group.RawDescriptionHTML, "Generated BHD description") {
+		t.Fatalf("expected generated description to remain in preview html, got %q", group.RawDescriptionHTML)
+	}
+}
+
+func TestBuildDescriptionBuilderGroupDoesNotAugmentOverrides(t *testing.T) {
+	t.Parallel()
+
+	mediaInfoPath := filepath.Join(t.TempDir(), "MEDIAINFO.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte(coreDescriptionBuilderMediaInfoSample()), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	group := buildDescriptionBuilderGroup(api.PreparationDescription{
+		GroupKey:    "hdb",
+		Trackers:    []string{"HDB"},
+		Description: "Generated HDB description",
+	}, map[string]api.DescriptionOverride{
+		"hdb": {Description: "custom override"},
+	}, api.PreparedMetadata{MediaInfoTextPath: mediaInfoPath}, api.NopLogger{})
+
+	if group.RawDescription != "custom override" {
+		t.Fatalf("expected override raw description, got %q", group.RawDescription)
+	}
+	if strings.Contains(group.RawDescriptionHTML, `class="mediainfo"`) {
+		t.Fatalf("did not expect override preview to be augmented, got %q", group.RawDescriptionHTML)
+	}
+}
+
+func descriptionHTMLForTest(value string) string {
+	return value
+}
+
+func coreDescriptionBuilderMediaInfoSample() string {
+	return `General
+Complete name : C:\Media\Movie.2024.1080p.mkv
+Format : Matroska
+File size : 10.4 GiB
+Duration : 1 h 42 min
+Overall bit rate : 14.6 Mb/s
+
+Video
+Format : AVC
+Width : 1 920 pixels
+Height : 1 080 pixels`
 }
 
 func TestGetHistoryOverviewIncludesGroupedDescriptionOverrides(t *testing.T) {
@@ -121,6 +191,140 @@ func TestRunUploadMultiplePaths(t *testing.T) {
 	}
 	if trackerCalls := svc.Trackers.(*stubTrackers).calls; trackerCalls != 2 {
 		t.Fatalf("expected 2 tracker calls, got %d", trackerCalls)
+	}
+}
+
+func TestResolveGUICachedPreparedMetaReusesRequestRefreshedCache(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Metadata: metaSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	sourcePath := "/tmp/a"
+	req := api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeGUI,
+	}
+	core.storeDupeCache(sourcePath, "", api.PreparedMetadata{SourcePath: sourcePath})
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), req, sourcePath); err != nil {
+		t.Fatalf("resolve cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata")
+	}
+	if metaSvc.refreshCalls != 1 {
+		t.Fatalf("expected first lookup to refresh once, got %d", metaSvc.refreshCalls)
+	}
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), req, sourcePath); err != nil {
+		t.Fatalf("resolve cached prepared metadata again: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata on second lookup")
+	}
+	if metaSvc.refreshCalls != 1 {
+		t.Fatalf("expected second lookup to reuse refreshed cache, got %d refreshes", metaSvc.refreshCalls)
+	}
+
+	edition := "Director's Cut"
+	editedReq := req
+	editedReq.ReleaseNameOverrides = api.ReleaseNameOverrides{Edition: &edition}
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), editedReq, sourcePath); err != nil {
+		t.Fatalf("resolve edited cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected fallback cache for edited request")
+	}
+	if metaSvc.refreshCalls != 2 {
+		t.Fatalf("expected edited request to refresh once, got %d refreshes", metaSvc.refreshCalls)
+	}
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), editedReq, sourcePath); err != nil {
+		t.Fatalf("resolve edited cached prepared metadata again: %v", err)
+	} else if !ok {
+		t.Fatal("expected exact edited cache on second lookup")
+	}
+	if metaSvc.refreshCalls != 2 {
+		t.Fatalf("expected repeated edited request to reuse refreshed cache, got %d refreshes", metaSvc.refreshCalls)
+	}
+}
+
+func TestResolveGUICachedPreparedMetaTreatsResolvedTrackerDataAsCacheMatch(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Metadata: metaSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	sourcePath := "/tmp/a"
+	req := api.Request{
+		Paths:    []string{sourcePath},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER", "HDB"},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath:     sourcePath,
+		Paths:          []string{sourcePath},
+		Mode:           api.ModeGUI,
+		Trackers:       []string{"AITHER", "HDB"},
+		TrackersRemove: []string{"HDB"},
+		TrackerIDs:     map[string]string{"hdb": "123"},
+	}
+	core.storeRefreshedDupeCache(sourcePath, "", meta)
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), req, sourcePath); err != nil {
+		t.Fatalf("resolve cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata")
+	}
+	if metaSvc.refreshCalls != 0 {
+		t.Fatalf("expected resolved tracker data to remain cacheable, got %d refreshes", metaSvc.refreshCalls)
+	}
+}
+
+func TestResolveGUICachedPreparedMetaAllowsTrackerlessFollowUp(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Metadata: metaSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	sourcePath := "/tmp/a"
+	meta := api.PreparedMetadata{
+		SourcePath: sourcePath,
+		Paths:      []string{sourcePath},
+		Mode:       api.ModeGUI,
+		Trackers:   []string{"AITHER", "HDB"},
+	}
+	core.storeRefreshedDupeCache(sourcePath, "", meta)
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeGUI,
+	}, sourcePath); err != nil {
+		t.Fatalf("resolve trackerless cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata")
+	}
+	if metaSvc.refreshCalls != 0 {
+		t.Fatalf("expected trackerless follow-up to reuse cache, got %d refreshes", metaSvc.refreshCalls)
 	}
 }
 
@@ -863,7 +1067,7 @@ func TestExportGUICachedPreparedMetaExactSignature(t *testing.T) {
 	}
 }
 
-func TestExportGUICachedPreparedMetaFallsBackForGUIWithoutExternalOverrides(t *testing.T) {
+func TestExportGUICachedPreparedMetaFallsBackForNonExternalSignedOverrides(t *testing.T) {
 	t.Parallel()
 
 	core, err := New(api.CoreDependencies{
@@ -898,10 +1102,61 @@ func TestExportGUICachedPreparedMetaFallsBackForGUIWithoutExternalOverrides(t *t
 		t.Fatalf("export gui cached prepared meta: %v", err)
 	}
 	if !ok {
-		t.Fatal("expected GUI fallback cache hit")
+		t.Fatal("expected non-external GUI override to fall back to cached metadata")
 	}
 	if exported.SourcePath != "/tmp/a" {
-		t.Fatalf("expected cached source path /tmp/a, got %q", exported.SourcePath)
+		t.Fatalf("expected cached prepared metadata on fallback, got %q", exported.SourcePath)
+	}
+}
+
+func TestCheckDupesGUIFallbackReappliesReleaseOverrides(t *testing.T) {
+	t.Parallel()
+
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Release: api.ReleaseInfo{
+			Title:  "Example",
+			Source: "WEB",
+		},
+	}); err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+
+	category := "TV"
+	edition := "Hybrid"
+	if _, err := core.CheckDupes(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			Category: &category,
+			Edition:  &edition,
+		},
+	}); err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+
+	if dupes.lastMeta.ReleaseNameOverrides.Category == nil || *dupes.lastMeta.ReleaseNameOverrides.Category != category {
+		t.Fatalf("expected dupe check to receive category override, got %#v", dupes.lastMeta.ReleaseNameOverrides)
+	}
+	if dupes.lastMeta.ReleaseNameOverrides.Edition == nil || *dupes.lastMeta.ReleaseNameOverrides.Edition != edition {
+		t.Fatalf("expected dupe check to receive edition override, got %#v", dupes.lastMeta.ReleaseNameOverrides)
 	}
 }
 
@@ -2094,9 +2349,10 @@ func (s stubFS) ValidatePaths(_ context.Context, paths []string) ([]string, erro
 }
 
 type stubMeta struct {
-	calls    int
-	options  api.UploadOptions
-	prepared api.PreparedMetadata
+	calls        int
+	refreshCalls int
+	options      api.UploadOptions
+	prepared     api.PreparedMetadata
 }
 
 func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
@@ -2118,6 +2374,11 @@ func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMe
 	if s.prepared.SourcePath != "" {
 		meta = s.prepared
 	}
+	return meta, nil
+}
+
+func (s *stubMeta) RefreshPreparedMetadata(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	s.refreshCalls++
 	return meta, nil
 }
 
@@ -2208,9 +2469,11 @@ func (s *stubClient) SearchPathedTorrents(context.Context, api.PreparedMetadata)
 
 type stubDupes struct {
 	lastTrackers []string
+	lastMeta     api.PreparedMetadata
 }
 
-func (s *stubDupes) Check(ctx context.Context, _ api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
+func (s *stubDupes) Check(ctx context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
+	s.lastMeta = meta
 	s.lastTrackers = append([]string{}, trackers...)
 	return api.DupeCheckSummary{}, nil
 }

@@ -42,6 +42,8 @@ func buildUnit3DName(tracker string, meta api.PreparedMetadata) string {
 		return addNoGroupSuffix(name, meta, "NoGroup")
 	case "OE":
 		return addNoGroupSuffix(name, meta, "NOGRP")
+	case "ULCX":
+		return buildULCXName(name, meta)
 	default:
 		return name
 	}
@@ -59,6 +61,13 @@ func buildDPName(name string, meta api.PreparedMetadata) string {
 	audioLabel := resolveDPAudioLabel(meta.AudioLanguages)
 	if audioLabel != "" {
 		name = strings.Replace(name, "Dual-Audio", audioLabel, 1)
+	}
+	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+}
+
+func buildULCXName(name string, meta api.PreparedMetadata) string {
+	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") && (strings.Contains(strings.ToLower(strings.TrimSpace(meta.Edition)), "hybrid") || meta.WebDV) {
+		name = strings.Replace(name, "Hybrid ", "", 1)
 	}
 	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
 }

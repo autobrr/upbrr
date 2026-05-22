@@ -29,7 +29,10 @@ const (
 	sourceFlag = "https://immortalseed.me"
 )
 
-var sslPattern = regexp.MustCompile(`details\.php\?hash=([a-zA-Z0-9]+)|download\.php\?id=([a-zA-Z0-9]+)`)
+var (
+	sslPattern   = regexp.MustCompile(`details\.php\?hash=([a-zA-Z0-9]+)|download\.php\?id=([a-zA-Z0-9]+)`)
+	successTexts = []string{"Download Torrent (SSL)", "Thank you for uploading"}
+)
 
 type uploadState struct {
 	torrentPath   string
@@ -81,9 +84,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		finalURL = resp.Request.URL.String()
 	}
 	responseBody, _ := io.ReadAll(resp.Body)
-	match := sslPattern.FindStringSubmatch(finalURL + "\n" + string(responseBody))
-	if resp.StatusCode >= 200 && resp.StatusCode < 400 && len(match) >= 3 {
-		id := firstNonEmpty(match[1], match[2])
+	id, success := successfulUploadResponse(finalURL, string(responseBody))
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 && success {
 		if id != "" {
 			tURL := torrentURL + id
 			artifactPath := ""
@@ -107,9 +109,25 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 				}},
 			}, nil
 		}
+		return api.UploadSummary{Uploaded: 1}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "IS", "upload_failure", responseBody, ".html")
 	return api.UploadSummary{}, fmt.Errorf("trackers: IS upload failed status=%d", resp.StatusCode)
+}
+
+func successfulUploadResponse(finalURL string, responseBody string) (string, bool) {
+	match := sslPattern.FindStringSubmatch(finalURL + "\n" + responseBody)
+	if len(match) >= 3 {
+		if id := firstNonEmpty(match[1], match[2]); id != "" {
+			return id, true
+		}
+	}
+	for _, text := range successTexts {
+		if strings.Contains(responseBody, text) {
+			return "", true
+		}
+	}
+	return "", false
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

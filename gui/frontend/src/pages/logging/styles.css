@@ -203,7 +203,7 @@
 }
 
 .log-message {
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .log-mute-panel {

@@ -32,6 +32,7 @@ type LanguageRule struct {
 	RequireBoth    bool
 	AllowOriginal  bool
 	ApplyIfNonDisc bool
+	ApplyIfNonBDMV bool
 }
 
 type RuleSet struct {
