@@ -69,7 +69,9 @@ func TestUploadImagesWithoutCache(t *testing.T) {
 
 	core := &Core{
 		logger: api.NopLogger{},
-		cfg:    config.Config{},
+		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
+		},
 		services: api.ServiceSet{
 			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
 			Images:     &stubImageHosting{uploaded: uploaded},
@@ -131,7 +133,9 @@ func TestUploadImagesGUIFallbackReappliesReleaseOverrides(t *testing.T) {
 	imageService := &stubImageHosting{uploaded: []api.UploadedImageLink{{ImagePath: "/tmp/img1.png", Host: "imgbox"}}}
 	core := &Core{
 		logger: api.NopLogger{},
-		cfg:    config.Config{},
+		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
+		},
 		services: api.ServiceSet{
 			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
 			Metadata:   &stubMeta{},
@@ -174,6 +178,7 @@ func TestUploadImagesUploadsApplicableTrackerHosts(t *testing.T) {
 	core := &Core{
 		logger: api.NopLogger{},
 		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"PTP": {ImageHost: "ptpimg"},
@@ -215,7 +220,7 @@ func TestUploadImagesUploadsApplicableTrackerHosts(t *testing.T) {
 	}
 }
 
-func TestUploadImagesUsesBuiltInTrackerPreferredHostsWhenSelectedHostIsNotApproved(t *testing.T) {
+func TestUploadImagesUsesConfiguredHostPriorityWhenSelectedHostIsNotApproved(t *testing.T) {
 	t.Parallel()
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
@@ -227,6 +232,10 @@ func TestUploadImagesUsesBuiltInTrackerPreferredHostsWhenSelectedHostIsNotApprov
 	core := &Core{
 		logger: api.NopLogger{},
 		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{
+				Host1: "imgbb",
+				Host2: "pixhost",
+			},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"PTP": {},
@@ -251,11 +260,11 @@ func TestUploadImagesUsesBuiltInTrackerPreferredHostsWhenSelectedHostIsNotApprov
 	if len(imageService.calls) != 1 {
 		t.Fatalf("expected upload to required tracker host only, got %d calls: %#v", len(imageService.calls), imageService.calls)
 	}
-	if imageService.calls[0].host != "ptpimg" {
-		t.Fatalf("expected required PTP host ptpimg, got %#v", imageService.calls[0])
+	if imageService.calls[0].host != "pixhost" {
+		t.Fatalf("expected configured PTP-approved host pixhost, got %#v", imageService.calls[0])
 	}
-	if len(result.Links) != 1 || result.Links[0].Host != "ptpimg" {
-		t.Fatalf("expected ptpimg result only, got %#v", result)
+	if len(result.Links) != 1 || result.Links[0].Host != "pixhost" {
+		t.Fatalf("expected pixhost result only, got %#v", result)
 	}
 }
 
@@ -271,6 +280,7 @@ func TestUploadImagesUsesSelectedHostWhenApprovedForTracker(t *testing.T) {
 	core := &Core{
 		logger: api.NopLogger{},
 		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"MTV": {},
@@ -315,6 +325,7 @@ func TestUploadImagesFiltersCachedBlockedTrackers(t *testing.T) {
 	core := &Core{
 		logger: api.NopLogger{},
 		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"HDB": {ImageHost: "hdb"},
@@ -385,6 +396,7 @@ func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
 	core := &Core{
 		logger: api.NopLogger{},
 		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"PTP": {ImageHost: "ptpimg"},
@@ -429,6 +441,10 @@ func TestUploadImagesReturnsHostFailuresWithSuccessfulLinks(t *testing.T) {
 	core := &Core{
 		logger: api.NopLogger{},
 		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{
+				Host1: "imgbox",
+				Host2: "pixhost",
+			},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"PTP": {ImageHost: "ptpimg"},
@@ -487,6 +503,10 @@ func TestUploadImagesFallsBackWhenSelectedHostFails(t *testing.T) {
 	core := &Core{
 		logger: api.NopLogger{},
 		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{
+				Host1: "imgbb",
+				Host2: "imgbox",
+			},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"MTV": {},
