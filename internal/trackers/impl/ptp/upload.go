@@ -185,7 +185,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		return uploadState{}, err
 	}
 	answers := questionnaireAnswers(req.Meta, "PTP")
-	poster := firstNonEmpty(strings.TrimSpace(answers["poster"]), resolvePoster(req.Meta))
+	poster := metautil.FirstNonEmptyTrimmed(answers["poster"], resolvePoster(req.Meta))
 	if !dryRun {
 		poster = rehostPosterToSelectedHost(ctx, req, poster)
 	}
@@ -405,7 +405,7 @@ func rehostPosterToSelectedHost(ctx context.Context, req trackers.UploadRequest,
 		logPosterRehostFailure(req.Logger, selectedHost, errors.New("upload returned no links"))
 		return trimmedURL
 	}
-	uploadedURL := firstNonEmpty(uploaded[0].RawURL, uploaded[0].ImgURL, uploaded[0].WebURL)
+	uploadedURL := metautil.FirstNonEmptyTrimmed(uploaded[0].RawURL, uploaded[0].ImgURL, uploaded[0].WebURL)
 	if strings.TrimSpace(uploadedURL) == "" {
 		logPosterRehostFailure(req.Logger, selectedHost, errors.New("upload returned blank link"))
 		return trimmedURL
@@ -542,9 +542,9 @@ func buildUploadFields(meta api.PreparedMetadata, description string, groupID st
 	fields["title"] = title
 	fields["year"] = year
 	fields["image"] = strings.TrimSpace(poster)
-	fields["tags"] = firstNonEmpty(strings.TrimSpace(answers["tags"]), resolveTags(meta))
-	fields["album_desc"] = firstNonEmpty(strings.TrimSpace(answers["album_desc"]), resolveOverview(meta))
-	fields["trailer"] = firstNonEmpty(strings.TrimSpace(answers["trailer"]), resolveTrailer(meta))
+	fields["tags"] = metautil.FirstNonEmptyTrimmed(answers["tags"], resolveTags(meta))
+	fields["album_desc"] = metautil.FirstNonEmptyTrimmed(answers["album_desc"], resolveOverview(meta))
+	fields["trailer"] = metautil.FirstNonEmptyTrimmed(answers["trailer"], resolveTrailer(meta))
 	directors := resolveDirectors(meta)
 	if len(directors) > 0 {
 		fields["artist[]"] = strings.Join(directors, "\n")

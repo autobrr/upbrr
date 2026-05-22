@@ -120,7 +120,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 func successfulUploadResponse(finalURL string, responseBody string) (string, bool) {
 	match := sslPattern.FindStringSubmatch(finalURL + "\n" + responseBody)
 	if len(match) >= 3 {
-		if id := firstNonEmpty(match[1], match[2]); id != "" {
+		if id := metautil.FirstNonEmptyTrimmed(match[1], match[2]); id != "" {
 			return id, true
 		}
 	}

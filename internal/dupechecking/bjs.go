@@ -14,6 +14,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -118,7 +119,7 @@ func updateBJSContext(row *xhtml.Node, currentSeason *string, currentResolution 
 }
 
 func shouldProcessBJSRow(currentSeason string, currentResolution string, currentEpisode string, currentPack bool, meta api.PreparedMetadata) bool {
-	category := strings.ToUpper(strings.TrimSpace(firstNonEmpty(meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category)))
+	category := strings.ToUpper(metautil.FirstNonEmptyTrimmed(meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category))
 	switch category {
 	case "TV":
 		if meta.SeasonInt <= 0 || strings.TrimSpace(currentSeason) == "" {

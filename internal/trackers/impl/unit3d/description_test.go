@@ -298,7 +298,7 @@ func TestBuildUnit3DDescriptionAddsSHRIIslandReleaseNotes(t *testing.T) {
 		Release: api.ReleaseInfo{Group: "island"},
 	}
 
-	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil)
+	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestBuildUnit3DDescriptionSkipsSHRIIslandReleaseNotesForOtherGroups(t *test
 		Release: api.ReleaseInfo{Group: "other"},
 	}
 
-	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil)
+	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
