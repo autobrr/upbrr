@@ -210,6 +210,14 @@ func formatBlockedReasons(reasons []api.TrackerBlockReason) string {
 }
 
 func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger) api.PreparedMetadata {
+	return applyRequestToPreparedMetaWithDerivedFields(meta, req, cfg, logger, true)
+}
+
+func applyRequestToPreparedMetaBeforeRefresh(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger) api.PreparedMetadata {
+	return applyRequestToPreparedMetaWithDerivedFields(meta, req, cfg, logger, false)
+}
+
+func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger, rebuildDerivedFields bool) api.PreparedMetadata {
 	meta = deepCopyPreparedMetadata(meta)
 	meta.Mode = req.Mode
 	meta.Options = req.Options
@@ -234,8 +242,10 @@ func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request, cfg 
 	meta.ReleaseNameOverrides = req.ReleaseNameOverrides
 	meta.TrackerQuestionnaireAnswers = cloneTrackerQuestionnaireAnswers(req.TrackerQuestionnaireAnswers)
 	applyMetadataOverridesToPreparedMeta(&meta)
-	metadata.ApplyRequestScopedAudioPolicy(&meta, cfg, logger)
-	metadata.RebuildReleaseName(&meta, logger)
+	if rebuildDerivedFields {
+		metadata.ApplyRequestScopedAudioPolicy(&meta, cfg, logger)
+		metadata.RebuildReleaseName(&meta, logger)
+	}
 	applyTorrentOverridesToPreparedMeta(&meta)
 	meta.TrackerRuleFailures = filterTrackerRuleFailures(meta.TrackerRuleFailures, req.IgnoreTrackerRuleFailuresFor)
 	if req.SkipDupeCheck {
@@ -247,10 +257,11 @@ func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request, cfg 
 }
 
 func (c *Core) applyRequestToCachedPreparedMeta(ctx context.Context, meta api.PreparedMetadata, req api.Request) (api.PreparedMetadata, error) {
-	meta = applyRequestToPreparedMeta(meta, req, c.cfg, c.logger)
 	if c.services.Metadata == nil {
+		meta = applyRequestToPreparedMeta(meta, req, c.cfg, c.logger)
 		return meta, nil
 	}
+	meta = applyRequestToPreparedMetaBeforeRefresh(meta, req, c.cfg, c.logger)
 	refreshed, err := c.services.Metadata.RefreshPreparedMetadata(ctx, meta)
 	if err != nil {
 		return api.PreparedMetadata{}, err

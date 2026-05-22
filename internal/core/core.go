@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -50,9 +51,10 @@ type Core struct {
 }
 
 type dupeCacheEntry struct {
-	meta      api.PreparedMetadata
-	signature string
-	updatedAt time.Time
+	meta             api.PreparedMetadata
+	signature        string
+	updatedAt        time.Time
+	requestRefreshed bool
 }
 
 func New(deps api.CoreDependencies) (*Core, error) {
@@ -348,7 +350,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 			}
 			summary = appendPathedDupeResults(summary, matchedTrackers)
 			applyDupeSummaryToPreparedMeta(&cached, summary)
-			c.storeDupeCache(cached.SourcePath, overrideSignature(cached.ExternalIDOverrides, cached.ReleaseNameOverrides, cached.MetadataOverrides, cached.TrackerConfigOverrides, cached.TrackerSiteOverrides, cached.ClientOverrides, cached.TorrentOverrides, cached.ImageHostOverrides, cached.ScreenshotOverrides), cached)
+			c.storeRefreshedDupeCache(cached.SourcePath, overrideSignature(cached.ExternalIDOverrides, cached.ReleaseNameOverrides, cached.MetadataOverrides, cached.TrackerConfigOverrides, cached.TrackerSiteOverrides, cached.ClientOverrides, cached.TorrentOverrides, cached.ImageHostOverrides, cached.ScreenshotOverrides), cached)
 			return summary, nil
 		}
 		return api.DupeCheckSummary{}, errors.New("core: dupe check requires metadata preview")
@@ -463,7 +465,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 		return api.DupeCheckSummary{}, err
 	}
 
-	c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
+	c.storeRefreshedDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 
 	matchedTrackers := mergeTrackerRemovals(nil, meta.MatchedTrackers)
 	removeTrackers := mergeTrackerRemovals(req.TrackersRemove, matchedTrackers)
@@ -474,7 +476,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 	}
 	summary = appendPathedDupeResults(summary, matchedTrackers)
 	applyDupeSummaryToPreparedMeta(&meta, summary)
-	c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
+	c.storeRefreshedDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 	return summary, nil
 }
 
@@ -1386,7 +1388,7 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 		return api.MetadataPreview{}, err
 	}
 
-	c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
+	c.storeRefreshedDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 
 	emitProgress("complete", "completed", "Metadata preview ready")
 
@@ -1893,12 +1895,20 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 }
 
 func (c *Core) storeDupeCache(path string, signature string, meta api.PreparedMetadata) {
+	c.storeDupeCacheEntry(path, signature, meta, false)
+}
+
+func (c *Core) storeRefreshedDupeCache(path string, signature string, meta api.PreparedMetadata) {
+	c.storeDupeCacheEntry(path, signature, meta, true)
+}
+
+func (c *Core) storeDupeCacheEntry(path string, signature string, meta api.PreparedMetadata, requestRefreshed bool) {
 	if strings.TrimSpace(path) == "" {
 		return
 	}
 	c.dupeMu.Lock()
 	defer c.dupeMu.Unlock()
-	c.dupeCache[path] = dupeCacheEntry{meta: meta, signature: signature, updatedAt: time.Now().UTC()}
+	c.dupeCache[path] = dupeCacheEntry{meta: meta, signature: signature, updatedAt: time.Now().UTC(), requestRefreshed: requestRefreshed}
 }
 
 func (c *Core) clearDupeCache(path string) {
@@ -2039,40 +2049,174 @@ func (c *Core) getDupeCache(path string, signature string) (api.PreparedMetadata
 	return entry.meta, true
 }
 
-func (c *Core) getGUICachedMeta(path string, signature string, overrides api.ExternalIDOverrides) (api.PreparedMetadata, bool) {
+func (c *Core) getGUICachedMetaEntry(path string, signature string, overrides api.ExternalIDOverrides) (dupeCacheEntry, bool) {
 	if strings.TrimSpace(signature) != "" {
-		if cached, ok := c.getDupeCache(path, signature); ok {
-			return cached, true
+		c.dupeMu.RLock()
+		entry, ok := c.dupeCache[path]
+		c.dupeMu.RUnlock()
+		if ok && entry.signature == signature {
+			return entry, true
 		}
 	}
 	if hasExternalIDOverrides(overrides) {
-		return api.PreparedMetadata{}, false
+		return dupeCacheEntry{}, false
 	}
 	c.dupeMu.RLock()
 	defer c.dupeMu.RUnlock()
 	entry, ok := c.dupeCache[path]
 	if !ok || hasExternalIDOverrides(entry.meta.ExternalIDOverrides) {
+		return dupeCacheEntry{}, false
+	}
+	return entry, true
+}
+
+func (c *Core) getGUICachedMeta(path string, signature string, overrides api.ExternalIDOverrides) (api.PreparedMetadata, bool) {
+	entry, ok := c.getGUICachedMetaEntry(path, signature, overrides)
+	if !ok {
 		return api.PreparedMetadata{}, false
 	}
 	return entry.meta, true
 }
 
-func (c *Core) lookupGUICachedMeta(req api.Request, path string) (api.PreparedMetadata, bool) {
+func (c *Core) lookupGUICachedMetaEntry(req api.Request, path string) (dupeCacheEntry, string, bool) {
 	mergedOverrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
 	signature := overrideSignature(mergedOverrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
-	return c.getGUICachedMeta(path, signature, mergedOverrides)
+	entry, ok := c.getGUICachedMetaEntry(path, signature, mergedOverrides)
+	return entry, signature, ok
+}
+
+func (c *Core) lookupGUICachedMeta(req api.Request, path string) (api.PreparedMetadata, bool) {
+	entry, _, ok := c.lookupGUICachedMetaEntry(req, path)
+	if !ok {
+		return api.PreparedMetadata{}, false
+	}
+	return entry.meta, true
 }
 
 func (c *Core) resolveGUICachedPreparedMeta(ctx context.Context, req api.Request, path string) (api.PreparedMetadata, bool, error) {
-	cached, ok := c.lookupGUICachedMeta(req, path)
+	entry, signature, ok := c.lookupGUICachedMetaEntry(req, path)
 	if !ok {
 		return api.PreparedMetadata{}, false, nil
 	}
-	resolved, err := c.applyRequestToCachedPreparedMeta(ctx, cached, req)
+	if entry.requestRefreshed && cachedPreparedMetaMatchesRequest(entry.meta, req, path) {
+		return deepCopyPreparedMetadata(entry.meta), true, nil
+	}
+	resolved, err := c.applyRequestToCachedPreparedMeta(ctx, entry.meta, req)
 	if err != nil {
 		return api.PreparedMetadata{}, false, err
 	}
+	if cacheableGUIPreparedMetaRequest(req) {
+		c.storeRefreshedDupeCache(path, signature, resolved)
+	}
 	return resolved, true, nil
+}
+
+func cachedPreparedMetaMatchesRequest(meta api.PreparedMetadata, req api.Request, path string) bool {
+	if strings.TrimSpace(meta.SourcePath) != strings.TrimSpace(path) {
+		return false
+	}
+	mergedOverrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
+	return meta.Mode == req.Mode &&
+		reflect.DeepEqual(meta.Options, req.Options) &&
+		requestedTrackersApplied(meta.Trackers, req.Trackers) &&
+		requestedTrackersRemoveApplied(meta.TrackersRemove, req.TrackersRemove) &&
+		requestedTrackerIDsApplied(meta.TrackerIDs, req.TrackerIDOverrides) &&
+		strings.TrimSpace(meta.DescriptionOverride) == strings.TrimSpace(req.DescriptionOverrideRaw) &&
+		reflect.DeepEqual(meta.MetadataOverrides, req.MetadataOverrides) &&
+		reflect.DeepEqual(meta.TrackerConfigOverrides, req.TrackerConfigOverrides) &&
+		reflect.DeepEqual(meta.TrackerSiteOverrides, req.TrackerSiteOverrides) &&
+		reflect.DeepEqual(meta.ClientOverrides, req.ClientOverrides) &&
+		reflect.DeepEqual(meta.ImageHostOverrides, req.ImageHostOverrides) &&
+		reflect.DeepEqual(meta.ScreenshotOverrides, req.ScreenshotOverrides) &&
+		reflect.DeepEqual(meta.TorrentOverrides, req.TorrentOverrides) &&
+		meta.IgnoreTrackerRuleFailures == req.IgnoreTrackerRuleFailures &&
+		reflect.DeepEqual(meta.ExternalIDOverrides, mergedOverrides) &&
+		reflect.DeepEqual(meta.ReleaseNameOverrides, req.ReleaseNameOverrides) &&
+		sameQuestionnaireAnswers(meta.TrackerQuestionnaireAnswers, req.TrackerQuestionnaireAnswers) &&
+		sameDescriptionGroups(meta.DescriptionGroups, req.DescriptionGroups)
+}
+
+func requestedTrackersApplied(metaTrackers []string, requested []string) bool {
+	if len(requested) == 0 {
+		return true
+	}
+	if len(metaTrackers) != len(requested) {
+		return false
+	}
+	for idx, tracker := range requested {
+		if !strings.EqualFold(strings.TrimSpace(metaTrackers[idx]), strings.TrimSpace(tracker)) {
+			return false
+		}
+	}
+	return true
+}
+
+func requestedTrackersRemoveApplied(metaTrackersRemove []string, requested []string) bool {
+	if len(requested) == 0 {
+		return true
+	}
+	seen := make(map[string]struct{}, len(metaTrackersRemove))
+	for _, tracker := range metaTrackersRemove {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name != "" {
+			seen[name] = struct{}{}
+		}
+	}
+	for _, tracker := range requested {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func requestedTrackerIDsApplied(metaTrackerIDs map[string]string, requested map[string]string) bool {
+	if len(requested) == 0 {
+		return true
+	}
+	for tracker, id := range requested {
+		name := strings.ToLower(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		got := ""
+		for metaTracker, metaID := range metaTrackerIDs {
+			if strings.EqualFold(strings.TrimSpace(metaTracker), name) {
+				got = metaID
+				break
+			}
+		}
+		if strings.TrimSpace(got) != strings.TrimSpace(id) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameQuestionnaireAnswers(left map[string]map[string]string, right map[string]map[string]string) bool {
+	if len(left) == 0 && len(right) == 0 {
+		return true
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func sameDescriptionGroups(left []api.DescriptionBuilderGroup, right []api.DescriptionBuilderGroup) bool {
+	if len(left) == 0 && len(right) == 0 {
+		return true
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func cacheableGUIPreparedMetaRequest(req api.Request) bool {
+	return !req.SkipDupeCheck &&
+		len(req.IgnoreDupesFor) == 0 &&
+		len(req.IgnoreTrackerRuleFailuresFor) == 0 &&
+		strings.TrimSpace(req.DescriptionOverrideRaw) == "" &&
+		len(req.DescriptionGroups) == 0
 }
 
 // ExportGUICachedPreparedMeta exposes the resolved GUI prepared metadata cache entry

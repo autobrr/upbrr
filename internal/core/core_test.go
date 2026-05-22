@@ -194,6 +194,140 @@ func TestRunUploadMultiplePaths(t *testing.T) {
 	}
 }
 
+func TestResolveGUICachedPreparedMetaReusesRequestRefreshedCache(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Metadata: metaSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	sourcePath := "/tmp/a"
+	req := api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeGUI,
+	}
+	core.storeDupeCache(sourcePath, "", api.PreparedMetadata{SourcePath: sourcePath})
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), req, sourcePath); err != nil {
+		t.Fatalf("resolve cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata")
+	}
+	if metaSvc.refreshCalls != 1 {
+		t.Fatalf("expected first lookup to refresh once, got %d", metaSvc.refreshCalls)
+	}
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), req, sourcePath); err != nil {
+		t.Fatalf("resolve cached prepared metadata again: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata on second lookup")
+	}
+	if metaSvc.refreshCalls != 1 {
+		t.Fatalf("expected second lookup to reuse refreshed cache, got %d refreshes", metaSvc.refreshCalls)
+	}
+
+	edition := "Director's Cut"
+	editedReq := req
+	editedReq.ReleaseNameOverrides = api.ReleaseNameOverrides{Edition: &edition}
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), editedReq, sourcePath); err != nil {
+		t.Fatalf("resolve edited cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected fallback cache for edited request")
+	}
+	if metaSvc.refreshCalls != 2 {
+		t.Fatalf("expected edited request to refresh once, got %d refreshes", metaSvc.refreshCalls)
+	}
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), editedReq, sourcePath); err != nil {
+		t.Fatalf("resolve edited cached prepared metadata again: %v", err)
+	} else if !ok {
+		t.Fatal("expected exact edited cache on second lookup")
+	}
+	if metaSvc.refreshCalls != 2 {
+		t.Fatalf("expected repeated edited request to reuse refreshed cache, got %d refreshes", metaSvc.refreshCalls)
+	}
+}
+
+func TestResolveGUICachedPreparedMetaTreatsResolvedTrackerDataAsCacheMatch(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Metadata: metaSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	sourcePath := "/tmp/a"
+	req := api.Request{
+		Paths:    []string{sourcePath},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER", "HDB"},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath:     sourcePath,
+		Paths:          []string{sourcePath},
+		Mode:           api.ModeGUI,
+		Trackers:       []string{"AITHER", "HDB"},
+		TrackersRemove: []string{"HDB"},
+		TrackerIDs:     map[string]string{"hdb": "123"},
+	}
+	core.storeRefreshedDupeCache(sourcePath, "", meta)
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), req, sourcePath); err != nil {
+		t.Fatalf("resolve cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata")
+	}
+	if metaSvc.refreshCalls != 0 {
+		t.Fatalf("expected resolved tracker data to remain cacheable, got %d refreshes", metaSvc.refreshCalls)
+	}
+}
+
+func TestResolveGUICachedPreparedMetaAllowsTrackerlessFollowUp(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Metadata: metaSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	sourcePath := "/tmp/a"
+	meta := api.PreparedMetadata{
+		SourcePath: sourcePath,
+		Paths:      []string{sourcePath},
+		Mode:       api.ModeGUI,
+		Trackers:   []string{"AITHER", "HDB"},
+	}
+	core.storeRefreshedDupeCache(sourcePath, "", meta)
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeGUI,
+	}, sourcePath); err != nil {
+		t.Fatalf("resolve trackerless cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata")
+	}
+	if metaSvc.refreshCalls != 0 {
+		t.Fatalf("expected trackerless follow-up to reuse cache, got %d refreshes", metaSvc.refreshCalls)
+	}
+}
+
 func TestRunUploadPreparedDryRunSkipsUpload(t *testing.T) {
 	t.Parallel()
 
@@ -2215,9 +2349,10 @@ func (s stubFS) ValidatePaths(_ context.Context, paths []string) ([]string, erro
 }
 
 type stubMeta struct {
-	calls    int
-	options  api.UploadOptions
-	prepared api.PreparedMetadata
+	calls        int
+	refreshCalls int
+	options      api.UploadOptions
+	prepared     api.PreparedMetadata
 }
 
 func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
@@ -2243,6 +2378,7 @@ func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMe
 }
 
 func (s *stubMeta) RefreshPreparedMetadata(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	s.refreshCalls++
 	return meta, nil
 }
 
