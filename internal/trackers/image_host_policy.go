@@ -329,11 +329,12 @@ func betterImageUploadHostRanking(candidate imageUploadHostRanking, current imag
 func candidateImageUploadTargetHosts(tracker string, policy imageHostPolicy, candidates []string, excludedHosts map[string]struct{}) []string {
 	hosts := make([]string, 0, len(candidates))
 	for _, host := range candidates {
-		if _, excluded := excludedHosts[strings.ToLower(strings.TrimSpace(host))]; excluded {
+		normalizedHost := strings.ToLower(strings.TrimSpace(host))
+		if _, excluded := excludedHosts[normalizedHost]; excluded {
 			continue
 		}
-		if imageHostUsableForPolicy(tracker, host, policy) {
-			hosts = appendUniqueHost(hosts, host)
+		if imageHostUsableForPolicy(tracker, normalizedHost, policy) {
+			hosts = appendUniqueHost(hosts, normalizedHost)
 		}
 	}
 	return hosts

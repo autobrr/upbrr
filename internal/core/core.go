@@ -966,7 +966,7 @@ func (c *Core) resolveImageUploadTargets(req api.Request, meta api.PreparedMetad
 		normalized = append(normalized, target)
 	}
 	if len(normalized) == 0 {
-		return nil, fmt.Errorf("core: image host %q is tracker-scoped but no active tracker can use it", normalizedHost)
+		return nil, fmt.Errorf("core: image host %q resolved image upload targets were filtered out after tracker eligibility and normalization", normalizedHost)
 	}
 	return normalized, nil
 }
