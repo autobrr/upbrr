@@ -56,6 +56,7 @@ func SplitBDInfoReport(text string) (summary string, files string, extSummary st
 
 		remaining := strings.TrimRight(parts[1], " \n")
 		summary = strings.TrimRight(strings.SplitN(remaining, "********************", 2)[0], " \n")
+		summary = normalizeSummarySpaces(summary)
 	}
 
 	// Legacy Python logic selects the segment after the second [code] marker.
@@ -64,9 +65,26 @@ func SplitBDInfoReport(text string) (summary string, files string, extSummary st
 	if len(codeParts) >= 3 {
 		codeSection := strings.TrimRight(codeParts[2], " \n")
 		extSummary = strings.TrimRight(strings.SplitN(codeSection, "FILES:", 2)[0], " \n")
+		extSummary = normalizeSummarySpaces(extSummary)
 	}
 
 	return summary, files, extSummary
+}
+
+func normalizeSummarySpaces(text string) string {
+	rawLines := strings.Split(text, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, line := range rawLines {
+		if strings.Contains(line, "/") && !strings.Contains(line, "[") && !strings.Contains(line, "]") && !strings.Contains(line, "**") {
+			parts := strings.Split(line, "/")
+			for i := range parts {
+				parts[i] = strings.TrimSpace(parts[i])
+			}
+			line = strings.Join(parts, " / ")
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // SplitBDInfoPlaylistReports extracts each playlist section from a full BDInfo report.

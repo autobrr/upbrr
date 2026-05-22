@@ -96,7 +96,7 @@ func TestContextCancellation(t *testing.T) {
 	cancel() // Cancel immediately
 
 	// ExecuteForPlaylist should respect context cancellation
-	_, err := svc.ExecuteForPlaylist(ctx, "/nonexistent", "00001.mpls", "/nonexistent/BD_SUMMARY_00001.MPLS.txt")
+	_, err := svc.ExecuteForPlaylist(ctx, "/nonexistent", "00001.mpls", "/nonexistent/BD_SUMMARY_00001.MPLS.txt", true)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled, got %v", err)
 	}
@@ -124,7 +124,7 @@ func TestExecuteForPlaylistUsesInProcessRunner(t *testing.T) {
 	ctx := WithProgressReporter(context.Background(), func(_ string) {
 		reported = true
 	})
-	outputPath, err := svc.ExecuteForPlaylist(ctx, `D:\Media\Movie\BDMV`, "00001", expectedOutput)
+	outputPath, err := svc.ExecuteForPlaylist(ctx, `D:\Media\Movie\BDMV`, "00001", expectedOutput, true)
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestExecuteForPlaylistNormalizesLowercaseAndPathPlaylist(t *testing.T) {
 
 			svc := New(api.NopLogger{})
 			outputPath := filepath.Join(tmpDir, tc.want+".txt")
-			if _, err := svc.ExecuteForPlaylist(context.Background(), `D:\Media\Movie\BDMV`, tc.playlistFile, outputPath); err != nil {
+			if _, err := svc.ExecuteForPlaylist(context.Background(), `D:\Media\Movie\BDMV`, tc.playlistFile, outputPath, true); err != nil {
 				t.Fatalf("execute failed: %v", err)
 			}
 

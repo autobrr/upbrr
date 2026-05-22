@@ -297,7 +297,7 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 			ReportText: fullReport,
 		}, nil
 	}
-	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string) (string, error) {
+	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string, summaryOnly bool) (string, error) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
@@ -486,7 +486,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		fullScans++
 		return bdinfo.ScanResult{}, errors.New("unexpected full scan")
 	}
-	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string) (string, error) {
+	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string, summaryOnly bool) (string, error) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
@@ -531,6 +531,128 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00002.MPLS"), "extended summary two")
 	if got := meta.BDInfo["summary"]; !strings.Contains(got.(string), "Playlist: 00002.MPLS") {
 		t.Fatalf("expected cached canonical summary for first selected playlist, got %#v", meta.BDInfo)
+	}
+}
+
+func TestPrepareBDMVSinglePlaylistFullScan(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "disc")
+	bdmvPath := filepath.Join(sourcePath, "BDMV")
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "PLAYLIST"), 0o755); err != nil {
+		t.Fatalf("mkdir playlist failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
+		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	repo := &stubRepo{
+		playlistSelection: db.PlaylistSelection{
+			SelectedPlaylists: []string{"00001.MPLS"},
+		},
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+
+	originalDiscover := discoverBDMVPlaylists
+	originalParse := parseBDMVPlaylist
+	originalFullScan := executeFullBDInfoScan
+	originalPlaylistScan := executePlaylistBDInfo
+	originalParseOutput := parseBDInfoOutput
+	t.Cleanup(func() {
+		discoverBDMVPlaylists = originalDiscover
+		parseBDMVPlaylist = originalParse
+		executeFullBDInfoScan = originalFullScan
+		executePlaylistBDInfo = originalPlaylistScan
+		parseBDInfoOutput = originalParseOutput
+	})
+
+	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{
+			{File: "00001.MPLS", Duration: 5400},
+		}, nil
+	}
+	parseBDMVPlaylist = func(mplsPath string) (float64, []filesystem.PlaylistItem, error) {
+		return 5400, []filesystem.PlaylistItem{
+			{File: "00001.m2ts", Size: 100},
+		}, nil
+	}
+
+	fullScans := 0
+	playlistScans := 0
+	dummyFullReport := strings.Join([]string{
+		"DISC INFO:",
+		"DISC LABEL: DISC-ONE",
+		"FILES:",
+		"-------------",
+		"00001.m2ts        01:30:00     1,000,000,000",
+		"CHAPTERS:",
+		"[code]",
+		"table one",
+		"[/code]",
+		"[code]",
+		"extended summary one",
+		"[/code]",
+		"QUICK SUMMARY:",
+		"Playlist: 00001.MPLS",
+		"Disc Label: DISC-ONE",
+		"Length: 01:30:00.000",
+	}, "\n") + "\n"
+
+	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+		fullScans++
+		return bdinfo.ScanResult{}, errors.New("unexpected full scan")
+	}
+	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputPath string, summaryOnly bool) (string, error) {
+		playlistScans++
+		if summaryOnly {
+			return "", errors.New("expected full scan, got summaryOnly = true")
+		}
+		// Simulate writing the full report to the outputPath
+		if err := os.WriteFile(outputPath, []byte(dummyFullReport), 0o600); err != nil {
+			return "", err
+		}
+		return outputPath, nil
+	}
+	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+		payload, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"summary": string(payload)}, nil
+	}
+
+	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
+	if err != nil {
+		t.Fatalf("tmp dir: %v", err)
+	}
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+
+	if fullScans != 0 {
+		t.Fatalf("expected no full scan, got %d", fullScans)
+	}
+	if playlistScans != 1 {
+		t.Fatalf("expected exactly 1 playlist scan, got %d", playlistScans)
+	}
+
+	// Verify all three versions of the report are saved in tmpDir
+	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), "Playlist: 00001.MPLS")
+	assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00001.MPLS"), "extended summary one")
+	assertFileContains(t, paths.BDMVFullSummaryPath(tmpDir, "00001.MPLS"), "QUICK SUMMARY:")
+
+	if got := meta.BDInfo["summary"]; !strings.Contains(got.(string), "Playlist: 00001.MPLS") {
+		t.Fatalf("unexpected summary in BDInfo: %v", got)
 	}
 }
 
@@ -950,5 +1072,19 @@ func writeBDMVSummaryFixture(t *testing.T, tmpDir string, playlist string, extSu
 	extPath := paths.BDMVExtSummaryPath(tmpDir, playlist)
 	if err := os.WriteFile(extPath, []byte(extSummary+"\n"), 0o600); err != nil {
 		t.Fatalf("write ext fixture: %v", err)
+	}
+	fullPath := paths.BDMVFullSummaryPath(tmpDir, playlist)
+	fullReport := strings.Join([]string{
+		"QUICK SUMMARY:",
+		"Playlist: " + playlist,
+		"[code]",
+		"extended summary info",
+		"[/code]",
+		"[code]",
+		extSummary,
+		"[/code]",
+	}, "\n") + "\n"
+	if err := os.WriteFile(fullPath, []byte(fullReport), 0o600); err != nil {
+		t.Fatalf("write full summary fixture: %v", err)
 	}
 }
