@@ -980,15 +980,34 @@ func (c *Core) filterImageUploadTrackers(trackerNames []string, meta api.Prepare
 		}
 		blockedReasons := blockedReasonsForTracker(meta.BlockedTrackers, name)
 		ruleFailures := ruleFailuresForTracker(meta.TrackerRuleFailures, name)
-		if len(blockedReasons) > 0 || (!meta.IgnoreTrackerRuleFailures && len(ruleFailures) > 0) {
+		existingMatch := matchedTrackerForUpload(meta.MatchedTrackers, name)
+		if len(blockedReasons) > 0 || (!meta.IgnoreTrackerRuleFailures && len(ruleFailures) > 0) || existingMatch {
 			if c.logger != nil {
-				c.logger.Debugf("core: excluding blocked image upload tracker tracker=%s blocked_reasons=%v rule_failures=%d", name, blockedReasons, len(ruleFailures))
+				c.logger.Debugf("core: excluding blocked image upload tracker tracker=%s blocked_reasons=%v rule_failures=%d existing_match=%t", name, blockedReasons, len(ruleFailures), existingMatch)
 			}
 			continue
 		}
 		filtered = append(filtered, name)
 	}
 	return filtered
+}
+
+func matchedTrackerForUpload(matchedTrackers []string, tracker string) bool {
+	if len(matchedTrackers) == 0 {
+		return false
+	}
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if name == "" {
+		return false
+	}
+	for _, matched := range matchedTrackers {
+		for _, entry := range splitTrackerLabel(matched) {
+			if strings.EqualFold(strings.TrimSpace(entry), name) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func blockedReasonsForTracker(blocked map[string][]api.TrackerBlockReason, tracker string) []api.TrackerBlockReason {

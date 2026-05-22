@@ -369,6 +369,56 @@ func TestUploadImagesFiltersCachedBlockedTrackers(t *testing.T) {
 	}
 }
 
+func TestUploadImagesFiltersCachedMatchedTrackers(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	imageService := &stubImageHosting{
+		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"HDB": {ImageHost: "hdb"},
+					"OE":  {},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeDupeCache("/tmp/source", "", api.PreparedMetadata{
+		SourcePath:      "/tmp/source",
+		MatchedTrackers: []string{"hdb"},
+	})
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"HDB", "OE"},
+	}, "imgbb", images)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(imageService.calls) != 1 {
+		t.Fatalf("expected upload only for unmatched tracker, got %d calls: %#v", len(imageService.calls), imageService.calls)
+	}
+	if imageService.calls[0].host != "imgbb" {
+		t.Fatalf("expected only selected global host for OE, got %#v", imageService.calls[0])
+	}
+	if len(result.Links) != 1 || result.Links[0].Host != "imgbb" {
+		t.Fatalf("expected imgbb result only, got %#v", result)
+	}
+}
+
 func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
 	t.Parallel()
 
