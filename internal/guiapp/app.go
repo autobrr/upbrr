@@ -25,8 +25,10 @@ import (
 	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -76,6 +78,11 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		return nil, err
 	}
 	if err := repo.MigrateContext(ctx); err != nil {
+		_ = repo.Close()
+		_ = logger.Close()
+		return nil, err
+	}
+	if err := repo.ClearUIState(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
 		return nil, err
@@ -143,12 +150,26 @@ func (a *App) BrowseFile() (string, error) {
 	}
 
 	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select a file",
+		Title:   "Select a file",
+		Filters: []runtime.FileFilter{videoFileDialogFilter()},
 	})
 	if err != nil {
 		return "", err
 	}
 	return selection, nil
+}
+
+func videoFileDialogFilter() runtime.FileFilter {
+	extensions := filesystem.SupportedVideoExtensions()
+	patterns := make([]string, 0, len(extensions))
+	for _, ext := range extensions {
+		patterns = append(patterns, "*"+ext)
+	}
+	pattern := strings.Join(patterns, ";")
+	return runtime.FileFilter{
+		DisplayName: "Video files (" + pattern + ")",
+		Pattern:     pattern,
+	}
 }
 
 func (a *App) BrowseFiles() ([]string, error) {
@@ -199,6 +220,55 @@ func (a *App) BrowsePath() (string, error) {
 	}
 
 	return a.BrowseFolder()
+}
+
+func (a *App) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResponse, error) {
+	if a == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("app not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(a.cfg.MainSettings.DBPath)
+	return guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback)
+}
+
+func (a *App) ListUIStates() (api.UIStateList, error) {
+	if a == nil || a.repo == nil {
+		return api.UIStateList{}, errors.New("config repository not initialized")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
+	defer cancel()
+	states, err := a.repo.ListUIStates(ctx)
+	if err != nil {
+		return api.UIStateList{}, err
+	}
+	return api.UIStateList{States: states}, nil
+}
+
+func (a *App) GetUIState(id string) (api.UIStateRecord, error) {
+	if a == nil || a.repo == nil {
+		return api.UIStateRecord{}, errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(id) == "" {
+		return api.UIStateRecord{}, errors.New("id is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return a.repo.LoadUIState(ctx, id)
+}
+
+func (a *App) SaveUIState(id string, label string, state api.UIState) error {
+	if a == nil || a.repo == nil {
+		return errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(id) == "" {
+		return errors.New("id is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return a.repo.SaveUIState(ctx, id, label, state)
 }
 
 func validateExternalURL(raw string) (string, error) {
@@ -290,7 +360,7 @@ func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.E
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackers,
+		Trackers:        slices.Clone(trackers),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
@@ -436,7 +506,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackers,
+		Trackers:        slices.Clone(trackers),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
@@ -553,7 +623,7 @@ func (a *App) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOve
 	req := api.Request{
 		Paths:    []string{trimmedPath},
 		Mode:     api.ModeGUI,
-		Trackers: trackers,
+		Trackers: slices.Clone(trackers),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
 			OnlyID:     a.cfg.Metadata.OnlyID,
@@ -585,7 +655,7 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 	req := api.Request{
 		Paths:          []string{trimmedPath},
 		Mode:           api.ModeGUI,
-		Trackers:       trackers,
+		Trackers:       slices.Clone(trackers),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
@@ -644,7 +714,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		Paths:                       []string{trimmedPath},
 		Mode:                        api.ModeGUI,
 		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
-		Trackers:                    trackers,
+		Trackers:                    slices.Clone(trackers),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   ignoreRuleFailures,
 		Options:                     buildRunUploadOptions(a.cfg, runOpts),
@@ -688,7 +758,7 @@ func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverr
 	req := api.Request{
 		Paths:          []string{path},
 		Mode:           api.ModeGUI,
-		Trackers:       trackers,
+		Trackers:       slices.Clone(trackers),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
 		Options: api.UploadOptions{
 			Screens:    a.cfg.ScreenshotHandling.Screens,
@@ -738,7 +808,7 @@ func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, 
 		DescriptionOverrideGroup: strings.TrimSpace(groupKey),
 	}
 
-	req.Trackers = append([]string{}, trackers...)
+	req.Trackers = slices.Clone(trackers)
 	req.ExternalIDOverrides = overrides
 	req.ReleaseNameOverrides = nameOverrides
 
@@ -973,18 +1043,18 @@ func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides,
 	return a.core.ListUploadedImages(ctx, req)
 }
 
-func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	if a == nil || a.core == nil {
-		return nil, errors.New("app not initialized")
+		return api.UploadImagesResult{}, errors.New("app not initialized")
 	}
 	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("path is required")
+		return api.UploadImagesResult{}, errors.New("path is required")
 	}
 	if strings.TrimSpace(host) == "" {
-		return nil, errors.New("host is required")
+		return api.UploadImagesResult{}, errors.New("host is required")
 	}
 	if len(images) == 0 {
-		return nil, errors.New("no images selected")
+		return api.UploadImagesResult{}, errors.New("no images selected")
 	}
 
 	ctx := a.ctx
@@ -1004,6 +1074,7 @@ func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameO
 		},
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		Trackers:             slices.Clone(trackers),
 	}
 
 	return a.core.UploadImages(ctx, req, host, images)
@@ -1272,6 +1343,14 @@ func (a *App) ListKnownTrackers() ([]string, error) {
 	return trackers.KnownTrackers(), nil
 }
 
+func (a *App) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {
+	if a == nil {
+		return imagehostpolicy.Metadata{}, errors.New("app not initialized")
+	}
+
+	return imagehostpolicy.PolicyMetadata(), nil
+}
+
 func (a *App) SaveConfig(payload string) error {
 	if a == nil {
 		return errors.New("app not initialized")
@@ -1405,14 +1484,16 @@ type ImportResult struct {
 }
 
 type WebAuthStatus struct {
-	Path                   string `json:"path"`
-	Exists                 bool   `json:"exists"`
-	Usable                 bool   `json:"usable"`
-	CanCreate              bool   `json:"canCreate"`
-	Username               string `json:"username"`
-	AllowUnencryptedExport bool   `json:"allowUnencryptedExport"`
-	EncryptionEnabled      bool   `json:"encryptionEnabled"`
-	Message                string `json:"message"`
+	Path                    string `json:"path"`
+	Exists                  bool   `json:"exists"`
+	Usable                  bool   `json:"usable"`
+	CanCreate               bool   `json:"canCreate"`
+	Username                string `json:"username"`
+	AllowUnencryptedExport  bool   `json:"allowUnencryptedExport"`
+	BrowseRoot              string `json:"browseRoot"`
+	AllowUnrestrictedBrowse bool   `json:"allowUnrestrictedBrowse"`
+	EncryptionEnabled       bool   `json:"encryptionEnabled"`
+	Message                 string `json:"message"`
 }
 
 func (a *App) GetWebAuthStatus() (WebAuthStatus, error) {
@@ -1449,6 +1530,16 @@ func (a *App) GetWebAuthStatus() (WebAuthStatus, error) {
 		status.CanCreate = false
 		status.Username = material.Username
 		status.AllowUnencryptedExport = material.AllowUnencryptedExport
+		if record, loadErr := authmaterial.LoadRecordFromDBPath(dbPath); loadErr == nil {
+			status.BrowseRoot = record.BrowseRoot
+			status.AllowUnrestrictedBrowse = record.AllowUnrestrictedBrowse
+		} else if a.logger != nil {
+			a.logger.Debugf(
+				"gui: web auth browse policy record unavailable db_path=%s error=%s",
+				redaction.RedactValue(dbPath, nil),
+				redaction.RedactValue(loadErr.Error(), nil),
+			)
+		}
 		status.EncryptionEnabled = true
 		status.Message = "Secret encryption is enabled for this installation."
 		return status, nil

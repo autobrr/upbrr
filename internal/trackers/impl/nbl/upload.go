@@ -141,7 +141,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		"tvmazeid":    strconv.Itoa(req.Meta.ExternalIDs.TVmazeID),
 		"mediainfo":   mediaInfo,
 		"category":    strconv.Itoa(resolveCategoryID(req.Meta)),
-		"ignoredupes": "on",
+		"ignoredupes": "1",
 	}
 
 	return uploadState{torrentPath: torrentPath, fields: fields}, nil

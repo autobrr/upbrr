@@ -12,6 +12,8 @@ import (
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/autobrr/upbrr/internal/filesystem"
 )
 
 type powershellNativePicker struct{}
@@ -21,14 +23,16 @@ func newNativePicker() nativePicker {
 }
 
 func (powershellNativePicker) BrowseFile() (string, error) {
-	return runPickerScript(`
+	filterPattern := videoFilePickerFilterPattern()
+	return runPickerScript(fmt.Sprintf(`
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
 $dialog.Title = 'Select a file'
+$dialog.Filter = 'Video files (%[1]s)|%[1]s'
 if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
   [Console]::Out.Write($dialog.FileName)
 }
-`)
+`, filterPattern))
 }
 
 func (powershellNativePicker) BrowseFolder() (string, error) {
@@ -69,6 +73,15 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($f
 		return "", fmt.Errorf("native browse failed: %s", message)
 	}
 	return decodePickerOutput(stdout.Bytes()), nil
+}
+
+func videoFilePickerFilterPattern() string {
+	extensions := filesystem.SupportedVideoExtensions()
+	patterns := make([]string, 0, len(extensions))
+	for _, ext := range extensions {
+		patterns = append(patterns, "*"+ext)
+	}
+	return strings.Join(patterns, ";")
 }
 
 func decodePickerOutput(raw []byte) string {

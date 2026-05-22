@@ -112,3 +112,127 @@ func TestRenderLinkedWidthImageBBCode(t *testing.T) {
 		t.Fatalf("expected no visible link text duplication, got %q", rendered)
 	}
 }
+
+func TestRenderMediaInfoSpoilerPreview(t *testing.T) {
+	input := "[spoiler=MediaInfo][code]" + sampleMediaInfoText() + "[/code][/spoiler]"
+	rendered := Render(input)
+	for _, expected := range []string{
+		`class="mediainfo"`,
+		`class="mediainfo__general"`,
+		`class="mediainfo__video"`,
+		`class="mediainfo__audio"`,
+		`Movie.2024.1080p.mkv`,
+		`14.6 Mb/s`,
+		`AVC (8 bits)`,
+		`1 920 pixels x 1 080 pixels`,
+		`English / DTS / 6 channels / 1 509 kb/s / Main Audio`,
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("expected %q in rendered mediainfo, got %q", expected, rendered)
+		}
+	}
+}
+
+func TestRenderMediaInfoTagPreview(t *testing.T) {
+	rendered := Render("[mediainfo]" + sampleMediaInfoText() + "[/mediainfo]")
+	if !strings.Contains(rendered, `class="mediainfo"`) {
+		t.Fatalf("expected mediainfo preview, got %q", rendered)
+	}
+	if !strings.Contains(rendered, `<summary>Raw MediaInfo</summary>`) {
+		t.Fatalf("expected raw mediainfo details, got %q", rendered)
+	}
+}
+
+func TestRenderVOBMediaInfoKeepsRawDump(t *testing.T) {
+	rendered := Render("[spoiler=VOB MediaInfo][code]" + sampleMediaInfoText() + "[/code][/spoiler]")
+	if !strings.Contains(rendered, `<summary>Raw VOB MediaInfo</summary>`) {
+		t.Fatalf("expected VOB MediaInfo raw summary, got %q", rendered)
+	}
+	if !strings.Contains(rendered, `Writing library : x264`) {
+		t.Fatalf("expected raw dump to be preserved, got %q", rendered)
+	}
+	if strings.Contains(rendered, `mediainfo__encode-settings`) || strings.Contains(rendered, `Encode settings`) {
+		t.Fatalf("did not expect encode settings section, got %q", rendered)
+	}
+}
+
+func TestRenderHDBTransformedMediaInfoPreview(t *testing.T) {
+	rendered := Render("[hide=MediaInfo][font=monospace]" + sampleMediaInfoText() + "[/font][/hide]")
+	if !strings.Contains(rendered, `class="mediainfo"`) {
+		t.Fatalf("expected mediainfo preview for HDB transformed block, got %q", rendered)
+	}
+	if !strings.Contains(rendered, `<summary>Raw MediaInfo</summary>`) {
+		t.Fatalf("expected raw mediainfo details, got %q", rendered)
+	}
+}
+
+func TestRenderQuoteVOBMediaInfoPreview(t *testing.T) {
+	rendered := Render("[quote=VOB MediaInfo]" + sampleMediaInfoText() + "[/quote]")
+	if !strings.Contains(rendered, `class="mediainfo"`) {
+		t.Fatalf("expected mediainfo preview for quote block, got %q", rendered)
+	}
+	if !strings.Contains(rendered, `<summary>Raw VOB MediaInfo</summary>`) {
+		t.Fatalf("expected VOB MediaInfo raw summary, got %q", rendered)
+	}
+}
+
+func TestRenderHideCodeMediaInfoPreview(t *testing.T) {
+	rendered := Render("[hide][code]" + sampleMediaInfoText() + "[/code][/hide]")
+	if !strings.Contains(rendered, `class="mediainfo"`) {
+		t.Fatalf("expected mediainfo preview for hide code block, got %q", rendered)
+	}
+}
+
+func TestRenderMalformedMediaInfoFallsBack(t *testing.T) {
+	input := "[spoiler=MediaInfo][code]not really mediainfo[/code][/spoiler]"
+	rendered := Render(input)
+	if strings.Contains(rendered, `class="mediainfo"`) {
+		t.Fatalf("did not expect mediainfo preview, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "<details>") || !strings.Contains(rendered, "not really mediainfo") {
+		t.Fatalf("expected existing spoiler rendering fallback, got %q", rendered)
+	}
+}
+
+func TestRenderMediaInfoSanitizesPreviewHTML(t *testing.T) {
+	input := "[mediainfo]" + sampleMediaInfoText() + "\nTitle : <script>alert(1)</script> Safe[/mediainfo]"
+	rendered := Render(input)
+	if strings.Contains(rendered, "<script") {
+		t.Fatalf("expected script tag to be removed, got %q", rendered)
+	}
+	if !strings.Contains(rendered, `class="mediainfo__raw"`) {
+		t.Fatalf("expected safe mediainfo class to be preserved, got %q", rendered)
+	}
+}
+
+func sampleMediaInfoText() string {
+	return `General
+Complete name : C:\Media\Movie.2024.1080p.mkv
+Format : Matroska
+File size : 10.4 GiB
+Duration : 1 h 42 min
+Overall bit rate : 14.6 Mb/s
+
+Video
+Format : AVC
+Bit depth : 8 bits
+Width : 1 920 pixels
+Height : 1 080 pixels
+Display aspect ratio : 16:9
+Frame rate : 23.976 FPS
+Bit rate : 12.0 Mb/s
+Writing library : x264
+Encoding settings : cabac=1 / ref=5
+
+Audio
+Format : DTS
+Language : English
+Channel(s) : 6 channels
+Bit rate : 1 509 kb/s
+Title : Main Audio
+
+Text
+Format : UTF-8
+Language : English
+Title : SDH`
+}

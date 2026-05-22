@@ -5,7 +5,12 @@ package core
 
 import (
 	"context"
+	"errors"
+	"slices"
+	"sort"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -16,12 +21,23 @@ type stubImageHosting struct {
 	uploaded   []api.UploadedImageLink
 	err        error
 	lastMeta   api.PreparedMetadata
+	mu         sync.Mutex
+	calls      []stubImageUploadCall
+	uploadFn   func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error)
+}
+
+type stubImageUploadCall struct {
+	host       string
+	usageScope string
+	images     []api.ScreenshotImage
 }
 
 func (s *stubImageHosting) ListCandidates(ctx context.Context, meta api.PreparedMetadata) ([]api.ScreenshotImage, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.lastMeta = meta
 	return s.candidates, nil
 }
@@ -30,7 +46,17 @@ func (s *stubImageHosting) Upload(ctx context.Context, meta api.PreparedMetadata
 	if s.err != nil {
 		return nil, s.err
 	}
+	s.mu.Lock()
 	s.lastMeta = meta
+	s.calls = append(s.calls, stubImageUploadCall{
+		host:       host,
+		usageScope: usageScope,
+		images:     append([]api.ScreenshotImage{}, images...),
+	})
+	s.mu.Unlock()
+	if s.uploadFn != nil {
+		return s.uploadFn(ctx, meta, host, usageScope, images)
+	}
 	return s.uploaded, nil
 }
 
@@ -58,11 +84,11 @@ func TestUploadImagesWithoutCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(result))
+	if len(result.Links) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result.Links))
 	}
-	if result[0].Host != "imgbox" {
-		t.Fatalf("expected host imgbox, got %s", result[0].Host)
+	if result.Links[0].Host != "imgbox" {
+		t.Fatalf("expected host imgbox, got %s", result.Links[0].Host)
 	}
 }
 
@@ -133,4 +159,228 @@ func TestUploadImagesGUIFallbackReappliesReleaseOverrides(t *testing.T) {
 	if imageService.lastMeta.ReleaseNameOverrides.Edition == nil || *imageService.lastMeta.ReleaseNameOverrides.Edition != edition {
 		t.Fatalf("expected upload images to receive edition override, got %#v", imageService.lastMeta.ReleaseNameOverrides)
 	}
+}
+
+func TestUploadImagesUploadsApplicableTrackerHosts(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	imageService := &stubImageHosting{
+		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"PTP": {ImageHost: "ptpimg"},
+					"STC": {},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"PTP", "STC"},
+	}, "imgbox", images)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(imageService.calls) != 2 {
+		t.Fatalf("expected uploads to two hosts, got %d calls: %#v", len(imageService.calls), imageService.calls)
+	}
+	calledHosts := map[string]string{}
+	for _, call := range imageService.calls {
+		calledHosts[call.host] = call.usageScope
+	}
+	if calledHosts["imgbox"] != "global" {
+		t.Fatalf("expected selected host imgbox, got %#v", imageService.calls)
+	}
+	if calledHosts["ptpimg"] != "global" {
+		t.Fatalf("expected configured PTP host ptpimg, got %#v", imageService.calls)
+	}
+	if len(result.Links) != 2 {
+		t.Fatalf("expected result from both hosts, got %d", len(result.Links))
+	}
+}
+
+func TestUploadImagesDoesNotUseBuiltInTrackerPreferredHosts(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	imageService := &stubImageHosting{
+		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"PTP": {},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"PTP"},
+	}, "imgbox", images)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(imageService.calls) != 1 {
+		t.Fatalf("expected upload to selected host only, got %d calls: %#v", len(imageService.calls), imageService.calls)
+	}
+	if imageService.calls[0].host != "imgbox" {
+		t.Fatalf("expected selected host imgbox, got %#v", imageService.calls[0])
+	}
+	if len(result.Links) != 1 || result.Links[0].Host != "imgbox" {
+		t.Fatalf("expected imgbox result only, got %#v", result)
+	}
+}
+
+func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	bothStarted := make(chan struct{})
+	var startedMu sync.Mutex
+	started := 0
+	imageService := &stubImageHosting{
+		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			startedMu.Lock()
+			started++
+			if started == 2 {
+				close(bothStarted)
+			}
+			startedMu.Unlock()
+
+			select {
+			case <-bothStarted:
+			case <-time.After(500 * time.Millisecond):
+				return nil, errors.New("second host did not start")
+			}
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"PTP": {ImageHost: "ptpimg"},
+					"MTV": {ImageHost: "ptpimg"},
+					"STC": {},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"PTP", "MTV", "STC"},
+	}, "imgbox", images)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(result.Links) != 2 {
+		t.Fatalf("expected both concurrent uploads to succeed, got %#v", result)
+	}
+}
+
+func TestUploadImagesReturnsHostFailuresWithSuccessfulLinks(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	imageService := &stubImageHosting{
+		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			if host == "ptpimg" {
+				return nil, errors.New("ptpimg unavailable")
+			}
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"PTP": {ImageHost: "ptpimg"},
+					"MTV": {ImageHost: "ptpimg"},
+					"STC": {},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"PTP", "MTV", "STC"},
+	}, "imgbox", images)
+	if err != nil {
+		t.Fatalf("expected partial host failure to return successful links, got %v", err)
+	}
+	if len(result.Links) != 1 || result.Links[0].Host != "imgbox" {
+		t.Fatalf("expected only successful imgbox upload, got %#v", result)
+	}
+	if len(result.Failures) != 1 {
+		t.Fatalf("expected one host failure, got %#v", result.Failures)
+	}
+	failure := result.Failures[0]
+	if failure.Host != "ptpimg" || failure.Message != "ptpimg unavailable" {
+		t.Fatalf("expected ptpimg failure, got %#v", failure)
+	}
+	expectedTrackers := []string{"PTP", "MTV"}
+	sort.Strings(failure.Trackers)
+	sort.Strings(expectedTrackers)
+	if !slices.Equal(failure.Trackers, expectedTrackers) {
+		t.Fatalf("expected failure to block only linked trackers, got %#v", failure.Trackers)
+	}
+}
+
+func uploadedImageLinksForHost(meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) []api.UploadedImageLink {
+	result := make([]api.UploadedImageLink, 0, len(images))
+	for _, image := range images {
+		result = append(result, api.UploadedImageLink{
+			SourcePath: meta.SourcePath,
+			ImagePath:  image.Path,
+			Host:       host,
+			UsageScope: usageScope,
+			RawURL:     "https://" + host + "/raw.png",
+			ImgURL:     "https://" + host + "/img.png",
+			WebURL:     "https://" + host + "/web.png",
+		})
+	}
+	return result
 }

@@ -26,7 +26,6 @@ func (h antHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("missing api_key for tracker")}, nil
 	}
 	params := url.Values{}
-	params.Set("apikey", apiKey)
 	params.Set("t", "search")
 	params.Set("o", "json")
 	switch {
@@ -37,8 +36,12 @@ func (h antHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	default:
 		return nil, []string{noteSkip("missing tmdb/imdb id for ANT dupe search")}, nil
 	}
+	headers := map[string]string{
+		"User-Agent": "upbrr",
+		"X-API-Key":  apiKey,
+	}
 
-	status, payload, err := doJSONGet(ctx, h.http, "https://anthelion.me/api.php", params, nil)
+	status, payload, err := doJSONGet(ctx, h.http, "https://anthelion.me/api.php", params, headers)
 	if err != nil {
 		return nil, []string{noteSkip("ANT request failed")}, nil
 	}

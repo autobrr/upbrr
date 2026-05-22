@@ -399,10 +399,24 @@ func printDryRunSummary(entry api.TrackerDryRunEntry) {
 		sort.Strings(keys)
 		fmt.Printf("Payload fields: %s\n", strings.Join(keys, ", "))
 	}
-	if entry.ImageHost.Reuploaded {
-		if message := strings.TrimSpace(entry.ImageHost.Message); message != "" {
-			fmt.Printf("Images: %s\n", message)
+	if imageMessage := strings.TrimSpace(entry.ImageHost.Message); imageMessage != "" && (entry.ImageHost.Reuploaded || strings.EqualFold(entry.ImageHost.Status, "warning")) {
+		fmt.Printf("Images: %s\n", imageMessage)
+	}
+	for _, warning := range entry.ImageHost.Warnings {
+		host := strings.TrimSpace(warning.Host)
+		warningMessage := strings.TrimSpace(warning.Message)
+		if host == "" && warningMessage == "" {
+			continue
 		}
+		if host == "" {
+			fmt.Printf("Image host warning: %s\n", warningMessage)
+			continue
+		}
+		if warningMessage == "" {
+			fmt.Printf("Image host warning: %s failed\n", host)
+			continue
+		}
+		fmt.Printf("Image host warning: %s failed: %s\n", host, warningMessage)
 	}
 }
 

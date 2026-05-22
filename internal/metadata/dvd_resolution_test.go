@@ -83,6 +83,23 @@ func TestExtractDVDMediaInfoDefaultsUnknownScanToProgressive(t *testing.T) {
 	}
 }
 
+func TestExtractDVDMediaInfoDoesNotOverrideJSONProgressiveScan(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DiscType:            "DVD",
+		SourcePath:          `/releases/Movie.DVD`,
+		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"576","FrameRate":"25.000","ScanType":"Progressive"}]}}`,
+		DVDVOBMediaInfoText: "Width : 720\nHeight : 576\nFrame rate : 25.000\nScan type : Interlaced\n",
+	}
+
+	info := extractDVDMediaInfo(meta)
+	if info.ScanType != "p" {
+		t.Fatalf("expected JSON progressive scan to be preserved, got %q", info.ScanType)
+	}
+	if info.Resolution != "576p" {
+		t.Fatalf("expected 576p, got %q", info.Resolution)
+	}
+}
+
 func TestResolutionFromMediaInfo(t *testing.T) {
 	tests := []struct {
 		name     string

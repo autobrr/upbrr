@@ -137,8 +137,17 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, meta.MediaInfoTVDBID, "mediainfo")
 	}
 
+	if !overrideTMDB && !clearedTMDB {
+		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, meta.SceneTMDBID, "scene")
+	}
 	if !overrideIMDB && !clearedIMDB {
 		applyResolvedID(&ids.IMDBID, &ids.SourceIMDB, meta.SceneIMDB, "scene")
+	}
+	if !overrideTVDB && !clearedTVDB {
+		applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, meta.SceneTVDBID, "scene")
+	}
+	if !overrideTVmaze {
+		applyResolvedID(&ids.TVmazeID, &ids.SourceTVmaze, meta.SceneTVmazeID, "scene")
 	}
 	if !overrideTMDB && !clearedTMDB {
 		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, meta.ArrTMDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
@@ -362,7 +371,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0) {
 			return true
 		}
-		if !overrideTVmaze && ids.TVmazeID == 0 && metadata.TVmaze == nil && isTVForTVmaze() && (ids.IMDBID != 0 || ids.TVDBID != 0) {
+		if metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0))) {
 			return true
 		}
 		return false
@@ -372,7 +381,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		fetchTMDB := ids.TMDBID != 0 && metadata.TMDB == nil
 		fetchIMDB := ids.IMDBID != 0 && metadata.IMDB == nil
 		lookupTVDB := !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
-		lookupTVmaze := !overrideTVmaze && ids.TVmazeID == 0 && metadata.TVmaze == nil && isTVForTVmaze() && (ids.IMDBID != 0 || ids.TVDBID != 0)
+		lookupTVmaze := metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
 
 		if s.logger != nil {
 			s.logger.Debugf(
@@ -441,7 +450,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 
 		if lookupTVDB {
 			group.Go(func() error {
-				tvMovie := strings.EqualFold(ids.Category, "MOVIE")
+				tvMovie := isIMDbTVMovie(ids, metadata)
 				id, name, err := tvdbClient.GetByExternalID(gctx, formatIMDbID(ids.IMDBID), formatOptionalInt(ids.TMDBID), tvMovie)
 				if err != nil {
 					mu.Lock()
@@ -478,6 +487,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 					Year:              yearText,
 					ImdbID:            formatIMDbID(ids.IMDBID),
 					TVDBID:            formatOptionalInt(ids.TVDBID),
+					ManualID:          ids.TVmazeID,
 					ManualDate:        manualDate,
 					StrictIDOnly:      !allowTVmazeNameFallback,
 					AllowNameFallback: allowTVmazeNameFallback,
@@ -741,6 +751,31 @@ func (s *Service) ensureExternalClients() (TMDBClient, IMDBClient, TVDBClient, T
 		s.tvmaze = tvmaze.NewClient(nil, s.logger)
 	}
 	return s.tmdb, s.imdb, s.tvdb, s.tvmaze, nil
+}
+
+func isIMDbTVMovie(ids api.ExternalIDs, metadata api.ExternalMetadata) bool {
+	if ids.IMDBID == 0 || metadata.IMDB == nil {
+		return false
+	}
+	imdbType := strings.TrimSpace(metadata.IMDB.Type)
+	if imdbType == "" {
+		return false
+	}
+	for _, keyword := range []string{"tv movie", "tv special", "tvmovie"} {
+		if imdbTypeContains(imdbType, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func imdbTypeContains(value string, keyword string) bool {
+	for _, part := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveTVDBCacheDir(dbPath string) string {
@@ -1195,8 +1230,8 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	}
 	year := parseYearFromDate(details.FirstAired)
 	yearFromAlias := false
-	if slugYear := parseYearFromSlug(details.Slug); slugYear > 0 {
-		year = slugYear
+	if details.SeriesYear > 0 {
+		year = details.SeriesYear
 		yearFromAlias = true
 	}
 	name := metautil.FirstNonEmptyTrimmed(details.Name, fallbackName)
@@ -1365,6 +1400,9 @@ func (s *Service) applyTVEpisodeMetadata(
 		meta.Anime = external.TMDB.Anime
 		meta.MALID = external.TMDB.MALID
 	}
+	if meta.MALID == 0 {
+		meta.MALID = meta.SceneMALID
+	}
 	if overrideMAL {
 		meta.MALID = metautil.FirstInt(*meta.ExternalIDOverrides.MALID, 0)
 	}
@@ -1483,8 +1521,10 @@ func (s *Service) applyTVEpisodeMetadata(
 						external.TVDB = &api.TVDBMetadata{TVDBID: ids.TVDBID}
 					}
 					external.TVDB.Name = aliasName
-					external.TVDB.Year = aliasYear
-					external.TVDB.YearFromAlias = true
+					if aliasYear > 0 {
+						external.TVDB.Year = aliasYear
+						external.TVDB.YearFromAlias = true
+					}
 				}
 			}
 			if !meta.TVPack {
@@ -1690,18 +1730,6 @@ func parseYearFromDate(value string) int {
 	return year
 }
 
-func parseYearFromSlug(value string) int {
-	match := tvdbAliasYearPattern.FindStringSubmatch(strings.TrimSpace(value))
-	if len(match) != 2 {
-		return 0
-	}
-	year, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0
-	}
-	return year
-}
-
 func isGenericEpisodeTitle(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -1731,18 +1759,20 @@ func parseTVDBAliasNameYear(alias string) (string, int, bool) {
 	if trimmed == "" {
 		return "", 0, false
 	}
+	name := trimmed
+	year := 0
 	match := tvdbAliasYearPattern.FindStringSubmatch(trimmed)
-	if len(match) != 2 {
-		return "", 0, false
-	}
-	year, err := strconv.Atoi(match[1])
-	if err != nil {
-		return "", 0, false
+	if len(match) == 2 {
+		parsed, err := strconv.Atoi(match[1])
+		if err != nil {
+			return "", 0, false
+		}
+		year = parsed
+		name = tvdbAliasYearCleanup.ReplaceAllString(trimmed, " ")
+		name = strings.ReplaceAll(name, "(", " ")
+		name = strings.ReplaceAll(name, ")", " ")
 	}
 
-	name := tvdbAliasYearCleanup.ReplaceAllString(trimmed, " ")
-	name = strings.ReplaceAll(name, "(", " ")
-	name = strings.ReplaceAll(name, ")", " ")
 	name = strings.Join(strings.Fields(name), " ")
 	if name == "" {
 		return "", 0, false

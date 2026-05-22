@@ -1159,8 +1159,9 @@ func sourceAndType(meta api.PreparedMetadata, doc mediaInfoDoc) (string, string)
 		typeValue = "WEBRIP"
 		source = "Web"
 	}
-	if strings.EqualFold(source, "Web") && typeValue == "ENCODE" {
-		typeValue = "WEBRIP"
+	if webType := webReleaseTypeFromSignals(typeValue, source, meta.SourcePath); webType != "" {
+		typeValue = webType
+		source = "Web"
 	}
 	if strings.EqualFold(source, "Ultra HDTV") {
 		source = "UHDTV"
@@ -1201,7 +1202,7 @@ func uhdFromMeta(meta api.PreparedMetadata) string {
 			return "UHD"
 		}
 	}
-	if meta.Type == "DISC" || meta.Type == "REMUX" || meta.Type == "ENCODE" {
+	if meta.Type == "DISC" || meta.Type == "REMUX" || meta.Type == "ENCODE" && !isWebSourceValue(meta.Source) && !isWebSourceValue(meta.Release.Source) {
 		if strings.EqualFold(meta.Release.Resolution, "2160p") {
 			return "UHD"
 		}

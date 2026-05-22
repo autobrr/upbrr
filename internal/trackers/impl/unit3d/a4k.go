@@ -3,18 +3,12 @@
 
 package unit3d
 
-import (
-	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/pkg/api"
-)
+import "github.com/autobrr/upbrr/pkg/api"
 
 func siteA4KProfile() unit3DSiteProfile {
 	return unit3DSiteProfile{
 		resolveTypeID:       resolveUnit3DA4KTypeID,
 		resolveResolutionID: resolveUnit3DA4KResolutionID,
-		applyAdditionalPayload: func(req trackers.UploadRequest, data map[string]string) {
-			data["modq"] = boolFlag(req.TrackerConfig.ModQ)
-		},
 	}
 }
 

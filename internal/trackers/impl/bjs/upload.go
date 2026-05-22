@@ -186,13 +186,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 
 func buildFields(meta api.PreparedMetadata, description string, auth string, answers map[string]string) map[string]string {
 	width, height := resolveResolution(meta)
+	runtimeMinutes := resolveRuntime(meta)
 	fields := map[string]string{
 		"audio":            resolveAudio(meta),
 		"auth":             auth,
 		"codecaudio":       resolveAudioCodec(meta),
 		"codecvideo":       resolveVideoCodec(meta),
-		"duracaoHR":        strconv.Itoa(resolveRuntime(meta) / 60),
-		"duracaoMIN":       strconv.Itoa(resolveRuntime(meta) % 60),
+		"duracaoHR":        strconv.Itoa(runtimeMinutes / 60),
+		"duracaoMIN":       strconv.Itoa(runtimeMinutes % 60),
 		"duracaotipo":      "selectbox",
 		"fichatecnica":     description,
 		"formato":          resolveContainer(meta),
@@ -245,6 +246,9 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 	}
 	if meta.Anime && category == "TV" {
 		fields["adulto"] = resolveAdult(meta)
+	}
+	if strings.TrimSpace(meta.Repack) != "" {
+		fields["repack"] = "on"
 	}
 	if resolvePoster(meta) != "" {
 		fields["image"] = resolvePoster(meta)
@@ -533,6 +537,11 @@ func resolveRuntime(meta api.PreparedMetadata) int {
 			return minutes
 		}
 	}
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		if minutes := parseBDInfoLengthMinutes(meta.BDInfo["length"]); minutes > 0 {
+			return minutes
+		}
+	}
 	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.RuntimeMinutes > 0 {
 		return meta.ExternalMetadata.IMDB.RuntimeMinutes
 	}
@@ -543,6 +552,34 @@ func resolveRuntime(meta api.PreparedMetadata) int {
 		return meta.ExternalMetadata.TVmaze.Runtime
 	}
 	return 0
+}
+
+func parseBDInfoLengthMinutes(value interface{}) int {
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "" || text == "<nil>" {
+		return 0
+	}
+	parts := strings.Split(text, ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	hours, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if err != nil || hours < 0 {
+		return 0
+	}
+	minutes, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err != nil || minutes < 0 {
+		return 0
+	}
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+	if err != nil || seconds < 0 {
+		return 0
+	}
+	totalSeconds := hours*3600 + minutes*60 + seconds
+	if totalSeconds <= 0 {
+		return 0
+	}
+	return int(math.Round(totalSeconds / 60))
 }
 
 func parseMediaInfoDurationMinutes(text string) int {
@@ -700,7 +737,7 @@ func resolveAdult(meta api.PreparedMetadata) string {
 
 func resolveDirectors(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Directors) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Directors, ", ")
+		return firstTrimmed(meta.ExternalMetadata.TMDB.Directors)
 	}
 	if meta.ExternalMetadata.IMDB != nil {
 		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Directors))
@@ -710,7 +747,7 @@ func resolveDirectors(meta api.PreparedMetadata) string {
 			}
 		}
 		if len(names) > 0 {
-			return strings.Join(names, ", ")
+			return names[0]
 		}
 	}
 	return ""
@@ -718,7 +755,7 @@ func resolveDirectors(meta api.PreparedMetadata) string {
 
 func resolveCreators(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Creators) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Creators, ", ")
+		return firstTrimmed(meta.ExternalMetadata.TMDB.Creators)
 	}
 	if meta.ExternalMetadata.IMDB != nil {
 		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Creators))
@@ -727,14 +764,16 @@ func resolveCreators(meta api.PreparedMetadata) string {
 				names = append(names, strings.TrimSpace(p.Name))
 			}
 		}
-		return strings.Join(names, ", ")
+		if len(names) > 0 {
+			return names[0]
+		}
 	}
 	return ""
 }
 
 func resolveCast(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Cast) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Cast, ", ")
+		return strings.Join(firstNTrimmed(meta.ExternalMetadata.TMDB.Cast, 5), ", ")
 	}
 	if meta.ExternalMetadata.IMDB != nil {
 		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Stars))
@@ -743,7 +782,7 @@ func resolveCast(meta api.PreparedMetadata) string {
 				names = append(names, strings.TrimSpace(p.Name))
 			}
 		}
-		return strings.Join(names, ", ")
+		return strings.Join(firstNTrimmed(names, 5), ", ")
 	}
 	return ""
 }
@@ -784,6 +823,38 @@ func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	for key, value := range in {
 		out[key] = value
+	}
+	return out
+}
+
+func firstTrimmed(values []string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func firstNTrimmed(values []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]string, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+		if len(out) == limit {
+			break
+		}
 	}
 	return out
 }

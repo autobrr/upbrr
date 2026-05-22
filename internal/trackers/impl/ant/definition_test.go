@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -105,6 +106,91 @@ func TestDefinitionBuildUploadDryRunMarksManualTagsWhenOnlyIMDbGenresExist(t *te
 	}
 }
 
+func TestDefinitionBuildUploadDryRunUsesBDInfoForBDMV(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "db.sqlite")
+	torrentPath := filepath.Join(tmp, "Movie.torrent")
+	sourcePath := filepath.Join(tmp, "Movie", "BDMV")
+	if err := os.MkdirAll(sourcePath, 0o700); err != nil {
+		t.Fatalf("create source path: %v", err)
+	}
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	meta := api.PreparedMetadata{
+		SourcePath:            sourcePath,
+		TorrentPath:           torrentPath,
+		DiscType:              "BDMV",
+		SelectedBDMVPlaylists: []api.PlaylistInfo{{File: "00001.MPLS"}},
+		ExternalIDs:           api.ExternalIDs{TMDBID: 123},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{Genres: "Action"},
+		},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{
+			"ANT": {"type": "Feature Film"},
+		},
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(filepath.Join(tmp, "tmp"), meta, sourcePath)
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	bdinfoPath := paths.BDMVSummaryPath(tmpDir, "00001.MPLS")
+	if err := os.WriteFile(bdinfoPath, []byte("BDINFO_CONTENT"), 0o600); err != nil {
+		t.Fatalf("write bdinfo: %v", err)
+	}
+
+	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+		Tracker:       "ANT",
+		Meta:          meta,
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		Logger:        api.NopLogger{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := entry.Payload["bdinfo"]; got != "BDINFO_CONTENT" {
+		t.Fatalf("expected BDInfo payload, got %q", got)
+	}
+	if got := entry.Payload["container_type"]; got != "m2ts" {
+		t.Fatalf("expected m2ts container type, got %q", got)
+	}
+	if _, ok := entry.Payload["mediainfo"]; ok {
+		t.Fatalf("expected BDMV upload to omit mediainfo, got %#v", entry.Payload)
+	}
+	if _, ok := entry.Payload["media"]; ok {
+		t.Fatalf("expected BDMV upload to omit media field, got %#v", entry.Payload)
+	}
+}
+
+func TestResolveFlagsIncludesIMAXAndCriterionEdition(t *testing.T) {
+	t.Parallel()
+
+	flags := resolveFlags(api.PreparedMetadata{Edition: "IMAX Criterion Collection"})
+	if !containsString(flags, "IMAX") {
+		t.Fatalf("expected IMAX flag, got %#v", flags)
+	}
+	if !containsString(flags, "Criterion") {
+		t.Fatalf("expected Criterion flag from edition, got %#v", flags)
+	}
+}
+
+func TestResolveReleaseGroupBansUpdatedGroups(t *testing.T) {
+	t.Parallel()
+
+	for _, group := range []string{"EVO", "SM737"} {
+		if got, ok := resolveReleaseGroup(group); ok || got != "" {
+			t.Fatalf("expected %s to be banned, got %q ok=%t", group, got, ok)
+		}
+	}
+	if got, ok := resolveReleaseGroup("Flights"); !ok || got != "Flights" {
+		t.Fatalf("expected Flights to be allowed, got %q ok=%t", got, ok)
+	}
+}
+
 func TestBuildDescriptionRemovesScreenshotOnlyBlockAndDefaultSignature(t *testing.T) {
 	description, err := buildDescription(trackers.UploadRequest{}, trackers.DescriptionAssets{
 		Description: `[align=center]
@@ -119,4 +205,13 @@ func TestBuildDescriptionRemovesScreenshotOnlyBlockAndDefaultSignature(t *testin
 	if strings.TrimSpace(description) != "" {
 		t.Fatalf("expected screenshot-only/signature-only description removed, got %q", description)
 	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

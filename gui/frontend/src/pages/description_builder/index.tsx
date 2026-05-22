@@ -15,8 +15,10 @@ type Props = {
   builderLoading: boolean;
   builderSaving: boolean;
   builderRenderLoading: boolean;
+  builderRefreshing: boolean;
   builderError: string;
   builderSaved: string;
+  refreshDescriptionBuilder: () => void;
   setBuilderRawByGroup: Dispatch<SetStateAction<Record<string, string>>>;
   setBuilderDirtyByGroup: Dispatch<SetStateAction<Record<string, boolean>>>;
   setBuilderExpandedGroups: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -51,8 +53,10 @@ export default function DescriptionBuilderPage(props: Props) {
     builderLoading,
     builderSaving,
     builderRenderLoading,
+    builderRefreshing,
     builderError,
     builderSaved,
+    refreshDescriptionBuilder,
     setBuilderRawByGroup,
     setBuilderDirtyByGroup,
     setBuilderExpandedGroups,
@@ -79,6 +83,14 @@ export default function DescriptionBuilderPage(props: Props) {
           <p className="label">Source path</p>
           <p className="value dupe-path">{path || "No path selected"}</p>
         </div>
+        <button
+          className="ghost"
+          type="button"
+          onClick={refreshDescriptionBuilder}
+          disabled={builderLoading || builderSaving || builderRenderLoading || !path.trim()}
+        >
+          {builderRefreshing ? "Refreshing..." : "Refresh descriptions"}
+        </button>
       </section>
 
       {builderError ? <p className="error">{builderError}</p> : null}
@@ -107,6 +119,7 @@ export default function DescriptionBuilderPage(props: Props) {
           const renderedHTML = builderRenderedByGroup[groupKey] ?? seededRendered;
           const expanded = builderExpandedGroups[groupKey] ?? false;
           const label = groupLabel(groupKey, group.Trackers || []);
+          const imageHostWarnings = group.ImageHost?.Warnings || [];
 
           return (
             <section className="panel builder-preview" key={reactKey}>
@@ -121,6 +134,20 @@ export default function DescriptionBuilderPage(props: Props) {
                   {group.ImageHost?.Reuploaded && group.ImageHost?.Message ? (
                     <p className="muted">{group.ImageHost.Message}</p>
                   ) : null}
+                  {group.ImageHost?.Status === "warning" && group.ImageHost?.Message ? (
+                    <p className="builder-image-warning">{group.ImageHost.Message}</p>
+                  ) : null}
+                  {imageHostWarnings.map((warning, index) => {
+                    const host = String(warning.Host || "").trim();
+                    const message = String(warning.Message || "").trim();
+                    if (!host && !message) return null;
+                    return (
+                      <p className="builder-image-warning" key={`${host || "host"}-${index}`}>
+                        {host ? `${host} failed` : "Image host warning"}
+                        {message ? `: ${message}` : ""}
+                      </p>
+                    );
+                  })}
                 </div>
                 <button
                   className="ghost"

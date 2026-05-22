@@ -88,6 +88,21 @@ const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
   return payload as T;
 };
 
+const getJSON = async <T>(path: string): Promise<T> => {
+  const response = await fetch(path, {
+    method: "GET",
+    credentials: "include",
+  });
+  const payload = await parseJSONResponse<T & { error?: string }>(response);
+  if (!response.ok) {
+    throw new Error(String(payload?.error || response.statusText || "Request failed"));
+  }
+  if (payload === null) {
+    throw new Error("Request returned an empty response");
+  }
+  return payload as T;
+};
+
 export const initializeBrowserBridge = (token: string, browseEnabled = false) => {
   browserMode = isWebUIRuntime();
   nativeBrowseEnabled = browseEnabled;
@@ -104,6 +119,12 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         BrowsePath: () => call<string>("BrowseFile"),
         BrowseFile: () => call<string>("BrowseFile"),
         BrowseFolder: () => call<string>("BrowseFolder"),
+        BrowseDirectory: (path: string, mode: "file" | "folder") =>
+          call("BrowseDirectory", { path, mode }),
+        ListUIStates: () => getJSON("/api/app/UIState"),
+        GetUIState: (id: string) => getJSON(`/api/app/UIState?id=${encodeURIComponent(id)}`),
+        SaveUIState: (id: string, label: string, state: unknown) =>
+          call("UIState", { id, label, state }),
         DetectDiscType: (path: string) => call<string>("DetectDiscType", { Path: path }),
         FetchMetadata: (
           path: string,
@@ -296,6 +317,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          trackers: string[],
           host: string,
           images: unknown,
         ) =>
@@ -303,6 +325,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            Trackers: trackers,
             Host: host,
             Images: images,
           }),
@@ -392,6 +415,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         UpdateLogExclusions: (patterns: string[]) =>
           call("UpdateLogExclusions", { Patterns: patterns }),
         ListKnownTrackers: () => call("ListKnownTrackers"),
+        GetImageHostPolicyMetadata: () => call("GetImageHostPolicyMetadata"),
         ListHistory: () => call("ListHistory"),
         GetHistoryOverview: (sourcePath: string) =>
           call("GetHistoryOverview", { SourcePath: sourcePath }),
@@ -462,6 +486,8 @@ export const browserAuth = {
     postJSON("/api/auth/bootstrap", { username, password, retainLogin }),
   login: (username: string, password: string, retainLogin: boolean) =>
     postJSON("/api/auth/login", { username, password, retainLogin }),
+  saveBrowsePolicy: (browseRoot: string, allowUnrestrictedBrowse: boolean) =>
+    postJSON("/api/auth/browse-policy", { browseRoot, allowUnrestrictedBrowse }),
   logout: () => postJSON("/api/auth/logout"),
 };
 

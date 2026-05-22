@@ -4,6 +4,7 @@
 package screenshots
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -52,5 +53,40 @@ func TestBuildManualFrameSelections(t *testing.T) {
 	}
 	if selections[1].TimestampSeconds != 20 {
 		t.Fatalf("expected second timestamp 20, got %f", selections[1].TimestampSeconds)
+	}
+}
+
+func TestMediaInfoVideoGeometryBuildsPARScaleFactors(t *testing.T) {
+	var doc mediaInfoDoc
+	payload := []byte(`{"media":{"track":[{"@type":"Video","Width":"720 pixels","Height":"576 pixels","PixelAspectRatio":"0.750","DisplayAspectRatio":"4:3"}]}}`)
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		t.Fatalf("unmarshal mediainfo: %v", err)
+	}
+
+	width, height, widthScale, heightScale := mediaInfoVideoGeometry(doc)
+	if width != 720 || height != 576 {
+		t.Fatalf("expected source dimensions 720x576, got %dx%d", width, height)
+	}
+	if widthScale != 1 {
+		t.Fatalf("expected width scale 1, got %f", widthScale)
+	}
+	if heightScale < 0.9374 || heightScale > 0.9376 {
+		t.Fatalf("expected height scale near 0.9375, got %f", heightScale)
+	}
+}
+
+func TestMediaInfoVideoGeometryScalesWidthForWidePixels(t *testing.T) {
+	var doc mediaInfoDoc
+	payload := []byte(`{"media":{"track":[{"@type":"Video","Width":"720","Height":"480","PixelAspectRatio":"1.185","DisplayAspectRatio":"16:9"}]}}`)
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		t.Fatalf("unmarshal mediainfo: %v", err)
+	}
+
+	width, height, widthScale, heightScale := mediaInfoVideoGeometry(doc)
+	if width != 720 || height != 480 {
+		t.Fatalf("expected source dimensions 720x480, got %dx%d", width, height)
+	}
+	if widthScale != 1.185 || heightScale != 1 {
+		t.Fatalf("expected width scale 1.185 and height scale 1, got %f x %f", widthScale, heightScale)
 	}
 }

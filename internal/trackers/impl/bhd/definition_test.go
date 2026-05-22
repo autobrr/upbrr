@@ -84,6 +84,37 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	}
 }
 
+func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+	torrentPath := filepath.Join(tmp, "Movie.torrent")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	_, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+		Tracker: "BHD",
+		Meta: api.PreparedMetadata{
+			SourcePath:        filepath.Join(tmp, "Movie.avi"),
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			ExternalIDs:       api.ExternalIDs{TMDBID: 123, Category: "MOVIE"},
+			Type:              "REMUX",
+			Container:         "avi",
+		},
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		Logger:        api.NopLogger{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "container") {
+		t.Fatalf("expected container validation error, got %v", err)
+	}
+}
+
 func TestUploadRetriesInvalidIMDb(t *testing.T) {
 	t.Parallel()
 

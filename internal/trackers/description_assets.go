@@ -43,6 +43,68 @@ type preloadedDescriptionAssetData struct {
 	screenshotSlotsLoaded bool
 }
 
+func clonePreloadedDescriptionAssetData(preloaded *preloadedDescriptionAssetData) *preloadedDescriptionAssetData {
+	if preloaded == nil {
+		return nil
+	}
+	return &preloadedDescriptionAssetData{
+		descriptionOverrides:  cloneDescriptionOverrides(preloaded.descriptionOverrides),
+		groupDescriptions:     cloneStringMap(preloaded.groupDescriptions),
+		trackerDescriptions:   cloneStringMap(preloaded.trackerDescriptions),
+		ambiguousTrackers:     cloneStringSet(preloaded.ambiguousTrackers),
+		trackerRecords:        cloneTrackerMetadata(preloaded.trackerRecords),
+		selections:            append([]api.ScreenshotFinalSelection(nil), preloaded.selections...),
+		uploads:               append([]api.UploadedImageLink(nil), preloaded.uploads...),
+		screenshotSlots:       cloneScreenshotSlots(preloaded.screenshotSlots),
+		screenshotSlotsLoaded: preloaded.screenshotSlotsLoaded,
+	}
+}
+
+func cloneDescriptionOverrides(values map[string]api.DescriptionOverride) map[string]api.DescriptionOverride {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]api.DescriptionOverride, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneStringSet(values map[string]struct{}) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]struct{}, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneTrackerMetadata(records []api.TrackerMetadata) []api.TrackerMetadata {
+	if len(records) == 0 {
+		return nil
+	}
+	cloned := make([]api.TrackerMetadata, len(records))
+	for idx := range records {
+		cloned[idx] = records[idx]
+		cloned[idx].ImageURLs = append([]string(nil), records[idx].ImageURLs...)
+	}
+	return cloned
+}
+
 func DescriptionOverrideGroupForTracker(tracker string) string {
 	normalized := strings.ToUpper(strings.TrimSpace(tracker))
 	switch {

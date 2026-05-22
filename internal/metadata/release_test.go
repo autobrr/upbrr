@@ -49,6 +49,20 @@ func TestParseReleaseInfo(t *testing.T) {
 			source:   "Web",
 		},
 		{
+			name:     "bare web filename uses webdl before webrip",
+			input:    "Movie.2026.2160p.WEB.DDP5.1.H.265-GRP.mkv",
+			category: "MOVIE",
+			typ:      "WEBDL",
+			source:   "Web",
+		},
+		{
+			name:     "webrip filename uses webrip",
+			input:    "Movie.2026.2160p.WEBRip.DDP5.1.H.265-GRP.mkv",
+			category: "MOVIE",
+			typ:      "WEBRIP",
+			source:   "Web",
+		},
+		{
 			name:     "bluray remux preserves distinct source and type",
 			input:    "Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
 			category: "MOVIE",

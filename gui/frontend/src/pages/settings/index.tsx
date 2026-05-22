@@ -296,6 +296,12 @@ export default function SettingsPage(props: Props) {
                     {webAuthStatus?.usable && webAuthStatus.username ? (
                       <p className="muted">Configured user: {webAuthStatus.username}</p>
                     ) : null}
+                    {webAuthStatus?.browseRoot ? (
+                      <p className="muted">Web browse root: {webAuthStatus.browseRoot}</p>
+                    ) : null}
+                    {webAuthStatus?.allowUnrestrictedBrowse ? (
+                      <p className="muted">Web browse access: Unrestricted</p>
+                    ) : null}
                   </div>
                   {webAuthStatus?.canCreate ? (
                     <div className="settings-grid">

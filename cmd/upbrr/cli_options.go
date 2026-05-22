@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -822,12 +823,10 @@ func parseInfoHash(raw string) (string, error) {
 
 func parseImageHost(raw string) (string, error) {
 	trimmed := strings.ToLower(strings.TrimSpace(raw))
-	switch trimmed {
-	case "imgbb", "ptpimg", "imgbox", "pixhost", "lensdump", "ptscreens", "onlyimage", "dalexni", "zipline", "passtheimage", "seedpool_cdn", "utppm":
+	if imagehostpolicy.IsUploadHost(trimmed) && imagehostpolicy.OwnerForHost(trimmed) == "" {
 		return trimmed, nil
-	default:
-		return "", fmt.Errorf("invalid imghost %q", raw)
 	}
+	return "", fmt.Errorf("invalid imghost %q", raw)
 }
 
 func parseManualFrames(raw string) ([]int, error) {

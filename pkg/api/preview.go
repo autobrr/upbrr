@@ -98,8 +98,14 @@ type ImageHostFeedback struct {
 	Status       string
 	SelectedHost string
 	AllowedHosts []string
+	Warnings     []ImageHostWarning
 	Reuploaded   bool
 	Message      string
+}
+
+type ImageHostWarning struct {
+	Host    string
+	Message string
 }
 
 type DescriptionImageHostStatus struct {

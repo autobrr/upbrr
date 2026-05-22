@@ -76,10 +76,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 }
 
 func parsedReleaseType(base string, source string, other []string, codec []string) string {
-	if inferred := inferReleaseTypeFromSource(source); inferred != "" {
-		return inferred
-	}
-	if inferred := inferReleaseTypeFromName(base); inferred != "" {
+	if inferred := webReleaseTypeFromSignals("", source, base); inferred != "" {
 		return inferred
 	}
 	for _, value := range other {

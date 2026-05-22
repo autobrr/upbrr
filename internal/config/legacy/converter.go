@@ -45,6 +45,7 @@ var legacyDefaultSectionByKey = map[string]string{
 	"utppm_api":                      "image_hosting",
 	"btn_api":                        "metadata",
 	"skip_auto_torrent":              "metadata",
+	"skip_tracker_filename_lookup":   "metadata",
 	"use_largest_playlist":           "metadata",
 	"keep_images":                    "metadata",
 	"only_id":                        "metadata",

@@ -4,6 +4,8 @@ import {api} from '../models';
 import {guiapp} from '../models';
 import {logging} from '../models';
 
+export function BrowseDirectory(arg1:string,arg2:string):Promise<api.BrowseDirectoryResponse>;
+
 export function BrowseFile():Promise<string>;
 
 export function BrowseFiles():Promise<Array<string>>;
@@ -54,6 +56,8 @@ export function GetDupeCheckSnapshot(arg1:string):Promise<guiapp.DupeCheckSnapsh
 
 export function GetHistoryOverview(arg1:string):Promise<api.HistoryOverview>;
 
+export function GetImageHostPolicyMetadata():Promise<any>;
+
 export function GetLogExclusions():Promise<Array<string>>;
 
 export function GetLogPath():Promise<string>;
@@ -61,6 +65,8 @@ export function GetLogPath():Promise<string>;
 export function GetRecentLogs(arg1:number):Promise<Array<logging.Entry>>;
 
 export function GetTrackerUploadSnapshot(arg1:string):Promise<guiapp.TrackerUploadSnapshot>;
+
+export function GetUIState(arg1:string):Promise<api.UIStateRecord>;
 
 export function GetWebAuthStatus():Promise<guiapp.WebAuthStatus>;
 
@@ -71,6 +77,8 @@ export function ImportMenuImages(arg1:string,arg2:api.ExternalIDOverrides,arg3:a
 export function ListHistory():Promise<Array<api.HistoryEntry>>;
 
 export function ListKnownTrackers():Promise<Array<string>>;
+
+export function ListUIStates():Promise<api.UIStateList>;
 
 export function ListUploadCandidates(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides):Promise<Array<api.ScreenshotImage>>;
 
@@ -98,6 +106,8 @@ export function SaveFinalScreenshotSelections(arg1:string,arg2:api.ExternalIDOve
 
 export function SavePlaylistSelection(arg1:string,arg2:Array<string>,arg3:boolean):Promise<void>;
 
+export function SaveUIState(arg1:string,arg2:string,arg3:api.UIState):Promise<void>;
+
 export function StartDupeCheck(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>):Promise<string>;
 
 export function StartLogStream():Promise<string>;
@@ -108,4 +118,4 @@ export function StopLogStream(arg1:string):Promise<void>;
 
 export function UpdateLogExclusions(arg1:Array<string>):Promise<void>;
 
-export function UploadImages(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:string,arg5:Array<api.ScreenshotImage>):Promise<Array<api.UploadedImageLink>>;
+export function UploadImages(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:string,arg6:Array<api.ScreenshotImage>):Promise<api.UploadImagesResult>;

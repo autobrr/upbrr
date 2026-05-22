@@ -255,6 +255,9 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
             const showBadges = hasRuleSkip || hasDupes;
             const trackerStatus = trackerStatusMap[tracker.name];
             const dryRun = dryRunMap[normalizedTrackerName];
+            const imageHost = dryRun?.ImageHost;
+            const imageHostWarnings = imageHost?.Warnings || [];
+            const imageHostStatus = String(imageHost?.Status || "").toLowerCase();
             const questionnaire = dryRun?.Questionnaire;
             const questionnaireAnswers =
               trackerQuestionnaireAnswers[tracker.name.toUpperCase().trim()] || {};
@@ -330,6 +333,24 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                       "Rule check failed. Enable override blocks to upload anyway."}
                   </p>
                 ) : null}
+                {imageHost?.Message &&
+                (imageHostWarnings.length > 0 || imageHostStatus === "warning") ? (
+                  <p className="upload-image-warning">{imageHost.Message}</p>
+                ) : null}
+                {imageHostWarnings.map((warning, index) => {
+                  const host = String(warning.Host || "").trim();
+                  const message = String(warning.Message || "").trim();
+                  if (!host && !message) return null;
+                  return (
+                    <p
+                      className="upload-image-warning"
+                      key={`${tracker.name}-${host || "host"}-${index}`}
+                    >
+                      {host ? `${host} failed` : "Image host warning"}
+                      {message ? `: ${message}` : ""}
+                    </p>
+                  );
+                })}
 
                 <details className="upload-details">
                   <summary>Dry run data</summary>

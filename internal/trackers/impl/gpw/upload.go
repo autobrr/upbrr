@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
@@ -147,7 +148,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	groupID, _ := lookupGroupID(ctx, req.TrackerConfig.APIKey, req.Meta)
 	answers := questionnaireAnswers(req.Meta)
-	fields := buildFields(req, description, groupID, answers)
+	fields := buildFields(req, req.TrackerConfig, description, groupID, answers)
 	state := uploadState{
 		torrentPath:   torrentPath,
 		description:   description,
@@ -189,7 +190,7 @@ func lookupGroupID(ctx context.Context, apiKey string, meta api.PreparedMetadata
 	return "", nil
 }
 
-func buildFields(req trackers.UploadRequest, description string, groupID string, answers map[string]string) map[string]string {
+func buildFields(req trackers.UploadRequest, trackerCfg config.TrackerConfig, description string, groupID string, answers map[string]string) map[string]string {
 	meta := req.Meta
 	fields := map[string]string{
 		"codec_other":               "",
@@ -240,9 +241,20 @@ func buildFields(req trackers.UploadRequest, description string, groupID string,
 		fields["scene"] = "on"
 	}
 	if meta.PersonalRelease {
-		fields["self_rip"] = "on"
+		if isDiscUpload(meta) {
+			fields["buy"] = "on"
+		} else {
+			fields["diy"] = "on"
+		}
+	}
+	if trackerCfg.Exclusive {
+		fields["jinzhuan"] = "on"
 	}
 	return fields
+}
+
+func isDiscUpload(meta api.PreparedMetadata) bool {
+	return strings.TrimSpace(meta.DiscType) != "" || strings.EqualFold(strings.TrimSpace(meta.Type), "DISC")
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata, groupID string, answers map[string]string) *api.TrackerQuestionnaire {

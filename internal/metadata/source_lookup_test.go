@@ -37,6 +37,7 @@ func TestResolveSourceLookupURLMedia(t *testing.T) {
 		{name: "tvmaze", url: "https://www.tvmaze.com/shows/82/game-of-thrones", provider: "tvmaze", id: 82},
 		{name: "tvdb", url: "https://thetvdb.com/series/121361", provider: "tvdb", id: 121361},
 		{name: "tvdb query", url: "https://www.thetvdb.com/?tab=series&id=303904", provider: "tvdb", id: 303904},
+		{name: "mal anime", url: "https://myanimelist.net/anime/5114/Fullmetal_Alchemist__Brotherhood", provider: "mal", id: 5114},
 	}
 
 	for _, tc := range cases {
@@ -63,6 +64,10 @@ func TestResolveSourceLookupURLMedia(t *testing.T) {
 		case "tvdb":
 			if result.TVDBID != tc.id {
 				t.Fatalf("%s: expected tvdb id %d, got %d", tc.name, tc.id, result.TVDBID)
+			}
+		case "mal":
+			if result.MALID != tc.id {
+				t.Fatalf("%s: expected mal id %d, got %d", tc.name, tc.id, result.MALID)
 			}
 		}
 	}

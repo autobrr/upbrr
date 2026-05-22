@@ -185,6 +185,50 @@ func TestLookupPTPAndHDB(t *testing.T) {
 	}
 }
 
+func TestLookupANTSendsAPIKeyHeader(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if got := query.Get("apikey"); got != "" {
+			t.Fatalf("apikey should not be sent as a query parameter, got %q", got)
+		}
+		if got := query.Get("t"); got != "search" {
+			t.Fatalf("unexpected t query value: got %q want %q", got, "search")
+		}
+		if got := query.Get("filename"); got != "Example.Release.mkv" {
+			t.Fatalf("unexpected filename query value: got %q", got)
+		}
+		if got := r.Header.Get("X-API-Key"); got != "token" {
+			t.Fatalf("unexpected X-API-Key header: got %q want %q", got, "token")
+		}
+		if got := r.Header.Get("User-Agent"); got == "" {
+			t.Fatal("expected User-Agent header")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"item": []map[string]any{
+				{"imdb": "tt1234567", "tmdb": 765},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"ANT": {APIKey: "token"},
+		}},
+	}, api.NopLogger{}, server.Client())
+	client.antURL = server.URL
+
+	result, err := client.Lookup(context.Background(), "ANT", "", api.PreparedMetadata{}, "Example.Release.mkv", false, true)
+	if err != nil {
+		t.Fatalf("ant lookup failed: %v", err)
+	}
+	if result.IMDBID != 1234567 || result.TMDBID != 765 {
+		t.Fatalf("unexpected ant result: %+v", result)
+	}
+}
+
 func TestLookupUnit3DOnlyIDKeepsImages(t *testing.T) {
 	t.Parallel()
 
@@ -247,5 +291,80 @@ func TestLookupUnit3DOnlyIDKeepsImages(t *testing.T) {
 	}
 	if len(result.Images) != 1 {
 		t.Fatalf("expected keepImages to retain images with onlyID=true, got %d", len(result.Images))
+	}
+}
+
+func TestLookupHDBSkipsUnfilteredSearch(t *testing.T) {
+	t.Parallel()
+
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = true
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"HDB": {Username: "user", Passkey: "pass"},
+		}},
+	}, api.NopLogger{}, server.Client())
+	client.hdbURL = server.URL + "/hdb"
+
+	result, err := client.Lookup(
+		context.Background(),
+		"HDB",
+		"",
+		api.PreparedMetadata{SourcePath: `D:\TV\From.S04E01.2160p.WEB.h265-ETHEL.mkv`, FileList: []string{"From.S04E01.2160p.WEB.h265-ETHEL.mkv"}},
+		"",
+		false,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("hdb lookup failed: %v", err)
+	}
+	if result.HasData() {
+		t.Fatalf("expected empty result for unfiltered HDB lookup, got %+v", result)
+	}
+	if requested {
+		t.Fatalf("expected HDB lookup to skip request without id or filename")
+	}
+}
+
+func TestLookupBHDSkipsUnfilteredSearch(t *testing.T) {
+	t.Parallel()
+
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = true
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	token := strings.Repeat("a", minTokenLength)
+	client := NewClient(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BHD": {APIKey: token, BhdRSSKey: token},
+		}},
+	}, api.NopLogger{}, server.Client())
+	client.bhdBaseURL = server.URL + "/api/torrents"
+
+	result, err := client.Lookup(
+		context.Background(),
+		"BHD",
+		"",
+		api.PreparedMetadata{SourcePath: `D:\TV\From.S04E01.2160p.WEB.h265-ETHEL.mkv`, FileList: []string{"From.S04E01.2160p.WEB.h265-ETHEL.mkv"}},
+		"",
+		false,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("bhd lookup failed: %v", err)
+	}
+	if result.HasData() {
+		t.Fatalf("expected empty result for unfiltered BHD lookup, got %+v", result)
+	}
+	if requested {
+		t.Fatalf("expected BHD lookup to skip request without id or filename")
 	}
 }
