@@ -156,6 +156,72 @@ func ConfiguredImageUploadTargets(appCfg config.Config, trackerNames []string) (
 	return targets, nil
 }
 
+func NeededImageUploadTargets(appCfg config.Config, trackerNames []string, selectedHost string) ([]ImageUploadTarget, error) {
+	selectedHost = strings.ToLower(strings.TrimSpace(selectedHost))
+	targets := make([]ImageUploadTarget, 0, len(trackerNames)+1)
+	seen := make(map[string]int, len(trackerNames)+1)
+
+	addTarget := func(host string, tracker string) {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host == "" {
+			return
+		}
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		scope := usageScopeForHost(host)
+		key := host + "\x00" + scope
+		if idx, ok := seen[key]; ok {
+			targets[idx].Trackers = appendUniqueTracker(targets[idx].Trackers, name)
+			return
+		}
+		seen[key] = len(targets)
+		targets = append(targets, ImageUploadTarget{
+			Host:       host,
+			UsageScope: scope,
+			Trackers:   []string{name},
+		})
+	}
+
+	for _, tracker := range trackerNames {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
+		if strings.TrimSpace(trackerCfg.ImageHost) != "" {
+			policy, err := resolveImageHostPolicy(name, trackerCfg, api.ImageHostOverrides{})
+			if err != nil {
+				return nil, err
+			}
+			addTarget(preferredHost(policy), name)
+			continue
+		}
+
+		policy := policyForTracker(name, trackerCfg)
+		if selectedHostUsableForPolicy(name, selectedHost, policy) {
+			addTarget(selectedHost, name)
+			continue
+		}
+		addTarget(preferredHost(policy), name)
+	}
+
+	if len(targets) == 0 && selectedHost != "" && trackerForOwnedHost(selectedHost) == "" {
+		targets = append(targets, ImageUploadTarget{Host: selectedHost, UsageScope: globalImageUsageScope})
+	}
+
+	return targets, nil
+}
+
+func selectedHostUsableForPolicy(tracker string, host string, policy imageHostPolicy) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || !supportedUploadImageHost(host) {
+		return false
+	}
+	if owner := trackerForOwnedHost(host); owner != "" && !strings.EqualFold(owner, tracker) {
+		return false
+	}
+	return len(policy.allowed) == 0 || hostAllowed(host, policy.allowed)
+}
+
 func trackerConfigForImageHostPolicy(appCfg config.Config, tracker string) config.TrackerConfig {
 	if len(appCfg.Trackers.Trackers) == 0 {
 		return config.TrackerConfig{}

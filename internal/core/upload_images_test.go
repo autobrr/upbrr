@@ -214,7 +214,7 @@ func TestUploadImagesUploadsApplicableTrackerHosts(t *testing.T) {
 	}
 }
 
-func TestUploadImagesDoesNotUseBuiltInTrackerPreferredHosts(t *testing.T) {
+func TestUploadImagesUsesBuiltInTrackerPreferredHostsWhenSelectedHostIsNotApproved(t *testing.T) {
 	t.Parallel()
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
@@ -248,7 +248,51 @@ func TestUploadImagesDoesNotUseBuiltInTrackerPreferredHosts(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if len(imageService.calls) != 1 {
-		t.Fatalf("expected upload to selected host only, got %d calls: %#v", len(imageService.calls), imageService.calls)
+		t.Fatalf("expected upload to required tracker host only, got %d calls: %#v", len(imageService.calls), imageService.calls)
+	}
+	if imageService.calls[0].host != "ptpimg" {
+		t.Fatalf("expected required PTP host ptpimg, got %#v", imageService.calls[0])
+	}
+	if len(result.Links) != 1 || result.Links[0].Host != "ptpimg" {
+		t.Fatalf("expected ptpimg result only, got %#v", result)
+	}
+}
+
+func TestUploadImagesUsesSelectedHostWhenApprovedForTracker(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	imageService := &stubImageHosting{
+		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"MTV": {},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"MTV"},
+	}, "imgbox", images)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(imageService.calls) != 1 {
+		t.Fatalf("expected upload to selected approved host only, got %d calls: %#v", len(imageService.calls), imageService.calls)
 	}
 	if imageService.calls[0].host != "imgbox" {
 		t.Fatalf("expected selected host imgbox, got %#v", imageService.calls[0])

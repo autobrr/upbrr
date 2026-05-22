@@ -949,39 +949,25 @@ func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]tracke
 	trackerCfg := c.cfg
 	trackerCfg.Trackers.DefaultTrackers = nil
 	resolvedTrackers := trackers.ResolveTrackers(trackerCfg, req.Trackers, req.TrackersRemove, c.logger)
-	trackerTargets, err := trackers.ConfiguredImageUploadTargets(c.cfg, resolvedTrackers)
+	targets, err := trackers.NeededImageUploadTargets(c.cfg, resolvedTrackers, normalizedHost)
 	if err != nil {
 		return nil, err
-	}
-
-	targets := make([]trackers.ImageUploadTarget, 0, len(trackerTargets)+1)
-	seen := make(map[string]int, len(trackerTargets)+1)
-	addTarget := func(target trackers.ImageUploadTarget) {
-		target = normalizeImageUploadTarget(target)
-		if target.Host == "" {
-			return
-		}
-		key := target.Host + "\x00" + target.UsageScope
-		if idx, ok := seen[key]; ok {
-			for _, tracker := range target.Trackers {
-				targets[idx].Trackers = appendUniqueNormalizedTracker(targets[idx].Trackers, tracker)
-			}
-			return
-		}
-		seen[key] = len(targets)
-		targets = append(targets, target)
-	}
-
-	if trackers.TrackerForOwnedImageHost(normalizedHost) == "" {
-		addTarget(trackers.ImageUploadTarget{Host: normalizedHost, UsageScope: "global"})
-	}
-	for _, target := range trackerTargets {
-		addTarget(target)
 	}
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("core: image host %q is tracker-scoped but no active tracker can use it", normalizedHost)
 	}
-	return targets, nil
+	normalized := make([]trackers.ImageUploadTarget, 0, len(targets))
+	for _, target := range targets {
+		target = normalizeImageUploadTarget(target)
+		if target.Host == "" {
+			continue
+		}
+		normalized = append(normalized, target)
+	}
+	if len(normalized) == 0 {
+		return nil, fmt.Errorf("core: image host %q is tracker-scoped but no active tracker can use it", normalizedHost)
+	}
+	return normalized, nil
 }
 
 func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetadata, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
@@ -1071,7 +1057,7 @@ func (c *Core) uploadImagesToTarget(ctx context.Context, meta api.PreparedMetada
 	target.Host = strings.ToLower(strings.TrimSpace(target.Host))
 	target.UsageScope = normalizeImageUploadUsageScope(target.UsageScope)
 	if c.repo == nil {
-		c.logger.Debugf("core: uploading images host=%s scope=%s count=%d", target.Host, target.UsageScope, len(images))
+		c.logger.Debugf("core: uploading images host=%s scope=%s trackers=%v count=%d", target.Host, target.UsageScope, target.Trackers, len(images))
 		return c.services.Images.Upload(ctx, meta, target.Host, target.UsageScope, images)
 	}
 
@@ -1095,11 +1081,11 @@ func (c *Core) uploadImagesToTarget(ctx context.Context, meta api.PreparedMetada
 		missing = append(missing, image)
 	}
 	if len(missing) == 0 {
-		c.logger.Debugf("core: reusing uploaded images host=%s scope=%s count=%d", target.Host, target.UsageScope, len(results))
+		c.logger.Debugf("core: reusing uploaded images host=%s scope=%s trackers=%v count=%d", target.Host, target.UsageScope, target.Trackers, len(results))
 		return results, nil
 	}
 
-	c.logger.Debugf("core: uploading missing images host=%s scope=%s missing=%d reused=%d", target.Host, target.UsageScope, len(missing), len(results))
+	c.logger.Debugf("core: uploading missing images host=%s scope=%s trackers=%v missing=%d reused=%d", target.Host, target.UsageScope, target.Trackers, len(missing), len(results))
 	uploaded, err := c.services.Images.Upload(ctx, meta, target.Host, target.UsageScope, missing)
 	results = append(results, uploaded...)
 	return results, err
