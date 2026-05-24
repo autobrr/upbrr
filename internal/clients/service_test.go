@@ -100,7 +100,9 @@ func TestInjectQbitClient(t *testing.T) {
 				fileCount = len(files)
 			}
 			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -184,7 +186,9 @@ func TestInjectQbitClientUsesRequestOverrides(t *testing.T) {
 			addCategory = r.FormValue("category")
 			addTags = r.FormValue("tags")
 			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -332,7 +336,9 @@ func TestInjectQuiProxyClient(t *testing.T) {
 				fileCount = len(files)
 			}
 			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -458,7 +464,9 @@ func TestInjectQbitClientFromURL(t *testing.T) {
 			addSkipChecking = r.FormValue("skip_checking")
 			fileCount = 0
 			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -538,7 +546,9 @@ func TestInjectQbitClientPrefersTorrentFileOverURL(t *testing.T) {
 				}
 			}
 			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -605,7 +615,9 @@ func TestInjectURLSkipsWatchFolderClient(t *testing.T) {
 			return
 		case "/api/v2/torrents/add":
 			addCalled = true
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -654,7 +666,9 @@ func TestInjectHonorsGlobalDelayCancellation(t *testing.T) {
 			return
 		case "/api/v2/torrents/add":
 			addCalled = true
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -699,7 +713,9 @@ func TestInjectTrackerDelayOverrideBeatsGlobalDelay(t *testing.T) {
 			return
 		case "/api/v2/torrents/add":
 			addCalled = true
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
 			return
 		default:
 			w.WriteHeader(http.StatusNotFound)

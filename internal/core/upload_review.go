@@ -433,7 +433,7 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 
 	blocked := removeTrackerBlockReason(cloneBlockedTrackers(meta.BlockedTrackers), api.TrackerBlockReasonDupe)
 	for _, result := range summary.Results {
-		if !result.HasDupes {
+		if !dupeResultBlocksTracker(result) {
 			continue
 		}
 
@@ -446,6 +446,16 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 		}
 	}
 	meta.BlockedTrackers = blocked
+}
+
+func dupeResultBlocksTracker(result api.DupeCheckResult) bool {
+	if result.HasDupes || result.Skipped {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
+		return true
+	}
+	return strings.TrimSpace(result.Error) != ""
 }
 
 func cloneBlockedTrackers(input map[string][]api.TrackerBlockReason) map[string][]api.TrackerBlockReason {
