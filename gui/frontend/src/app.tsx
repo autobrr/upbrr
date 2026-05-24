@@ -1235,10 +1235,27 @@ export default function App() {
 
   const selectedUploadImageTrackers = useMemo(() => {
     const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
-    return Object.entries(releasePageTrackerSelection)
-      .filter(([name, selected]) => selected && validTrackers.has(name))
+    return Object.entries(uploadToggles)
+      .filter(([name, enabled]) => {
+        if (!enabled) return false;
+        if (!validTrackers.has(name)) return false;
+        const normalized = name.toLowerCase().trim();
+        if (!normalized) return false;
+        // overrideRuleBlocks can bypass known dupes and rule skips, but failed dupe checks stay blocked because the dupe state is unknown.
+        if (dupedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
+        if (ruleSkippedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
+        if (failedDupeTrackerSet.has(normalized)) return false;
+        return true;
+      })
       .map(([name]) => name);
-  }, [releasePageTrackerSelection, trackerUploadItems]);
+  }, [
+    uploadToggles,
+    trackerUploadItems,
+    dupedTrackerSet,
+    ruleSkippedTrackerSet,
+    failedDupeTrackerSet,
+    overrideRuleBlocks,
+  ]);
 
   // Upload images workflow hook
   const uploadImages = useUploadImages({
@@ -3508,28 +3525,10 @@ export default function App() {
       .map(([name]) => name);
   };
 
-  const getSelectedUploadTrackers = useCallback(() => {
-    const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
-    return Object.entries(uploadToggles)
-      .filter(([name, enabled]) => {
-        if (!enabled) return false;
-        if (!validTrackers.has(name)) return false;
-        const normalized = name.toLowerCase().trim();
-        if (!normalized) return false;
-        if (dupedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
-        if (ruleSkippedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
-        if (failedDupeTrackerSet.has(normalized)) return false;
-        return true;
-      })
-      .map(([name]) => name);
-  }, [
-    uploadToggles,
-    trackerUploadItems,
-    dupedTrackerSet,
-    ruleSkippedTrackerSet,
-    failedDupeTrackerSet,
-    overrideRuleBlocks,
-  ]);
+  const getSelectedUploadTrackers = useCallback(
+    () => selectedUploadImageTrackers,
+    [selectedUploadImageTrackers],
+  );
 
   const updateTrackerQuestionnaireAnswer = useCallback(
     (tracker: string, key: string, value: string) => {
