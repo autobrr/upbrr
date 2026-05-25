@@ -196,7 +196,15 @@ func parseTrustedProxies(values []string) []*net.IPNet {
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	raw = append(raw, '\n')
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	if _, err := w.Write(raw); err != nil {
+		return
+	}
 }

@@ -26,6 +26,23 @@ import (
 var sizePattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*([kmgt]?i?b)`)
 var thrNamePattern = regexp.MustCompile(`overlibImage\('(.+?)','/images`)
 
+type getResponseInfo struct {
+	StatusCode int
+	FinalURL   string
+}
+
+func newGetResponseInfo(resp *http.Response) getResponseInfo {
+	info := getResponseInfo{StatusCode: resp.StatusCode}
+	if resp.Request != nil && resp.Request.URL != nil {
+		info.FinalURL = resp.Request.URL.String()
+	}
+	return info
+}
+
+func (info getResponseInfo) ok() bool {
+	return info.StatusCode >= 200 && info.StatusCode < 300
+}
+
 func trackerBaseURL(cfg config.Config, tracker string, fallback string) string {
 	if trackerCfg, ok := trackerCfg(cfg, tracker); ok && strings.TrimSpace(trackerCfg.URL) != "" {
 		trimmed := strings.TrimSpace(trackerCfg.URL)
@@ -48,10 +65,10 @@ func loadTrackerCookies(ctx context.Context, cfg config.Config, tracker string, 
 	return cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, tracker, domain)
 }
 
-func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, headers map[string]string, cookies []*http.Cookie) (*http.Response, *xhtml.Node, error) {
+func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, headers map[string]string, cookies []*http.Cookie) (getResponseInfo, *xhtml.Node, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, nil, err
+		return getResponseInfo{}, nil, err
 	}
 	if len(params) > 0 {
 		req.URL.RawQuery = params.Encode()
@@ -63,22 +80,23 @@ func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params
 	commonhttp.ApplyCookies(req, cookies)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return getResponseInfo{}, nil, err
 	}
+	info := newGetResponseInfo(resp)
 	root, err := xhtml.Parse(resp.Body)
 	if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
 		err = closeErr
 	}
 	if err != nil {
-		return resp, nil, err
+		return info, nil, err
 	}
-	return resp, root, nil
+	return info, root, nil
 }
 
-func doTextGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, headers map[string]string, cookies []*http.Cookie) (*http.Response, string, error) {
+func doTextGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, headers map[string]string, cookies []*http.Cookie) (getResponseInfo, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, "", err
+		return getResponseInfo{}, "", err
 	}
 	if len(params) > 0 {
 		req.URL.RawQuery = params.Encode()
@@ -90,14 +108,17 @@ func doTextGet(ctx context.Context, client *http.Client, endpoint string, params
 	commonhttp.ApplyCookies(req, cookies)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return getResponseInfo{}, "", err
 	}
-	defer resp.Body.Close()
+	info := newGetResponseInfo(resp)
 	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return resp, "", err
+	if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
+		err = closeErr
 	}
-	return resp, string(body), nil
+	if err != nil {
+		return info, "", err
+	}
+	return info, string(body), nil
 }
 
 func absoluteURL(baseURL string, value string) string {
@@ -305,8 +326,11 @@ func resolveHDTCategoryID(meta api.PreparedMetadata) int {
 
 func loginTHR(ctx context.Context, client *http.Client, baseURL string, username string, password string) ([]*http.Cookie, error) {
 	resp, root, err := doHTMLGet(ctx, client, baseURL+"/login.php", nil, nil, nil)
-	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if err != nil {
 		return nil, fmt.Errorf("fetch login page: %w", err)
+	}
+	if !resp.ok() {
+		return nil, fmt.Errorf("fetch login page: status=%d", resp.StatusCode)
 	}
 	form := url.Values{}
 	inputs := findNodes(root, func(node *xhtml.Node) bool {

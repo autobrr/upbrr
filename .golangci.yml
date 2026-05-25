@@ -15,19 +15,24 @@ formatters:
 
 linters:
   enable:
+    - bodyclose
     - copyloopvar
     - errname
+    - errchkjson
     - errorlint
     - exhaustive
     - fatcontext
     - gocritic
     - gosec
     - loggercheck
+    - makezero
     - mirror
     - misspell
+    - nolintlint
     - perfsprint
     - prealloc
     - rowserrcheck
+    - sqlclosecheck
     - spancheck
     - testifylint
     - unconvert

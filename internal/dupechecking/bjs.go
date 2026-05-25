@@ -33,7 +33,7 @@ func (h bjsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("missing valid BJS cookies")}, nil
 	}
 	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/torrents.php", url.Values{"searchstr": {imdb}}, nil, cookies)
-	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("BJS search failed")}, nil
 	}
 	mainColumn := firstNode(root, func(node *xhtml.Node) bool {

@@ -503,7 +503,10 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		"method":  "getTorrentsSearch",
 		"params":  []any{apiToken, filter, 50},
 	}
-	encoded, _ := json.Marshal(payload)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API search encode: %w", err)
+	}
 	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(encoded))
 	if err != nil {
 		return err
@@ -546,7 +549,10 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		"method":  "getTorrentById",
 		"params":  []any{apiToken, selectedID},
 	}
-	downloadEncoded, _ := json.Marshal(downloadPayload)
+	downloadEncoded, err := json.Marshal(downloadPayload)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API download encode: %w", err)
+	}
 	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(downloadEncoded))
 	if err != nil {
 		return err

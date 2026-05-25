@@ -47,7 +47,7 @@ func (h hdsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 			"pages":   {strconv.Itoa(page)},
 		}
 		resp, body, err := doTextGet(ctx, h.http, baseURL+"/index.php", params, nil, cookies)
-		if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if err != nil || !resp.ok() {
 			return nil, []string{noteSkip("HDS search failed")}, nil
 		}
 		parts := strings.SplitN(body, "Show/Hide Categories", 2)
