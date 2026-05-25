@@ -158,8 +158,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if err != nil {
 		return uploadState{}, err
 	}
+	releaseName := firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename)
 	payload := map[string]any{
-		"name":        firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
+		"name":        releaseName,
 		"description": description,
 		"mediaInfo":   commonhttp.ReadOptionalFile(strings.TrimSpace(req.Meta.MediaInfoTextPath)),
 		"nfo":         "",
@@ -173,7 +174,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	return uploadState{
 		torrentPath:   torrentPath,
-		releaseName:   payload["name"].(string),
+		releaseName:   releaseName,
 		description:   description,
 		payload:       payload,
 		blockedReason: validateEligibility(req.Meta),

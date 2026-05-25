@@ -529,7 +529,11 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00002.MPLS"), "Playlist: 00002.MPLS")
 	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), "Playlist: 00001.MPLS")
 	assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00002.MPLS"), "extended summary two")
-	if got := meta.BDInfo["summary"]; !strings.Contains(got.(string), "Playlist: 00002.MPLS") {
+	got, ok := meta.BDInfo["summary"].(string)
+	if !ok {
+		t.Fatalf("expected BDInfo summary string, got %T", meta.BDInfo["summary"])
+	}
+	if !strings.Contains(got, "Playlist: 00002.MPLS") {
 		t.Fatalf("expected cached canonical summary for first selected playlist, got %#v", meta.BDInfo)
 	}
 }

@@ -22,6 +22,7 @@ linters:
     - errorlint
     - exhaustive
     - fatcontext
+    - forcetypeassert
     - gocritic
     - gosec
     - loggercheck

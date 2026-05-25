@@ -164,12 +164,13 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if err != nil {
 		return uploadState{}, err
 	}
+	releaseName := normalizeName(firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename))
 	payload := map[string]any{
 		"bdInfo":           resolveBDInfo(req.Meta),
 		"coverPhotoUrl":    firstNonEmpty(req.Meta.ExternalMetadata.TMDB.Backdrop, req.Meta.ExternalMetadata.TMDB.Poster),
 		"description":      genresText(req.Meta),
 		"media_info":       commonhttp.ReadOptionalFile(strings.TrimSpace(req.Meta.MediaInfoTextPath)),
-		"name":             normalizeName(firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename)),
+		"name":             releaseName,
 		"nfo":              "",
 		"plot":             firstNonEmpty(req.Meta.EpisodeOverview, req.Meta.ExternalMetadata.TMDB.Overview),
 		"poster":           firstNonEmpty(req.Meta.ExternalMetadata.TMDB.Poster),
@@ -183,7 +184,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	return uploadState{
 		torrentPath:   torrentPath,
 		description:   description,
-		releaseName:   payload["name"].(string),
+		releaseName:   releaseName,
 		payload:       payload,
 		questionnaire: questionnaire,
 		blockedReason: blockedReason,
