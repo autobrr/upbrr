@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,17 +74,17 @@ func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string,
 func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, comment string, source string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: load torrent artifact: %w", err)
 	}
 
 	info, err := torrentMeta.UnmarshalInfo()
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: unmarshal torrent artifact info: %w", err)
 	}
 	info.Source = source
 	infoBytes, err := bencode.Marshal(info)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: marshal torrent artifact info: %w", err)
 	}
 	torrentMeta.InfoBytes = infoBytes
 
@@ -102,5 +103,8 @@ func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL 
 	}
 	defer file.Close()
 
-	return torrentMeta.Write(file)
+	if err := torrentMeta.Write(file); err != nil {
+		return fmt.Errorf("trackers: write torrent artifact: %w", err)
+	}
+	return nil
 }

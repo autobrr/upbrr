@@ -591,7 +591,11 @@ func buildProxySearchURL(proxyBase, searchTerm string) (string, error) {
 
 func fetchTorrentProperties(ctx context.Context, client *qbittorrent.Client, httpClient *http.Client, proxyBase, hash string, useProxy bool) (qbittorrent.TorrentProperties, error) {
 	if !useProxy {
-		return client.GetTorrentPropertiesCtx(ctx, hash)
+		props, err := client.GetTorrentPropertiesCtx(ctx, hash)
+		if err != nil {
+			return qbittorrent.TorrentProperties{}, fmt.Errorf("clients: get qbit torrent properties: %w", err)
+		}
+		return props, nil
 	}
 
 	propertiesURL := strings.TrimRight(proxyBase, "/") + "/api/v2/torrents/properties"
@@ -654,7 +658,11 @@ func fetchTorrentTrackers(ctx context.Context, client *qbittorrent.Client, httpC
 		return trackers, nil
 	}
 
-	return client.GetTorrentTrackersCtx(ctx, hash)
+	trackers, err := client.GetTorrentTrackersCtx(ctx, hash)
+	if err != nil {
+		return nil, fmt.Errorf("clients: get qbit torrent trackers: %w", err)
+	}
+	return trackers, nil
 }
 
 func collectTrackerURLs(primary string, trackers []qbittorrent.TorrentTracker) []string {
@@ -1155,7 +1163,11 @@ func exportTorrent(ctx context.Context, qbitClient *qbittorrent.Client, httpClie
 		if qbitClient == nil {
 			return nil, errors.New("clients: qbit client is required")
 		}
-		return qbitClient.ExportTorrentCtx(ctx, hash)
+		data, err := qbitClient.ExportTorrentCtx(ctx, hash)
+		if err != nil {
+			return nil, fmt.Errorf("clients: export qbit torrent: %w", err)
+		}
+		return data, nil
 	}
 
 	proxyURL := strings.TrimRight(proxyBase, "/") + "/api/v2/torrents/export"
@@ -1175,7 +1187,11 @@ func exportTorrent(ctx context.Context, qbitClient *qbittorrent.Client, httpClie
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("clients: proxy export status %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("clients: read proxy export body: %w", err)
+	}
+	return body, nil
 }
 
 func writeTorrentFile(path string, data []byte) (string, error) {
@@ -1192,7 +1208,7 @@ func writeTorrentFile(path string, data []byte) (string, error) {
 func sanitizeTorrentData(data []byte) ([]byte, error) {
 	metaInfo, err := metainfo.Load(bytes.NewReader(data))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("clients: parse torrent metadata: %w", err)
 	}
 	metaInfo.Comment = ""
 	metaInfo.Announce = ""
@@ -1201,7 +1217,7 @@ func sanitizeTorrentData(data []byte) ([]byte, error) {
 
 	var buf bytes.Buffer
 	if err := metaInfo.Write(&buf); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("clients: write sanitized torrent metadata: %w", err)
 	}
 	return buf.Bytes(), nil
 }

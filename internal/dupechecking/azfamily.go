@@ -131,7 +131,7 @@ func (h azNetworkHandler) fetchTorrentList(ctx context.Context, site azDupeSiteD
 		root, err := xhtml.Parse(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("dupechecking: parse %s search response: %w", site.baseURL, err)
 		}
 		rows := findTorrentRows(root)
 		for _, row := range rows {

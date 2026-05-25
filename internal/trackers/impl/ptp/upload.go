@@ -820,16 +820,16 @@ func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error
 func writeTrackerTorrent(sourcePath string, outputPath string, announceURL string, comment string, source string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: PTP load torrent: %w", err)
 	}
 	info, err := torrentMeta.UnmarshalInfo()
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: PTP unmarshal torrent info: %w", err)
 	}
 	info.Source = source
 	infoBytes, err := bencode.Marshal(info)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: PTP marshal torrent info: %w", err)
 	}
 	torrentMeta.InfoBytes = infoBytes
 	if strings.TrimSpace(announceURL) != "" {
@@ -845,7 +845,10 @@ func writeTrackerTorrent(sourcePath string, outputPath string, announceURL strin
 		return err
 	}
 	defer file.Close()
-	return torrentMeta.Write(file)
+	if err := torrentMeta.Write(file); err != nil {
+		return fmt.Errorf("trackers: PTP write torrent: %w", err)
+	}
+	return nil
 }
 
 func loadCookies(ctx context.Context, dbPath string) (map[string]string, error) {

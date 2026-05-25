@@ -158,16 +158,16 @@ type moduleAnalyzer struct{}
 func (moduleAnalyzer) Analyze(_ context.Context, target string) (string, []byte, error) {
 	report, err := gomediainfo.AnalyzeFile(target)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("mediainfo: analyze file: %w", err)
 	}
 	reports := []gomediainfo.Report{report}
 	text, err := gomediainfo.Render(reports, gomediainfo.OutputText)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("mediainfo: render text: %w", err)
 	}
 	json, err := gomediainfo.Render(reports, gomediainfo.OutputJSON)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("mediainfo: render json: %w", err)
 	}
 	return text, []byte(json), nil
 }

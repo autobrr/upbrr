@@ -41,6 +41,7 @@ linters:
     - unconvert
     - unused
     - wastedassign
+    - wrapcheck
     - whitespace
 
   disable:
@@ -60,6 +61,25 @@ linters:
     gosec:
       excludes:
         - G115
+
+    wrapcheck:
+      ignore-package-globs:
+        - github.com/autobrr/upbrr/*
+        - context
+        - os
+        - net/http
+        - net/http/cookiejar
+        - encoding/*
+        - io
+        - io/fs
+        - path/filepath
+        - net/url
+        - mime/multipart
+        - database/sql
+        - crypto/*
+        - flag
+        - bufio
+        - strconv
 
   exclusions:
     generated: lax

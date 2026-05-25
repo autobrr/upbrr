@@ -158,7 +158,7 @@ func searchRequests(ctx context.Context, site siteDefinition, state sessionState
 	}
 	root, err := xhtml.Parse(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: AZ parse upload form: %w", err)
 	}
 	var names []string
 	var walk func(*xhtml.Node)

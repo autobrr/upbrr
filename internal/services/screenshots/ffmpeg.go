@@ -48,7 +48,7 @@ func (commandRunner) Run(ctx context.Context, name string, args []string, dir st
 			exitCode = exitErr.ExitCode()
 		}
 		result.ExitCode = exitCode
-		return result, err
+		return result, fmt.Errorf("screenshots: run ffmpeg command: %w", err)
 	}
 	return result, nil
 }

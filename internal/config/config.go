@@ -377,11 +377,11 @@ func trackerConfigToYAMLMap(cfg TrackerConfig) (map[string]interface{}, error) {
 	alias.Unknown = nil
 	payload, err := yaml.Marshal(alias)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config: marshal tracker config to yaml map: %w", err)
 	}
 	result := map[string]interface{}{}
 	if err := yaml.Unmarshal(payload, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config: unmarshal tracker config yaml map: %w", err)
 	}
 	return result, nil
 }
@@ -464,11 +464,11 @@ func decodeTrackerConfigFromJSON(raw map[string]interface{}) (TrackerConfig, err
 func decodeTrackerConfigFromYAML(raw map[string]interface{}) (TrackerConfig, error) {
 	payload, err := yaml.Marshal(raw)
 	if err != nil {
-		return TrackerConfig{}, err
+		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from yaml: %w", err)
 	}
 	var cfg TrackerConfig
 	if err := yaml.Unmarshal(payload, &cfg); err != nil {
-		return TrackerConfig{}, err
+		return TrackerConfig{}, fmt.Errorf("config: unmarshal tracker config from yaml: %w", err)
 	}
 	cfg.Unknown = extractTrackerUnknown(raw)
 	return cfg, nil
@@ -599,7 +599,7 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 
 	var root map[string]interface{}
 	if err := value.Decode(&root); err != nil {
-		return err
+		return fmt.Errorf("config: decode trackers yaml: %w", err)
 	}
 
 	t.DefaultTrackers = parseDefaultTrackersValue(root["default_trackers"])

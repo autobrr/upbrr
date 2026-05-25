@@ -155,7 +155,7 @@ func (a *App) BrowseFile() (string, error) {
 		Filters: []runtime.FileFilter{videoFileDialogFilter()},
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: open file dialog: %w", err)
 	}
 	return selection, nil
 }
@@ -185,7 +185,7 @@ func (a *App) BrowseFolder() (string, error) {
 		Title: "Select a folder",
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: open directory dialog: %w", err)
 	}
 	return selection, nil
 }
@@ -1373,7 +1373,7 @@ func (a *App) ExportConfig() (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: save config dialog: %w", err)
 	}
 
 	trimmedPath := strings.TrimSpace(path)
@@ -1543,7 +1543,7 @@ func (a *App) ImportConfig() (ImportResult, error) {
 		return ImportResult{}, nil
 	}
 	if err != nil {
-		return ImportResult{}, err
+		return ImportResult{}, fmt.Errorf("gui: import config dialog: %w", err)
 	}
 	if strings.TrimSpace(path) == "" {
 		return ImportResult{}, nil
