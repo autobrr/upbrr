@@ -76,10 +76,6 @@ linters:
         - hardlink
         - hardlinked
 
-    gosec:
-      excludes:
-        - G115
-
     wrapcheck:
       ignore-package-globs:
         - github.com/autobrr/upbrr/*

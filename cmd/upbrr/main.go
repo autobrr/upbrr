@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -337,19 +338,22 @@ func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer,
 	if _, err := fmt.Fprint(stdout, label); err != nil {
 		return "", fmt.Errorf("create auth: write password prompt: %w", err)
 	}
-	if file, ok := stdin.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		raw, err := term.ReadPassword(int(file.Fd()))
-		if err != nil {
-			return "", fmt.Errorf("create auth: read password: %w", err)
+	if file, ok := stdin.(*os.File); ok {
+		fd, ok := terminalFileDescriptor(file)
+		if ok && term.IsTerminal(fd) {
+			raw, err := term.ReadPassword(fd)
+			if err != nil {
+				return "", fmt.Errorf("create auth: read password: %w", err)
+			}
+			if _, err := fmt.Fprintln(stdout); err != nil {
+				return "", fmt.Errorf("create auth: finish password prompt: %w", err)
+			}
+			value := strings.TrimSpace(string(raw))
+			if value == "" {
+				return "", errors.New("create auth: password cannot be empty")
+			}
+			return value, nil
 		}
-		if _, err := fmt.Fprintln(stdout); err != nil {
-			return "", fmt.Errorf("create auth: finish password prompt: %w", err)
-		}
-		value := strings.TrimSpace(string(raw))
-		if value == "" {
-			return "", errors.New("create auth: password cannot be empty")
-		}
-		return value, nil
 	}
 
 	line, err := reader.ReadString('\n')
@@ -361,6 +365,14 @@ func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer,
 		return "", errors.New("create auth: password cannot be empty")
 	}
 	return value, nil
+}
+
+func terminalFileDescriptor(file *os.File) (int, bool) {
+	fd, err := strconv.Atoi(fmt.Sprint(file.Fd()))
+	if err != nil {
+		return 0, false
+	}
+	return fd, true
 }
 
 func runServe(args []string) error {

@@ -619,7 +619,11 @@ func resolve2FACode(otpURI string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	counter := uint64(time.Now().Unix() / int64(period))
+	counterTime := time.Now().Unix() / int64(period)
+	if counterTime < 0 {
+		return "", errors.New("totp counter before unix epoch")
+	}
+	counter := uint64(counterTime)
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, counter)
 	mac := hmac.New(sha1.New, secretBytes)

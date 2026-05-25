@@ -387,7 +387,11 @@ func totpFromOTPURI(otpURI string, now time.Time) (string, error) {
 			interval = value
 		}
 	}
-	counter := uint64(now.Unix() / int64(interval))
+	counterTime := now.Unix() / int64(interval)
+	if counterTime < 0 {
+		return "", errors.New("totp counter before unix epoch")
+	}
+	counter := uint64(counterTime)
 
 	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
 	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
