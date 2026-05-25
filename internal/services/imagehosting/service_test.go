@@ -294,12 +294,11 @@ func TestUploadImagesRejectsTrackerOwnedHostOutsideOwnerScope(t *testing.T) {
 		logger:    api.NopLogger{},
 		uploaders: map[string]uploader{"hdb": &fakeUploader{}},
 	}
-	tmp, err := os.CreateTemp("", "imagehosting-owned-host-*.png")
+	tmp, err := os.CreateTemp(t.TempDir(), "imagehosting-owned-host-*.png")
 	if err != nil {
 		t.Fatalf("create temp file: %v", err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
 	if err := tmp.Close(); err != nil {
 		t.Fatalf("close temp file: %v", err)
 	}

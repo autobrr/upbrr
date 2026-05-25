@@ -51,6 +51,7 @@ linters:
     - testifylint
     - unconvert
     - usestdlibvars
+    - usetesting
     - unused
     - wastedassign
     - wrapcheck
