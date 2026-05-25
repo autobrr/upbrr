@@ -224,10 +224,13 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	return "", nil
 }
 
-func resolveExtraFiles(_ context.Context, meta api.PreparedMetadata) []commonhttp.FileField {
+func resolveExtraFiles(ctx context.Context, meta api.PreparedMetadata) []commonhttp.FileField {
 	files := make([]commonhttp.FileField, 0, 2)
+	if ctx == nil {
+		return files
+	}
 	if poster := resolvePoster(meta); poster != "" {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, poster, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, poster, nil)
 		if err == nil {
 			resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 			if err == nil {

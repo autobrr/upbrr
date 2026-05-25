@@ -56,11 +56,11 @@ type CookieStore interface {
 // database. When both sources are available, startup file cookies win on conflicts so
 // a fresh startup bootstrap can override stale persisted values while still preserving
 // DB-only cookies.
-// A nil ctx is accepted and treated as context.Background(); callers should pass
-// an explicit request-scoped context whenever possible.
+// Callers must pass an explicit request-scoped context so cancellation and
+// deadlines are preserved through database cookie reads.
 func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string, cookieStore CookieStore, encryptionKey []byte) (map[string]string, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("commonhttp: context is required")
 	}
 
 	var storeCookies map[string]string

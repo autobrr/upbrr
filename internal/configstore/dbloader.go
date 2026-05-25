@@ -73,13 +73,13 @@ func LoadFromPathOrEmbedded(path string) (*config.Config, error) {
 // Callers decide whether to validate the returned config — the CLI fails fast
 // while the web/GUI start with invalid config so users can fix it via the UI.
 func LoadFromDBPath(ctx context.Context, dbPath string) (*config.Config, error) {
-	repo, err := db.Open(dbPath)
+	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
 		return nil, err
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return nil, err
 	}
 
@@ -102,13 +102,13 @@ func LoadFromDBPath(ctx context.Context, dbPath string) (*config.Config, error) 
 // SaveToDBPath opens the sqlite database at dbPath, runs migrations, and
 // persists the provided config.
 func SaveToDBPath(ctx context.Context, cfg *config.Config, dbPath string) error {
-	repo, err := db.Open(dbPath)
+	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
 		return err
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(ctx); err != nil {
 		return err
 	}
 	if err := config.SaveToDatabase(ctx, cfg, repo); err != nil {

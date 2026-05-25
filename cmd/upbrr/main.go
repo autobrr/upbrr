@@ -428,7 +428,7 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 		return err
 	}
 
-	repo, err := db.Open(dbPath)
+	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
 		return fmt.Errorf("open config database: %w", err)
 	}

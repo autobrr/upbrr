@@ -16,6 +16,7 @@ formatters:
 linters:
   enable:
     - bodyclose
+    - contextcheck
     - copyloopvar
     - errname
     - errchkjson

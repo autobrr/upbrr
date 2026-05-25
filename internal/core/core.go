@@ -58,9 +58,24 @@ type dupeCacheEntry struct {
 }
 
 func New(deps api.CoreDependencies) (*Core, error) {
+	if deps.Context == nil {
+		deps.Context = context.Background()
+	}
+	return newCore(deps)
+}
+
+func NewWithContext(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
+	if ctx == nil {
+		return nil, errors.New("core: context is required")
+	}
+	deps.Context = ctx
+	return newCore(deps)
+}
+
+func newCore(deps api.CoreDependencies) (*Core, error) {
 	ctx := deps.Context
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("core: context is required")
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -91,7 +106,7 @@ func New(deps api.CoreDependencies) (*Core, error) {
 	ownsRepo := false
 	if repo == nil {
 		logger.Debugf("core: opening repository")
-		sqliteRepo, err := db.OpenWithLogger(cfg.MainSettings.DBPath, logger)
+		sqliteRepo, err := db.OpenWithLoggerContext(ctx, cfg.MainSettings.DBPath, logger)
 		if err != nil {
 			return nil, err
 		}

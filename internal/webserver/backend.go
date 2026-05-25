@@ -75,14 +75,14 @@ func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
 
 func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub) (*Backend, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("webserver: context is required")
 	}
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
 		return nil, err
 	}
 
-	repo, err := db.OpenWithLogger(cfg.MainSettings.DBPath, logger)
+	repo, err := db.OpenWithLoggerContext(ctx, cfg.MainSettings.DBPath, logger)
 	if err != nil {
 		_ = logger.Close()
 		return nil, err
@@ -104,7 +104,7 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		coreInitErr = err
 		logger.Warnf("web: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
-		coreSvc, err = core.New(api.CoreDependencies{
+		coreSvc, err = core.NewWithContext(ctx, api.CoreDependencies{
 			Context: ctx,
 			Config:  cfg,
 			Logger:  logger,

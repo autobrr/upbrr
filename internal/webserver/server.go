@@ -106,7 +106,7 @@ func (s *Server) Close() error {
 
 func (s *Server) Run(ctx context.Context) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("webserver: context is required")
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -136,7 +136,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		return s.server.Shutdown(shutdownCtx)
 	case err := <-errCh:

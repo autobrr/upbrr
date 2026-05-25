@@ -5,6 +5,7 @@ package guishared
 
 import (
 	"context"
+	"errors"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
@@ -27,14 +28,14 @@ type Runtime struct {
 // initialized resources are cleaned up before returning.
 func BuildRuntime(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (Runtime, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return Runtime{}, errors.New("guishared: context is required")
 	}
 
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
 		return Runtime{}, err
 	}
-	svc, err := core.New(api.CoreDependencies{
+	svc, err := core.NewWithContext(ctx, api.CoreDependencies{
 		Context: ctx,
 		Config:  cfg,
 		Logger:  logger,

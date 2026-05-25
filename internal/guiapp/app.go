@@ -60,7 +60,7 @@ func NewApp(configPath string, configProvided bool) (*App, error) {
 
 func NewAppWithContext(ctx context.Context, configPath string, configProvided bool) (*App, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("guiapp: context is required")
 	}
 	cfg, dbPath, err := configstore.Bootstrap(ctx, configPath, configProvided, true)
 	if err != nil {
@@ -72,7 +72,7 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		return nil, err
 	}
 
-	repo, err := db.OpenWithLogger(dbPath, logger)
+	repo, err := db.OpenWithLoggerContext(ctx, dbPath, logger)
 	if err != nil {
 		_ = logger.Close()
 		return nil, err
@@ -94,7 +94,7 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		coreInitErr = err
 		logger.Warnf("gui: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
-		coreSvc, err = core.New(api.CoreDependencies{
+		coreSvc, err = core.NewWithContext(ctx, api.CoreDependencies{
 			Context: ctx,
 			Config:  cfg,
 			Logger:  logger,
@@ -111,6 +111,7 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 	}
 
 	return &App{
+		ctx:         ctx,
 		cfg:         cfg,
 		core:        coreSvc,
 		coreInitErr: coreInitErr,
@@ -1580,7 +1581,11 @@ func (a *App) ImportConfig() (ImportResult, error) {
 }
 
 func (a *App) applyConfig(cfg config.Config) error {
-	rt, err := guishared.BuildRuntime(a.ctx, cfg, a.repo)
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rt, err := guishared.BuildRuntime(ctx, cfg, a.repo)
 	if err != nil {
 		return err
 	}

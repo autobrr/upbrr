@@ -40,7 +40,18 @@ func Open(path string) (*SQLiteRepository, error) {
 	return OpenWithLogger(path, nopLogger{})
 }
 
+func OpenContext(ctx context.Context, path string) (*SQLiteRepository, error) {
+	return OpenWithLoggerContext(ctx, path, nopLogger{})
+}
+
 func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
+	return OpenWithLoggerContext(context.Background(), path, logger)
+}
+
+func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQLiteRepository, error) {
+	if ctx == nil {
+		return nil, errors.New("db: context is required")
+	}
 	if logger == nil {
 		logger = nopLogger{}
 	}
@@ -56,7 +67,6 @@ func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
 		return nil, fmt.Errorf("db open: %w", err)
 	}
 
-	ctx := context.Background()
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db ping: %w", err)

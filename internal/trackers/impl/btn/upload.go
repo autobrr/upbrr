@@ -68,11 +68,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, err
 	}
 
-	uploadCtx, err := newUploadContext(req)
+	uploadCtx, err := newUploadContext(ctx, req)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
-	if err := login(uploadCtx, req.TrackerConfig); err != nil {
+	if err := login(ctx, uploadCtx, req.TrackerConfig); err != nil {
 		return api.UploadSummary{}, err
 	}
 
@@ -156,7 +156,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		return api.TrackerDryRunEntry{}, err
 	}
 
-	uploadCtx, err := newUploadContext(req)
+	uploadCtx, err := newUploadContext(ctx, req)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -192,7 +192,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-func newUploadContext(req trackers.UploadRequest) (uploadContext, error) {
+func newUploadContext(ctx context.Context, req trackers.UploadRequest) (uploadContext, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return uploadContext{}, err
@@ -202,18 +202,18 @@ func newUploadContext(req trackers.UploadRequest) (uploadContext, error) {
 	if baseURL == "" {
 		baseURL = btnDefaultBaseURL
 	}
-	ctx := uploadContext{
+	uploadCtx := uploadContext{
 		baseURL:   baseURL,
 		uploadURL: baseURL + btnUploadPath,
 		apiToken:  config.ResolveBTNAPIToken(req.AppConfig),
 		apiURL:    resolveBTNAPIURL(req.TrackerConfig),
 		client:    client,
 	}
-	_ = loadCookies(client, req.AppConfig.MainSettings.DBPath, baseURL)
-	return ctx, nil
+	_ = loadCookies(ctx, client, req.AppConfig.MainSettings.DBPath, baseURL)
+	return uploadCtx, nil
 }
 
-func login(uploadCtx uploadContext, cfg config.TrackerConfig) error {
+func login(ctx context.Context, uploadCtx uploadContext, cfg config.TrackerConfig) error {
 	values := url.Values{}
 	values.Set("username", strings.TrimSpace(cfg.Username))
 	values.Set("password", strings.TrimSpace(cfg.Password))
@@ -221,7 +221,7 @@ func login(uploadCtx uploadContext, cfg config.TrackerConfig) error {
 	if code, err := resolve2FACode(strings.TrimSpace(cfg.OTPURI)); err == nil && code != "" {
 		values.Set("codenumber", code)
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, strings.TrimRight(uploadCtx.baseURL, "/")+btnLoginPath, strings.NewReader(values.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(uploadCtx.baseURL, "/")+btnLoginPath, strings.NewReader(values.Encode()))
 	if err != nil {
 		return fmt.Errorf("trackers: BTN login request: %w", err)
 	}
@@ -576,11 +576,11 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	return os.WriteFile(outputPath, body, 0o600)
 }
 
-func loadCookies(client *http.Client, dbPath string, baseURL string) error {
+func loadCookies(ctx context.Context, client *http.Client, dbPath string, baseURL string) error {
 	if client == nil || client.Jar == nil {
 		return nil
 	}
-	values, err := cookies.LoadTrackerCookieMap(context.Background(), dbPath, "BTN")
+	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "BTN")
 	if err != nil {
 		return nil
 	}
