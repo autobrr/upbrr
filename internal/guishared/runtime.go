@@ -36,9 +36,8 @@ func BuildRuntime(ctx context.Context, cfg config.Config, repo *db.SQLiteReposit
 		return Runtime{}, err
 	}
 	svc, err := core.NewWithContext(ctx, api.CoreDependencies{
-		Context: ctx,
-		Config:  cfg,
-		Logger:  logger,
+		Config: cfg,
+		Logger: logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},

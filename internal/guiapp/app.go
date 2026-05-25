@@ -95,9 +95,8 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		logger.Warnf("gui: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
 		coreSvc, err = core.NewWithContext(ctx, api.CoreDependencies{
-			Context: ctx,
-			Config:  cfg,
-			Logger:  logger,
+			Config: cfg,
+			Logger: logger,
 			Services: api.ServiceSet{
 				Filesystem: filesystem.NewValidator(),
 			},

@@ -105,9 +105,8 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		logger.Warnf("web: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
 		coreSvc, err = core.NewWithContext(ctx, api.CoreDependencies{
-			Context: ctx,
-			Config:  cfg,
-			Logger:  logger,
+			Config: cfg,
+			Logger: logger,
 			Services: api.ServiceSet{
 				Filesystem: filesystem.NewValidator(),
 			},
@@ -169,11 +168,11 @@ func (b *Backend) requireHistoryRepo() error {
 	return nil
 }
 
-func (b *Backend) DetectDiscType(path string) (string, error) {
+func (b *Backend) DetectDiscType(ctx context.Context, path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", errors.New("path is required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return filesystem.DetectDiscType(ctx, path)
 }

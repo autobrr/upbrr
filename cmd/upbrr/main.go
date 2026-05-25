@@ -196,10 +196,9 @@ func run() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	coreSvc, err := core.New(api.CoreDependencies{
-		Context: ctx,
-		Config:  cfg,
-		Logger:  logger,
+	coreSvc, err := core.NewWithContext(ctx, api.CoreDependencies{
+		Config: cfg,
+		Logger: logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
@@ -390,9 +389,8 @@ func runServe(args []string) error {
 	}
 
 	server, err := webserver.New(webserver.Options{
-		StartupContext: context.Background(),
-		Config:         cfg,
-		CLIConfig:      webCfg,
+		Config:    cfg,
+		CLIConfig: webCfg,
 	})
 	if err != nil {
 		return err

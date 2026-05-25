@@ -58,22 +58,17 @@ type dupeCacheEntry struct {
 }
 
 func New(deps api.CoreDependencies) (*Core, error) {
-	if deps.Context == nil {
-		deps.Context = context.Background()
-	}
-	return newCore(deps)
+	return newCore(context.Background(), deps)
 }
 
 func NewWithContext(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 	if ctx == nil {
 		return nil, errors.New("core: context is required")
 	}
-	deps.Context = ctx
-	return newCore(deps)
+	return newCore(ctx, deps)
 }
 
-func newCore(deps api.CoreDependencies) (*Core, error) {
-	ctx := deps.Context
+func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 	if ctx == nil {
 		return nil, errors.New("core: context is required")
 	}

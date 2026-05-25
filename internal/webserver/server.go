@@ -26,9 +26,8 @@ import (
 )
 
 type Options struct {
-	StartupContext context.Context
-	Config         config.Config
-	CLIConfig      CLIConfig
+	Config    config.Config
+	CLIConfig CLIConfig
 }
 
 type Server struct {
@@ -55,7 +54,7 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	backend, err := NewBackendWithContext(opts.StartupContext, cfg, hub)
+	backend, err := NewBackendWithContext(context.Background(), cfg, hub)
 	if err != nil {
 		return nil, err
 	}
