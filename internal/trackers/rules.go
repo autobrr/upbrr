@@ -91,12 +91,12 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 	}
 
 	if rules.MinResolution != "" {
-		min := strings.ToLower(strings.TrimSpace(rules.MinResolution))
+		minResolution := strings.ToLower(strings.TrimSpace(rules.MinResolution))
 		value := resolveResolution(meta)
 		if value == "" {
 			addFailure("min_resolution", "resolution required for "+name)
-		} else if ruleResolutionOrder[value] < ruleResolutionOrder[min] {
-			addFailure("min_resolution", fmt.Sprintf("resolution %s below %s", value, min))
+		} else if ruleResolutionOrder[value] < ruleResolutionOrder[minResolution] {
+			addFailure("min_resolution", fmt.Sprintf("resolution %s below %s", value, minResolution))
 		}
 	}
 

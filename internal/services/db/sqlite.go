@@ -1213,24 +1213,24 @@ func nullStringPtr(value sql.NullString) *string {
 	if !value.Valid {
 		return nil
 	}
-	copy := value.String
-	return &copy
+	ptrValue := value.String
+	return &ptrValue
 }
 
 func nullIntPtr(value sql.NullInt64) *int {
 	if !value.Valid {
 		return nil
 	}
-	copy := int(value.Int64)
-	return &copy
+	ptrValue := int(value.Int64)
+	return &ptrValue
 }
 
 func nullBoolPtr(value sql.NullBool) *bool {
 	if !value.Valid {
 		return nil
 	}
-	copy := value.Bool
-	return &copy
+	ptrValue := value.Bool
+	return &ptrValue
 }
 
 func encodeFileList(paths []string) string {

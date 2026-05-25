@@ -486,7 +486,7 @@ func (s *Server) allowGeneralRequest(r *http.Request) bool {
 }
 
 func (s *Server) verifyCSRF(r *http.Request, current session) bool {
-	token := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
+	token := strings.TrimSpace(r.Header.Get("X-Csrf-Token"))
 	if token == "" {
 		return false
 	}

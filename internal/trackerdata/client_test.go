@@ -199,7 +199,7 @@ func TestLookupANTSendsAPIKeyHeader(t *testing.T) {
 		if got := query.Get("filename"); got != "Example.Release.mkv" {
 			t.Fatalf("unexpected filename query value: got %q", got)
 		}
-		if got := r.Header.Get("X-API-Key"); got != "token" {
+		if got := r.Header.Get("X-Api-Key"); got != "token" {
 			t.Fatalf("unexpected X-API-Key header: got %q want %q", got, "token")
 		}
 		if got := r.Header.Get("User-Agent"); got == "" {

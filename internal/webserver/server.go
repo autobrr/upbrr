@@ -151,7 +151,7 @@ func (s *Server) baseURL() string {
 	if strings.TrimSpace(s.cliCfg.BaseURL) != "" {
 		return strings.TrimRight(strings.TrimSpace(s.cliCfg.BaseURL), "/")
 	}
-	return fmt.Sprintf("http://%s:%d", s.cliCfg.Host, s.cliCfg.Port)
+	return "http://" + net.JoinHostPort(s.cliCfg.Host, strconv.Itoa(s.cliCfg.Port))
 }
 
 func resolveWebAssets() (fs.FS, error) {

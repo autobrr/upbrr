@@ -125,7 +125,7 @@ func newBrowseRequest(path string, host string, remoteAddr string) *http.Request
 	req.RemoteAddr = remoteAddr
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://"+host)
-	req.Header.Set("X-CSRF-Token", "test-csrf")
+	req.Header.Set("X-Csrf-Token", "test-csrf")
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
 	return req
 }
@@ -321,7 +321,7 @@ func TestUIStateRouteRejectsUnauthenticatedAndBadCSRF(t *testing.T) {
 			name: "bad csrf",
 			request: func() *http.Request {
 				req := newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
-				req.Header.Del("X-CSRF-Token")
+				req.Header.Del("X-Csrf-Token")
 				return req
 			},
 			expectedStatus: http.StatusForbidden,

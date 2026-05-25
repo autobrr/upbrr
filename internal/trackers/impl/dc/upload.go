@@ -66,7 +66,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	httpReq.ContentLength = int64(len(body))
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
-	httpReq.Header.Set("X-API-KEY", strings.TrimSpace(req.TrackerConfig.APIKey))
+	httpReq.Header.Set("X-Api-Key", strings.TrimSpace(req.TrackerConfig.APIKey))
 
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(httpReq)
 	if err != nil {

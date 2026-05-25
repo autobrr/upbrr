@@ -571,18 +571,18 @@ func buildReleaseNameOverrides(visited map[string]bool, input releaseOverrideInp
 }
 
 func stringPtr(value string) *string {
-	copy := value
-	return &copy
+	ptrValue := value
+	return &ptrValue
 }
 
 func intPtr(value int) *int {
-	copy := value
-	return &copy
+	ptrValue := value
+	return &ptrValue
 }
 
 func boolPtr(value bool) *bool {
-	copy := value
-	return &copy
+	ptrValue := value
+	return &ptrValue
 }
 
 func splitCSV(value string) []string {

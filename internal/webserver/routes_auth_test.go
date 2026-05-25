@@ -462,7 +462,7 @@ func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:5000"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://127.0.0.1:7480")
-	req.Header.Set("X-CSRF-Token", current.CSRFToken)
+	req.Header.Set("X-Csrf-Token", current.CSRFToken)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
 
 	recorder := httptest.NewRecorder()

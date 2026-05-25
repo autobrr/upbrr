@@ -1431,8 +1431,8 @@ func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
 				continue
 			}
 			if best == nil || diff < bestDiff {
-				copy := detail
-				best = &copy
+				detailCopy := detail
+				best = &detailCopy
 				bestDiff = diff
 			}
 		}
