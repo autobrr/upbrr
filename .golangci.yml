@@ -16,13 +16,18 @@ formatters:
 linters:
   enable:
     - bodyclose
+    - asciicheck
+    - bidichk
     - contextcheck
     - copyloopvar
+    - durationcheck
     - errname
     - errchkjson
     - errorlint
     - exhaustive
+    - exptostd
     - fatcontext
+    - gocheckcompilerdirectives
     - forcetypeassert
     - gocritic
     - gosec
@@ -31,14 +36,17 @@ linters:
     - mirror
     - misspell
     - noctx
+    - nilnesserr
     - nolintlint
     - perfsprint
     - prealloc
+    - reassign
     - rowserrcheck
     - sqlclosecheck
     - spancheck
     - testifylint
     - unconvert
+    - usestdlibvars
     - unused
     - wastedassign
     - wrapcheck
