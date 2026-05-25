@@ -28,6 +28,7 @@ linters:
     - makezero
     - mirror
     - misspell
+    - noctx
     - nolintlint
     - perfsprint
     - prealloc
@@ -41,7 +42,6 @@ linters:
 
   disable:
     - containedctx
-    - noctx
     - revive
 
   settings:

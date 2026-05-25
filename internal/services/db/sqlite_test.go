@@ -20,7 +20,7 @@ import (
 func readSchemaMigrationIDs(t *testing.T, db *sql.DB) []string {
 	t.Helper()
 
-	rows, err := db.Query(`SELECT id FROM schema_migrations ORDER BY id`)
+	rows, err := db.QueryContext(context.Background(), `SELECT id FROM schema_migrations ORDER BY id`)
 	if err != nil {
 		t.Fatalf("query schema_migrations: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestOpenWithLoggerConfiguresConcurrentSQLiteSettings(t *testing.T) {
 	}
 
 	var journalMode string
-	if err := repo.db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+	if err := repo.db.QueryRowContext(context.Background(), `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
 		t.Fatalf("query journal_mode: %v", err)
 	}
 	if !strings.EqualFold(journalMode, "wal") {
@@ -349,7 +349,7 @@ func TestOpenWithLoggerConfiguresConcurrentSQLiteSettings(t *testing.T) {
 	}
 
 	var busyTimeout int
-	if err := repo.db.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+	if err := repo.db.QueryRowContext(context.Background(), `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
 		t.Fatalf("query busy_timeout: %v", err)
 	}
 	if busyTimeout != sqliteBusyTimeout {
@@ -645,7 +645,7 @@ func TestIsBusyErrorUnwrapsSQLiteErrors(t *testing.T) {
 	if err := lockingRepo.Migrate(); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if _, err := contendingRepo.db.Exec(`PRAGMA busy_timeout = 1`); err != nil {
+	if _, err := contendingRepo.db.ExecContext(context.Background(), `PRAGMA busy_timeout = 1`); err != nil {
 		t.Fatalf("set contending busy_timeout: %v", err)
 	}
 
@@ -798,7 +798,7 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES ('/tmp/source', 'latest desc', '')`,
 	}
 	for _, statement := range statements {
-		if _, err := dbConn.Exec(statement); err != nil {
+		if _, err := dbConn.ExecContext(context.Background(), statement); err != nil {
 			t.Fatalf("seed legacy schema: %v", err)
 		}
 	}
@@ -831,7 +831,7 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 		t.Fatalf("expected invalid input for blank path lookup, got %v", err)
 	}
 
-	row := dbConn.QueryRow(`SELECT COUNT(*) FROM description_overrides`)
+	row := dbConn.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM description_overrides`)
 	var count int
 	if err := row.Scan(&count); err != nil {
 		t.Fatalf("count migrated overrides: %v", err)
@@ -841,7 +841,7 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 	}
 
 	var updatedAt string
-	if err := dbConn.QueryRow(`SELECT updated_at FROM description_overrides WHERE source_path = ? AND group_key = ?`, "/tmp/source", "").Scan(&updatedAt); err != nil {
+	if err := dbConn.QueryRowContext(context.Background(), `SELECT updated_at FROM description_overrides WHERE source_path = ? AND group_key = ?`, "/tmp/source", "").Scan(&updatedAt); err != nil {
 		t.Fatalf("read migrated updated_at: %v", err)
 	}
 	if strings.TrimSpace(updatedAt) == "" {
@@ -870,7 +870,7 @@ func TestSQLiteMigrationBootstrapRecordsLedgerAndCompatibilityStamp(t *testing.T
 	}
 
 	var userVersion int
-	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if userVersion != legacyCompatibilitySchemaVersion {
@@ -914,7 +914,7 @@ func TestSQLiteMigrationLegacyV8BridgeIsIdempotent(t *testing.T) {
 	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
 		t.Fatalf("apply legacy v8: %v", err)
 	}
-	if _, err := rawDB.Exec(`PRAGMA user_version = 8`); err != nil {
+	if _, err := rawDB.ExecContext(context.Background(), `PRAGMA user_version = 8`); err != nil {
 		t.Fatalf("set legacy user_version: %v", err)
 	}
 
@@ -931,7 +931,7 @@ func TestSQLiteMigrationLegacyV8BridgeIsIdempotent(t *testing.T) {
 	}
 
 	var userVersion int
-	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version after bridge: %v", err)
 	}
 	if userVersion != legacyCompatibilitySchemaVersion {
@@ -975,7 +975,7 @@ func TestSQLiteMigrationBridgesLegacyV8AndAppliesReleaseCategory(t *testing.T) {
 	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
 		t.Fatalf("apply legacy v8: %v", err)
 	}
-	if _, err := rawDB.Exec(`PRAGMA user_version = 8`); err != nil {
+	if _, err := rawDB.ExecContext(context.Background(), `PRAGMA user_version = 8`); err != nil {
 		t.Fatalf("set legacy user_version: %v", err)
 	}
 
@@ -1005,7 +1005,7 @@ func TestSQLiteMigrationBridgesLegacyV8AndAppliesReleaseCategory(t *testing.T) {
 	}
 
 	var userVersion int
-	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version after v8 bridge: %v", err)
 	}
 	if userVersion != legacyCompatibilitySchemaVersion {
@@ -1029,7 +1029,7 @@ func TestSQLiteMigrationKeepsLegacyRollbackCompatibilityStamp(t *testing.T) {
 	}
 
 	var userVersion int
-	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("read compatibility user_version: %v", err)
 	}
 	if userVersion != legacyCompatibilitySchemaVersion {
@@ -1041,7 +1041,7 @@ func TestSQLiteMigrationKeepsLegacyRollbackCompatibilityStamp(t *testing.T) {
 	if userVersion < 3 {
 		t.Fatalf("rollback binary would misclassify db as pre-v3, got user_version %d", userVersion)
 	}
-	if _, err := rawDB.Exec(`ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`); err == nil {
+	if _, err := rawDB.ExecContext(context.Background(), `ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`); err == nil {
 		t.Fatalf("expected legacy v3 ALTER to be unsafe if rerun, but it unexpectedly succeeded")
 	}
 }
@@ -1060,7 +1060,7 @@ func TestSQLiteMigrationUnknownAppliedIDsAreTolerated(t *testing.T) {
 	if err := Migrate(rawDB); err != nil {
 		t.Fatalf("initial migrate: %v", err)
 	}
-	if _, err := rawDB.Exec(`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "branch_only_future_migration", "2026-04-18T00:00:00Z"); err != nil {
+	if _, err := rawDB.ExecContext(context.Background(), `INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "branch_only_future_migration", "2026-04-18T00:00:00Z"); err != nil {
 		t.Fatalf("insert unknown migration: %v", err)
 	}
 
@@ -1132,7 +1132,7 @@ func TestSQLiteMigrationFailsWhenAppliedMigrationIsMissingDependency(t *testing.
 	if err := ensureSchemaMigrationsTable(context.Background(), rawDB); err != nil {
 		t.Fatalf("ensure schema_migrations: %v", err)
 	}
-	if _, err := rawDB.Exec(`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "child", "2026-04-18T00:00:00Z"); err != nil {
+	if _, err := rawDB.ExecContext(context.Background(), `INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "child", "2026-04-18T00:00:00Z"); err != nil {
 		t.Fatalf("insert inconsistent applied migration: %v", err)
 	}
 
@@ -1527,7 +1527,7 @@ func TestSQLiteMigrationBackfillsUploadedImageUsageScope(t *testing.T) {
 		`PRAGMA user_version = 4`,
 	}
 	for _, statement := range statements {
-		if _, err := rawDB.Exec(statement); err != nil {
+		if _, err := rawDB.ExecContext(context.Background(), statement); err != nil {
 			t.Fatalf("exec setup statement: %v", err)
 		}
 	}

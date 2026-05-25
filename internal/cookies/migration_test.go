@@ -64,7 +64,7 @@ func TestEnsureCookieMigrationKeepsLegacyFilesOnPartialFailure(t *testing.T) {
 	t.Cleanup(func() {
 		_ = db.Close()
 	})
-	if _, err := db.Exec(`CREATE TABLE config_settings (
+	if _, err := db.ExecContext(context.Background(), `CREATE TABLE config_settings (
 		section TEXT PRIMARY KEY,
 		data TEXT NOT NULL,
 		updated_at DATETIME

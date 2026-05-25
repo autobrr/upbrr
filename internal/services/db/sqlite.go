@@ -56,30 +56,31 @@ func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
 		return nil, fmt.Errorf("db open: %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
+	ctx := context.Background()
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db ping: %w", err)
 	}
 
-	if _, err := db.Exec(pragmaForeignKeysOnSQL); err != nil {
+	if _, err := db.ExecContext(ctx, pragmaForeignKeysOnSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db pragma foreign_keys: %w", err)
 	}
-	if _, err := db.Exec(pragmaBusyTimeoutPrefix + strconv.Itoa(sqliteBusyTimeout)); err != nil {
+	if _, err := db.ExecContext(ctx, pragmaBusyTimeoutPrefix+strconv.Itoa(sqliteBusyTimeout)); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db pragma busy_timeout: %w", err)
 	}
 	if isMemorySQLitePath(path) {
 		// SQLite cannot use WAL for in-memory databases, so tests that use :memory:
 		// intentionally run with different journaling semantics than on-disk production DBs.
-		journalMode, err := queryCurrentJournalMode(db)
+		journalMode, err := queryCurrentJournalMode(ctx, db)
 		if err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("db pragma journal_mode: %w", err)
 		}
 		logger.Debugf("db: sqlite journal_mode is %s for in-memory database", journalMode)
 	} else {
-		journalMode, err := enableWALJournalMode(db)
+		journalMode, err := enableWALJournalMode(ctx, db)
 		if err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("db pragma journal_mode: %w", err)
@@ -184,8 +185,8 @@ func retryBusyContext(ctx context.Context, logger Logger, operation string, atte
 	return lastErr
 }
 
-func enableWALJournalMode(db *sql.DB) (string, error) {
-	row := db.QueryRow(pragmaJournalModeWALSQL)
+func enableWALJournalMode(ctx context.Context, db *sql.DB) (string, error) {
+	row := db.QueryRowContext(ctx, pragmaJournalModeWALSQL)
 	var got string
 	if err := row.Scan(&got); err != nil {
 		return "", err
@@ -193,8 +194,8 @@ func enableWALJournalMode(db *sql.DB) (string, error) {
 	return got, nil
 }
 
-func queryCurrentJournalMode(db *sql.DB) (string, error) {
-	row := db.QueryRow(pragmaJournalModeSQL)
+func queryCurrentJournalMode(ctx context.Context, db *sql.DB) (string, error) {
+	row := db.QueryRowContext(ctx, pragmaJournalModeSQL)
 	var got string
 	if err := row.Scan(&got); err != nil {
 		return "", err

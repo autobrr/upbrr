@@ -427,7 +427,7 @@ func newTestCookieDB(t *testing.T) *sql.DB {
 		)`,
 	}
 	for _, statement := range statements {
-		if _, err := db.Exec(statement); err != nil {
+		if _, err := db.ExecContext(context.Background(), statement); err != nil {
 			t.Fatalf("create test schema: %v", err)
 		}
 	}
