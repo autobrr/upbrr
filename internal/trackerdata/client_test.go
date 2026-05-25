@@ -154,7 +154,7 @@ func TestLookupPTPAndHDB(t *testing.T) {
 
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"PTP": {ApiUser: "user", ApiKey: "key"},
+			"PTP": {PTPAPIUser: "user", PTPAPIKey: "key"},
 			"HDB": {Username: "user", Passkey: "pass"},
 		}},
 	}

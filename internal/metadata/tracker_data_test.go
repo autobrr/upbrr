@@ -268,7 +268,7 @@ func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 			Trackers: map[string]config.TrackerConfig{
 				"ANT": {APIKey: "ant-key"},
 				"HDB": {Username: "user", Passkey: "pass"},
-				"PTP": {ApiUser: "user", ApiKey: "key"},
+				"PTP": {PTPAPIUser: "user", PTPAPIKey: "key"},
 			},
 		},
 	}

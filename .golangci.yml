@@ -46,6 +46,7 @@ linters:
     - reassign
     - recvcheck
     - rowserrcheck
+    - revive
     - sqlclosecheck
     - spancheck
     - testifylint
@@ -60,7 +61,6 @@ linters:
 
   disable:
     - containedctx
-    - revive
 
   settings:
     recvcheck:

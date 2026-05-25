@@ -179,8 +179,8 @@ type TrackersConfig struct {
 type TrackerConfig struct {
 	LinkDirName         string                 `yaml:"link_dir_name" json:"LinkDirName"`
 	APIKey              string                 `yaml:"api_key" json:"APIKey"`
-	ApiUser             string                 `yaml:"ApiUser" json:"ApiUser"`
-	ApiKey              string                 `yaml:"ApiKey" json:"ApiKey"`
+	PTPAPIUser          string                 `yaml:"ApiUser" json:"ApiUser"`
+	PTPAPIKey           string                 `yaml:"ApiKey" json:"ApiKey"`
 	Username            string                 `yaml:"username" json:"Username"`
 	Password            string                 `yaml:"password" json:"Password"`
 	Passkey             string                 `yaml:"passkey" json:"Passkey"`

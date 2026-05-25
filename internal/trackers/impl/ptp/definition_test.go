@@ -66,9 +66,9 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 			},
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:     server.URL,
-			ApiUser: "user",
-			ApiKey:  "key",
+			URL:        server.URL,
+			PTPAPIUser: "user",
+			PTPAPIKey:  "key",
 		},
 		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
 		Logger:    api.NopLogger{},

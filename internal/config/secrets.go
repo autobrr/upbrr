@@ -397,8 +397,8 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 			field *string
 		}{
 			{name: "APIKey", field: &entry.APIKey},
-			{name: "ApiKey", field: &entry.ApiKey},
-			{name: "ApiUser", field: &entry.ApiUser},
+			{name: "ApiKey", field: &entry.PTPAPIKey},
+			{name: "ApiUser", field: &entry.PTPAPIUser},
 			{name: "Username", field: &entry.Username},
 			{name: "Password", field: &entry.Password},
 			{name: "Passkey", field: &entry.Passkey},

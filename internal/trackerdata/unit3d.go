@@ -99,7 +99,7 @@ func IsUnit3DTrackerWithConfig(cfg config.Config, tracker string) bool {
 	if strings.TrimSpace(entry.Username) != "" || strings.TrimSpace(entry.Password) != "" || strings.TrimSpace(entry.Passkey) != "" {
 		return false
 	}
-	if strings.TrimSpace(entry.ApiUser) != "" || strings.TrimSpace(entry.ApiKey) != "" {
+	if strings.TrimSpace(entry.PTPAPIUser) != "" || strings.TrimSpace(entry.PTPAPIKey) != "" {
 		return false
 	}
 	return true

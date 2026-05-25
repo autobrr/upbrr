@@ -33,8 +33,8 @@ func (c *Client) lookupPTP(
 	if !ok {
 		return Result{}, nil
 	}
-	apiUser := strings.TrimSpace(cfg.ApiUser)
-	apiKey := strings.TrimSpace(cfg.ApiKey)
+	apiUser := strings.TrimSpace(cfg.PTPAPIUser)
+	apiKey := strings.TrimSpace(cfg.PTPAPIKey)
 	if apiUser == "" || apiKey == "" {
 		return Result{}, nil
 	}

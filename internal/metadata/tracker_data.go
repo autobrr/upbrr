@@ -663,7 +663,7 @@ func trackerLookupConfigured(tracker string, entry config.TrackerConfig) bool {
 		return len(strings.TrimSpace(entry.APIKey)) >= minTrackerTokenLen &&
 			len(strings.TrimSpace(entry.BhdRSSKey)) >= minTrackerTokenLen
 	case "PTP":
-		return strings.TrimSpace(entry.ApiUser) != "" && strings.TrimSpace(entry.ApiKey) != ""
+		return strings.TrimSpace(entry.PTPAPIUser) != "" && strings.TrimSpace(entry.PTPAPIKey) != ""
 	case "HDB":
 		return strings.TrimSpace(entry.Username) != "" && strings.TrimSpace(entry.Passkey) != ""
 	case "ANT":

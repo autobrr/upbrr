@@ -320,8 +320,8 @@ func convertDescription(value string) string {
 }
 
 func lookupGroupID(ctx context.Context, baseURL string, trackerConfig config.TrackerConfig, meta api.PreparedMetadata) (string, error) {
-	apiUser := strings.TrimSpace(trackerConfig.ApiUser)
-	apiKey := strings.TrimSpace(trackerConfig.ApiKey)
+	apiUser := strings.TrimSpace(trackerConfig.PTPAPIUser)
+	apiKey := strings.TrimSpace(trackerConfig.PTPAPIKey)
 	if apiUser == "" || apiKey == "" || meta.ExternalIDs.IMDBID == 0 {
 		return "", nil
 	}

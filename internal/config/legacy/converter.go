@@ -133,7 +133,7 @@ var torrentClientKeyAliases = map[string]string{
 // Convert transforms a parsed legacy config into a new Config using the
 // embedded template for structure and type information. It returns the
 // converted config and a list of warnings for skipped/unmapped items.
-func Convert(legacy *LegacyConfig, template *config.Config) (*config.Config, []string, error) {
+func Convert(legacy *Config, template *config.Config) (*config.Config, []string, error) {
 	if legacy == nil {
 		return nil, nil, errors.New("legacy config is nil")
 	}
