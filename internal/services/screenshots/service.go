@@ -8,7 +8,7 @@ import (
 	"context"
 	"fmt"
 	"image"
-	_ "image/png"
+	_ "image/png" // register PNG decoder for screenshot metadata loading
 	"io/fs"
 	"net/url"
 	"os"

@@ -2371,7 +2371,7 @@ type stubMeta struct {
 	prepared     api.PreparedMetadata
 }
 
-func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
+func (s *stubMeta) Prepare(_ context.Context, req api.Request) (api.PreparedMetadata, error) {
 	s.calls++
 	s.options = req.Options
 	meta := api.PreparedMetadata{SourcePath: req.Paths[0], Paths: req.Paths, Mode: req.Mode, Options: req.Options}
@@ -2393,28 +2393,28 @@ func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMe
 	return meta, nil
 }
 
-func (s *stubMeta) RefreshPreparedMetadata(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) RefreshPreparedMetadata(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	s.refreshCalls++
 	return meta, nil
 }
 
-func (s *stubMeta) EnrichTrackerData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) EnrichTrackerData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ApplyMediaInfoIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ApplyMediaInfoIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ApplyArrData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ApplyArrData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ResolveExternalIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ApplyMediaDetails(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
@@ -2488,7 +2488,7 @@ type stubDupes struct {
 	lastMeta     api.PreparedMetadata
 }
 
-func (s *stubDupes) Check(ctx context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
+func (s *stubDupes) Check(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
 	s.lastMeta = meta
 	s.lastTrackers = append([]string{}, trackers...)
 	return api.DupeCheckSummary{}, nil
@@ -2501,7 +2501,7 @@ type stubTrackers struct {
 	summary     api.UploadSummary
 }
 
-func (s *stubTrackers) Upload(ctx context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
+func (s *stubTrackers) Upload(_ context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
 	s.calls++
 	s.lastMeta = meta
 	if s.summary.Uploaded == 0 {

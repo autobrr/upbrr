@@ -146,7 +146,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			name:    "THR",
 			tracker: "THR",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, SourcePath: "x"},
-			setup:   func(t *testing.T, _ string, _ string) {},
+			setup:   func(_ *testing.T, _ string, _ string) {},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return thrHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
 				if len(entries) != 1 || entries[0].Name != "THR.Movie.2024.1080p.BluRay-GRP" {

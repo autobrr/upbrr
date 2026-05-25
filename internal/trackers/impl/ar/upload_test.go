@@ -44,7 +44,7 @@ func (l *captureLogger) Tracef(string, ...any) {}
 func (l *captureLogger) Debugf(string, ...any) {}
 func (l *captureLogger) Infof(string, ...any)  {}
 func (l *captureLogger) Errorf(string, ...any) {}
-func (l *captureLogger) Warnf(format string, args ...any) {
+func (l *captureLogger) Warnf(format string, _ ...any) {
 	l.warnings = append(l.warnings, strings.TrimSpace(format))
 }
 

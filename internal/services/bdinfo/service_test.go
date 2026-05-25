@@ -108,7 +108,7 @@ func TestExecuteForPlaylistUsesInProcessRunner(t *testing.T) {
 
 	var captured runRequest
 	originalRunner := runBDInfo
-	runBDInfo = func(ctx context.Context, req runRequest) (bdrunner.Result, error) {
+	runBDInfo = func(_ context.Context, req runRequest) (bdrunner.Result, error) {
 		captured = req
 		return bdrunner.Result{
 			Report:     "QUICK SUMMARY:\n********************\n",
@@ -160,7 +160,7 @@ func TestExecuteFullScanUsesFullReportMode(t *testing.T) {
 
 	var captured runRequest
 	originalRunner := runBDInfo
-	runBDInfo = func(ctx context.Context, req runRequest) (bdrunner.Result, error) {
+	runBDInfo = func(_ context.Context, req runRequest) (bdrunner.Result, error) {
 		captured = req
 		return bdrunner.Result{
 			Report:     "full report content",
@@ -208,7 +208,7 @@ func TestExecuteForPlaylistNormalizesLowercaseAndPathPlaylist(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var captured runRequest
 			originalRunner := runBDInfo
-			runBDInfo = func(ctx context.Context, req runRequest) (bdrunner.Result, error) {
+			runBDInfo = func(_ context.Context, req runRequest) (bdrunner.Result, error) {
 				captured = req
 				return bdrunner.Result{
 					Report:     "QUICK SUMMARY:\n********************\n",

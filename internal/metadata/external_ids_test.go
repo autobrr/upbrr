@@ -27,180 +27,180 @@ type fakeRepo struct {
 	trackerRuleFailures []api.TrackerRuleFailure
 }
 
-func (f *fakeRepo) GetByPath(ctx context.Context, path string) (api.FileMetadata, error) {
+func (f *fakeRepo) GetByPath(_ context.Context, path string) (api.FileMetadata, error) {
 	if strings.EqualFold(strings.TrimSpace(f.fileMetadata.Path), strings.TrimSpace(path)) {
 		return f.fileMetadata, nil
 	}
 	return api.FileMetadata{}, internalerrors.ErrNotFound
 }
 
-func (f *fakeRepo) Save(ctx context.Context, metadata api.FileMetadata) error {
+func (f *fakeRepo) Save(_ context.Context, metadata api.FileMetadata) error {
 	f.fileMetadata = metadata
 	return nil
 }
 
-func (f *fakeRepo) GetExternalIDs(ctx context.Context, path string) (api.ExternalIDs, error) {
+func (f *fakeRepo) GetExternalIDs(_ context.Context, _ string) (api.ExternalIDs, error) {
 	return api.ExternalIDs{}, internalerrors.ErrNotFound
 }
 
-func (f *fakeRepo) SaveExternalIDs(ctx context.Context, ids api.ExternalIDs) error {
+func (f *fakeRepo) SaveExternalIDs(_ context.Context, ids api.ExternalIDs) error {
 	f.ids = ids
 	return nil
 }
 
-func (f *fakeRepo) GetExternalMetadata(ctx context.Context, path string) (api.ExternalMetadata, error) {
+func (f *fakeRepo) GetExternalMetadata(_ context.Context, _ string) (api.ExternalMetadata, error) {
 	return api.ExternalMetadata{}, internalerrors.ErrNotFound
 }
 
-func (f *fakeRepo) SaveExternalMetadata(ctx context.Context, metadata api.ExternalMetadata) error {
+func (f *fakeRepo) SaveExternalMetadata(_ context.Context, metadata api.ExternalMetadata) error {
 	f.meta = metadata
 	return nil
 }
 
-func (f *fakeRepo) GetDVDMediaInfo(ctx context.Context, path string) (api.DVDMediaInfo, error) {
+func (f *fakeRepo) GetDVDMediaInfo(_ context.Context, _ string) (api.DVDMediaInfo, error) {
 	return api.DVDMediaInfo{}, internalerrors.ErrNotFound
 }
 
-func (f *fakeRepo) SaveDVDMediaInfo(ctx context.Context, info api.DVDMediaInfo) error {
+func (f *fakeRepo) SaveDVDMediaInfo(_ context.Context, _ api.DVDMediaInfo) error {
 	return nil
 }
 
-func (f *fakeRepo) GetReleaseNameOverrides(ctx context.Context, path string) (api.ReleaseNameOverrides, error) {
+func (f *fakeRepo) GetReleaseNameOverrides(_ context.Context, _ string) (api.ReleaseNameOverrides, error) {
 	return api.ReleaseNameOverrides{}, internalerrors.ErrNotFound
 }
 
-func (f *fakeRepo) SaveReleaseNameOverrides(ctx context.Context, path string, overrides api.ReleaseNameOverrides) error {
+func (f *fakeRepo) SaveReleaseNameOverrides(_ context.Context, _ string, _ api.ReleaseNameOverrides) error {
 	return nil
 }
 
-func (f *fakeRepo) DeleteReleaseNameOverrides(ctx context.Context, path string) error {
+func (f *fakeRepo) DeleteReleaseNameOverrides(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *fakeRepo) ListHistoryEntries(ctx context.Context) ([]api.HistoryEntry, error) {
+func (f *fakeRepo) ListHistoryEntries(_ context.Context) ([]api.HistoryEntry, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) ListUploadHistoryByPath(ctx context.Context, sourcePath string) ([]api.UploadRecord, error) {
+func (f *fakeRepo) ListUploadHistoryByPath(_ context.Context, _ string) ([]api.UploadRecord, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) ListPendingUploads(ctx context.Context) ([]api.UploadRecord, error) {
+func (f *fakeRepo) ListPendingUploads(_ context.Context) ([]api.UploadRecord, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) CreateUploadRecord(ctx context.Context, record api.UploadRecord) error {
+func (f *fakeRepo) CreateUploadRecord(_ context.Context, _ api.UploadRecord) error {
 	return nil
 }
 
-func (f *fakeRepo) UpdateLatestUploadRecordStatus(ctx context.Context, sourcePath string, tracker string, status string) error {
+func (f *fakeRepo) UpdateLatestUploadRecordStatus(_ context.Context, _ string, _ string, _ string) error {
 	return nil
 }
 
-func (f *fakeRepo) SaveTrackerRuleFailures(ctx context.Context, sourcePath string, tracker string, failures []api.TrackerRuleFailure) error {
+func (f *fakeRepo) SaveTrackerRuleFailures(_ context.Context, _ string, _ string, failures []api.TrackerRuleFailure) error {
 	f.trackerRuleFailures = append([]api.TrackerRuleFailure{}, failures...)
 	return nil
 }
 
-func (f *fakeRepo) ListTrackerRuleFailuresByPath(ctx context.Context, path string) ([]api.TrackerRuleFailure, error) {
+func (f *fakeRepo) ListTrackerRuleFailuresByPath(_ context.Context, _ string) ([]api.TrackerRuleFailure, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) GetTrackerTimestamp(ctx context.Context, tracker string) (time.Time, error) {
+func (f *fakeRepo) GetTrackerTimestamp(_ context.Context, _ string) (time.Time, error) {
 	return time.Time{}, internalerrors.ErrNotFound
 }
 
-func (f *fakeRepo) SaveTrackerTimestamp(ctx context.Context, timestamp api.TrackerTimestamp) error {
+func (f *fakeRepo) SaveTrackerTimestamp(_ context.Context, timestamp api.TrackerTimestamp) error {
 	f.trackerTimestamps = append(f.trackerTimestamps, timestamp)
 	return nil
 }
 
-func (f *fakeRepo) SaveTrackerMetadata(ctx context.Context, metadata api.TrackerMetadata) error {
+func (f *fakeRepo) SaveTrackerMetadata(_ context.Context, metadata api.TrackerMetadata) error {
 	f.trackerMetadata = append(f.trackerMetadata, metadata)
 	return nil
 }
 
-func (f *fakeRepo) ListTrackerMetadataByPath(ctx context.Context, path string) ([]api.TrackerMetadata, error) {
+func (f *fakeRepo) ListTrackerMetadataByPath(_ context.Context, _ string) ([]api.TrackerMetadata, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) SaveScreenshot(ctx context.Context, screenshot api.Screenshot) error {
+func (f *fakeRepo) SaveScreenshot(_ context.Context, _ api.Screenshot) error {
 	return nil
 }
 
-func (f *fakeRepo) ListScreenshotsByPath(ctx context.Context, path string) ([]api.Screenshot, error) {
+func (f *fakeRepo) ListScreenshotsByPath(_ context.Context, _ string) ([]api.Screenshot, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) DeleteScreenshot(ctx context.Context, imagePath string) error {
+func (f *fakeRepo) DeleteScreenshot(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *fakeRepo) SaveFinalSelections(ctx context.Context, path string, selections []api.ScreenshotFinalSelection) error {
+func (f *fakeRepo) SaveFinalSelections(_ context.Context, _ string, _ []api.ScreenshotFinalSelection) error {
 	return nil
 }
 
-func (f *fakeRepo) ListFinalSelections(ctx context.Context, path string) ([]api.ScreenshotFinalSelection, error) {
+func (f *fakeRepo) ListFinalSelections(_ context.Context, _ string) ([]api.ScreenshotFinalSelection, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) DeleteFinalSelection(ctx context.Context, imagePath string) error {
+func (f *fakeRepo) DeleteFinalSelection(_ context.Context, _ string) error {
 	return nil
 }
-func (f *fakeRepo) ReplaceScreenshotSlots(ctx context.Context, path string, slots []api.ScreenshotSlot) error {
+func (f *fakeRepo) ReplaceScreenshotSlots(_ context.Context, _ string, _ []api.ScreenshotSlot) error {
 	return nil
 }
-func (f *fakeRepo) ListScreenshotSlotsByPath(ctx context.Context, path string) ([]api.ScreenshotSlot, error) {
+func (f *fakeRepo) ListScreenshotSlotsByPath(_ context.Context, _ string) ([]api.ScreenshotSlot, error) {
 	return nil, nil
 }
-func (f *fakeRepo) UpsertScreenshotSlotVariants(ctx context.Context, path string, variants []api.ScreenshotSlotVariant) error {
+func (f *fakeRepo) UpsertScreenshotSlotVariants(_ context.Context, _ string, _ []api.ScreenshotSlotVariant) error {
 	return nil
 }
 
-func (f *fakeRepo) SaveUploadedImages(ctx context.Context, path string, host string, images []api.UploadedImageLink) error {
+func (f *fakeRepo) SaveUploadedImages(_ context.Context, _ string, _ string, _ []api.UploadedImageLink) error {
 	return nil
 }
 
-func (f *fakeRepo) ListUploadedImagesByPath(ctx context.Context, path string) ([]api.UploadedImageLink, error) {
+func (f *fakeRepo) ListUploadedImagesByPath(_ context.Context, _ string) ([]api.UploadedImageLink, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error {
+func (f *fakeRepo) DeleteUploadedImage(_ context.Context, _ string, _ string, _ string) error {
 	return nil
 }
 
-func (f *fakeRepo) GetDescriptionOverride(ctx context.Context, path string, groupKey string) (api.DescriptionOverride, error) {
+func (f *fakeRepo) GetDescriptionOverride(_ context.Context, _ string, _ string) (api.DescriptionOverride, error) {
 	return api.DescriptionOverride{}, internalerrors.ErrNotFound
 }
-func (f *fakeRepo) ListDescriptionOverridesByPath(ctx context.Context, path string) ([]api.DescriptionOverride, error) {
+func (f *fakeRepo) ListDescriptionOverridesByPath(_ context.Context, _ string) ([]api.DescriptionOverride, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) SaveDescriptionOverride(ctx context.Context, override api.DescriptionOverride) error {
+func (f *fakeRepo) SaveDescriptionOverride(_ context.Context, _ api.DescriptionOverride) error {
 	return nil
 }
 
-func (f *fakeRepo) DeleteDescriptionOverride(ctx context.Context, path string, groupKey string) error {
+func (f *fakeRepo) DeleteDescriptionOverride(_ context.Context, _ string, _ string) error {
 	return nil
 }
 
-func (f *fakeRepo) GetPlaylistSelection(ctx context.Context, path string) (api.PlaylistSelection, error) {
+func (f *fakeRepo) GetPlaylistSelection(_ context.Context, _ string) (api.PlaylistSelection, error) {
 	return api.PlaylistSelection{}, internalerrors.ErrNotFound
 }
 
-func (f *fakeRepo) SavePlaylistSelection(ctx context.Context, path string, playlists []string, useAll bool) error {
+func (f *fakeRepo) SavePlaylistSelection(_ context.Context, _ string, _ []string, _ bool) error {
 	return nil
 }
 
-func (f *fakeRepo) DeletePlaylistSelection(ctx context.Context, path string) error {
+func (f *fakeRepo) DeletePlaylistSelection(_ context.Context, _ string) error {
 	return nil
 }
 
-func (f *fakeRepo) ListStoredReleasePaths(ctx context.Context) ([]string, error) {
+func (f *fakeRepo) ListStoredReleasePaths(_ context.Context) ([]string, error) {
 	return nil, nil
 }
 
-func (f *fakeRepo) PurgeContentData(ctx context.Context, path string) error {
+func (f *fakeRepo) PurgeContentData(_ context.Context, _ string) error {
 	return nil
 }
 
@@ -222,7 +222,7 @@ type stubTMDB struct {
 	metaInputs    []tmdb.MetadataInput
 }
 
-func (s *stubTMDB) FindByExternalID(ctx context.Context, input tmdb.FindInput) (tmdb.FindResult, error) {
+func (s *stubTMDB) FindByExternalID(_ context.Context, input tmdb.FindInput) (tmdb.FindResult, error) {
 	s.findCalls++
 	s.findInputs = append(s.findInputs, input)
 	if s.findErr != nil {
@@ -231,7 +231,7 @@ func (s *stubTMDB) FindByExternalID(ctx context.Context, input tmdb.FindInput) (
 	return s.findResult, nil
 }
 
-func (s *stubTMDB) SearchID(ctx context.Context, input tmdb.SearchInput) (tmdb.SearchOutcome, error) {
+func (s *stubTMDB) SearchID(_ context.Context, input tmdb.SearchInput) (tmdb.SearchOutcome, error) {
 	s.searchCalls++
 	s.searchInputs = append(s.searchInputs, input)
 	if s.searchFn != nil {
@@ -243,21 +243,21 @@ func (s *stubTMDB) SearchID(ctx context.Context, input tmdb.SearchInput) (tmdb.S
 	return s.searchOutcome, nil
 }
 
-func (s *stubTMDB) FetchMetadata(ctx context.Context, input tmdb.MetadataInput) (tmdb.MetadataResult, error) {
+func (s *stubTMDB) FetchMetadata(_ context.Context, input tmdb.MetadataInput) (tmdb.MetadataResult, error) {
 	s.metaCalls++
 	s.metaInputs = append(s.metaInputs, input)
 	return s.metadata, nil
 }
 
-func (s *stubTMDB) GetEpisodeDetails(ctx context.Context, tmdbID, season, episode int) (tmdb.EpisodeDetails, error) {
+func (s *stubTMDB) GetEpisodeDetails(_ context.Context, tmdbID, season, episode int) (tmdb.EpisodeDetails, error) {
 	return tmdb.EpisodeDetails{}, nil
 }
 
-func (s *stubTMDB) GetSeasonDetails(ctx context.Context, tmdbID, season int) (tmdb.SeasonDetails, error) {
+func (s *stubTMDB) GetSeasonDetails(_ context.Context, tmdbID, season int) (tmdb.SeasonDetails, error) {
 	return tmdb.SeasonDetails{}, nil
 }
 
-func (s *stubTMDB) DailyToSeasonEpisode(ctx context.Context, tmdbID int, date time.Time) (int, int, error) {
+func (s *stubTMDB) DailyToSeasonEpisode(_ context.Context, tmdbID int, date time.Time) (int, int, error) {
 	return s.dailySeason, s.dailyEpisode, s.dailyErr
 }
 
@@ -271,7 +271,7 @@ type stubIMDB struct {
 	lastManualLanguage string
 }
 
-func (s *stubIMDB) Search(ctx context.Context, input imdb.SearchInput) (imdb.SearchResult, error) {
+func (s *stubIMDB) Search(_ context.Context, input imdb.SearchInput) (imdb.SearchResult, error) {
 	s.searchCalls++
 	s.searchInputs = append(s.searchInputs, input)
 	if s.searchFn != nil {
@@ -280,7 +280,7 @@ func (s *stubIMDB) Search(ctx context.Context, input imdb.SearchInput) (imdb.Sea
 	return s.searchResult, nil
 }
 
-func (s *stubIMDB) GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (imdb.Info, error) {
+func (s *stubIMDB) GetInfo(_ context.Context, imdbID string, manualLanguage string, debug bool) (imdb.Info, error) {
 	s.infoCalls++
 	s.lastManualLanguage = manualLanguage
 	return s.info, nil
@@ -306,7 +306,7 @@ type stubTVDB struct {
 	lastEpisodeQuery  tvdb.EpisodeQuery
 }
 
-func (s *stubTVDB) GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
+func (s *stubTVDB) GetByExternalID(_ context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
 	s.calls++
 	s.tvMovieCalls = append(s.tvMovieCalls, tvMovie)
 	if tvMovie && s.idWhenTVMovie != 0 {
@@ -315,7 +315,7 @@ func (s *stubTVDB) GetByExternalID(ctx context.Context, imdbID, tmdbID string, t
 	return s.id, s.name, nil
 }
 
-func (s *stubTVDB) GetSeriesMetadata(ctx context.Context, seriesID int) (tvdb.SeriesMetadata, error) {
+func (s *stubTVDB) GetSeriesMetadata(_ context.Context, seriesID int) (tvdb.SeriesMetadata, error) {
 	if s.seriesMetadata.TVDBID != 0 || s.seriesMetadata.Name != "" {
 		return s.seriesMetadata, nil
 	}
@@ -327,7 +327,7 @@ func (s *stubTVDB) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID i
 	return s.GetSeriesMetadata(ctx, seriesID)
 }
 
-func (s *stubTVDB) GetEpisodes(ctx context.Context, seriesID int, query tvdb.EpisodeQuery) (tvdb.EpisodesData, string, error) {
+func (s *stubTVDB) GetEpisodes(_ context.Context, seriesID int, query tvdb.EpisodeQuery) (tvdb.EpisodesData, string, error) {
 	s.episodeCalls++
 	s.lastEpisodeQuery = query
 	if s.episodeErr != nil {
@@ -341,7 +341,7 @@ func (s *stubTVDB) GetEpisodesWithLanguage(ctx context.Context, seriesID int, qu
 	return s.GetEpisodes(ctx, seriesID, query)
 }
 
-func (s *stubTVDB) GetEpisodeTranslation(ctx context.Context, episodeID int, language string) (tvdb.EpisodeTranslation, error) {
+func (s *stubTVDB) GetEpisodeTranslation(_ context.Context, episodeID int, language string) (tvdb.EpisodeTranslation, error) {
 	s.episodeTransCalls = append(s.episodeTransCalls, episodeID)
 	if s.episodeTransErr != nil {
 		return tvdb.EpisodeTranslation{}, s.episodeTransErr
@@ -355,17 +355,17 @@ type stubTVmaze struct {
 	inputs []tvmaze.SearchInput
 }
 
-func (s *stubTVmaze) Search(ctx context.Context, input tvmaze.SearchInput) (tvmaze.SearchResult, error) {
+func (s *stubTVmaze) Search(_ context.Context, input tvmaze.SearchInput) (tvmaze.SearchResult, error) {
 	s.calls++
 	s.inputs = append(s.inputs, input)
 	return s.result, nil
 }
 
-func (s *stubTVmaze) GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episode int, lookup tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error) {
+func (s *stubTVmaze) GetEpisodeByNumber(_ context.Context, tvmazeID, season, episode int, lookup tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error) {
 	return nil, nil
 }
 
-func (s *stubTVmaze) GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate string) (*tvmaze.EpisodeData, error) {
+func (s *stubTVmaze) GetEpisodeByDate(_ context.Context, tvmazeID int, airdate string) (*tvmaze.EpisodeData, error) {
 	return nil, nil
 }
 

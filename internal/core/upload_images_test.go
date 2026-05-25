@@ -33,7 +33,7 @@ type stubImageUploadCall struct {
 	images     []api.ScreenshotImage
 }
 
-func (s *stubImageHosting) ListCandidates(ctx context.Context, meta api.PreparedMetadata) ([]api.ScreenshotImage, error) {
+func (s *stubImageHosting) ListCandidates(_ context.Context, meta api.PreparedMetadata) ([]api.ScreenshotImage, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -171,7 +171,7 @@ func TestUploadImagesUploadsApplicableTrackerHosts(t *testing.T) {
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	imageService := &stubImageHosting{
-		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
 		},
 	}
@@ -225,7 +225,7 @@ func TestUploadImagesUsesConfiguredHostPriorityWhenSelectedHostIsNotApproved(t *
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	imageService := &stubImageHosting{
-		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
 		},
 	}
@@ -273,7 +273,7 @@ func TestUploadImagesUsesSelectedHostWhenApprovedForTracker(t *testing.T) {
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	imageService := &stubImageHosting{
-		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
 		},
 	}
@@ -318,7 +318,7 @@ func TestUploadImagesFiltersCachedBlockedTrackers(t *testing.T) {
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	imageService := &stubImageHosting{
-		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
 		},
 	}
@@ -374,7 +374,7 @@ func TestUploadImagesFiltersCachedMatchedTrackers(t *testing.T) {
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	imageService := &stubImageHosting{
-		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
 		},
 	}
@@ -427,7 +427,7 @@ func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
 	var startedMu sync.Mutex
 	started := 0
 	imageService := &stubImageHosting{
-		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			startedMu.Lock()
 			started++
 			if started == 2 {
@@ -480,7 +480,7 @@ func TestUploadImagesReturnsHostFailuresWithSuccessfulLinks(t *testing.T) {
 
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	imageService := &stubImageHosting{
-		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			switch host {
 			case "ptpimg", "pixhost":
 				return nil, fmt.Errorf("%s unavailable", host)
@@ -542,7 +542,7 @@ func TestUploadImagesFallsBackWhenSelectedHostFails(t *testing.T) {
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	var calls []string
 	imageService := &stubImageHosting{
-		uploadFn: func(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			calls = append(calls, host)
 			if host == "imgbb" {
 				return nil, errors.New("imgbb unavailable")

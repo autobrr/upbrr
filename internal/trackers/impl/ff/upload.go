@@ -67,7 +67,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
 	commonhttp.ApplyCookies(httpReq, cookies)
-	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
+	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: FF upload request: %w", err)
@@ -202,7 +202,7 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "upbrr")
-	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
+	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

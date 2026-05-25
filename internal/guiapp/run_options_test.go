@@ -99,7 +99,7 @@ func (c *closeCounterCore) ListUploadedImages(context.Context, api.Request) ([]a
 	return nil, nil
 }
 
-func (c *closeCounterCore) UploadImages(ctx context.Context, req api.Request, host string, screenshots []api.ScreenshotImage) (api.UploadImagesResult, error) {
+func (c *closeCounterCore) UploadImages(_ context.Context, _ api.Request, host string, screenshots []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	return api.UploadImagesResult{}, nil
 }
 

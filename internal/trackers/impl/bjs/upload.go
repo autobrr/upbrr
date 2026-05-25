@@ -758,7 +758,7 @@ func resolvePoster(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveScreens(meta api.PreparedMetadata) []string {
+func resolveScreens(_ api.PreparedMetadata) []string {
 	return nil
 }
 

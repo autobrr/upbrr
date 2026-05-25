@@ -9,9 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
+	_ "image/gif"  // register GIF decoder for tracker images
+	_ "image/jpeg" // register JPEG decoder for tracker images
+	_ "image/png"  // register PNG decoder for tracker images
 	"io"
 	"net/http"
 	"net/url"

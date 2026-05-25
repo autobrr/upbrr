@@ -22,7 +22,7 @@ type testSearchHandler struct {
 	err     error
 }
 
-func (h testSearchHandler) Search(ctx context.Context, meta api.PreparedMetadata, tracker string) ([]api.DupeEntry, []string, error) {
+func (h testSearchHandler) Search(ctx context.Context, _ api.PreparedMetadata, _ string) ([]api.DupeEntry, []string, error) {
 	if h.delay > 0 {
 		select {
 		case <-ctx.Done():

@@ -20,7 +20,7 @@ type exportLoadRepo struct {
 	err error
 }
 
-func (r *exportLoadRepo) LoadFullConfig(ctx context.Context, dest interface{}) error {
+func (r *exportLoadRepo) LoadFullConfig(_ context.Context, dest interface{}) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -497,7 +497,7 @@ type secretRoundTripRepo struct {
 	saved *Config
 }
 
-func (r *secretRoundTripRepo) SaveFullConfig(ctx context.Context, cfg interface{}) error {
+func (r *secretRoundTripRepo) SaveFullConfig(_ context.Context, cfg interface{}) error {
 	typed, ok := cfg.(*Config)
 	if !ok {
 		return errors.New("unexpected config payload type")
@@ -506,7 +506,7 @@ func (r *secretRoundTripRepo) SaveFullConfig(ctx context.Context, cfg interface{
 	return nil
 }
 
-func (r *secretRoundTripRepo) LoadFullConfig(ctx context.Context, dest interface{}) error {
+func (r *secretRoundTripRepo) LoadFullConfig(_ context.Context, dest interface{}) error {
 	if r.saved == nil {
 		return errors.New("no saved config")
 	}

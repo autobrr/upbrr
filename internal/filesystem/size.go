@@ -76,7 +76,7 @@ func discTreeSize(ctx context.Context, root string) (int64, error) {
 	}
 
 	var total int64
-	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if os.IsNotExist(walkErr) {
 				return nil

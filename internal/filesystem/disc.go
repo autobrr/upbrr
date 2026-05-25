@@ -37,7 +37,7 @@ func DetectDiscType(ctx context.Context, root string) (string, error) {
 	}
 
 	discType := ""
-	err = filepath.WalkDir(trimmed, func(path string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(trimmed, func(_ string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}

@@ -102,11 +102,11 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 			return "", err
 		}
 		if bdinfo != nil {
-			if filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo); err == nil {
-				return filePath, nil
-			} else {
+			filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo)
+			if err != nil {
 				return "", err
 			}
+			return filePath, nil
 		}
 	}
 

@@ -36,11 +36,11 @@ type stubTrackerLookup struct {
 func (s *stubTrackerLookup) Lookup(
 	ctx context.Context,
 	tracker string,
-	trackerID string,
-	meta api.PreparedMetadata,
-	searchFileName string,
-	onlyID bool,
-	keepImages bool,
+	_ string,
+	_ api.PreparedMetadata,
+	_ string,
+	_ bool,
+	_ bool,
 ) (trackerdata.Result, error) {
 	s.mu.Lock()
 	s.calls = append(s.calls, tracker)
@@ -538,7 +538,7 @@ func TestLoadBTNClaimedTitlesUsesFreshCacheWithin48Hours(t *testing.T) {
 	}
 
 	clientCalls := 0
-	restore := swapDefaultTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	restore := swapDefaultTransport(roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
 		clientCalls++
 		return nil, context.Canceled
 	}))

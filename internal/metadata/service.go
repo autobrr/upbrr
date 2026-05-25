@@ -951,9 +951,7 @@ func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Requ
 		}
 		return outputPath, false, nil
 	case len(missing) > 0 && len(missing) < len(selected):
-		if req.Options.InteractionMode == api.InteractionModeUnattended || req.ConfirmBDMVRescan {
-			// proceed to rescan
-		} else {
+		if req.Options.InteractionMode != api.InteractionModeUnattended && !req.ConfirmBDMVRescan {
 			return "", false, &api.BDMVRescanRequiredError{
 				SourcePath:        req.Paths[0],
 				SelectedPlaylists: append([]string(nil), selected...),
