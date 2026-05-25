@@ -6,7 +6,6 @@ package bhd
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -54,10 +53,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		}
 	}
 
-	description, err := buildDescription(req.Meta, req.AppConfig, assets)
-	if err != nil {
-		return trackers.DescriptionResult{}, fmt.Errorf("trackers: BHD description build: %w", err)
-	}
+	description := buildDescription(req.Meta, req.AppConfig, assets)
 	return trackers.DescriptionResult{
 		Group:       "bhd",
 		Description: description,

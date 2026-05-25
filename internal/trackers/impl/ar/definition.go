@@ -49,10 +49,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		}
 	}
 
-	description, err := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
-	if err != nil {
-		return trackers.DescriptionResult{}, err
-	}
+	description := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
 	return trackers.DescriptionResult{
 		Group:       "ar",
 		Description: strings.TrimSpace(description),

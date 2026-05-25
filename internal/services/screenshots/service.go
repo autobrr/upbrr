@@ -699,7 +699,7 @@ func listExistingScreens(tmpDir, base string) []api.ScreenshotImage {
 		if err != nil {
 			continue
 		}
-		ts, _ := parseScreenshotTimestamp(match, base)
+		ts := parseScreenshotTimestamp(match, base)
 		results = append(results, api.ScreenshotImage{
 			Index:            parseScreenshotIndex(match, base),
 			TimestampSeconds: ts,
@@ -794,7 +794,7 @@ func buildScreenshotImage(pathValue string, index int) (api.ScreenshotImage, boo
 		return api.ScreenshotImage{}, false
 	}
 	basePrefix := screenshotBaseFromFilename(pathValue)
-	ts, _ := parseScreenshotTimestamp(pathValue, basePrefix)
+	ts := parseScreenshotTimestamp(pathValue, basePrefix)
 	img := api.ScreenshotImage{
 		Index:            index,
 		TimestampSeconds: ts,
@@ -1028,7 +1028,7 @@ func buildScreenshotFilename(base string, index int, timestampSeconds float64, p
 	return fmt.Sprintf("%s-%02d-%s.png", base, index, stamp)
 }
 
-func parseScreenshotTimestamp(path string, base string) (float64, bool) {
+func parseScreenshotTimestamp(path string, base string) float64 {
 	name := filepath.Base(path)
 	name = strings.TrimSuffix(name, filepath.Ext(name))
 	if base != "" {
@@ -1049,9 +1049,9 @@ func parseScreenshotTimestamp(path string, base string) (float64, bool) {
 		if err != nil {
 			continue
 		}
-		return float64(parsed) / 1000.0, true
+		return float64(parsed) / 1000.0
 	}
-	return 0, false
+	return 0
 }
 
 func screenshotBaseFromFilename(path string) string {

@@ -6,7 +6,6 @@ package ptp
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -49,10 +48,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		assets = trackers.DescriptionAssets{}
 	}
 
-	description, err := buildDescription(req.Meta, req.TrackerConfig, req.AppConfig, assets)
-	if err != nil {
-		return trackers.DescriptionResult{}, fmt.Errorf("trackers: PTP description build: %w", err)
-	}
+	description := buildDescription(req.Meta, req.TrackerConfig, req.AppConfig, assets)
 	if strings.TrimSpace(description) == "" && req.Logger != nil {
 		req.Logger.Infof("trackers: PTP preparation description empty")
 	}

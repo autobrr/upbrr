@@ -175,10 +175,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, req.TrackerConfig, req.AppConfig, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, req.TrackerConfig, req.AppConfig, assets)
 	groupID, err := lookupGroupID(ctx, baseURL, req.TrackerConfig, req.Meta)
 	if err != nil {
 		return uploadState{}, err
@@ -214,7 +211,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) string {
 	baseDescription := strings.TrimSpace(assets.Description)
 	if baseDescription != "" {
 		report := bbcode.CleanPTPDescription(baseDescription, meta.DiscType)
@@ -234,7 +231,7 @@ func buildDescription(meta api.PreparedMetadata, trackerConfig config.TrackerCon
 	if shots := buildScreenshotSection(meta, assets.Screenshots); shots != "" {
 		sections = append(sections, shots)
 	}
-	return strings.TrimSpace(strings.Join(sections, "\n\n")), nil
+	return strings.TrimSpace(strings.Join(sections, "\n\n"))
 }
 
 func buildMediaSection(meta api.PreparedMetadata, dbPath string) (string, error) {

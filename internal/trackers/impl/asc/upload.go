@@ -154,10 +154,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		assets = trackers.DescriptionAssets{}
 	}
 
-	description, err := buildDescription(ctx, req.Meta, req.AppConfig, assets, req.TrackerConfig.CustomLayout)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(ctx, req.Meta, req.AppConfig, assets, req.TrackerConfig.CustomLayout)
 
 	fields, releaseName := buildPayload(req.Meta, req.TrackerConfig, assets, description)
 	state := uploadState{

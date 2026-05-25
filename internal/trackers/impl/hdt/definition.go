@@ -5,7 +5,6 @@ package hdt
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -34,9 +33,6 @@ func (definition) BuildDescription(ctx context.Context, req trackers.Description
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return trackers.DescriptionResult{}, fmt.Errorf("trackers: HDT description build: %w", err)
-	}
+	description := buildDescription(req.Meta, assets)
 	return trackers.DescriptionResult{Group: "hdt", Description: description}, nil
 }

@@ -150,7 +150,7 @@ func parseDescriptionImageSlots(sourcePath string, description string) []api.Scr
 			rawURL := strings.TrimSpace(body[urlMatch[0]:urlMatch[1]])
 			parsed = append(parsed, parsedDescriptionSlot{
 				start: blockStart + urlMatch[0],
-				slot:  newDescriptionSlot(sourcePath, rawURL, rawURL, rawURL, screenshotSectionComparison, true),
+				slot:  newDescriptionSlot(sourcePath, rawURL, rawURL, screenshotSectionComparison, true),
 			})
 		}
 	}
@@ -213,14 +213,13 @@ func parseImageMatchesInSegment(sourcePath string, value string, offset int, sec
 			continue
 		}
 		covered = append(covered, [2]int{match[0], match[1]})
-		webURL := strings.TrimSpace(value[match[2]:match[3]])
 		imgURL := strings.TrimSpace(value[match[4]:match[5]])
 		if imgURL == "" {
 			continue
 		}
 		results = append(results, parsedDescriptionSlot{
 			start: offset + match[0],
-			slot:  newDescriptionSlot(sourcePath, imgURL, imgURL, webURL, sectionKind, true),
+			slot:  newDescriptionSlot(sourcePath, imgURL, imgURL, sectionKind, true),
 		})
 	}
 
@@ -237,7 +236,7 @@ func parseImageMatchesInSegment(sourcePath string, value string, offset int, sec
 		}
 		results = append(results, parsedDescriptionSlot{
 			start: offset + match[0],
-			slot:  newDescriptionSlot(sourcePath, imgURL, imgURL, imgURL, sectionKind, true),
+			slot:  newDescriptionSlot(sourcePath, imgURL, imgURL, sectionKind, true),
 		})
 	}
 
@@ -245,7 +244,7 @@ func parseImageMatchesInSegment(sourcePath string, value string, offset int, sec
 	return results
 }
 
-func newDescriptionSlot(sourcePath string, originalURL string, rawURL string, webURL string, sectionKind string, fromDescription bool) api.ScreenshotSlot {
+func newDescriptionSlot(sourcePath string, originalURL string, rawURL string, sectionKind string, fromDescription bool) api.ScreenshotSlot {
 	normalizedOriginal := strings.TrimSpace(originalURL)
 	host := strings.TrimSpace(imagehost.ExtractHost(rawURL))
 	return api.ScreenshotSlot{

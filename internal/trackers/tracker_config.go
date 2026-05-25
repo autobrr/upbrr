@@ -9,29 +9,29 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 )
 
-func trackerConfigFor(cfg config.Config, tracker string) (config.TrackerConfig, bool) {
+func trackerConfigFor(cfg config.Config, tracker string) config.TrackerConfig {
 	if cfg.Trackers.Trackers == nil {
-		return config.TrackerConfig{}, false
+		return config.TrackerConfig{}
 	}
 	key := strings.TrimSpace(tracker)
 	if key == "" {
-		return config.TrackerConfig{}, false
+		return config.TrackerConfig{}
 	}
 	if value, ok := cfg.Trackers.Trackers[key]; ok {
-		return value, true
+		return value
 	}
 	lower := strings.ToLower(key)
 	upper := strings.ToUpper(key)
 	if value, ok := cfg.Trackers.Trackers[lower]; ok {
-		return value, true
+		return value
 	}
 	if value, ok := cfg.Trackers.Trackers[upper]; ok {
-		return value, true
+		return value
 	}
 	for name, value := range cfg.Trackers.Trackers {
 		if strings.EqualFold(name, key) {
-			return value, true
+			return value
 		}
 	}
-	return config.TrackerConfig{}, false
+	return config.TrackerConfig{}
 }

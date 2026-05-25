@@ -50,6 +50,7 @@ linters:
     - spancheck
     - testifylint
     - unconvert
+    - unparam
     - usestdlibvars
     - usetesting
     - unused

@@ -209,7 +209,7 @@ func newUploadContext(ctx context.Context, req trackers.UploadRequest) (uploadCo
 		apiURL:    resolveBTNAPIURL(req.TrackerConfig),
 		client:    client,
 	}
-	_ = loadCookies(ctx, client, req.AppConfig.MainSettings.DBPath, baseURL)
+	loadCookies(ctx, client, req.AppConfig.MainSettings.DBPath, baseURL)
 	return uploadCtx, nil
 }
 
@@ -576,24 +576,23 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	return os.WriteFile(outputPath, body, 0o600)
 }
 
-func loadCookies(ctx context.Context, client *http.Client, dbPath string, baseURL string) error {
+func loadCookies(ctx context.Context, client *http.Client, dbPath string, baseURL string) {
 	if client == nil || client.Jar == nil {
-		return nil
+		return
 	}
 	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "BTN")
 	if err != nil {
-		return nil
+		return
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
-		return nil
+		return
 	}
 	jarCookies := make([]*http.Cookie, 0, len(values))
 	for name, value := range values {
 		jarCookies = append(jarCookies, &http.Cookie{Name: name, Value: value, Domain: parsed.Hostname(), Path: "/"})
 	}
 	client.Jar.SetCookies(parsed, jarCookies)
-	return nil
 }
 
 func resolve2FACode(otpURI string) (string, error) {

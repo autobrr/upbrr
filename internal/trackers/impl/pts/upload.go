@@ -137,10 +137,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 
 	state := uploadState{
 		torrentPath:   torrentPath,
@@ -166,7 +163,7 @@ func buildPayload(meta api.PreparedMetadata, description string) map[string]stri
 	}
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 4)
 	if info := commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)); strings.TrimSpace(info) != "" {
 		parts = append(parts, info)
@@ -178,7 +175,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 		parts = append(parts, shots)
 	}
 	parts = append(parts, "[right][url=https://github.com/autobrr/upbrr][size=1]upbrr[/size][/url][/right]")
-	return bbcode.FinalizeTrackerDescription("PTS", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("PTS", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {

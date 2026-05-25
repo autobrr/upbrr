@@ -433,7 +433,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 			}
 
 			// Extract m2ts files from selected playlist(s)
-			m2tsFiles, mainFile, err := s.extractM2TSFromPlaylist(ctx, playlistPath, selectedPlaylistNames)
+			m2tsFiles, mainFile, err := s.extractM2TSFromPlaylist(playlistPath, selectedPlaylistNames)
 			if err != nil {
 				s.logger.Debugf("metadata: failed to extract m2ts from playlist: %v", err)
 				// Fall back to regular disc handling
@@ -702,7 +702,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 
 // extractM2TSFromPlaylist parses selected playlist files and extracts m2ts file references.
 // Returns all m2ts files and the largest one to use as VideoPath.
-func (s *Service) extractM2TSFromPlaylist(ctx context.Context, bdmvPath string, playlistFiles []string) ([]string, string, error) {
+func (s *Service) extractM2TSFromPlaylist(bdmvPath string, playlistFiles []string) ([]string, string, error) {
 	playlistDir := filepath.Join(bdmvPath, "PLAYLIST")
 	if _, err := os.Stat(playlistDir); err != nil {
 		return nil, "", fmt.Errorf("playlist directory not found: %w", err)
@@ -834,7 +834,7 @@ func writeSelectedPlaylistSummaries(tmpDir string, fullReport string, selected [
 	return paths.BDMVSummaryPath(tmpDir, reports[0].Playlist), nil
 }
 
-func writeCachedSelectedPlaylistSummaries(tmpDir string, cache bdmvSummaryCache, selected []string) (string, error) {
+func writeCachedSelectedPlaylistSummaries(cache bdmvSummaryCache, selected []string) (string, error) {
 	if len(selected) == 0 {
 		return "", errors.New("no selected playlists")
 	}
@@ -945,7 +945,7 @@ func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Requ
 	missing := missingCachedPlaylists(cache, selected)
 	switch {
 	case len(selected) > 0 && len(missing) == 0:
-		outputPath, err := writeCachedSelectedPlaylistSummaries(tmpDir, cache, selected)
+		outputPath, err := writeCachedSelectedPlaylistSummaries(cache, selected)
 		if err != nil {
 			return "", false, fmt.Errorf("metadata: refresh cached bdmv summaries: %w", err)
 		}

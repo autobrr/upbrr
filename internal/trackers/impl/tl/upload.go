@@ -122,10 +122,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, req.TrackerConfig, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 
 	releaseName := resolveName(req.Meta)
 	state := uploadState{
@@ -214,8 +211,7 @@ func cookieClient(ctx context.Context, dbPath string) (*http.Client, error) {
 	return client, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, assets trackers.DescriptionAssets) (string, error) {
-	_ = cfg
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 6)
 	if logo := strings.TrimSpace(meta.ExternalMetadata.TMDB.Logo); logo != "" {
 		parts = append(parts, `<center><img src="`+logo+`" style="max-width: 300px;"></center>`)
@@ -236,7 +232,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 		parts = append(parts, shots)
 	}
 	parts = append(parts, `<div style="text-align: right; font-size: 11px;"><a href="https://github.com/autobrr/upbrr">upbrr</a></div>`)
-	return bbcode.FinalizeTrackerDescription("TL", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("TL", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func resolveCategory(meta api.PreparedMetadata) string {

@@ -289,7 +289,7 @@ func matchingPreparationDescriptionGroupKeys(groups []api.DescriptionBuilderGrou
 		if key == "" {
 			continue
 		}
-		if !descriptionGroupMatchesTracker(group, canonicalGroup, normalizedTracker) {
+		if !descriptionGroupMatchesTracker(group, canonicalGroup) {
 			continue
 		}
 		_, host, usageScope := parsePreparationDescriptionGroupKey(key)
@@ -319,7 +319,7 @@ func matchingPreparationDescriptionGroupKeys(groups []api.DescriptionBuilderGrou
 	return keys
 }
 
-func descriptionGroupMatchesTracker(group api.DescriptionBuilderGroup, canonicalGroup string, normalizedTracker string) bool {
+func descriptionGroupMatchesTracker(group api.DescriptionBuilderGroup, canonicalGroup string) bool {
 	baseGroup, _, _ := parsePreparationDescriptionGroupKey(group.GroupKey)
 	return strings.EqualFold(strings.TrimSpace(baseGroup), canonicalGroup)
 }

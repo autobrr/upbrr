@@ -150,10 +150,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(assets)
 	name := resolveName(req.Meta, questionnaireAnswers(req.Meta))
 	fields := map[string]string{
 		"name":  name,
@@ -278,8 +275,8 @@ func downloadPersonalizedTorrent(ctx context.Context, client *http.Client, id st
 	return os.WriteFile(outputPath, body, 0o600)
 }
 
-func buildDescription(_ api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	return bbcode.FinalizeTrackerDescription("FL", strings.TrimSpace(assets.Description)), nil
+func buildDescription(assets trackers.DescriptionAssets) string {
+	return bbcode.FinalizeTrackerDescription("FL", strings.TrimSpace(assets.Description))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata, computedName string) *api.TrackerQuestionnaire {

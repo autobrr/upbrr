@@ -164,10 +164,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 	fields := buildFields(req.Meta, description, auth, questionnaireAnswers(req.Meta))
 	state := uploadState{
 		torrentPath:   torrentPath,
@@ -293,7 +290,7 @@ func validateFields(fields map[string]string) string {
 	return ""
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 5)
 	if logo := resolveLogo(meta); logo != "" {
 		parts = append(parts, "[center][img]"+logo+"[/img][/center]")
@@ -304,7 +301,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	if strings.TrimSpace(assets.Description) != "" {
 		parts = append(parts, strings.TrimSpace(assets.Description))
 	}
-	return bbcode.FinalizeTrackerDescription("BJS", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("BJS", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {

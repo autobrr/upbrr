@@ -41,7 +41,7 @@ func (h thrHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		if page > 0 {
 			params.Set("page", strconv.Itoa(page))
 		}
-		resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/browse.php", params, nil, cookies)
+		resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/browse.php", params, cookies)
 		if err != nil || !resp.ok() {
 			return nil, []string{noteSkip("THR search failed")}, nil
 		}

@@ -247,9 +247,7 @@ func run() error {
 	}
 
 	// Handle BDMV playlist selection before upload
-	if err := handleBDMVPlaylistSelection(ctx, paths, coreSvc, cfg, logger); err != nil {
-		return exitError(1, err)
-	}
+	handleBDMVPlaylistSelection(ctx, paths, coreSvc, cfg, logger)
 
 	if opts.UploadOnly {
 		uploadReq, err := buildCLIRequest(opts, visitedFlags, paths, screens)
@@ -618,9 +616,9 @@ func deleteCLIStoredReleases(ctx context.Context, coreSvc api.Core, paths []stri
 	}
 	return nil
 }
-func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc api.Core, cfg config.Config, logger api.Logger) error {
+func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc api.Core, cfg config.Config, logger api.Logger) {
 	if len(paths) == 0 {
-		return nil
+		return
 	}
 
 	for _, path := range paths {
@@ -775,8 +773,6 @@ func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc ap
 			}
 		}
 	}
-
-	return nil
 }
 
 func formatDuration(seconds float64) string {

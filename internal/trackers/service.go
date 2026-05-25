@@ -318,7 +318,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 				continue
 			}
 
-			trackerCfg, _ := trackerConfigFor(s.cfg, tracker)
+			trackerCfg := trackerConfigFor(s.cfg, tracker)
 			trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
 			resolution, ok := preflight[strings.ToUpper(strings.TrimSpace(tracker))]
 			if !ok {
@@ -442,7 +442,7 @@ func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.P
 		if _, ok := s.registry.Lookup(tracker); !ok {
 			continue
 		}
-		trackerCfg, _ := trackerConfigFor(s.cfg, tracker)
+		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
 		targetKey := ""
 		policy, err := resolveImageHostPolicy(tracker, trackerCfg, meta.ImageHostOverrides)
@@ -590,7 +590,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 			placeholder("", tracker, "no description builder")
 			continue
 		}
-		trackerCfg, _ := trackerConfigFor(s.cfg, tracker)
+		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
 		resolution, err := ensureDescriptionImageHostWithData(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger, preloaded)
 		if err != nil {
@@ -730,7 +730,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			continue
 		}
 
-		trackerCfg, _ := trackerConfigFor(s.cfg, tracker)
+		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
 		resolution, err := ensureDescriptionImageHostWithData(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger, preloaded)
 		if err != nil {

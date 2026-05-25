@@ -140,10 +140,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(assets)
 	groupID, _ := lookupGroupID(ctx, req.TrackerConfig.APIKey, req.Meta)
 	answers := questionnaireAnswers(req.Meta)
 	fields := buildFields(req.Meta, req.TrackerConfig, description, groupID, answers)
@@ -286,8 +283,8 @@ func validateFields(groupID string, fields map[string]string) string {
 	return ""
 }
 
-func buildDescription(_ api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	return bbcode.FinalizeTrackerDescription("GPW", strings.TrimSpace(assets.Description)), nil
+func buildDescription(assets trackers.DescriptionAssets) string {
+	return bbcode.FinalizeTrackerDescription("GPW", strings.TrimSpace(assets.Description))
 }
 
 func extractTorrentID(value any) string {

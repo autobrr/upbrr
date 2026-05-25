@@ -167,10 +167,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		descriptionAssets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, descriptionAssets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, descriptionAssets)
 
 	answers := questionnaireAnswers(req.Meta)
 	typeName, typeID := resolveType(req.Meta, answers)
@@ -232,15 +229,15 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	base := strings.TrimSpace(antDefaultSignaturePattern.ReplaceAllString(assets.Description, ""))
 	if base == "" {
-		return "", nil
+		return ""
 	}
 
 	report := bbcode.CleanPTPDescription(base, meta.DiscType)
 	if len(report.Images) > 0 {
-		return "", nil
+		return ""
 	}
 
 	body := strings.TrimSpace(report.Description)
@@ -250,7 +247,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 
 	finalized := bbcode.FinalizeTrackerDescription("ANT", body)
 	finalized = strings.TrimSpace(antEmptyURLPattern.ReplaceAllString(finalized, ""))
-	return finalized, nil
+	return finalized
 }
 
 func resolveMediaFields(meta api.PreparedMetadata, dbPath string) (map[string]string, error) {

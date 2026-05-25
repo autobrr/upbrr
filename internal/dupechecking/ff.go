@@ -33,7 +33,7 @@ func (h ffHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 	if meta.Anime {
 		query = firstNonEmpty(meta.Release.Title, meta.ReleaseName)
 	}
-	resp, root, err := doHTMLGet(ctx, h.http, trackerBaseURL(h.cfg, "FF", "https://www.funfile.org")+"/torrents.php", url.Values{"searchstr": {query}}, nil, cookies)
+	resp, root, err := doHTMLGet(ctx, h.http, trackerBaseURL(h.cfg, "FF", "https://www.funfile.org")+"/torrents.php", url.Values{"searchstr": {query}}, cookies)
 	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("FF search failed")}, nil
 	}
@@ -54,7 +54,7 @@ func (h ffHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 			continue
 		}
 		seen[groupLink] = struct{}{}
-		groupResp, groupRoot, err := doHTMLGet(ctx, h.http, groupLink, nil, nil, cookies)
+		groupResp, groupRoot, err := doHTMLGet(ctx, h.http, groupLink, nil, cookies)
 		if err != nil || !groupResp.ok() {
 			continue
 		}

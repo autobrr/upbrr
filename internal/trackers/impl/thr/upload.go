@@ -127,10 +127,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, req.TrackerConfig, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 	releaseName := resolveName(req.Meta)
 	if override := strings.TrimSpace(questionnaireAnswers(req.Meta)["name_override"]); override != "" {
 		releaseName = override
@@ -186,8 +183,7 @@ func login(ctx context.Context, cfg config.TrackerConfig) (*http.Client, error) 
 	return client, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, assets trackers.DescriptionAssets) (string, error) {
-	_ = cfg
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := []string{
 		"[quote=Info]",
 		"Name: " + strings.TrimSpace(firstNonEmpty(meta.Release.Title, meta.ReleaseName)),
@@ -215,7 +211,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 		}
 	}
 	parts = append(parts, `[size=2][url=https://www.torrenthr.org/forums.php?action=viewtopic&topicid=8977]upbrr[/url][/size]`)
-	return bbcode.FinalizeTrackerDescription("THR", strings.TrimSpace(strings.Join(parts, "\n"))), nil
+	return bbcode.FinalizeTrackerDescription("THR", strings.TrimSpace(strings.Join(parts, "\n")))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {

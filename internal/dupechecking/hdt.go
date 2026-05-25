@@ -43,7 +43,7 @@ func (h hdtHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		params.Set("search", firstNonEmpty(meta.Release.Title, meta.ReleaseName))
 		params.Set("options", "3")
 	}
-	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/torrents.php", params, nil, cookies)
+	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/torrents.php", params, cookies)
 	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("HDT search failed")}, nil
 	}

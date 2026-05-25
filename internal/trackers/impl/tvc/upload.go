@@ -143,10 +143,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, req.TrackerConfig, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, req.TrackerConfig, assets)
 	releaseName := resolveName(req.Meta)
 	if override := strings.TrimSpace(questionnaireAnswers(req.Meta)["name_override"]); override != "" {
 		releaseName = override
@@ -190,7 +187,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 6)
 	if logo := strings.TrimSpace(meta.ExternalMetadata.TMDB.Logo); logo != "" {
 		parts = append(parts, fmt.Sprintf("[center][img=%d]%s[/img][/center]", maxInt(cfg.ImageCount, 300), logo))
@@ -210,7 +207,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 	if base := strings.TrimSpace(assets.Description); base != "" {
 		parts = append(parts, "[center][b]Notes / Extra Info[/b]\n"+base+"[/center]")
 	}
-	return bbcode.FinalizeTrackerDescription("TVC", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("TVC", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {

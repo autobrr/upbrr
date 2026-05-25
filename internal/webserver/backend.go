@@ -298,10 +298,10 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 		return api.MetadataPreview{}, fmt.Errorf("reset metadata: purge sqlite: %w", err)
 	}
 	for _, filePath := range artifactPaths {
-		_, _ = removeIfWithinRoot(tmpRoot, filePath, false)
+		_ = removeIfWithinRoot(tmpRoot, filePath, false)
 	}
 	for dir := range tmpDirs {
-		_, _ = removeIfWithinRoot(tmpRoot, dir, true)
+		_ = removeIfWithinRoot(tmpRoot, dir, true)
 	}
 
 	req := api.Request{
@@ -1146,41 +1146,38 @@ func resolveContentTmpRoot(tmpRoot string, candidate string) (string, bool) {
 	return filepath.Join(absTmpRoot, parts[0]), true
 }
 
-func removeIfWithinRoot(root string, target string, recursive bool) (bool, error) {
+func removeIfWithinRoot(root string, target string, recursive bool) error {
 	trimmed := strings.TrimSpace(target)
 	if trimmed == "" {
-		return false, nil
+		return nil
 	}
 	absRoot, err := filepath.Abs(strings.TrimSpace(root))
 	if err != nil {
-		return false, err
+		return err
 	}
 	absTarget, err := filepath.Abs(trimmed)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if absTarget == absRoot || !pathWithinRoot(absRoot, absTarget) {
-		return false, nil
+		return nil
 	}
 	if recursive {
 		if _, err := os.Stat(absTarget); err != nil {
 			if os.IsNotExist(err) {
-				return false, nil
+				return nil
 			}
-			return false, err
+			return err
 		}
 		if err := os.RemoveAll(absTarget); err != nil {
-			return false, err
+			return err
 		}
-		return true, nil
+		return nil
 	}
 	if err := os.Remove(absTarget); err != nil && !os.IsNotExist(err) {
-		return false, err
+		return err
 	}
-	if _, err := os.Stat(absTarget); err == nil {
-		return false, nil
-	}
-	return true, nil
+	return nil
 }
 
 func pathWithinRoot(root string, target string) bool {

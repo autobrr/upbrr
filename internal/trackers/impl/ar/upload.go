@@ -172,10 +172,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description, err := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
 
 	fields := map[string]string{
 		"submit": "true",
@@ -210,7 +207,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	return state, client, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.DescriptionAssets) string {
 	var parts []string
 	title := firstNonEmpty(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.Release.Title), pathutil.Base(meta.SourcePath))
 	parts = append(parts, fmt.Sprintf("[color=green][size=6]%s[/size][/color]", title))
@@ -250,7 +247,7 @@ func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.
 		parts = append(parts, "[color=red][size=4]Notes[/size][/color]\n"+notes)
 	}
 
-	return strings.TrimSpace(strings.Join(parts, "\n\n")), nil
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
 func buildDatabaseLinks(meta api.PreparedMetadata) string {

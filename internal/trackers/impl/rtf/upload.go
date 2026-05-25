@@ -150,10 +150,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(assets)
 	torrentBytes, err := os.ReadFile(torrentPath)
 	if err != nil {
 		return uploadState{}, err
@@ -181,8 +178,8 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	return strings.TrimSpace(assets.Description), nil
+func buildDescription(assets trackers.DescriptionAssets) string {
+	return strings.TrimSpace(assets.Description)
 }
 
 func validateEligibility(meta api.PreparedMetadata) string {

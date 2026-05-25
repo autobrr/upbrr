@@ -148,10 +148,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description, err := buildDescription(req.Meta, req.AppConfig, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, req.AppConfig, assets)
 	mediaDump, err := resolveMediaDump(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, err

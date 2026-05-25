@@ -155,10 +155,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, assets)
 	mediaInfo, err := resolveMediaInfo(req.Meta)
 	if err != nil {
 		return uploadState{}, err
@@ -189,7 +186,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	return state, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 6)
 	if overview := resolveOverview(meta); overview != "" && strings.EqualFold(categoryOf(meta), "TV") && strings.TrimSpace(meta.EpisodeOverview) != "" {
 		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]\n[center]"+overview+"[/center]")
@@ -203,7 +200,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	if shots := screenshotBlock(assets.Screenshots); shots != "" {
 		parts = append(parts, shots)
 	}
-	return bbcode.FinalizeTrackerDescription("DC", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("DC", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func resolveCategoryID(meta api.PreparedMetadata) int {

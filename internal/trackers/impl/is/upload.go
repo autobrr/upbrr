@@ -168,10 +168,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 	fields := map[string]string{
 		"UseNFOasDescr": "no",
 		"message":       buildMessage(req.Meta),
@@ -199,7 +196,7 @@ func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
 	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "IS", "immortalseed.me")
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 5)
 	if strings.TrimSpace(meta.EpisodeOverview) != "" {
 		parts = append(parts, "Title: "+strings.TrimSpace(meta.EpisodeTitle), "Overview: "+strings.TrimSpace(meta.EpisodeOverview))
@@ -221,7 +218,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 			parts = append(parts, "Screenshots:\n"+strings.Join(shotLines, "\n"))
 		}
 	}
-	return bbcode.FinalizeTrackerDescription("IS", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("IS", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func buildMessage(meta api.PreparedMetadata) string {

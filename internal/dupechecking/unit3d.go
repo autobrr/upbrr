@@ -21,10 +21,7 @@ func (h unit3dHandler) Search(ctx context.Context, meta api.PreparedMetadata, tr
 	if strings.TrimSpace(trackerdata.TrackerAPIKey(h.cfg, tracker)) == "" {
 		return nil, []string{noteSkip("missing api_key for tracker")}, nil
 	}
-	params, err := buildUnit3DSearchParams(meta, tracker)
-	if err != nil {
-		return nil, nil, err
-	}
+	params := buildUnit3DSearchParams(meta, tracker)
 	if len(params) == 0 {
 		return nil, []string{"missing required metadata for dupe search"}, nil
 	}

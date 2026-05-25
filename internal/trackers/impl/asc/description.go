@@ -27,9 +27,9 @@ type layoutData struct {
 	Images map[string]string
 }
 
-func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets, layoutID string) (string, error) {
+func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets, layoutID string) string {
 	if assets.Override && strings.TrimSpace(assets.Description) != "" {
-		return strings.TrimSpace(assets.Description), nil
+		return strings.TrimSpace(assets.Description)
 	}
 	layout, _ := fetchLayout(ctx, cfg.MainSettings.DBPath, meta, layoutID)
 	parts := []string{"[center]"}
@@ -78,7 +78,7 @@ func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config
 	}
 	parts = append(parts, "[/center]")
 	parts = append(parts, "[center][url=https://github.com/autobrr/upbrr]Upload realizado via upbrr[/url][/center]")
-	return strings.TrimSpace(strings.Join(filterEmpty(parts), "\n\n")), nil
+	return strings.TrimSpace(strings.Join(filterEmpty(parts), "\n\n"))
 }
 
 func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, layoutID string) (layoutData, error) {

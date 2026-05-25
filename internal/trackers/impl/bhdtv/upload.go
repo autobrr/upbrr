@@ -131,10 +131,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		descriptionAssets = trackers.DescriptionAssets{}
 	}
 
-	screenBlock, err := buildDescription(req.Meta, descriptionAssets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	screenBlock := buildDescription(descriptionAssets)
 
 	mediaDump, err := resolveMediaDump(req.Meta)
 	if err != nil {
@@ -410,7 +407,7 @@ func categoryOf(meta api.PreparedMetadata) string {
 	}
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(assets trackers.DescriptionAssets) string {
 	base := strings.ReplaceAll(strings.TrimSpace(assets.Description), "[img=250]", "[img=250x250]")
 	parts := make([]string, 0, 1+len(assets.Screenshots))
 	if base != "" {
@@ -424,7 +421,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 		}
 		parts = append(parts, fmt.Sprintf("[url=%s][img]%s[/img][/url]", webURL, imgURL))
 	}
-	return strings.Join(parts, " "), nil
+	return strings.Join(parts, " ")
 }
 
 func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name string) (string, error) {

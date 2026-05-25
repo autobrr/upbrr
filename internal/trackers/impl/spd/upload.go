@@ -155,10 +155,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, assets)
 	channelID, blockedReason, questionnaire := resolveChannel(ctx, req)
 	torrentBytes, err := os.ReadFile(torrentPath)
 	if err != nil {
@@ -237,7 +234,7 @@ func lookupChannelID(ctx context.Context, apiKey string, input string) (string, 
 	return "", errors.New("channel not found")
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 4)
 	if title := strings.TrimSpace(meta.EpisodeTitle); title != "" {
 		parts = append(parts, "[center]"+title+"[/center]")
@@ -249,7 +246,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 		parts = append(parts, base)
 	}
 	parts = append(parts, "[url=https://github.com/autobrr/upbrr]upbrr[/url]")
-	return bbcode.FinalizeTrackerDescription("SPD", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("SPD", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func resolveCategory(meta api.PreparedMetadata) string {

@@ -38,7 +38,7 @@ func (h isHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 		params.Set("search_type", "t_name")
 		params.Set("keywords", strings.TrimSpace(firstNonEmpty(meta.Release.Title, meta.ReleaseName)+" "+resolveSeasonEpisodeQuery(meta)))
 	}
-	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/browse.php", params, nil, cookies)
+	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/browse.php", params, cookies)
 	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("IS search failed")}, nil
 	}

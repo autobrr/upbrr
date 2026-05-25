@@ -1084,10 +1084,7 @@ func (c *Core) uploadImagesToTargetsWithFallback(ctx context.Context, meta api.P
 	var failures []api.UploadImageHostFailure
 
 	for len(currentTargets) > 0 {
-		result, err := c.uploadImagesToTargets(ctx, meta, currentTargets, images)
-		if err != nil {
-			return api.UploadImagesResult{}, err
-		}
+		result := c.uploadImagesToTargets(ctx, meta, currentTargets, images)
 		allLinks = append(allLinks, result.Links...)
 		if len(result.Failures) == 0 {
 			return api.UploadImagesResult{Links: allLinks}, nil
@@ -1239,7 +1236,7 @@ func sortedMapKeys(values map[string]struct{}) []string {
 	return keys
 }
 
-func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetadata, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
+func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetadata, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) api.UploadImagesResult {
 	type uploadResult struct {
 		index  int
 		target trackers.ImageUploadTarget
@@ -1287,15 +1284,15 @@ func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetad
 		}
 	}
 	if len(failures) == 0 {
-		return api.UploadImagesResult{Links: results}, nil
+		return api.UploadImagesResult{Links: results}
 	}
 	result := api.UploadImagesResult{Links: results, Failures: failures}
 	if len(results) > 0 {
 		c.logger.Warnf("core: image uploads completed with %d host failures and %d successful links: %s", len(failures), len(results), strings.Join(failureMessages, "; "))
-		return result, nil
+		return result
 	}
 	c.logger.Warnf("core: image uploads failed for all hosts: %s", strings.Join(failureMessages, "; "))
-	return result, nil
+	return result
 }
 
 func normalizeImageUploadTarget(target trackers.ImageUploadTarget) trackers.ImageUploadTarget {

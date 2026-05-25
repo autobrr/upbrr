@@ -85,10 +85,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, err
 	}
 
-	fields, err := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
-	if err != nil {
-		return api.UploadSummary{}, err
-	}
+	fields := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
 	body, contentType, err := buildMultipartPayload(fields, torrentPath)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -189,10 +186,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 	uploadURL += hdbUploadPath
 
-	fields, err := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
-	if err != nil {
-		return api.TrackerDryRunEntry{}, err
-	}
+	fields := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
 
 	return api.TrackerDryRunEntry{
 		Tracker:          "HDB",
@@ -211,7 +205,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categoryID int, codecID int, mediumID int, description string) (map[string]string, error) {
+func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categoryID int, codecID int, mediumID int, description string) map[string]string {
 	fields := map[string]string{
 		"name":     resolveUploadName(meta),
 		"category": strconv.Itoa(categoryID),
@@ -256,7 +250,7 @@ func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categ
 		fields["tvdb_episode"] = strconv.Itoa(episode)
 	}
 
-	return fields, nil
+	return fields
 }
 
 func resolveDescriptionAssets(

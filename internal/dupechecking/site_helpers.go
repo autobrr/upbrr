@@ -65,7 +65,7 @@ func loadTrackerCookies(ctx context.Context, cfg config.Config, tracker string, 
 	return cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, tracker, domain)
 }
 
-func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, headers map[string]string, cookies []*http.Cookie) (getResponseInfo, *xhtml.Node, error) {
+func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, cookies []*http.Cookie) (getResponseInfo, *xhtml.Node, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return getResponseInfo{}, nil, err
@@ -74,9 +74,6 @@ func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params
 		req.URL.RawQuery = params.Encode()
 	}
 	req.Header.Set("User-Agent", "upbrr")
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
 	commonhttp.ApplyCookies(req, cookies)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -325,7 +322,7 @@ func resolveHDTCategoryID(meta api.PreparedMetadata) int {
 }
 
 func loginTHR(ctx context.Context, client *http.Client, baseURL string, username string, password string) ([]*http.Cookie, error) {
-	resp, root, err := doHTMLGet(ctx, client, baseURL+"/login.php", nil, nil, nil)
+	resp, root, err := doHTMLGet(ctx, client, baseURL+"/login.php", nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("fetch login page: %w", err)
 	}

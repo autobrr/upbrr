@@ -133,10 +133,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(assets)
 	fields := map[string]string{
 		"MAX_FILE_SIZE": "10000000",
 		"type":          resolveTypeID(req.Meta),
@@ -217,11 +214,11 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	return resp.Cookies(), nil
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(assets trackers.DescriptionAssets) string {
 	if strings.TrimSpace(assets.Description) != "" {
-		return bbcode.FinalizeTrackerDescription("FF", strings.TrimSpace(assets.Description)), nil
+		return bbcode.FinalizeTrackerDescription("FF", strings.TrimSpace(assets.Description))
 	}
-	return "", nil
+	return ""
 }
 
 func resolveExtraFiles(ctx context.Context, meta api.PreparedMetadata) []commonhttp.FileField {

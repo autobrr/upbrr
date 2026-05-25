@@ -39,7 +39,7 @@ func (h flHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 		params.Set("search", query)
 		params.Set("searchin", "0")
 	}
-	resp, root, err := doHTMLGet(ctx, h.http, trackerBaseURL(h.cfg, "FL", "https://filelist.io")+"/browse.php", params, nil, cookies)
+	resp, root, err := doHTMLGet(ctx, h.http, trackerBaseURL(h.cfg, "FL", "https://filelist.io")+"/browse.php", params, cookies)
 	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("FL search failed")}, nil
 	}

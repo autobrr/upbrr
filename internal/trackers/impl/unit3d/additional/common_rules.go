@@ -25,7 +25,7 @@ var resolutionOrder = map[string]int{
 	"8640p": 11,
 }
 
-func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
 		return Fail(ctx.Err().Error())

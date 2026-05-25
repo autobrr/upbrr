@@ -5,7 +5,6 @@ package bhdtv
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -41,10 +40,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		assets = trackers.DescriptionAssets{}
 	}
 
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return trackers.DescriptionResult{}, fmt.Errorf("trackers: BHDTV description build: %w", err)
-	}
+	description := buildDescription(assets)
 	return trackers.DescriptionResult{
 		Group:       "bhdtv",
 		Description: description,

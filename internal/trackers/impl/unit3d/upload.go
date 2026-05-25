@@ -451,14 +451,14 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 	}
 
 	logger.Debugf("trackers: attaching torrent file: %s", filepath.Base(torrentPath))
-	if err := addFile(writer, "torrent", torrentPath, "application/x-bittorrent"); err != nil {
+	if err := addFile(writer, "torrent", torrentPath); err != nil {
 		_ = writer.Close()
 		return nil, "", err
 	}
 
 	if nfoPath := resolveNFOPath(req.Meta, req.AppConfig.MainSettings.DBPath); nfoPath != "" {
 		logger.Debugf("trackers: attaching NFO file: %s", filepath.Base(nfoPath))
-		if err := addFile(writer, "nfo", nfoPath, "text/plain"); err != nil {
+		if err := addFile(writer, "nfo", nfoPath); err != nil {
 			_ = writer.Close()
 			return nil, "", err
 		}
@@ -473,7 +473,7 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 	return strings.NewReader(builder.String()), writer.FormDataContentType(), nil
 }
 
-func addFile(writer *multipart.Writer, field, path, contentType string) error {
+func addFile(writer *multipart.Writer, field, path string) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err

@@ -1030,7 +1030,7 @@ func (s *Service) selectValidTorrent(
 				valid, pieceSize, infoHash, reason := validateTorrentData(meta, normalizedHash, data, constraints)
 				if valid && strings.EqualFold(infoHash, normalizedHash) {
 					s.logger.Debugf("clients: validated existing torrent for %s (piece=%d)", normalizedHash, pieceSize)
-					if shouldSelectPreferred(pieceSize, bestPiece, constraints) {
+					if shouldSelectPreferred(pieceSize, constraints) {
 						return normalizedHash, outputPath, nil
 					}
 					if shouldReplaceBest(pieceSize, bestPiece, constraints) {
@@ -1070,7 +1070,7 @@ func (s *Service) selectValidTorrent(
 		}
 		s.logger.Tracef("clients: validated exported torrent for %s (piece=%d)", normalizedHash, pieceSize)
 
-		if shouldSelectPreferred(pieceSize, bestPiece, constraints) {
+		if shouldSelectPreferred(pieceSize, constraints) {
 			path, err := writeTorrentFile(outputPath, data)
 			if err != nil {
 				return "", "", err
@@ -1370,7 +1370,7 @@ func splitPath(value string) []string {
 	return strings.Split(trimmed, "/")
 }
 
-func shouldSelectPreferred(pieceSize int64, bestPiece int64, constraints pieceConstraints) bool {
+func shouldSelectPreferred(pieceSize int64, constraints pieceConstraints) bool {
 	if !constraints.preferSmall && !constraints.preferMax16 {
 		return true
 	}

@@ -111,10 +111,10 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		s.logger.Debugf("metadata: external ids start path=%q category=%q", meta.SourcePath, ids.Category)
 	}
 
-	overrideTMDB, clearedTMDB := applyOverrideID(&ids.TMDBID, &ids.SourceTMDB, meta.ExternalIDOverrides.TMDBID, "override")
-	overrideIMDB, clearedIMDB := applyOverrideID(&ids.IMDBID, &ids.SourceIMDB, meta.ExternalIDOverrides.IMDBID, "override")
-	overrideTVDB, clearedTVDB := applyOverrideID(&ids.TVDBID, &ids.SourceTVDB, meta.ExternalIDOverrides.TVDBID, "override")
-	overrideTVmaze, _ := applyOverrideID(&ids.TVmazeID, &ids.SourceTVmaze, meta.ExternalIDOverrides.TVmazeID, "override")
+	overrideTMDB, clearedTMDB := applyOverrideID(&ids.TMDBID, &ids.SourceTMDB, meta.ExternalIDOverrides.TMDBID)
+	overrideIMDB, clearedIMDB := applyOverrideID(&ids.IMDBID, &ids.SourceIMDB, meta.ExternalIDOverrides.IMDBID)
+	overrideTVDB, clearedTVDB := applyOverrideID(&ids.TVDBID, &ids.SourceTVDB, meta.ExternalIDOverrides.TVDBID)
+	overrideTVmaze, _ := applyOverrideID(&ids.TVmazeID, &ids.SourceTVmaze, meta.ExternalIDOverrides.TVmazeID)
 
 	trackerTMDB, trackerIMDB, trackerTVDB := resolveTrackerIDs(meta.TrackerData)
 	if !overrideTMDB && !clearedTMDB {
@@ -978,17 +978,17 @@ func (s *Service) persistResolvedReleaseCategory(ctx context.Context, sourcePath
 	return nil
 }
 
-func applyOverrideID(target *int, source *string, override *int, origin string) (bool, bool) {
+func applyOverrideID(target *int, source *string, override *int) (bool, bool) {
 	if target == nil || source == nil || override == nil {
 		return false, false
 	}
 	if *override == 0 {
 		*target = 0
-		*source = origin + "_clear"
+		*source = "override_clear"
 		return false, true
 	}
 	*target = *override
-	*source = origin
+	*source = "override"
 	return true, false
 }
 
