@@ -283,7 +283,7 @@ func resolveResolution(meta api.PreparedMetadata) string {
 
 func resolveName(meta api.PreparedMetadata) string {
 	typeName := strings.ReplaceAll(meta.Type, "WEBDL", "WEB-DL")
-	name := ""
+	var name string
 	switch {
 	case !isTV(meta):
 		name = fmt.Sprintf("%s (%d) [%s %s %s]", firstNonEmpty(meta.Release.Title, meta.ReleaseName), maxInt(meta.Release.Year, meta.ExternalMetadata.TMDB.Year), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))

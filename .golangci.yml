@@ -39,6 +39,7 @@ linters:
     - testifylint
     - unconvert
     - unused
+    - wastedassign
     - whitespace
 
   disable:

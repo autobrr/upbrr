@@ -271,7 +271,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 		c.logger.Debugf("unit3d: %s missing api token; request may be unauthenticated", tracker)
 	}
 
-	endpoint := ""
+	var endpoint string
 	switch {
 	case strings.TrimSpace(id) != "":
 		endpoint = baseURL + "/api/torrents/" + strings.TrimSpace(id)

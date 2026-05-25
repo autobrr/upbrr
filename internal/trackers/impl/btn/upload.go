@@ -712,7 +712,7 @@ func mapSource(meta api.PreparedMetadata, fields map[string]string) string {
 	source := strings.ToLower(strings.TrimSpace(meta.Source))
 	typeName := strings.ToUpper(strings.TrimSpace(meta.Type))
 	resolution := strings.ToUpper(strings.TrimSpace(meta.Release.Resolution))
-	mapped := ""
+	var mapped string
 	switch {
 	case strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD"):
 		mapped = "DVD9"

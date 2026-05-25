@@ -478,7 +478,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 	sortMatchingTorrents(matches, priorityOrder)
 
 	bestMatch := matches[0]
-	foundPreferred := ""
+	var foundPreferred string
 	if constraints.preferSmall || constraints.preferMax16 {
 		bestMatch, foundPreferred = selectPreferredMatch(ctx, matches, propertiesCache, qbitClient, httpClient, proxyBaseURL, useProxy, constraints)
 	} else {

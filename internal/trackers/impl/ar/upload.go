@@ -220,7 +220,7 @@ func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.
 	}
 
 	mediaLabel := "MEDIAINFO"
-	mediaText := ""
+	var mediaText string
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV":
 		mediaLabel = "BDINFO"
