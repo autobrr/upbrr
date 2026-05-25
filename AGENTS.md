@@ -27,12 +27,10 @@ Use `CONTRIBUTING.md` for full command reference and platform details. Use narro
 
 - Match repo style. Keep changes narrow. Fix root causes, not symptoms.
 - New Go code must satisfy enabled `.golangci.yml` linters and formatters. Avoid broad `nolint`.
-- `containedctx` is the only disabled Go linter. Do not add new context fields just because that linter is disabled.
-- Active checks include `noctx`, `contextcheck`, `wrapcheck`, `revive`, `forcetypeassert`, `unparam`, `usetesting`, and `gosec`.
+- Active checks include `noctx`, `contextcheck`, `containedctx`, `wrapcheck`, `revive`, `forcetypeassert`, `unparam`, `usetesting`, and `gosec`.
 - Use context-aware APIs. Propagate context where meaningful; terminate it deliberately when crossing into root/background work.
 - Wrap external-package errors where lint requires it. Handle errors by returning, wrapping, logging with useful context, or making intentional ignore paths obvious.
 - Avoid unchecked type assertions. Use `testing` helpers in tests. Justify narrow `nolint` at source.
-- Do not reshape existing code only for disabled lint policy unless functional need exists or nearby code already follows that pattern.
 - Frontend changes must keep TypeScript, ESLint, Stylelint, and dead-code checks clean. Do not weaken rules or bypass type errors.
 
 ## Logging

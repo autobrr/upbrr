@@ -59,9 +59,6 @@ linters:
     - wrapcheck
     - whitespace
 
-  disable:
-    - containedctx
-
   settings:
     recvcheck:
       exclusions:

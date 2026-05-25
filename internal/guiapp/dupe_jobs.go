@@ -97,10 +97,7 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 		startedAt:     time.Now().UTC(),
 	}
 
-	baseCtx := a.ctx
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
+	baseCtx := a.runtimeContext()
 	//nolint:gosec // The cancel func is stored on the job and invoked on completion/cancel paths.
 	jobCtx, cancel := context.WithCancel(baseCtx)
 	job.cancel = cancel
@@ -109,8 +106,8 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 	a.dupes[jobID] = job
 	a.dupeMu.Unlock()
 
-	a.emitDupeCheckSnapshot(job)
-	go a.runDupeCheckJob(jobCtx, job)
+	a.emitDupeCheckSnapshot(baseCtx, job)
+	go a.runDupeCheckJob(jobCtx, baseCtx, job)
 
 	return jobID, nil
 }
@@ -155,7 +152,7 @@ func (a *App) CancelDupeCheck(jobID string) error {
 	return nil
 }
 
-func (a *App) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
+func (a *App) runDupeCheckJob(ctx context.Context, eventCtx context.Context, job *dupeCheckJob) {
 	if a == nil || a.core == nil || job == nil {
 		return
 	}
@@ -163,10 +160,10 @@ func (a *App) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 	job.mu.Lock()
 	job.status = "running"
 	job.mu.Unlock()
-	a.emitDupeCheckSnapshot(job)
+	a.emitDupeCheckSnapshot(eventCtx, job)
 
 	progressCtx := api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
-		a.applyDupeProgress(job, update)
+		a.applyDupeProgress(eventCtx, job, update)
 	})
 
 	req := api.Request{
@@ -204,7 +201,7 @@ func (a *App) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 			job.errorMessage = err.Error()
 		}
 		job.mu.Unlock()
-		a.emitDupeCheckSnapshot(job)
+		a.emitDupeCheckSnapshot(eventCtx, job)
 		return
 	}
 
@@ -243,7 +240,7 @@ func (a *App) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 		job.errorMessage = ""
 	}
 	job.mu.Unlock()
-	a.emitDupeCheckSnapshot(job)
+	a.emitDupeCheckSnapshot(eventCtx, job)
 }
 
 func randomJobID() string {
@@ -254,7 +251,7 @@ func randomJobID() string {
 	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), value.Uint64())
 }
 
-func (a *App) applyDupeProgress(job *dupeCheckJob, update api.DupeProgressUpdate) {
+func (a *App) applyDupeProgress(ctx context.Context, job *dupeCheckJob, update api.DupeProgressUpdate) {
 	if a == nil || job == nil {
 		return
 	}
@@ -299,7 +296,7 @@ func (a *App) applyDupeProgress(job *dupeCheckJob, update api.DupeProgressUpdate
 	job.states[tracker] = state
 	job.mu.Unlock()
 
-	a.emitDupeCheckSnapshot(job)
+	a.emitDupeCheckSnapshot(ctx, job)
 }
 
 func upsertDupeSummaryResult(summary *api.DupeCheckSummary, result api.DupeCheckResult) {
@@ -365,12 +362,12 @@ func resultMessage(result api.DupeCheckResult) string {
 	return "no dupes found"
 }
 
-func (a *App) emitDupeCheckSnapshot(job *dupeCheckJob) {
-	if a == nil || a.ctx == nil || job == nil {
+func (a *App) emitDupeCheckSnapshot(ctx context.Context, job *dupeCheckJob) {
+	if a == nil || ctx == nil || job == nil {
 		return
 	}
 	snapshot := buildDupeCheckSnapshot(job)
-	runtime.EventsEmit(a.ctx, dupeCheckEventPrefix+job.id, snapshot)
+	runtime.EventsEmit(ctx, dupeCheckEventPrefix+job.id, snapshot)
 }
 
 func buildDupeCheckSnapshot(job *dupeCheckJob) DupeCheckSnapshot {

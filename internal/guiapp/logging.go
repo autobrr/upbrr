@@ -4,7 +4,6 @@
 package guiapp
 
 import (
-	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -95,10 +94,7 @@ func (a *App) GetLogExclusions() ([]string, error) {
 		return nil, errors.New("config repository not initialized")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 
 	var exclusions LogExclusions
 	if err := config.LoadSectionFromDatabase(ctx, logExclusionsSection, &exclusions, a.repo); err != nil {
@@ -119,10 +115,7 @@ func (a *App) UpdateLogExclusions(patterns []string) error {
 		return errors.New("config repository not initialized")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 
 	exclusions := LogExclusions{Patterns: normalizePatterns(patterns)}
 	if err := config.SaveSectionToDatabase(ctx, logExclusionsSection, exclusions, a.repo); err != nil {
@@ -141,10 +134,7 @@ func (a *App) startStreamLocked(session *logStreamSession) {
 	session.logger = a.logger
 	session.subID = subID
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 
 	stop := session.stop
 	done := session.done
