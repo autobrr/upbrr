@@ -94,7 +94,7 @@ func TestInitializeEncryptionKeyStoresFingerprintOnly(t *testing.T) {
 		t.Fatalf("expected 32-byte key, got %d", len(key))
 	}
 
-	state, rawJSON := readPersistedAuthState(t, ctx, db)
+	state, rawJSON := readPersistedAuthState(ctx, t, db)
 	if state.Fingerprint == "" {
 		t.Fatalf("expected fingerprint to be stored")
 	}
@@ -149,7 +149,7 @@ func TestInitializeEncryptionKeyUnchangedFingerprintNormalizesLegacyState(t *tes
 		t.Fatalf("expected derived key to remain stable")
 	}
 
-	_, rawJSON := readPersistedAuthState(t, ctx, db)
+	_, rawJSON := readPersistedAuthState(ctx, t, db)
 	if strings.Contains(rawJSON, "helper") {
 		t.Fatalf("expected legacy helper to be removed, got %s", rawJSON)
 	}
@@ -185,7 +185,7 @@ func TestInitializeEncryptionKeyChangedFingerprintWithoutRecoverableHelper(t *te
 		t.Fatalf("save cookie with old key: %v", err)
 	}
 
-	before := readCookieCiphertext(t, ctx, db, "tracker", "session")
+	before := readCookieCiphertext(ctx, t, db, "tracker", "session")
 
 	km := NewKeyManager(db)
 	_, err = km.InitializeEncryptionKey(ctx, dbPath)
@@ -193,12 +193,12 @@ func TestInitializeEncryptionKeyChangedFingerprintWithoutRecoverableHelper(t *te
 		t.Fatalf("expected ErrAuthHelperUnavailable, got %v", err)
 	}
 
-	after := readCookieCiphertext(t, ctx, db, "tracker", "session")
+	after := readCookieCiphertext(ctx, t, db, "tracker", "session")
 	if before != after {
 		t.Fatalf("expected encrypted cookie row to remain unchanged")
 	}
 
-	state, _ := readPersistedAuthState(t, ctx, db)
+	state, _ := readPersistedAuthState(ctx, t, db)
 	if state.Fingerprint != oldFingerprint {
 		t.Fatalf("expected stored fingerprint to remain unchanged, got %q", state.Fingerprint)
 	}
@@ -333,7 +333,7 @@ func TestRewrapCookiesWithAuthChangeMigratesLegacyHelperToStableSeed(t *testing.
 		t.Fatalf("expected cookie value to survive rewrap, got %q", value)
 	}
 
-	state, _ := readPersistedAuthState(t, ctx, db)
+	state, _ := readPersistedAuthState(ctx, t, db)
 	if state.Fingerprint != newFingerprint {
 		t.Fatalf("expected auth state fingerprint %q, got %q", newFingerprint, state.Fingerprint)
 	}
@@ -474,7 +474,7 @@ func writeWebAuthFileWithSeed(t *testing.T, username, passwordHash, seed string)
 	return dbPath
 }
 
-func readPersistedAuthState(t *testing.T, ctx context.Context, db *sql.DB) (authState, string) {
+func readPersistedAuthState(ctx context.Context, t *testing.T, db *sql.DB) (authState, string) {
 	t.Helper()
 
 	var rawJSON string
@@ -490,7 +490,7 @@ func readPersistedAuthState(t *testing.T, ctx context.Context, db *sql.DB) (auth
 	return state, rawJSON
 }
 
-func readCookieCiphertext(t *testing.T, ctx context.Context, db *sql.DB, trackerID, cookieName string) string {
+func readCookieCiphertext(ctx context.Context, t *testing.T, db *sql.DB, trackerID, cookieName string) string {
 	t.Helper()
 
 	var ciphertext, nonce, authTag string

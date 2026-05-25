@@ -219,7 +219,7 @@ func TestTHRUploaderRequiresImageURL(t *testing.T) {
 	}
 
 	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     make(http.Header),

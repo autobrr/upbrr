@@ -249,15 +249,15 @@ func (s *stubTMDB) FetchMetadata(_ context.Context, input tmdb.MetadataInput) (t
 	return s.metadata, nil
 }
 
-func (s *stubTMDB) GetEpisodeDetails(_ context.Context, tmdbID, season, episode int) (tmdb.EpisodeDetails, error) {
+func (s *stubTMDB) GetEpisodeDetails(_ context.Context, _, _, _ int) (tmdb.EpisodeDetails, error) {
 	return tmdb.EpisodeDetails{}, nil
 }
 
-func (s *stubTMDB) GetSeasonDetails(_ context.Context, tmdbID, season int) (tmdb.SeasonDetails, error) {
+func (s *stubTMDB) GetSeasonDetails(_ context.Context, _, _ int) (tmdb.SeasonDetails, error) {
 	return tmdb.SeasonDetails{}, nil
 }
 
-func (s *stubTMDB) DailyToSeasonEpisode(_ context.Context, tmdbID int, date time.Time) (int, int, error) {
+func (s *stubTMDB) DailyToSeasonEpisode(_ context.Context, _ int, _ time.Time) (int, int, error) {
 	return s.dailySeason, s.dailyEpisode, s.dailyErr
 }
 
@@ -280,7 +280,7 @@ func (s *stubIMDB) Search(_ context.Context, input imdb.SearchInput) (imdb.Searc
 	return s.searchResult, nil
 }
 
-func (s *stubIMDB) GetInfo(_ context.Context, imdbID string, manualLanguage string, debug bool) (imdb.Info, error) {
+func (s *stubIMDB) GetInfo(_ context.Context, _ string, manualLanguage string, _ bool) (imdb.Info, error) {
 	s.infoCalls++
 	s.lastManualLanguage = manualLanguage
 	return s.info, nil
@@ -306,7 +306,7 @@ type stubTVDB struct {
 	lastEpisodeQuery  tvdb.EpisodeQuery
 }
 
-func (s *stubTVDB) GetByExternalID(_ context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
+func (s *stubTVDB) GetByExternalID(_ context.Context, _, _ string, tvMovie bool) (int, string, error) {
 	s.calls++
 	s.tvMovieCalls = append(s.tvMovieCalls, tvMovie)
 	if tvMovie && s.idWhenTVMovie != 0 {
@@ -327,7 +327,7 @@ func (s *stubTVDB) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID i
 	return s.GetSeriesMetadata(ctx, seriesID)
 }
 
-func (s *stubTVDB) GetEpisodes(_ context.Context, seriesID int, query tvdb.EpisodeQuery) (tvdb.EpisodesData, string, error) {
+func (s *stubTVDB) GetEpisodes(_ context.Context, _ int, query tvdb.EpisodeQuery) (tvdb.EpisodesData, string, error) {
 	s.episodeCalls++
 	s.lastEpisodeQuery = query
 	if s.episodeErr != nil {
@@ -341,7 +341,7 @@ func (s *stubTVDB) GetEpisodesWithLanguage(ctx context.Context, seriesID int, qu
 	return s.GetEpisodes(ctx, seriesID, query)
 }
 
-func (s *stubTVDB) GetEpisodeTranslation(_ context.Context, episodeID int, language string) (tvdb.EpisodeTranslation, error) {
+func (s *stubTVDB) GetEpisodeTranslation(_ context.Context, episodeID int, _ string) (tvdb.EpisodeTranslation, error) {
 	s.episodeTransCalls = append(s.episodeTransCalls, episodeID)
 	if s.episodeTransErr != nil {
 		return tvdb.EpisodeTranslation{}, s.episodeTransErr
@@ -361,11 +361,11 @@ func (s *stubTVmaze) Search(_ context.Context, input tvmaze.SearchInput) (tvmaze
 	return s.result, nil
 }
 
-func (s *stubTVmaze) GetEpisodeByNumber(_ context.Context, tvmazeID, season, episode int, lookup tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error) {
+func (s *stubTVmaze) GetEpisodeByNumber(_ context.Context, _, _, _ int, _ tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error) {
 	return nil, nil
 }
 
-func (s *stubTVmaze) GetEpisodeByDate(_ context.Context, tvmazeID int, airdate string) (*tvmaze.EpisodeData, error) {
+func (s *stubTVmaze) GetEpisodeByDate(_ context.Context, _ int, _ string) (*tvmaze.EpisodeData, error) {
 	return nil, nil
 }
 
@@ -854,10 +854,10 @@ func TestResolveExternalIDsSearchStagesAndUnattendedInteractionMode(t *testing.T
 
 func TestResolveExternalIDsInteractiveCLIDoesNotForceUnattendedSearch(t *testing.T) {
 	repo := &fakeRepo{}
-	tmdbClient := &stubTMDB{searchFn: func(input tmdb.SearchInput) (tmdb.SearchOutcome, error) {
+	tmdbClient := &stubTMDB{searchFn: func(_ tmdb.SearchInput) (tmdb.SearchOutcome, error) {
 		return tmdb.SearchOutcome{TMDBID: 4242}, nil
 	}}
-	imdbClient := &stubIMDB{searchFn: func(input imdb.SearchInput) (imdb.SearchResult, error) {
+	imdbClient := &stubIMDB{searchFn: func(_ imdb.SearchInput) (imdb.SearchResult, error) {
 		return imdb.SearchResult{IMDbID: 2424}, nil
 	}}
 	svc := NewService(repo, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))

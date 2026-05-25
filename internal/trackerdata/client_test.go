@@ -298,7 +298,7 @@ func TestLookupHDBSkipsUnfilteredSearch(t *testing.T) {
 	t.Parallel()
 
 	requested := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requested = true
 		http.Error(w, "unexpected request", http.StatusInternalServerError)
 	}))
@@ -335,7 +335,7 @@ func TestLookupBHDSkipsUnfilteredSearch(t *testing.T) {
 	t.Parallel()
 
 	requested := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requested = true
 		http.Error(w, "unexpected request", http.StatusInternalServerError)
 	}))

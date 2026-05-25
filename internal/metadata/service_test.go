@@ -221,7 +221,7 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 		parseBDInfoOutput = originalParseOutput
 	})
 
-	discoverBDMVPlaylists = func(_ context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 			{File: "00002.MPLS", Duration: 6000},
@@ -290,14 +290,14 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 
 	fullScans := 0
 	playlistScans := 0
-	executeFullBDInfoScan = func(_ *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, outputDir string) (bdinfo.ScanResult, error) {
 		fullScans++
 		return bdinfo.ScanResult{
 			ReportPath: filepath.Join(outputDir, "BD_FULL.txt"),
 			ReportText: fullReport,
 		}, nil
 	}
-	executePlaylistBDInfo = func(_ *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string) (string, error) {
+	executePlaylistBDInfo = func(_ *bdinfo.Service, _ context.Context, _ string, _ string, _ string) (string, error) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
@@ -360,7 +360,7 @@ func TestLoadSelectedBDMVPlaylistsErrorsWhenRequestedPlaylistMissing(t *testing.
 		discoverBDMVPlaylists = originalDiscover
 	})
 
-	discoverBDMVPlaylists = func(_ context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 		}, nil
@@ -458,7 +458,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		parseBDInfoOutput = originalParseOutput
 	})
 
-	discoverBDMVPlaylists = func(_ context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 			{File: "00002.MPLS", Duration: 6000},
@@ -482,11 +482,11 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	}
 	fullScans := 0
 	playlistScans := 0
-	executeFullBDInfoScan = func(_ *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, _ string) (bdinfo.ScanResult, error) {
 		fullScans++
 		return bdinfo.ScanResult{}, errors.New("unexpected full scan")
 	}
-	executePlaylistBDInfo = func(_ *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string) (string, error) {
+	executePlaylistBDInfo = func(_ *bdinfo.Service, _ context.Context, _ string, _ string, _ string) (string, error) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
@@ -562,7 +562,7 @@ func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
 	t.Cleanup(func() {
 		discoverBDMVPlaylists = originalDiscover
 	})
-	discoverBDMVPlaylists = func(_ context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 			{File: "00002.MPLS", Duration: 6000},
@@ -626,7 +626,7 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 		executeFullBDInfoScan = originalFullScan
 		parseBDInfoOutput = originalParseOutput
 	})
-	discoverBDMVPlaylists = func(_ context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 			{File: "00002.MPLS", Duration: 6000},
@@ -676,7 +676,7 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 		"[/code]",
 	}, "\n")
 	fullScans := 0
-	executeFullBDInfoScan = func(_ *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, outputDir string) (bdinfo.ScanResult, error) {
 		fullScans++
 		return bdinfo.ScanResult{
 			ReportPath: filepath.Join(outputDir, "BD_FULL.txt"),

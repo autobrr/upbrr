@@ -389,7 +389,7 @@ func TestApplyTrackerClaimsBlocksAitherAndCachesClaims(t *testing.T) {
 func TestApplyTrackerClaimsDoesNotBlockOnSemanticMismatch(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{
 			"data":[
 				{"attributes":{"title":"Example Show","season":2,"tmdb_id":4242,"resolutions":["2"],"types":["4"]}}

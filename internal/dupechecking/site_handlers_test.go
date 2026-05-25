@@ -48,7 +48,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			name:    "FL",
 			tracker: "FL",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, Release: api.ReleaseInfo{Resolution: "1080p"}, SourcePath: "x"},
-			setup: func(t *testing.T, baseURL string, dbPath string) {
+			setup: func(t *testing.T, _ string, dbPath string) {
 				writeJSONCookie(t, dbPath, "FL", `{"sid":"cookie"}`)
 			},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return flHandler{cfg: cfg, http: client} },
