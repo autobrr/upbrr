@@ -1,43 +1,53 @@
 # Project Guidelines
 
+## Source Of Truth
+
+- Contributor setup, platform notes, Makefile targets, build commands, tests, hooks, and commit format live in `CONTRIBUTING.md`.
+- Tool wiring lives in `Makefile`, `lefthook.yml`, `.golangci.yml`, `gui/frontend/package.json`, and `.github/workflows/*.yml`.
+- When docs disagree, prefer tool config over prose. Update prose instead of copying stale commands.
+
+## Quick Commands
+
+```bash
+make help               # Show supported targets
+make backend            # Fast build sanity check
+make test-go            # Full Go tests
+make test-frontend      # Frontend lint/dead-code/type/format checks
+make lint               # Full Go lint
+make logpolicy          # Logging policy check
+make precommit          # Lefthook pre-commit
+make prepush            # Lefthook pre-push
+make gofix-check-changed # Inspect Go fix drift on changed packages
+git diff --check        # Whitespace/conflict-marker check
+```
+
+Use `CONTRIBUTING.md` for full command reference and platform details. Use narrow package/file checks first, then expand when touching shared behavior or release surfaces.
+
 ## Code Quality
 
 - Match repo style. Keep changes narrow. Fix root causes, not symptoms.
-- Format Go with `gofmt` and `goimports`. Use local prefix `github.com/autobrr/upbrr`.
-- Treat `.golangci.yml` as Go source of truth. New Go code must satisfy enabled linters and formatters. Avoid broad `nolint`.
-- `containedctx` is only disabled Go linter. Treat it as existing-code exception, not license for new context fields.
+- New Go code must satisfy enabled `.golangci.yml` linters and formatters. Avoid broad `nolint`.
+- `containedctx` is the only disabled Go linter. Do not add new context fields just because that linter is disabled.
 - Active checks include `noctx`, `contextcheck`, `wrapcheck`, `revive`, `forcetypeassert`, `unparam`, `usetesting`, and `gosec`.
 - Use context-aware APIs. Propagate context where meaningful; terminate it deliberately when crossing into root/background work.
 - Wrap external-package errors where lint requires it. Handle errors by returning, wrapping, logging with useful context, or making intentional ignore paths obvious.
 - Avoid unchecked type assertions. Use `testing` helpers in tests. Justify narrow `nolint` at source.
 - Do not reshape existing code only for disabled lint policy unless functional need exists or nearby code already follows that pattern.
+- Frontend changes must keep TypeScript, ESLint, Stylelint, and dead-code checks clean. Do not weaken rules or bypass type errors.
+
+## Logging
+
 - Add logs where they explain meaningful state, decisions, failures, retries, or user-visible outcomes. Improve touched functions when practical and relevant.
 - Treat `cmd/logpolicy` as logging contract. Fix flagged log messages or levels at source; do not weaken checker or move noise sideways.
-- Redact secrets and user-sensitive data with `internal/redaction/redaction.go`. Never log credentials, tokens, API keys, passkeys, cookies, or secret-bearing payloads without that standard.
-- Keep log levels purposeful: `INFO` for concise user-facing upload progress/outcomes, `DEBUG` for troubleshooting context, `TRACE` for high-fidelity operational flow.
-- Respect current golangci-lint exclusions and formatter settings. Avoid churn in files covered by scoped exceptions.
-- Frontend: keep TypeScript and ESLint clean. Do not weaken rules or bypass type errors.
-- Frontend CSS: keep Stylelint clean. Avoid dead selectors, files, exports, and dependencies. Dead-code check uses `knip.ts` plus CSS compiler hook over `src/**/*.{ts,tsx,css}`.
-- Commits must satisfy `cmd/commitmsgcheck`: `type(scope): subject`; optional scope; lower-case imperative subject; no trailing period; max 115 chars. Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
-- Treat `lefthook.yml` as local preflight contract. Do not bypass hooks or validation unless user explicitly asks, or bypass is temporary WIP that gets validated before handoff.
+- Redact secrets and user-sensitive data with `internal/redaction/redaction.go`.
+- Never log credentials, tokens, API keys, passkeys, cookies, or secret-bearing payloads without repository redaction standard.
+- Keep levels purposeful: `INFO` for concise user-facing upload progress/outcomes, `DEBUG` for troubleshooting context, `TRACE` for high-fidelity operational flow.
 
-## Validation
+## Go Fix
 
-- Run relevant CI-aligned checks after changes.
-- PR validation can include commit-message validation, full Go tests, golangci-lint, logpolicy, and frontend lint/stylelint/type/format/dead-code checks. Use `lefthook.yml`, `CONTRIBUTING.md`, `gui/frontend/package.json`, and `.github/workflows/*` as source of truth.
-- Go: run narrow package tests first. If change touches shared behavior, multiple packages, or cross-surface flows, expand up to `go test -v -timeout 20m ./...`.
-- Go lint: run `golangci-lint run --timeout=5m ./...`.
-- Logging changes under `internal`: run `go run ./cmd/logpolicy`.
-- Commit checks: run `go run ./cmd/commitmsgcheck <commit-msg-file>` or `go run ./cmd/commitmsgcheck --from <base> --to <head>`.
-- If Lefthook is installed and task includes staged changes or push, run matching hook when practical: `lefthook run pre-commit` or `lefthook run pre-push`.
-- Frontend: prefer smallest relevant validation for changed files, but keep affected surface lint/typecheck clean.
-- Broad frontend/config changes: from `gui/frontend`, run `pnpm run lint`, `pnpm run lint:dead`, `pnpm run typecheck`, and `pnpm run format:check`.
-- Frontend dependency or lockfile-sensitive changes: run `pnpm install --frozen-lockfile`.
-- CSS changes: also run `pnpm run lint:style`.
-- Frontend build logic, embedded assets, or Vite/TypeScript config: also run `pnpm run build`.
-- Wails runtime/backend changes: validate with `go run ./gui` when practical.
-- GUI packaging, embedded assets, Wails config, or desktop integration: run `pnpm run build` in `gui/frontend` plus nearest relevant Wails build validation.
-- Packaging/release/Docker/build-script/cross-platform changes: review `.github/workflows/build-binaries.yml` and validate directly affected local path, such as `scripts/build.sh`, `scripts/build.ps1`, CLI build, GUI build, or Docker build.
+- Do not apply `go fix` wholesale without review.
+- Prefer `make gofix-check-changed` and package-scoped `go fix -omitzero=false <packages>`.
+- Keep `omitzero` disabled unless a change explicitly reviews JSON output semantics.
 
 ## Product Invariants
 
@@ -58,5 +68,5 @@
 
 ## Scope Notes
 
-- Keep guidance consistent with `.golangci.yml`, `gui/frontend/package.json`, and `.github/workflows/*.yml`. Do not invent new required steps.
+- Do not duplicate detailed contributor workflow from `CONTRIBUTING.md` here. Link or summarize only agent-critical deltas.
 - If change affects one area, run smallest relevant checks. If change crosses backend, frontend, GUI, packaging, or unattended execution, expand validation.

@@ -23,6 +23,7 @@ Install the following on your machine:
 - [Go](https://golang.org/dl/) — see [go.mod](./go.mod) for the required version
 - [Node.js](https://nodejs.org) (20 LTS or newer)
 - [pnpm](https://pnpm.io/installation) (10 or newer — version is pinned in `gui/frontend/package.json` via `packageManager`)
+- [GNU Make](https://www.gnu.org/software/make/) — top-level shortcuts for builds, checks, formatting, and hooks
 - [golangci-lint](https://golangci-lint.run/) — used by hooks and CI
 - [Lefthook](https://github.com/evilmartians/lefthook) — git hooks runner (see [Git hooks](#git-hooks-lefthook))
 - [Wails CLI](https://wails.io/) `v2.10.1` for desktop builds
@@ -40,8 +41,8 @@ Every script, hook, and VS Code task runs on macOS, Linux, and Windows using nat
 
 Notes:
 
-- CLI binaries are named `upbrr` on Unix and `upbrr.exe` on Windows. The VS Code `build-cli` task picks the right suffix automatically.
-- Use `scripts/build.sh` on macOS/Linux and `scripts/build.ps1` on Windows — they produce the same artifacts.
+- CLI binaries are named `upbrr` on Unix and `upbrr.exe` on Windows. The Makefile picks the right suffix automatically for `make backend`.
+- Prefer `make build` for full local builds. It dispatches to `scripts/build.sh` on macOS/Linux and `scripts/build.ps1` on Windows; use the scripts directly only when debugging script behavior.
 - Line endings are normalised via `.gitattributes` and `.editorconfig`.
 
 ## How to contribute
@@ -73,8 +74,15 @@ lefthook install
 What runs when:
 
 - `pre-commit` — on **staged files only**: `prettier --write` (gui/frontend), `eslint` (gui/frontend/src), `golangci-lint fmt` (Go), `go run ./cmd/logpolicy` (when `internal/**` Go files change). Formatters auto-re-stage their fixes.
-- `pre-push` — full-project: `pnpm run typecheck` and `golangci-lint run ./...`. Mirrors CI.
+- `pre-push` — full-project TypeScript typecheck and Go lint. CI also runs frontend lint, dead-code, and formatting checks.
 - `commit-msg` — `go run ./cmd/commitmsgcheck` enforces [Conventional Commits](https://www.conventionalcommits.org/) without requiring Node.js or `pnpm install`.
+
+Makefile shortcuts:
+
+```sh
+make precommit
+make prepush
+```
 
 Bypass (use sparingly, e.g. for emergency fixes or WIP commits):
 
@@ -118,12 +126,12 @@ git clone https://github.com/<your-user>/upbrr && cd upbrr
 ### Frontend
 
 ```sh
-cd gui/frontend
-pnpm install
-pnpm run dev          # Vite dev server
-pnpm run lint         # ESLint
-pnpm run typecheck    # tsc --noEmit
-pnpm run format:check # Prettier
+pnpm --dir gui/frontend install --frozen-lockfile
+make dev-frontend      # Vite dev server
+make test-frontend     # ESLint, dead-code, typecheck, Prettier
+
+# CSS changes:
+pnpm --dir gui/frontend run lint:style
 ```
 
 ### Backend
@@ -146,28 +154,18 @@ go run ./gui
 Full build (CLI + Wails GUI + embedded frontend):
 
 ```sh
-# macOS/Linux:
-./scripts/build.sh
-
-# Windows (PowerShell):
-.\scripts\build.ps1
+make build
 ```
 
-Both scripts install frontend deps, build the React frontend, sync it into `internal/guiapp/assets`, then build the CLI into `dist/` and the Wails GUI into `gui/build/bin/`.
+`make build` runs the platform build script, installs frontend deps, builds the React frontend, syncs it into `internal/guiapp/assets`, then builds the CLI into `dist/` and the Wails GUI into `gui/build/bin/`.
 
 Individual pieces:
 
 ```sh
-# CLI only:
-go build -o dist/upbrr ./cmd/upbrr        # Unix
-go build -o dist/upbrr.exe ./cmd/upbrr    # Windows
-
-# Frontend only:
-pnpm --dir gui/frontend run build
-
-# Wails GUI only (after the frontend build):
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
-cd gui && wails build
+make backend          # CLI only
+make frontend         # Typecheck + frontend bundle
+make frontend-bundle  # Vite bundle only
+make gui              # Wails GUI with current embedded assets
 ```
 
 ## Tests and checks
@@ -175,18 +173,22 @@ cd gui && wails build
 Run the same checks CI runs:
 
 ```sh
-# Go
-go test -v -timeout 20m ./...
-golangci-lint run --timeout=5m
-go run ./cmd/logpolicy
-
-# Frontend (from gui/frontend/)
-pnpm run lint
-pnpm run typecheck
-pnpm run format:check
+make test-go
+make test-frontend
+make lint
+make logpolicy
 ```
 
-Alternatively, `lefthook run pre-commit --all-files` and `lefthook run pre-push` will execute the same set via the hooks.
+Useful focused checks:
+
+```sh
+go test -v -timeout 20m <package>
+make gofix-check-changed
+make gofix-changed
+pnpm --dir gui/frontend run lint:style
+```
+
+Alternatively, `make precommit` and `make prepush` run the configured Lefthook checks.
 
 ## Project conventions
 
