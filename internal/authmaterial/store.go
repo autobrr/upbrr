@@ -463,7 +463,7 @@ func parseAuthHashConfig(part string) (authHashParams, bool) {
 func randomString(length int) (string, error) {
 	buf := make([]byte, length)
 	if _, err := rand.Read(buf); err != nil {
-		return "", err
+		return "", fmt.Errorf("auth material: generate random string: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf)[:length], nil
 }

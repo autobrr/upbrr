@@ -392,7 +392,7 @@ func (m *sessionManager) logPersistError(action string, err error) {
 func randomString(size int) (string, error) {
 	buf := make([]byte, size)
 	if _, err := rand.Read(buf); err != nil {
-		return "", err
+		return "", fmt.Errorf("web: generate random string: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

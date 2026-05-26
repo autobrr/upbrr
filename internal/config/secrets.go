@@ -657,11 +657,11 @@ func encryptSecretValue(plaintext string, key []byte) (secretPayload, error) {
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return secretPayload{}, err
+		return secretPayload{}, fmt.Errorf("secrets: create AES cipher: %w", err)
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return secretPayload{}, err
+		return secretPayload{}, fmt.Errorf("secrets: create GCM cipher: %w", err)
 	}
 	nonce, err := generateRandomBytes(12)
 	if err != nil {
@@ -691,16 +691,16 @@ func decryptSecretValue(payload secretPayload, key []byte) (string, error) {
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: create AES cipher: %w", err)
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: create GCM cipher: %w", err)
 	}
 	sealed := append(append([]byte{}, payload.ciphertext...), payload.authTag...)
 	plaintext, err := gcm.Open(nil, payload.nonce, sealed, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: decrypt value: %w", err)
 	}
 	return string(plaintext), nil
 }

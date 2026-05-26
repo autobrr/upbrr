@@ -77,7 +77,6 @@ linters:
       ignore-package-globs:
         - github.com/autobrr/upbrr/*
         - encoding/*
-        - crypto/*
 
   exclusions:
     generated: lax
