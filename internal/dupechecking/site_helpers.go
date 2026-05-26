@@ -62,7 +62,11 @@ func trackerHost(baseURL string, fallback string) string {
 }
 
 func loadTrackerCookies(ctx context.Context, cfg config.Config, tracker string, domain string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, tracker, domain)
+	loaded, err := cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, tracker, domain)
+	if err != nil {
+		return nil, fmt.Errorf("dupechecking: load tracker cookies: %w", err)
+	}
+	return loaded, nil
 }
 
 func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, cookies []*http.Cookie) (getResponseInfo, *xhtml.Node, error) {

@@ -74,10 +74,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if strings.TrimSpace(req.TrackerConfig.MyAnnounceURL) != "" {
 		artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "BHDTV")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, req.TrackerConfig.MyAnnounceURL, viewURL, sourceFlag); err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		state.artifactPath = artifactPath
 	}
@@ -140,7 +140,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	fields := map[string]string{
@@ -430,11 +430,11 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 	}
 	tmpRoot, err := db.Subdir(req.AppConfig.MainSettings.DBPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, req.Meta, req.Meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	ext := ".txt"
 	if bytes.Contains(bytes.ToLower(payload), []byte("<html")) {

@@ -48,7 +48,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, state.files)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -83,10 +83,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if announces := announceList(req.TrackerConfig); len(announces) > 0 {
 		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "TL")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announces[0], urlValue, sourceFlag); err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
@@ -115,7 +115,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, *http.Client, error) {
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
@@ -306,7 +306,7 @@ func announceList(cfg config.TrackerConfig) []string {
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "TL", "torrentleech.org")
+	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "TL", "torrentleech.org"))
 }
 
 func imdbURL(meta api.PreparedMetadata) string {

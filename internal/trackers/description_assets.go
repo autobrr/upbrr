@@ -462,24 +462,24 @@ func preloadDescriptionAssetData(ctx context.Context, meta api.PreparedMetadata,
 		}
 	case errors.Is(err, internalerrors.ErrNotFound):
 	default:
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 
 	trackerRecords, err := repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	preloaded.trackerRecords = trackerRecords
 
 	selections, err := repo.ListFinalSelections(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	preloaded.selections = selections
 
 	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	preloaded.uploads = uploads
 
@@ -508,7 +508,7 @@ func descriptionOverrideFromSource(ctx context.Context, meta api.PreparedMetadat
 	if err == nil {
 		return override, nil
 	}
-	return api.DescriptionOverride{}, err
+	return api.DescriptionOverride{}, fmt.Errorf("trackers: %w", err)
 }
 
 func trackerMetadataFromSource(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData) ([]api.TrackerMetadata, error) {
@@ -518,7 +518,7 @@ func trackerMetadataFromSource(ctx context.Context, meta api.PreparedMetadata, r
 	if preloaded != nil {
 		return preloaded.trackerRecords, nil
 	}
-	return repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
+	return wrapTrackerResult(repo.ListTrackerMetadataByPath(ctx, meta.SourcePath))
 }
 
 func finalSelectionsFromSource(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData) ([]api.ScreenshotFinalSelection, error) {
@@ -528,7 +528,7 @@ func finalSelectionsFromSource(ctx context.Context, meta api.PreparedMetadata, r
 	if preloaded != nil {
 		return preloaded.selections, nil
 	}
-	return repo.ListFinalSelections(ctx, meta.SourcePath)
+	return wrapTrackerResult(repo.ListFinalSelections(ctx, meta.SourcePath))
 }
 
 func uploadedImagesFromSource(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData) ([]api.UploadedImageLink, error) {
@@ -538,7 +538,7 @@ func uploadedImagesFromSource(ctx context.Context, meta api.PreparedMetadata, re
 	if preloaded != nil {
 		return preloaded.uploads, nil
 	}
-	return repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
+	return wrapTrackerResult(repo.ListUploadedImagesByPath(ctx, meta.SourcePath))
 }
 
 func resolveTrackerImageURLs(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger, preloaded *preloadedDescriptionAssetData) []string {

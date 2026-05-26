@@ -66,7 +66,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	descriptionText, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -172,7 +172,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 	descriptionText, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return api.TrackerDryRunEntry{}, err
+		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -264,7 +264,7 @@ func resolveDescriptionAssets(
 	if provided != nil {
 		return *provided, nil
 	}
-	return trackers.ResolveDescriptionAssets(ctx, tracker, meta, repo, logger)
+	return wrapTrackerResult(trackers.ResolveDescriptionAssets(ctx, tracker, meta, repo, logger))
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
@@ -382,7 +382,7 @@ func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker
 }
 
 func resolveHDBCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "HDB", "hdbits.org")
+	return wrapTrackerResult(cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "HDB", "hdbits.org"))
 }
 
 func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api.PreparedMetadata, torrentPath string, torrentID string, passkey string, cookies []*http.Cookie) error {

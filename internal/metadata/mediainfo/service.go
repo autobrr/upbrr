@@ -83,7 +83,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 
 	tmpDir, _, err := paths.ReleaseTempDir(req.TempRoot, api.PreparedMetadata{Release: req.Release}, req.SourcePath)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("metadata: %w", err)
 	}
 	textPath := filepath.Join(tmpDir, "mediainfo.txt")
 	jsonPath := filepath.Join(tmpDir, "MediaInfo.json")

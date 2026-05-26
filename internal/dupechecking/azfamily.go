@@ -170,7 +170,11 @@ func loadAZFamilyCookies(ctx context.Context, cfg config.Config, tracker string,
 		return nil, fmt.Errorf("parse baseURL %q: %w", baseURL, err)
 	}
 	host := parsed.Hostname()
-	return cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, strings.ToUpper(strings.TrimSpace(tracker)), host)
+	loaded, err := cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, strings.ToUpper(strings.TrimSpace(tracker)), host)
+	if err != nil {
+		return nil, fmt.Errorf("dupechecking: load AZ-family cookies: %w", err)
+	}
+	return loaded, nil
 }
 
 func lookupAZDupeTitle(meta api.PreparedMetadata) string {

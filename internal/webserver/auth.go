@@ -39,7 +39,7 @@ const AuthFileName = authmaterial.WebAuthFileName
 const AuthPasswordMinLength = authmaterial.AuthPasswordMinLength
 
 func newAuthStore(dbPath string) (*authStore, error) {
-	return authmaterial.NewStore(dbPath)
+	return wrapWebResult(authmaterial.NewStore(dbPath))
 }
 
 // AuthFilePath returns the auth file path colocated with dbPath.
@@ -49,11 +49,11 @@ func AuthFilePath(dbPath string) string {
 
 // BootstrapAuthFile creates the canonical auth file beside dbPath.
 func BootstrapAuthFile(dbPath string, username string, password string) error {
-	return authmaterial.BootstrapAuthFile(dbPath, username, password)
+	return wrapWebError(authmaterial.BootstrapAuthFile(dbPath, username, password))
 }
 
 func hashPassword(password string) (string, error) {
-	return authmaterial.HashPassword(password)
+	return wrapWebResult(authmaterial.HashPassword(password))
 }
 
 func verifyPassword(password string, encoded string) bool {

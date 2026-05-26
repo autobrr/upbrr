@@ -49,7 +49,7 @@ func (l Level) String() string {
 func ParseLevel(value string) (Level, error) {
 	normalized, err := api.ParseLogLevel(value)
 	if err != nil {
-		return LevelInfo, err
+		return LevelInfo, fmt.Errorf("logging: %w", err)
 	}
 
 	switch normalized {

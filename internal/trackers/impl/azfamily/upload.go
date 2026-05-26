@@ -245,11 +245,11 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error
 func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, fmt.Sprintf("[%s] %s.torrent", tracker, base)), nil
 }

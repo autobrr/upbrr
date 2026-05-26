@@ -74,7 +74,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return trackers.DescriptionResult{}, err
+				return trackers.DescriptionResult{}, fmt.Errorf("trackers: %w", err)
 			}
 			if req.Logger != nil {
 				req.Logger.Warnf("trackers: %s description assets failed: %v", d.name, err)
@@ -102,7 +102,7 @@ func Register(registry *trackers.Registry, trackersList []string) error {
 	}
 	for _, name := range trackersList {
 		if err := registry.Register(New(name)); err != nil {
-			return err
+			return fmt.Errorf("trackers: %w", err)
 		}
 	}
 	return nil

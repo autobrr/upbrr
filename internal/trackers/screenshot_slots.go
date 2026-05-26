@@ -63,7 +63,7 @@ func screenshotSlotsFromSource(
 
 	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if len(slots) > 0 {
 		return cloneScreenshotSlots(slots), nil
@@ -77,7 +77,7 @@ func screenshotSlotsFromSource(
 		return nil, nil
 	}
 	if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	return cloneScreenshotSlots(slots), nil
 }
@@ -713,7 +713,7 @@ func upsertScreenshotVariantsFromUploads(ctx context.Context, repo api.MetadataR
 			UploadedAt: upload.UploadedAt,
 		})
 	}
-	return repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants)
+	return wrapTrackerError(repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants))
 }
 
 func slotSourceImagesForRehost(slots []api.ScreenshotSlot) []api.ScreenshotImage {

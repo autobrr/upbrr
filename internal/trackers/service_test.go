@@ -6,6 +6,7 @@ package trackers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -195,7 +196,7 @@ func (testHDBPreparationDefinition) BuildDescription(ctx context.Context, req De
 	}
 	description, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return DescriptionResult{}, err
+		return DescriptionResult{}, fmt.Errorf("trackers: %w", err)
 	}
 	return DescriptionResult{Group: "hdb", Description: description}, nil
 }

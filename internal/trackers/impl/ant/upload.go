@@ -103,10 +103,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "ANT")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, viewURL, "ANT"); err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 
@@ -160,7 +160,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 	descriptionAssets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
@@ -300,9 +300,9 @@ func resolveBDInfoPath(meta api.PreparedMetadata, dbPath string) (string, error)
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
-	return paths.PrimaryBDMVSummaryPath(tmpRoot, meta)
+	return wrapTrackerResult(paths.PrimaryBDMVSummaryPath(tmpRoot, meta))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata, state uploadState) *api.TrackerQuestionnaire {

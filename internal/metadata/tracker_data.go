@@ -315,7 +315,7 @@ func (s *Service) lookupTrackerData(
 			meta.Options.KeepImages,
 		)
 		if err != nil {
-			return api.TrackerMetadata{}, false, false, err
+			return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
 		}
 		if !hasUnit3DData(result) {
 			if s.logger != nil {
@@ -388,7 +388,7 @@ func (s *Service) lookupTrackerData(
 		meta.Options.KeepImages,
 	)
 	if err != nil {
-		return api.TrackerMetadata{}, false, false, err
+		return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
 	}
 	if !result.HasData() {
 		if s.logger != nil {

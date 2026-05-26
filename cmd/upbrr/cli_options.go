@@ -386,7 +386,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	}
 	if visited["log-level"] {
 		if _, err := api.ParseLogLevel(opts.LogLevel); err != nil {
-			return cliOptions{}, nil, nil, err
+			return cliOptions{}, nil, nil, fmt.Errorf("upbrr: %w", err)
 		}
 	}
 	if visited["tmdb"] {
@@ -453,7 +453,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 	if visited["log-level"] {
 		normalized, err := api.ParseLogLevel(opts.LogLevel)
 		if err != nil {
-			return api.Request{}, err
+			return api.Request{}, fmt.Errorf("upbrr: %w", err)
 		}
 		runLogLevel = normalized
 	}

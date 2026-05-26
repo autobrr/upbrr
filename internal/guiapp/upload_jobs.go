@@ -125,7 +125,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	if err := guishared.SeedRunCorePreparedMeta(baseCtx, a.core, runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 
 	jobID := randomUploadJobID()
@@ -337,7 +337,7 @@ func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
 	}
 
-	return job.core.RunUploadPrepared(ctx, req)
+	return wrapGUIResult(job.core.RunUploadPrepared(ctx, req))
 }
 
 func (a *App) emitTrackerUploadSnapshot(ctx context.Context, job *trackerUploadJob) {

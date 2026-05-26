@@ -25,11 +25,11 @@ func ResolveTrackerTorrentArtifactPath(meta api.PreparedMetadata, dbPath string,
 
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 
 	name := strings.ToLower(strings.TrimSpace(tracker))

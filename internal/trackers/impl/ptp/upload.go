@@ -415,11 +415,11 @@ func rehostPosterToSelectedHost(ctx context.Context, req trackers.UploadRequest,
 func downloadPoster(ctx context.Context, meta api.PreparedMetadata, dbPath string, imageURL string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
@@ -790,11 +790,11 @@ func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, base+"."+strings.ToLower(strings.TrimSpace(tracker))+".torrent"), nil
 }
@@ -805,11 +805,11 @@ func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, "[PTP]upload_failure.html"), nil
 }
@@ -850,7 +850,7 @@ func writeTrackerTorrent(sourcePath string, outputPath string, announceURL strin
 
 func loadCookies(ctx context.Context, dbPath string) (map[string]string, error) {
 	values, err := cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "PTP")
-	return values, err
+	return values, fmt.Errorf("trackers: %w", err)
 }
 
 func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseURL string) error {
@@ -871,7 +871,7 @@ func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseUR
 	if len(cookies) == 0 {
 		return nil
 	}
-	return cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", cookies)
+	return wrapTrackerError(cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", cookies))
 }
 
 func passkeyFromAnnounce(announceURL string) (string, error) {
@@ -1307,11 +1307,11 @@ func joinInts(values []int) string {
 func readBDSummary(meta api.PreparedMetadata, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return readTextFile(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta)))
 }

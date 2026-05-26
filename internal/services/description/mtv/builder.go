@@ -108,11 +108,11 @@ func resolveBDInfoPath(meta api.PreparedMetadata, dbPath string) (string, error)
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("description: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("description: %w", err)
 	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
 	if strings.TrimSpace(path) == "" {

@@ -133,7 +133,7 @@ func fetchTagID(ctx context.Context, site siteDefinition, state sessionState, wo
 func uploadScreenshots(ctx context.Context, site siteDefinition, state sessionState, req trackers.UploadRequest) ([]string, error) {
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	limit := 3
 	if req.Meta.TVPack {

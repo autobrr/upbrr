@@ -101,7 +101,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 
 	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return api.ScreenshotPlan{}, err
+		return api.ScreenshotPlan{}, fmt.Errorf("screenshots: %w", err)
 	}
 
 	// Load existing screenshots from database that still exist on disk.
@@ -215,7 +215,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 
 	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return api.ScreenshotResult{}, err
+		return api.ScreenshotResult{}, fmt.Errorf("screenshots: %w", err)
 	}
 
 	result := api.ScreenshotResult{
@@ -457,7 +457,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 
 	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("screenshots: %w", err)
 	}
 
 	absTarget, err := filepath.Abs(trimmed)
@@ -642,7 +642,7 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 
 	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("screenshots: %w", err)
 	}
 
 	selections := make([]api.ScreenshotFinalSelection, 0, len(images))
@@ -666,7 +666,10 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 		})
 	}
 
-	return s.repo.SaveFinalSelections(ctx, meta.SourcePath, selections)
+	if err := s.repo.SaveFinalSelections(ctx, meta.SourcePath, selections); err != nil {
+		return fmt.Errorf("screenshots: save final selections: %w", err)
+	}
+	return nil
 }
 
 func screenshotBaseName(meta api.PreparedMetadata) string {

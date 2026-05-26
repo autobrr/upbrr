@@ -40,7 +40,7 @@ func (a *App) GetLogPath() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
 	}
-	return logging.LogPath(a.cfg.MainSettings.DBPath)
+	return wrapGUIResult(logging.LogPath(a.cfg.MainSettings.DBPath))
 }
 
 func (a *App) GetRecentLogs(limit int) ([]logging.Entry, error) {
@@ -101,7 +101,7 @@ func (a *App) GetLogExclusions() ([]string, error) {
 		if errors.Is(err, internalerrors.ErrNotFound) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 
 	return normalizePatterns(exclusions.Patterns), nil
@@ -119,7 +119,7 @@ func (a *App) UpdateLogExclusions(patterns []string) error {
 
 	exclusions := LogExclusions{Patterns: normalizePatterns(patterns)}
 	if err := config.SaveSectionToDatabase(ctx, logExclusionsSection, exclusions, a.repo); err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 
 	return nil

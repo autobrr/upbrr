@@ -5,6 +5,7 @@ package webserver
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -841,7 +842,7 @@ func (s *Server) webBrowsePolicy() (webBrowsePolicy, error) {
 		if os.IsNotExist(err) {
 			return webBrowsePolicy{}, nil
 		}
-		return webBrowsePolicy{}, err
+		return webBrowsePolicy{}, fmt.Errorf("web: %w", err)
 	}
 	if record.AllowUnrestrictedBrowse {
 		return webBrowsePolicy{AllowUnrestricted: true}, nil

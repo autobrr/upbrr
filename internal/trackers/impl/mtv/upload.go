@@ -90,7 +90,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	descText, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -157,7 +157,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 	descText, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return api.TrackerDryRunEntry{}, err
+		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -237,11 +237,11 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 }
 
 func loadMTVCookies(ctx context.Context, dbPath string) (map[string]string, error) {
-	return cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "MTV")
+	return wrapTrackerResult(cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "MTV"))
 }
 
 func saveMTVCookies(ctx context.Context, dbPath string, values map[string]string) error {
-	return cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "MTV", values)
+	return wrapTrackerError(cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "MTV", values))
 }
 
 func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string) (string, *http.Client, map[string]string, error) {

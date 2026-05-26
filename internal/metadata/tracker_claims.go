@@ -389,7 +389,11 @@ func resolveTrackerClaimResolution(meta api.PreparedMetadata) string {
 }
 
 func trackerClaimsPath(dbPath string, tracker string) (string, error) {
-	return db.FileInSubdir(dbPath, "cache", filepath.Join("banned", strings.ToUpper(strings.TrimSpace(tracker))+"_claimed_releases.json"))
+	path, err := db.FileInSubdir(dbPath, "cache", filepath.Join("banned", strings.ToUpper(strings.TrimSpace(tracker))+"_claimed_releases.json"))
+	if err != nil {
+		return "", fmt.Errorf("metadata: resolve tracker claims path: %w", err)
+	}
+	return path, nil
 }
 
 func trackerClaimsBaseURL(cfg config.Config, tracker string) (string, bool) {

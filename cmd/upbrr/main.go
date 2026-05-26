@@ -314,7 +314,7 @@ func createCLIAuthFile(stdin io.Reader, stdout io.Writer, dbPath string) error {
 		return fmt.Errorf("create auth: password too short (minimum %d characters)", webserver.AuthPasswordMinLength)
 	}
 	if err := webserver.BootstrapAuthFile(dbPath, username, password); err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	return nil
 }
@@ -384,7 +384,7 @@ func runServe(args []string) error {
 	configFlagProvided := visitedFlags["config"]
 	resolvedConfigPath, err := configstore.ResolveYAMLPath(opts.ConfigPath, configFlagProvided)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 
 	cfg, dbPath, err := loadServeConfig(resolvedConfigPath, configFlagProvided)
@@ -394,10 +394,10 @@ func runServe(args []string) error {
 
 	webCfg, err := webserver.LoadCLIConfig(dbPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	if err := webserver.SaveCLIConfig(dbPath, webCfg); err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 
 	server, err := webserver.New(webserver.Options{
@@ -405,20 +405,20 @@ func runServe(args []string) error {
 		CLIConfig: webCfg,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	defer server.Close()
 
-	return server.Run(context.Background())
+	return wrapUpbrrError(server.Run(context.Background()))
 }
 
 func loadCLIConfig(configPath string, configProvided bool) (config.Config, string, error) {
 	cfg, dbPath, err := configstore.Bootstrap(context.Background(), configPath, configProvided, true)
 	if err != nil {
-		return config.Config{}, "", err
+		return config.Config{}, "", fmt.Errorf("upbrr: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {
-		return config.Config{}, "", err
+		return config.Config{}, "", fmt.Errorf("upbrr: %w", err)
 	}
 	return cfg, dbPath, nil
 }
@@ -427,7 +427,7 @@ func loadCLIConfig(configPath string, configProvided bool) (config.Config, strin
 // valid config (e.g. tmdb_api). The web UI handles initial setup, so the
 // server must be able to start even on a fresh install with no config yet.
 func loadServeConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	return configstore.Bootstrap(context.Background(), configPath, configProvided, false)
+	return wrapUpbrrResult2(configstore.Bootstrap(context.Background(), configPath, configProvided, false))
 }
 
 func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string, plaintext bool) error {
@@ -448,13 +448,13 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 
 	if plaintext {
 		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, outputPath, repo); err != nil {
-			return err
+			return fmt.Errorf("upbrr: %w", err)
 		}
 		return nil
 	}
 
 	if err := config.ExportFromDatabaseToYAML(ctx, outputPath, repo); err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 
 	return nil
@@ -464,7 +464,7 @@ func resolveExportDBPath(configPath string, configProvided bool) (string, error)
 	if configProvided {
 		resolvedConfigPath, err := configstore.ResolveYAMLPath(configPath, configProvided)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("upbrr: %w", err)
 		}
 
 		loaded, err := config.ImportFromYAML(resolvedConfigPath)
@@ -612,7 +612,7 @@ func normalizeCLIPaths(ctx context.Context, paths []string) ([]string, error) {
 	validator := filesystem.NewValidator()
 	normalized, err := validator.ValidatePaths(ctx, paths)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upbrr: %w", err)
 	}
 	return normalized, nil
 }
@@ -801,7 +801,7 @@ func formatDuration(seconds float64) string {
 func importConfig(ctx context.Context, importPath, configPath string, configProvided bool) error {
 	cfg, warnings, err := importer.ImportFromFile(importPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 
 	for _, w := range warnings {

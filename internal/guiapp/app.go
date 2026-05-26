@@ -64,28 +64,28 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 	}
 	cfg, dbPath, err := configstore.Bootstrap(ctx, configPath, configProvided, true)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 
 	repo, err := db.OpenWithLoggerContext(ctx, dbPath, logger)
 	if err != nil {
 		_ = logger.Close()
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 	if err := repo.MigrateContext(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 	if err := repo.ClearUIState(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 
 	var coreSvc api.Core
@@ -105,7 +105,7 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		if err != nil {
 			_ = repo.Close()
 			_ = logger.Close()
-			return nil, err
+			return nil, fmt.Errorf("gui: %w", err)
 		}
 	}
 
@@ -208,7 +208,7 @@ func (a *App) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResp
 		return api.BrowseDirectoryResponse{}, errors.New("app not initialized")
 	}
 	fallback := guishared.BrowseDirectoryFallback(a.cfg.MainSettings.DBPath)
-	return guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback)
+	return wrapGUIResult(guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback))
 }
 
 func (a *App) ListUIStates() (api.UIStateList, error) {
@@ -220,7 +220,7 @@ func (a *App) ListUIStates() (api.UIStateList, error) {
 	defer cancel()
 	states, err := a.repo.ListUIStates(ctx)
 	if err != nil {
-		return api.UIStateList{}, err
+		return api.UIStateList{}, fmt.Errorf("gui: %w", err)
 	}
 	return api.UIStateList{States: states}, nil
 }
@@ -234,7 +234,7 @@ func (a *App) GetUIState(id string) (api.UIStateRecord, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return a.repo.LoadUIState(ctx, id)
+	return wrapGUIResult(a.repo.LoadUIState(ctx, id))
 }
 
 func (a *App) SaveUIState(id string, label string, state api.UIState) error {
@@ -246,7 +246,7 @@ func (a *App) SaveUIState(id string, label string, state api.UIState) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return a.repo.SaveUIState(ctx, id, label, state)
+	return wrapGUIError(a.repo.SaveUIState(ctx, id, label, state))
 }
 
 func validateExternalURL(raw string) (string, error) {
@@ -305,7 +305,7 @@ func (a *App) DetectDiscType(path string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return filesystem.DetectDiscType(ctx, path)
+	return wrapGUIResult(filesystem.DetectDiscType(ctx, path))
 }
 
 func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (api.MetadataPreview, error) {
@@ -344,7 +344,7 @@ func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.E
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.FetchMetadataPreview(progressCtx, req)
+	return wrapGUIResult(a.core.FetchMetadataPreview(progressCtx, req))
 }
 
 func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (api.MetadataPreview, error) {
@@ -488,7 +488,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 	}
 	preview, err := a.core.FetchMetadataPreview(progressCtx, req)
 	if err != nil {
-		return api.MetadataPreview{}, err
+		return api.MetadataPreview{}, fmt.Errorf("gui: %w", err)
 	}
 	if a.logger != nil {
 		a.logger.Infof("gui: reset metadata completed path=%s release=%s", trimmedPath, strings.TrimSpace(preview.ReleaseName))
@@ -600,7 +600,7 @@ func (a *App) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOve
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.CheckDupes(ctx, req)
+	return wrapGUIResult(a.core.CheckDupes(ctx, req))
 }
 
 func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string) (api.PreparationPreview, error) {
@@ -640,7 +640,7 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 		})
 	})
 
-	return a.core.FetchPreparationPreview(progressCtx, req)
+	return wrapGUIResult(a.core.FetchPreparationPreview(progressCtx, req))
 }
 
 func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
@@ -685,7 +685,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 	}
 	req.Options.DryRun = true
 	if err := guishared.SeedRunCorePreparedMeta(ctx, a.core, runCore, req); err != nil {
-		return api.TrackerDryRunPreview{}, err
+		return api.TrackerDryRunPreview{}, fmt.Errorf("gui: %w", err)
 	}
 
 	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
@@ -698,7 +698,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		})
 	})
 
-	return runCore.FetchTrackerDryRunPreview(progressCtx, req)
+	return wrapGUIResult(runCore.FetchTrackerDryRunPreview(progressCtx, req))
 }
 
 func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string) (api.DescriptionBuilderPreview, error) {
@@ -727,7 +727,7 @@ func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverr
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.FetchDescriptionBuilderPreview(ctx, req)
+	return wrapGUIResult(a.core.FetchDescriptionBuilderPreview(ctx, req))
 }
 
 func (a *App) RenderDescription(raw string) (string, error) {
@@ -739,7 +739,7 @@ func (a *App) RenderDescription(raw string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return a.core.RenderDescription(ctx, raw)
+	return wrapGUIResult(a.core.RenderDescription(ctx, raw))
 }
 
 func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, trackers []string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.DescriptionBuilderGroup, error) {
@@ -764,7 +764,7 @@ func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, 
 	req.ExternalIDOverrides = overrides
 	req.ReleaseNameOverrides = nameOverrides
 
-	return a.core.SaveDescriptionOverride(ctx, req, raw)
+	return wrapGUIResult(a.core.SaveDescriptionOverride(ctx, req, raw))
 }
 
 func (a *App) DiscoverPlaylists(path string) ([]api.PlaylistInfo, error) {
@@ -779,7 +779,7 @@ func (a *App) DiscoverPlaylists(path string) ([]api.PlaylistInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return a.core.DiscoverPlaylists(ctx, path)
+	return wrapGUIResult(a.core.DiscoverPlaylists(ctx, path))
 }
 
 func (a *App) SavePlaylistSelection(path string, playlists []string, useAll bool) error {
@@ -794,7 +794,7 @@ func (a *App) SavePlaylistSelection(path string, playlists []string, useAll bool
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return a.core.SavePlaylistSelection(ctx, path, playlists, useAll)
+	return wrapGUIError(a.core.SavePlaylistSelection(ctx, path, playlists, useAll))
 }
 
 func (a *App) LoadPlaylistSelection(path string) (api.PlaylistSelection, error) {
@@ -809,7 +809,7 @@ func (a *App) LoadPlaylistSelection(path string) (api.PlaylistSelection, error) 
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return a.core.LoadPlaylistSelection(ctx, path)
+	return wrapGUIResult(a.core.LoadPlaylistSelection(ctx, path))
 }
 
 func (a *App) ListHistory() ([]api.HistoryEntry, error) {
@@ -881,7 +881,7 @@ func (a *App) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.FetchScreenshotPlan(ctx, req)
+	return wrapGUIResult(a.core.FetchScreenshotPlan(ctx, req))
 }
 
 func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
@@ -908,7 +908,7 @@ func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.GenerateScreenshots(ctx, req, selections, purpose)
+	return wrapGUIResult(a.core.GenerateScreenshots(ctx, req, selections, purpose))
 }
 
 func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.ScreenshotImage, error) {
@@ -935,7 +935,7 @@ func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverride
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.ListUploadCandidates(ctx, req)
+	return wrapGUIResult(a.core.ListUploadCandidates(ctx, req))
 }
 
 func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.UploadedImageLink, error) {
@@ -962,7 +962,7 @@ func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.ListUploadedImages(ctx, req)
+	return wrapGUIResult(a.core.ListUploadedImages(ctx, req))
 }
 
 func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
@@ -996,7 +996,7 @@ func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameO
 		Trackers:             slices.Clone(trackers),
 	}
 
-	return a.core.UploadImages(ctx, req, host, images)
+	return wrapGUIResult(a.core.UploadImages(ctx, req, host, images))
 }
 
 func (a *App) DeleteUploadedImage(path string, imagePath string, host string) error {
@@ -1022,7 +1022,7 @@ func (a *App) DeleteUploadedImage(path string, imagePath string, host string) er
 		Mode:  api.ModeGUI,
 	}
 
-	return a.core.DeleteUploadedImage(ctx, req, imagePath, host)
+	return wrapGUIError(a.core.DeleteUploadedImage(ctx, req, imagePath, host))
 }
 
 func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, timestampSeconds float64) (string, error) {
@@ -1051,7 +1051,7 @@ func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverri
 
 	preview, err := a.core.PreviewScreenshotFrame(ctx, req, timestampSeconds)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 	if len(preview.ImageBytes) == 0 {
 		return "", errors.New("preview image is empty")
@@ -1087,7 +1087,7 @@ func (a *App) DeleteScreenshot(path string, overrides api.ExternalIDOverrides, n
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.DeleteScreenshot(ctx, req, imagePath)
+	return wrapGUIError(a.core.DeleteScreenshot(ctx, req, imagePath))
 }
 
 func (a *App) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, url string) error {
@@ -1117,7 +1117,7 @@ func (a *App) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrid
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.DeleteTrackerImageURL(ctx, req, url)
+	return wrapGUIError(a.core.DeleteTrackerImageURL(ctx, req, url))
 }
 
 func (a *App) SaveFinalScreenshotSelections(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, images []api.ScreenshotImage) error {
@@ -1144,7 +1144,7 @@ func (a *App) SaveFinalScreenshotSelections(path string, overrides api.ExternalI
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.SaveFinalScreenshotSelections(ctx, req, images)
+	return wrapGUIError(a.core.SaveFinalScreenshotSelections(ctx, req, images))
 }
 
 func (a *App) ReadScreenshotImage(path string) (string, error) {
@@ -1175,10 +1175,10 @@ func (a *App) GetConfig() (string, error) {
 
 	cfg, err := config.LoadFromDatabase(ctx, a.repo)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
 		cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
@@ -1190,7 +1190,7 @@ func (a *App) GetConfig() (string, error) {
 		cfg.Trackers.DefaultTrackers = config.CSVList{}
 	}
 
-	return config.ExportToJSON(cfg)
+	return wrapGUIResult(config.ExportToJSON(cfg))
 }
 
 func (a *App) GetDefaultConfig() (string, error) {
@@ -1200,10 +1200,10 @@ func (a *App) GetDefaultConfig() (string, error) {
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 
-	return config.ExportToJSON(cfg)
+	return wrapGUIResult(config.ExportToJSON(cfg))
 }
 
 func (a *App) ListKnownTrackers() ([]string, error) {
@@ -1235,10 +1235,10 @@ func (a *App) SaveConfig(payload string) error {
 
 	cfg, err := config.ImportFromJSONEncrypted(payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
 		cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
@@ -1247,12 +1247,12 @@ func (a *App) SaveConfig(payload string) error {
 		return errors.New("changing main_settings.db_path requires restart and is not supported in the GUI")
 	}
 	if err := cfg.Validate(); err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 
 	ctx := a.runtimeContext()
 	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 
 	return a.applyConfig(*cfg)
@@ -1310,13 +1310,13 @@ func (a *App) ExportConfig() (string, error) {
 
 	if allowPlaintext {
 		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, trimmedPath, a.repo); err != nil {
-			return "", err
+			return "", fmt.Errorf("gui: %w", err)
 		}
 		return trimmedPath, nil
 	}
 
 	if err := config.ExportFromDatabaseToYAML(ctx, trimmedPath, a.repo); err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 
 	return trimmedPath, nil
@@ -1339,7 +1339,7 @@ func (a *App) allowUnencryptedExport() (bool, error) {
 	if errors.Is(err, authmaterial.ErrUnavailable) {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("gui: %w", err)
 }
 
 type ImportResult struct {
@@ -1429,7 +1429,7 @@ func (a *App) CreateWebAuth(username string, password string) (WebAuthStatus, er
 	}
 
 	if err := authmaterial.BootstrapAuthFile(dbPath, username, password); err != nil {
-		return WebAuthStatus{}, err
+		return WebAuthStatus{}, fmt.Errorf("gui: %w", err)
 	}
 
 	return a.GetWebAuthStatus()
@@ -1466,7 +1466,7 @@ func (a *App) ImportConfig() (ImportResult, error) {
 
 	cfg, warnings, err := importer.ImportFromFile(path)
 	if err != nil {
-		return ImportResult{}, err
+		return ImportResult{}, fmt.Errorf("gui: %w", err)
 	}
 
 	cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
@@ -1476,7 +1476,7 @@ func (a *App) ImportConfig() (ImportResult, error) {
 	}
 
 	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
-		return ImportResult{}, err
+		return ImportResult{}, fmt.Errorf("gui: %w", err)
 	}
 
 	config.ApplyEnvOverrides(cfg)
@@ -1495,7 +1495,7 @@ func (a *App) applyConfig(cfg config.Config) error {
 	ctx := a.runtimeContext()
 	rt, err := guishared.BuildRuntime(ctx, cfg, a.repo)
 	if err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 
 	oldCore := a.core

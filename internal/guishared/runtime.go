@@ -6,6 +6,7 @@ package guishared
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
@@ -33,7 +34,7 @@ func BuildRuntime(ctx context.Context, cfg config.Config, repo *db.SQLiteReposit
 
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
-		return Runtime{}, err
+		return Runtime{}, fmt.Errorf("gui shared: %w", err)
 	}
 	svc, err := core.NewWithContext(ctx, api.CoreDependencies{
 		Config: cfg,
@@ -45,7 +46,7 @@ func BuildRuntime(ctx context.Context, cfg config.Config, repo *db.SQLiteReposit
 	})
 	if err != nil {
 		_ = logger.Close()
-		return Runtime{}, err
+		return Runtime{}, fmt.Errorf("gui shared: %w", err)
 	}
 	return Runtime{Core: svc, Logger: logger}, nil
 }

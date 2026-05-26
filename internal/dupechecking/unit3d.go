@@ -5,6 +5,7 @@ package dupechecking
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -27,7 +28,7 @@ func (h unit3dHandler) Search(ctx context.Context, meta api.PreparedMetadata, tr
 	}
 	entries, warning, err := h.tracker.SearchTorrents(ctx, tracker, params, strings.TrimSpace(meta.DiscType) != "")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("dupechecking: %w", err)
 	}
 	if warning != "" {
 		return entries, []string{warning}, nil

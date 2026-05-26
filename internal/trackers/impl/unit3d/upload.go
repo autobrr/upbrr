@@ -80,7 +80,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, logger)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			logger.Warnf("trackers: %s description assets failed: %v", trackerName, err)
 			assets = trackers.DescriptionAssets{}
@@ -374,7 +374,7 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, logger)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return api.TrackerDryRunEntry{}, err
+				return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
 			}
 			trackers.LogDescriptionAssetResolutionFailure(logger, req.Tracker, err)
 			assets = trackers.DescriptionAssets{}
@@ -532,11 +532,11 @@ func loadUnit3DMedia(meta api.PreparedMetadata, dbPath string, logger api.Logger
 func readBDInfo(dbPath string, meta api.PreparedMetadata) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
 	if strings.TrimSpace(path) == "" {
@@ -603,7 +603,7 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string, logger api.Log
 func torrentPathFromTemp(tmpRoot string, meta api.PreparedMetadata) (string, error) {
 	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, base+".torrent"), nil
 }

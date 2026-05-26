@@ -808,7 +808,7 @@ func playlistNames(playlists []api.PlaylistInfo) []string {
 func writeSelectedPlaylistSummaries(tmpDir string, fullReport string, selected []string) (string, error) {
 	reports, err := discparse.ExtractPlaylistReports(fullReport, selected)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("metadata: %w", err)
 	}
 	if len(reports) == 0 {
 		return "", errors.New("no selected playlist reports extracted")

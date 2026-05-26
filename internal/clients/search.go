@@ -1021,7 +1021,7 @@ func (s *Service) selectValidTorrent(
 
 		outputPath, err := torrent.TempTorrentPath(tmpRoot, meta, meta.SourcePath)
 		if err != nil {
-			return "", "", err
+			return "", "", fmt.Errorf("clients: %w", err)
 		}
 
 		if info, err := os.Stat(outputPath); err == nil && !info.IsDir() {

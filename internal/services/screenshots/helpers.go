@@ -329,7 +329,7 @@ func loadBDInfo(tmpRoot string, meta api.PreparedMetadata) (*discparse.BDInfo, e
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("screenshots: %w", err)
 	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
 	if strings.TrimSpace(path) == "" {

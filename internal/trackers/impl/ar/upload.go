@@ -93,10 +93,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "AR")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, arSourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		id := firstNonEmpty(torrentID, groupID)
@@ -160,7 +160,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	var assets trackers.DescriptionAssets
 	if req.Assets != nil {
@@ -664,11 +664,11 @@ func buildDownloadURL(torrentID string, fallback string) string {
 func readBDSummary(meta api.PreparedMetadata, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return readTextFile(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta)))
 }
@@ -676,11 +676,11 @@ func readBDSummary(meta api.PreparedMetadata, dbPath string) (string, error) {
 func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, "[AR]upload_failure.html"), nil
 }
@@ -705,11 +705,11 @@ func readAuthKey(dbPath string) string {
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "AR", "alpharatio.cc")
+	return wrapTrackerResult(cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "AR", "alpharatio.cc"))
 }
 
 func saveCookies(ctx context.Context, dbPath string, values []*http.Cookie) error {
-	return cookiepkg.SaveTrackerHTTPCookies(ctx, dbPath, "AR", values)
+	return wrapTrackerError(cookiepkg.SaveTrackerHTTPCookies(ctx, dbPath, "AR", values))
 }
 
 func extractAuthKey(body string) string {
