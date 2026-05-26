@@ -414,6 +414,12 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 			{name: "LoginAnswer", field: &entry.LoginAnswer},
 			{name: "Filebrowser", field: &entry.Filebrowser},
 		}
+		if strings.EqualFold(strings.TrimSpace(name), "BTN") {
+			trackerSecrets = append(trackerSecrets, struct {
+				name  string
+				field *string
+			}{name: "URL", field: &entry.URL})
+		}
 		for _, item := range trackerSecrets {
 			if err := visit("Trackers."+name+"."+item.name, item.field); err != nil {
 				return err
