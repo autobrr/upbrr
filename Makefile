@@ -1,4 +1,4 @@
-.PHONY: help build backend frontend frontend-bundle gui dev dev-frontend test test-go test-frontend lint lint-json logpolicy precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
+.PHONY: help build backend frontend frontend-bundle gui dev dev-frontend test test-go test-frontend lint lint-json logpolicy vuln precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
 
 ifeq ($(OS),Windows_NT)
 EXE := .exe
@@ -19,6 +19,7 @@ endif
 CLI_OUT := dist/upbrr$(EXE)
 GO_TEST_FLAGS := -v -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
+GOVULNCHECK_VERSION := v1.3.0
 GO_CHANGED_FILES := $(shell git diff --name-only --diff-filter=ACMR HEAD -- '*.go')
 GO_CHANGED_PKGS := $(sort $(patsubst %/,%,$(dir $(GO_CHANGED_FILES))))
 
@@ -43,6 +44,7 @@ help:
 	@echo   make lint               Run full Go lint
 	@echo   make lint-json          Write Go lint JSON to lint-report.json
 	@echo   make logpolicy          Run logging policy check
+	@echo   make vuln               Run Go vulnerability scan
 	@$(BLANK)
 	@echo Pre-commit
 	@echo   make precommit          Run Lefthook pre-commit
@@ -103,6 +105,9 @@ lint-json:
 
 logpolicy:
 	go run ./cmd/logpolicy
+
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 precommit:
 	lefthook run pre-commit
