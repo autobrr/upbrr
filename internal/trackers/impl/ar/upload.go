@@ -614,18 +614,18 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	writer := multipart.NewWriter(body)
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: AR write multipart field %q: %w", key, err)
 		}
 	}
 	part, err := writer.CreateFormFile("file_input", filepath.Base(torrentPath))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		return nil, "", fmt.Errorf("trackers: AR copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }

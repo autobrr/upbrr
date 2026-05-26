@@ -161,7 +161,7 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 		"media_info": fileInfo,
 	} {
 		if err := writer.WriteField(key, value); err != nil {
-			return taskInfo{}, err
+			return taskInfo{}, fmt.Errorf("trackers: %s write multipart field %q: %w", site.Name, key, err)
 		}
 	}
 	file, err := os.Open(torrentPath)
@@ -171,13 +171,13 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 	defer file.Close()
 	part, err := writer.CreateFormFile("torrent_file", filepath.Base(torrentPath))
 	if err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s create torrent form file: %w", site.Name, err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		return taskInfo{}, fmt.Errorf("trackers: %s copy torrent file: %w", site.Name, err)
 	}
 	if err := writer.Close(); err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s close multipart writer: %w", site.Name, err)
 	}
 
 	endpoint := site.BaseURL + "/upload/" + categorySlug(req.Meta)

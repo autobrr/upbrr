@@ -715,7 +715,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 				}
 				if err := writer.WriteField(key, value); err != nil {
 					_ = writer.Close()
-					return nil, "", err
+					return nil, "", fmt.Errorf("trackers: PTP write multipart field %q: %w", key, err)
 				}
 			}
 			continue
@@ -728,14 +728,14 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 				}
 				if err := writer.WriteField(key, trimmed); err != nil {
 					_ = writer.Close()
-					return nil, "", err
+					return nil, "", fmt.Errorf("trackers: PTP write multipart field %q: %w", key, err)
 				}
 			}
 			continue
 		}
 		if err := writer.WriteField(key, fields[key]); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: PTP write multipart field %q: %w", key, err)
 		}
 	}
 
@@ -748,14 +748,14 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 	part, err := writer.CreateFormFile(fileField, "placeholder.torrent")
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: PTP create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
 		return nil, "", fmt.Errorf("trackers: PTP copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: PTP close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }

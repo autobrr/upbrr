@@ -439,7 +439,7 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 	for key, value := range data {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: UNIT3D write multipart field %q: %w", key, err)
 		}
 	}
 
@@ -467,7 +467,7 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: UNIT3D close multipart writer: %w", err)
 	}
 
 	return strings.NewReader(builder.String()), writer.FormDataContentType(), nil
@@ -482,7 +482,7 @@ func addFile(writer *multipart.Writer, field, path string) error {
 
 	part, err := writer.CreateFormFile(field, filepath.Base(path))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: UNIT3D create multipart file %q: %w", field, err)
 	}
 	_, err = io.Copy(part, file)
 	if err != nil {

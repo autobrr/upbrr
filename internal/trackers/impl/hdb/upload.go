@@ -302,7 +302,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: HDB write multipart field %q: %w", key, err)
 		}
 	}
 
@@ -316,7 +316,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	part, err := writer.CreateFormFile("file", filepath.Base(torrentPath))
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: HDB create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
@@ -324,7 +324,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: HDB close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }

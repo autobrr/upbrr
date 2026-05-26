@@ -209,7 +209,7 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("write multipart field %q: %w", key, err)
 		}
 	}
 	for _, file := range files {
@@ -220,7 +220,7 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 		part, err := writer.CreateFormFile(file.FieldName, name)
 		if err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("create multipart file %q: %w", file.FieldName, err)
 		}
 		payload := file.Content
 		if len(payload) == 0 {
@@ -236,7 +236,7 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -253,7 +253,7 @@ func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) (
 		for _, value := range values {
 			if err := writer.WriteField(key, value); err != nil {
 				_ = writer.Close()
-				return nil, "", err
+				return nil, "", fmt.Errorf("write multipart field %q: %w", key, err)
 			}
 		}
 	}
@@ -265,7 +265,7 @@ func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) (
 		part, err := writer.CreateFormFile(file.FieldName, name)
 		if err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("create multipart file %q: %w", file.FieldName, err)
 		}
 		payload := file.Content
 		if len(payload) == 0 {
@@ -281,7 +281,7 @@ func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) (
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }

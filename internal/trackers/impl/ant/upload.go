@@ -621,14 +621,14 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 				}
 				if err := writer.WriteField(key, trimmed); err != nil {
 					_ = writer.Close()
-					return nil, "", err
+					return nil, "", fmt.Errorf("trackers: ANT write multipart field %q: %w", key, err)
 				}
 			}
 			continue
 		}
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: ANT write multipart field %q: %w", key, err)
 		}
 	}
 	file, err := os.Open(torrentPath)
@@ -640,14 +640,14 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	part, err := writer.CreateFormFile("file_input", "torrent.torrent")
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
 		return nil, "", fmt.Errorf("trackers: ANT copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }

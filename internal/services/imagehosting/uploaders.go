@@ -1066,7 +1066,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 	for _, key := range fieldKeys {
 		value := fields[key]
 		if err := writer.WriteField(key, value); err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: write multipart field %q: %w", key, err)
 		}
 	}
 	fileFieldKeys := make([]string, 0, len(fileFields))
@@ -1083,7 +1083,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 		part, err := writer.CreateFormFile(fileField, filepath.Base(filePath))
 		if err != nil {
 			_ = file.Close()
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: create multipart file %q: %w", fileField, err)
 		}
 		if _, err := io.Copy(part, file); err != nil {
 			_ = file.Close()
@@ -1094,7 +1094,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: close multipart writer: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)

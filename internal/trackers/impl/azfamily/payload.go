@@ -168,13 +168,13 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 	_ = writer.WriteField("qqtotalfilesize", strconv.Itoa(len(imageBytes)))
 	part, err := writer.CreateFormFile("qqfile", filename)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s create screenshot form file: %w", site.Name, err)
 	}
 	if _, err := part.Write(imageBytes); err != nil {
 		return "", fmt.Errorf("trackers: %s write screenshot upload part: %w", site.Name, err)
 	}
 	if err := writer.Close(); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s close screenshot multipart writer: %w", site.Name, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, site.BaseURL+"/ajax/image/upload", body)
 	if err != nil {

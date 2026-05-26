@@ -243,12 +243,12 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: BHD write multipart field %q: %w", key, err)
 		}
 	}
 	if err := writer.WriteField("mediainfo", mediaDump); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD write multipart field %q: %w", "mediainfo", err)
 	}
 	file, err := os.Open(torrentPath)
 	if err != nil {
@@ -259,14 +259,14 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 	part, err := writer.CreateFormFile("file", "torrent.torrent")
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
 		return nil, "", fmt.Errorf("trackers: BHD copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
