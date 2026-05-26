@@ -361,6 +361,8 @@ func mergeUnknownKeys(target map[string]interface{}, unknown map[string]interfac
 func trackerConfigToJSONMap(cfg TrackerConfig) (map[string]interface{}, error) {
 	alias := trackerConfigAlias(cfg)
 	alias.Unknown = nil
+	// Export paths encrypt known secrets first unless explicitly called for plaintext export.
+	//nolint:gosec // TrackerConfig intentionally serializes API key fields for config export.
 	payload, err := json.Marshal(alias)
 	if err != nil {
 		return nil, err
@@ -375,6 +377,8 @@ func trackerConfigToJSONMap(cfg TrackerConfig) (map[string]interface{}, error) {
 func trackerConfigToYAMLMap(cfg TrackerConfig) (map[string]interface{}, error) {
 	alias := trackerConfigAlias(cfg)
 	alias.Unknown = nil
+	// Export paths encrypt known secrets first unless explicitly called for plaintext export.
+	//nolint:gosec // TrackerConfig intentionally serializes API key fields for config export.
 	payload, err := yaml.Marshal(alias)
 	if err != nil {
 		return nil, fmt.Errorf("config: marshal tracker config to yaml map: %w", err)
