@@ -161,7 +161,7 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 		})
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scan Netscape cookie file: %w", err)
 	}
 	if len(cookies) == 0 {
 		return nil, errors.New("no valid cookies found")

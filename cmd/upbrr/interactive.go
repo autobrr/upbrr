@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -486,10 +487,10 @@ func promptLine(reader *bufio.Reader, prompt string) (string, error) {
 	fmt.Print(prompt)
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		if err.Error() == "EOF" && line != "" {
+		if errors.Is(err, io.EOF) && line != "" {
 			return line, nil
 		}
-		return "", err
+		return "", fmt.Errorf("read prompt line: %w", err)
 	}
 	return strings.TrimSpace(line), nil
 }

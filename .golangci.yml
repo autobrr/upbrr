@@ -80,7 +80,6 @@ linters:
         - encoding/*
         - crypto/*
         - flag
-        - bufio
         - strconv
 
   exclusions:
