@@ -74,7 +74,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 
 	current, err := filepath.Abs(filepath.Clean(requested))
 	if err != nil {
-		return api.BrowseDirectoryResponse{}, err
+		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: resolve current path: %w", err)
 	}
 	info, err := os.Stat(current)
 	if err != nil {
@@ -86,7 +86,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 	if len(roots) > 0 {
 		current, err = filepath.EvalSymlinks(current)
 		if err != nil {
-			return api.BrowseDirectoryResponse{}, err
+			return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: resolve current symlinks: %w", err)
 		}
 		root = containingRoot(roots, current)
 		if root == "" {
@@ -182,7 +182,7 @@ func normalizedBrowseRoot(rootPath string) (string, error) {
 	}
 	root, err := filepath.Abs(filepath.Clean(trimmed))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse directory: resolve root path: %w", err)
 	}
 	info, err := os.Stat(root)
 	if err != nil {
@@ -193,7 +193,7 @@ func normalizedBrowseRoot(rootPath string) (string, error) {
 	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse directory: resolve root symlinks: %w", err)
 	}
 	return root, nil
 }

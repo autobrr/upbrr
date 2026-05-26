@@ -266,7 +266,7 @@ func findVideoTS(ctx context.Context, root string) (string, error) {
 	})
 	if walkErr != nil && !errors.Is(walkErr, foundErr) {
 		if errors.Is(walkErr, context.Canceled) || errors.Is(walkErr, context.DeadlineExceeded) {
-			return "", walkErr
+			return "", fmt.Errorf("mediainfo: scan dvd interrupted: %w", walkErr)
 		}
 		return "", fmt.Errorf("mediainfo: scan dvd: %w", walkErr)
 	}

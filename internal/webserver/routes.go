@@ -363,7 +363,7 @@ func normalizeBrowsePolicyRoot(value string) (string, error) {
 	}
 	root, err := filepath.Abs(filepath.Clean(trimmed))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse root: resolve path: %w", err)
 	}
 	info, err := os.Stat(root)
 	if err != nil {

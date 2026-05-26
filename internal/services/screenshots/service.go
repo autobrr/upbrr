@@ -462,11 +462,11 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 
 	absTarget, err := filepath.Abs(trimmed)
 	if err != nil {
-		return err
+		return fmt.Errorf("screenshots: resolve delete target path: %w", err)
 	}
 	absTmp, err := filepath.Abs(tmpDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("screenshots: resolve temp path: %w", err)
 	}
 	if absTarget != absTmp && !strings.HasPrefix(absTarget, absTmp+string(os.PathSeparator)) {
 		return internalerrors.ErrInvalidInput

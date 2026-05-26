@@ -69,7 +69,7 @@ func DetectDiscType(ctx context.Context, root string) (string, error) {
 			return discType, nil
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return "", err
+			return "", fmt.Errorf("filesystem: scan disc interrupted: %w", err)
 		}
 		return "", fmt.Errorf("filesystem: scan disc: %w", err)
 	}

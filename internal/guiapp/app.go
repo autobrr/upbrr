@@ -530,11 +530,11 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 	}
 	absRoot, err := filepath.Abs(strings.TrimSpace(root))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cleanup path: resolve root path: %w", err)
 	}
 	absTarget, err := filepath.Abs(trimmed)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cleanup path: resolve target path: %w", err)
 	}
 	if absTarget == absRoot {
 		return false, nil

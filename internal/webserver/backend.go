@@ -1152,11 +1152,11 @@ func removeIfWithinRoot(root string, target string, recursive bool) error {
 	}
 	absRoot, err := filepath.Abs(strings.TrimSpace(root))
 	if err != nil {
-		return err
+		return fmt.Errorf("cleanup path: resolve root path: %w", err)
 	}
 	absTarget, err := filepath.Abs(trimmed)
 	if err != nil {
-		return err
+		return fmt.Errorf("cleanup path: resolve target path: %w", err)
 	}
 	if absTarget == absRoot || !pathWithinRoot(absRoot, absTarget) {
 		return nil

@@ -390,7 +390,7 @@ func selectBDMVFile(ctx context.Context, root string, info *discparse.BDInfo) (s
 		return nil
 	})
 	if walkErr != nil && !errors.Is(walkErr, context.Canceled) && !errors.Is(walkErr, errFound) {
-		return "", walkErr
+		return "", fmt.Errorf("screenshots: scan bdinfo files: %w", walkErr)
 	}
 	if found == "" {
 		return "", errors.New("screenshots: bdinfo file not found")
@@ -482,7 +482,7 @@ func findVideoTS(ctx context.Context, root string) (string, error) {
 		return nil
 	})
 	if walkErr != nil && !errors.Is(walkErr, context.Canceled) && !errors.Is(walkErr, errFound) {
-		return "", walkErr
+		return "", fmt.Errorf("screenshots: scan VIDEO_TS: %w", walkErr)
 	}
 	if found == "" {
 		return "", errors.New("screenshots: VIDEO_TS not found")

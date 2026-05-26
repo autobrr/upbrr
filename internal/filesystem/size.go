@@ -105,7 +105,7 @@ func discTreeSize(ctx context.Context, root string) (int64, error) {
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return 0, err
+			return 0, fmt.Errorf("filesystem: size walk interrupted: %w", err)
 		}
 		return 0, fmt.Errorf("filesystem: size walk: %w", err)
 	}

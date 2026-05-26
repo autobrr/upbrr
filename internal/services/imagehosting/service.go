@@ -158,7 +158,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 		}
 		absPath, err := filepath.Abs(pathValue)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("image hosting: resolve image path: %w", err)
 		}
 		if !isAllowedImageExt(absPath) {
 			return nil, internalerrors.ErrInvalidInput
