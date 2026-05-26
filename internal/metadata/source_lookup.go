@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"fmt"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -104,7 +105,7 @@ func applySourceLookupOverride(meta *api.PreparedMetadata) {
 func resolveSourceLookupURL(raw string) (sourceLookupResolution, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return sourceLookupResolution{}, err
+		return sourceLookupResolution{}, fmt.Errorf("metadata: parse source lookup URL: %w", err)
 	}
 	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
 	if scheme != "http" && scheme != "https" {

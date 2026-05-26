@@ -78,7 +78,6 @@ linters:
         - github.com/autobrr/upbrr/*
         - context
         - encoding/*
-        - net/url
         - mime/multipart
         - crypto/*
         - flag

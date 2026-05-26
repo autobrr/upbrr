@@ -272,7 +272,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 	if params != nil {
 		parsed, err := url.Parse(endpoint)
 		if err != nil {
-			return err
+			return fmt.Errorf("tvmaze: parse request endpoint: %w", err)
 		}
 		parsed.RawQuery = params.Encode()
 		reqURL = parsed.String()

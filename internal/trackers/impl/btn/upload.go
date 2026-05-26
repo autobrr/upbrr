@@ -608,7 +608,7 @@ func resolve2FACode(otpURI string) (string, error) {
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BTN parse otp_uri: %w", err)
 	}
 	secret := strings.TrimSpace(parsed.Query().Get("secret"))
 	if secret == "" {

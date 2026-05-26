@@ -575,7 +575,7 @@ func fetchAntiCsrfToken(ctx context.Context, baseURL string, cookies map[string]
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: PTP parse base URL: %w", err)
 	}
 	jarCookies := make([]*http.Cookie, 0, len(cookies))
 	for name, value := range cookies {
@@ -859,7 +859,7 @@ func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseUR
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: PTP parse cookie URL: %w", err)
 	}
 	cookies := make(map[string]string)
 	for _, cookie := range client.Jar.Cookies(parsed) {
@@ -877,7 +877,7 @@ func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseUR
 func passkeyFromAnnounce(announceURL string) (string, error) {
 	parsed, err := url.Parse(announceURL)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: PTP parse announce URL: %w", err)
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	if len(parts) < 2 {
@@ -893,7 +893,7 @@ func resolve2FACode(otpURI string) (string, error) {
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: PTP parse otp_uri: %w", err)
 	}
 	secret := strings.TrimSpace(parsed.Query().Get("secret"))
 	if secret == "" {

@@ -198,7 +198,7 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 	}
 	parsedBase, err := url.Parse(baseURL)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV parse base URL: %w", err)
 	}
 	jarCookies := make([]*http.Cookie, 0, len(cookies))
 	for name, value := range cookies {
@@ -374,7 +374,7 @@ func totpFromOTPURI(otpURI string, now time.Time) (string, error) {
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: MTV parse otp_uri: %w", err)
 	}
 	query := parsed.Query()
 	secret := strings.TrimSpace(query.Get("secret"))

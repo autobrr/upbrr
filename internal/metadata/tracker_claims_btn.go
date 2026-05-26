@@ -397,7 +397,7 @@ func setBTNJarCookiesFromNetscape(client *http.Client, rawURL string, values []*
 
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("metadata: parse BTN cookie URL: %w", err)
 	}
 
 	jarCookies := make([]*http.Cookie, 0, len(values))
@@ -454,7 +454,7 @@ func resolveBTNClaims2FACode(otpURI string) (string, error) {
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("metadata: parse BTN claims otp_uri: %w", err)
 	}
 	secret := strings.TrimSpace(parsed.Query().Get("secret"))
 	if secret == "" {
