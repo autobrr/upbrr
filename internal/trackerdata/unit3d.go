@@ -669,7 +669,7 @@ func parseNumberToInt64(value json.Number) (int64, error) {
 	}
 	parsed, err := strconv.ParseFloat(text, 64)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("parse numeric JSON value %q: %w", text, err)
 	}
 	return int64(parsed), nil
 }
