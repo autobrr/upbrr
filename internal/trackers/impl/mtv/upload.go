@@ -47,7 +47,7 @@ var mtvTokenPattern = regexp.MustCompile(`name="token"\s+value="([^"]{16,128})"`
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
-		return api.UploadSummary{}, ctx.Err()
+		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -140,7 +140,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
-		return api.TrackerDryRunEntry{}, ctx.Err()
+		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 

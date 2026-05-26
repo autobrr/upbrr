@@ -655,7 +655,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
-		return api.TrackerDryRunPreview{}, err
+		return api.TrackerDryRunPreview{}, fmt.Errorf("gui: tracker dry-run preview canceled: %w", err)
 	}
 	trimmedPath := strings.TrimSpace(path)
 	runOpts, err := a.buildRunOptions(debug, runLogLevel)

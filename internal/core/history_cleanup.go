@@ -19,7 +19,7 @@ import (
 
 func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("core: delete all history releases canceled: %w", err)
 	}
 	if c.repo == nil {
 		return 0, errors.New("core: repository not initialized")
@@ -43,7 +43,7 @@ func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
 
 func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("core: delete stored release canceled: %w", err)
 	}
 	trimmedPath := strings.TrimSpace(sourcePath)
 	if trimmedPath == "" {

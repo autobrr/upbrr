@@ -56,7 +56,7 @@ func NewServiceWithRegistryAndImages(cfg config.Config, logger api.Logger, repo 
 func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
-		return api.UploadSummary{}, ctx.Err()
+		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -78,7 +78,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 		for _, tracker := range trackers {
 			select {
 			case <-ctx.Done():
-				return api.UploadSummary{}, ctx.Err()
+				return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 			default:
 			}
 			banned, err := s.banned.IsBanned(tracker, group)
@@ -166,7 +166,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 			select {
 			case <-ctx.Done():
 				finalizePending("canceled")
-				return api.UploadSummary{}, ctx.Err()
+				return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 			default:
 			}
 			s.logger.Debugf("trackers: creating pending record for %s", tracker)
@@ -384,7 +384,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 		case <-ctx.Done():
 			close(jobs)
 			wg.Wait()
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		case jobs <- idx:
 		}
 	}
@@ -393,7 +393,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 	wg.Wait()
 
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 	}
 
 	return results, nil
@@ -518,7 +518,7 @@ func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.P
 func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadata, trackersList []string) (api.PreparationPreview, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparationPreview{}, ctx.Err()
+		return api.PreparationPreview{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -576,7 +576,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 	for _, tracker := range resolved {
 		select {
 		case <-ctx.Done():
-			return api.PreparationPreview{}, ctx.Err()
+			return api.PreparationPreview{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -680,7 +680,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetadata, trackersList []string) ([]api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -710,7 +710,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 	for _, tracker := range resolved {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 

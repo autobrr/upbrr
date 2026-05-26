@@ -170,7 +170,7 @@ func retryBusyContext(ctx context.Context, logger Logger, operation string, atte
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("db: retry busy context canceled: %w", err)
 		}
 		err := fn()
 		if err == nil {
@@ -191,7 +191,7 @@ func retryBusyContext(ctx context.Context, logger Logger, operation string, atte
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-timer.C:
 		}
 	}
@@ -1906,7 +1906,7 @@ func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, path string,
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db save final selections: context canceled: %w", err)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2024,7 +2024,7 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, path stri
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db replace screenshot slots: context canceled: %w", err)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2270,7 +2270,7 @@ func (r *SQLiteRepository) SaveUploadedImages(ctx context.Context, path string, 
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db save uploaded images: context canceled: %w", err)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2481,7 +2481,7 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db purge content: context canceled: %w", err)
 	}
 	if r.logger != nil {
 		r.logger.Debugf("db: purge content data started path=%s", trimmedPath)

@@ -6,6 +6,7 @@ package imagehosting
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -179,7 +180,7 @@ func (u *blockingUploader) Upload(ctx context.Context, imagePath string) (upload
 	u.mu.Unlock()
 
 	<-ctx.Done()
-	return uploadResult{}, ctx.Err()
+	return uploadResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 }
 
 type fakeBatchUploader struct {

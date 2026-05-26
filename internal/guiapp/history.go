@@ -6,6 +6,7 @@ package guiapp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -17,7 +18,7 @@ func (a *App) listHistoryFromRepo(ctx context.Context) ([]api.HistoryEntry, erro
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gui: list history canceled: %w", err)
 	}
 
 	entries, err := a.repo.ListHistoryEntries(ctx)
@@ -40,7 +41,7 @@ func (a *App) getHistoryOverviewFromRepo(ctx context.Context, sourcePath string)
 		return api.HistoryOverview{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("gui: get history overview canceled: %w", err)
 	}
 
 	trimmed := strings.TrimSpace(sourcePath)

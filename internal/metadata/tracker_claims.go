@@ -85,7 +85,7 @@ func (s *Service) applyTrackerClaims(ctx context.Context, meta api.PreparedMetad
 	for _, tracker := range resolved {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, ctx.Err()
+			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 

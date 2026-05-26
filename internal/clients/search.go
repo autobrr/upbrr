@@ -188,7 +188,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 	for _, name := range clients {
 		select {
 		case <-ctx.Done():
-			return api.ClientSearchResult{}, ctx.Err()
+			return api.ClientSearchResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -406,7 +406,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 	for _, torrent := range torrents {
 		select {
 		case <-ctx.Done():
-			return api.ClientSearchResult{}, nil, ctx.Err()
+			return api.ClientSearchResult{}, nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -1000,7 +1000,7 @@ func (s *Service) selectValidTorrent(
 	for _, match := range matches {
 		select {
 		case <-ctx.Done():
-			return "", "", ctx.Err()
+			return "", "", fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 

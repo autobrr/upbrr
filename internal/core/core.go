@@ -221,7 +221,7 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 	for _, path := range uniquePaths {
 		select {
 		case <-ctx.Done():
-			return api.Result{}, ctx.Err()
+			return api.Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -272,7 +272,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	if c.repo != nil && torrent.InfoHash != "" {
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return 0, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if err := c.repo.Save(ctx, db.FileMetadata{Path: meta.SourcePath, InfoHash: torrent.InfoHash, UpdatedAt: time.Now().UTC()}); err != nil {
@@ -2194,7 +2194,7 @@ func (c *Core) applyStoredTrackerData(ctx context.Context, meta *api.PreparedMet
 	}
 	select {
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return false, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	records, err := c.repo.ListTrackerMetadataByPath(ctx, path)
@@ -2470,7 +2470,7 @@ func cacheableGUIPreparedMetaRequest(req api.Request) bool {
 // so callers can hand off metadata to isolated per-run cores.
 func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request) (api.PreparedMetadata, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return api.PreparedMetadata{}, false, err
+		return api.PreparedMetadata{}, false, fmt.Errorf("core: export cached prepared metadata canceled: %w", err)
 	}
 	path, err := c.resolveSinglePreparedMetaPath(ctx, req.Paths)
 	if err != nil {
@@ -2487,7 +2487,7 @@ func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request)
 // and upload-only flows can reuse metadata prepared on the long-lived GUI core.
 func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request, meta api.PreparedMetadata) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("core: import prepared metadata canceled: %w", err)
 	}
 	path, err := c.resolveSinglePreparedMetaPath(ctx, req.Paths)
 	if err != nil {
@@ -2898,7 +2898,7 @@ func clonePtr[T any](value *T) *T {
 
 func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.PlaylistInfo, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: discover playlists canceled: %w", err)
 	}
 	if strings.TrimSpace(sourcePath) == "" {
 		return nil, internalerrors.ErrInvalidInput
@@ -2937,7 +2937,7 @@ func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.
 
 func (c *Core) SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("core: save playlist selection canceled: %w", err)
 	}
 	if strings.TrimSpace(sourcePath) == "" {
 		return internalerrors.ErrInvalidInput
@@ -2961,7 +2961,7 @@ func (c *Core) SavePlaylistSelection(ctx context.Context, sourcePath string, pla
 
 func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (api.PlaylistSelection, error) {
 	if err := ctx.Err(); err != nil {
-		return api.PlaylistSelection{}, err
+		return api.PlaylistSelection{}, fmt.Errorf("core: load playlist selection canceled: %w", err)
 	}
 	if strings.TrimSpace(sourcePath) == "" {
 		return api.PlaylistSelection{}, internalerrors.ErrInvalidInput
@@ -2988,7 +2988,7 @@ func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (ap
 
 func (c *Core) ListHistory(ctx context.Context) ([]api.HistoryEntry, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: list history canceled: %w", err)
 	}
 	if c.repo == nil {
 		return nil, errors.New("core: repository not initialized")
@@ -3011,7 +3011,7 @@ func (c *Core) ListHistory(ctx context.Context) ([]api.HistoryEntry, error) {
 
 func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.HistoryOverview, error) {
 	if err := ctx.Err(); err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: get history overview canceled: %w", err)
 	}
 	trimmed := strings.TrimSpace(sourcePath)
 	if trimmed == "" {
@@ -3134,7 +3134,7 @@ func preferredHistoryDescriptionOverride(overrides []api.DescriptionOverride) ap
 
 func (c *Core) DeleteHistoryRelease(ctx context.Context, sourcePath string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("core: delete history release canceled: %w", err)
 	}
 	trimmed := strings.TrimSpace(sourcePath)
 	if trimmed == "" {
@@ -3160,7 +3160,7 @@ func (c *Core) Close() error {
 
 func (c *Core) RenderDescription(ctx context.Context, raw string) (string, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", fmt.Errorf("core: render description canceled: %w", err)
 	}
 	return description.Render(raw), nil
 }

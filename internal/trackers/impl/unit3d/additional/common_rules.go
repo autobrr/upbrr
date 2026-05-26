@@ -28,7 +28,7 @@ var resolutionOrder = map[string]int{
 func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -49,7 +49,7 @@ func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, _ api.L
 func checkLUMERequirements(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -62,7 +62,7 @@ func checkLUMERequirements(ctx context.Context, meta api.PreparedMetadata, logge
 func checkBHDRequirements(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -79,7 +79,7 @@ func checkBHDRequirements(ctx context.Context, meta api.PreparedMetadata, _ api.
 func checkBLUContainer(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -117,7 +117,7 @@ func isDolbyVisionOnly(meta api.PreparedMetadata) bool {
 func checkOTWGenres(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -149,7 +149,7 @@ func checkOTWGenres(ctx context.Context, meta api.PreparedMetadata, _ api.Logger
 func checkSHRIRegion(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -165,7 +165,7 @@ func checkSHRIRegion(ctx context.Context, meta api.PreparedMetadata, _ api.Logge
 func checkTTRSubtitleOnly(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -178,7 +178,7 @@ func checkTTRSubtitleOnly(ctx context.Context, meta api.PreparedMetadata, _ api.
 func checkULCXRules(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 

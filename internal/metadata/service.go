@@ -264,7 +264,7 @@ func applyTorrentOverridesToPreparedMeta(meta *api.PreparedMetadata) {
 func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -581,7 +581,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -646,13 +646,13 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if err := s.repo.Save(ctx, db.FileMetadata{

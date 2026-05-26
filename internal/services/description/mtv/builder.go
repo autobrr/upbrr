@@ -27,7 +27,7 @@ var mtvEmptyAlignPattern = regexp.MustCompile(`(?is)\[(?:center|right|left|align
 func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 

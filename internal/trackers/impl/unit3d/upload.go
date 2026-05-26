@@ -337,7 +337,7 @@ func isNumericID(value string) bool {
 func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
-		return api.TrackerDryRunEntry{}, ctx.Err()
+		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 

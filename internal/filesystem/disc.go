@@ -43,7 +43,7 @@ func DetectDiscType(ctx context.Context, root string) (string, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if !entry.IsDir() {

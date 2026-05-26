@@ -61,7 +61,7 @@ func DiscoverPlaylists(ctx context.Context, bdmvRoot string) ([]PlaylistInfo, er
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() {

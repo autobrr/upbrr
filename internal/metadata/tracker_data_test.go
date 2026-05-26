@@ -51,7 +51,7 @@ func (s *stubTrackerLookup) Lookup(
 	if delay > 0 {
 		select {
 		case <-ctx.Done():
-			return trackerdata.Result{}, ctx.Err()
+			return trackerdata.Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-time.After(delay):
 		}
 	}

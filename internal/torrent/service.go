@@ -34,7 +34,7 @@ func NewService(logger api.Logger, tmpRoot string) *Service {
 func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.TorrentResult, error) {
 	select {
 	case <-ctx.Done():
-		return api.TorrentResult{}, ctx.Err()
+		return api.TorrentResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -130,7 +130,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 
 	select {
 	case <-ctx.Done():
-		return api.TorrentResult{}, ctx.Err()
+		return api.TorrentResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 

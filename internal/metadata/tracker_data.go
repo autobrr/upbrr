@@ -32,7 +32,7 @@ const (
 func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -90,7 +90,7 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 	for _, tracker := range trackers {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, ctx.Err()
+			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if s.isTrackerCoolingDown(ctx, tracker, now) {
@@ -124,7 +124,7 @@ func (s *Service) enrichTrackerDataPriority(
 	for _, tracker := range eligible {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, ctx.Err()
+			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -288,7 +288,7 @@ func (s *Service) lookupTrackerData(
 ) (api.TrackerMetadata, bool, bool, error) {
 	select {
 	case <-ctx.Done():
-		return api.TrackerMetadata{}, false, false, ctx.Err()
+		return api.TrackerMetadata{}, false, false, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 

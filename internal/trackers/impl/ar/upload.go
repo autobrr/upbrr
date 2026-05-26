@@ -154,7 +154,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun bool) (uploadState, *http.Client, error) {
 	select {
 	case <-ctx.Done():
-		return uploadState{}, nil, ctx.Err()
+		return uploadState{}, nil, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 

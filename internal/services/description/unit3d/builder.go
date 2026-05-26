@@ -35,7 +35,7 @@ var unit3DNFOBlockTag = regexp.MustCompile(`(?is)\[(?:center|align=center)\]\s*\
 func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, _ config.TrackerConfig, logger api.Logger, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if logger == nil {

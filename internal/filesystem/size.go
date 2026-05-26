@@ -45,7 +45,7 @@ func SourceSize(ctx context.Context, sourcePath, discType string, fileList []str
 	for _, path := range paths {
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return 0, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		info, err := os.Stat(path)
@@ -85,7 +85,7 @@ func discTreeSize(ctx context.Context, root string) (int64, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() {

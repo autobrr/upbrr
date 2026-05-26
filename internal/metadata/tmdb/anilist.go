@@ -121,7 +121,7 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 			return response.Data.Page.Media, nil
 		}
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		}
 		if !isRetryableAniListError(err) || attempt == anilistRetryCount-1 {
 			return nil, err

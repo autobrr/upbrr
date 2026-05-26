@@ -6,6 +6,7 @@ package unit3d
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -32,7 +33,7 @@ func (d *Definition) Upload(ctx context.Context, req trackers.UploadRequest) (ap
 	}
 	select {
 	case <-ctx.Done():
-		return api.UploadSummary{}, ctx.Err()
+		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if req.Logger != nil {
@@ -47,7 +48,7 @@ func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadR
 	}
 	select {
 	case <-ctx.Done():
-		return api.TrackerDryRunEntry{}, ctx.Err()
+		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if req.Logger != nil {
@@ -59,7 +60,7 @@ func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadR
 func (d *Definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
-		return trackers.DescriptionResult{}, ctx.Err()
+		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if req.Logger != nil {

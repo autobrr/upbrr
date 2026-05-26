@@ -69,7 +69,7 @@ func NewService(logger api.Logger, analyzer Analyzer) *Service {
 func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	select {
 	case <-ctx.Done():
-		return Result{}, ctx.Err()
+		return Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -255,7 +255,7 @@ func findVideoTS(ctx context.Context, root string) (string, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() && strings.EqualFold(entry.Name(), "VIDEO_TS") {
@@ -288,7 +288,7 @@ func selectBestIFO(ctx context.Context, videoTS string) (string, string, string,
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return "", "", "", ctx.Err()
+			return "", "", "", fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		name := entry.Name()

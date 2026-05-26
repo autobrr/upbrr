@@ -61,7 +61,7 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int) (api.ScreenshotPlan, error) {
 	select {
 	case <-ctx.Done():
-		return api.ScreenshotPlan{}, ctx.Err()
+		return api.ScreenshotPlan{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -195,7 +195,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
 	select {
 	case <-ctx.Done():
-		return api.ScreenshotResult{}, ctx.Err()
+		return api.ScreenshotResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -368,7 +368,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 	wg.Wait()
 
 	if err := ctx.Err(); err != nil {
-		return result, err
+		return result, fmt.Errorf("screenshots: generate canceled: %w", err)
 	}
 
 	sort.Slice(images, func(i, j int) bool { return images[i].Index < images[j].Index })
@@ -401,7 +401,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, timestampSeconds float64) (api.ScreenshotPreview, error) {
 	select {
 	case <-ctx.Done():
-		return api.ScreenshotPreview{}, ctx.Err()
+		return api.ScreenshotPreview{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -443,7 +443,7 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePath string) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -599,7 +599,7 @@ func retrySQLiteBusy(ctx context.Context, attempts int, fn func() error) error {
 	var lastErr error
 	for i := 0; i < attempts; i++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("screenshots: sqlite retry canceled: %w", err)
 		}
 		err := fn()
 		if err == nil {
@@ -610,7 +610,7 @@ func retrySQLiteBusy(ctx context.Context, attempts int, fn func() error) error {
 			return err
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		}
 		time.Sleep(time.Duration(50*(i+1)) * time.Millisecond)
 	}
@@ -636,7 +636,7 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 	}
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 

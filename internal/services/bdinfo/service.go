@@ -163,7 +163,7 @@ func (s *Service) ExecuteFullScan(ctx context.Context, bdmvPath string, outputDi
 
 func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName string, outputPath string, summaryOnly bool) (ScanResult, error) {
 	if err := ctx.Err(); err != nil {
-		return ScanResult{}, err
+		return ScanResult{}, fmt.Errorf("bdinfo: scan canceled: %w", err)
 	}
 	reporter := progressReporterFromContext(ctx)
 	outputDir := filepath.Dir(outputPath)

@@ -43,7 +43,7 @@ func NewService(cfg config.Config, logger api.Logger, repo api.MetadataRepositor
 
 func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata) ([]api.ScreenshotImage, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: list candidates canceled: %w", err)
 	}
 	if s == nil || s.repo == nil {
 		return nil, errors.New("image hosting: repository not configured")
@@ -113,7 +113,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 
 func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
 	if s == nil {
 		return nil, errors.New("image hosting: service not configured")
@@ -143,7 +143,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 		return nil, internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
 
 	s.logger.Infof("image hosting: uploading %d images to %s", len(images), normalizedHost)
@@ -348,7 +348,7 @@ dispatchLoop:
 
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
 
 	totalDuration := time.Since(uploadStart)

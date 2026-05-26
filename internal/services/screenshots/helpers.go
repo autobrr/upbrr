@@ -377,7 +377,7 @@ func selectBDMVFile(ctx context.Context, root string, info *discparse.BDInfo) (s
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() {
@@ -413,7 +413,7 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		name := entry.Name()
@@ -472,7 +472,7 @@ func findVideoTS(ctx context.Context, root string) (string, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() && strings.EqualFold(entry.Name(), "VIDEO_TS") {
