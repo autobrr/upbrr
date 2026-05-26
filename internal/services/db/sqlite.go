@@ -111,7 +111,10 @@ func (r *SQLiteRepository) Close() error {
 	if r.logger != nil {
 		r.logger.Infof("db: closing sqlite")
 	}
-	return r.db.Close()
+	if err := r.db.Close(); err != nil {
+		return fmt.Errorf("db: close sqlite: %w", err)
+	}
+	return nil
 }
 
 // RawDB returns the underlying *sql.DB handle.
@@ -199,7 +202,7 @@ func enableWALJournalMode(ctx context.Context, db *sql.DB) (string, error) {
 	row := db.QueryRowContext(ctx, pragmaJournalModeWALSQL)
 	var got string
 	if err := row.Scan(&got); err != nil {
-		return "", err
+		return "", fmt.Errorf("db: enable WAL journal mode: %w", err)
 	}
 	return got, nil
 }
@@ -208,7 +211,7 @@ func queryCurrentJournalMode(ctx context.Context, db *sql.DB) (string, error) {
 	row := db.QueryRowContext(ctx, pragmaJournalModeSQL)
 	var got string
 	if err := row.Scan(&got); err != nil {
-		return "", err
+		return "", fmt.Errorf("db: query current journal mode: %w", err)
 	}
 	return got, nil
 }

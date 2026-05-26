@@ -338,14 +338,14 @@ func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName st
 		var defaultValue any
 		var primaryKey int
 		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return false, err
+			return false, fmt.Errorf("scan column metadata for table %q: %w", tableName, err)
 		}
 		if strings.EqualFold(name, columnName) {
 			return true, nil
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return false, err
+		return false, fmt.Errorf("iterate column metadata for table %q: %w", tableName, err)
 	}
 	return false, nil
 }
@@ -353,7 +353,7 @@ func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName st
 func tableExists(ctx context.Context, exec migrationExecutor, tableName string) (bool, error) {
 	var count int
 	if err := exec.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=?`, tableName).Scan(&count); err != nil {
-		return false, err
+		return false, fmt.Errorf("check table %q exists: %w", tableName, err)
 	}
 	return count > 0, nil
 }

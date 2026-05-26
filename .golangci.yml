@@ -83,7 +83,6 @@ linters:
         - path/filepath
         - net/url
         - mime/multipart
-        - database/sql
         - crypto/*
         - flag
         - bufio
