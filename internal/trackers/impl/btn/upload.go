@@ -263,7 +263,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 	}
 	htmlPayload, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: BTN read autofill response: %w", err)
 	}
 	fields := extractAutofillFields(string(htmlPayload))
 	if !validateAutofill(fields) {
@@ -474,7 +474,7 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, baseURL st
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN read torrent response: %w", err)
 	}
 	if len(body) == 0 || body[0] != 'd' {
 		return errors.New("not a torrent payload")
@@ -568,7 +568,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	defer downloadResp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(downloadResp.Body, 8*1024*1024))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API read torrent response: %w", err)
 	}
 	if len(body) == 0 || body[0] != 'd' {
 		return errors.New("trackers: BTN API did not return torrent payload")

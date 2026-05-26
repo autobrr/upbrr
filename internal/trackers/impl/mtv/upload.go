@@ -227,7 +227,7 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV read auth response: %w", err)
 	}
 	match := mtvAuthKeyPattern.FindStringSubmatch(string(body))
 	if len(match) < 2 {
@@ -340,7 +340,7 @@ func resolveAuthKeyFromClient(ctx context.Context, baseURL string, client *http.
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV read auth response: %w", err)
 	}
 	match := mtvAuthKeyPattern.FindStringSubmatch(string(body))
 	if len(match) < 2 {
@@ -457,7 +457,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: MTV copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
 		return nil, "", err

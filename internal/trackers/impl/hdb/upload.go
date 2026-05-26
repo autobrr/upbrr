@@ -320,7 +320,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: HDB copy torrent file: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
@@ -406,7 +406,7 @@ func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: HDB read personalized torrent response: %w", err)
 	}
 	if len(body) == 0 {
 		return errors.New("empty torrent response")

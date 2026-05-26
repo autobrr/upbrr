@@ -1087,7 +1087,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 		}
 		if _, err := io.Copy(part, file); err != nil {
 			_ = file.Close()
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: copy multipart file: %w", err)
 		}
 		if err := file.Close(); err != nil {
 			return nil, 0, fmt.Errorf("image hosting: close multipart file: %w", err)
@@ -1123,7 +1123,11 @@ func readAndCloseResponseBody(resp *http.Response) ([]byte, error) {
 		return nil, nil
 	}
 	defer closeResponseBody(resp)
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("image hosting: read response body: %w", err)
+	}
+	return body, nil
 }
 
 func closeResponseBody(resp *http.Response) {

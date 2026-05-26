@@ -226,7 +226,7 @@ func downloadImage(ctx context.Context, client *http.Client, rawURL string, outP
 	limited := io.LimitReader(resp.Body, unit3dMaxImageBytes)
 	payload, err := io.ReadAll(limited)
 	if err != nil {
-		return err
+		return fmt.Errorf("read image body: %w", err)
 	}
 	if len(payload) == 0 {
 		return errors.New("empty image")

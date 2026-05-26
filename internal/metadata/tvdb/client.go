@@ -1145,7 +1145,7 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb read response body: %w", err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.refreshToken(ctx); err != nil {

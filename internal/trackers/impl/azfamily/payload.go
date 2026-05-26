@@ -171,7 +171,7 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 		return "", err
 	}
 	if _, err := part.Write(imageBytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s write screenshot upload part: %w", site.Name, err)
 	}
 	if err := writer.Close(); err != nil {
 		return "", err
@@ -235,7 +235,7 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: read screenshot response body: %w", err)
 	}
 	filename := filepath.Base(strings.TrimSpace(resp.Request.URL.Path))
 	if filename == "" || filename == "." || filename == "/" {

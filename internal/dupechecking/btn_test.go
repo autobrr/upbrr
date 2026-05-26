@@ -6,6 +6,7 @@ package dupechecking
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -241,7 +242,7 @@ func captureBTNPayloads(t *testing.T, response string) *btnPayloadCapture {
 		Transport: btnRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 			body, err := io.ReadAll(req.Body)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("read BTN payload request body: %w", err)
 			}
 			_ = req.Body.Close()
 

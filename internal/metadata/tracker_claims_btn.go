@@ -964,5 +964,9 @@ func ioReadAllLimit(resp *http.Response, maxBytes int64) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("nil response body")
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read limited response body: %w", err)
+	}
+	return body, nil
 }

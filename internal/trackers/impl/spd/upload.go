@@ -360,7 +360,7 @@ func downloadTrackerTorrent(ctx context.Context, urlValue string, apiKey string,
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: SPD read torrent response: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
 		return fmt.Errorf("trackers: SPD create torrent output dir: %w", err)

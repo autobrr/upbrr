@@ -113,7 +113,7 @@ func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, 
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return layoutData{}, err
+		return layoutData{}, fmt.Errorf("trackers: ASC read layout response: %w", err)
 	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {

@@ -175,7 +175,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Errorf("trackers: %s failed to read response body: %v", trackerName, err)
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %s read response body: %w", trackerName, err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		err := fmt.Errorf("trackers: %s upload failed: status %d", trackerName, resp.StatusCode)
@@ -485,7 +485,10 @@ func addFile(writer *multipart.Writer, field, path string) error {
 		return err
 	}
 	_, err = io.Copy(part, file)
-	return err
+	if err != nil {
+		return fmt.Errorf("trackers: UNIT3D copy multipart file: %w", err)
+	}
+	return nil
 }
 
 func ensureUnit3DDVDVOBDescription(description string, meta api.PreparedMetadata) string {

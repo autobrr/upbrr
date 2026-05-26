@@ -544,7 +544,7 @@ func validateSession(ctx context.Context, client *http.Client, dbPath string) (s
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("trackers: AR read session response: %w", err)
 	}
 	body := string(bodyBytes)
 	if resp.StatusCode != http.StatusOK || arLoginFailurePattern.MatchString(body) {
@@ -583,7 +583,7 @@ func login(ctx context.Context, client *http.Client, cfg config.TrackerConfig, d
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: AR read login response: %w", err)
 	}
 	body := string(bodyBytes)
 	if resp.StatusCode != http.StatusOK || arLoginFailurePattern.MatchString(body) {
@@ -622,7 +622,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 		return nil, "", err
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
 		return nil, "", err

@@ -145,7 +145,10 @@ func (l *Logger) Close() error {
 	if l == nil || l.closer == nil {
 		return nil
 	}
-	return l.closer.Close()
+	if err := l.closer.Close(); err != nil {
+		return fmt.Errorf("close logger: %w", err)
+	}
+	return nil
 }
 
 func (l *Logger) Tracef(format string, args ...any) {

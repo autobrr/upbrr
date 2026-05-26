@@ -263,7 +263,7 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
 		return nil, "", err

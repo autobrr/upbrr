@@ -232,7 +232,7 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 		}
 		if _, err := part.Write(payload); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("write multipart file %q: %w", name, err)
 		}
 	}
 	if err := writer.Close(); err != nil {
@@ -277,7 +277,7 @@ func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) (
 		}
 		if _, err := part.Write(payload); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("write multipart file %q: %w", name, err)
 		}
 	}
 	if err := writer.Close(); err != nil {
@@ -364,7 +364,11 @@ func FileBytes(path string) ([]byte, error) {
 		return nil, fmt.Errorf("open file %q: %w", strings.TrimSpace(path), err)
 	}
 	defer file.Close()
-	return io.ReadAll(file)
+	payload, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("read file %q: %w", strings.TrimSpace(path), err)
+	}
+	return payload, nil
 }
 
 func firstNonEmpty(values ...string) string {

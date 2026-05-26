@@ -690,7 +690,7 @@ func requestAntiCsrfToken(ctx context.Context, client *http.Client, baseURL stri
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: PTP read upload page: %w", err)
 	}
 	matches := ptpAntiCsrfPattern.FindStringSubmatch(string(body))
 	if len(matches) < 2 {
@@ -752,7 +752,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: PTP copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
 		return nil, "", err

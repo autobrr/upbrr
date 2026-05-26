@@ -593,7 +593,11 @@ func decodeJSON(r *http.Request, dest any) error {
 }
 
 func fsStat(root fs.FS, name string) (fs.FileInfo, error) {
-	return fs.Stat(root, name)
+	info, err := fs.Stat(root, name)
+	if err != nil {
+		return nil, fmt.Errorf("stat asset %q: %w", name, err)
+	}
+	return info, nil
 }
 
 func redactAuthUsername(username string) string {

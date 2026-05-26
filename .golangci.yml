@@ -80,8 +80,6 @@ linters:
         - net/http
         - net/http/cookiejar
         - encoding/*
-        - io
-        - io/fs
         - path/filepath
         - net/url
         - mime/multipart

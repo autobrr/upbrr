@@ -644,7 +644,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
 		return nil, "", err

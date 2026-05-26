@@ -270,7 +270,7 @@ func downloadPersonalizedTorrent(ctx context.Context, client *http.Client, id st
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: FL read torrent response: %w", err)
 	}
 	if err := os.WriteFile(outputPath, body, 0o600); err != nil {
 		return fmt.Errorf("trackers: FL write torrent output: %w", err)
