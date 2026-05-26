@@ -267,7 +267,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.Channel, "channel", "", "Override SPD channel")
 
 	if err := fs.Parse(args); err != nil {
-		return cliOptions{}, nil, nil, err
+		return cliOptions{}, nil, nil, fmt.Errorf("parse CLI options: %w", err)
 	}
 
 	visited := make(map[string]bool)
@@ -427,7 +427,7 @@ func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 
 	if err := fs.Parse(args); err != nil {
-		return serveOptions{}, nil, err
+		return serveOptions{}, nil, fmt.Errorf("parse serve options: %w", err)
 	}
 
 	visited := make(map[string]bool)
