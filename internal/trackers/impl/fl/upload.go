@@ -66,7 +66,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
-	jar, _ := cookiejar.New(nil)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: FL create cookie jar: %w", err)
+	}
 	base, _ := url.Parse(baseURL)
 	jar.SetCookies(base, cookies)
 	client := httpclient.CloneWithTimeout(&http.Client{Jar: jar}, httpclient.DefaultTimeout)
@@ -206,11 +209,11 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginPageURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FL login page request build: %w", err)
 	}
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FL login page request: %w", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -225,13 +228,13 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	data.Set("unlock", "1")
 	loginReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FL login request build: %w", err)
 	}
 	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	client := httpclient.New(httpclient.DefaultTimeout)
 	loginResp, err := client.Do(loginReq)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FL login request: %w", err)
 	}
 	defer loginResp.Body.Close()
 	if loginResp.StatusCode < 200 || loginResp.StatusCode >= 400 {
@@ -261,11 +264,11 @@ func validFLCookies(values []*http.Cookie) []*http.Cookie {
 func downloadPersonalizedTorrent(ctx context.Context, client *http.Client, id string, outputPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL+id, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: FL torrent download request build: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: FL torrent download request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)

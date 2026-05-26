@@ -142,13 +142,13 @@ func (c *Client) doAniListSearch(ctx context.Context, body []byte) (anilistRespo
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anilistURL, bytes.NewReader(body))
 	if err != nil {
-		return response, err
+		return response, fmt.Errorf("anilist: build search request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return response, err
+		return response, fmt.Errorf("anilist: execute search request: %w", err)
 	}
 	defer resp.Body.Close()
 

@@ -54,14 +54,14 @@ func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/map/single", bytes.NewBufferString(form.Encode()))
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("thexem: build map/single request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("thexem: execute map/single request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -90,13 +90,13 @@ func (c *Client) GetSeasonNames(ctx context.Context, tvdbID int) (map[int][]stri
 	endpoint := fmt.Sprintf("%s/map/names?origin=tvdb&id=%d", c.baseURL, tvdbID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("thexem: build map/names request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("thexem: execute map/names request: %w", err)
 	}
 	defer resp.Body.Close()
 

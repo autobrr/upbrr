@@ -194,7 +194,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]string) (string, *http.Client, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV create auth cookie jar: %w", err)
 	}
 	parsedBase, err := url.Parse(baseURL)
 	if err != nil {
@@ -213,7 +213,7 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 	indexURL := strings.TrimRight(baseURL, "/") + mtvIndexPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV build auth request: %w", err)
 	}
 	req.Header.Set("User-Agent", mtvUserAgentWeb)
 
@@ -247,14 +247,14 @@ func saveMTVCookies(ctx context.Context, dbPath string, values map[string]string
 func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string) (string, *http.Client, map[string]string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, fmt.Errorf("trackers: MTV create login cookie jar: %w", err)
 	}
 	client := &http.Client{Timeout: 25 * time.Second, Jar: jar}
 
 	loginURL := strings.TrimRight(baseURL, "/") + "/login"
 	loginReq, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, fmt.Errorf("trackers: MTV build login page request: %w", err)
 	}
 	loginReq.Header.Set("User-Agent", mtvUserAgentWeb)
 	loginResp, err := client.Do(loginReq)
@@ -280,7 +280,7 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 
 	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, fmt.Errorf("trackers: MTV build login request: %w", err)
 	}
 	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	postReq.Header.Set("User-Agent", mtvUserAgentWeb)
@@ -306,7 +306,7 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 		twoFactorForm.Set("submit", "login")
 		twoReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/twofactor/login", strings.NewReader(twoFactorForm.Encode()))
 		if err != nil {
-			return "", nil, nil, err
+			return "", nil, nil, fmt.Errorf("trackers: MTV build 2FA login request: %w", err)
 		}
 		twoReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		twoReq.Header.Set("User-Agent", mtvUserAgentWeb)
@@ -330,7 +330,7 @@ func resolveAuthKeyFromClient(ctx context.Context, baseURL string, client *http.
 	indexURL := strings.TrimRight(baseURL, "/") + mtvIndexPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV build auth request: %w", err)
 	}
 	req.Header.Set("User-Agent", mtvUserAgentWeb)
 	resp, err := client.Do(req)

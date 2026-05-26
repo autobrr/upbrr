@@ -183,7 +183,7 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 	endpoint := site.BaseURL + "/upload/" + categorySlug(req.Meta)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s task creation request build: %w", site.Name, err)
 	}
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	httpReq.Header.Set("Referer", endpoint)
@@ -257,13 +257,17 @@ func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker
 func postForm(ctx context.Context, client *http.Client, endpoint string, data url.Values, headers map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: form post request build: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: form post request: %w", err)
+	}
+	return resp, nil
 }
 
 func noRedirectClient(base *http.Client) *http.Client {
@@ -283,12 +287,12 @@ func noRedirectClient(base *http.Client) *http.Client {
 func downloadTrackerTorrent(ctx context.Context, client *http.Client, downloadURL, targetPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: personalized torrent request build: %w", err)
 	}
 	req.Header.Set("User-Agent", azCookieUserAgent)
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: personalized torrent request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

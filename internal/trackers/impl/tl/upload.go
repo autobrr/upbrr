@@ -52,7 +52,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: TL build upload request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -194,7 +194,10 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 }
 
 func cookieClient(ctx context.Context, dbPath string) (*http.Client, error) {
-	jar, _ := cookiejar.New(nil)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: TL create cookie jar: %w", err)
+	}
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Jar:     jar,

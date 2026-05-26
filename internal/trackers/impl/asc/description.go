@@ -96,7 +96,7 @@ func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, 
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/search.php", strings.NewReader(form.Encode()))
 	if err != nil {
-		return layoutData{}, err
+		return layoutData{}, fmt.Errorf("trackers: ASC create layout request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", userAgent)
@@ -105,7 +105,7 @@ func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, 
 	}
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 	if err != nil {
-		return layoutData{}, err
+		return layoutData{}, fmt.Errorf("trackers: ASC fetch layout: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

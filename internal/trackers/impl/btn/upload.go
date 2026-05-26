@@ -195,7 +195,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func newUploadContext(ctx context.Context, req trackers.UploadRequest) (uploadContext, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return uploadContext{}, err
+		return uploadContext{}, fmt.Errorf("trackers: BTN create cookie jar: %w", err)
 	}
 	client := &http.Client{Timeout: 45 * time.Second, Jar: jar}
 	baseURL := strings.TrimRight(strings.TrimSpace(req.TrackerConfig.URL), "/")
@@ -248,7 +248,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadCtx.uploadURL, strings.NewReader(autofillPayload.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: BTN autofill request build: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -462,11 +462,11 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, baseURL st
 	downloadURL := strings.TrimRight(baseURL, "/") + "/torrents.php?action=download&id=" + url.QueryEscape(strings.TrimSpace(torrentID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN torrent download request build: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN torrent download request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -512,12 +512,12 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	}
 	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(encoded))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API search request build: %w", err)
 	}
 	apiReq.Header.Set("Content-Type", "application/json")
 	apiResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(apiReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API search request: %w", err)
 	}
 	defer apiResp.Body.Close()
 	if apiResp.StatusCode < 200 || apiResp.StatusCode >= 300 {
@@ -558,12 +558,12 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	}
 	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(downloadEncoded))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API download request build: %w", err)
 	}
 	downloadReq.Header.Set("Content-Type", "application/json")
 	downloadResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(downloadReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API download request: %w", err)
 	}
 	defer downloadResp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(downloadResp.Body, 8*1024*1024))

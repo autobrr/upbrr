@@ -148,7 +148,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, uploadURL, payload)
 	if err != nil {
 		logger.Errorf("trackers: %s failed to create HTTP request: %v", trackerName, err)
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %s build upload request: %w", trackerName, err)
 	}
 	if usesUnit3DBearerAuth(trackerName) {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
@@ -166,7 +166,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		logger.Errorf("trackers: %s HTTP request failed: %v", trackerName, err)
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload request: %w", trackerName, err)
 	}
 	defer resp.Body.Close()
 

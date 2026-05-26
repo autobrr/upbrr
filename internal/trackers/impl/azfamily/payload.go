@@ -103,14 +103,14 @@ func fetchTagID(ctx context.Context, site siteDefinition, state sessionState, wo
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, site.BaseURL+"/ajax/tags?term="+url.QueryEscape(word), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s tag lookup request build: %w", site.Name, err)
 	}
 	req.Header.Set("Referer", site.BaseURL+"/upload")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("User-Agent", azCookieUserAgent)
 	resp, err := state.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s tag lookup request: %w", site.Name, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -178,7 +178,7 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, site.BaseURL+"/ajax/image/upload", body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s screenshot upload request build: %w", site.Name, err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Referer", site.BaseURL)
@@ -188,7 +188,7 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 	req.Header.Set("User-Agent", azCookieUserAgent)
 	resp, err := state.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s screenshot upload request: %w", site.Name, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -223,11 +223,11 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: screenshot download request build: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: screenshot download request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

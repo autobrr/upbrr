@@ -217,7 +217,7 @@ func loadCookies(ctx context.Context, dbPath string, baseURL string) ([]*http.Co
 func fetchToken(ctx context.Context, baseURL string, cookies []*http.Cookie) (string, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/upload.php", nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: HDT token request build: %w", err)
 	}
 	httpReq.Header.Set("User-Agent", "upbrr")
 	commonhttp.ApplyCookies(httpReq, cookies)

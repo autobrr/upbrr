@@ -1132,14 +1132,14 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: build request for %s: %w", path, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: execute request for %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 
@@ -1198,14 +1198,14 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	url := c.baseURL + "/login"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: build login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: execute login request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

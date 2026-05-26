@@ -198,14 +198,14 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	data.Set("login", "Login")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FF login request build: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "upbrr")
 	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FF login request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {

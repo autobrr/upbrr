@@ -280,12 +280,12 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvmaze: build request for %s: %w", endpoint, err)
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvmaze: execute request for %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
 

@@ -389,7 +389,7 @@ func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api
 	downloadURL := buildHDBDownloadURL(uploadURL, meta, torrentID, passkey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: HDB create personalized torrent request: %w", err)
 	}
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)
@@ -398,7 +398,7 @@ func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api
 	client := &http.Client{Timeout: 40 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: HDB download personalized torrent: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

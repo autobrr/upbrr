@@ -43,7 +43,7 @@ func newSession(ctx context.Context, site siteDefinition, dbPath string, logger 
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, site.BaseURL+"/torrents", nil)
 	if err != nil {
-		return sessionState{}, err
+		return sessionState{}, fmt.Errorf("trackers: %s cookie validation request build: %w", site.Name, err)
 	}
 	req.Header.Set("User-Agent", azCookieUserAgent)
 	resp, err := client.Do(req)
@@ -79,14 +79,14 @@ func lookupMediaCode(ctx context.Context, site siteDefinition, state sessionStat
 		endpoint := fmt.Sprintf("%s/ajax/movies/%s?term=%s", site.BaseURL, categoryIDValue, url.QueryEscape(term))
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("trackers: %s media search request build: %w", site.Name, err)
 		}
 		req.Header.Set("Referer", site.BaseURL+"/upload/"+categorySlug(meta))
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
 		req.Header.Set("User-Agent", azCookieUserAgent)
 		resp, err := state.client.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("trackers: %s media search request: %w", site.Name, err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -145,12 +145,12 @@ func searchRequests(ctx context.Context, site siteDefinition, state sessionState
 	endpoint := fmt.Sprintf("%s?type=%s&search=%s&condition=new", site.RequestsURL, strings.ToLower(categorySlug(meta)), url.QueryEscape(query))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %s request search request build: %w", site.Name, err)
 	}
 	req.Header.Set("User-Agent", azCookieUserAgent)
 	resp, err := state.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %s request search request: %w", site.Name, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

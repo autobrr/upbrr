@@ -490,7 +490,7 @@ func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR create cookie jar: %w", err)
 	}
 	base, _ := url.Parse(arBaseURL + "/")
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
@@ -534,12 +534,12 @@ func persistLoginCookies(ctx context.Context, dbPath string, logger api.Logger, 
 func validateSession(ctx context.Context, client *http.Client, dbPath string) (string, bool, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, arBrowseURL, nil)
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("trackers: AR session validation request build: %w", err)
 	}
 	httpReq.Header.Set("User-Agent", arUserAgent)
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("trackers: AR session validation request: %w", err)
 	}
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
@@ -572,7 +572,7 @@ func login(ctx context.Context, client *http.Client, cfg config.TrackerConfig, d
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, arLoginURL, strings.NewReader(values.Encode()))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: AR login request build: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	httpReq.Header.Set("User-Agent", arUserAgent)

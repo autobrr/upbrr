@@ -32,7 +32,7 @@ func doJSONGet(ctx context.Context, client *http.Client, endpoint string, params
 func doJSONGetAny(ctx context.Context, client *http.Client, endpoint string, params url.Values, headers map[string]string) (int, any, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, fmt.Errorf("dupechecking: create JSON GET request: %w", err)
 	}
 	if len(params) > 0 {
 		req.URL.RawQuery = params.Encode()
@@ -42,7 +42,7 @@ func doJSONGetAny(ctx context.Context, client *http.Client, endpoint string, par
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, fmt.Errorf("dupechecking: JSON GET request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -77,7 +77,7 @@ func doJSONPostAny(ctx context.Context, client *http.Client, endpoint string, bo
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, fmt.Errorf("dupechecking: create JSON POST request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
@@ -85,7 +85,7 @@ func doJSONPostAny(ctx context.Context, client *http.Client, endpoint string, bo
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, fmt.Errorf("dupechecking: JSON POST request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

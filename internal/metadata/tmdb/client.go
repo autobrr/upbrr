@@ -553,12 +553,12 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("tmdb: build request for %s: %w", path, err)
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tmdb: execute request for %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 

@@ -334,7 +334,7 @@ func lookupGroupID(ctx context.Context, baseURL string, trackerConfig config.Tra
 	values.Set("imdb", fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID))
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+ptpTorrentPath+"?"+values.Encode(), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: PTP build group lookup request: %w", err)
 	}
 	for key, value := range headers {
 		httpReq.Header.Set(key, value)
@@ -571,7 +571,7 @@ func resolveSession(ctx context.Context, trackerConfig config.TrackerConfig, dbP
 func fetchAntiCsrfToken(ctx context.Context, baseURL string, cookies map[string]string) (*http.Client, string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: PTP create session cookie jar: %w", err)
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -611,7 +611,7 @@ func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.Tracke
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: PTP create login cookie jar: %w", err)
 	}
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
 	form := url.Values{
@@ -623,7 +623,7 @@ func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.Tracke
 	loginURL := strings.TrimRight(baseURL, "/") + ptpLoginPath
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: PTP build login request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	httpReq.Header.Set("User-Agent", ptpUserAgent)
@@ -647,7 +647,7 @@ func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.Tracke
 		form.Set("TfaCode", code)
 		httpReq, err = http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
 		if err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: PTP build 2FA request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		httpReq.Header.Set("User-Agent", ptpUserAgent)
@@ -680,7 +680,7 @@ func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.Tracke
 func requestAntiCsrfToken(ctx context.Context, client *http.Client, baseURL string) (string, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+ptpUploadPath, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: PTP build upload page request: %w", err)
 	}
 	httpReq.Header.Set("User-Agent", ptpUserAgent)
 	resp, err := client.Do(httpReq)

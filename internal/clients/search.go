@@ -601,7 +601,7 @@ func fetchTorrentProperties(ctx context.Context, client *qbittorrent.Client, htt
 	propertiesURL := strings.TrimRight(proxyBase, "/") + "/api/v2/torrents/properties"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, propertiesURL, nil)
 	if err != nil {
-		return qbittorrent.TorrentProperties{}, err
+		return qbittorrent.TorrentProperties{}, fmt.Errorf("clients: proxy properties request: %w", err)
 	}
 	q := req.URL.Query()
 	q.Set("hash", hash)
@@ -609,7 +609,7 @@ func fetchTorrentProperties(ctx context.Context, client *qbittorrent.Client, htt
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return qbittorrent.TorrentProperties{}, err
+		return qbittorrent.TorrentProperties{}, fmt.Errorf("clients: proxy properties: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -635,14 +635,14 @@ func fetchTorrentTrackers(ctx context.Context, client *qbittorrent.Client, httpC
 		trackersURL := strings.TrimRight(proxyBase, "/") + "/api/v2/torrents/trackers"
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, trackersURL, nil)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("clients: proxy trackers request: %w", err)
 		}
 		q := req.URL.Query()
 		q.Set("hash", hash)
 		req.URL.RawQuery = q.Encode()
 		resp, err := httpClient.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("clients: proxy trackers: %w", err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden {

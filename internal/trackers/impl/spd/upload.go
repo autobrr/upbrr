@@ -68,7 +68,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, strings.NewReader(string(body)))
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: SPD build upload request: %w", err)
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -212,13 +212,13 @@ func resolveChannel(ctx context.Context, req trackers.UploadRequest) (string, st
 func lookupChannelID(ctx context.Context, apiKey string, input string) (string, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/channel?search="+url.QueryEscape(input), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: SPD build channel lookup request: %w", err)
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", strings.TrimSpace(apiKey))
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(httpReq)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: SPD channel lookup request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -350,12 +350,12 @@ func imdbURL(meta api.PreparedMetadata) string {
 func downloadTrackerTorrent(ctx context.Context, urlValue string, apiKey string, output string) error {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, urlValue, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: SPD build torrent download request: %w", err)
 	}
 	httpReq.Header.Set("Authorization", strings.TrimSpace(apiKey))
 	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(httpReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: SPD torrent download request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)

@@ -68,7 +68,7 @@ func loadTrackerCookies(ctx context.Context, cfg config.Config, tracker string, 
 func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, cookies []*http.Cookie) (getResponseInfo, *xhtml.Node, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return getResponseInfo{}, nil, err
+		return getResponseInfo{}, nil, fmt.Errorf("dupechecking: create HTML GET request: %w", err)
 	}
 	if len(params) > 0 {
 		req.URL.RawQuery = params.Encode()
@@ -77,7 +77,7 @@ func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params
 	commonhttp.ApplyCookies(req, cookies)
 	resp, err := client.Do(req)
 	if err != nil {
-		return getResponseInfo{}, nil, err
+		return getResponseInfo{}, nil, fmt.Errorf("dupechecking: HTML GET request: %w", err)
 	}
 	info := newGetResponseInfo(resp)
 	root, err := xhtml.Parse(resp.Body)
@@ -93,7 +93,7 @@ func doHTMLGet(ctx context.Context, client *http.Client, endpoint string, params
 func doTextGet(ctx context.Context, client *http.Client, endpoint string, params url.Values, headers map[string]string, cookies []*http.Cookie) (getResponseInfo, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return getResponseInfo{}, "", err
+		return getResponseInfo{}, "", fmt.Errorf("dupechecking: create text GET request: %w", err)
 	}
 	if len(params) > 0 {
 		req.URL.RawQuery = params.Encode()
@@ -105,7 +105,7 @@ func doTextGet(ctx context.Context, client *http.Client, endpoint string, params
 	commonhttp.ApplyCookies(req, cookies)
 	resp, err := client.Do(req)
 	if err != nil {
-		return getResponseInfo{}, "", err
+		return getResponseInfo{}, "", fmt.Errorf("dupechecking: text GET request: %w", err)
 	}
 	info := newGetResponseInfo(resp)
 	body, err := io.ReadAll(resp.Body)
@@ -344,14 +344,14 @@ func loginTHR(ctx context.Context, client *http.Client, baseURL string, username
 	form.Set("password", strings.TrimSpace(password))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/takelogin.php", strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("dupechecking: create THR login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Referer", baseURL+"/login.php")
 	req.Header.Set("User-Agent", "upbrr")
 	loginResp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("dupechecking: submit THR login: %w", err)
 	}
 	defer loginResp.Body.Close()
 	if loginResp.StatusCode < 200 || loginResp.StatusCode >= 400 {

@@ -259,13 +259,13 @@ func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
 func fetchAuth(ctx context.Context, cookies []*http.Cookie) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uploadURL, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BT auth token request build: %w", err)
 	}
 	req.Header.Set("User-Agent", "upbrr")
 	commonhttp.ApplyCookies(req, cookies)
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BT auth token request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

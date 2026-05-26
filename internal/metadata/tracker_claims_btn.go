@@ -243,14 +243,14 @@ func (s *Service) fetchBTNClaimedTitles(ctx context.Context) (map[string]struct{
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims request build failed: %v", err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("metadata: build BTN claims request: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims fetch request failed: %v", err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("metadata: execute BTN claims request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -315,7 +315,7 @@ func (s *Service) loginBTNForClaims(ctx context.Context, client *http.Client) er
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims login request build failed: %v", err)
 		}
-		return err
+		return fmt.Errorf("metadata: build BTN claims login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "upbrr")
@@ -324,7 +324,7 @@ func (s *Service) loginBTNForClaims(ctx context.Context, client *http.Client) er
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims login request failed: %v", err)
 		}
-		return err
+		return fmt.Errorf("metadata: execute BTN claims login request: %w", err)
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
@@ -427,13 +427,13 @@ func (s *Service) btnClaimsSessionValid(ctx context.Context, client *http.Client
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, btnSiteBaseURL+btnUserPath, nil)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("metadata: build BTN claims session validation request: %w", err)
 	}
 	req.Header.Set("User-Agent", "upbrr")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("metadata: execute BTN claims session validation request: %w", err)
 	}
 	defer resp.Body.Close()
 
