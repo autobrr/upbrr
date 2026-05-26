@@ -857,7 +857,7 @@ func parseBTNTime(value string) (time.Time, bool) {
 func readBTNClaimedCache(path string) (map[string]struct{}, int64, error) {
 	payload, err := os.ReadFile(path)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("metadata: read BTN claimed cache: %w", err)
 	}
 	var cache btnClaimedShowsCache
 	if err := json.Unmarshal(payload, &cache); err != nil {
@@ -874,7 +874,7 @@ func readBTNClaimedCache(path string) (map[string]struct{}, int64, error) {
 
 func writeBTNClaimedCache(path string, titles map[string]struct{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("metadata: create BTN claimed cache dir: %w", err)
 	}
 	serializedTitles := make([]string, 0, len(titles))
 	for title := range titles {
@@ -891,7 +891,10 @@ func writeBTNClaimedCache(path string, titles map[string]struct{}) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, encoded, 0o600)
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		return fmt.Errorf("metadata: write BTN claimed cache: %w", err)
+	}
+	return nil
 }
 
 func parseOptionalInt(value any) int {

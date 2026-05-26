@@ -512,7 +512,7 @@ func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string
 		return nil, "", err
 	}
 	if err := os.WriteFile(authPath(dbPath), []byte(authKey), 0o600); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR write auth key: %w", err)
 	}
 	return client, authKey, nil
 }
@@ -558,7 +558,7 @@ func validateSession(ctx context.Context, client *http.Client, dbPath string) (s
 		return "", false, nil
 	}
 	if err := os.WriteFile(authPath(dbPath), []byte(authKey), 0o600); err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("trackers: AR write auth key: %w", err)
 	}
 	return authKey, true, nil
 }
@@ -606,7 +606,7 @@ func login(ctx context.Context, client *http.Client, cfg config.TrackerConfig, d
 func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte, string, error) {
 	file, err := os.Open(strings.TrimSpace(torrentPath))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR open torrent file: %w", err)
 	}
 	defer file.Close()
 
@@ -749,7 +749,7 @@ func extractAuthKey(body string) string {
 func readTextFile(path string) (string, error) {
 	payload, err := os.ReadFile(strings.TrimSpace(path))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: AR read text file: %w", err)
 	}
 	return string(payload), nil
 }

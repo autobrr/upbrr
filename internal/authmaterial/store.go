@@ -96,7 +96,7 @@ func (s *Store) Exists() (bool, error) {
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("web auth: stat auth file: %w", err)
 }
 
 func (s *Store) Load() (Record, error) {
@@ -105,7 +105,7 @@ func (s *Store) Load() (Record, error) {
 
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		return Record{}, err
+		return Record{}, fmt.Errorf("web auth: read auth file: %w", err)
 	}
 	var record Record
 	if err := json.Unmarshal(raw, &record); err != nil {
@@ -248,7 +248,7 @@ func (s *Store) updateRecordLocked(apply func(record *Record) error) error {
 
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		return err
+		return fmt.Errorf("web auth: read auth file: %w", err)
 	}
 
 	var record Record
@@ -280,31 +280,31 @@ func (s *Store) saveLocked(record Record) error {
 	dir := filepath.Dir(s.path)
 	tmpFile, err := os.CreateTemp(dir, filepath.Base(s.path)+".tmp-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("web auth: create temp auth file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 
 	if _, err := tmpFile.Write(raw); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: write temp auth file: %w", err)
 	}
 	if err := tmpFile.Sync(); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: sync temp auth file: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: close temp auth file: %w", err)
 	}
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: chmod temp auth file: %w", err)
 	}
 	if err := os.Rename(tmpPath, s.path); err != nil {
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: replace auth file: %w", err)
 	}
 	return nil
 }

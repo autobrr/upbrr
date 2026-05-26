@@ -166,7 +166,7 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 	}
 	file, err := os.Open(torrentPath)
 	if err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s open torrent file: %w", site.Name, err)
 	}
 	defer file.Close()
 	part, err := writer.CreateFormFile("torrent_file", filepath.Base(torrentPath))
@@ -299,7 +299,10 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, downloadUR
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return err
+		return fmt.Errorf("trackers: create personalized torrent dir: %w", err)
 	}
-	return os.WriteFile(targetPath, body, 0o600)
+	if err := os.WriteFile(targetPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: write personalized torrent: %w", err)
+	}
+	return nil
 }

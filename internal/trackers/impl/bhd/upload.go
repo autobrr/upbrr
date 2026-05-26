@@ -253,7 +253,7 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 	file, err := os.Open(torrentPath)
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD open torrent file: %w", err)
 	}
 	defer file.Close()
 	part, err := writer.CreateFormFile("file", "torrent.torrent")
@@ -347,9 +347,12 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 	}
 	path := filepath.Join(tmpDir, "[BHD]"+name+ext)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BHD create failure artifact dir: %w", err)
 	}
-	return path, os.WriteFile(path, payload, 0o600)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return "", fmt.Errorf("trackers: BHD write failure artifact: %w", err)
+	}
+	return path, nil
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {

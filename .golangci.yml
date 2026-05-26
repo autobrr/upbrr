@@ -77,7 +77,6 @@ linters:
       ignore-package-globs:
         - github.com/autobrr/upbrr/*
         - context
-        - os
         - net/http
         - net/http/cookiejar
         - encoding/*

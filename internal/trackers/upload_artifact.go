@@ -95,11 +95,11 @@ func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL 
 	torrentMeta.Comment = strings.TrimSpace(comment)
 
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: create torrent artifact dir: %w", err)
 	}
 	file, err := os.Create(outputPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: create torrent artifact: %w", err)
 	}
 	defer file.Close()
 

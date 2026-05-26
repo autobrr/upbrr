@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -58,7 +59,7 @@ func ApplyTagOverrides(path, currentTag, tagsPath string) (string, *api.TagOverr
 		if os.IsNotExist(err) {
 			return currentTag, nil, nil
 		}
-		return currentTag, nil, err
+		return currentTag, nil, fmt.Errorf("metadata: read tag overrides: %w", err)
 	}
 
 	entries := map[string]tagOverrideEntry{}

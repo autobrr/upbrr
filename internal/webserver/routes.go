@@ -367,7 +367,7 @@ func normalizeBrowsePolicyRoot(value string) (string, error) {
 	}
 	info, err := os.Stat(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse root: stat path: %w", err)
 	}
 	if !info.IsDir() {
 		return "", fmt.Errorf("browse root %q is not a directory", root)

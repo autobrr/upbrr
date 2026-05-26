@@ -1257,13 +1257,16 @@ func readEpisodesCache(path string) (EpisodesData, bool) {
 
 func writeEpisodesCache(path string, data EpisodesData) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("tvdb: create episodes cache dir: %w", err)
 	}
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, encoded, 0o600)
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		return fmt.Errorf("tvdb: write episodes cache: %w", err)
+	}
+	return nil
 }
 
 func normalizeIMDbRemote(value string) string {

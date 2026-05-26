@@ -153,7 +153,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	description := buildDescription(assets)
 	torrentBytes, err := os.ReadFile(torrentPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: RTF read torrent file: %w", err)
 	}
 	releaseName := firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename)
 	payload := map[string]any{

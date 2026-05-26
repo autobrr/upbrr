@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -1150,7 +1151,7 @@ func swapDefaultTransport(transport http.RoundTripper) func() {
 
 func writeBTNClaimedCacheFixture(path string, fetchedAt int64, titles map[string]struct{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("create BTN claimed cache fixture dir: %w", err)
 	}
 
 	serializedTitles := make([]string, 0, len(titles))
@@ -1168,5 +1169,8 @@ func writeBTNClaimedCacheFixture(path string, fetchedAt int64, titles map[string
 		return err
 	}
 
-	return os.WriteFile(path, payload, 0o600)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return fmt.Errorf("write BTN claimed cache fixture: %w", err)
+	}
+	return nil
 }

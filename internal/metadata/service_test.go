@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -304,7 +305,7 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
 		return map[string]interface{}{"summary": string(payload)}, nil
 	}
@@ -493,7 +494,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
 		return map[string]interface{}{"summary": string(payload)}, nil
 	}
@@ -686,7 +687,7 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
 		return map[string]interface{}{"summary": string(payload)}, nil
 	}

@@ -272,7 +272,10 @@ func downloadPersonalizedTorrent(ctx context.Context, client *http.Client, id st
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(outputPath, body, 0o600)
+	if err := os.WriteFile(outputPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: FL write torrent output: %w", err)
+	}
+	return nil
 }
 
 func buildDescription(assets trackers.DescriptionAssets) string {

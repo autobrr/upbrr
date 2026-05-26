@@ -169,7 +169,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 		}
 		info, err := os.Stat(absPath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("image hosting: stat image path: %w", err)
 		}
 		if info.IsDir() {
 			return nil, internalerrors.ErrInvalidInput

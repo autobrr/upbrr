@@ -5,6 +5,7 @@ package mtv
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -73,7 +74,7 @@ func buildMediaInfoBlock(meta api.PreparedMetadata, dbPath string) (string, erro
 			text, err := os.ReadFile(bdInfoPath)
 			if err != nil {
 				if !os.IsNotExist(err) {
-					return "", err
+					return "", fmt.Errorf("description: MTV read BDInfo file: %w", err)
 				}
 			} else {
 				trimmed := strings.TrimSpace(string(text))
@@ -88,7 +89,7 @@ func buildMediaInfoBlock(meta api.PreparedMetadata, dbPath string) (string, erro
 		text, err := os.ReadFile(strings.TrimSpace(meta.MediaInfoTextPath))
 		if err != nil {
 			if !os.IsNotExist(err) {
-				return "", err
+				return "", fmt.Errorf("description: MTV read MediaInfo file: %w", err)
 			}
 		} else {
 			trimmed := strings.TrimSpace(string(text))
@@ -121,7 +122,7 @@ func resolveBDInfoPath(meta api.PreparedMetadata, dbPath string) (string, error)
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		return "", err
+		return "", fmt.Errorf("description: MTV stat BDInfo summary: %w", err)
 	}
 	return path, nil
 }

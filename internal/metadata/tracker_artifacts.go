@@ -243,7 +243,10 @@ func downloadImage(ctx context.Context, client *http.Client, rawURL string, outP
 			return err
 		}
 	}
-	return os.WriteFile(outPath, payload, 0o600)
+	if err := os.WriteFile(outPath, payload, 0o600); err != nil {
+		return fmt.Errorf("metadata: write screenshot artifact: %w", err)
+	}
+	return nil
 }
 
 func parseResolutionHeight(resolution string) int {

@@ -145,7 +145,7 @@ func normalizeLayout(raw map[string]any) layoutData {
 func readLayoutCache(dbPath string, layoutID string) (layoutData, error) {
 	payload, err := os.ReadFile(layoutCachePath(dbPath, layoutID))
 	if err != nil {
-		return layoutData{}, err
+		return layoutData{}, fmt.Errorf("trackers: ASC read layout cache: %w", err)
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(payload, &raw); err != nil {
@@ -160,9 +160,12 @@ func writeLayoutCache(dbPath string, layoutID string, payload []byte) error {
 		return errors.New("missing layout cache path")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: ASC create layout cache dir: %w", err)
 	}
-	return os.WriteFile(path, payload, 0o600)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return fmt.Errorf("trackers: ASC write layout cache: %w", err)
+	}
+	return nil
 }
 
 func layoutCachePath(dbPath string, layoutID string) string {

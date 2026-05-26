@@ -94,7 +94,7 @@ func buildDiscSection(meta api.PreparedMetadata, dbPath string) (string, error) 
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		return "", err
+		return "", fmt.Errorf("description: HDB read MediaInfo file: %w", err)
 	}
 	trimmed := strings.TrimSpace(string(content))
 	if trimmed == "" {

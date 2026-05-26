@@ -296,7 +296,7 @@ func parseUploadID(finalURL string, body string) string {
 func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte, string, error) {
 	file, err := os.Open(strings.TrimSpace(torrentPath))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ASC open torrent file: %w", err)
 	}
 	defer file.Close()
 

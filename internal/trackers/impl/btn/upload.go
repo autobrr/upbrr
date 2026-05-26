@@ -480,9 +480,12 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, baseURL st
 		return errors.New("not a torrent payload")
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN create torrent output dir: %w", err)
 	}
-	return os.WriteFile(outputPath, body, 0o600)
+	if err := os.WriteFile(outputPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: BTN write torrent output: %w", err)
+	}
+	return nil
 }
 
 func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken string, req trackers.UploadRequest, groupID string, outputPath string) error {
@@ -571,9 +574,12 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		return errors.New("trackers: BTN API did not return torrent payload")
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API create torrent output dir: %w", err)
 	}
-	return os.WriteFile(outputPath, body, 0o600)
+	if err := os.WriteFile(outputPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: BTN API write torrent output: %w", err)
+	}
+	return nil
 }
 
 func loadCookies(ctx context.Context, client *http.Client, dbPath string, baseURL string) {

@@ -129,7 +129,7 @@ func loadMediaInfoDoc(path string) (mediaInfoDoc, error) {
 	}
 	payload, err := os.ReadFile(trimmed)
 	if err != nil {
-		return doc, err
+		return doc, fmt.Errorf("screenshots: read mediainfo document: %w", err)
 	}
 	if err := json.Unmarshal(payload, &doc); err != nil {
 		return doc, err
@@ -337,7 +337,7 @@ func loadBDInfo(tmpRoot string, meta api.PreparedMetadata) (*discparse.BDInfo, e
 	}
 	payload, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("screenshots: read BDMV summary: %w", err)
 	}
 	summary, files, _ := discparse.SplitBDInfoReport(string(payload))
 	return discparse.ParseBDInfoSummary(summary, files, meta.SourcePath), nil
@@ -405,7 +405,7 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 	}
 	entries, err := os.ReadDir(videoTS)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("screenshots: read VIDEO_TS directory: %w", err)
 	}
 
 	vobSizes := map[string]int64{}
@@ -453,7 +453,7 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 func findVideoTS(ctx context.Context, root string) (string, error) {
 	info, err := os.Stat(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("screenshots: stat DVD root: %w", err)
 	}
 	if info.IsDir() {
 		if strings.EqualFold(filepath.Base(root), "VIDEO_TS") {

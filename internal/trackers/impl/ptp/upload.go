@@ -742,7 +742,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 	file, err := os.Open(torrentPath)
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: PTP open torrent file: %w", err)
 	}
 	defer file.Close()
 	part, err := writer.CreateFormFile(fileField, "placeholder.torrent")
@@ -835,11 +835,11 @@ func writeTrackerTorrent(sourcePath string, outputPath string, announceURL strin
 	}
 	torrentMeta.Comment = strings.TrimSpace(comment)
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: PTP create torrent output dir: %w", err)
 	}
 	file, err := os.Create(outputPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: PTP create torrent output: %w", err)
 	}
 	defer file.Close()
 	if err := torrentMeta.Write(file); err != nil {
@@ -1323,7 +1323,7 @@ func readTextFile(path string) (string, error) {
 	}
 	payload, err := os.ReadFile(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: PTP read text file: %w", err)
 	}
 	return string(payload), nil
 }

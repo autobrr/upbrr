@@ -159,7 +159,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	file, err := os.Open(torrentPath)
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: NBL open torrent file: %w", err)
 	}
 	defer file.Close()
 	part, err := writer.CreateFormFile("file_input", "torrent.torrent")

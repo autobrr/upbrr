@@ -476,7 +476,7 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 func addFile(writer *multipart.Writer, field, path string) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: UNIT3D open multipart file: %w", err)
 	}
 	defer file.Close()
 
@@ -552,7 +552,7 @@ func readTextFile(path string) (string, error) {
 	}
 	payload, err := os.ReadFile(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: UNIT3D read text file: %w", err)
 	}
 	return string(payload), nil
 }

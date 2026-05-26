@@ -94,7 +94,7 @@ func (s *sessionStore) Load() ([]session, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("web auth: read session file: %w", err)
 	}
 	var sessions []session
 	if err := json.Unmarshal(raw, &sessions); err != nil {
@@ -109,7 +109,7 @@ func (s *sessionStore) Save(sessions []session) error {
 
 	if len(sessions) == 0 {
 		if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
-			return err
+			return fmt.Errorf("web auth: remove session file: %w", err)
 		}
 		return nil
 	}
@@ -122,32 +122,32 @@ func (s *sessionStore) Save(sessions []session) error {
 	dir := filepath.Dir(s.path)
 	tmpFile, err := os.CreateTemp(dir, filepath.Base(s.path)+".tmp-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("web auth: create temp session file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 
 	if err := tmpFile.Chmod(0o600); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: chmod temp session file: %w", err)
 	}
 	if _, err := tmpFile.Write(raw); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: write temp session file: %w", err)
 	}
 	if err := tmpFile.Sync(); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: sync temp session file: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: close temp session file: %w", err)
 	}
 	if err := os.Rename(tmpPath, s.path); err != nil {
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: replace session file: %w", err)
 	}
 
 	if err := syncDir(dir); err != nil {
@@ -167,10 +167,10 @@ func syncDir(path string) error {
 		if errors.Is(err, os.ErrInvalid) || os.IsPermission(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("web auth: sync session dir: %w", err)
 	}
 	if err := dir.Close(); err != nil {
-		return err
+		return fmt.Errorf("web auth: close session dir: %w", err)
 	}
 	return nil
 }

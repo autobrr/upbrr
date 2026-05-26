@@ -1078,7 +1078,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 		filePath := fileFields[fileField]
 		file, err := os.Open(filePath)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: open multipart file: %w", err)
 		}
 		part, err := writer.CreateFormFile(fileField, filepath.Base(filePath))
 		if err != nil {
@@ -1090,7 +1090,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 			return nil, 0, err
 		}
 		if err := file.Close(); err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: close multipart file: %w", err)
 		}
 	}
 	if err := writer.Close(); err != nil {
@@ -1137,7 +1137,7 @@ func closeResponseBody(resp *http.Response) {
 func readBase64(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("image hosting: read base64 file: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
 }

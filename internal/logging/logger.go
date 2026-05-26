@@ -330,7 +330,10 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 
 	n, err := w.file.Write(p)
 	w.size += int64(n)
-	return n, err
+	if err != nil {
+		return n, fmt.Errorf("logging: write log file: %w", err)
+	}
+	return n, nil
 }
 
 func (w *rotatingWriter) Close() error {
@@ -339,7 +342,10 @@ func (w *rotatingWriter) Close() error {
 	if w.file == nil {
 		return nil
 	}
-	return w.file.Close()
+	if err := w.file.Close(); err != nil {
+		return fmt.Errorf("logging: close log file: %w", err)
+	}
+	return nil
 }
 
 func (w *rotatingWriter) open() error {

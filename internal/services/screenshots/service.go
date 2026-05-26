@@ -481,7 +481,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 
 	if err := os.Remove(absTarget); err != nil {
 		if !os.IsNotExist(err) {
-			return err
+			return fmt.Errorf("screenshots: remove captured image: %w", err)
 		}
 		if s.logger != nil {
 			s.logger.Debugf("screenshots: image already missing: %s", absTarget)

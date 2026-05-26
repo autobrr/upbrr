@@ -309,7 +309,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	file, err := os.Open(torrentPath)
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: HDB open torrent file: %w", err)
 	}
 	defer file.Close()
 
@@ -412,9 +412,12 @@ func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api
 		return errors.New("empty torrent response")
 	}
 	if err := os.MkdirAll(filepath.Dir(torrentPath), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: HDB create torrent output dir: %w", err)
 	}
-	return os.WriteFile(torrentPath, body, 0o600)
+	if err := os.WriteFile(torrentPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: HDB write torrent output: %w", err)
+	}
+	return nil
 }
 
 func buildHDBDownloadURL(uploadURL string, meta api.PreparedMetadata, torrentID string, passkey string) string {

@@ -5,6 +5,7 @@ package guishared
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -66,7 +67,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 	if requested == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return api.BrowseDirectoryResponse{}, err
+			return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: get working directory: %w", err)
 		}
 		requested = cwd
 	}
@@ -77,7 +78,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 	}
 	info, err := os.Stat(current)
 	if err != nil {
-		return api.BrowseDirectoryResponse{}, err
+		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: stat current path: %w", err)
 	}
 	if !info.IsDir() {
 		current = filepath.Dir(current)
@@ -95,7 +96,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 
 	entries, err := os.ReadDir(current)
 	if err != nil {
-		return api.BrowseDirectoryResponse{}, err
+		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: read current path: %w", err)
 	}
 
 	items := make([]api.BrowseDirectoryEntry, 0, len(entries))
@@ -185,7 +186,7 @@ func normalizedBrowseRoot(rootPath string) (string, error) {
 	}
 	info, err := os.Stat(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse directory: stat root: %w", err)
 	}
 	if !info.IsDir() {
 		return "", errors.New("configured web browse root is not a directory")
@@ -334,7 +335,7 @@ func ValidateBrowseSelection(path string, wantDir bool) error {
 	}
 	info, err := os.Stat(trimmed)
 	if err != nil {
-		return err
+		return fmt.Errorf("browse selection: stat path: %w", err)
 	}
 	if wantDir && !info.IsDir() {
 		return errors.New("selected path is not a folder")

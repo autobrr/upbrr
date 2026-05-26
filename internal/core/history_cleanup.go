@@ -222,15 +222,15 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 			if os.IsNotExist(err) {
 				return false, nil
 			}
-			return false, err
+			return false, fmt.Errorf("cleanup history artifact: stat target: %w", err)
 		}
 		if err := os.RemoveAll(absTarget); err != nil {
-			return false, err
+			return false, fmt.Errorf("cleanup history artifact: remove target tree: %w", err)
 		}
 		return true, nil
 	}
 	if err := os.Remove(absTarget); err != nil && !os.IsNotExist(err) {
-		return false, err
+		return false, fmt.Errorf("cleanup history artifact: remove target: %w", err)
 	}
 	if _, err := os.Stat(absTarget); err == nil {
 		return false, nil

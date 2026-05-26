@@ -159,7 +159,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	channelID, blockedReason, questionnaire := resolveChannel(ctx, req)
 	torrentBytes, err := os.ReadFile(torrentPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: SPD read torrent file: %w", err)
 	}
 	releaseName := normalizeName(firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename))
 	payload := map[string]any{
@@ -363,9 +363,12 @@ func downloadTrackerTorrent(ctx context.Context, urlValue string, apiKey string,
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: SPD create torrent output dir: %w", err)
 	}
-	return os.WriteFile(output, body, 0o600)
+	if err := os.WriteFile(output, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: SPD write torrent output: %w", err)
+	}
+	return nil
 }
 
 func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {

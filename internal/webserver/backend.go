@@ -684,7 +684,7 @@ func (b *Backend) ReadScreenshotImage(path string) (string, error) {
 	}
 	payload, err := os.ReadFile(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read preview image: %w", err)
 	}
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(payload), nil
 }
@@ -1166,15 +1166,15 @@ func removeIfWithinRoot(root string, target string, recursive bool) error {
 			if os.IsNotExist(err) {
 				return nil
 			}
-			return err
+			return fmt.Errorf("cleanup path: stat target: %w", err)
 		}
 		if err := os.RemoveAll(absTarget); err != nil {
-			return err
+			return fmt.Errorf("cleanup path: remove target tree: %w", err)
 		}
 		return nil
 	}
 	if err := os.Remove(absTarget); err != nil && !os.IsNotExist(err) {
-		return err
+		return fmt.Errorf("cleanup path: remove target: %w", err)
 	}
 	return nil
 }
