@@ -908,7 +908,7 @@ func resolve2FACode(otpURI string) (string, error) {
 	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
 	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: PTP decode otp secret: %w", err)
 	}
 	counterTime := time.Now().Unix() / int64(period)
 	if counterTime < 0 {

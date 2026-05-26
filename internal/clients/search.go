@@ -622,7 +622,7 @@ func fetchTorrentProperties(ctx context.Context, client *qbittorrent.Client, htt
 
 	var props qbittorrent.TorrentProperties
 	if err := json.NewDecoder(resp.Body).Decode(&props); err != nil {
-		return qbittorrent.TorrentProperties{}, err
+		return qbittorrent.TorrentProperties{}, fmt.Errorf("clients: decode proxy torrent properties: %w", err)
 	}
 	return props, nil
 }
@@ -653,7 +653,7 @@ func fetchTorrentTrackers(ctx context.Context, client *qbittorrent.Client, httpC
 		}
 		var trackers []qbittorrent.TorrentTracker
 		if err := json.NewDecoder(resp.Body).Decode(&trackers); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("clients: decode proxy torrent trackers: %w", err)
 		}
 		return trackers, nil
 	}

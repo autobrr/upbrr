@@ -1253,7 +1253,7 @@ func decodeFileList(value string) ([]string, error) {
 		return result, nil
 	}
 	if err := json.Unmarshal([]byte(value), &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: decode file list: %w", err)
 	}
 	return result, nil
 }
@@ -1278,7 +1278,7 @@ func decodeStringList(value string) ([]string, error) {
 	decoder.DisallowUnknownFields()
 	var result []string
 	if err := decoder.Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: decode string list: %w", err)
 	}
 	return result, nil
 }
@@ -1310,7 +1310,7 @@ func decodeOptionalJSON[T any](value string) (*T, error) {
 	decoder := json.NewDecoder(strings.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: decode optional JSON: %w", err)
 	}
 	return &result, nil
 }

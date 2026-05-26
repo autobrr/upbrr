@@ -1166,7 +1166,7 @@ func writeBTNClaimedCacheFixture(path string, fetchedAt int64, titles map[string
 		Titles:    serializedTitles,
 	}, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal BTN claimed cache fixture: %w", err)
 	}
 
 	if err := os.WriteFile(path, payload, 0o600); err != nil {

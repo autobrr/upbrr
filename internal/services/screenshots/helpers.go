@@ -132,7 +132,7 @@ func loadMediaInfoDoc(path string) (mediaInfoDoc, error) {
 		return doc, fmt.Errorf("screenshots: read mediainfo document: %w", err)
 	}
 	if err := json.Unmarshal(payload, &doc); err != nil {
-		return doc, err
+		return doc, fmt.Errorf("screenshots: unmarshal mediainfo document: %w", err)
 	}
 	return doc, nil
 }

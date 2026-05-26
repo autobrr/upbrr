@@ -534,7 +534,7 @@ func encryptSecretString(plaintext string, helper string) (string, error) {
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: marshal envelope: %w", err)
 	}
 
 	return encryptedEnvelopePrefix + base64.StdEncoding.EncodeToString(payload), nil
@@ -558,15 +558,15 @@ func decryptSecretString(value string, helper string) (string, error) {
 
 	ciphertext, err := base64.StdEncoding.DecodeString(envelope.C)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: decode ciphertext: %w", err)
 	}
 	nonce, err := base64.StdEncoding.DecodeString(envelope.N)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: decode nonce: %w", err)
 	}
 	authTag, err := base64.StdEncoding.DecodeString(envelope.T)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: decode auth tag: %w", err)
 	}
 
 	return decryptSecretValue(secretPayload{ciphertext: ciphertext, nonce: nonce, authTag: authTag}, key)

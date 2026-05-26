@@ -589,7 +589,10 @@ func (s *Server) isTrustedProxy(ip net.IP) bool {
 
 func decodeJSON(r *http.Request, dest any) error {
 	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(dest)
+	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
+		return fmt.Errorf("web: decode request JSON: %w", err)
+	}
+	return nil
 }
 
 func fsStat(root fs.FS, name string) (fs.FileInfo, error) {

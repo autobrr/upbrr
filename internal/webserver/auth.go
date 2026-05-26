@@ -98,7 +98,7 @@ func (s *sessionStore) Load() ([]session, error) {
 	}
 	var sessions []session
 	if err := json.Unmarshal(raw, &sessions); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("web auth: unmarshal session file: %w", err)
 	}
 	return sessions, nil
 }
@@ -116,7 +116,7 @@ func (s *sessionStore) Save(sessions []session) error {
 
 	raw, err := json.MarshalIndent(sessions, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("web auth: marshal session file: %w", err)
 	}
 
 	dir := filepath.Dir(s.path)

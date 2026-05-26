@@ -529,7 +529,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(apiResp.Body).Decode(&response); err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN decode torrent search response: %w", err)
 	}
 	selectedID := ""
 	for id, torrentData := range response.Result.Torrents {
@@ -623,7 +623,7 @@ func resolve2FACode(otpURI string) (string, error) {
 	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
 	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BTN decode otp secret: %w", err)
 	}
 	counterTime := time.Now().Unix() / int64(period)
 	if counterTime < 0 {

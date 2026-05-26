@@ -365,11 +365,11 @@ func trackerConfigToJSONMap(cfg TrackerConfig) (map[string]interface{}, error) {
 	//nolint:gosec // TrackerConfig intentionally serializes API key fields for config export.
 	payload, err := json.Marshal(alias)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config: marshal tracker config to json map: %w", err)
 	}
 	result := map[string]interface{}{}
 	if err := json.Unmarshal(payload, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config: unmarshal tracker config json map: %w", err)
 	}
 	return result, nil
 }
@@ -455,11 +455,11 @@ func extractTrackerUnknown(raw map[string]interface{}) map[string]interface{} {
 func decodeTrackerConfigFromJSON(raw map[string]interface{}) (TrackerConfig, error) {
 	payload, err := json.Marshal(raw)
 	if err != nil {
-		return TrackerConfig{}, err
+		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from json: %w", err)
 	}
 	var cfg TrackerConfig
 	if err := json.Unmarshal(payload, &cfg); err != nil {
-		return TrackerConfig{}, err
+		return TrackerConfig{}, fmt.Errorf("config: unmarshal tracker config from json: %w", err)
 	}
 	cfg.Unknown = extractTrackerUnknown(raw)
 	return cfg, nil
@@ -502,7 +502,11 @@ func (t TrackersConfig) MarshalJSON() ([]byte, error) {
 	}
 	preferredTracker := strings.TrimSpace(t.PreferredTracker)
 
-	return json.Marshal(trackersJSON{DefaultTrackers: defaultTrackers, PreferredTracker: preferredTracker, Trackers: trackers})
+	payload, err := json.Marshal(trackersJSON{DefaultTrackers: defaultTrackers, PreferredTracker: preferredTracker, Trackers: trackers})
+	if err != nil {
+		return nil, fmt.Errorf("config: marshal trackers config: %w", err)
+	}
+	return payload, nil
 }
 
 func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
@@ -512,7 +516,7 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
-		return err
+		return fmt.Errorf("config: unmarshal trackers config root: %w", err)
 	}
 
 	t.DefaultTrackers = CSVList{}
@@ -547,7 +551,7 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 	var rawTrackers map[string]json.RawMessage
 	if raw, ok := root["Trackers"]; ok {
 		if err := json.Unmarshal(raw, &rawTrackers); err != nil {
-			return err
+			return fmt.Errorf("config: unmarshal trackers map: %w", err)
 		}
 	} else {
 		rawTrackers = make(map[string]json.RawMessage)

@@ -1192,7 +1192,7 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	payload := map[string]string{"apikey": c.apiKey}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: marshal login payload: %w", err)
 	}
 
 	url := c.baseURL + "/login"
@@ -1215,7 +1215,7 @@ func (c *Client) loginLocked(ctx context.Context) error {
 
 	var loginResp loginResponse
 	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		return err
+		return fmt.Errorf("tvdb: decode login response: %w", err)
 	}
 	if strings.TrimSpace(loginResp.Data.Token) == "" {
 		return errors.New("tvdb: login token missing")
@@ -1261,7 +1261,7 @@ func writeEpisodesCache(path string, data EpisodesData) error {
 	}
 	encoded, err := json.Marshal(data)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: marshal episodes cache: %w", err)
 	}
 	if err := os.WriteFile(path, encoded, 0o600); err != nil {
 		return fmt.Errorf("tvdb: write episodes cache: %w", err)
@@ -1376,7 +1376,7 @@ func (e *episodesDataResponse) UnmarshalJSON(data []byte) error {
 	case '[':
 		var episodes []episodeResponse
 		if err := json.Unmarshal(trimmed, &episodes); err != nil {
-			return err
+			return fmt.Errorf("tvdb: unmarshal episodes list: %w", err)
 		}
 		e.Episodes = episodes
 		e.Slug = ""
@@ -1387,7 +1387,7 @@ func (e *episodesDataResponse) UnmarshalJSON(data []byte) error {
 			Slug     string            `json:"slug"`
 		}
 		if err := json.Unmarshal(trimmed, &payload); err != nil {
-			return err
+			return fmt.Errorf("tvdb: unmarshal episodes payload: %w", err)
 		}
 		e.Episodes = payload.Episodes
 		e.Slug = payload.Slug
@@ -1421,7 +1421,7 @@ func (v *intOrString) UnmarshalJSON(data []byte) error {
 	if trimmed[0] == '"' {
 		var text string
 		if err := json.Unmarshal(trimmed, &text); err != nil {
-			return err
+			return fmt.Errorf("tvdb: unmarshal integer string: %w", err)
 		}
 		text = strings.TrimSpace(text)
 		if text == "" {
@@ -1438,7 +1438,7 @@ func (v *intOrString) UnmarshalJSON(data []byte) error {
 
 	var numeric int
 	if err := json.Unmarshal(trimmed, &numeric); err != nil {
-		return err
+		return fmt.Errorf("tvdb: unmarshal integer: %w", err)
 	}
 	*v = intOrString(numeric)
 	return nil

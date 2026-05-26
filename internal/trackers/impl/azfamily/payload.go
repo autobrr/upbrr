@@ -120,7 +120,7 @@ func fetchTagID(ctx context.Context, site siteDefinition, state sessionState, wo
 		Data []map[string]any `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s decode tag lookup response: %w", site.Name, err)
 	}
 	for _, item := range payload.Data {
 		if strings.EqualFold(stringValue(item["tag"]), word) {
@@ -200,7 +200,7 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 		Error   string `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s decode screenshot upload response: %w", site.Name, err)
 	}
 	if !payload.Success {
 		return "", fmt.Errorf("%s", strings.TrimSpace(payload.Error))

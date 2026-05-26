@@ -72,7 +72,7 @@ func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int)
 
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("thexem: decode map/single response: %w", err)
 	}
 
 	season, episode := parseSeasonEpisode(payload)
@@ -107,7 +107,7 @@ func (c *Client) GetSeasonNames(ctx context.Context, tvdbID int) (map[int][]stri
 
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("thexem: decode map/names response: %w", err)
 	}
 	return parseSeasonNames(payload), nil
 }

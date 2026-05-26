@@ -64,7 +64,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 
 	body, err := json.Marshal(state.payload)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: SPD marshal upload payload: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, strings.NewReader(string(body)))
 	if err != nil {
@@ -224,7 +224,7 @@ func lookupChannelID(ctx context.Context, apiKey string, input string) (string, 
 	body, _ := io.ReadAll(resp.Body)
 	var decoded []channelResult
 	if err := json.Unmarshal(body, &decoded); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: SPD unmarshal channel lookup response: %w", err)
 	}
 	for _, item := range decoded {
 		if strings.EqualFold(strings.TrimSpace(item.Tag), strings.TrimSpace(input)) {

@@ -396,7 +396,7 @@ func totpFromOTPURI(otpURI string, now time.Time) (string, error) {
 	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
 	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: MTV decode otp secret: %w", err)
 	}
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, counter)

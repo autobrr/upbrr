@@ -298,7 +298,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 
 	decoder := json.NewDecoder(resp.Body)
 	if err := decoder.Decode(target); err != nil {
-		return err
+		return fmt.Errorf("tvmaze: decode response: %w", err)
 	}
 	return nil
 }

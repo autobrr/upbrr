@@ -50,7 +50,7 @@ func doJSONGetAny(ctx context.Context, client *http.Client, endpoint string, par
 	}
 	var payload any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return resp.StatusCode, nil, err
+		return resp.StatusCode, nil, fmt.Errorf("dupechecking: decode JSON GET response: %w", err)
 	}
 	return resp.StatusCode, payload, nil
 }
@@ -73,7 +73,7 @@ func doJSONPost(ctx context.Context, client *http.Client, endpoint string, body 
 func doJSONPostAny(ctx context.Context, client *http.Client, endpoint string, body map[string]any, headers map[string]string) (int, any, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, fmt.Errorf("dupechecking: marshal JSON POST body: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
@@ -93,7 +93,7 @@ func doJSONPostAny(ctx context.Context, client *http.Client, endpoint string, bo
 	}
 	var payload any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return resp.StatusCode, nil, err
+		return resp.StatusCode, nil, fmt.Errorf("dupechecking: decode JSON POST response: %w", err)
 	}
 	return resp.StatusCode, payload, nil
 }

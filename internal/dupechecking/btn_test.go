@@ -249,7 +249,7 @@ func captureBTNPayloads(t *testing.T, response string) *btnPayloadCapture {
 			capture.mu.Lock()
 			defer capture.mu.Unlock()
 			if err := json.Unmarshal(body, &capture.payload); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("unmarshal BTN payload request body: %w", err)
 			}
 
 			return &http.Response{

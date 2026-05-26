@@ -81,7 +81,7 @@ func (h azNetworkHandler) lookupMediaCode(ctx context.Context, site azDupeSiteDe
 			Data []map[string]any `json:"data"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("dupechecking: decode %s media lookup: %w", site.baseURL, err)
 		}
 		return payload.Data, nil
 	}

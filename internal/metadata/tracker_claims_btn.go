@@ -469,7 +469,7 @@ func resolveBTNClaims2FACode(otpURI string) (string, error) {
 	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
 	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("metadata: decode BTN otp secret: %w", err)
 	}
 	counterTime := time.Now().Unix() / int64(period)
 	if counterTime < 0 {
@@ -861,7 +861,7 @@ func readBTNClaimedCache(path string) (map[string]struct{}, int64, error) {
 	}
 	var cache btnClaimedShowsCache
 	if err := json.Unmarshal(payload, &cache); err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("metadata: unmarshal BTN claimed cache: %w", err)
 	}
 	titles := make(map[string]struct{}, len(cache.Titles))
 	for _, title := range cache.Titles {
@@ -889,7 +889,7 @@ func writeBTNClaimedCache(path string, titles map[string]struct{}) error {
 	}
 	encoded, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("metadata: marshal BTN claimed cache: %w", err)
 	}
 	if err := os.WriteFile(path, encoded, 0o600); err != nil {
 		return fmt.Errorf("metadata: write BTN claimed cache: %w", err)

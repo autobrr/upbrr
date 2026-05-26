@@ -560,7 +560,7 @@ func decodeTrackerClaimValues(data []byte, namesByID func(string) []string, cano
 	var items []json.RawMessage
 	if trimmed[0] == '[' {
 		if err := json.Unmarshal(trimmed, &items); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("metadata: unmarshal tracker claim values: %w", err)
 		}
 	} else {
 		items = []json.RawMessage{trimmed}

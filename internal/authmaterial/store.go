@@ -109,7 +109,7 @@ func (s *Store) Load() (Record, error) {
 	}
 	var record Record
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return Record{}, err
+		return Record{}, fmt.Errorf("web auth: unmarshal auth file: %w", err)
 	}
 	return record, nil
 }
@@ -253,7 +253,7 @@ func (s *Store) updateRecordLocked(apply func(record *Record) error) error {
 
 	var record Record
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return err
+		return fmt.Errorf("web auth: unmarshal auth file: %w", err)
 	}
 	if err := apply(&record); err != nil {
 		return err
@@ -274,7 +274,7 @@ func (r Record) AuthMaterial() Material {
 func (s *Store) saveLocked(record Record) error {
 	raw, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("web auth: marshal auth file: %w", err)
 	}
 
 	dir := filepath.Dir(s.path)

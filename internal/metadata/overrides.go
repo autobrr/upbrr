@@ -64,7 +64,7 @@ func ApplyTagOverrides(path, currentTag, tagsPath string) (string, *api.TagOverr
 
 	entries := map[string]tagOverrideEntry{}
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return currentTag, nil, err
+		return currentTag, nil, fmt.Errorf("metadata: unmarshal tag overrides: %w", err)
 	}
 
 	effectiveTag := currentTag

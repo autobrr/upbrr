@@ -117,11 +117,11 @@ func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, 
 	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return layoutData{}, err
+		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout response: %w", err)
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(payload["ASC"], &raw); err != nil {
-		return layoutData{}, err
+		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout data: %w", err)
 	}
 	layout := normalizeLayout(raw)
 	_ = writeLayoutCache(dbPath, layoutID, payload["ASC"])
@@ -149,7 +149,7 @@ func readLayoutCache(dbPath string, layoutID string) (layoutData, error) {
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(payload, &raw); err != nil {
-		return layoutData{}, err
+		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout cache: %w", err)
 	}
 	return normalizeLayout(raw), nil
 }

@@ -572,7 +572,7 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 
 	decoder := json.NewDecoder(resp.Body)
 	if err := decoder.Decode(target); err != nil {
-		return err
+		return fmt.Errorf("tmdb: decode response for %s: %w", path, err)
 	}
 	return nil
 }

@@ -96,7 +96,7 @@ func lookupMediaCode(ctx context.Context, site siteDefinition, state sessionStat
 			Data []map[string]any `json:"data"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("trackers: %s decode media search response: %w", site.Name, err)
 		}
 		return payload.Data, nil
 	}

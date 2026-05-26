@@ -111,7 +111,7 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 	payload := map[string]any{"query": query, "variables": variables}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("anilist: marshal search payload: %w", err)
 	}
 
 	var lastErr error
@@ -156,7 +156,7 @@ func (c *Client) doAniListSearch(ctx context.Context, body []byte) (anilistRespo
 		return response, fmt.Errorf("anilist: http %d", resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return response, err
+		return response, fmt.Errorf("anilist: decode search response: %w", err)
 	}
 	return response, nil
 }

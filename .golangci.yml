@@ -76,7 +76,6 @@ linters:
     wrapcheck:
       ignore-package-globs:
         - github.com/autobrr/upbrr/*
-        - encoding/*
 
   exclusions:
     generated: lax
