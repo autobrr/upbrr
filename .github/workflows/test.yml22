@@ -54,7 +54,7 @@ jobs:
           cache: true
 
       - name: Run Go tests
-        run: go test -v -timeout 20m ./...
+        run: make test-go
 
   test-frontend:
     name: Frontend checks

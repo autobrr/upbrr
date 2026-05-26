@@ -447,6 +447,7 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	firstCallCh := uploaderStub.firstCallCh
 	done := make(chan error, 1)
 	go func() {
 		_, err := service.Upload(ctx, api.PreparedMetadata{SourcePath: "source"}, "test", "global", []api.ScreenshotImage{
@@ -457,7 +458,7 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 	}()
 
 	select {
-	case <-uploaderStub.firstCallCh:
+	case <-firstCallCh:
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for first upload to start")
 	}

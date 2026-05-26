@@ -193,13 +193,14 @@ func (s *Service) enrichTrackerDataConcurrent(
 		workerCount = 1
 	}
 
+	lookupMeta := meta
 	var workers sync.WaitGroup
 	for idx := 0; idx < workerCount; idx++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
 			for tracker := range jobs {
-				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, meta, tracker, now, unit3dClient)
+				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, lookupMeta, tracker, now, unit3dClient)
 				results <- trackerLookupOutcome{
 					tracker:     tracker,
 					record:      record,

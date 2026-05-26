@@ -174,7 +174,7 @@ make gui              # Wails GUI with current embedded assets
 Run the same checks CI runs:
 
 ```sh
-make test-go
+make test-go            # Go tests with race detector
 make test-frontend
 make lint
 make logpolicy
@@ -184,7 +184,7 @@ make vuln
 Useful focused checks:
 
 ```sh
-go test -v -timeout 20m <package>
+go test -race -v -timeout 20m <package>
 make gofix-check-changed
 make gofix-changed
 pnpm --dir gui/frontend run lint:style

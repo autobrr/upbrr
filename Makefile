@@ -17,7 +17,7 @@ BLANK := echo
 endif
 
 CLI_OUT := dist/upbrr$(EXE)
-GO_TEST_FLAGS := -v -timeout 20m
+GO_TEST_FLAGS := -race -v -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
 GOVULNCHECK_VERSION := v1.3.0
 GO_CHANGED_FILES := $(shell git diff --name-only --diff-filter=ACMR HEAD -- '*.go')
@@ -37,7 +37,7 @@ help:
 	@$(BLANK)
 	@echo Testing
 	@echo   make test               Run Go and frontend checks
-	@echo   make test-go            Run full Go test suite
+	@echo   make test-go            Run full Go test suite with race detector
 	@echo   make test-frontend      Run frontend lint/type/format/dead-code checks
 	@$(BLANK)
 	@echo Linting

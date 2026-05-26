@@ -11,7 +11,7 @@
 ```bash
 make help               # Show supported targets
 make backend            # Fast build sanity check
-make test-go            # Full Go tests
+make test-go            # Full Go tests with race detector
 make test-frontend      # Frontend lint/dead-code/type/format checks
 make lint               # Full Go lint
 make logpolicy          # Logging policy check
