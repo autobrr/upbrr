@@ -105,10 +105,6 @@ linters:
       - path: _test\.go
         linters:
           - gosec
-      - path: internal/clients/search\.go
-        text: G402
-        linters:
-          - gosec
       - path: internal/config/config\.go
         text: G117
         linters:

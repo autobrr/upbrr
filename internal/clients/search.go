@@ -6,7 +6,6 @@ package clients
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -351,10 +350,11 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s proxy url is required", name)
 		}
 		s.logger.Tracef("clients: %s searching via qBittorrent proxy", name)
-		transport := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: clientCfg.QbitTLSSkipVerify()},
-		}
-		httpClient = &http.Client{Timeout: proxySearchTimeout, Transport: transport}
+		httpClient = qbittorrent.NewClient(qbittorrent.Config{
+			Host:          proxyBaseURL,
+			Timeout:       int(proxySearchTimeout.Seconds()),
+			TLSSkipVerify: clientCfg.QbitTLSSkipVerify(),
+		}).GetHTTPClient()
 	} else {
 		host := strings.TrimSpace(clientCfg.QbitHost())
 		if host == "" {
