@@ -78,6 +78,22 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     }
     return left.Tracker.localeCompare(right.Tracker);
   });
+  const availableTrackers = sortedResults
+    .filter((result) => {
+      const normalizedTracker = result.Tracker.toLowerCase().trim();
+      const status = String(result.Status || "")
+        .toLowerCase()
+        .trim();
+      const hasFailure = status === "failed" || Boolean(result.Error?.trim());
+      const hasPathedNote = result.Notes?.includes(pathedNote) ?? false;
+      if (hasFailure) return false;
+      if (hasPathedNote) return false;
+      if (dupeTrackerFlags[result.Tracker]) return false;
+      if (ruleSkippedTrackerSet.has(normalizedTracker)) return false;
+      return true;
+    })
+    .map((result) => result.Tracker);
+  const unavailableCount = Math.max(sortedResults.length - availableTrackers.length, 0);
 
   return (
     <section className="flex flex-col gap-3">
@@ -91,6 +107,30 @@ export default function DupeCheckPage(props: Readonly<Props>) {
         <div className="min-w-0">
           <p className="label">Source path</p>
           <p className="value break-words text-sm">{path || "No path selected"}</p>
+          {hasDupeResults ? (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-[var(--muted)]">
+              <span className="font-semibold text-[var(--text)]">
+                Available for upload: {availableTrackers.length}
+              </span>
+              {availableTrackers.length ? (
+                availableTrackers.map((tracker) => (
+                  <Badge
+                    className="text-[var(--text)]"
+                    style={{
+                      backgroundColor: "color-mix(in srgb, var(--accent-2) 14%, transparent)",
+                      borderColor: "color-mix(in srgb, var(--accent-2) 42%, transparent)",
+                    }}
+                    key={`available-${tracker}`}
+                  >
+                    {tracker}
+                  </Badge>
+                ))
+              ) : (
+                <span>No trackers passed.</span>
+              )}
+              {unavailableCount > 0 ? <span>{unavailableCount} blocked.</span> : null}
+            </div>
+          ) : null}
         </div>
         <Button
           className="ml-auto"

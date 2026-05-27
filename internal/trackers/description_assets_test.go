@@ -565,7 +565,7 @@ func TestResolveDescriptionAssetsFallbackTrackerImages(t *testing.T) {
 			ImageURLs: []string{"https://imgbb.com/a.png", "https://imgbb.com/b.png", "https://ptpimg.me/c.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
 	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
 	if err != nil {
@@ -579,6 +579,50 @@ func TestResolveDescriptionAssetsFallbackTrackerImages(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsSkipsTrackerImagesWhenNotKeepingImages(t *testing.T) {
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{{
+			Tracker:   "AITHER",
+			ImageURLs: []string{"https://imgbb.com/a.png", "https://imgbb.com/b.png"},
+		}},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(assets.Screenshots) != 0 {
+		t.Fatalf("expected no tracker image fallback when keep_images=false, got %#v", assets.Screenshots)
+	}
+	if len(assets.Slots) != 0 {
+		t.Fatalf("expected no synthesized tracker image slots when keep_images=false, got %#v", assets.Slots)
+	}
+}
+
+func TestResolveDescriptionAssetsSkipsStoredTrackerSlotsWhenNotKeepingImages(t *testing.T) {
+	repo := &stubRepo{
+		screenshotSlots: []api.ScreenshotSlot{{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           0,
+			SourceKind:          screenshotSlotSourceTracker,
+			OriginalURL:         "https://imgbb.com/stale.png",
+			OriginalHost:        "imgbb",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		}},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(assets.Screenshots) != 0 {
+		t.Fatalf("expected stale stored tracker slots skipped when keep_images=false, got %#v", assets.Screenshots)
+	}
+}
+
 func TestResolveDescriptionAssetsSkipsTMDBTrackerImages(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{{
@@ -586,7 +630,7 @@ func TestResolveDescriptionAssetsSkipsTMDBTrackerImages(t *testing.T) {
 			ImageURLs: []string{"https://image.tmdb.org/t/p/original/poster.jpg", "https://imgbb.com/a.png", "https://imgbb.com/b.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
 	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
 	if err != nil {
@@ -702,7 +746,7 @@ func TestResolveDescriptionAssetsFallbackOtherTrackerImages(t *testing.T) {
 			ImageURLs: []string{"https://imgbb.com/a.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
 	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
 	if err != nil {
@@ -782,7 +826,7 @@ func TestResolveDescriptionAssetsDegradesGracefullyOnScreenshotReadFailure(t *te
 			ImageURLs: []string{"https://imgbb.com/a.png", "https://imgbb.com/b.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
 	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
 	if err != nil {
@@ -807,7 +851,7 @@ func TestResolveDescriptionAssetsDegradesGracefullyOnSelectedUploadMismatch(t *t
 			ImageURLs: []string{"https://ptpimg.me/fallback-a.png", "https://ptpimg.me/fallback-b.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
 	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
 	if err != nil {

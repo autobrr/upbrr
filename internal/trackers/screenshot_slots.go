@@ -66,6 +66,15 @@ func screenshotSlotsFromSource(
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if len(slots) > 0 {
+		if !meta.Options.KeepImages {
+			slots, err = filterStoredSlotsForSelectedImages(ctx, meta, repo, slots, preloaded)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if len(slots) == 0 {
+			return nil, nil
+		}
 		return cloneScreenshotSlots(slots), nil
 	}
 
@@ -80,6 +89,49 @@ func screenshotSlotsFromSource(
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	return cloneScreenshotSlots(slots), nil
+}
+
+func filterStoredSlotsForSelectedImages(
+	ctx context.Context,
+	meta api.PreparedMetadata,
+	repo api.MetadataRepository,
+	slots []api.ScreenshotSlot,
+	preloaded *preloadedDescriptionAssetData,
+) ([]api.ScreenshotSlot, error) {
+	selections, err := finalSelectionsFromSource(ctx, meta, repo, preloaded)
+	if err != nil && !errorsIsNotFound(err) {
+		return nil, err
+	}
+	selectedPaths := make(map[string]struct{}, len(selections))
+	for _, selection := range selections {
+		pathValue := strings.TrimSpace(selection.ImagePath)
+		if pathValue == "" {
+			continue
+		}
+		selectedPaths[pathValue] = struct{}{}
+	}
+	filtered := make([]api.ScreenshotSlot, 0, len(slots))
+	for _, slot := range slots {
+		imagePath := strings.TrimSpace(slot.ImagePath)
+		if strings.EqualFold(strings.TrimSpace(slot.SourceKind), screenshotSlotSourceSelection) || selectedPathExists(selectedPaths, imagePath) {
+			slot.Variants = nil
+			filtered = append(filtered, slot)
+		}
+	}
+	uploads, err := uploadedImagesFromSource(ctx, meta, repo, preloaded)
+	if err != nil && !errorsIsNotFound(err) {
+		return nil, err
+	}
+	applyUploadedVariantsToSlots(filtered, uploads)
+	return filtered, nil
+}
+
+func selectedPathExists(selectedPaths map[string]struct{}, imagePath string) bool {
+	if strings.TrimSpace(imagePath) == "" {
+		return false
+	}
+	_, ok := selectedPaths[imagePath]
+	return ok
 }
 
 func synthesizeScreenshotSlots(
@@ -118,6 +170,13 @@ func synthesizeScreenshotSlots(
 		slots = buildSelectionSlots(meta.SourcePath, selections)
 		applyUploadedVariantsToSlots(slots, uploads)
 		return normalizeSlotOrders(slots), nil
+	}
+
+	if !meta.Options.KeepImages {
+		if logger != nil {
+			logger.Tracef("trackers: screenshot slots tracker urls skipped keep_images=false tracker=%s", strings.TrimSpace(tracker))
+		}
+		return nil, nil
 	}
 
 	urls := collectImageURLs(trackerRecords)

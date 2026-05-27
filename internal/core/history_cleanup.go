@@ -120,6 +120,17 @@ func (c *Core) collectReleaseCleanupTargets(ctx context.Context, sourcePath stri
 		artifactPaths = append(artifactPaths, image.ImagePath)
 	}
 
+	slots, err := c.repo.ListScreenshotSlotsByPath(ctx, sourcePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("core: delete history release list screenshot slots: %w", err)
+	}
+	for _, slot := range slots {
+		artifactPaths = append(artifactPaths, slot.ImagePath)
+		for _, variant := range slot.Variants {
+			artifactPaths = append(artifactPaths, variant.ImagePath)
+		}
+	}
+
 	artifactPaths = compactStrings(artifactPaths)
 	tmpDirs := make(map[string]struct{})
 	fallbackBase := paths.ReleaseTempBase(api.PreparedMetadata{}, sourcePath)

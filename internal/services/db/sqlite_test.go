@@ -1316,6 +1316,34 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save uploaded image: %v", err)
 	}
+	if err := repo.ReplaceScreenshotSlots(ctx, targetPath, []ScreenshotSlot{{
+		SourcePath:          targetPath,
+		SlotOrder:           0,
+		SourceKind:          "tracker_metadata",
+		OriginalURL:         "https://example.invalid/a.png",
+		ImagePath:           "/tmp/slot-target-01.png",
+		RenderInScreenshots: true,
+		Variants: []ScreenshotSlotVariant{{
+			SourcePath: targetPath,
+			SlotOrder:  0,
+			Host:       "imgbox",
+			UsageScope: "global",
+			ImagePath:  "/tmp/slot-target-01.png",
+			ImgURL:     "https://example.invalid/a.png",
+			UploadedAt: now,
+		}},
+	}}); err != nil {
+		t.Fatalf("save screenshot slots target: %v", err)
+	}
+	if err := repo.ReplaceScreenshotSlots(ctx, otherPath, []ScreenshotSlot{{
+		SourcePath:          otherPath,
+		SlotOrder:           0,
+		SourceKind:          "tracker_metadata",
+		OriginalURL:         "https://example.invalid/other.png",
+		RenderInScreenshots: true,
+	}}); err != nil {
+		t.Fatalf("save screenshot slots other: %v", err)
+	}
 	if err := repo.CreateUploadRecord(ctx, UploadRecord{Tracker: "BLU", Status: "pending", SourcePath: targetPath}); err != nil {
 		t.Fatalf("save upload record target: %v", err)
 	}
@@ -1360,9 +1388,15 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if uploaded, err := repo.ListUploadedImagesByPath(ctx, targetPath); err != nil || len(uploaded) != 0 {
 		t.Fatalf("expected uploaded images removed, got len=%d err=%v", len(uploaded), err)
 	}
+	if slots, err := repo.ListScreenshotSlotsByPath(ctx, targetPath); err != nil || len(slots) != 0 {
+		t.Fatalf("expected screenshot slots removed, got len=%d err=%v", len(slots), err)
+	}
 
 	if _, err := repo.GetByPath(ctx, otherPath); err != nil {
 		t.Fatalf("expected other path untouched, got %v", err)
+	}
+	if slots, err := repo.ListScreenshotSlotsByPath(ctx, otherPath); err != nil || len(slots) != 1 {
+		t.Fatalf("expected other screenshot slots untouched, got len=%d err=%v", len(slots), err)
 	}
 	pending, err := repo.ListPendingUploads(ctx)
 	if err != nil {
@@ -1404,13 +1438,31 @@ func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save screenshot: %v", err)
 	}
+	if err := repo.ReplaceScreenshotSlots(ctx, "/media/orphan-slot.mkv", []ScreenshotSlot{{
+		SourcePath:          "/media/orphan-slot.mkv",
+		SlotOrder:           0,
+		SourceKind:          "tracker_metadata",
+		OriginalURL:         "https://example.invalid/slot.png",
+		RenderInScreenshots: true,
+	}}); err != nil {
+		t.Fatalf("save screenshot slot: %v", err)
+	}
+	if err := repo.UpsertScreenshotSlotVariants(ctx, "/media/orphan-variant.mkv", []ScreenshotSlotVariant{{
+		SourcePath: "/media/orphan-variant.mkv",
+		SlotOrder:  0,
+		Host:       "imgbox",
+		UsageScope: "global",
+		ImgURL:     "https://example.invalid/variant.png",
+	}}); err != nil {
+		t.Fatalf("save screenshot slot variant: %v", err)
+	}
 
 	paths, err := repo.ListStoredReleasePaths(ctx)
 	if err != nil {
 		t.Fatalf("list stored release paths: %v", err)
 	}
 
-	expected := []string{"/media/a.mkv", "/media/orphan-shot.mkv", "/media/orphan-upload.mkv"}
+	expected := []string{"/media/a.mkv", "/media/orphan-shot.mkv", "/media/orphan-slot.mkv", "/media/orphan-upload.mkv", "/media/orphan-variant.mkv"}
 	if len(paths) != len(expected) {
 		t.Fatalf("expected %d stored paths, got %d (%#v)", len(expected), len(paths), paths)
 	}

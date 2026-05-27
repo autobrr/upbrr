@@ -662,6 +662,7 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 	}
 	meta := api.PreparedMetadata{
 		SourcePath: `D:\TV\The.Pitt.S02E15.1080p.WEB-DL.mkv`,
+		Options:    api.UploadOptions{KeepImages: true},
 		TrackerData: []api.TrackerMetadata{{
 			Tracker:   "AITHER",
 			ImageURLs: []string{"https://ptpimg.me/4m092k.png", "https://ptpimg.me/7oj122.png"},

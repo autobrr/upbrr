@@ -2446,6 +2446,10 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			UNION
 			SELECT source_path FROM screenshots
 			UNION
+			SELECT source_path FROM screenshot_slots
+			UNION
+			SELECT source_path FROM screenshot_slot_variants
+			UNION
 			SELECT source_path FROM uploaded_images
 			UNION
 			SELECT source_path FROM upload_records
@@ -2509,6 +2513,8 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		{sql: `DELETE FROM tracker_rule_failures WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM screenshot_final_selections WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM screenshots WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM screenshot_slot_variants WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM screenshot_slots WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM uploaded_images WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM upload_records WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM file_metadata WHERE path = ?`, args: []any{trimmedPath}},

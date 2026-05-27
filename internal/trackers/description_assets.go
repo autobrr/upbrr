@@ -546,6 +546,12 @@ func resolveTrackerImageURLs(ctx context.Context, tracker string, meta api.Prepa
 		return nil
 	}
 	trackerKey := strings.TrimSpace(tracker)
+	if !meta.Options.KeepImages {
+		if logger != nil {
+			logger.Tracef("trackers: description assets tracker urls skipped keep_images=false tracker=%s", trackerKey)
+		}
+		return nil
+	}
 	records, err := trackerMetadataFromSource(ctx, meta, repo, preloaded)
 	if err == nil {
 		if len(records) > 0 {
