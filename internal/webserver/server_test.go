@@ -29,9 +29,11 @@ func TestIsDevelopmentNoAuthHost(t *testing.T) {
 		want bool
 	}{
 		{host: "localhost", want: true},
+		{host: "localhost:7480", want: true},
 		{host: "127.0.0.1", want: true},
 		{host: "::1", want: true},
 		{host: "[::1]", want: true},
+		{host: "[::1]:7480", want: true},
 		{host: "0.0.0.0", want: false},
 		{host: "::", want: false},
 		{host: "192.168.1.20", want: false},

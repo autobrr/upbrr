@@ -113,7 +113,7 @@ func New(opts Options) (*Server, error) {
 }
 
 func isDevelopmentNoAuthHost(host string) bool {
-	return isLoopbackHostname(strings.Trim(strings.TrimSpace(host), "[]"))
+	return isLoopbackHostPort(host)
 }
 
 func (s *Server) Close() error {
