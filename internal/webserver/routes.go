@@ -51,6 +51,20 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ session) {
+	if current, ok := s.developmentCurrentSession(r); ok {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"authenticated":           true,
+			"needsSetup":              false,
+			"username":                current.Username,
+			"csrfToken":               current.CSRFToken,
+			"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+			"browseRoot":              "",
+			"allowUnrestrictedBrowse": true,
+			"needsBrowsePolicy":       false,
+		})
+		return
+	}
+
 	exists, err := s.auth.Exists()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -444,7 +458,7 @@ func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, se
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if !s.verifySameOrigin(r) || !s.verifyCSRF(r, current) {
+			if !s.verifySameOrigin(r, current) || !s.verifyCSRF(r, current) {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf validation failed"})
 				return
 			}
@@ -455,10 +469,31 @@ func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, se
 
 func (s *Server) currentSession(r *http.Request) (session, bool) {
 	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil {
+	if err == nil && s.sessions != nil {
+		if current, ok := s.sessions.Get(cookie.Value); ok {
+			return current, true
+		}
+	}
+	return s.developmentCurrentSession(r)
+}
+
+func (s *Server) developmentCurrentSession(r *http.Request) (session, bool) {
+	if s == nil || !s.developmentNoAuth || !s.isLocalWebUIRequest(r) {
 		return session{}, false
 	}
-	return s.sessions.Get(cookie.Value)
+	current := s.developmentSession
+	if current.ID == "" || current.CSRFToken == "" {
+		return session{}, false
+	}
+	return current, true
+}
+
+func (s *Server) isDevelopmentSession(current session) bool {
+	return s != nil &&
+		s.developmentNoAuth &&
+		s.developmentSession.ID != "" &&
+		current.ID == s.developmentSession.ID &&
+		current.CSRFToken == s.developmentSession.CSRFToken
 }
 
 func (s *Server) writeSessionCookie(w http.ResponseWriter, r *http.Request, current session) {
@@ -493,7 +528,7 @@ func (s *Server) verifyCSRF(r *http.Request, current session) bool {
 	return token == current.CSRFToken
 }
 
-func (s *Server) verifySameOrigin(r *http.Request) bool {
+func (s *Server) verifySameOrigin(r *http.Request, current session) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		origin = strings.TrimSpace(r.Header.Get("Referer"))
@@ -505,7 +540,21 @@ func (s *Server) verifySameOrigin(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	return strings.EqualFold(parsed.Host, r.Host)
+	if strings.EqualFold(parsed.Host, r.Host) {
+		return true
+	}
+	return s.isDevelopmentSession(current) && isLoopbackHostPort(parsed.Host) && isLoopbackHostPort(r.Host)
+}
+
+func isLoopbackHostPort(host string) bool {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		return false
+	}
+	if parsedHost, _, err := net.SplitHostPort(trimmed); err == nil {
+		trimmed = parsedHost
+	}
+	return isLoopbackHostname(strings.Trim(trimmed, "[]"))
 }
 
 func (s *Server) clientIP(r *http.Request) string {

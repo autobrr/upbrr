@@ -307,7 +307,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		}
 	}))
 
-	mux.HandleFunc("/api/app/BrowseDirectory", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/BrowseDirectory", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
@@ -317,7 +317,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		policy, err := s.webBrowsePolicy()
+		policy, err := s.webBrowsePolicy(current)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -833,7 +833,10 @@ type webBrowsePolicy struct {
 	AllowUnrestricted bool
 }
 
-func (s *Server) webBrowsePolicy() (webBrowsePolicy, error) {
+func (s *Server) webBrowsePolicy(current session) (webBrowsePolicy, error) {
+	if s != nil && s.isDevelopmentSession(current) {
+		return webBrowsePolicy{AllowUnrestricted: true}, nil
+	}
 	if s == nil || s.auth == nil {
 		return webBrowsePolicy{}, nil
 	}

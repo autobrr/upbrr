@@ -2737,4 +2737,3 @@ export namespace logging {
 	}
 
 }
-

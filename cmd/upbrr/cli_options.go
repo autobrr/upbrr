@@ -117,6 +117,7 @@ type cliOptions struct {
 
 type serveOptions struct {
 	ConfigPath string
+	DevNoAuth  bool
 }
 
 func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, error) {
@@ -425,6 +426,7 @@ func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	fs.SetOutput(io.Discard)
 
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
+	fs.BoolVar(&opts.DevNoAuth, "dev-no-auth", false, "Development only: serve web UI without web authentication on loopback hosts")
 
 	if err := fs.Parse(args); err != nil {
 		return serveOptions{}, nil, fmt.Errorf("parse serve options: %w", err)

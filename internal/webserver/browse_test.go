@@ -229,6 +229,73 @@ func TestBrowseFileRouteRejectsRemoteSessions(t *testing.T) {
 	}
 }
 
+func TestDevelopmentNoAuthAppRouteAllowsLoopbackWithCSRF(t *testing.T) {
+	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
+	server := &Server{
+		picker:            picker,
+		generalLimiter:    newFixedWindowLimiter(100, time.Minute),
+		developmentNoAuth: true,
+		developmentSession: session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: "dev-csrf",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		},
+	}
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5050"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("X-Csrf-Token", "dev-csrf")
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse file route returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if picker.fileCalls != 1 {
+		t.Fatalf("expected picker to be called once, got %d", picker.fileCalls)
+	}
+}
+
+func TestDevelopmentNoAuthAppRouteRejectsMissingCSRF(t *testing.T) {
+	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
+	server := &Server{
+		picker:            picker,
+		generalLimiter:    newFixedWindowLimiter(100, time.Minute),
+		developmentNoAuth: true,
+		developmentSession: session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: "dev-csrf",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		},
+	}
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:8080"
+	req.RemoteAddr = "127.0.0.1:5050"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://127.0.0.1:8080")
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden status, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if picker.fileCalls != 0 {
+		t.Fatalf("expected picker not to be called, got %d calls", picker.fileCalls)
+	}
+}
+
 func TestUIStateRoutePersistsSharedState(t *testing.T) {
 	repo, dbPath := openBrowseTestRepo(t)
 	server := testServerWithBackend(t, repo, config.Config{

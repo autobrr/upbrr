@@ -399,10 +399,14 @@ func runServe(args []string) error {
 	if err := webserver.SaveCLIConfig(dbPath, webCfg); err != nil {
 		return fmt.Errorf("upbrr: %w", err)
 	}
+	if opts.DevNoAuth {
+		webCfg.OpenBrowser = false
+	}
 
 	server, err := webserver.New(webserver.Options{
-		Config:    cfg,
-		CLIConfig: webCfg,
+		Config:            cfg,
+		CLIConfig:         webCfg,
+		DevelopmentNoAuth: opts.DevNoAuth,
 	})
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
