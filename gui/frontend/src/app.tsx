@@ -4337,6 +4337,7 @@ export default function App() {
               dupedTrackerSet={dupedTrackerSet}
               ruleSkipReasons={ruleSkipReasons}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
+              failedDupeTrackerSet={failedDupeTrackerSet}
               overrideRuleBlocks={overrideRuleBlocks}
               setOverrideRuleBlocks={setOverrideRuleBlocks}
               uploadToggles={uploadToggles}

@@ -20,6 +20,7 @@ type Props = {
   dupedTrackerSet: Set<string>;
   ruleSkipReasons: Record<string, string>;
   ruleSkippedTrackerSet: Set<string>;
+  failedDupeTrackerSet: Set<string>;
   overrideRuleBlocks: boolean;
   setOverrideRuleBlocks: Dispatch<SetStateAction<boolean>>;
   uploadToggles: Record<string, boolean>;
@@ -56,6 +57,8 @@ const statusClass = (status: string) => {
 };
 
 const subtleBox = "rounded-md border border-white/10 bg-white/5 px-2 py-1.5";
+const blockReasonClass =
+  "inline-flex h-5 items-center rounded border border-red-400/30 bg-red-500/10 px-1.5 text-[11px] font-semibold leading-none text-red-700 dark:text-red-100";
 
 export default function TrackerUploadPage(props: Readonly<Props>) {
   const {
@@ -64,6 +67,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     dupedTrackerSet,
     ruleSkipReasons,
     ruleSkippedTrackerSet,
+    failedDupeTrackerSet,
     overrideRuleBlocks,
     setOverrideRuleBlocks,
     uploadToggles,
@@ -90,16 +94,67 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     [trackerUploadItems, releasePageTrackerSelection],
   );
 
+  const trackerBlockState = useMemo(() => {
+    const next: Record<string, { blocked: boolean; reasons: string[]; hardBlocked: boolean }> = {};
+    visibleTrackers.forEach((tracker) => {
+      const normalized = tracker.name.toLowerCase().trim();
+      const reasons: string[] = [];
+      const hasFailedDupe = failedDupeTrackerSet.has(normalized);
+      const hasDupes = dupedTrackerSet.has(normalized);
+      const hasRuleSkip = ruleSkippedTrackerSet.has(normalized);
+      if (hasFailedDupe) {
+        reasons.push("Dupe check failed");
+      }
+      if (hasDupes && !overrideRuleBlocks) {
+        reasons.push("Dupes found");
+      }
+      if (hasRuleSkip && !overrideRuleBlocks) {
+        reasons.push(ruleSkipReasons[normalized] || "Rule check failed");
+      }
+      next[tracker.name] = {
+        blocked: reasons.length > 0,
+        reasons,
+        hardBlocked: hasFailedDupe,
+      };
+    });
+    return next;
+  }, [
+    visibleTrackers,
+    failedDupeTrackerSet,
+    dupedTrackerSet,
+    ruleSkippedTrackerSet,
+    ruleSkipReasons,
+    overrideRuleBlocks,
+  ]);
+
+  const availableTrackers = useMemo(
+    () => visibleTrackers.filter((tracker) => !trackerBlockState[tracker.name]?.blocked),
+    [visibleTrackers, trackerBlockState],
+  );
+
+  const blockedTrackers = useMemo(
+    () => visibleTrackers.filter((tracker) => trackerBlockState[tracker.name]?.blocked),
+    [visibleTrackers, trackerBlockState],
+  );
+
   const selectedTrackerCount = useMemo(
     () =>
-      visibleTrackers.filter((tracker) => {
+      availableTrackers.filter((tracker) => {
         const normalized = tracker.name.toLowerCase().trim();
         if (!uploadToggles[tracker.name]) return false;
         if (dupedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
         if (ruleSkippedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
+        if (failedDupeTrackerSet.has(normalized)) return false;
         return true;
       }).length,
-    [visibleTrackers, uploadToggles, dupedTrackerSet, ruleSkippedTrackerSet, overrideRuleBlocks],
+    [
+      availableTrackers,
+      uploadToggles,
+      dupedTrackerSet,
+      ruleSkippedTrackerSet,
+      failedDupeTrackerSet,
+      overrideRuleBlocks,
+    ],
   );
 
   const trackerStatusMap = useMemo(() => {
@@ -252,15 +307,41 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
         <p className="muted">No tracker entries with credentials or details were found.</p>
       ) : (
         <div className="grid gap-1.5">
-          {visibleTrackers.map((tracker) => {
+          {blockedTrackers.length > 0 ? (
+            <details className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-2">
+              <summary className="cursor-pointer list-none text-sm font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
+                Blocked trackers ({blockedTrackers.length})
+              </summary>
+              <div className="mt-2 grid gap-1">
+                {blockedTrackers.map((tracker) => {
+                  const state = trackerBlockState[tracker.name];
+                  return (
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1.5"
+                      key={tracker.name}
+                    >
+                      <span className="value text-sm leading-5">{tracker.name}</span>
+                      <div className="flex flex-wrap items-center justify-end gap-1">
+                        {state?.reasons.map((reason) => (
+                          <span className={blockReasonClass} key={`${tracker.name}-${reason}`}>
+                            {reason}
+                          </span>
+                        ))}
+                        {state?.hardBlocked ? (
+                          <span className="text-xs text-[var(--muted)]">not uploadable</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          ) : null}
+
+          {availableTrackers.map((tracker) => {
             const normalizedTrackerName = tracker.name.toLowerCase().trim();
-            const hasDupes = dupedTrackerSet.has(tracker.name.toLowerCase());
-            const ruleSkipReason = ruleSkipReasons[tracker.name.toLowerCase()] || "";
-            const hasRuleSkip = ruleSkippedTrackerSet.has(tracker.name.toLowerCase());
             const selected = Boolean(uploadToggles[tracker.name]);
-            const enabled =
-              selected && (!hasDupes || overrideRuleBlocks) && (!hasRuleSkip || overrideRuleBlocks);
-            const showBadges = hasRuleSkip || hasDupes;
+            const enabled = selected;
             const trackerStatus = trackerStatusMap[tracker.name];
             const dryRun = dryRunMap[normalizedTrackerName];
             const imageHost = dryRun?.ImageHost;
@@ -271,18 +352,12 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
               trackerQuestionnaireAnswers[tracker.name.toUpperCase().trim()] || {};
             let statusLabel = trackerStatus?.status || "";
             if (!statusLabel) {
-              if ((hasDupes && !overrideRuleBlocks) || (hasRuleSkip && !overrideRuleBlocks)) {
-                statusLabel = "blocked";
-              } else if (enabled) {
-                statusLabel = "ready";
-              } else {
-                statusLabel = "disabled";
-              }
+              statusLabel = enabled ? "ready" : "disabled";
             }
 
             return (
               <article
-                className="grid gap-1.5 rounded-lg border border-white/10 bg-[rgba(12,16,26,0.78)] px-2.5 py-2"
+                className="grid gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-2"
                 key={tracker.name}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -296,19 +371,11 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                     >
                       {statusLabel.replaceAll("_", " ")}
                     </span>
-                    {showBadges ? (
-                      <>
-                        {hasRuleSkip ? (
-                          <Badge tone="danger" title={ruleSkipReason || "Rule check failed"}>
-                            {overrideRuleBlocks ? "Rule override" : "Rule check failed"}
-                          </Badge>
-                        ) : null}
-                        {hasDupes ? (
-                          <Badge tone="danger">
-                            {overrideRuleBlocks ? "Dupe override" : "Dupes found"}
-                          </Badge>
-                        ) : null}
-                      </>
+                    {overrideRuleBlocks && dupedTrackerSet.has(normalizedTrackerName) ? (
+                      <Badge tone="info">Dupe override</Badge>
+                    ) : null}
+                    {overrideRuleBlocks && ruleSkippedTrackerSet.has(normalizedTrackerName) ? (
+                      <Badge tone="info">Rule override</Badge>
                     ) : null}
                   </div>
                   <Switch
@@ -325,17 +392,6 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
 
                 {trackerStatus?.message ? (
                   <p className="m-0 text-xs text-[var(--muted)]">{trackerStatus.message}</p>
-                ) : null}
-                {hasDupes && !overrideRuleBlocks ? (
-                  <p className="m-0 text-xs text-[var(--muted)]">
-                    Dupes found. Enable override blocks to upload anyway.
-                  </p>
-                ) : null}
-                {hasRuleSkip && !overrideRuleBlocks ? (
-                  <p className="m-0 text-xs text-[var(--muted)]">
-                    {ruleSkipReason ||
-                      "Rule check failed. Enable override blocks to upload anyway."}
-                  </p>
                 ) : null}
                 {imageHost?.Message &&
                 (imageHostWarnings.length > 0 || imageHostStatus === "warning") ? (
