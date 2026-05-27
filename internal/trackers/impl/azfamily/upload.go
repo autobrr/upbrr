@@ -161,29 +161,29 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 		"media_info": fileInfo,
 	} {
 		if err := writer.WriteField(key, value); err != nil {
-			return taskInfo{}, err
+			return taskInfo{}, fmt.Errorf("trackers: %s write multipart field %q: %w", site.Name, key, err)
 		}
 	}
 	file, err := os.Open(torrentPath)
 	if err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s open torrent file: %w", site.Name, err)
 	}
 	defer file.Close()
 	part, err := writer.CreateFormFile("torrent_file", filepath.Base(torrentPath))
 	if err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s create torrent form file: %w", site.Name, err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s copy torrent file: %w", site.Name, err)
 	}
 	if err := writer.Close(); err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s close multipart writer: %w", site.Name, err)
 	}
 
 	endpoint := site.BaseURL + "/upload/" + categorySlug(req.Meta)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
-		return taskInfo{}, err
+		return taskInfo{}, fmt.Errorf("trackers: %s task creation request build: %w", site.Name, err)
 	}
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	httpReq.Header.Set("Referer", endpoint)
@@ -245,11 +245,11 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error
 func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, fmt.Sprintf("[%s] %s.torrent", tracker, base)), nil
 }
@@ -257,13 +257,17 @@ func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker
 func postForm(ctx context.Context, client *http.Client, endpoint string, data url.Values, headers map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: form post request build: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: form post request: %w", err)
+	}
+	return resp, nil
 }
 
 func noRedirectClient(base *http.Client) *http.Client {
@@ -283,12 +287,12 @@ func noRedirectClient(base *http.Client) *http.Client {
 func downloadTrackerTorrent(ctx context.Context, client *http.Client, downloadURL, targetPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: personalized torrent request build: %w", err)
 	}
 	req.Header.Set("User-Agent", azCookieUserAgent)
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: personalized torrent request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -296,10 +300,13 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, downloadUR
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: read personalized torrent response: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return err
+		return fmt.Errorf("trackers: create personalized torrent dir: %w", err)
 	}
-	return os.WriteFile(targetPath, body, 0o600)
+	if err := os.WriteFile(targetPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: write personalized torrent: %w", err)
+	}
+	return nil
 }

@@ -19,7 +19,7 @@ import (
 
 func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("core: delete all history releases canceled: %w", err)
 	}
 	if c.repo == nil {
 		return 0, errors.New("core: repository not initialized")
@@ -43,7 +43,7 @@ func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
 
 func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("core: delete stored release canceled: %w", err)
 	}
 	trimmedPath := strings.TrimSpace(sourcePath)
 	if trimmedPath == "" {
@@ -205,11 +205,11 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 	}
 	absRoot, err := filepath.Abs(strings.TrimSpace(root))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cleanup history artifact: resolve root path: %w", err)
 	}
 	absTarget, err := filepath.Abs(trimmed)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cleanup history artifact: resolve target path: %w", err)
 	}
 	if absTarget == absRoot {
 		return false, nil
@@ -222,15 +222,15 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 			if os.IsNotExist(err) {
 				return false, nil
 			}
-			return false, err
+			return false, fmt.Errorf("cleanup history artifact: stat target: %w", err)
 		}
 		if err := os.RemoveAll(absTarget); err != nil {
-			return false, err
+			return false, fmt.Errorf("cleanup history artifact: remove target tree: %w", err)
 		}
 		return true, nil
 	}
 	if err := os.Remove(absTarget); err != nil && !os.IsNotExist(err) {
-		return false, err
+		return false, fmt.Errorf("cleanup history artifact: remove target: %w", err)
 	}
 	if _, err := os.Stat(absTarget); err == nil {
 		return false, nil

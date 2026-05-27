@@ -26,9 +26,8 @@ import (
 )
 
 type Options struct {
-	StartupContext context.Context
-	Config         config.Config
-	CLIConfig      CLIConfig
+	Config    config.Config
+	CLIConfig CLIConfig
 }
 
 type Server struct {
@@ -55,7 +54,7 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	backend, err := NewBackendWithContext(opts.StartupContext, cfg, hub)
+	backend, err := NewBackendWithContext(context.Background(), cfg, hub)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +105,7 @@ func (s *Server) Close() error {
 
 func (s *Server) Run(ctx context.Context) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("webserver: context is required")
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -136,9 +135,12 @@ func (s *Server) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		return s.server.Shutdown(shutdownCtx)
+		if err := s.server.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("webserver: shutdown HTTP server: %w", err)
+		}
+		return nil
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -151,7 +153,7 @@ func (s *Server) baseURL() string {
 	if strings.TrimSpace(s.cliCfg.BaseURL) != "" {
 		return strings.TrimRight(strings.TrimSpace(s.cliCfg.BaseURL), "/")
 	}
-	return fmt.Sprintf("http://%s:%d", s.cliCfg.Host, s.cliCfg.Port)
+	return "http://" + net.JoinHostPort(s.cliCfg.Host, strconv.Itoa(s.cliCfg.Port))
 }
 
 func resolveWebAssets() (fs.FS, error) {
@@ -196,7 +198,15 @@ func parseTrustedProxies(values []string) []*net.IPNet {
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	raw = append(raw, '\n')
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	if _, err := w.Write(raw); err != nil {
+		return
+	}
 }

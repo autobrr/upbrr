@@ -56,11 +56,11 @@ type CookieStore interface {
 // database. When both sources are available, startup file cookies win on conflicts so
 // a fresh startup bootstrap can override stale persisted values while still preserving
 // DB-only cookies.
-// A nil ctx is accepted and treated as context.Background(); callers should pass
-// an explicit request-scoped context whenever possible.
+// Callers must pass an explicit request-scoped context so cancellation and
+// deadlines are preserved through database cookie reads.
 func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string, cookieStore CookieStore, encryptionKey []byte) (map[string]string, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("commonhttp: context is required")
 	}
 
 	var storeCookies map[string]string
@@ -119,7 +119,7 @@ func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string,
 func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open Netscape cookie file: %w", err)
 	}
 	defer file.Close()
 
@@ -161,7 +161,7 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 		})
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scan Netscape cookie file: %w", err)
 	}
 	if len(cookies) == 0 {
 		return nil, errors.New("no valid cookies found")
@@ -172,11 +172,11 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 func LoadJSONCookieMap(path string) (map[string]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read JSON cookie file: %w", err)
 	}
 	var decoded map[string]any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read JSON cookie file: unmarshal: %w", err)
 	}
 	result := make(map[string]string, len(decoded))
 	for key, value := range decoded {
@@ -209,7 +209,7 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("write multipart field %q: %w", key, err)
 		}
 	}
 	for _, file := range files {
@@ -220,23 +220,23 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 		part, err := writer.CreateFormFile(file.FieldName, name)
 		if err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("create multipart file %q: %w", file.FieldName, err)
 		}
 		payload := file.Content
 		if len(payload) == 0 {
 			payload, err = os.ReadFile(strings.TrimSpace(file.Path))
 			if err != nil {
 				_ = writer.Close()
-				return nil, "", err
+				return nil, "", fmt.Errorf("read multipart file %q: %w", strings.TrimSpace(file.Path), err)
 			}
 		}
 		if _, err := part.Write(payload); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("write multipart file %q: %w", name, err)
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -253,7 +253,7 @@ func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) (
 		for _, value := range values {
 			if err := writer.WriteField(key, value); err != nil {
 				_ = writer.Close()
-				return nil, "", err
+				return nil, "", fmt.Errorf("write multipart field %q: %w", key, err)
 			}
 		}
 	}
@@ -265,23 +265,23 @@ func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) (
 		part, err := writer.CreateFormFile(file.FieldName, name)
 		if err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("create multipart file %q: %w", file.FieldName, err)
 		}
 		payload := file.Content
 		if len(payload) == 0 {
 			payload, err = os.ReadFile(strings.TrimSpace(file.Path))
 			if err != nil {
 				_ = writer.Close()
-				return nil, "", err
+				return nil, "", fmt.Errorf("read multipart file %q: %w", strings.TrimSpace(file.Path), err)
 			}
 		}
 		if _, err := part.Write(payload); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("write multipart file %q: %w", name, err)
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -301,14 +301,14 @@ func WriteFailureArtifact(meta api.PreparedMetadata, dbPath string, tracker stri
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-		return "", err
+		return "", fmt.Errorf("create failure artifact dir: %w", err)
 	}
 	safeTracker := strings.ToUpper(strings.TrimSpace(tracker))
 	if safeTracker == "" {
@@ -320,7 +320,7 @@ func WriteFailureArtifact(meta api.PreparedMetadata, dbPath string, tracker stri
 	}
 	path := filepath.Join(tmpDir, filename+ext)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
-		return "", err
+		return "", fmt.Errorf("write failure artifact: %w", err)
 	}
 	return path, nil
 }
@@ -350,7 +350,7 @@ func ReadFirstMatching(dir string, patterns ...string) ([]byte, string, error) {
 			}
 			payload, err := os.ReadFile(match)
 			if err != nil {
-				return nil, "", err
+				return nil, "", fmt.Errorf("read matching file %q: %w", match, err)
 			}
 			return payload, match, nil
 		}
@@ -361,10 +361,14 @@ func ReadFirstMatching(dir string, patterns ...string) ([]byte, string, error) {
 func FileBytes(path string) ([]byte, error) {
 	file, err := os.Open(strings.TrimSpace(path))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open file %q: %w", strings.TrimSpace(path), err)
 	}
 	defer file.Close()
-	return io.ReadAll(file)
+	payload, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("read file %q: %w", strings.TrimSpace(path), err)
+	}
+	return payload, nil
 }
 
 func firstNonEmpty(values ...string) string {

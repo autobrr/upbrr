@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -36,11 +37,11 @@ type stubTrackerLookup struct {
 func (s *stubTrackerLookup) Lookup(
 	ctx context.Context,
 	tracker string,
-	trackerID string,
-	meta api.PreparedMetadata,
-	searchFileName string,
-	onlyID bool,
-	keepImages bool,
+	_ string,
+	_ api.PreparedMetadata,
+	_ string,
+	_ bool,
+	_ bool,
 ) (trackerdata.Result, error) {
 	s.mu.Lock()
 	s.calls = append(s.calls, tracker)
@@ -50,7 +51,7 @@ func (s *stubTrackerLookup) Lookup(
 	if delay > 0 {
 		select {
 		case <-ctx.Done():
-			return trackerdata.Result{}, ctx.Err()
+			return trackerdata.Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-time.After(delay):
 		}
 	}
@@ -268,7 +269,7 @@ func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 			Trackers: map[string]config.TrackerConfig{
 				"ANT": {APIKey: "ant-key"},
 				"HDB": {Username: "user", Passkey: "pass"},
-				"PTP": {ApiUser: "user", ApiKey: "key"},
+				"PTP": {PTPAPIUser: "user", PTPAPIKey: "key"},
 			},
 		},
 	}
@@ -389,7 +390,7 @@ func TestApplyTrackerClaimsBlocksAitherAndCachesClaims(t *testing.T) {
 func TestApplyTrackerClaimsDoesNotBlockOnSemanticMismatch(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{
 			"data":[
 				{"attributes":{"title":"Example Show","season":2,"tmdb_id":4242,"resolutions":["2"],"types":["4"]}}
@@ -538,7 +539,7 @@ func TestLoadBTNClaimedTitlesUsesFreshCacheWithin48Hours(t *testing.T) {
 	}
 
 	clientCalls := 0
-	restore := swapDefaultTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	restore := swapDefaultTransport(roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
 		clientCalls++
 		return nil, context.Canceled
 	}))
@@ -1150,7 +1151,7 @@ func swapDefaultTransport(transport http.RoundTripper) func() {
 
 func writeBTNClaimedCacheFixture(path string, fetchedAt int64, titles map[string]struct{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("create BTN claimed cache fixture dir: %w", err)
 	}
 
 	serializedTitles := make([]string, 0, len(titles))
@@ -1165,8 +1166,11 @@ func writeBTNClaimedCacheFixture(path string, fetchedAt int64, titles map[string
 		Titles:    serializedTitles,
 	}, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal BTN claimed cache fixture: %w", err)
 	}
 
-	return os.WriteFile(path, payload, 0o600)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return fmt.Errorf("write BTN claimed cache fixture: %w", err)
+	}
+	return nil
 }

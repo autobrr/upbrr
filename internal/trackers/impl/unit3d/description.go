@@ -5,6 +5,7 @@ package unit3d
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -18,7 +19,7 @@ func buildUnit3DDescription(ctx context.Context, tracker string, meta api.Prepar
 	}
 	description, err := descriptionunit3d.BuildDescription(ctx, meta, appConfig, trackerConfig, logger, keptDescription, screenshots)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	if strings.EqualFold(strings.TrimSpace(tracker), "SHRI") {
 		return applySHRIDescriptionNotes(description, meta), nil

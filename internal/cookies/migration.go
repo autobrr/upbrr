@@ -28,7 +28,7 @@ type FailedCookie struct {
 // cookies plus any tracker/cookie pairs that failed during storage.
 func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieStore, key []byte, logger api.Logger) (int, []FailedCookie, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return 0, nil, errors.New("cookies: context is required")
 	}
 	if logger == nil {
 		logger = api.NopLogger{}

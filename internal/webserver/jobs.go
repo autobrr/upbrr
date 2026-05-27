@@ -403,7 +403,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	if err := guishared.SeedRunCorePreparedMeta(seedCtx, b.core, runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
-		return "", err
+		return "", fmt.Errorf("web: %w", err)
 	}
 
 	jobID := randomJobID()
@@ -572,7 +572,7 @@ func (b *Backend) runSingleTrackerUpload(ctx context.Context, job *trackerUpload
 		ReleaseNameOverrides:        job.nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
 	}
-	return job.core.RunUploadPrepared(ctx, req)
+	return wrapWebResult(job.core.RunUploadPrepared(ctx, req))
 }
 
 func upsertDupeSummaryResult(summary *api.DupeCheckSummary, result api.DupeCheckResult) {

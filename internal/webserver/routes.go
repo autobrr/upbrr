@@ -363,11 +363,11 @@ func normalizeBrowsePolicyRoot(value string) (string, error) {
 	}
 	root, err := filepath.Abs(filepath.Clean(trimmed))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse root: resolve path: %w", err)
 	}
 	info, err := os.Stat(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse root: stat path: %w", err)
 	}
 	if !info.IsDir() {
 		return "", fmt.Errorf("browse root %q is not a directory", root)
@@ -486,7 +486,7 @@ func (s *Server) allowGeneralRequest(r *http.Request) bool {
 }
 
 func (s *Server) verifyCSRF(r *http.Request, current session) bool {
-	token := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
+	token := strings.TrimSpace(r.Header.Get("X-Csrf-Token"))
 	if token == "" {
 		return false
 	}
@@ -589,11 +589,18 @@ func (s *Server) isTrustedProxy(ip net.IP) bool {
 
 func decodeJSON(r *http.Request, dest any) error {
 	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(dest)
+	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
+		return fmt.Errorf("web: decode request JSON: %w", err)
+	}
+	return nil
 }
 
 func fsStat(root fs.FS, name string) (fs.FileInfo, error) {
-	return fs.Stat(root, name)
+	info, err := fs.Stat(root, name)
+	if err != nil {
+		return nil, fmt.Errorf("stat asset %q: %w", name, err)
+	}
+	return info, nil
 }
 
 func redactAuthUsername(username string) string {

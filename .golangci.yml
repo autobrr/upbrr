@@ -15,31 +15,55 @@ formatters:
 
 linters:
   enable:
+    - bodyclose
+    - asciicheck
+    - bidichk
+    - canonicalheader
+    - contextcheck
     - copyloopvar
+    - durationcheck
     - errname
+    - errchkjson
     - errorlint
     - exhaustive
+    - exptostd
     - fatcontext
+    - gocheckcompilerdirectives
+    - forcetypeassert
     - gocritic
     - gosec
     - loggercheck
+    - makezero
     - mirror
     - misspell
+    - noctx
+    - nilnesserr
+    - nolintlint
+    - nosprintfhostport
     - perfsprint
     - prealloc
+    - predeclared
+    - reassign
+    - recvcheck
     - rowserrcheck
+    - revive
+    - sqlclosecheck
     - spancheck
     - testifylint
     - unconvert
+    - unparam
+    - usestdlibvars
+    - usetesting
     - unused
+    - wastedassign
+    - wrapcheck
     - whitespace
 
-  disable:
-    - containedctx
-    - noctx
-    - revive
-
   settings:
+    recvcheck:
+      exclusions:
+        - Category.Scan
+
     exhaustive:
       default-signifies-exhaustive: false
 
@@ -48,10 +72,6 @@ linters:
         - alltime
         - hardlink
         - hardlinked
-
-    gosec:
-      excludes:
-        - G115
 
   exclusions:
     generated: lax
@@ -64,13 +84,5 @@ linters:
 
     rules:
       - path: _test\.go
-        linters:
-          - gosec
-      - path: internal/clients/search\.go
-        text: G402
-        linters:
-          - gosec
-      - path: internal/config/config\.go
-        text: G117
         linters:
           - gosec

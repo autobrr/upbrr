@@ -6,6 +6,7 @@ package imagehosting
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -28,7 +29,14 @@ type trackingReadCloser struct {
 }
 
 func (t *trackingReadCloser) Read(p []byte) (int, error) {
-	return t.reader.Read(p)
+	n, err := t.reader.Read(p)
+	if err == nil {
+		return n, nil
+	}
+	if errors.Is(err, io.EOF) {
+		return n, io.EOF
+	}
+	return n, fmt.Errorf("read tracking response body: %w", err)
 }
 
 func (t *trackingReadCloser) Close() error {
@@ -219,7 +227,7 @@ func TestTHRUploaderRequiresImageURL(t *testing.T) {
 	}
 
 	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     make(http.Header),

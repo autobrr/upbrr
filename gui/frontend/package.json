@@ -9,6 +9,8 @@
     "build": "tsc -b && vite build",
     "build:bundle": "vite build",
     "preview": "vite preview",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
     "lint": "eslint --cache \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint --cache --fix src --ext .ts,.tsx",
     "lint:style": "stylelint \"src/**/*.css\"",
@@ -23,6 +25,10 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@typescript-eslint/eslint-plugin": "^8.58.2",
@@ -32,11 +38,13 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-unused-imports": "^4.4.1",
+    "happy-dom": "^20.9.0",
     "knip": "^6.4.1",
     "prettier": "^3.8.2",
     "stylelint": "^16.26.1",
     "stylelint-config-recommended": "^17.0.0",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^6.4.2",
+    "vitest": "^4.1.7"
   }
 }

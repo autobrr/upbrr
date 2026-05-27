@@ -80,14 +80,13 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, logger)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			logger.Warnf("trackers: %s description assets failed: %v", trackerName, err)
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description := ""
-	description, err = buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.Screenshots)
+	description, err := buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.Screenshots)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return api.UploadSummary{}, err
@@ -149,7 +148,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, uploadURL, payload)
 	if err != nil {
 		logger.Errorf("trackers: %s failed to create HTTP request: %v", trackerName, err)
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %s build upload request: %w", trackerName, err)
 	}
 	if usesUnit3DBearerAuth(trackerName) {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
@@ -167,7 +166,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		logger.Errorf("trackers: %s HTTP request failed: %v", trackerName, err)
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload request: %w", trackerName, err)
 	}
 	defer resp.Body.Close()
 
@@ -176,7 +175,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Errorf("trackers: %s failed to read response body: %v", trackerName, err)
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %s read response body: %w", trackerName, err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		err := fmt.Errorf("trackers: %s upload failed: status %d", trackerName, resp.StatusCode)
@@ -338,7 +337,7 @@ func isNumericID(value string) bool {
 func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
-		return api.TrackerDryRunEntry{}, ctx.Err()
+		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -375,14 +374,13 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, logger)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return api.TrackerDryRunEntry{}, err
+				return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
 			}
 			trackers.LogDescriptionAssetResolutionFailure(logger, req.Tracker, err)
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description := ""
-	description, err = buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.Screenshots)
+	description, err := buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.Screenshots)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return api.TrackerDryRunEntry{}, err
@@ -441,7 +439,7 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 	for key, value := range data {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: UNIT3D write multipart field %q: %w", key, err)
 		}
 	}
 
@@ -453,14 +451,14 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 	}
 
 	logger.Debugf("trackers: attaching torrent file: %s", filepath.Base(torrentPath))
-	if err := addFile(writer, "torrent", torrentPath, "application/x-bittorrent"); err != nil {
+	if err := addFile(writer, "torrent", torrentPath); err != nil {
 		_ = writer.Close()
 		return nil, "", err
 	}
 
 	if nfoPath := resolveNFOPath(req.Meta, req.AppConfig.MainSettings.DBPath); nfoPath != "" {
 		logger.Debugf("trackers: attaching NFO file: %s", filepath.Base(nfoPath))
-		if err := addFile(writer, "nfo", nfoPath, "text/plain"); err != nil {
+		if err := addFile(writer, "nfo", nfoPath); err != nil {
 			_ = writer.Close()
 			return nil, "", err
 		}
@@ -469,25 +467,28 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: UNIT3D close multipart writer: %w", err)
 	}
 
 	return strings.NewReader(builder.String()), writer.FormDataContentType(), nil
 }
 
-func addFile(writer *multipart.Writer, field, path, contentType string) error {
+func addFile(writer *multipart.Writer, field, path string) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: UNIT3D open multipart file: %w", err)
 	}
 	defer file.Close()
 
 	part, err := writer.CreateFormFile(field, filepath.Base(path))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: UNIT3D create multipart file %q: %w", field, err)
 	}
 	_, err = io.Copy(part, file)
-	return err
+	if err != nil {
+		return fmt.Errorf("trackers: UNIT3D copy multipart file: %w", err)
+	}
+	return nil
 }
 
 func ensureUnit3DDVDVOBDescription(description string, meta api.PreparedMetadata) string {
@@ -531,11 +532,11 @@ func loadUnit3DMedia(meta api.PreparedMetadata, dbPath string, logger api.Logger
 func readBDInfo(dbPath string, meta api.PreparedMetadata) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
 	if strings.TrimSpace(path) == "" {
@@ -554,7 +555,7 @@ func readTextFile(path string) (string, error) {
 	}
 	payload, err := os.ReadFile(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: UNIT3D read text file: %w", err)
 	}
 	return string(payload), nil
 }
@@ -602,7 +603,7 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string, logger api.Log
 func torrentPathFromTemp(tmpRoot string, meta api.PreparedMetadata) (string, error) {
 	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, base+".torrent"), nil
 }

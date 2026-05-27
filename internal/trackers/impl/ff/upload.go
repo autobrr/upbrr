@@ -58,7 +58,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}}, state.extraFiles...)
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, files)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
@@ -67,7 +67,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
 	commonhttp.ApplyCookies(httpReq, cookies)
-	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
+	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: FF upload request: %w", err)
@@ -83,10 +83,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "FF")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announce, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{Tracker: "FF", TorrentID: id, TorrentURL: tURL, DownloadURL: tURL, TorrentPath: artifactPath}}}, nil
@@ -126,17 +126,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(assets)
 	fields := map[string]string{
 		"MAX_FILE_SIZE": "10000000",
 		"type":          resolveTypeID(req.Meta),
@@ -201,14 +198,14 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	data.Set("login", "Login")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FF login request build: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "upbrr")
-	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
+	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FF login request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
@@ -217,17 +214,20 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	return resp.Cookies(), nil
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(assets trackers.DescriptionAssets) string {
 	if strings.TrimSpace(assets.Description) != "" {
-		return bbcode.FinalizeTrackerDescription("FF", strings.TrimSpace(assets.Description)), nil
+		return bbcode.FinalizeTrackerDescription("FF", strings.TrimSpace(assets.Description))
 	}
-	return "", nil
+	return ""
 }
 
-func resolveExtraFiles(_ context.Context, meta api.PreparedMetadata) []commonhttp.FileField {
+func resolveExtraFiles(ctx context.Context, meta api.PreparedMetadata) []commonhttp.FileField {
 	files := make([]commonhttp.FileField, 0, 2)
+	if ctx == nil {
+		return files
+	}
 	if poster := resolvePoster(meta); poster != "" {
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, poster, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, poster, nil)
 		if err == nil {
 			resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 			if err == nil {

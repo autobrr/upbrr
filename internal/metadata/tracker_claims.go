@@ -85,7 +85,7 @@ func (s *Service) applyTrackerClaims(ctx context.Context, meta api.PreparedMetad
 	for _, tracker := range resolved {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, ctx.Err()
+			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -389,7 +389,11 @@ func resolveTrackerClaimResolution(meta api.PreparedMetadata) string {
 }
 
 func trackerClaimsPath(dbPath string, tracker string) (string, error) {
-	return db.FileInSubdir(dbPath, "cache", filepath.Join("banned", strings.ToUpper(strings.TrimSpace(tracker))+"_claimed_releases.json"))
+	path, err := db.FileInSubdir(dbPath, "cache", filepath.Join("banned", strings.ToUpper(strings.TrimSpace(tracker))+"_claimed_releases.json"))
+	if err != nil {
+		return "", fmt.Errorf("metadata: resolve tracker claims path: %w", err)
+	}
+	return path, nil
 }
 
 func trackerClaimsBaseURL(cfg config.Config, tracker string) (string, bool) {
@@ -560,7 +564,7 @@ func decodeTrackerClaimValues(data []byte, namesByID func(string) []string, cano
 	var items []json.RawMessage
 	if trimmed[0] == '[' {
 		if err := json.Unmarshal(trimmed, &items); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("metadata: unmarshal tracker claim values: %w", err)
 		}
 	} else {
 		items = []json.RawMessage{trimmed}

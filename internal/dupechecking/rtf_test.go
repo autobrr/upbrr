@@ -187,7 +187,7 @@ func TestRTFHandlerSkipsTooRecentContent(t *testing.T) {
 
 	called := false
 	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 			called = true
 			t.Fatalf("no request should be sent for too-recent content")
 			return nil, nil

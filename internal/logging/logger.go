@@ -49,7 +49,7 @@ func (l Level) String() string {
 func ParseLevel(value string) (Level, error) {
 	normalized, err := api.ParseLogLevel(value)
 	if err != nil {
-		return LevelInfo, err
+		return LevelInfo, fmt.Errorf("logging: %w", err)
 	}
 
 	switch normalized {
@@ -145,7 +145,10 @@ func (l *Logger) Close() error {
 	if l == nil || l.closer == nil {
 		return nil
 	}
-	return l.closer.Close()
+	if err := l.closer.Close(); err != nil {
+		return fmt.Errorf("close logger: %w", err)
+	}
+	return nil
 }
 
 func (l *Logger) Tracef(format string, args ...any) {
@@ -330,7 +333,10 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 
 	n, err := w.file.Write(p)
 	w.size += int64(n)
-	return n, err
+	if err != nil {
+		return n, fmt.Errorf("logging: write log file: %w", err)
+	}
+	return n, nil
 }
 
 func (w *rotatingWriter) Close() error {
@@ -339,7 +345,10 @@ func (w *rotatingWriter) Close() error {
 	if w.file == nil {
 		return nil
 	}
-	return w.file.Close()
+	if err := w.file.Close(); err != nil {
+		return fmt.Errorf("logging: close log file: %w", err)
+	}
+	return nil
 }
 
 func (w *rotatingWriter) open() error {

@@ -4,6 +4,7 @@
 package webserver
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -59,7 +60,7 @@ func TestBootstrapRetainedSessionSetsPersistentCookie(t *testing.T) {
 	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
 
 	body := `{"username":"admin","password":"very-secure-password","retainLogin":true}`
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Host = "127.0.0.1:7480"
 	req.RemoteAddr = "127.0.0.1:5000"
@@ -115,7 +116,7 @@ func TestLoginUpgradesLegacyPasswordHash(t *testing.T) {
 	}
 
 	body := `{"username":"admin","password":"very-secure-password","retainLogin":false}`
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/login", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Host = "127.0.0.1:7480"
 	req.RemoteAddr = "127.0.0.1:5000"
@@ -188,7 +189,7 @@ func TestLoginFinalizesPendingAuthUpgradeAfterInterruptedRewrap(t *testing.T) {
 	}
 
 	body := `{"username":"admin","password":"very-secure-password","retainLogin":false}`
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/login", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Host = "127.0.0.1:7480"
 	req.RemoteAddr = "127.0.0.1:5000"
@@ -222,7 +223,7 @@ func TestBootstrapNonRetainedSessionDoesNotSetPersistentCookie(t *testing.T) {
 	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
 
 	body := `{"username":"admin","password":"very-secure-password","retainLogin":false}`
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Host = "127.0.0.1:7480"
 	req.RemoteAddr = "127.0.0.1:5000"
@@ -252,7 +253,7 @@ func TestAuthStatusRestoresRetainedSessionAfterRestart(t *testing.T) {
 	server := newAuthTestServer(t, dbPath)
 
 	body := `{"username":"admin","password":"very-secure-password","retainLogin":true}`
-	bootstrapReq := httptest.NewRequest(http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	bootstrapReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
 	bootstrapReq.Header.Set("Content-Type", "application/json")
 	bootstrapReq.Host = "127.0.0.1:7480"
 	bootstrapReq.RemoteAddr = "127.0.0.1:5000"
@@ -267,7 +268,7 @@ func TestAuthStatusRestoresRetainedSessionAfterRestart(t *testing.T) {
 	server.sessions.Close()
 
 	reloaded := newAuthTestServer(t, dbPath)
-	statusReq := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
 	statusReq.Host = "127.0.0.1:7480"
 	statusReq.RemoteAddr = "127.0.0.1:5000"
 	statusReq.AddCookie(cookie)
@@ -288,7 +289,7 @@ func TestAuthStatusRejectsNonRetainedSessionAfterRestart(t *testing.T) {
 	server := newAuthTestServer(t, dbPath)
 
 	body := `{"username":"admin","password":"very-secure-password","retainLogin":false}`
-	bootstrapReq := httptest.NewRequest(http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	bootstrapReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
 	bootstrapReq.Header.Set("Content-Type", "application/json")
 	bootstrapReq.Host = "127.0.0.1:7480"
 	bootstrapReq.RemoteAddr = "127.0.0.1:5000"
@@ -303,7 +304,7 @@ func TestAuthStatusRejectsNonRetainedSessionAfterRestart(t *testing.T) {
 	server.sessions.Close()
 
 	reloaded := newAuthTestServer(t, dbPath)
-	statusReq := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	statusReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
 	statusReq.Host = "127.0.0.1:7480"
 	statusReq.RemoteAddr = "127.0.0.1:5000"
 	statusReq.AddCookie(cookie)
@@ -324,7 +325,7 @@ func TestAuthStatusMasksBrowseRootUntilAuthenticated(t *testing.T) {
 	server := newAuthTestServer(t, dbPath)
 
 	body := `{"username":"admin","password":"very-secure-password","retainLogin":false}`
-	bootstrapReq := httptest.NewRequest(http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	bootstrapReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
 	bootstrapReq.Header.Set("Content-Type", "application/json")
 	bootstrapReq.Host = "127.0.0.1:7480"
 	bootstrapReq.RemoteAddr = "127.0.0.1:5000"
@@ -345,7 +346,7 @@ func TestAuthStatusMasksBrowseRootUntilAuthenticated(t *testing.T) {
 		t.Fatalf("update auth record: %v", err)
 	}
 
-	unauthReq := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	unauthReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
 	unauthRecorder := httptest.NewRecorder()
 	server.handleAuthStatus(unauthRecorder, unauthReq, session{})
 	if unauthRecorder.Code != http.StatusOK {
@@ -361,7 +362,7 @@ func TestAuthStatusMasksBrowseRootUntilAuthenticated(t *testing.T) {
 		t.Fatalf("expected unauthenticated auth status to mask browse root, got %q", unauthPayload.BrowseRoot)
 	}
 
-	authReq := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	authReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
 	authReq.AddCookie(cookie)
 	authRecorder := httptest.NewRecorder()
 	server.handleAuthStatus(authRecorder, authReq, session{})
@@ -388,7 +389,7 @@ func TestLogoutRemovesRetainedSessionFromDisk(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/logout", nil)
 	req.Host = "127.0.0.1:7480"
 	req.RemoteAddr = "127.0.0.1:5000"
 	recorder := httptest.NewRecorder()
@@ -424,7 +425,7 @@ func TestLogoutReturnsErrorWhenRetainedSessionPersistenceFails(t *testing.T) {
 	}
 	server.sessions.store.path = blockedPath
 
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/logout", nil)
 	req.Host = "127.0.0.1:7480"
 	req.RemoteAddr = "127.0.0.1:5000"
 	recorder := httptest.NewRecorder()
@@ -456,12 +457,12 @@ func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 	mux := http.NewServeMux()
 	reloaded.registerAppRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
 	req.Host = "127.0.0.1:7480"
 	req.RemoteAddr = "127.0.0.1:5000"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://127.0.0.1:7480")
-	req.Header.Set("X-CSRF-Token", current.CSRFToken)
+	req.Header.Set("X-Csrf-Token", current.CSRFToken)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
 
 	recorder := httptest.NewRecorder()

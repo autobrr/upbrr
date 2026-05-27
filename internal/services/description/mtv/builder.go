@@ -5,6 +5,7 @@ package mtv
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -26,7 +27,7 @@ var mtvEmptyAlignPattern = regexp.MustCompile(`(?is)\[(?:center|right|left|align
 func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -73,7 +74,7 @@ func buildMediaInfoBlock(meta api.PreparedMetadata, dbPath string) (string, erro
 			text, err := os.ReadFile(bdInfoPath)
 			if err != nil {
 				if !os.IsNotExist(err) {
-					return "", err
+					return "", fmt.Errorf("description: MTV read BDInfo file: %w", err)
 				}
 			} else {
 				trimmed := strings.TrimSpace(string(text))
@@ -88,7 +89,7 @@ func buildMediaInfoBlock(meta api.PreparedMetadata, dbPath string) (string, erro
 		text, err := os.ReadFile(strings.TrimSpace(meta.MediaInfoTextPath))
 		if err != nil {
 			if !os.IsNotExist(err) {
-				return "", err
+				return "", fmt.Errorf("description: MTV read MediaInfo file: %w", err)
 			}
 		} else {
 			trimmed := strings.TrimSpace(string(text))
@@ -107,11 +108,11 @@ func resolveBDInfoPath(meta api.PreparedMetadata, dbPath string) (string, error)
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("description: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("description: %w", err)
 	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
 	if strings.TrimSpace(path) == "" {
@@ -121,7 +122,7 @@ func resolveBDInfoPath(meta api.PreparedMetadata, dbPath string) (string, error)
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		return "", err
+		return "", fmt.Errorf("description: MTV stat BDInfo summary: %w", err)
 	}
 	return path, nil
 }

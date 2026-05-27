@@ -32,10 +32,10 @@ var unit3DWidthImageTag = regexp.MustCompile(`(?i)\[img\s+width=(\d+)\]`)
 var unit3DUASignatureTag = regexp.MustCompile(`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/(?:Audionut|autobrr)/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`)
 var unit3DNFOBlockTag = regexp.MustCompile(`(?is)\[(?:center|align=center)\]\s*\[spoiler=(?:Scene|FraMeSToR) NFO:\]\[code\].*?\[/code\]\[/spoiler\]\s*\[/(?:center|align)\]`)
 
-func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, trackerConfig config.TrackerConfig, logger api.Logger, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
+func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, _ config.TrackerConfig, logger api.Logger, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if logger == nil {

@@ -93,7 +93,7 @@ func migrateAddDVDMediaInfo(ctx context.Context, exec migrationExecutor) error {
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -107,7 +107,7 @@ func migrateAddReleaseOverrideUseSeasonEpisode(ctx context.Context, exec migrati
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -122,7 +122,7 @@ func migrateAddHistoryIndexes(ctx context.Context, exec migrationExecutor) error
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -147,7 +147,7 @@ func migrateBackfillUploadedImageUsageScope(ctx context.Context, exec migrationE
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -194,7 +194,7 @@ func migrateAddScreenshotSlotTables(ctx context.Context, exec migrationExecutor)
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -216,10 +216,10 @@ func migrateNormalizeDescriptionOverrides(ctx context.Context, exec migrationExe
 				PRIMARY KEY (source_path, group_key)
 			)
 		`); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 		if _, err := exec.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 		return nil
 	}
@@ -255,7 +255,7 @@ func migrateNormalizeDescriptionOverrides(ctx context.Context, exec migrationExe
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -283,7 +283,7 @@ func migrateAddTrackerCookies(ctx context.Context, exec migrationExecutor) error
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -306,7 +306,7 @@ func migrateAddReleaseCategory(ctx context.Context, exec migrationExecutor) erro
 		return nil
 	}
 	if _, err := exec.ExecContext(ctx, `ALTER TABLE file_metadata ADD COLUMN release_category TEXT NOT NULL DEFAULT ""`); err != nil {
-		return err
+		return fmt.Errorf("db: %w", err)
 	}
 	return nil
 }
@@ -320,13 +320,16 @@ func migrateAddUIState(ctx context.Context, exec migrationExecutor) error {
 			updated_at TEXT NOT NULL
 		)
 	`)
-	return err
+	if err != nil {
+		return fmt.Errorf("db: %w", err)
+	}
+	return nil
 }
 
 func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName string, columnName string) (bool, error) {
 	rows, err := exec.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("db: %w", err)
 	}
 	defer rows.Close()
 
@@ -338,14 +341,14 @@ func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName st
 		var defaultValue any
 		var primaryKey int
 		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return false, err
+			return false, fmt.Errorf("scan column metadata for table %q: %w", tableName, err)
 		}
 		if strings.EqualFold(name, columnName) {
 			return true, nil
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return false, err
+		return false, fmt.Errorf("iterate column metadata for table %q: %w", tableName, err)
 	}
 	return false, nil
 }
@@ -353,7 +356,7 @@ func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName st
 func tableExists(ctx context.Context, exec migrationExecutor, tableName string) (bool, error) {
 	var count int
 	if err := exec.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=?`, tableName).Scan(&count); err != nil {
-		return false, err
+		return false, fmt.Errorf("check table %q exists: %w", tableName, err)
 	}
 	return count > 0, nil
 }

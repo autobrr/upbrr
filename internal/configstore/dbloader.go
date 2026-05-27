@@ -52,7 +52,11 @@ func ResolveYAMLPath(path string, provided bool) (string, error) {
 func LoadFromPathOrEmbedded(path string) (*config.Config, error) {
 	if strings.TrimSpace(path) != "" {
 		if _, err := os.Stat(path); err == nil {
-			return config.ImportFromYAML(path)
+			loaded, err := config.ImportFromYAML(path)
+			if err != nil {
+				return nil, fmt.Errorf("load config from yaml: %w", err)
+			}
+			return loaded, nil
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("check config: %w", err)
 		}
@@ -73,26 +77,26 @@ func LoadFromPathOrEmbedded(path string) (*config.Config, error) {
 // Callers decide whether to validate the returned config — the CLI fails fast
 // while the web/GUI start with invalid config so users can fix it via the UI.
 func LoadFromDBPath(ctx context.Context, dbPath string) (*config.Config, error) {
-	repo, err := db.Open(dbPath)
+	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config store: %w", err)
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
-		return nil, err
+	if err := repo.MigrateContext(ctx); err != nil {
+		return nil, fmt.Errorf("config store: %w", err)
 	}
 
 	loaded, err := config.LoadFromDatabase(ctx, repo)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config store: %w", err)
 	}
 	if err := config.MergeMissingTrackerDefaults(loaded); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config store: %w", err)
 	}
 	if len(config.DisableUnsupportedTrackerImageRehosts(loaded)) > 0 {
 		if err := config.SaveToDatabase(ctx, loaded, repo); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("config store: %w", err)
 		}
 	}
 	config.ApplyEnvOverrides(loaded)
@@ -102,17 +106,17 @@ func LoadFromDBPath(ctx context.Context, dbPath string) (*config.Config, error) 
 // SaveToDBPath opens the sqlite database at dbPath, runs migrations, and
 // persists the provided config.
 func SaveToDBPath(ctx context.Context, cfg *config.Config, dbPath string) error {
-	repo, err := db.Open(dbPath)
+	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("config store: %w", err)
 	}
 	defer repo.Close()
 
-	if err := repo.Migrate(); err != nil {
-		return err
+	if err := repo.MigrateContext(ctx); err != nil {
+		return fmt.Errorf("config store: %w", err)
 	}
 	if err := config.SaveToDatabase(ctx, cfg, repo); err != nil {
-		return err
+		return fmt.Errorf("config store: %w", err)
 	}
 
 	if err := cookies.SyncCookieEncryptionWithAuth(ctx, repo.RawDB(), dbPath); err != nil {
@@ -145,7 +149,7 @@ func Bootstrap(ctx context.Context, configPath string, configProvided, persistYA
 		}
 		loaded, err := config.ImportFromYAML(resolved)
 		if err != nil {
-			return config.Config{}, "", err
+			return config.Config{}, "", fmt.Errorf("config store: %w", err)
 		}
 
 		dbPath, err := resolveDBPath(loaded)

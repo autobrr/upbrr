@@ -523,7 +523,7 @@ func pluralSuffix(value int) string {
 func readTextFile(path string) (string, error) {
 	payload, err := os.ReadFile(strings.TrimSpace(path))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: ASC read text file: %w", err)
 	}
 	return strings.ReplaceAll(string(payload), "\r", ""), nil
 }

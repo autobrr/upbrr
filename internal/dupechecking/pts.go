@@ -31,8 +31,8 @@ func (h ptsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("missing valid PTS cookies")}, nil
 	}
 	params := url.Values{"incldead": {"1"}, "search": {imdb}, "search_area": {"4"}}
-	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/torrents.php", params, nil, cookies)
-	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/torrents.php", params, cookies)
+	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("PTS search failed")}, nil
 	}
 	names := findNodes(root, func(node *xhtml.Node) bool {

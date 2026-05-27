@@ -38,7 +38,7 @@ func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
 		174, 66, 96, 130,
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		current := atomic.AddInt32(&inFlight, 1)
 		for {
 			peak := atomic.LoadInt32(&maxInFlight)

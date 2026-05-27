@@ -133,7 +133,7 @@ var torrentClientKeyAliases = map[string]string{
 // Convert transforms a parsed legacy config into a new Config using the
 // embedded template for structure and type information. It returns the
 // converted config and a list of warnings for skipped/unmapped items.
-func Convert(legacy *LegacyConfig, template *config.Config) (*config.Config, []string, error) {
+func Convert(legacy *Config, template *config.Config) (*config.Config, []string, error) {
 	if legacy == nil {
 		return nil, nil, errors.New("legacy config is nil")
 	}
@@ -423,11 +423,11 @@ func coerceToStringSlice(value any) config.CSVList {
 func configToSectionMaps(cfg *config.Config) (map[string]map[string]any, error) {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("legacy config: marshal config sections: %w", err)
 	}
 	var raw map[string]map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("legacy config: unmarshal config sections: %w", err)
 	}
 	// Remove non-section keys that appear at root (trackers and torrent_clients
 	// are handled specially).
@@ -442,7 +442,7 @@ func applySectionMaps(cfg *config.Config, sections map[string]map[string]any) er
 	// trackers/torrent_clients) and unmarshal it into the config.
 	data, err := yaml.Marshal(sections)
 	if err != nil {
-		return err
+		return fmt.Errorf("legacy config: marshal section maps: %w", err)
 	}
 
 	// We only want to overwrite the simple scalar sections, preserving
@@ -451,7 +451,7 @@ func applySectionMaps(cfg *config.Config, sections map[string]map[string]any) er
 	clients := cfg.TorrentClients
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return err
+		return fmt.Errorf("legacy config: apply section maps: %w", err)
 	}
 
 	cfg.Trackers = trackers
@@ -463,11 +463,11 @@ func applySectionMaps(cfg *config.Config, sections map[string]map[string]any) er
 func deepCopyConfig(cfg *config.Config) (*config.Config, error) {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("legacy config: marshal config copy: %w", err)
 	}
 	var out config.Config
 	if err := yaml.Unmarshal(data, &out); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("legacy config: unmarshal config copy: %w", err)
 	}
 	return &out, nil
 }

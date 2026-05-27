@@ -5,6 +5,8 @@ package guishared
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
@@ -27,17 +29,16 @@ type Runtime struct {
 // initialized resources are cleaned up before returning.
 func BuildRuntime(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (Runtime, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return Runtime{}, errors.New("guishared: context is required")
 	}
 
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
-		return Runtime{}, err
+		return Runtime{}, fmt.Errorf("gui shared: %w", err)
 	}
-	svc, err := core.New(api.CoreDependencies{
-		Context: ctx,
-		Config:  cfg,
-		Logger:  logger,
+	svc, err := core.NewWithContext(ctx, api.CoreDependencies{
+		Config: cfg,
+		Logger: logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
@@ -45,7 +46,7 @@ func BuildRuntime(ctx context.Context, cfg config.Config, repo *db.SQLiteReposit
 	})
 	if err != nil {
 		_ = logger.Close()
-		return Runtime{}, err
+		return Runtime{}, fmt.Errorf("gui shared: %w", err)
 	}
 	return Runtime{Core: svc, Logger: logger}, nil
 }

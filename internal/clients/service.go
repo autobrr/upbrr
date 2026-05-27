@@ -35,7 +35,7 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent api.TorrentResult) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -111,7 +111,7 @@ func (s *Service) waitInjectDelay(ctx context.Context, tracker string) error {
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	case <-timer.C:
 		return nil
 	}
@@ -141,7 +141,7 @@ func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPa
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -168,7 +168,7 @@ func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPa
 	}
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -192,7 +192,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 

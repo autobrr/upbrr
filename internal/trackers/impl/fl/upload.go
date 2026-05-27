@@ -64,9 +64,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		Path:      state.torrentPath,
 	}})
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
-	jar, _ := cookiejar.New(nil)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: FL create cookie jar: %w", err)
+	}
 	base, _ := url.Parse(baseURL)
 	jar.SetCookies(base, cookies)
 	client := httpclient.CloneWithTimeout(&http.Client{Jar: jar}, httpclient.DefaultTimeout)
@@ -91,7 +94,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		id := match[1]
 		artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "FL")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := downloadPersonalizedTorrent(ctx, client, id, artifactPath); err != nil {
 			return api.UploadSummary{}, err
@@ -143,17 +146,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(assets)
 	name := resolveName(req.Meta, questionnaireAnswers(req.Meta))
 	fields := map[string]string{
 		"name":  name,
@@ -209,11 +209,11 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginPageURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FL login page request build: %w", err)
 	}
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FL login page request: %w", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -228,13 +228,13 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	data.Set("unlock", "1")
 	loginReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FL login request build: %w", err)
 	}
 	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	client := httpclient.New(httpclient.DefaultTimeout)
 	loginResp, err := client.Do(loginReq)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: FL login request: %w", err)
 	}
 	defer loginResp.Body.Close()
 	if loginResp.StatusCode < 200 || loginResp.StatusCode >= 400 {
@@ -264,22 +264,25 @@ func validFLCookies(values []*http.Cookie) []*http.Cookie {
 func downloadPersonalizedTorrent(ctx context.Context, client *http.Client, id string, outputPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL+id, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: FL torrent download request build: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: FL torrent download request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: FL read torrent response: %w", err)
 	}
-	return os.WriteFile(outputPath, body, 0o600)
+	if err := os.WriteFile(outputPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: FL write torrent output: %w", err)
+	}
+	return nil
 }
 
-func buildDescription(_ api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	return bbcode.FinalizeTrackerDescription("FL", strings.TrimSpace(assets.Description)), nil
+func buildDescription(assets trackers.DescriptionAssets) string {
+	return bbcode.FinalizeTrackerDescription("FL", strings.TrimSpace(assets.Description))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata, computedName string) *api.TrackerQuestionnaire {

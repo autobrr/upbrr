@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,12 +78,12 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 			c.cache[tracker] = groups
 			return groups, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("trackers: read banned groups: %w", err)
 	}
 
 	var payload bannedGroupsFile
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: unmarshal banned groups: %w", err)
 	}
 
 	for _, value := range strings.Split(payload.BannedGroups, ",") {

@@ -48,11 +48,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, state.files)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: TL build upload request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -83,10 +83,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if announces := announceList(req.TrackerConfig); len(announces) > 0 {
 		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "TL")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announces[0], urlValue, sourceFlag); err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
@@ -115,17 +115,14 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, *http.Client, error) {
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, req.TrackerConfig, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 
 	releaseName := resolveName(req.Meta)
 	state := uploadState{
@@ -197,7 +194,10 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 }
 
 func cookieClient(ctx context.Context, dbPath string) (*http.Client, error) {
-	jar, _ := cookiejar.New(nil)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: TL create cookie jar: %w", err)
+	}
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Jar:     jar,
@@ -214,8 +214,7 @@ func cookieClient(ctx context.Context, dbPath string) (*http.Client, error) {
 	return client, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, assets trackers.DescriptionAssets) (string, error) {
-	_ = cfg
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 6)
 	if logo := strings.TrimSpace(meta.ExternalMetadata.TMDB.Logo); logo != "" {
 		parts = append(parts, `<center><img src="`+logo+`" style="max-width: 300px;"></center>`)
@@ -236,7 +235,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 		parts = append(parts, shots)
 	}
 	parts = append(parts, `<div style="text-align: right; font-size: 11px;"><a href="https://github.com/autobrr/upbrr">upbrr</a></div>`)
-	return bbcode.FinalizeTrackerDescription("TL", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("TL", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func resolveCategory(meta api.PreparedMetadata) string {
@@ -307,7 +306,7 @@ func announceList(cfg config.TrackerConfig) []string {
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "TL", "torrentleech.org")
+	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "TL", "torrentleech.org"))
 }
 
 func imdbURL(meta api.PreparedMetadata) string {

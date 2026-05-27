@@ -39,8 +39,8 @@ func (h flHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 		params.Set("search", query)
 		params.Set("searchin", "0")
 	}
-	resp, root, err := doHTMLGet(ctx, h.http, trackerBaseURL(h.cfg, "FL", "https://filelist.io")+"/browse.php", params, nil, cookies)
-	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	resp, root, err := doHTMLGet(ctx, h.http, trackerBaseURL(h.cfg, "FL", "https://filelist.io")+"/browse.php", params, cookies)
+	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("FL search failed")}, nil
 	}
 	links := findNodes(root, func(node *xhtml.Node) bool {

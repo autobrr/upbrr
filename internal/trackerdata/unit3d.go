@@ -9,9 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
+	_ "image/gif"  // register GIF decoder for tracker images
+	_ "image/jpeg" // register JPEG decoder for tracker images
+	_ "image/png"  // register PNG decoder for tracker images
 	"io"
 	"net/http"
 	"net/url"
@@ -99,7 +99,7 @@ func IsUnit3DTrackerWithConfig(cfg config.Config, tracker string) bool {
 	if strings.TrimSpace(entry.Username) != "" || strings.TrimSpace(entry.Password) != "" || strings.TrimSpace(entry.Passkey) != "" {
 		return false
 	}
-	if strings.TrimSpace(entry.ApiUser) != "" || strings.TrimSpace(entry.ApiKey) != "" {
+	if strings.TrimSpace(entry.PTPAPIUser) != "" || strings.TrimSpace(entry.PTPAPIKey) != "" {
 		return false
 	}
 	return true
@@ -271,7 +271,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 		c.logger.Debugf("unit3d: %s missing api token; request may be unauthenticated", tracker)
 	}
 
-	endpoint := ""
+	var endpoint string
 	switch {
 	case strings.TrimSpace(id) != "":
 		endpoint = baseURL + "/api/torrents/" + strings.TrimSpace(id)
@@ -669,7 +669,7 @@ func parseNumberToInt64(value json.Number) (int64, error) {
 	}
 	parsed, err := strconv.ParseFloat(text, 64)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("parse numeric JSON value %q: %w", text, err)
 	}
 	return int64(parsed), nil
 }

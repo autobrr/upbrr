@@ -4,6 +4,7 @@
 package webserver
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -119,12 +120,12 @@ func setTestBrowsePolicy(t *testing.T, server *Server, dbPath string, root strin
 }
 
 func newBrowseRequest(path string, host string, remoteAddr string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(`{}`))
 	req.Host = host
 	req.RemoteAddr = remoteAddr
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://"+host)
-	req.Header.Set("X-CSRF-Token", "test-csrf")
+	req.Header.Set("X-Csrf-Token", "test-csrf")
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
 	return req
 }
@@ -164,7 +165,7 @@ func TestHandleAuthStatusIncludesNativeBrowseCapability(t *testing.T) {
 		picker: &stubNativePicker{},
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
 	req.Host = "127.0.0.1:8080"
 	req.RemoteAddr = "127.0.0.1:5050"
 
@@ -245,7 +246,7 @@ func TestUIStateRoutePersistsSharedState(t *testing.T) {
 		t.Fatalf("save ui state returned %d: %s", recorder.Code, recorder.Body.String())
 	}
 
-	get := httptest.NewRequest(http.MethodGet, "/api/app/UIState?id=state-a", nil)
+	get := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState?id=state-a", nil)
 	get.Host = "example.com:8080"
 	get.RemoteAddr = "192.168.1.25:5050"
 	get.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
@@ -270,7 +271,7 @@ func TestUIStateRoutePersistsSharedState(t *testing.T) {
 		t.Fatalf("save second ui state returned %d: %s", recorder.Code, recorder.Body.String())
 	}
 
-	list := httptest.NewRequest(http.MethodGet, "/api/app/UIState", nil)
+	list := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState", nil)
 	list.Host = "example.com:8080"
 	list.RemoteAddr = "192.168.1.25:5050"
 	list.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
@@ -312,7 +313,7 @@ func TestUIStateRouteRejectsUnauthenticatedAndBadCSRF(t *testing.T) {
 		{
 			name: "unauthenticated",
 			request: func() *http.Request {
-				return httptest.NewRequest(http.MethodGet, "/api/app/UIState", nil)
+				return httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState", nil)
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},
@@ -320,7 +321,7 @@ func TestUIStateRouteRejectsUnauthenticatedAndBadCSRF(t *testing.T) {
 			name: "bad csrf",
 			request: func() *http.Request {
 				req := newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
-				req.Header.Del("X-CSRF-Token")
+				req.Header.Del("X-Csrf-Token")
 				return req
 			},
 			expectedStatus: http.StatusForbidden,

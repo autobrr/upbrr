@@ -186,10 +186,18 @@ func TestRunUploadMultiplePaths(t *testing.T) {
 		t.Fatalf("expected 2 uploads, got %d", result.UploadedCount)
 	}
 
-	if metaCalls := svc.Metadata.(*stubMeta).calls; metaCalls != 0 {
+	metaSvc, ok := svc.Metadata.(*stubMeta)
+	if !ok {
+		t.Fatalf("expected metadata service type *stubMeta, got %T", svc.Metadata)
+	}
+	if metaCalls := metaSvc.calls; metaCalls != 0 {
 		t.Fatalf("expected 0 metadata calls, got %d", metaCalls)
 	}
-	if trackerCalls := svc.Trackers.(*stubTrackers).calls; trackerCalls != 2 {
+	trackerSvc, ok := svc.Trackers.(*stubTrackers)
+	if !ok {
+		t.Fatalf("expected tracker service type *stubTrackers, got %T", svc.Trackers)
+	}
+	if trackerCalls := trackerSvc.calls; trackerCalls != 2 {
 		t.Fatalf("expected 2 tracker calls, got %d", trackerCalls)
 	}
 }
@@ -1260,7 +1268,11 @@ func TestExportGUICachedPreparedMetaReturnsIsolatedCopy(t *testing.T) {
 	exported.TrackerQuestionnaireAnswers["AITHER"]["season"] = "2"
 	exported.TrackerRuleFailures["AITHER"][0].Rule = "rule_b"
 	exported.Release.Codec[0] = "x265"
-	exported.BDInfo["playlists"].([]interface{})[0] = "99999"
+	exportedPlaylists, ok := exported.BDInfo["playlists"].([]interface{})
+	if !ok {
+		t.Fatalf("expected exported BDInfo playlists to be []interface{}, got %T", exported.BDInfo["playlists"])
+	}
+	exportedPlaylists[0] = "99999"
 
 	cached, ok := core.getDupeCache("/tmp/a", "")
 	if !ok {
@@ -1281,7 +1293,11 @@ func TestExportGUICachedPreparedMetaReturnsIsolatedCopy(t *testing.T) {
 	if cached.Release.Codec[0] != "x264" {
 		t.Fatalf("expected cached release info to remain isolated, got %#v", cached.Release)
 	}
-	if cached.BDInfo["playlists"].([]interface{})[0] != "00001" {
+	cachedPlaylists, ok := cached.BDInfo["playlists"].([]interface{})
+	if !ok {
+		t.Fatalf("expected cached BDInfo playlists to be []interface{}, got %T", cached.BDInfo["playlists"])
+	}
+	if cachedPlaylists[0] != "00001" {
 		t.Fatalf("expected cached BDInfo to remain isolated, got %#v", cached.BDInfo)
 	}
 }
@@ -2355,7 +2371,7 @@ type stubMeta struct {
 	prepared     api.PreparedMetadata
 }
 
-func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
+func (s *stubMeta) Prepare(_ context.Context, req api.Request) (api.PreparedMetadata, error) {
 	s.calls++
 	s.options = req.Options
 	meta := api.PreparedMetadata{SourcePath: req.Paths[0], Paths: req.Paths, Mode: req.Mode, Options: req.Options}
@@ -2377,28 +2393,28 @@ func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMe
 	return meta, nil
 }
 
-func (s *stubMeta) RefreshPreparedMetadata(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) RefreshPreparedMetadata(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	s.refreshCalls++
 	return meta, nil
 }
 
-func (s *stubMeta) EnrichTrackerData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) EnrichTrackerData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ApplyMediaInfoIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ApplyMediaInfoIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ApplyArrData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ApplyArrData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ResolveExternalIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ApplyMediaDetails(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
@@ -2472,7 +2488,7 @@ type stubDupes struct {
 	lastMeta     api.PreparedMetadata
 }
 
-func (s *stubDupes) Check(ctx context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
+func (s *stubDupes) Check(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
 	s.lastMeta = meta
 	s.lastTrackers = append([]string{}, trackers...)
 	return api.DupeCheckSummary{}, nil
@@ -2485,7 +2501,7 @@ type stubTrackers struct {
 	summary     api.UploadSummary
 }
 
-func (s *stubTrackers) Upload(ctx context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
+func (s *stubTrackers) Upload(_ context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
 	s.calls++
 	s.lastMeta = meta
 	if s.summary.Uploaded == 0 {

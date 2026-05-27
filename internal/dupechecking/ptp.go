@@ -22,8 +22,8 @@ type ptpHandler struct {
 
 func (h ptpHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ string) ([]api.DupeEntry, []string, error) {
 	cfg, ok := trackerCfg(h.cfg, "PTP")
-	apiUser := strings.TrimSpace(cfg.ApiUser)
-	apiKey := strings.TrimSpace(cfg.ApiKey)
+	apiUser := strings.TrimSpace(cfg.PTPAPIUser)
+	apiKey := strings.TrimSpace(cfg.PTPAPIKey)
 	if !ok || apiUser == "" || apiKey == "" {
 		return nil, []string{noteSkip("missing ApiUser/ApiKey for tracker")}, nil
 	}

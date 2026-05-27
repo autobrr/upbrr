@@ -106,10 +106,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	if err != nil {
 		return "", err
 	}
-	baseCtx := a.ctx
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
+	baseCtx := a.runtimeContext()
 
 	runCore, runLogger, err := a.buildRunCore(runOpts)
 	if err != nil {
@@ -128,7 +125,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	if err := guishared.SeedRunCorePreparedMeta(baseCtx, a.core, runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 
 	jobID := randomUploadJobID()
@@ -161,8 +158,8 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	a.uploads[jobID] = job
 	a.uploadMu.Unlock()
 
-	a.emitTrackerUploadSnapshot(job)
-	go a.runTrackerUploadJob(jobCtx, job)
+	a.emitTrackerUploadSnapshot(baseCtx, job)
+	go a.runTrackerUploadJob(jobCtx, baseCtx, job)
 
 	return jobID, nil
 }
@@ -241,7 +238,7 @@ func (a *App) GetTrackerUploadSnapshot(jobID string) (TrackerUploadSnapshot, err
 	return buildTrackerUploadSnapshot(job), nil
 }
 
-func (a *App) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob) {
+func (a *App) runTrackerUploadJob(ctx context.Context, eventCtx context.Context, job *trackerUploadJob) {
 	if a == nil || job == nil {
 		return
 	}
@@ -249,7 +246,7 @@ func (a *App) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob) {
 	job.mu.Lock()
 	job.status = "running"
 	job.mu.Unlock()
-	a.emitTrackerUploadSnapshot(job)
+	a.emitTrackerUploadSnapshot(eventCtx, job)
 
 	for _, tracker := range job.trackers {
 		if ctx.Err() != nil {
@@ -263,7 +260,7 @@ func (a *App) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob) {
 		state.StartedAt = time.Now().UTC().Format(time.RFC3339)
 		job.states[tracker] = state
 		job.mu.Unlock()
-		a.emitTrackerUploadSnapshot(job)
+		a.emitTrackerUploadSnapshot(eventCtx, job)
 
 		result, err := a.runSingleTrackerUpload(ctx, job, tracker)
 		if err != nil {
@@ -279,7 +276,7 @@ func (a *App) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob) {
 			job.failedTrackers = append(job.failedTrackers, tracker)
 			job.errorMessage = err.Error()
 			job.mu.Unlock()
-			a.emitTrackerUploadSnapshot(job)
+			a.emitTrackerUploadSnapshot(eventCtx, job)
 			continue
 		}
 
@@ -292,7 +289,7 @@ func (a *App) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob) {
 		job.states[tracker] = state
 		job.uploadedCount += result.UploadedCount
 		job.mu.Unlock()
-		a.emitTrackerUploadSnapshot(job)
+		a.emitTrackerUploadSnapshot(eventCtx, job)
 	}
 
 	job.mu.Lock()
@@ -319,7 +316,7 @@ func (a *App) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob) {
 	job.cancel = nil
 	job.mu.Unlock()
 	job.closeResources()
-	a.emitTrackerUploadSnapshot(job)
+	a.emitTrackerUploadSnapshot(eventCtx, job)
 }
 
 func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob, tracker string) (api.Result, error) {
@@ -340,15 +337,15 @@ func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
 	}
 
-	return job.core.RunUploadPrepared(ctx, req)
+	return wrapGUIResult(job.core.RunUploadPrepared(ctx, req))
 }
 
-func (a *App) emitTrackerUploadSnapshot(job *trackerUploadJob) {
-	if a == nil || a.ctx == nil || job == nil {
+func (a *App) emitTrackerUploadSnapshot(ctx context.Context, job *trackerUploadJob) {
+	if a == nil || ctx == nil || job == nil {
 		return
 	}
 	snapshot := buildTrackerUploadSnapshot(job)
-	runtime.EventsEmit(a.ctx, trackerUploadEventPrefix+job.id, snapshot)
+	runtime.EventsEmit(ctx, trackerUploadEventPrefix+job.id, snapshot)
 }
 
 func buildTrackerUploadSnapshot(job *trackerUploadJob) TrackerUploadSnapshot {

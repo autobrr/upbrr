@@ -103,10 +103,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "ANT")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, viewURL, "ANT"); err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 
@@ -148,7 +148,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
 	select {
 	case <-ctx.Done():
-		return uploadState{}, ctx.Err()
+		return uploadState{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" {
@@ -160,17 +160,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 	descriptionAssets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		descriptionAssets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, descriptionAssets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, descriptionAssets)
 
 	answers := questionnaireAnswers(req.Meta)
 	typeName, typeID := resolveType(req.Meta, answers)
@@ -232,15 +229,15 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	base := strings.TrimSpace(antDefaultSignaturePattern.ReplaceAllString(assets.Description, ""))
 	if base == "" {
-		return "", nil
+		return ""
 	}
 
 	report := bbcode.CleanPTPDescription(base, meta.DiscType)
 	if len(report.Images) > 0 {
-		return "", nil
+		return ""
 	}
 
 	body := strings.TrimSpace(report.Description)
@@ -250,7 +247,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 
 	finalized := bbcode.FinalizeTrackerDescription("ANT", body)
 	finalized = strings.TrimSpace(antEmptyURLPattern.ReplaceAllString(finalized, ""))
-	return finalized, nil
+	return finalized
 }
 
 func resolveMediaFields(meta api.PreparedMetadata, dbPath string) (map[string]string, error) {
@@ -303,9 +300,9 @@ func resolveBDInfoPath(meta api.PreparedMetadata, dbPath string) (string, error)
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
-	return paths.PrimaryBDMVSummaryPath(tmpRoot, meta)
+	return wrapTrackerResult(paths.PrimaryBDMVSummaryPath(tmpRoot, meta))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata, state uploadState) *api.TrackerQuestionnaire {
@@ -624,33 +621,33 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 				}
 				if err := writer.WriteField(key, trimmed); err != nil {
 					_ = writer.Close()
-					return nil, "", err
+					return nil, "", fmt.Errorf("trackers: ANT write multipart field %q: %w", key, err)
 				}
 			}
 			continue
 		}
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: ANT write multipart field %q: %w", key, err)
 		}
 	}
 	file, err := os.Open(torrentPath)
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT open torrent file: %w", err)
 	}
 	defer file.Close()
 	part, err := writer.CreateFormFile("file_input", "torrent.torrent")
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }

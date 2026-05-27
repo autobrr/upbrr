@@ -20,7 +20,7 @@ type stubArrClient struct {
 	last   api.PreparedMetadata
 }
 
-func (s *stubArrClient) Lookup(ctx context.Context, meta api.PreparedMetadata) (ArrLookupResult, error) {
+func (s *stubArrClient) Lookup(_ context.Context, meta api.PreparedMetadata) (ArrLookupResult, error) {
 	s.calls++
 	s.last = meta
 	if s.err != nil {

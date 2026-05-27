@@ -16,6 +16,7 @@ dist/
 .lefthook/
 
 # Lint / formatter caches
+lint-report.json
 gui/frontend/.eslintcache
 gui/frontend/node_modules/.cache/prettier/
 

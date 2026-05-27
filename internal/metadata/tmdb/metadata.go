@@ -699,7 +699,11 @@ func readJSONFile(path string) ([]byte, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errNotFound
 	}
-	return os.ReadFile(path)
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("tmdb: read JSON cache: %w", err)
+	}
+	return payload, nil
 }
 
 func writeJSONFile(path string, data []byte) error {
@@ -707,9 +711,12 @@ func writeJSONFile(path string, data []byte) error {
 		return errNotFound
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("tmdb: create JSON cache dir: %w", err)
 	}
-	return os.WriteFile(path, data, 0o600)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("tmdb: write JSON cache: %w", err)
+	}
+	return nil
 }
 
 var localizedLocks = newLockPool()

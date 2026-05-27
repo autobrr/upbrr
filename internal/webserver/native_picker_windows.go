@@ -7,6 +7,7 @@ package webserver
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -52,7 +53,8 @@ func runPickerScript(script string) (string, error) {
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 ` + "\n" + script)
 
-	cmd := exec.Command(
+	cmd := exec.CommandContext(
+		context.Background(),
 		"powershell",
 		"-NoLogo",
 		"-NoProfile",
