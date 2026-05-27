@@ -128,7 +128,7 @@ git clone https://github.com/<your-user>/upbrr && cd upbrr
 ```sh
 pnpm --dir gui/frontend install --frozen-lockfile
 make dev-frontend      # Vite dev server
-make test-frontend     # ESLint, dead-code, typecheck, Prettier
+make test-frontend     # ESLint, dead-code, typecheck, Vitest, Prettier
 
 # CSS changes:
 pnpm --dir gui/frontend run lint:style
@@ -174,7 +174,7 @@ Run the same checks CI runs:
 
 ```sh
 make test-go            # Go tests with race detector
-make test-frontend
+make test-frontend      # Frontend checks including Vitest
 make lint
 make logpolicy
 ```

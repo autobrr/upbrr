@@ -37,7 +37,7 @@ help:
 	@echo Testing
 	@echo   make test               Run Go and frontend checks
 	@echo   make test-go            Run full Go test suite with race detector
-	@echo   make test-frontend      Run frontend lint/type/format/dead-code checks
+	@echo   make test-frontend      Run frontend lint/type/format/dead-code/unit checks
 	@$(BLANK)
 	@echo Linting
 	@echo   make lint               Run full Go lint
@@ -93,6 +93,7 @@ test-frontend:
 	pnpm --dir gui/frontend run lint
 	pnpm --dir gui/frontend run lint:dead
 	pnpm --dir gui/frontend run typecheck
+	pnpm --dir gui/frontend run test:unit
 	pnpm --dir gui/frontend run format:check
 
 lint:
