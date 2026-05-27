@@ -3,13 +3,16 @@
 
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Switch } from "../../components/ui/switch";
 import type {
   MetadataPreview,
   TrackerDryRunPreview,
   TrackerUploadItem,
   TrackerUploadSnapshot,
 } from "../../types";
-import "./styles.css";
+import { cn } from "../../utils/cn";
 
 type Props = {
   trackerUploadItems: TrackerUploadItem[];
@@ -37,6 +40,22 @@ type Props = {
   onCancelUpload: () => void;
   onRetryFailed: () => void;
 };
+
+const statusClass = (status: string) => {
+  const normalized = status.replaceAll("_", "-");
+  if (["running", "queued", "ready"].includes(normalized)) {
+    return "border-blue-400/45 text-blue-100";
+  }
+  if (["success", "completed"].includes(normalized)) {
+    return "border-emerald-400/45 text-emerald-100";
+  }
+  if (["failed", "completed-with-errors", "canceled", "blocked"].includes(normalized)) {
+    return "border-red-400/45 text-red-100";
+  }
+  return "border-white/15 text-[var(--muted)]";
+};
+
+const subtleBox = "rounded-md border border-white/10 bg-white/5 px-2 py-1.5";
 
 export default function TrackerUploadPage(props: Readonly<Props>) {
   const {
@@ -117,7 +136,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     if (field.Kind === "textarea") {
       return (
         <textarea
-          className="text-input upload-questionnaire__input upload-questionnaire__textarea"
+          className="text-input min-h-24 w-full resize-y"
           value={value}
           placeholder={field.Placeholder || ""}
           onChange={(event) =>
@@ -131,7 +150,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     if (field.Kind === "select" && field.Options?.length) {
       return (
         <select
-          className="text-input upload-questionnaire__input upload-questionnaire__select"
+          className="text-input w-full appearance-auto"
           value={value}
           onChange={(event) =>
             onQuestionnaireAnswerChange(trackerName, field.Key, event.target.value)
@@ -150,7 +169,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     if (field.Kind === "boolean") {
       const checked = value === "true";
       return (
-        <label className="upload-questionnaire__checkbox">
+        <label className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
           <input
             type="checkbox"
             checked={checked}
@@ -169,7 +188,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
 
     return (
       <input
-        className="text-input upload-questionnaire__input"
+        className="text-input w-full"
         type="text"
         value={value}
         placeholder={field.Placeholder || ""}
@@ -181,69 +200,58 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
   };
 
   return (
-    <section className="upload-panel">
-      <header className="upload-header">
+    <section className="flex flex-col gap-2.5">
+      <header className="max-w-3xl">
         <p className="eyebrow">Tracker Upload</p>
         <h1>Upload Targets</h1>
         <p className="subtitle">Toggle trackers and review naming changes before upload.</p>
-        <div className="upload-actions">
-          <label className="upload-toggle upload-toggle--labelled">
-            <input
-              type="checkbox"
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold text-[var(--text)]">
+            <Switch
               aria-label="Override tracker blocks"
               checked={overrideRuleBlocks}
               onChange={(event) => setOverrideRuleBlocks(event.target.checked)}
             />
-            <span className="upload-toggle__pill" />
-            <span className="upload-toggle__label">Override blocks</span>
+            <span>Override blocks</span>
           </label>
-          <button
+          <Button
             type="button"
-            className="upload-action-button upload-action-button--primary"
+            variant="primary"
             onClick={onStartUpload}
             disabled={uploadRunning || selectedTrackerCount === 0}
           >
             {uploadRunning ? "Uploading..." : "Start Upload"}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="upload-action-button"
             onClick={onRunDryRun}
             disabled={dryRunLoading || uploadRunning || selectedTrackerCount === 0}
           >
             {dryRunLoading ? "Running Dry Run..." : "Run Dry Run"}
-          </button>
-          <button
-            type="button"
-            className="upload-action-button"
-            onClick={onCancelUpload}
-            disabled={!uploadRunning}
-          >
+          </Button>
+          <Button type="button" onClick={onCancelUpload} disabled={!uploadRunning}>
             Cancel
-          </button>
-          <button
-            type="button"
-            className="upload-action-button"
-            onClick={onRetryFailed}
-            disabled={!canRetry}
-          >
+          </Button>
+          <Button type="button" onClick={onRetryFailed} disabled={!canRetry}>
             Retry Failed
-          </button>
-          <p className="upload-summary-text">
+          </Button>
+          <p className="m-0 text-xs text-[var(--muted)]">
             Selected: {selectedTrackerCount} · Uploaded: {uploadSnapshot?.uploadedCount || 0}
           </p>
           {uploadStatus ? (
-            <p className="upload-summary-text">Job status: {uploadStatus.replaceAll("_", " ")}</p>
+            <p className="m-0 text-xs text-[var(--muted)]">
+              Job status: {uploadStatus.replaceAll("_", " ")}
+            </p>
           ) : null}
         </div>
-        {uploadError ? <p className="error-text">{uploadError}</p> : null}
-        {dryRunError ? <p className="error-text">{dryRunError}</p> : null}
+        {uploadError ? <p className="error">{uploadError}</p> : null}
+        {dryRunError ? <p className="error">{dryRunError}</p> : null}
       </header>
 
       {visibleTrackers.length === 0 ? (
         <p className="muted">No tracker entries with credentials or details were found.</p>
       ) : (
-        <div className="upload-grid">
+        <div className="grid gap-1.5">
           {visibleTrackers.map((tracker) => {
             const normalizedTrackerName = tracker.name.toLowerCase().trim();
             const hasDupes = dupedTrackerSet.has(tracker.name.toLowerCase());
@@ -271,71 +279,69 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                 statusLabel = "disabled";
               }
             }
+
             return (
-              <article className="upload-card" key={tracker.name}>
-                <div className="upload-card__header">
-                  <div className="upload-title-row">
-                    <p className="value upload-title">{tracker.name}</p>
+              <article
+                className="grid gap-1.5 rounded-lg border border-white/10 bg-[rgba(12,16,26,0.78)] px-2.5 py-2"
+                key={tracker.name}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="value text-base leading-5">{tracker.name}</p>
                     <span
-                      className={`upload-status-pill upload-status-pill--${statusLabel.replaceAll("_", "-")}`}
+                      className={cn(
+                        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs capitalize",
+                        statusClass(statusLabel),
+                      )}
                     >
                       {statusLabel.replaceAll("_", " ")}
                     </span>
                     {showBadges ? (
-                      <div className="upload-badges">
+                      <>
                         {hasRuleSkip ? (
-                          <span
-                            className="tracker-rule-badge"
-                            title={ruleSkipReason || "Rule check failed"}
-                          >
+                          <Badge tone="danger" title={ruleSkipReason || "Rule check failed"}>
                             {overrideRuleBlocks ? "Rule override" : "Rule check failed"}
-                          </span>
+                          </Badge>
                         ) : null}
                         {hasDupes ? (
-                          <span className="tracker-dupe-badge">
+                          <Badge tone="danger">
                             {overrideRuleBlocks ? "Dupe override" : "Dupes found"}
-                          </span>
+                          </Badge>
                         ) : null}
-                      </div>
+                      </>
                     ) : null}
                   </div>
-                  <label
-                    className="upload-toggle"
-                    aria-label={`Toggle upload target for ${tracker.name}`}
-                  >
-                    <input
-                      type="checkbox"
-                      aria-label={`Enable upload for ${tracker.name}`}
-                      checked={selected}
-                      disabled={false}
-                      onChange={(event) =>
-                        setUploadToggles((prev) => ({
-                          ...prev,
-                          [tracker.name]: event.target.checked,
-                        }))
-                      }
-                    />
-                    <span className="upload-toggle__pill" />
-                  </label>
+                  <Switch
+                    aria-label={`Enable upload for ${tracker.name}`}
+                    checked={selected}
+                    onChange={(event) =>
+                      setUploadToggles((prev) => ({
+                        ...prev,
+                        [tracker.name]: event.target.checked,
+                      }))
+                    }
+                  />
                 </div>
 
                 {trackerStatus?.message ? (
-                  <p className="upload-status-message">{trackerStatus.message}</p>
+                  <p className="m-0 text-xs text-[var(--muted)]">{trackerStatus.message}</p>
                 ) : null}
                 {hasDupes && !overrideRuleBlocks ? (
-                  <p className="upload-status-message">
+                  <p className="m-0 text-xs text-[var(--muted)]">
                     Dupes found. Enable override blocks to upload anyway.
                   </p>
                 ) : null}
                 {hasRuleSkip && !overrideRuleBlocks ? (
-                  <p className="upload-status-message">
+                  <p className="m-0 text-xs text-[var(--muted)]">
                     {ruleSkipReason ||
                       "Rule check failed. Enable override blocks to upload anyway."}
                   </p>
                 ) : null}
                 {imageHost?.Message &&
                 (imageHostWarnings.length > 0 || imageHostStatus === "warning") ? (
-                  <p className="upload-image-warning">{imageHost.Message}</p>
+                  <p className="m-0 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-xs text-amber-100 [overflow-wrap:anywhere]">
+                    {imageHost.Message}
+                  </p>
                 ) : null}
                 {imageHostWarnings.map((warning, index) => {
                   const host = String(warning.Host || "").trim();
@@ -343,7 +349,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                   if (!host && !message) return null;
                   return (
                     <p
-                      className="upload-image-warning"
+                      className="m-0 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-xs text-amber-100 [overflow-wrap:anywhere]"
                       key={`${tracker.name}-${host || "host"}-${index}`}
                     >
                       {host ? `${host} failed` : "Image host warning"}
@@ -352,43 +358,45 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                   );
                 })}
 
-                <details className="upload-details">
-                  <summary>Dry run data</summary>
-                  <div className="upload-details__body">
+                <details>
+                  <summary className="cursor-pointer list-none text-sm font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
+                    Dry run data
+                  </summary>
+                  <div className="mt-2 grid gap-1.5">
                     {dryRun ? (
                       <>
-                        <div className="upload-detail">
+                        <div>
                           <p className="label">Status</p>
                           <p className="value mono">{dryRun.Status || "ready"}</p>
                         </div>
                         {dryRun.Message ? (
-                          <div className="upload-detail">
+                          <div>
                             <p className="label">Message</p>
                             <p className="value">{dryRun.Message}</p>
                           </div>
                         ) : null}
                         {dryRun.ReleaseName ? (
-                          <div className="upload-detail">
+                          <div>
                             <p className="label">Release name</p>
                             <p className="value mono">{dryRun.ReleaseName}</p>
                           </div>
                         ) : null}
                         {dryRun.DescriptionGroup ? (
-                          <div className="upload-detail">
+                          <div>
                             <p className="label">Description group</p>
                             <p className="value mono">{dryRun.DescriptionGroup}</p>
                           </div>
                         ) : null}
                         {dryRun.Endpoint ? (
-                          <div className="upload-detail">
+                          <div>
                             <p className="label">Endpoint</p>
                             <p className="value mono">{dryRun.Endpoint}</p>
                           </div>
                         ) : null}
                         {dryRun.Files?.length ? (
-                          <div className="upload-changes">
+                          <div className="grid gap-1.5">
                             {dryRun.Files.map((file) => (
-                              <div className="upload-change" key={`${file.Field}-${file.Path}`}>
+                              <div className={subtleBox} key={`${file.Field}-${file.Path}`}>
                                 <p className="label">File · {file.Field}</p>
                                 <p className="value mono">{file.Path || "(missing)"}</p>
                               </div>
@@ -396,11 +404,11 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                           </div>
                         ) : null}
                         {Object.keys(dryRun.Payload || {}).length ? (
-                          <div className="upload-changes">
+                          <div className="grid gap-1.5">
                             {Object.entries(dryRun.Payload)
                               .sort(([left], [right]) => left.localeCompare(right))
                               .map(([key, value]) => (
-                                <div className="upload-change" key={key}>
+                                <div className={subtleBox} key={key}>
                                   <p className="label">{key}</p>
                                   <p className="value mono">{String(value)}</p>
                                 </div>
@@ -408,11 +416,11 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                           </div>
                         ) : null}
                         {questionnaire?.Fields?.length ? (
-                          <div className="upload-questionnaire">
+                          <div>
                             <p className="label">Questionnaire</p>
-                            <div className="upload-changes">
+                            <div className="grid gap-1.5">
                               {questionnaire.Fields.map((field) => (
-                                <label className="upload-change" key={field.Key}>
+                                <label className={subtleBox} key={field.Key}>
                                   <p className="label">
                                     {field.Label || field.Key}
                                     {field.Required ? " *" : ""}
@@ -436,16 +444,18 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                 </details>
 
                 {namingOverrides.length > 0 ? (
-                  <details className="upload-details">
-                    <summary>Naming changes</summary>
-                    <div className="upload-details__body">
-                      <div className="upload-detail">
+                  <details>
+                    <summary className="cursor-pointer list-none text-sm font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
+                      Naming changes
+                    </summary>
+                    <div className="mt-2 grid gap-1.5">
+                      <div>
                         <p className="label">Release name</p>
                         <p className="value mono">{preview.ReleaseName || "No release name yet"}</p>
                       </div>
-                      <div className="upload-changes">
+                      <div className="grid gap-1.5">
                         {namingOverrides.map(([key, value]) => (
-                          <div className="upload-change" key={key}>
+                          <div className={subtleBox} key={key}>
                             <p className="label">{formatLabel(key)}</p>
                             <p className="value mono">{String(value)}</p>
                           </div>

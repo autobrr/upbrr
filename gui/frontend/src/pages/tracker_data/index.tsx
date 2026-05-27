@@ -3,9 +3,9 @@
 
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { Button } from "../../components/ui/button";
 import type { MetadataPreview, TrackerPreview } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
-import "./styles.css";
 
 type Props = {
   preview: MetadataPreview;
@@ -62,8 +62,8 @@ export default function TrackerDataPage(props: Props) {
   }, [preview.TrackerData]);
 
   return (
-    <section className="tracker-panel">
-      <header className="tracker-header">
+    <section className="flex flex-col gap-3">
+      <header className="max-w-3xl">
         <p className="eyebrow">Tracker Data</p>
         <h1>Input Metadata</h1>
         <p className="subtitle">Tracker-provided metadata, descriptions, and images.</p>
@@ -71,7 +71,7 @@ export default function TrackerDataPage(props: Props) {
       {preview.TrackerData.length === 0 ? (
         <p className="muted">No tracker data available.</p>
       ) : (
-        <div className="tracker-grid">
+        <div className="grid gap-3">
           {trackerDataOrdered.items.map((item, index) => {
             const trackerKey = `${item.Tracker}-${index}`;
             const isRendered =
@@ -79,15 +79,21 @@ export default function TrackerDataPage(props: Props) {
             const renderedHTML = isRendered ? decodeHtmlEntities(item.DescriptionHTML) : "";
             const isPrimary = index === trackerDataOrdered.primaryIndex;
             return (
-              <details className="tracker-card" key={trackerKey} open={isPrimary}>
-                <summary className="tracker-card__summary">
-                  <span className="tracker-card__summary-name">{item.Tracker || "Unknown"}</span>
-                  <span className="tracker-card__summary-id">
+              <details
+                className="overflow-hidden rounded-lg border border-white/10 bg-[rgba(12,16,26,0.78)]"
+                key={trackerKey}
+                open={isPrimary}
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
+                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                    {item.Tracker || "Unknown"}
+                  </span>
+                  <span className="whitespace-nowrap text-sm font-medium text-[var(--muted)]">
                     Torrent ID: {item.TrackerID || "-"}
                   </span>
                 </summary>
-                <div className="tracker-card__body">
-                  <div className="tracker-card__header">
+                <div className="grid gap-3 border-t border-white/10 px-3 pb-3 pt-2">
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-2">
                     <div>
                       <p className="label">Tracker</p>
                       {item.TorrentURL ? (
@@ -113,25 +119,25 @@ export default function TrackerDataPage(props: Props) {
                       <p className="value">{item.UpdatedAt || "-"}</p>
                     </div>
                   </div>
-                  <div className="tracker-card__meta">
-                    <div>
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-2">
+                    <div className="min-w-0">
                       <p className="label">Torrent ID</p>
-                      <p className="value mono tracker-meta-value">{item.TrackerID || "-"}</p>
+                      <p className="value mono [overflow-wrap:anywhere]">{item.TrackerID || "-"}</p>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="label">Info Hash</p>
-                      <p className="value mono tracker-meta-value">{item.InfoHash || "-"}</p>
+                      <p className="value mono [overflow-wrap:anywhere]">{item.InfoHash || "-"}</p>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="label">Category</p>
-                      <p className="value tracker-meta-value">{item.Category || "-"}</p>
+                      <p className="value [overflow-wrap:anywhere]">{item.Category || "-"}</p>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="label">Filename</p>
-                      <p className="value tracker-meta-value">{item.Filename || "-"}</p>
+                      <p className="value [overflow-wrap:anywhere]">{item.Filename || "-"}</p>
                     </div>
                   </div>
-                  <div className="tracker-card__ids">
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-2">
                     <div>
                       <p className="label">TMDB</p>
                       <p className="value mono">{item.TMDBID || 0}</p>
@@ -149,12 +155,12 @@ export default function TrackerDataPage(props: Props) {
                       <p className="value mono">{item.MALID || 0}</p>
                     </div>
                   </div>
-                  <div className="tracker-card__desc">
-                    <div className="tracker-desc__header">
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
                       <h2>Description</h2>
                       {item.DescriptionHTML ? (
-                        <button
-                          className="tracker-desc__toggle"
+                        <Button
+                          className="h-7 rounded-full px-2 text-xs"
                           type="button"
                           onClick={() =>
                             setRenderedDescriptions((prev) => ({
@@ -164,7 +170,7 @@ export default function TrackerDataPage(props: Props) {
                           }
                         >
                           {isRendered ? "Show raw" : "Render"}
-                        </button>
+                        </Button>
                       ) : null}
                     </div>
                     {isRendered ? (
@@ -179,15 +185,15 @@ export default function TrackerDataPage(props: Props) {
                       </p>
                     )}
                   </div>
-                  <div className="tracker-card__images">
+                  <div>
                     <h2>Images</h2>
                     {item.ImageURLs.length === 0 ? (
                       <p className="muted">No images provided.</p>
                     ) : (
-                      <div className="tracker-images">
+                      <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2">
                         {item.ImageURLs.map((url, imageIndex) => (
                           <button
-                            className="tracker-image-button"
+                            className="cursor-pointer border-0 bg-transparent p-0"
                             type="button"
                             key={`${url}-${imageIndex}`}
                             onClick={() => {
@@ -195,7 +201,12 @@ export default function TrackerDataPage(props: Props) {
                               setLightboxAlt(`${item.Tracker || "Tracker"} image`);
                             }}
                           >
-                            <img src={url} alt="Tracker" loading="lazy" />
+                            <img
+                              className="w-full rounded-lg border border-white/10"
+                              src={url}
+                              alt="Tracker"
+                              loading="lazy"
+                            />
                           </button>
                         ))}
                       </div>

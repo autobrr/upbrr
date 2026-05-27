@@ -3,10 +3,15 @@
 
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { Button } from "../../components/ui/button";
+import { Switch } from "../../components/ui/switch";
+import { cn } from "../../utils/cn";
 import type { ConfigMap, ConfigValue, FieldMeta, WebAuthStatus } from "../../types";
-import "./styles.css";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
+
+const settingsInputClass =
+  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
 
 type ConfigOpStatus = {
   type: "success" | "error" | "warning";
@@ -128,38 +133,31 @@ export default function SettingsPage(props: Props) {
             <p className="helper">Invalid changes will be rejected with a validation error.</p>
           </div>
           <div className="settings-actions">
-            <button
-              className="ghost"
-              type="button"
-              onClick={loadSettings}
-              disabled={settingsLoading}
-            >
+            <Button type="button" onClick={loadSettings} disabled={settingsLoading}>
               Reload
-            </button>
-            <button
-              className="ghost"
+            </Button>
+            <Button
               type="button"
               onClick={handleExportSettings}
               disabled={settingsLoading || settingsExporting || settingsImporting}
             >
               {settingsExporting ? "Exporting..." : "Export"}
-            </button>
-            <button
-              className="ghost"
+            </Button>
+            <Button
               type="button"
               onClick={handleImportConfig}
               disabled={settingsLoading || settingsExporting || settingsImporting}
             >
               {settingsImporting ? "Importing..." : "Import"}
-            </button>
-            <button
-              className="primary"
+            </Button>
+            <Button
+              variant="primary"
               type="button"
               onClick={handleSaveSettings}
               disabled={settingsLoading || settingsExporting || settingsImporting || !settingsDirty}
             >
               Save
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -257,7 +255,12 @@ export default function SettingsPage(props: Props) {
               <button
                 key={section.key}
                 type="button"
-                className={`settings-tag ${settingsSection === section.key ? "active" : ""}`}
+                className={cn(
+                  "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
+                  settingsSection === section.key
+                    ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
+                    : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
+                )}
                 onClick={() => setSettingsSection(section.key)}
               >
                 {section.label}
@@ -308,6 +311,7 @@ export default function SettingsPage(props: Props) {
                       <label className="settings-field">
                         <span>Username</span>
                         <input
+                          className={settingsInputClass}
                           value={webAuthUsername}
                           onChange={(event) => setWebAuthUsername(event.target.value)}
                           autoComplete="username"
@@ -316,6 +320,7 @@ export default function SettingsPage(props: Props) {
                       <label className="settings-field">
                         <span>Password</span>
                         <input
+                          className={settingsInputClass}
                           type="password"
                           value={webAuthPassword}
                           onChange={(event) => setWebAuthPassword(event.target.value)}
@@ -325,6 +330,7 @@ export default function SettingsPage(props: Props) {
                       <label className="settings-field">
                         <span>Confirm password</span>
                         <input
+                          className={settingsInputClass}
                           type="password"
                           value={webAuthConfirm}
                           onChange={(event) => setWebAuthConfirm(event.target.value)}
@@ -334,8 +340,8 @@ export default function SettingsPage(props: Props) {
                     </div>
                   ) : null}
                   <div className="settings-auth-actions">
-                    <button
-                      className="primary"
+                    <Button
+                      variant="primary"
                       type="button"
                       onClick={handleCreateWebAuth}
                       disabled={
@@ -348,7 +354,7 @@ export default function SettingsPage(props: Props) {
                       }
                     >
                       {webAuthCreating ? "Creating..." : "Create web-auth.json"}
-                    </button>
+                    </Button>
                   </div>
                   {webAuthError ? <p className="error">{webAuthError}</p> : null}
                 </div>
@@ -357,10 +363,10 @@ export default function SettingsPage(props: Props) {
             {configData ? (
               <div className="settings-form">
                 {showAdvancedToggle ? (
-                  <label className="settings-toggle">
+                  <div className="settings-switch-row">
                     <span>Show advanced</span>
-                    <input
-                      type="checkbox"
+                    <Switch
+                      aria-label="Show advanced"
                       checked={advancedOpen}
                       onChange={(event) =>
                         setSettingsAdvanced((prev) => ({
@@ -369,8 +375,7 @@ export default function SettingsPage(props: Props) {
                         }))
                       }
                     />
-                    <span className="settings-toggle__pill" />
-                  </label>
+                  </div>
                 ) : null}
                 {settingsSection === "image_hosting" ? (
                   renderImageHostingSection()
@@ -458,30 +463,25 @@ export default function SettingsPage(props: Props) {
               </p>
             </div>
             <div className="import-confirm-dialog__actions">
-              <button
-                type="button"
-                className="ghost"
-                onClick={handleImportConfigCancel}
-                disabled={settingsImporting}
-              >
+              <Button type="button" onClick={handleImportConfigCancel} disabled={settingsImporting}>
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="ghost"
                 onClick={handleExportSettings}
                 disabled={settingsExporting || settingsImporting}
               >
                 {settingsExporting ? "Exporting..." : "Export current config"}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="primary import-confirm-dialog__confirm"
+                variant="primary"
+                className="import-confirm-dialog__confirm"
                 onClick={handleImportConfigConfirm}
                 disabled={settingsImporting}
               >
                 {settingsImporting ? "Importing..." : "Choose file & import"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
