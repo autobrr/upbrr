@@ -2679,7 +2679,7 @@ export namespace imagehostpolicy {
 	
 	export class Metadata {
 	    UploadHosts: string[];
-	    TrackerUploadHosts: Record<string, string[]>;
+	    TrackerUploadHosts: Record<string, Array<string>>;
 	    OwnedHosts: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {

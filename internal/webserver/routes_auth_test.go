@@ -380,6 +380,85 @@ func TestAuthStatusMasksBrowseRootUntilAuthenticated(t *testing.T) {
 	}
 }
 
+func TestDevelopmentNoAuthStatusBypassesMissingAuthOnLoopback(t *testing.T) {
+	server := &Server{
+		developmentNoAuth: true,
+		developmentSession: session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: "dev-csrf",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		},
+		picker: &stubNativePicker{},
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5000"
+
+	recorder := httptest.NewRecorder()
+	server.handleAuthStatus(recorder, req, session{})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleAuthStatus returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Authenticated           bool   `json:"authenticated"`
+		NeedsSetup              bool   `json:"needsSetup"`
+		Username                string `json:"username"`
+		CSRFToken               string `json:"csrfToken"`
+		AllowUnrestrictedBrowse bool   `json:"allowUnrestrictedBrowse"`
+		NeedsBrowsePolicy       bool   `json:"needsBrowsePolicy"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal auth status: %v", err)
+	}
+	if !payload.Authenticated || payload.NeedsSetup || payload.Username != "dev" || payload.CSRFToken != "dev-csrf" {
+		t.Fatalf("unexpected development auth status: %#v", payload)
+	}
+	if !payload.AllowUnrestrictedBrowse || payload.NeedsBrowsePolicy {
+		t.Fatalf("expected development auth status to skip browse policy setup, got %#v", payload)
+	}
+}
+
+func TestDevelopmentNoAuthStatusDoesNotBypassRemoteRequests(t *testing.T) {
+	store, err := newAuthStore(filepath.Join(t.TempDir(), "state", "db.sqlite"))
+	if err != nil {
+		t.Fatalf("newAuthStore: %v", err)
+	}
+	server := &Server{
+		auth:              store,
+		developmentNoAuth: true,
+		developmentSession: session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: "dev-csrf",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		},
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
+	req.Host = "example.com:7480"
+	req.RemoteAddr = "192.168.1.10:5000"
+
+	recorder := httptest.NewRecorder()
+	server.handleAuthStatus(recorder, req, session{})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleAuthStatus returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Authenticated bool `json:"authenticated"`
+		NeedsSetup    bool `json:"needsSetup"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal auth status: %v", err)
+	}
+	if payload.Authenticated || !payload.NeedsSetup {
+		t.Fatalf("expected remote request to use normal auth status, got %#v", payload)
+	}
+}
+
 func TestLogoutRemovesRetainedSessionFromDisk(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
 	server := newAuthTestServer(t, dbPath)

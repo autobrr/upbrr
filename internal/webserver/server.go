@@ -26,28 +26,34 @@ import (
 )
 
 type Options struct {
-	Config    config.Config
-	CLIConfig CLIConfig
+	Config            config.Config
+	CLIConfig         CLIConfig
+	DevelopmentNoAuth bool
 }
 
 type Server struct {
-	cfg            config.Config
-	cliCfg         CLIConfig
-	backend        *Backend
-	picker         nativePicker
-	auth           *authStore
-	sessions       *sessionManager
-	hub            *eventHub
-	authLimiter    *fixedWindowLimiter
-	generalLimiter *fixedWindowLimiter
-	trustedProxies []*net.IPNet
-	server         *http.Server
-	assets         fs.FS
+	cfg                config.Config
+	cliCfg             CLIConfig
+	backend            *Backend
+	picker             nativePicker
+	auth               *authStore
+	sessions           *sessionManager
+	hub                *eventHub
+	authLimiter        *fixedWindowLimiter
+	generalLimiter     *fixedWindowLimiter
+	trustedProxies     []*net.IPNet
+	server             *http.Server
+	assets             fs.FS
+	developmentNoAuth  bool
+	developmentSession session
 }
 
 func New(opts Options) (*Server, error) {
 	cfg := opts.Config
 	cliCfg := normalizeCLIConfig(opts.CLIConfig)
+	if opts.DevelopmentNoAuth && !isDevelopmentNoAuthHost(cliCfg.Host) {
+		return nil, fmt.Errorf("webserver: --dev-no-auth requires a loopback host, got %q", cliCfg.Host)
+	}
 
 	hub := newEventHub()
 	authStore, err := newAuthStore(cfg.MainSettings.DBPath)
@@ -80,6 +86,19 @@ func New(opts Options) (*Server, error) {
 		trustedProxies: parseTrustedProxies(cliCfg.TrustedProxies),
 		assets:         assets,
 	}
+	if opts.DevelopmentNoAuth {
+		csrf, err := randomString(24)
+		if err != nil {
+			return nil, err
+		}
+		srv.developmentNoAuth = true
+		srv.developmentSession = session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: csrf,
+			ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+		}
+	}
 	sessions.SetLogger(func(format string, args ...any) {
 		backend.logger.Warnf(format, args...)
 	})
@@ -91,6 +110,10 @@ func New(opts Options) (*Server, error) {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return srv, nil
+}
+
+func isDevelopmentNoAuthHost(host string) bool {
+	return isLoopbackHostname(strings.Trim(strings.TrimSpace(host), "[]"))
 }
 
 func (s *Server) Close() error {

@@ -143,6 +143,9 @@ go run ./cmd/upbrr
 # Run the embedded web server:
 go run ./cmd/upbrr serve
 
+# Run the embedded web server without web auth for local frontend development:
+go run ./cmd/upbrr serve --dev-no-auth
+
 # Launch the Wails desktop GUI:
 go run ./cmd/upbrr --gui
 # or the dedicated GUI entrypoint:
