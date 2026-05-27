@@ -102,15 +102,27 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 		return meta, nil
 	}
 
-	if !shouldUseStrictPriorityLookup(meta) {
+	if !shouldUseStrictPriorityLookup(meta, eligible, s.cfg.Trackers.PreferredTracker) {
 		return s.enrichTrackerDataConcurrent(ctx, meta, eligible, now, unit3dClient)
 	}
 
 	return s.enrichTrackerDataPriority(ctx, meta, eligible, now, unit3dClient)
 }
 
-func shouldUseStrictPriorityLookup(meta api.PreparedMetadata) bool {
-	return len(meta.TrackerIDs) > 0
+func shouldUseStrictPriorityLookup(meta api.PreparedMetadata, eligible []string, preferred string) bool {
+	if len(meta.TrackerIDs) > 0 {
+		return true
+	}
+	preferred = strings.TrimSpace(preferred)
+	if preferred == "" {
+		return false
+	}
+	for _, tracker := range eligible {
+		if strings.EqualFold(strings.TrimSpace(tracker), preferred) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) enrichTrackerDataPriority(

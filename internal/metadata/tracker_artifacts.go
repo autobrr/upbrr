@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	_ "image/png" // register PNG decoder for tracker image validation
 	"io"
 	"net/http"
 	"net/url"
