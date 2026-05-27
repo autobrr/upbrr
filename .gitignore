@@ -7,6 +7,7 @@ internal/webserver/assets/
 internal/guiapp/assets/*
 !internal/guiapp/assets/.keep
 dist/
+tmp/
 .trunk/
 *.exe
 /scripts/__pycache__/

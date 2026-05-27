@@ -41,6 +41,7 @@
     "eslint-plugin-unused-imports": "^4.4.1",
     "happy-dom": "^20.9.0",
     "knip": "^6.4.1",
+    "playwright": "^1.60.0",
     "postcss": "^8.5.15",
     "prettier": "^3.8.2",
     "stylelint": "^16.26.1",

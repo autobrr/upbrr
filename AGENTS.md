@@ -32,6 +32,7 @@ Use `CONTRIBUTING.md` for full command reference and platform details. Use narro
 - Wrap external-package errors where lint requires it. Handle errors by returning, wrapping, logging with useful context, or making intentional ignore paths obvious.
 - Avoid unchecked type assertions. Use `testing` helpers in tests. Justify narrow `nolint` at source.
 - Frontend changes must keep TypeScript, ESLint, Stylelint, and dead-code checks clean. Do not weaken rules or bypass type errors.
+- For embedded frontend visual checks, rebuild/sync embedded assets and rebuild the CLI binary before browser automation. Use the main embedded server port (`7480`) with `dist/upbrr.exe serve --dev-no-auth`; do not use the Vite-only dev server on `5173` for embedded parity checks. Stop the embedded server after inspection.
 
 ## Logging
 

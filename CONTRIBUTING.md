@@ -134,6 +134,17 @@ make test-frontend     # ESLint, dead-code, typecheck, Vitest, Prettier
 pnpm --dir gui/frontend run lint:style
 ```
 
+For embedded web visual checks, test the embedded build rather than the Vite-only server. Rebuild the frontend, sync it into embedded assets, rebuild the CLI, then run the auth-disabled embedded server on the main port:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1
+.\dist\upbrr.exe serve --dev-no-auth
+```
+
+Use `http://localhost:7480` for Playwright or browser automation. Avoid `5173` for embedded parity checks; stale embedded assets can otherwise hide or misrepresent frontend changes.
+
+Stop the embedded server after inspection so later runs do not reuse an old process.
+
 ### Backend
 
 ```sh
