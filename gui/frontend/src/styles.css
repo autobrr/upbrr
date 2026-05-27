@@ -584,20 +584,6 @@ h1 {
   border-color: rgba(0, 0, 0, 0.08);
 }
 
-.path-row {
-  display: grid;
-  grid-template-columns: 1fr auto auto auto;
-  gap: 12px;
-  align-items: end;
-}
-
-.path-input label {
-  display: block;
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
 input {
   width: 100%;
   padding: 11px 12px;
@@ -742,103 +728,6 @@ button:hover:not(:disabled) {
 
 .metadata-progress__item--failed .metadata-progress__status {
   color: var(--danger);
-}
-
-.run-options-card {
-  margin-top: 10px;
-  display: grid;
-  gap: 9px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(12, 16, 26, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-:root.light .run-options-card {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(0, 0, 0, 0.08);
-}
-
-.run-options-card__header {
-  display: grid;
-  gap: 4px;
-}
-
-.run-options-card__header p {
-  margin: 0;
-}
-
-.run-options-card__controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: end;
-}
-
-.run-options-card__field {
-  display: grid;
-  gap: 5px;
-  min-width: 160px;
-}
-
-.upload-toggle {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 6px 8px;
-  border-radius: 10px;
-  background: rgba(6, 9, 14, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: var(--text);
-  cursor: pointer;
-  user-select: none;
-}
-
-.upload-toggle input[type="checkbox"] {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.upload-toggle__pill {
-  width: 38px;
-  height: 20px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
-  position: relative;
-  transition: background 0.18s ease;
-}
-
-.upload-toggle__pill::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  background: var(--text);
-  transition: transform 0.18s ease;
-}
-
-.upload-toggle input[type="checkbox"]:checked + .upload-toggle__pill {
-  background: rgba(53, 194, 193, 0.62);
-}
-
-.upload-toggle input[type="checkbox"]:checked + .upload-toggle__pill::after {
-  transform: translateX(18px);
-}
-
-.upload-toggle input[type="checkbox"]:focus-visible + .upload-toggle__pill {
-  outline: 2px solid rgba(53, 194, 193, 0.8);
-  outline-offset: 2px;
-}
-
-.upload-toggle__label {
-  font-size: 0.88rem;
-  font-weight: 600;
 }
 
 .success {
@@ -1849,10 +1738,6 @@ h2 {
   .content {
     padding: 25px 16px 78px;
     max-height: calc(100vh - 78px);
-  }
-
-  .path-row {
-    grid-template-columns: 1fr;
   }
 
   .details {

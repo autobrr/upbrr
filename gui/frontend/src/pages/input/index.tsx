@@ -3,6 +3,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { Button } from "../../components/ui/button";
+import { Switch } from "../../components/ui/switch";
 import type {
   DetailBlock,
   DetailItem,
@@ -24,6 +26,9 @@ import type {
   TMDBNetwork,
   TrackerUploadItem,
 } from "../../types";
+
+const compactInputClass =
+  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
 
 const formatProvider = (value: string) => value.toUpperCase();
 
@@ -824,74 +829,83 @@ export default function InputPage(props: Props) {
       </header>
 
       <section className="panel">
-        <div className="path-row">
-          <div className="path-input">
-            <label htmlFor="source-lookup-url" className="source-url-label">
-              Site URL override
-            </label>
-            <input
-              id="source-lookup-url"
-              value={sourceLookupURL}
-              onChange={(event) => setSourceLookupURL(event.target.value)}
-              placeholder="Paste tracker or media URL for ID lookup"
-            />
-            <p className="muted path-helper">
-              Used for metadata ID, and tracker description/tracker image fetching when supported.
-            </p>
+        <div className="grid gap-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 max-[1100px]:grid-cols-1">
+            <div className="grid grid-cols-2 gap-3 max-[900px]:grid-cols-1">
+              <label
+                className="grid gap-1.5 text-sm text-[var(--muted)]"
+                htmlFor="source-lookup-url"
+              >
+                <span>Site URL override</span>
+                <input
+                  id="source-lookup-url"
+                  className={compactInputClass}
+                  value={sourceLookupURL}
+                  onChange={(event) => setSourceLookupURL(event.target.value)}
+                  placeholder="Paste tracker or media URL for ID lookup"
+                />
+                <span className="text-xs leading-tight text-[var(--muted)]">
+                  Metadata ID and tracker description/image lookup.
+                </span>
+              </label>
 
-            <label htmlFor="source-path">Source path</label>
-            <input
-              id="source-path"
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder="Select a file or folder"
-            />
-            {discHint ? <p className="path-hint">{discHint}</p> : null}
-            <p className="muted path-helper">
-              Select folder for discs (containing BDMV or VIDEO_TS) or Season Pack folder.
+              <label className="grid gap-1.5 text-sm text-[var(--muted)]" htmlFor="source-path">
+                <span>Source path</span>
+                <input
+                  id="source-path"
+                  className={compactInputClass}
+                  value={path}
+                  onChange={(event) => setPath(event.target.value)}
+                  placeholder="Select a file or folder"
+                />
+                <span className="text-xs leading-tight text-[var(--muted)]">
+                  {discHint || "File, disc folder, or Season Pack folder."}
+                </span>
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 max-[1100px]:justify-start">
+              {browseAvailable ? (
+                <>
+                  <Button type="button" onClick={handleBrowseFile}>
+                    Browse file
+                  </Button>
+                  <Button type="button" onClick={handleBrowseFolder}>
+                    Browse folder
+                  </Button>
+                </>
+              ) : null}
+              <Button variant="primary" type="button" onClick={handleFetch} disabled={loading}>
+                {loading ? "Fetching..." : "Fetch metadata"}
+              </Button>
+            </div>
+          </div>
+
+          {!browseAvailable ? (
+            <p className="m-0 text-xs text-[var(--muted)]">
+              Native browse is only available from localhost. Remote sessions must enter the server
+              path manually.
             </p>
-            {!browseAvailable ? (
-              <p className="muted path-helper">
-                Native browse is only available when the WebUI is opened from localhost on this
-                machine. Remote sessions must enter the server path manually.
-              </p>
-            ) : null}
-          </div>
-          {browseAvailable ? (
-            <>
-              <button className="ghost" type="button" onClick={handleBrowseFile}>
-                Browse file
-              </button>
-              <button className="ghost" type="button" onClick={handleBrowseFolder}>
-                Browse folder
-              </button>
-            </>
           ) : null}
-          <button className="primary" type="button" onClick={handleFetch} disabled={loading}>
-            {loading ? "Fetching..." : "Fetch metadata"}
-          </button>
-        </div>
-        <div className="run-options-card">
-          <div className="run-options-card__header">
-            <p className="label">Run options</p>
-            <p className="muted">Applies only to tracker dry run and upload for this session.</p>
-          </div>
-          <div className="run-options-card__controls">
-            <label className="upload-toggle upload-toggle--labelled">
-              <input
-                type="checkbox"
+
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2">
+            <span className="text-sm font-semibold text-[var(--text)]">Run options</span>
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
+              <Switch
                 aria-label="Enable debug run"
                 checked={runDebug}
                 onChange={(event) => setRunDebug(event.target.checked)}
               />
-              <span className="upload-toggle__pill" />
-              <span className="upload-toggle__label">Debug run</span>
+              <span>Debug run</span>
             </label>
-            <label className="run-options-card__field" htmlFor="run-log-level">
-              <span className="label">Run log level</span>
+            <label
+              className="inline-flex items-center gap-2 text-sm text-[var(--muted)]"
+              htmlFor="run-log-level"
+            >
+              <span>Log level</span>
               <select
                 id="run-log-level"
-                className="text-input"
+                className={compactInputClass}
                 value={runLogLevel}
                 onChange={(event) => {
                   setRunLogLevel(event.target.value);
@@ -906,9 +920,9 @@ export default function InputPage(props: Props) {
               </select>
             </label>
             {runLogLevelTouched ? (
-              <button className="ghost" type="button" onClick={() => setRunLogLevelTouched(false)}>
+              <Button type="button" onClick={() => setRunLogLevelTouched(false)}>
                 Reset log level
-              </button>
+              </Button>
             ) : null}
           </div>
         </div>
