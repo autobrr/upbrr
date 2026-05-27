@@ -250,6 +250,90 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 	}
 }
 
+func TestEnrichTrackerDataPreferredTrackerIsSourceOfTruthWithoutClientTrackerIDs(t *testing.T) {
+	repo := &fakeRepo{}
+	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte{
+			0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+			0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+			0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+			0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+			0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
+			0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+			0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d,
+			0xb0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+			0x44, 0xae, 0x42, 0x60, 0x82,
+		})
+	}))
+	defer imageServer.Close()
+	antImageURL := imageServer.URL + "/ant.png"
+	hdbImageURL := imageServer.URL + "/hdb.png"
+	lookup := &stubTrackerLookup{
+		results: map[string]trackerdata.Result{
+			"ANT": {
+				TMDBID:      123,
+				IMDBID:      456,
+				Description: "ant description",
+				Images:      []bbcode.Image{{RawURL: antImageURL}},
+			},
+			"HDB": {
+				TMDBID:      999,
+				IMDBID:      888,
+				Description: "hdb description",
+				Images:      []bbcode.Image{{RawURL: hdbImageURL}},
+			},
+		},
+		delays: map[string]time.Duration{
+			"ANT": 40 * time.Millisecond,
+			"HDB": 5 * time.Millisecond,
+		},
+	}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			PreferredTracker: "ANT",
+			Trackers: map[string]config.TrackerConfig{
+				"ANT": {APIKey: "ant-key"},
+				"HDB": {Username: "user", Passkey: "pass"},
+			},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+
+	meta := api.PreparedMetadata{
+		SourcePath: `D:\Movies\A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD`,
+		Trackers:   []string{"ANT", "HDB"},
+		Options:    api.UploadOptions{KeepImages: true},
+	}
+
+	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+
+	calls := lookup.Calls()
+	if len(calls) != 1 || !strings.EqualFold(calls[0], "ANT") {
+		t.Fatalf("expected preferred tracker ANT to be queried first and stop as source of truth, calls=%v", calls)
+	}
+	winner, found := trackerRecordFor(result.TrackerData, "ANT")
+	if !found {
+		t.Fatalf("expected ANT tracker winner record, got %v", result.TrackerData)
+	}
+	if winner.TMDBID != 123 || winner.IMDBID != 456 {
+		t.Fatalf("expected ANT ids, got tmdb=%d imdb=%d", winner.TMDBID, winner.IMDBID)
+	}
+	if winner.Description != "ant description" {
+		t.Fatalf("expected ANT description, got %q", winner.Description)
+	}
+	if len(winner.ImageURLs) != 1 || winner.ImageURLs[0] != antImageURL {
+		t.Fatalf("expected ANT image urls, got %v", winner.ImageURLs)
+	}
+	if _, found := trackerRecordFor(result.TrackerData, "HDB"); found {
+		t.Fatalf("expected non-preferred HDB not to supply tracker data, got %v", result.TrackerData)
+	}
+}
+
 func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 	repo := &fakeRepo{}
 	lookup := &stubTrackerLookup{
