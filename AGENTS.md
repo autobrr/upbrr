@@ -15,7 +15,6 @@ make test-go            # Full Go tests with race detector
 make test-frontend      # Frontend lint/dead-code/type/format checks
 make lint               # Full Go lint
 make logpolicy          # Logging policy check
-make vuln               # Go vulnerability scan
 make precommit          # Lefthook pre-commit
 make prepush            # Lefthook pre-push
 make gofix-check-changed # Inspect Go fix drift on changed packages

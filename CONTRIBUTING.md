@@ -25,7 +25,6 @@ Install the following on your machine:
 - [pnpm](https://pnpm.io/installation) (10 or newer — version is pinned in `gui/frontend/package.json` via `packageManager`)
 - [GNU Make](https://www.gnu.org/software/make/) — top-level shortcuts for builds, checks, formatting, and hooks
 - [golangci-lint](https://golangci-lint.run/) — used by hooks and CI
-- [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) — run through `make vuln` with `go run`; no separate install required
 - [Lefthook](https://github.com/evilmartians/lefthook) — git hooks runner (see [Git hooks](#git-hooks-lefthook))
 - [Wails CLI](https://wails.io/) `v2.10.1` for desktop builds
   - Install with `go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1`
@@ -178,7 +177,6 @@ make test-go            # Go tests with race detector
 make test-frontend
 make lint
 make logpolicy
-make vuln
 ```
 
 Useful focused checks:
