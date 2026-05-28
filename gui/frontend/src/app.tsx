@@ -53,6 +53,7 @@ import type {
   WebAuthStatus,
   UploadedImageLink,
   UploadImagesResult,
+  UploadProgressUpdate,
 } from "./types";
 import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
 
@@ -184,6 +185,7 @@ const bdinfoProgressEvent = "bdinfo:progress";
 const metadataProgressEvent = "metadata:progress";
 const dupeCheckEventPrefix = "dupe:job:";
 const trackerUploadEventPrefix = "upload:job:";
+const trackerUploadProgressEvent = "upload:progress";
 const runLogLevels = ["error", "warn", "info", "debug", "trace"] as const;
 
 const progressUpdatePrefixes = new Set([
@@ -595,6 +597,9 @@ export default function App() {
   const [trackerDryRunError, setTrackerDryRunError] = useState("");
   const [trackerDryRunPreview, setTrackerDryRunPreview] =
     useState<TrackerDryRunPreview>(emptyTrackerDryRun);
+  const [trackerDryRunProgress, setTrackerDryRunProgress] = useState<UploadProgressUpdate | null>(
+    null,
+  );
   const [trackerQuestionnaireAnswers, setTrackerQuestionnaireAnswers] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -1900,6 +1905,7 @@ export default function App() {
     setTrackerDryRunLoading(false);
     setTrackerDryRunError("");
     setTrackerDryRunPreview(emptyTrackerDryRun);
+    setTrackerDryRunProgress(null);
     setTrackerQuestionnaireAnswers({});
     setReleasePageTrackerSelection({});
     setRunDebug(false);
@@ -3265,6 +3271,7 @@ export default function App() {
     setTrackerDryRunLoading(false);
     setTrackerDryRunError("");
     setTrackerDryRunPreview(emptyTrackerDryRun);
+    setTrackerDryRunProgress(null);
     setMetadataProgressTarget("");
     setMetadataProgressActive(false);
     setMetadataProgressUpdates([]);
@@ -3466,6 +3473,7 @@ export default function App() {
     setTrackerQuestionnaireAnswers({});
     setTrackerDryRunPreview(emptyTrackerDryRun);
     setTrackerDryRunError("");
+    setTrackerDryRunProgress(null);
   }, [path]);
 
   // NOTE: releasePageTrackerSelection is memory-only state tracking which trackers
@@ -3627,6 +3635,18 @@ export default function App() {
       }
 
       setTrackerDryRunLoading(true);
+      setTrackerDryRunProgress({
+        sourcePath: path.trim(),
+        tracker: "",
+        task: "dry_run",
+        status: "running",
+        message: "Starting dry run",
+        completedPieces: 0,
+        totalPieces: 0,
+        percent: 0,
+        hashRateMiB: 0,
+        timestamp: new Date().toISOString(),
+      });
       try {
         const result = await fetcher(
           path.trim(),
@@ -3682,6 +3702,23 @@ export default function App() {
   const handleRunTrackerDryRun = useCallback(async () => {
     await runTrackerDryRun(builderPreview.Groups || []);
   }, [builderPreview, runTrackerDryRun]);
+
+  useEffect(() => {
+    const off = EventsOn(trackerUploadProgressEvent, (payload: any) => {
+      const update = payload as UploadProgressUpdate;
+      const updatePath = String(update?.sourcePath || "").trim();
+      if (updatePath && updatePath !== path.trim()) {
+        return;
+      }
+      setTrackerDryRunProgress(update);
+    });
+
+    return () => {
+      if (typeof off === "function") {
+        off();
+      }
+    };
+  }, [path]);
 
   const handleCancelTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
@@ -4269,6 +4306,7 @@ export default function App() {
               uploadSnapshot={trackerUploadSnapshot}
               dryRunLoading={trackerDryRunLoading}
               dryRunError={trackerDryRunError}
+              dryRunProgress={trackerDryRunProgress}
               dryRunPreview={trackerDryRunPreview}
               trackerQuestionnaireAnswers={trackerQuestionnaireAnswers}
               onQuestionnaireAnswerChange={updateTrackerQuestionnaireAnswer}

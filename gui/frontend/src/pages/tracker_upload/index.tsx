@@ -11,6 +11,7 @@ import type {
   TrackerDryRunPreview,
   TrackerUploadItem,
   TrackerUploadSnapshot,
+  UploadProgressUpdate,
 } from "../../types";
 import { cn } from "../../utils/cn";
 
@@ -31,6 +32,7 @@ type Props = {
   uploadSnapshot: TrackerUploadSnapshot | null;
   dryRunLoading: boolean;
   dryRunError: string;
+  dryRunProgress: UploadProgressUpdate | null;
   dryRunPreview: TrackerDryRunPreview;
   trackerQuestionnaireAnswers: Record<string, Record<string, string>>;
   onQuestionnaireAnswerChange: (tracker: string, key: string, value: string) => void;
@@ -57,6 +59,7 @@ const statusClass = (status: string) => {
 const subtleBox = "rounded-md border border-white/10 bg-white/5 px-2 py-1.5";
 const blockReasonClass =
   "inline-flex h-5 items-center rounded border border-red-400/30 bg-red-500/10 px-1.5 text-[11px] font-semibold leading-none text-red-700 dark:text-red-100";
+const formatStatusText = (value: string) => value.replaceAll("_", " ");
 
 export default function TrackerUploadPage(props: Readonly<Props>) {
   const {
@@ -76,6 +79,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     uploadSnapshot,
     dryRunLoading,
     dryRunError,
+    dryRunProgress,
     dryRunPreview,
     trackerQuestionnaireAnswers,
     onQuestionnaireAnswerChange,
@@ -152,18 +156,53 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
   );
 
   const trackerStatusMap = useMemo(() => {
-    const next: Record<string, { status: string; message: string }> = {};
+    const next: Record<
+      string,
+      {
+        status: string;
+        task: string;
+        taskStatus: string;
+        message: string;
+        percent: number;
+        totalPieces: number;
+      }
+    > = {};
     (uploadSnapshot?.trackers || []).forEach((entry) => {
       if (!entry?.tracker) return;
       next[entry.tracker] = {
         status: String(entry.status || "").toLowerCase(),
+        task: String(entry.task || "").toLowerCase(),
+        taskStatus: String(entry.taskStatus || "").toLowerCase(),
         message: entry.message || "",
+        percent: Number(entry.percent || 0),
+        totalPieces: Number(entry.totalPieces || 0),
       };
     });
     return next;
   }, [uploadSnapshot]);
 
   const uploadStatus = String(uploadSnapshot?.status || "").toLowerCase();
+  const activeProgress =
+    dryRunLoading && dryRunProgress
+      ? {
+          task: String(dryRunProgress.task || "").toLowerCase(),
+          status: String(dryRunProgress.status || "").toLowerCase(),
+          message: dryRunProgress.message || "",
+          percent: Number(dryRunProgress.percent || 0),
+          totalPieces: Number(dryRunProgress.totalPieces || 0),
+        }
+      : {
+          task: String(uploadSnapshot?.currentTask || "").toLowerCase(),
+          status: String(uploadSnapshot?.currentTaskStatus || "").toLowerCase(),
+          message: uploadSnapshot?.currentMessage || "",
+          percent: Number(uploadSnapshot?.currentPercent || 0),
+          totalPieces: Number(uploadSnapshot?.currentTotalPieces || 0),
+        };
+  const currentTask = activeProgress.task;
+  const currentTaskStatus = activeProgress.status;
+  const currentMessage = activeProgress.message;
+  const currentPercent = activeProgress.percent;
+  const currentTotalPieces = activeProgress.totalPieces;
   const canRetry = !uploadRunning && (uploadSnapshot?.failedTrackers?.length || 0) > 0;
   const dryRunMap = useMemo(() => {
     const next: Record<string, (typeof dryRunPreview.Trackers)[number]> = {};
@@ -280,10 +319,43 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
           </p>
           {uploadStatus ? (
             <p className="m-0 text-xs text-[var(--muted)]">
-              Job status: {uploadStatus.replaceAll("_", " ")}
+              Job status: {formatStatusText(uploadStatus)}
             </p>
           ) : null}
         </div>
+        {currentTask || currentMessage ? (
+          <div
+            className="mt-2 grid gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs"
+            role="status"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-[var(--text)]">Current task</span>
+              {currentTask ? (
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-2 py-0.5 capitalize",
+                    statusClass(currentTaskStatus || uploadStatus || "running"),
+                  )}
+                >
+                  {formatStatusText(currentTask)}
+                </span>
+              ) : null}
+              {currentMessage ? (
+                <span className="text-[var(--muted)] [overflow-wrap:anywhere]">
+                  {currentMessage}
+                </span>
+              ) : null}
+            </div>
+            {currentTotalPieces > 0 ? (
+              <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-[var(--accent)] transition-[width]"
+                  style={{ width: `${Math.max(0, Math.min(100, currentPercent))}%` }}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {uploadError ? <p className="error">{uploadError}</p> : null}
         {dryRunError ? <p className="error">{dryRunError}</p> : null}
       </header>
@@ -354,7 +426,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                         statusClass(statusLabel),
                       )}
                     >
-                      {statusLabel.replaceAll("_", " ")}
+                      {formatStatusText(statusLabel)}
                     </span>
                   </div>
                   <Switch
@@ -369,8 +441,34 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                   />
                 </div>
 
-                {trackerStatus?.message ? (
-                  <p className="m-0 text-xs text-[var(--muted)]">{trackerStatus.message}</p>
+                {trackerStatus?.task || trackerStatus?.message ? (
+                  <div className="grid gap-1">
+                    <p className="m-0 flex flex-wrap items-center gap-1.5 text-xs text-[var(--muted)]">
+                      {trackerStatus.task ? (
+                        <span
+                          className={cn(
+                            "inline-flex items-center rounded border px-1.5 py-0.5 capitalize",
+                            statusClass(trackerStatus.taskStatus || trackerStatus.status),
+                          )}
+                        >
+                          {formatStatusText(trackerStatus.task)}
+                        </span>
+                      ) : null}
+                      {trackerStatus.message ? (
+                        <span className="[overflow-wrap:anywhere]">{trackerStatus.message}</span>
+                      ) : null}
+                    </p>
+                    {trackerStatus.totalPieces > 0 ? (
+                      <div className="h-1 overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className="h-full rounded-full bg-[var(--accent)] transition-[width]"
+                          style={{
+                            width: `${Math.max(0, Math.min(100, trackerStatus.percent))}%`,
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
                 {imageHost?.Message &&
                 (imageHostWarnings.length > 0 || imageHostStatus === "warning") ? (

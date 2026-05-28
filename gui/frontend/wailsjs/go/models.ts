@@ -2343,7 +2343,13 @@ export namespace guiapp {
 	export class TrackerUploadTrackerState {
 	    tracker: string;
 	    status: string;
+	    task: string;
+	    taskStatus: string;
 	    message: string;
+	    completedPieces: number;
+	    totalPieces: number;
+	    percent: number;
+	    hashRateMiB: number;
 	    uploadedCount: number;
 	    startedAt: string;
 	    finishedAt: string;
@@ -2356,7 +2362,13 @@ export namespace guiapp {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.tracker = source["tracker"];
 	        this.status = source["status"];
+	        this.task = source["task"];
+	        this.taskStatus = source["taskStatus"];
 	        this.message = source["message"];
+	        this.completedPieces = source["completedPieces"];
+	        this.totalPieces = source["totalPieces"];
+	        this.percent = source["percent"];
+	        this.hashRateMiB = source["hashRateMiB"];
 	        this.uploadedCount = source["uploadedCount"];
 	        this.startedAt = source["startedAt"];
 	        this.finishedAt = source["finishedAt"];
@@ -2366,6 +2378,13 @@ export namespace guiapp {
 	    jobID: string;
 	    sourcePath: string;
 	    status: string;
+	    currentTask: string;
+	    currentTaskStatus: string;
+	    currentMessage: string;
+	    currentCompletedPieces: number;
+	    currentTotalPieces: number;
+	    currentPercent: number;
+	    currentHashRateMiB: number;
 	    trackers: TrackerUploadTrackerState[];
 	    failedTrackers: string[];
 	    uploadedCount: number;
@@ -2382,6 +2401,13 @@ export namespace guiapp {
 	        this.jobID = source["jobID"];
 	        this.sourcePath = source["sourcePath"];
 	        this.status = source["status"];
+	        this.currentTask = source["currentTask"];
+	        this.currentTaskStatus = source["currentTaskStatus"];
+	        this.currentMessage = source["currentMessage"];
+	        this.currentCompletedPieces = source["currentCompletedPieces"];
+	        this.currentTotalPieces = source["currentTotalPieces"];
+	        this.currentPercent = source["currentPercent"];
+	        this.currentHashRateMiB = source["currentHashRateMiB"];
 	        this.trackers = this.convertValues(source["trackers"], TrackerUploadTrackerState);
 	        this.failedTrackers = source["failedTrackers"];
 	        this.uploadedCount = source["uploadedCount"];

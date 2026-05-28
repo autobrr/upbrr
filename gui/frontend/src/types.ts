@@ -667,16 +667,42 @@ export type TrackerUploadItem = {
 export type TrackerUploadTrackerState = {
   tracker: string;
   status: string;
+  task: string;
+  taskStatus: string;
   message: string;
+  completedPieces: number;
+  totalPieces: number;
+  percent: number;
+  hashRateMiB: number;
   uploadedCount: number;
   startedAt: string;
   finishedAt: string;
+};
+
+export type UploadProgressUpdate = {
+  sourcePath: string;
+  tracker: string;
+  task: string;
+  status: string;
+  message: string;
+  completedPieces: number;
+  totalPieces: number;
+  percent: number;
+  hashRateMiB: number;
+  timestamp: string;
 };
 
 export type TrackerUploadSnapshot = {
   jobID: string;
   sourcePath: string;
   status: string;
+  currentTask: string;
+  currentTaskStatus: string;
+  currentMessage: string;
+  currentCompletedPieces: number;
+  currentTotalPieces: number;
+  currentPercent: number;
+  currentHashRateMiB: number;
   trackers: TrackerUploadTrackerState[];
   failedTrackers: string[];
   uploadedCount: number;

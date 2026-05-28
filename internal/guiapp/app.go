@@ -688,7 +688,10 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		return api.TrackerDryRunPreview{}, fmt.Errorf("gui: %w", err)
 	}
 
-	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
+	progressCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+		runtime.EventsEmit(ctx, trackerUploadProgressEvent, update)
+	})
+	progressCtx = bdinfo.WithProgressReporter(progressCtx, func(line string) {
 		if strings.TrimSpace(line) == "" {
 			return
 		}

@@ -262,6 +262,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 	meta.DescriptionGroups = descriptionGroups
 
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "torrent", "running", "Preparing torrent")
 	torrent, err := c.services.Torrents.Create(ctx, meta)
 	if err != nil {
 		return 0, fmt.Errorf("core: %w", err)
@@ -282,14 +283,18 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 
 	if req.Options.DryRun || req.Options.Debug {
 		c.logger.Debugf("core: dry-run or debug enabled, skipping injection/upload")
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "upload", "completed", "Dry run complete")
 		return 0, nil
 	}
 
 	c.logger.Debugf("core: uploading to trackers for %s", meta.SourcePath)
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "running", "Uploading to tracker")
 	summary, err := c.services.Trackers.Upload(ctx, meta)
 	if err != nil {
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "failed", "Tracker upload failed")
 		return 0, fmt.Errorf("core: %w", err)
 	}
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "completed", "Tracker upload complete")
 
 	if !meta.Options.NoSeed {
 		if len(summary.UploadedTorrents) == 0 {
@@ -302,13 +307,16 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 					continue
 				}
 				c.logger.Debugf("core: injecting tracker torrent for %s from %s", meta.SourcePath, uploaded.Tracker)
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "running", "Injecting torrent into client")
 				if err := c.services.Clients.Inject(ctx, meta, api.TorrentResult{
 					Path:    torrentPath,
 					URL:     torrentURL,
 					Tracker: uploaded.Tracker,
 				}); err != nil {
+					emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "failed", "Client injection failed")
 					return 0, fmt.Errorf("core: %w", err)
 				}
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "completed", "Client injection complete")
 			}
 		}
 	}
@@ -318,6 +326,24 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 
 	return summary.Uploaded, nil
+}
+
+func emitPreparedUploadProgress(ctx context.Context, req api.Request, sourcePath string, task string, status string, message string) {
+	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
+		SourcePath: sourcePath,
+		Tracker:    firstRequestedTracker(req.Trackers),
+		Task:       task,
+		Status:     status,
+		Message:    message,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func firstRequestedTracker(trackers []string) string {
+	if len(trackers) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(trackers[0])
 }
 
 func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSummary, error) {

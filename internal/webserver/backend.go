@@ -406,7 +406,10 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 	if err := guishared.SeedRunCorePreparedMeta(ctx, b.core, runCore, req); err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("web: %w", err)
 	}
-	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
+	progressCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+		b.hub.Emit(sessionID, trackerUploadProgressEvent, update)
+	})
+	progressCtx = bdinfo.WithProgressReporter(progressCtx, func(line string) {
 		if strings.TrimSpace(line) == "" {
 			return
 		}
