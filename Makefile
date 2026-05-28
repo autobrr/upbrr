@@ -17,6 +17,7 @@ BLANK := echo
 endif
 
 CLI_OUT := dist/upbrr$(EXE)
+WAILS_CLI := go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 GO_TEST_FLAGS := -race -v -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
 GO_CHANGED_FILES := $(shell git diff --name-only --diff-filter=ACMR HEAD -- '*.go')
@@ -71,15 +72,14 @@ frontend-bundle:
 	pnpm --dir gui/frontend run build:bundle
 
 gui:
-	go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
 ifeq ($(WAILS_PLATFORM),)
-	cd gui && wails build
+	cd gui && $(WAILS_CLI) build
 else
-	cd gui && wails build -platform $(WAILS_PLATFORM)
+	cd gui && $(WAILS_CLI) build -platform $(WAILS_PLATFORM)
 endif
 
 dev:
-	cd gui && wails dev
+	cd gui && $(WAILS_CLI) dev
 
 dev-frontend:
 	pnpm --dir gui/frontend run dev

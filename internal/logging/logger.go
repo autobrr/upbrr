@@ -84,7 +84,7 @@ type Logger struct {
 
 type Entry struct {
 	ID      int64     `json:"id"`
-	Time    time.Time `json:"time"`
+	Time    time.Time `json:"time" ts_type:"string"`
 	Level   string    `json:"level"`
 	Message string    `json:"message"`
 }

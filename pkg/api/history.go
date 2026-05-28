@@ -10,9 +10,9 @@ type HistoryEntry struct {
 	ReleaseTitle       string
 	ReleaseSource      string
 	ReleaseResolution  string
-	MetadataUpdatedAt  time.Time
+	MetadataUpdatedAt  time.Time `ts_type:"string"`
 	LatestUploadStatus string
-	LatestUploadAt     time.Time
+	LatestUploadAt     time.Time `ts_type:"string"`
 	RuleFailureCount   int
 }
 
@@ -21,9 +21,9 @@ type HistoryOverview struct {
 	ReleaseTitle         string
 	ReleaseSource        string
 	ReleaseResolution    string
-	MetadataUpdatedAt    time.Time
+	MetadataUpdatedAt    time.Time `ts_type:"string"`
 	LatestUploadStatus   string
-	LatestUploadAt       time.Time
+	LatestUploadAt       time.Time `ts_type:"string"`
 	StatusLabel          string
 	Metadata             FileMetadata
 	ExternalIDs          ExternalIDs

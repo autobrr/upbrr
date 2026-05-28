@@ -186,8 +186,7 @@ export namespace api {
 	    SourcePath: string;
 	    GroupKey: string;
 	    Description: string;
-	    // Go type: time
-	    UpdatedAt: any;
+	    UpdatedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DescriptionOverride(source);
@@ -198,26 +197,8 @@ export namespace api {
 	        this.SourcePath = source["SourcePath"];
 	        this.GroupKey = source["GroupKey"];
 	        this.Description = source["Description"];
-	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
+	        this.UpdatedAt = source["UpdatedAt"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class DupeEpisodeMatch {
 	    ID: string;
@@ -352,8 +333,7 @@ export namespace api {
 	    SkipRules: string[];
 	    Status: string;
 	    Error: string;
-	    // Go type: time
-	    CheckedAt: any;
+	    CheckedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DupeCheckResult(source);
@@ -373,7 +353,7 @@ export namespace api {
 	        this.SkipRules = source["SkipRules"];
 	        this.Status = source["Status"];
 	        this.Error = source["Error"];
-	        this.CheckedAt = this.convertValues(source["CheckedAt"], null);
+	        this.CheckedAt = source["CheckedAt"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -544,8 +524,7 @@ export namespace api {
 	    SourceIMDB: string;
 	    SourceTVDB: string;
 	    SourceTVmaze: string;
-	    // Go type: time
-	    UpdatedAt: any;
+	    UpdatedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ExternalIDs(source);
@@ -563,26 +542,8 @@ export namespace api {
 	        this.SourceIMDB = source["SourceIMDB"];
 	        this.SourceTVDB = source["SourceTVDB"];
 	        this.SourceTVmaze = source["SourceTVmaze"];
-	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
+	        this.UpdatedAt = source["UpdatedAt"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class TVmazeMetadata {
 	    TVmazeID: number;
@@ -1074,8 +1035,7 @@ export namespace api {
 	    IMDB?: IMDBMetadata;
 	    TVDB?: TVDBMetadata;
 	    TVmaze?: TVmazeMetadata;
-	    // Go type: time
-	    UpdatedAt: any;
+	    UpdatedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ExternalMetadata(source);
@@ -1088,7 +1048,7 @@ export namespace api {
 	        this.IMDB = this.convertValues(source["IMDB"], IMDBMetadata);
 	        this.TVDB = this.convertValues(source["TVDB"], TVDBMetadata);
 	        this.TVmaze = this.convertValues(source["TVmaze"], TVmazeMetadata);
-	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
+	        this.UpdatedAt = source["UpdatedAt"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1202,8 +1162,7 @@ export namespace api {
 	export class FileMetadata {
 	    Path: string;
 	    InfoHash: string;
-	    // Go type: time
-	    UpdatedAt: any;
+	    UpdatedAt: string;
 	    DiscType: string;
 	    VideoPath: string;
 	    FileList: string[];
@@ -1246,7 +1205,7 @@ export namespace api {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Path = source["Path"];
 	        this.InfoHash = source["InfoHash"];
-	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
+	        this.UpdatedAt = source["UpdatedAt"];
 	        this.DiscType = source["DiscType"];
 	        this.VideoPath = source["VideoPath"];
 	        this.FileList = source["FileList"];
@@ -1281,35 +1240,15 @@ export namespace api {
 	        this.Edition = source["Edition"];
 	        this.Other = source["Other"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class HistoryEntry {
 	    SourcePath: string;
 	    ReleaseTitle: string;
 	    ReleaseSource: string;
 	    ReleaseResolution: string;
-	    // Go type: time
-	    MetadataUpdatedAt: any;
+	    MetadataUpdatedAt: string;
 	    LatestUploadStatus: string;
-	    // Go type: time
-	    LatestUploadAt: any;
+	    LatestUploadAt: string;
 	    RuleFailureCount: number;
 	
 	    static createFrom(source: any = {}) {
@@ -1322,35 +1261,16 @@ export namespace api {
 	        this.ReleaseTitle = source["ReleaseTitle"];
 	        this.ReleaseSource = source["ReleaseSource"];
 	        this.ReleaseResolution = source["ReleaseResolution"];
-	        this.MetadataUpdatedAt = this.convertValues(source["MetadataUpdatedAt"], null);
+	        this.MetadataUpdatedAt = source["MetadataUpdatedAt"];
 	        this.LatestUploadStatus = source["LatestUploadStatus"];
-	        this.LatestUploadAt = this.convertValues(source["LatestUploadAt"], null);
+	        this.LatestUploadAt = source["LatestUploadAt"];
 	        this.RuleFailureCount = source["RuleFailureCount"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class UploadRecord {
 	    Tracker: string;
 	    Status: string;
-	    // Go type: time
-	    CreatedAt: any;
+	    CreatedAt: string;
 	    SourcePath: string;
 	
 	    static createFrom(source: any = {}) {
@@ -1361,27 +1281,9 @@ export namespace api {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Tracker = source["Tracker"];
 	        this.Status = source["Status"];
-	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
+	        this.CreatedAt = source["CreatedAt"];
 	        this.SourcePath = source["SourcePath"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class UploadedImageLink {
 	    SourcePath: string;
@@ -1392,8 +1294,7 @@ export namespace api {
 	    RawURL: string;
 	    WebURL: string;
 	    SizeBytes: number;
-	    // Go type: time
-	    UploadedAt: any;
+	    UploadedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new UploadedImageLink(source);
@@ -1409,34 +1310,15 @@ export namespace api {
 	        this.RawURL = source["RawURL"];
 	        this.WebURL = source["WebURL"];
 	        this.SizeBytes = source["SizeBytes"];
-	        this.UploadedAt = this.convertValues(source["UploadedAt"], null);
+	        this.UploadedAt = source["UploadedAt"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class ScreenshotFinalSelection {
 	    SourcePath: string;
 	    ImagePath: string;
 	    Order: number;
 	    Source: string;
-	    // Go type: time
-	    SelectedAt: any;
+	    SelectedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ScreenshotFinalSelection(source);
@@ -1448,26 +1330,8 @@ export namespace api {
 	        this.ImagePath = source["ImagePath"];
 	        this.Order = source["Order"];
 	        this.Source = source["Source"];
-	        this.SelectedAt = this.convertValues(source["SelectedAt"], null);
+	        this.SelectedAt = source["SelectedAt"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class Screenshot {
 	    SourcePath: string;
@@ -1477,8 +1341,7 @@ export namespace api {
 	    Width: number;
 	    Height: number;
 	    Purpose: string;
-	    // Go type: time
-	    CapturedAt: any;
+	    CapturedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Screenshot(source);
@@ -1493,34 +1356,15 @@ export namespace api {
 	        this.Width = source["Width"];
 	        this.Height = source["Height"];
 	        this.Purpose = source["Purpose"];
-	        this.CapturedAt = this.convertValues(source["CapturedAt"], null);
+	        this.CapturedAt = source["CapturedAt"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class TrackerRuleFailure {
 	    SourcePath: string;
 	    Tracker: string;
 	    Rule: string;
 	    Reason: string;
-	    // Go type: time
-	    CreatedAt: any;
+	    CreatedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new TrackerRuleFailure(source);
@@ -1532,26 +1376,8 @@ export namespace api {
 	        this.Tracker = source["Tracker"];
 	        this.Rule = source["Rule"];
 	        this.Reason = source["Reason"];
-	        this.CreatedAt = this.convertValues(source["CreatedAt"], null);
+	        this.CreatedAt = source["CreatedAt"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class TrackerMetadata {
 	    SourcePath: string;
@@ -1567,8 +1393,7 @@ export namespace api {
 	    ImageURLs: string[];
 	    Filename: string;
 	    Matched: boolean;
-	    // Go type: time
-	    UpdatedAt: any;
+	    UpdatedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new TrackerMetadata(source);
@@ -1589,33 +1414,14 @@ export namespace api {
 	        this.ImageURLs = source["ImageURLs"];
 	        this.Filename = source["Filename"];
 	        this.Matched = source["Matched"];
-	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
+	        this.UpdatedAt = source["UpdatedAt"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class PlaylistSelection {
 	    SourcePath: string;
 	    SelectedPlaylists: string[];
 	    UseAll: boolean;
-	    // Go type: time
-	    UpdatedAt: any;
+	    UpdatedAt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PlaylistSelection(source);
@@ -1626,26 +1432,8 @@ export namespace api {
 	        this.SourcePath = source["SourcePath"];
 	        this.SelectedPlaylists = source["SelectedPlaylists"];
 	        this.UseAll = source["UseAll"];
-	        this.UpdatedAt = this.convertValues(source["UpdatedAt"], null);
+	        this.UpdatedAt = source["UpdatedAt"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class ReleaseNameOverrides {
 	    Category?: string;
@@ -1706,11 +1494,9 @@ export namespace api {
 	    ReleaseTitle: string;
 	    ReleaseSource: string;
 	    ReleaseResolution: string;
-	    // Go type: time
-	    MetadataUpdatedAt: any;
+	    MetadataUpdatedAt: string;
 	    LatestUploadStatus: string;
-	    // Go type: time
-	    LatestUploadAt: any;
+	    LatestUploadAt: string;
 	    StatusLabel: string;
 	    Metadata: FileMetadata;
 	    ExternalIDs: ExternalIDs;
@@ -1736,9 +1522,9 @@ export namespace api {
 	        this.ReleaseTitle = source["ReleaseTitle"];
 	        this.ReleaseSource = source["ReleaseSource"];
 	        this.ReleaseResolution = source["ReleaseResolution"];
-	        this.MetadataUpdatedAt = this.convertValues(source["MetadataUpdatedAt"], null);
+	        this.MetadataUpdatedAt = source["MetadataUpdatedAt"];
 	        this.LatestUploadStatus = source["LatestUploadStatus"];
-	        this.LatestUploadAt = this.convertValues(source["LatestUploadAt"], null);
+	        this.LatestUploadAt = source["LatestUploadAt"];
 	        this.StatusLabel = source["StatusLabel"];
 	        this.Metadata = this.convertValues(source["Metadata"], FileMetadata);
 	        this.ExternalIDs = this.convertValues(source["ExternalIDs"], ExternalIDs);
@@ -2028,8 +1814,7 @@ export namespace api {
 	    ImgURL?: string;
 	    RawURL?: string;
 	    WebURL?: string;
-	    // Go type: time
-	    UploadedAt?: any;
+	    UploadedAt?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ScreenshotImage(source);
@@ -2047,26 +1832,8 @@ export namespace api {
 	        this.ImgURL = source["ImgURL"];
 	        this.RawURL = source["RawURL"];
 	        this.WebURL = source["WebURL"];
-	        this.UploadedAt = this.convertValues(source["UploadedAt"], null);
+	        this.UploadedAt = source["UploadedAt"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class ScreenshotLinkedImage {
 	    Tracker: string;
@@ -2700,8 +2467,7 @@ export namespace logging {
 	
 	export class Entry {
 	    id: number;
-	    // Go type: time
-	    time: any;
+	    time: string;
 	    level: string;
 	    message: string;
 	
@@ -2712,28 +2478,10 @@ export namespace logging {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.time = this.convertValues(source["time"], null);
+	        this.time = source["time"];
 	        this.level = source["level"];
 	        this.message = source["message"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 
 }

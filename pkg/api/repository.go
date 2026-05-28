@@ -93,7 +93,7 @@ func (c *Category) Scan(src any) error {
 type FileMetadata struct {
 	Path       string
 	InfoHash   string
-	UpdatedAt  time.Time
+	UpdatedAt  time.Time `ts_type:"string"`
 	DiscType   string
 	VideoPath  string
 	FileList   []string
@@ -152,18 +152,18 @@ type TrackerMetadata struct {
 	ImageURLs   []string
 	Filename    string
 	Matched     bool
-	UpdatedAt   time.Time
+	UpdatedAt   time.Time `ts_type:"string"`
 }
 
 type TrackerTimestamp struct {
 	Tracker   string
-	UpdatedAt time.Time
+	UpdatedAt time.Time `ts_type:"string"`
 }
 
 type UploadRecord struct {
 	Tracker    string
 	Status     string
-	CreatedAt  time.Time
+	CreatedAt  time.Time `ts_type:"string"`
 	SourcePath string
 }
 
@@ -172,21 +172,21 @@ type TrackerRuleFailure struct {
 	Tracker    string
 	Rule       string
 	Reason     string
-	CreatedAt  time.Time
+	CreatedAt  time.Time `ts_type:"string"`
 }
 
 type DescriptionOverride struct {
 	SourcePath  string
 	GroupKey    string
 	Description string
-	UpdatedAt   time.Time
+	UpdatedAt   time.Time `ts_type:"string"`
 }
 
 type PlaylistSelection struct {
 	SourcePath        string
 	SelectedPlaylists []string
 	UseAll            bool
-	UpdatedAt         time.Time
+	UpdatedAt         time.Time `ts_type:"string"`
 }
 
 type Screenshot struct {
@@ -197,7 +197,7 @@ type Screenshot struct {
 	Width       int
 	Height      int
 	Purpose     ScreenshotPurpose
-	CapturedAt  time.Time
+	CapturedAt  time.Time `ts_type:"string"`
 }
 
 type DVDMediaInfo struct {
@@ -214,7 +214,7 @@ type DVDMediaInfo struct {
 	MediaInfoJSON   string
 	MediaInfoText   string
 	VOBMediaInfoRaw string
-	UpdatedAt       time.Time
+	UpdatedAt       time.Time `ts_type:"string"`
 }
 
 type MetadataRepository interface {

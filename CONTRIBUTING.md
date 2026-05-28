@@ -26,8 +26,8 @@ Install the following on your machine:
 - [GNU Make](https://www.gnu.org/software/make/) — top-level shortcuts for builds, checks, formatting, and hooks
 - [golangci-lint](https://golangci-lint.run/) — used by hooks and CI
 - [Lefthook](https://github.com/evilmartians/lefthook) — git hooks runner (see [Git hooks](#git-hooks-lefthook))
-- [Wails CLI](https://wails.io/) `v2.10.1` for desktop builds
-  - Install with `go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1`
+- [Wails CLI](https://wails.io/) `v2.12.0` for desktop builds
+  - Build scripts invoke `go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0`
 
 On Linux, Wails builds also need GTK/WebKit development packages. The full list is in [`.github/workflows/build-binaries.yml`](./.github/workflows/build-binaries.yml) — key packages are `build-essential`, `libgtk-3-dev`, `libwebkit2gtk-4.0-dev` (or `4.1-dev`), `libglib2.0-dev`, and `pkg-config`.
 
