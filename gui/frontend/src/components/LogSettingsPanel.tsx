@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Checkbox } from "./ui/checkbox";
 import { Switch } from "./ui/switch";
 import { cn } from "../utils/cn";
 import { EventsOn } from "../utils/runtime";
@@ -340,17 +341,19 @@ export default function LogSettingsPanel({
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex flex-wrap gap-1.5">
             {levelOrder.map((level) => (
-              <label
+              <div
                 key={level}
                 className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold uppercase"
               >
-                <input
-                  type="checkbox"
+                <Checkbox
+                  id={`log-level-${level}`}
                   checked={levelFilter[level]}
-                  onChange={() => toggleLevel(level)}
+                  onCheckedChange={() => toggleLevel(level)}
                 />
-                <span>{level.toUpperCase()}</span>
-              </label>
+                <label className="cursor-pointer" htmlFor={`log-level-${level}`}>
+                  {level.toUpperCase()}
+                </label>
+              </div>
             ))}
           </div>
           <input

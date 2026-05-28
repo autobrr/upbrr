@@ -4,6 +4,7 @@
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Switch } from "../../components/ui/switch";
 import type {
   MetadataPreview,
@@ -216,21 +217,20 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
 
     if (field.Kind === "boolean") {
       const checked = value === "true";
+      const checkboxId = `questionnaire-${trackerName}-${field.Key}`;
       return (
-        <label className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
-          <input
-            type="checkbox"
+        <div className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
+          <Checkbox
+            id={checkboxId}
             checked={checked}
-            onChange={(event) =>
-              onQuestionnaireAnswerChange(
-                trackerName,
-                field.Key,
-                event.target.checked ? "true" : "false",
-              )
+            onCheckedChange={(nextChecked) =>
+              onQuestionnaireAnswerChange(trackerName, field.Key, nextChecked ? "true" : "false")
             }
           />
-          <span>{field.Placeholder || "Enabled"}</span>
-        </label>
+          <label className="cursor-pointer" htmlFor={checkboxId}>
+            {field.Placeholder || "Enabled"}
+          </label>
+        </div>
       );
     }
 

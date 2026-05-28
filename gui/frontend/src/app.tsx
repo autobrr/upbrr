@@ -3,6 +3,7 @@
 
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
 import DupeCheckPage from "./pages/dupe_check";
@@ -631,9 +632,7 @@ export default function App() {
   const [hostBrowser, setHostBrowser] = useState<BrowseDirectoryResponse | null>(null);
   const [hostBrowserLoading, setHostBrowserLoading] = useState(false);
   const [hostBrowserError, setHostBrowserError] = useState("");
-  const hostBrowserDialogRef = useRef<HTMLDivElement | null>(null);
   const hostBrowserEntryRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const hostBrowserPreviousFocusRef = useRef<HTMLElement | null>(null);
 
   const builderDirty = useMemo(
     () => Object.values(builderDirtyByGroup).some(Boolean),
@@ -727,14 +726,6 @@ export default function App() {
   useEffect(() => {
     if (!lightboxImage) return;
     setLightboxFit(true);
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setLightboxImage("");
-        setLightboxAlt("");
-      }
-    };
-    globalThis.addEventListener("keydown", handleKeyDown);
-    return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, [lightboxImage]);
 
   useEffect(() => {
@@ -2353,21 +2344,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!hostBrowserMode) {
-      hostBrowserPreviousFocusRef.current?.focus();
-      hostBrowserPreviousFocusRef.current = null;
-      return;
-    }
-    if (!hostBrowserPreviousFocusRef.current) {
-      hostBrowserPreviousFocusRef.current = document.activeElement as HTMLElement | null;
-    }
-    if (hostBrowserLoading) {
+    if (!hostBrowserMode || hostBrowserLoading) {
       return;
     }
 
-    const focusTarget =
-      hostBrowserEntryRefs.current.find((entry) => entry !== null) || hostBrowserDialogRef.current;
-    focusTarget?.focus();
+    hostBrowserEntryRefs.current.find((entry) => entry !== null)?.focus();
   }, [hostBrowser?.currentPath, hostBrowser?.entries.length, hostBrowserLoading, hostBrowserMode]);
 
   const browseHostDirectory = async (nextPath: string) => {
@@ -2433,45 +2414,6 @@ export default function App() {
       event.preventDefault();
       event.stopPropagation();
       void selectHostPath(entry.path, entry.isDir);
-    }
-  };
-
-  const handleHostBrowserDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeHostBrowser();
-      return;
-    }
-    if (event.key !== "Tab") {
-      return;
-    }
-
-    const dialog = hostBrowserDialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    const focusable = Array.from(
-      dialog.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null);
-    if (focusable.length === 0) {
-      event.preventDefault();
-      dialog.focus();
-      return;
-    }
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-      return;
-    }
-    if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
     }
   };
 
@@ -4386,20 +4328,19 @@ export default function App() {
             />
           )}
         </main>
-        {lightboxImage ? (
-          <div
-            className="lightbox-overlay"
-            role="dialog"
-            aria-modal="true"
-            onClick={() => {
+        <Dialog.Root
+          open={Boolean(lightboxImage)}
+          onOpenChange={(open) => {
+            if (!open) {
               setLightboxImage("");
               setLightboxAlt("");
-            }}
-          >
-            <div
-              className={`lightbox-content ${lightboxFit ? "fit" : "native"}`}
-              onClick={(event) => event.stopPropagation()}
-            >
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="lightbox-overlay" />
+            <Dialog.Content className={`lightbox-content ${lightboxFit ? "fit" : "native"}`}>
+              <Dialog.Title className="sr-only">{lightboxAlt || "Preview"}</Dialog.Title>
               <div className="lightbox-toolbar">
                 <button
                   className="lightbox-toggle"
@@ -4409,29 +4350,35 @@ export default function App() {
                   {lightboxFit ? "Actual size" : "Fit to screen"}
                 </button>
               </div>
-              <img src={lightboxImage} alt={lightboxAlt || "Preview"} />
-            </div>
-          </div>
-        ) : null}
-        {hostBrowserMode ? (
-          <div
-            className="host-browser-overlay"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Host file browser"
-            ref={hostBrowserDialogRef}
-            tabIndex={-1}
-            onKeyDown={handleHostBrowserDialogKeyDown}
-          >
-            <div className="host-browser-dialog">
+              <img className="lightbox-image" src={lightboxImage} alt={lightboxAlt || "Preview"} />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+        <Dialog.Root
+          open={Boolean(hostBrowserMode)}
+          onOpenChange={(open) => {
+            if (!open) closeHostBrowser();
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="host-browser-overlay" />
+            <Dialog.Content className="host-browser-dialog">
               <div className="host-browser-header">
                 <div>
-                  <p className="label">Host browser</p>
-                  <p className="mono host-browser-path">{hostBrowser?.currentPath || "Computer"}</p>
+                  <Dialog.Title asChild>
+                    <h2 className="label">Host browser</h2>
+                  </Dialog.Title>
+                  <Dialog.Description asChild>
+                    <p className="mono host-browser-path">
+                      {hostBrowser?.currentPath || "Computer"}
+                    </p>
+                  </Dialog.Description>
                 </div>
-                <button className="ghost" type="button" onClick={closeHostBrowser}>
-                  Close
-                </button>
+                <Dialog.Close asChild>
+                  <button className="ghost" type="button">
+                    Close
+                  </button>
+                </Dialog.Close>
               </div>
               <div className="host-browser-toolbar">
                 <button
@@ -4522,9 +4469,9 @@ export default function App() {
                   ))}
                 </div>
               ) : null}
-            </div>
-          </div>
-        ) : null}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
       </div>
     </div>
   );

@@ -375,21 +375,22 @@ body {
   position: fixed;
   inset: 0;
   z-index: 1200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
   background: rgba(6, 10, 18, 0.78);
   backdrop-filter: blur(6px);
 }
 
 .import-confirm-dialog {
-  width: min(100%, 480px);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 1201;
+  width: min(480px, calc(100vw - 40px));
   padding: 18px;
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 12px;
   box-shadow: var(--shadow);
+  transform: translate(-50%, -50%);
 }
 
 .import-confirm-dialog__body {
@@ -872,58 +873,17 @@ h2 {
 }
 
 .tracker-pill {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.tracker-pill input[type="checkbox"] {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.pill-label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 24px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(12, 16, 26, 0.58);
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 600;
-  line-height: 1.1;
   letter-spacing: 0.02em;
-  user-select: none;
-  cursor: pointer;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    color 0.2s ease,
-    background-color 0.2s ease;
 }
 
-:root.light .pill-label {
-  border-color: rgba(0, 0, 0, 0.14);
-  background: rgba(255, 255, 255, 0.86);
-}
-
-.tracker-pill input[type="checkbox"]:checked + .pill-label {
-  border-color: var(--accent-2);
-  color: var(--text);
-  background: rgba(53, 194, 193, 0.16);
-  box-shadow: 0 0 12px rgba(53, 194, 193, 0.16);
-}
-
-.tracker-pill input[type="checkbox"]:focus-visible + .pill-label {
+.tracker-pill:focus-visible {
   outline: 2px solid var(--accent-2);
   outline-offset: 2px;
+}
+
+:root.light .tracker-pill {
+  border-color: rgba(0, 0, 0, 0.14);
+  background: rgba(255, 255, 255, 0.86);
 }
 
 .edit-actions {
@@ -1510,10 +1470,6 @@ h2 {
   position: fixed;
   inset: 0;
   background: rgba(6, 10, 18, 0.85);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 19px;
   z-index: 9999;
 }
 
@@ -1527,8 +1483,12 @@ h2 {
 }
 
 .lightbox-content {
-  max-width: 96vw;
-  max-height: 92vh;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 10000;
+  max-width: calc(100vw - 38px);
+  max-height: calc(100vh - 38px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1537,9 +1497,9 @@ h2 {
   padding: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   overflow: auto;
-  position: relative;
   flex-direction: column;
   gap: 9px;
+  transform: translate(-50%, -50%);
 }
 
 :root.light .lightbox-content {
@@ -1547,7 +1507,7 @@ h2 {
   border-color: rgba(0, 0, 0, 0.1);
 }
 
-.lightbox-overlay .lightbox-content img {
+.lightbox-image {
   border-radius: 12px;
 }
 
@@ -1589,16 +1549,16 @@ h2 {
   position: fixed;
   inset: 0;
   z-index: 9000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
   background: rgba(5, 8, 14, 0.72);
 }
 
 .host-browser-dialog {
-  width: min(900px, 100%);
-  max-height: min(760px, 88vh);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 9001;
+  width: min(900px, calc(100vw - 48px));
+  max-height: min(760px, calc(100vh - 48px));
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1607,6 +1567,7 @@ h2 {
   background: var(--panel);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: var(--shadow);
+  transform: translate(-50%, -50%);
 }
 
 :root.light .host-browser-dialog {
@@ -1623,6 +1584,10 @@ h2 {
 
 .host-browser-header {
   justify-content: space-between;
+}
+
+.host-browser-header .label {
+  margin: 0;
 }
 
 .host-browser-toolbar {
@@ -1774,6 +1739,22 @@ h2 {
   align-items: center;
   gap: 0.75rem;
   color: rgba(226, 232, 240, 0.9);
+}
+
+.web-auth-card__checkbox label {
+  display: inline;
+  cursor: pointer;
+}
+
+.web-auth-shell .web-auth-card button[role="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.25rem;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--accent-2);
+  font-weight: 400;
 }
 
 .web-auth-shell .web-auth-card__checkbox input {

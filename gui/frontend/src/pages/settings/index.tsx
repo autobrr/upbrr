@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
 import { cn } from "../../utils/cn";
@@ -425,17 +426,15 @@ export default function SettingsPage(props: Props) {
         {settingsError ? <p className="error">{settingsError}</p> : null}
       </section>
 
-      {importConfirmOpen ? (
-        <div
-          className="import-confirm-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="import-confirm-title"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) handleImportConfigCancel();
-          }}
-        >
-          <div className="import-confirm-dialog">
+      <AlertDialog.Root
+        open={importConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) handleImportConfigCancel();
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className="import-confirm-overlay" />
+          <AlertDialog.Content className="import-confirm-dialog">
             <div className="import-confirm-dialog__icon">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
                 <path d="M12 3 1.5 21h21L12 3Z" fill="currentColor" opacity=".12" />
@@ -450,22 +449,26 @@ export default function SettingsPage(props: Props) {
               </svg>
             </div>
             <div className="import-confirm-dialog__body">
-              <h2 id="import-confirm-title" className="import-confirm-dialog__title">
-                Replace current configuration?
-              </h2>
-              <p className="import-confirm-dialog__message">
-                Importing a configuration file will overwrite your current settings in the database.
-                This action cannot be undone.
-              </p>
+              <AlertDialog.Title asChild>
+                <h2 className="import-confirm-dialog__title">Replace current configuration?</h2>
+              </AlertDialog.Title>
+              <AlertDialog.Description asChild>
+                <p className="import-confirm-dialog__message">
+                  Importing a configuration file will overwrite your current settings in the
+                  database. This action cannot be undone.
+                </p>
+              </AlertDialog.Description>
               <p className="import-confirm-dialog__hint">
                 We strongly recommend exporting your current configuration first so you can restore
                 it if the imported file isn&apos;t what you expected.
               </p>
             </div>
             <div className="import-confirm-dialog__actions">
-              <Button type="button" onClick={handleImportConfigCancel} disabled={settingsImporting}>
-                Cancel
-              </Button>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" disabled={settingsImporting}>
+                  Cancel
+                </Button>
+              </AlertDialog.Cancel>
               <Button
                 type="button"
                 onClick={handleExportSettings}
@@ -473,19 +476,24 @@ export default function SettingsPage(props: Props) {
               >
                 {settingsExporting ? "Exporting..." : "Export current config"}
               </Button>
-              <Button
-                type="button"
-                variant="primary"
-                className="import-confirm-dialog__confirm"
-                onClick={handleImportConfigConfirm}
-                disabled={settingsImporting}
-              >
-                {settingsImporting ? "Importing..." : "Choose file & import"}
-              </Button>
+              <AlertDialog.Action asChild>
+                <Button
+                  type="button"
+                  variant="primary"
+                  className="import-confirm-dialog__confirm"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    handleImportConfigConfirm();
+                  }}
+                  disabled={settingsImporting}
+                >
+                  {settingsImporting ? "Importing..." : "Choose file & import"}
+                </Button>
+              </AlertDialog.Action>
             </div>
-          </div>
-        </div>
-      ) : null}
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </div>
   );
 }

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../components/ui/button";
+import { PillCheckbox } from "../components/ui/checkbox";
 import { Switch } from "../components/ui/switch";
 import type { ConfigMap, ConfigValue, FieldMeta, ImageHostPolicyMetadata } from "../types";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
@@ -1417,14 +1418,13 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                 <div className="tracker-selection-container">
                   <div className="tracker-pills">
                     {trackerNames.map((tracker) => (
-                      <label key={tracker} className="tracker-pill">
-                        <input
-                          type="checkbox"
-                          checked={normalizedDefaultTrackers.includes(tracker)}
-                          onChange={(event) => toggleDefaultTracker(tracker, event.target.checked)}
-                        />
-                        <span className="pill-label">{tracker}</span>
-                      </label>
+                      <PillCheckbox
+                        key={tracker}
+                        checked={normalizedDefaultTrackers.includes(tracker)}
+                        onCheckedChange={(checked) => toggleDefaultTracker(tracker, checked)}
+                      >
+                        {tracker}
+                      </PillCheckbox>
                     ))}
                   </div>
                 </div>

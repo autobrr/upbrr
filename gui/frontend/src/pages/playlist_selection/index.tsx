@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
 import type { PlaylistInfo } from "../../types";
 
 interface PlaylistSelectionPageProps {
@@ -169,21 +170,26 @@ const PlaylistSelectionPage = ({
           {playlists.slice(0, displayCount).map((playlist, index) => {
             const totalSize = playlist.items?.reduce((sum, item) => sum + item.size, 0) || 0;
             const fileCount = playlist.items?.length || 0;
+            const checkboxId = `playlist-${index}`;
             return (
               <div
                 key={playlist.file}
                 className="grid gap-1 border-b border-white/10 px-3 py-2 last:border-b-0 hover:bg-white/5"
               >
-                <label className="flex cursor-pointer select-none items-center gap-2">
-                  <input
-                    className="h-4 w-4 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-                    type="checkbox"
+                <div className="flex select-none items-center gap-2">
+                  <Checkbox
+                    id={checkboxId}
                     checked={selectedIndices.has(index)}
-                    onChange={() => handleTogglePlaylist(index)}
+                    onCheckedChange={() => handleTogglePlaylist(index)}
                     disabled={saving}
                   />
-                  <span className="font-semibold text-[var(--text)]">{playlist.file}</span>
-                </label>
+                  <label
+                    className="cursor-pointer font-semibold text-[var(--text)]"
+                    htmlFor={checkboxId}
+                  >
+                    {playlist.file}
+                  </label>
+                </div>
                 <span className="ml-6 text-xs text-[var(--muted)]">
                   {formatDuration(playlist.duration)} • {fileCount} files • {formatBytes(totalSize)}{" "}
                   • Score: {playlist.score.toFixed(2)}

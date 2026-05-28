@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
+import { PillCheckbox } from "../../components/ui/checkbox";
 import { Switch } from "../../components/ui/switch";
 import type {
   DetailBlock,
@@ -1139,19 +1140,18 @@ export default function InputPage(props: Props) {
                   ) : (
                     <div className="tracker-pills">
                       {trackerUploadItems.map((tracker) => (
-                        <label key={tracker.name} className="tracker-pill">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(releasePageTrackerSelection[tracker.name])}
-                            onChange={(event) =>
-                              setReleasePageTrackerSelection((prev) => ({
-                                ...prev,
-                                [tracker.name]: event.target.checked,
-                              }))
-                            }
-                          />
-                          <span className="pill-label">{tracker.name}</span>
-                        </label>
+                        <PillCheckbox
+                          key={tracker.name}
+                          checked={Boolean(releasePageTrackerSelection[tracker.name])}
+                          onCheckedChange={(checked) =>
+                            setReleasePageTrackerSelection((prev) => ({
+                              ...prev,
+                              [tracker.name]: checked,
+                            }))
+                          }
+                        >
+                          {tracker.name}
+                        </PillCheckbox>
                       ))}
                     </div>
                   )}
