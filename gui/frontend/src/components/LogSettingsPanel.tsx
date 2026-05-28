@@ -326,13 +326,14 @@ export default function LogSettingsPanel({
             <button className="ghost" type="button" onClick={handleClearLogs}>
               Clear
             </button>
-            <label className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold text-[var(--text)]">
+            <div className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold text-[var(--text)]">
               <span>Auto-scroll</span>
               <Switch
+                aria-label="Auto-scroll logs"
                 checked={autoScroll}
                 onChange={(event) => setAutoScroll(event.target.checked)}
               />
-            </label>
+            </div>
           </div>
         </div>
 

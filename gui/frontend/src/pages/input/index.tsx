@@ -890,14 +890,14 @@ export default function InputPage(props: Props) {
 
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2">
             <span className="text-sm font-semibold text-[var(--text)]">Run options</span>
-            <label className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
+            <div className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
               <Switch
                 aria-label="Enable debug run"
                 checked={runDebug}
                 onChange={(event) => setRunDebug(event.target.checked)}
               />
               <span>Debug run</span>
-            </label>
+            </div>
             <label
               className="inline-flex items-center gap-2 text-sm text-[var(--muted)]"
               htmlFor="run-log-level"
@@ -1379,10 +1379,10 @@ export default function InputPage(props: Props) {
                       />
                     </div>
                     {isTVEpisodePreview ? (
-                      <label className="settings-toggle">
+                      <div className="settings-toggle">
                         <span>Use season/episode instead</span>
-                        <input
-                          type="checkbox"
+                        <Switch
+                          aria-label="Use season/episode instead"
                           checked={Boolean(releaseEdits?.useSeasonEpisode)}
                           onChange={(event) => {
                             setReleaseEdits((prev) => ({
@@ -1392,110 +1392,101 @@ export default function InputPage(props: Props) {
                             markReleaseTouched("useSeasonEpisode");
                           }}
                         />
-                        <span className="settings-toggle__pill" />
-                      </label>
+                      </div>
                     ) : null}
                   </div>
                 </div>
                 <div className="settings-subgroup">
                   <div className="settings-subgroup__title">Flags</div>
                   <div className="settings-grid">
-                    <label className="settings-toggle">
+                    <div className="settings-toggle">
                       <span>No season</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No season"
                         checked={Boolean(releaseEdits?.noSeason)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noSeason: event.target.checked }));
                           markReleaseTouched("noSeason");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No year</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No year"
                         checked={Boolean(releaseEdits?.noYear)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noYear: event.target.checked }));
                           markReleaseTouched("noYear");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No AKA</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No AKA"
                         checked={Boolean(releaseEdits?.noAKA)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noAKA: event.target.checked }));
                           markReleaseTouched("noAKA");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No tag</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No tag"
                         checked={Boolean(releaseEdits?.noTag)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noTag: event.target.checked }));
                           markReleaseTouched("noTag");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No edition</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No edition"
                         checked={Boolean(releaseEdits?.noEdition)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noEdition: event.target.checked }));
                           markReleaseTouched("noEdition");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No dub</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No dub"
                         checked={Boolean(releaseEdits?.noDub)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noDub: event.target.checked }));
                           markReleaseTouched("noDub");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No dual-audio</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No dual-audio"
                         checked={Boolean(releaseEdits?.noDual)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noDual: event.target.checked }));
                           markReleaseTouched("noDual");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>Force dual-audio</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="Force dual-audio"
                         checked={Boolean(releaseEdits?.dualAudio)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, dualAudio: event.target.checked }));
                           markReleaseTouched("dualAudio");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
+                    </div>
                   </div>
                 </div>
                 {idOverrideState?.invalid ? (

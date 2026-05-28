@@ -268,9 +268,10 @@ export default function DupeCheckPage(props: Readonly<Props>) {
 
                   <div className="col-span-3 md:col-span-1">
                     {showIgnoreToggle ? (
-                      <label className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--text)]">
+                      <div className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--text)]">
                         <span>Ignore</span>
                         <Switch
+                          aria-label={`Ignore dupes for ${result.Tracker}`}
                           checked={dupeIgnore[result.Tracker] ?? false}
                           onChange={(event) =>
                             setDupeIgnore((prev) => ({
@@ -279,7 +280,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                             }))
                           }
                         />
-                      </label>
+                      </div>
                     ) : null}
                   </div>
                 </article>
