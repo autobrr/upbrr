@@ -43,7 +43,7 @@ export function FetchPreparation(arg1:string,arg2:api.ExternalIDOverrides,arg3:a
 
 export function FetchScreenshotPlan(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides):Promise<api.ScreenshotPlan>;
 
-export function FetchTrackerDryRun(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:boolean,arg6:Array<string>,arg7:Record<string, Record<string, string>>,arg8:Array<api.DescriptionBuilderGroup>,arg9:boolean,arg10:string):Promise<api.TrackerDryRunPreview>;
+export function FetchTrackerDryRun(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:Array<string>,arg6:Record<string, Record<string, string>>,arg7:Array<api.DescriptionBuilderGroup>,arg8:boolean,arg9:string):Promise<api.TrackerDryRunPreview>;
 
 export function GenerateScreenshots(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<api.ScreenshotSelection>,arg5:api.ScreenshotPurpose):Promise<api.ScreenshotResult>;
 
@@ -109,7 +109,7 @@ export function StartDupeCheck(arg1:string,arg2:api.ExternalIDOverrides,arg3:api
 
 export function StartLogStream():Promise<string>;
 
-export function StartTrackerUpload(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:boolean,arg6:Array<string>,arg7:Record<string, Record<string, string>>,arg8:Array<api.DescriptionBuilderGroup>,arg9:boolean,arg10:string):Promise<string>;
+export function StartTrackerUpload(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>,arg5:Array<string>,arg6:Record<string, Record<string, string>>,arg7:Array<api.DescriptionBuilderGroup>,arg8:boolean,arg9:string):Promise<string>;
 
 export function StopLogStream(arg1:string):Promise<void>;
 

@@ -3,7 +3,6 @@
 
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
 import type {
@@ -21,8 +20,6 @@ type Props = {
   ruleSkipReasons: Record<string, string>;
   ruleSkippedTrackerSet: Set<string>;
   failedDupeTrackerSet: Set<string>;
-  overrideRuleBlocks: boolean;
-  setOverrideRuleBlocks: Dispatch<SetStateAction<boolean>>;
   uploadToggles: Record<string, boolean>;
   setUploadToggles: Dispatch<SetStateAction<Record<string, boolean>>>;
   namingOverrides: Array<[string, unknown]>;
@@ -68,8 +65,6 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     ruleSkipReasons,
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,
-    overrideRuleBlocks,
-    setOverrideRuleBlocks,
     uploadToggles,
     setUploadToggles,
     namingOverrides,
@@ -105,10 +100,10 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
       if (hasFailedDupe) {
         reasons.push("Dupe check failed");
       }
-      if (hasDupes && !overrideRuleBlocks) {
+      if (hasDupes) {
         reasons.push("Dupes found");
       }
-      if (hasRuleSkip && !overrideRuleBlocks) {
+      if (hasRuleSkip) {
         reasons.push(ruleSkipReasons[normalized] || "Rule check failed");
       }
       next[tracker.name] = {
@@ -124,7 +119,6 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     dupedTrackerSet,
     ruleSkippedTrackerSet,
     ruleSkipReasons,
-    overrideRuleBlocks,
   ]);
 
   const availableTrackers = useMemo(
@@ -142,8 +136,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
       availableTrackers.filter((tracker) => {
         const normalized = tracker.name.toLowerCase().trim();
         if (!uploadToggles[tracker.name]) return false;
-        if (dupedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
-        if (ruleSkippedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
+        if (dupedTrackerSet.has(normalized)) return false;
+        if (ruleSkippedTrackerSet.has(normalized)) return false;
         if (failedDupeTrackerSet.has(normalized)) return false;
         return true;
       }).length,
@@ -153,7 +147,6 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
       dupedTrackerSet,
       ruleSkippedTrackerSet,
       failedDupeTrackerSet,
-      overrideRuleBlocks,
     ],
   );
 
@@ -261,14 +254,6 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
         <h1>Upload Targets</h1>
         <p className="subtitle">Toggle trackers and review naming changes before upload.</p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold text-[var(--text)]">
-            <Switch
-              aria-label="Override tracker blocks"
-              checked={overrideRuleBlocks}
-              onChange={(event) => setOverrideRuleBlocks(event.target.checked)}
-            />
-            <span>Override blocks</span>
-          </label>
           <Button
             type="button"
             variant="primary"
@@ -371,12 +356,6 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                     >
                       {statusLabel.replaceAll("_", " ")}
                     </span>
-                    {overrideRuleBlocks && dupedTrackerSet.has(normalizedTrackerName) ? (
-                      <Badge tone="info">Dupe override</Badge>
-                    ) : null}
-                    {overrideRuleBlocks && ruleSkippedTrackerSet.has(normalizedTrackerName) ? (
-                      <Badge tone="info">Rule override</Badge>
-                    ) : null}
                   </div>
                   <Switch
                     aria-label={`Enable upload for ${tracker.name}`}

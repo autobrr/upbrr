@@ -865,7 +865,6 @@ export type UIState = {
   selectedProvider?: string;
   releasePageTrackerSelection?: Record<string, boolean>;
   uploadToggles?: Record<string, boolean>;
-  overrideRuleBlocks?: boolean;
   runDebug?: boolean;
   runLogLevel?: string;
   runLogLevelTouched?: boolean;

@@ -278,7 +278,6 @@ declare global {
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
               trackers: string[],
-              ignoreRuleFailures: boolean,
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
@@ -388,7 +387,6 @@ declare global {
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
               trackers: string[],
-              ignoreRuleFailures: boolean,
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
@@ -586,7 +584,6 @@ export default function App() {
   const [builderRefreshing, setBuilderRefreshing] = useState(false);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
-  const [overrideRuleBlocks, setOverrideRuleBlocks] = useState(false);
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
   const [trackerUploadError, setTrackerUploadError] = useState("");
   const [trackerUploadJobID, setTrackerUploadJobID] = useState("");
@@ -1271,9 +1268,8 @@ export default function App() {
         if (!validTrackers.has(name)) return false;
         const normalized = name.toLowerCase().trim();
         if (!normalized) return false;
-        // overrideRuleBlocks can bypass known dupes and rule skips, but failed dupe checks stay blocked because the dupe state is unknown.
-        if (dupedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
-        if (ruleSkippedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
+        if (dupedTrackerSet.has(normalized)) return false;
+        if (ruleSkippedTrackerSet.has(normalized)) return false;
         if (failedDupeTrackerSet.has(normalized)) return false;
         return true;
       })
@@ -1284,7 +1280,6 @@ export default function App() {
     dupedTrackerSet,
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,
-    overrideRuleBlocks,
   ]);
 
   // Upload images workflow hook
@@ -1328,8 +1323,6 @@ export default function App() {
         setReleasePageTrackerSelection(state.releasePageTrackerSelection);
       }
       if (state.uploadToggles) setUploadToggles(state.uploadToggles);
-      if (typeof state.overrideRuleBlocks === "boolean")
-        setOverrideRuleBlocks(state.overrideRuleBlocks);
       if (typeof state.runDebug === "boolean") setRunDebug(state.runDebug);
       if (typeof state.runLogLevel === "string") setRunLogLevel(state.runLogLevel);
       if (typeof state.runLogLevelTouched === "boolean") {
@@ -1589,7 +1582,6 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
-      overrideRuleBlocks,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1676,7 +1668,6 @@ export default function App() {
     selectedProvider,
     releasePageTrackerSelection,
     uploadToggles,
-    overrideRuleBlocks,
     runDebug,
     runLogLevel,
     runLogLevelTouched,
@@ -1779,7 +1770,6 @@ export default function App() {
     resetScreenshots();
     resetUploadState();
     setUploadToggles({});
-    setOverrideRuleBlocks(false);
     setFinalDragIndex(null);
     setLiveCaptureLoading(false);
   }, [resetScreenshots, resetUploadState]);
@@ -1797,7 +1787,6 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
-      overrideRuleBlocks,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1835,7 +1824,6 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
-      overrideRuleBlocks,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -3328,7 +3316,6 @@ export default function App() {
     setBuilderSaved("");
     setBuilderRefreshing(false);
     setBuilderAutoRequestKey("");
-    setOverrideRuleBlocks(false);
     setTrackerUploadRunning(false);
     setTrackerUploadError("");
     setTrackerUploadJobID("");
@@ -3455,10 +3442,7 @@ export default function App() {
           next[item.name] = false;
           return;
         }
-        if (
-          (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) &&
-          !overrideRuleBlocks
-        ) {
+        if (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) {
           next[item.name] = false;
           return;
         }
@@ -3480,7 +3464,6 @@ export default function App() {
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,
     releasePageTrackerSelection,
-    overrideRuleBlocks,
   ]);
 
   useEffect(() => {
@@ -3633,7 +3616,6 @@ export default function App() {
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
-        overrideRuleBlocks,
         ignoredDupeTrackers,
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
         builderPreview.Groups || [],
@@ -3654,7 +3636,6 @@ export default function App() {
     idOverrideState,
     releaseOverrideState,
     getSelectedUploadTrackers,
-    overrideRuleBlocks,
     ignoredDupeTrackers,
     trackerDryRunPreview,
     trackerQuestionnaireAnswers,
@@ -3710,7 +3691,6 @@ export default function App() {
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
           selectedTrackers,
-          overrideRuleBlocks,
           ignoredDupeTrackers,
           cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
           descriptionGroups,
@@ -3750,7 +3730,6 @@ export default function App() {
       idOverrideState,
       releaseOverrideState,
       getSelectedUploadTrackers,
-      overrideRuleBlocks,
       ignoredDupeTrackers,
       trackerQuestionnaireAnswers,
       runDebug,
@@ -4338,8 +4317,6 @@ export default function App() {
               ruleSkipReasons={ruleSkipReasons}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
               failedDupeTrackerSet={failedDupeTrackerSet}
-              overrideRuleBlocks={overrideRuleBlocks}
-              setOverrideRuleBlocks={setOverrideRuleBlocks}
               uploadToggles={uploadToggles}
               setUploadToggles={setUploadToggles}
               namingOverrides={namingOverrides}
