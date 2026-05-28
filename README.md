@@ -147,6 +147,12 @@ GitHub Actions includes workflows for:
 
 The Dockerfile builds both `upbrr` and `upbrr-gui` binaries and places them in the final image.
 
+## Frontend Styling Strategy
+
+The frontend is in an incremental migration from broad custom CSS blocks toward Tailwind utilities. Existing `.settings-*` and `.screens-*` classes may stay until their JSX is touched, but new UI should prefer Tailwind utilities for local layout and spacing. Keep custom classes for shared component states, cross-cutting selectors, theme variables, or styles that would make JSX hard to read.
+
+Owner: frontend maintainers. Timeline: migrate class families opportunistically with the component PR that already changes the matching UI, then remove obsolete custom CSS in the same PR.
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to set up a development environment, run the test suite, install the git hooks, and write commit messages that pass the repo's commit-message validator ([`cmd/commitmsgcheck`](./cmd/commitmsgcheck)). The project uses [AGENTS.md](https://agents.md/) for AI-coding-agent guidance — see [`AGENTS.md`](./AGENTS.md).

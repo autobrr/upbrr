@@ -144,13 +144,11 @@ export default function WebRoot() {
 
     return (
       <div className="web-shell">
-        <div className="fixed right-3 top-3 z-[1100] flex items-center gap-2">
-          <span className="hidden h-8 items-center rounded-md border border-white/10 bg-slate-950/70 px-3 text-sm text-[var(--muted)] backdrop-blur md:inline-flex">
-            {status.username}
-          </span>
+        <div className="auth-bar">
+          <span className="auth-username">{status.username}</span>
           <button
             type="button"
-            className="inline-flex h-8 items-center justify-center rounded-md border border-white/10 bg-white/5 px-3 text-sm font-semibold text-[var(--text)] backdrop-blur transition hover:bg-white/10"
+            className="auth-logout"
             onClick={async () => {
               await browserAuth.logout();
               updateBrowserCSRFToken("");

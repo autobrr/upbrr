@@ -340,10 +340,13 @@ func emitPreparedUploadProgress(ctx context.Context, req api.Request, sourcePath
 }
 
 func firstRequestedTracker(trackers []string) string {
-	if len(trackers) == 0 {
-		return ""
+	for _, tracker := range trackers {
+		name := strings.TrimSpace(tracker)
+		if name != "" {
+			return name
+		}
 	}
-	return strings.TrimSpace(trackers[0])
+	return ""
 }
 
 func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSummary, error) {

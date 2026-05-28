@@ -25,7 +25,11 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// 700 chars keeps enough HTTP error context for short stack traces or JSON fragments
+// while avoiding oversized single-line log entries and stored history details.
 const maxHTTPErrorDetailLength = 700
+
+const maxHTTPErrorDetailDepth = 10
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
@@ -378,23 +382,32 @@ func FileBytes(path string) ([]byte, error) {
 	return payload, nil
 }
 
-func UploadHTTPError(tracker string, status int, body []byte) error {
+// HTTPError is a formatted tracker upload failure with redacted response detail.
+type HTTPError struct {
+	message string
+}
+
+func (e HTTPError) Error() string {
+	return e.message
+}
+
+func UploadHTTPError(tracker string, status int, body []byte) HTTPError {
 	detail := ExtractHTTPErrorDetail(body)
 	tracker = strings.ToUpper(RedactErrorDetail(tracker))
 	if detail == "" {
-		return fmt.Errorf("trackers: %s upload failed status=%d", tracker, status)
+		return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d", tracker, status)}
 	}
-	return fmt.Errorf("trackers: %s upload failed status=%d: %s", tracker, status, detail)
+	return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d: %s", tracker, status, detail)}
 }
 
-func UploadHTTPErrorWithURL(tracker string, status int, url string, body []byte) error {
+func UploadHTTPErrorWithURL(tracker string, status int, url string, body []byte) HTTPError {
 	detail := ExtractHTTPErrorDetail(body)
 	tracker = strings.ToUpper(RedactErrorDetail(tracker))
 	url = RedactErrorDetail(url)
 	if detail == "" {
-		return fmt.Errorf("trackers: %s upload failed status=%d url=%s", tracker, status, url)
+		return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d url=%s", tracker, status, url)}
 	}
-	return fmt.Errorf("trackers: %s upload failed status=%d url=%s: %s", tracker, status, url, detail)
+	return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d url=%s: %s", tracker, status, url, detail)}
 }
 
 func RedactErrorDetail(value string) string {
@@ -427,24 +440,28 @@ func extractJSONErrorDetail(body []byte) string {
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		return ""
 	}
-	return compactHTTPErrorText(formatErrorValue(decoded, ""))
+	return compactHTTPErrorText(formatErrorValue(decoded, "", 0))
 }
 
-func formatErrorValue(value any, key string) string {
+func formatErrorValue(value any, key string, depth int) string {
+	if depth >= maxHTTPErrorDetailDepth {
+		return ""
+	}
+
 	switch typed := value.(type) {
 	case map[string]any:
 		for _, candidate := range []string{"errors", "message", "status_message", "detail", "error_description", "reason", "error"} {
 			if nested, ok := valueForKey(typed, candidate); ok {
-				if formatted := formatErrorValue(nested, candidate); formatted != "" {
+				if formatted := formatErrorValue(nested, candidate, depth+1); formatted != "" {
 					return formatted
 				}
 			}
 		}
-		return formatErrorMap(typed)
+		return formatErrorMap(typed, depth)
 	case []any:
 		parts := make([]string, 0, len(typed))
 		for _, item := range typed {
-			if formatted := formatErrorValue(item, ""); formatted != "" {
+			if formatted := formatErrorValue(item, "", depth+1); formatted != "" {
 				parts = append(parts, formatted)
 			}
 		}
@@ -470,7 +487,11 @@ func isBooleanStatusKey(key string) bool {
 	}
 }
 
-func formatErrorMap(values map[string]any) string {
+func formatErrorMap(values map[string]any, depth int) string {
+	if depth >= maxHTTPErrorDetailDepth {
+		return ""
+	}
+
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)
@@ -482,7 +503,7 @@ func formatErrorMap(values map[string]any) string {
 		if strings.Contains(strings.ToLower(key), "token") || strings.Contains(strings.ToLower(key), "key") {
 			continue
 		}
-		formatted := formatErrorValue(values[key], key)
+		formatted := formatErrorValue(values[key], key, depth+1)
 		if formatted == "" {
 			continue
 		}

@@ -146,40 +146,48 @@ func TestGetHistoryOverviewUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	}
 }
 
-func TestGetLogExclusionsReturnsEmptySliceWhenMissing(t *testing.T) {
+func TestGetLogExclusionsReturnsEmptySlice(t *testing.T) {
 	t.Parallel()
 
-	app := &App{repo: openGUIAppTestRepo(t)}
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, app *App)
+	}{
+		{
+			name: "missing",
+		},
+		{
+			name: "stored empty",
+			setup: func(t *testing.T, app *App) {
+				t.Helper()
 
-	patterns, err := app.GetLogExclusions()
-	if err != nil {
-		t.Fatalf("get log exclusions: %v", err)
-	}
-	if patterns == nil {
-		t.Fatal("expected non-nil empty exclusions")
-	}
-	if len(patterns) != 0 {
-		t.Fatalf("expected no exclusions, got %#v", patterns)
-	}
-}
-
-func TestGetLogExclusionsReturnsEmptySliceWhenStoredEmpty(t *testing.T) {
-	t.Parallel()
-
-	app := &App{repo: openGUIAppTestRepo(t)}
-	if err := app.UpdateLogExclusions(nil); err != nil {
-		t.Fatalf("update log exclusions: %v", err)
+				if err := app.UpdateLogExclusions(nil); err != nil {
+					t.Fatalf("update log exclusions: %v", err)
+				}
+			},
+		},
 	}
 
-	patterns, err := app.GetLogExclusions()
-	if err != nil {
-		t.Fatalf("get log exclusions: %v", err)
-	}
-	if patterns == nil {
-		t.Fatal("expected non-nil empty exclusions")
-	}
-	if len(patterns) != 0 {
-		t.Fatalf("expected no exclusions, got %#v", patterns)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := &App{repo: openGUIAppTestRepo(t)}
+			if tt.setup != nil {
+				tt.setup(t, app)
+			}
+
+			patterns, err := app.GetLogExclusions()
+			if err != nil {
+				t.Fatalf("get log exclusions: %v", err)
+			}
+			if patterns == nil {
+				t.Fatal("expected non-nil empty exclusions")
+			}
+			if len(patterns) != 0 {
+				t.Fatalf("expected no exclusions, got %#v", patterns)
+			}
+		})
 	}
 }
 

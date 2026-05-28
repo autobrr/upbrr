@@ -128,11 +128,17 @@ type trackerUploadJob struct {
 	currentTotal         int
 	currentPercent       int
 	currentHashRateMiB   float64
+	lastSnapshotEmit     time.Time
+	snapshotThrottle     time.Duration
 	errorMessage         string
 	startedAt            time.Time
 	finishedAt           time.Time
 	cancel               context.CancelFunc
 }
+
+const trackerUploadSnapshotThrottle = 200 * time.Millisecond
+
+const trackerUploadHashRateEmitDeltaMiB = 1.0
 
 func normalizeTrackerList(trackers []string) []string {
 	seen := make(map[string]struct{})
@@ -443,6 +449,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 		states:               make(map[string]TrackerUploadTrackerState, len(resolvedTrackers)),
 		status:               "queued",
 		startedAt:            time.Now().UTC(),
+		snapshotThrottle:     trackerUploadSnapshotThrottle,
 	}
 	for _, tracker := range resolvedTrackers {
 		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
@@ -590,6 +597,10 @@ func (b *Backend) applyTrackerUploadProgress(job *trackerUploadJob, update api.U
 	}
 
 	job.mu.Lock()
+	now := time.Now()
+	previousStatus := job.currentTaskStatus
+	previousPercent := job.currentPercent
+	previousHashRate := job.currentHashRateMiB
 	job.currentTask = strings.TrimSpace(update.Task)
 	job.currentTaskStatus = strings.TrimSpace(update.Status)
 	job.currentMessage = strings.TrimSpace(update.Message)
@@ -597,6 +608,15 @@ func (b *Backend) applyTrackerUploadProgress(job *trackerUploadJob, update api.U
 	job.currentTotal = update.TotalPieces
 	job.currentPercent = update.Percent
 	job.currentHashRateMiB = update.HashRateMiB
+	throttle := job.snapshotThrottle
+	if throttle <= 0 {
+		throttle = trackerUploadSnapshotThrottle
+	}
+	shouldEmit := job.lastSnapshotEmit.IsZero() ||
+		now.Sub(job.lastSnapshotEmit) >= throttle ||
+		previousPercent != job.currentPercent ||
+		previousStatus != job.currentTaskStatus ||
+		absFloat64(previousHashRate-job.currentHashRateMiB) >= trackerUploadHashRateEmitDeltaMiB
 	if tracker != "" {
 		state := job.states[tracker]
 		state.Tracker = tracker
@@ -617,9 +637,21 @@ func (b *Backend) applyTrackerUploadProgress(job *trackerUploadJob, update api.U
 		}
 		job.states[tracker] = state
 	}
+	if shouldEmit {
+		job.lastSnapshotEmit = now
+	}
 	job.mu.Unlock()
 
-	b.emitTrackerUploadSnapshot(job)
+	if shouldEmit {
+		b.emitTrackerUploadSnapshot(job)
+	}
+}
+
+func absFloat64(value float64) float64 {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func (b *Backend) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob, tracker string) (api.Result, error) {

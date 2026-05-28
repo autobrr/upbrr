@@ -59,6 +59,7 @@ body {
   overflow: hidden;
 }
 
+/* TODO(styles-migration): Owner: frontend maintainers. Timeline: migrate .settings-* incrementally as settings JSX is touched; do not add new custom settings classes when Tailwind utilities can express the layout clearly. */
 .settings-header,
 .screens-actions {
   display: flex;
@@ -421,6 +422,7 @@ body {
   color: #fff;
 }
 
+/* TODO(styles-migration): Owner: frontend maintainers. Timeline: migrate .screens-* incrementally as screenshot UI is touched; keep custom classes only for shared states or selectors that utilities cannot keep readable. */
 .screens-actions {
   align-items: flex-start;
   margin-bottom: 0;
@@ -1686,6 +1688,56 @@ h2 {
   min-height: 100vh;
 }
 
+/* Prefer custom classes for stable app chrome; keep inline utilities for one-off layout tweaks. */
+.auth-bar {
+  position: fixed;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.auth-username {
+  display: none;
+  height: 2rem;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.375rem;
+  padding: 0 0.75rem;
+  background: rgba(2, 6, 23, 0.7);
+  color: var(--muted);
+  font-size: 0.875rem;
+  backdrop-filter: blur(8px);
+}
+
+.auth-logout {
+  display: inline-flex;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.375rem;
+  padding: 0 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+  transition: background 150ms ease;
+}
+
+.auth-logout:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+@media (min-width: 768px) {
+  .auth-username {
+    display: inline-flex;
+  }
+}
+
 .web-auth-shell {
   min-height: 100vh;
   display: grid;
@@ -1784,4 +1836,5 @@ h2 {
   color: #fca5a5;
 }
 
+/* Tailwind utilities stay enabled for incremental migration; see README "Frontend Styling Strategy" before adding broad custom CSS. */
 @tailwind utilities;

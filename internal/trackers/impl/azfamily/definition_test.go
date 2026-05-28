@@ -115,6 +115,7 @@ func TestUploadSuccess(t *testing.T) {
 			Container:         "mkv",
 			AudioLanguages:    []string{"English"},
 			SubtitleLanguages: []string{"English"},
+			Options:           api.UploadOptions{KeepImages: true},
 		},
 		TrackerConfig: config.TrackerConfig{URL: server.URL},
 		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},

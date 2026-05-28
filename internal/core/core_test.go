@@ -24,6 +24,31 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
+func TestFirstRequestedTracker(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		trackers []string
+		want     string
+	}{
+		{name: "nil", trackers: nil, want: ""},
+		{name: "empty first", trackers: []string{"", "BHD"}, want: "BHD"},
+		{name: "whitespace first", trackers: []string{" \t", " HDB "}, want: "HDB"},
+		{name: "all empty", trackers: []string{"", "  "}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := firstRequestedTracker(tt.trackers); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestBuildDescriptionBuilderGroupAddsBHDMediaInfoPreviewOnly(t *testing.T) {
 	t.Parallel()
 

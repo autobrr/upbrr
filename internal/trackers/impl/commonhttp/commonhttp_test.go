@@ -250,13 +250,29 @@ func TestExtractHTTPErrorDetailFallsBackToCompactBody(t *testing.T) {
 	}
 }
 
+func TestFormatErrorValueStopsAtMaxDepth(t *testing.T) {
+	t.Parallel()
+
+	if got := formatErrorValue(nestedMessageValue(maxHTTPErrorDetailDepth-1, "within depth"), "", 0); got != "within depth" {
+		t.Fatalf("expected nested value within depth, got %q", got)
+	}
+	if got := formatErrorValue(nestedMessageValue(maxHTTPErrorDetailDepth, "too deep"), "", 0); got != "" {
+		t.Fatalf("expected nested value beyond depth to be skipped, got %q", got)
+	}
+}
+
+func nestedMessageValue(depth int, message string) any {
+	var value any = message
+	for range depth {
+		value = map[string]any{"message": value}
+	}
+	return value
+}
+
 func TestUploadHTTPErrorWithURLRedactsURLSecrets(t *testing.T) {
 	t.Parallel()
 
-	err := UploadHTTPErrorWithURL("AITHER", 403, "https://tracker.example/api?api_key=secret-key", nil)
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	var err error = UploadHTTPErrorWithURL("AITHER", 403, "https://tracker.example/api?api_key=secret-key", nil)
 	if strings.Contains(err.Error(), "secret-key") {
 		t.Fatalf("expected URL secret to be redacted, got %v", err)
 	}
@@ -268,10 +284,7 @@ func TestUploadHTTPErrorWithURLRedactsURLSecrets(t *testing.T) {
 func TestUploadHTTPErrorIncludesExtractedDetail(t *testing.T) {
 	t.Parallel()
 
-	err := UploadHTTPError("AITHER", 422, []byte(`{"errors":{"name":["Already exists"]}}`))
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	var err error = UploadHTTPError("AITHER", 422, []byte(`{"errors":{"name":["Already exists"]}}`))
 	if !strings.Contains(err.Error(), "AITHER upload failed status=422: name: Already exists") {
 		t.Fatalf("unexpected error: %v", err)
 	}
