@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -65,7 +66,14 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if artifactPath != "" && req.Logger != nil {
 			req.Logger.Warnf("trackers: BHD upload failure artifact saved to %s", artifactPath)
 		}
-		return api.UploadSummary{}, fmt.Errorf("trackers: BHD api error: %s", response.StatusMessage)
+		message := commonhttp.ExtractHTTPErrorDetail(responseBody)
+		if message == "" {
+			message = commonhttp.RedactErrorDetail(response.StatusMessage)
+		}
+		if message == "" {
+			message = "upload failed"
+		}
+		return api.UploadSummary{}, fmt.Errorf("trackers: BHD api error: %s", message)
 	}
 
 	torrentID := extractTorrentID(response.StatusMessage)

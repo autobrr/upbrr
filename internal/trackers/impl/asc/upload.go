@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -106,9 +107,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		_ = os.WriteFile(failurePath, bodyBytes, 0o600)
 	}
 	if failurePath != "" {
-		return api.UploadSummary{}, fmt.Errorf("trackers: ASC upload failed status=%d url=%s failure=%s", resp.StatusCode, finalURL, failurePath)
+		return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, bodyBytes), failurePath)
 	}
-	return api.UploadSummary{}, fmt.Errorf("trackers: ASC upload failed status=%d url=%s", resp.StatusCode, finalURL)
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, bodyBytes)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

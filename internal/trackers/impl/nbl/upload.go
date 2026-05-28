@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -60,7 +61,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: NBL read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return api.UploadSummary{}, fmt.Errorf("trackers: NBL upload failed status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		return api.UploadSummary{}, commonhttp.UploadHTTPError("NBL", resp.StatusCode, bodyBytes)
 	}
 
 	payload := map[string]any{}

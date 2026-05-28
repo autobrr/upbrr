@@ -37,6 +37,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -121,14 +122,17 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		failurePath = pathValue
 		_ = os.WriteFile(failurePath, bodyBytes, 0o600)
 	}
-	errText := extractAlertError(string(bodyBytes))
+	errText := commonhttp.RedactErrorDetail(extractAlertError(string(bodyBytes)))
 	if errText == "" {
-		errText = strings.TrimSpace(string(bodyBytes))
+		errText = commonhttp.ExtractHTTPErrorDetail(bodyBytes)
+	}
+	if errText == "" {
+		errText = "upload failed"
 	}
 	if failurePath != "" {
-		return api.UploadSummary{}, fmt.Errorf("trackers: PTP upload failed status=%d url=%s error=%s failure=%s", resp.StatusCode, finalURL, compactError(errText), failurePath)
+		return api.UploadSummary{}, fmt.Errorf("trackers: PTP upload failed status=%d url=%s error=%s failure=%s", resp.StatusCode, commonhttp.RedactErrorDetail(finalURL), compactError(errText), failurePath)
 	}
-	return api.UploadSummary{}, fmt.Errorf("trackers: PTP upload failed status=%d url=%s error=%s", resp.StatusCode, finalURL, compactError(errText))
+	return api.UploadSummary{}, fmt.Errorf("trackers: PTP upload failed status=%d url=%s error=%s", resp.StatusCode, commonhttp.RedactErrorDetail(finalURL), compactError(errText))
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

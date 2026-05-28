@@ -111,7 +111,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "FL", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, fmt.Errorf("trackers: FL upload failed status=%d url=%s", resp.StatusCode, finalURL)
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("FL", resp.StatusCode, finalURL, responseBody)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

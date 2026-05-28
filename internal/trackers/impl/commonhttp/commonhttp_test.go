@@ -196,3 +196,83 @@ func TestLoadCookiesForTrackerReturnsErrorWhenNoSourcesExist(t *testing.T) {
 		t.Fatal("expected missing cookie sources to fail")
 	}
 }
+
+func TestExtractHTTPErrorDetailPrefersErrorsMap(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"message":"Validation failed","errors":{"name":["The name has already been taken."],"tmdb":["The tmdb field is required."]},"api_token":"secret"}`)
+	got := ExtractHTTPErrorDetail(body)
+
+	if !strings.Contains(got, "name: The name has already been taken.") {
+		t.Fatalf("expected name error, got %q", got)
+	}
+	if !strings.Contains(got, "tmdb: The tmdb field is required.") {
+		t.Fatalf("expected tmdb error, got %q", got)
+	}
+	if strings.Contains(got, "secret") {
+		t.Fatalf("expected sensitive value redacted, got %q", got)
+	}
+}
+
+func TestExtractHTTPErrorDetailSkipsBooleanStatusKeys(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"success":false,"error":true,"message":"Invalid category selected."}`)
+	got := ExtractHTTPErrorDetail(body)
+
+	if got != "Invalid category selected." {
+		t.Fatalf("unexpected detail: %q", got)
+	}
+}
+
+func TestExtractHTTPErrorDetailRedactsMessageSecrets(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"message":"Upload rejected at https://tracker.example/api?api_token=secret-token"}`)
+	got := ExtractHTTPErrorDetail(body)
+
+	if strings.Contains(got, "secret-token") {
+		t.Fatalf("expected secret to be redacted, got %q", got)
+	}
+	if !strings.Contains(got, "api_token=[REDACTED]") {
+		t.Fatalf("expected redacted token marker, got %q", got)
+	}
+}
+
+func TestExtractHTTPErrorDetailFallsBackToCompactBody(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("<html><body><h1>Forbidden</h1><p>Upload permission denied.</p></body></html>")
+	got := ExtractHTTPErrorDetail(body)
+
+	if got != "Forbidden Upload permission denied." {
+		t.Fatalf("unexpected compact body: %q", got)
+	}
+}
+
+func TestUploadHTTPErrorWithURLRedactsURLSecrets(t *testing.T) {
+	t.Parallel()
+
+	err := UploadHTTPErrorWithURL("AITHER", 403, "https://tracker.example/api?api_key=secret-key", nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "secret-key") {
+		t.Fatalf("expected URL secret to be redacted, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "api_key=[REDACTED]") {
+		t.Fatalf("expected redacted key marker, got %v", err)
+	}
+}
+
+func TestUploadHTTPErrorIncludesExtractedDetail(t *testing.T) {
+	t.Parallel()
+
+	err := UploadHTTPError("AITHER", 422, []byte(`{"errors":{"name":["Already exists"]}}`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "AITHER upload failed status=422: name: Already exists") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

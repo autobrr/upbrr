@@ -75,6 +75,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	responseBody, _ := io.ReadAll(resp.Body)
 	var decoded apiResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return api.UploadSummary{}, commonhttp.UploadHTTPError("GPW", resp.StatusCode, responseBody)
+		}
 		return api.UploadSummary{}, fmt.Errorf("trackers: GPW decode response: %w", err)
 	}
 	id := extractTorrentID(decoded.Response)
@@ -94,7 +97,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{Tracker: "GPW", TorrentID: id, TorrentURL: tURL, DownloadURL: tURL, TorrentPath: artifactPath}}}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "GPW", "upload_failure", responseBody, ".json")
-	return api.UploadSummary{}, fmt.Errorf("trackers: GPW %s", firstNonEmpty(decoded.Error, decoded.Message, "upload failed"))
+	return api.UploadSummary{}, fmt.Errorf("trackers: GPW %s", firstNonEmpty(commonhttp.ExtractHTTPErrorDetail(responseBody), commonhttp.RedactErrorDetail(decoded.Error), commonhttp.RedactErrorDetail(decoded.Message), "upload failed"))
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

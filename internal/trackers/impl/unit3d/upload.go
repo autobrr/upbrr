@@ -25,6 +25,7 @@ import (
 	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackerdata"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -178,7 +179,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s read response body: %w", trackerName, err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		err := fmt.Errorf("trackers: %s upload failed: status %d", trackerName, resp.StatusCode)
+		err := commonhttp.UploadHTTPError(trackerName, resp.StatusCode, body)
 		logger.Errorf("trackers: %s upload request failed: %v", trackerName, err)
 		if len(body) > 0 {
 			logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(body), nil))
@@ -193,7 +194,10 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s response json: %w", trackerName, err)
 	}
 	if !result.Success {
-		message := strings.TrimSpace(result.Message)
+		message := commonhttp.ExtractHTTPErrorDetail(body)
+		if message == "" {
+			message = commonhttp.RedactErrorDetail(result.Message)
+		}
 		if message == "" {
 			message = "unknown error"
 		}

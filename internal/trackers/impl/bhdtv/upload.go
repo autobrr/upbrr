@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -64,7 +65,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if artifactErr != nil && req.Logger != nil {
 			req.Logger.Warnf("trackers: BHDTV failure artifact write failed: %v", artifactErr)
 		}
-		message := firstNonEmpty(strings.TrimSpace(response.Message), strings.TrimSpace(response.Status), "upload response did not include a view URL")
+		message := firstNonEmpty(commonhttp.ExtractHTTPErrorDetail(responseBody), commonhttp.RedactErrorDetail(response.Message), commonhttp.RedactErrorDetail(response.Status), "upload response did not include a view URL")
 		if artifactPath != "" {
 			message += " (" + artifactPath + ")"
 		}

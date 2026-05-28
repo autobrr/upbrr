@@ -31,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	descriptionmtv "github.com/autobrr/upbrr/internal/services/description/mtv"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -134,7 +135,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{Uploaded: 1}, nil
 	}
 
-	return api.UploadSummary{}, fmt.Errorf("trackers: MTV upload failed status=%d url=%s body=%s", resp.StatusCode, finalURL, strings.TrimSpace(string(bodyPreview)))
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("MTV", resp.StatusCode, finalURL, bodyPreview)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

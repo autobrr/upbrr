@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -71,7 +72,7 @@ func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload failed status=%d body=%s", site.Name, resp.StatusCode, strings.TrimSpace(string(body)))
+		return api.UploadSummary{}, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, body)
 	}
 
 	location := strings.TrimSpace(resp.Header.Get("Location"))
@@ -195,7 +196,7 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return taskInfo{}, fmt.Errorf("trackers: %s task creation failed status=%d body=%s", site.Name, resp.StatusCode, strings.TrimSpace(string(body)))
+		return taskInfo{}, fmt.Errorf("trackers: %s task creation failed: %w", site.Name, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, body))
 	}
 	location := strings.TrimSpace(resp.Header.Get("Location"))
 	taskID := extractPatternGroup(azTaskIDPattern, absoluteURL(site.BaseURL, location))

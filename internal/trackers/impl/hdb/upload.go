@@ -26,6 +26,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	descriptionhdb "github.com/autobrr/upbrr/internal/services/description/hdb"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -115,7 +116,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	matches := hdbSuccessURLPattern.FindStringSubmatch(finalURL)
 	if len(matches) < 2 {
 		bodyPreview, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return api.UploadSummary{}, fmt.Errorf("trackers: HDB upload failed status=%d url=%s body=%s", resp.StatusCode, finalURL, strings.TrimSpace(string(bodyPreview)))
+		return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("HDB", resp.StatusCode, finalURL, bodyPreview)
 	}
 
 	torrentID := strings.TrimSpace(matches[1])

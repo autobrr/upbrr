@@ -6,7 +6,6 @@ package tl
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -75,7 +74,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	if torrentID == "" {
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "TL", "upload_failure", responseBody, ".html")
-		return api.UploadSummary{}, errors.New("trackers: TL upload failed")
+		return api.UploadSummary{}, commonhttp.UploadHTTPError("TL", resp.StatusCode, responseBody)
 	}
 
 	urlValue := torrentURL + torrentID

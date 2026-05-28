@@ -23,6 +23,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -83,7 +84,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	payload := map[string]any{}
 	if len(bodyBytes) > 0 {
 		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			return api.UploadSummary{}, errors.New("trackers: ANT json decode error, the API is probably down")
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return api.UploadSummary{}, errors.New("trackers: ANT json decode error, the API is probably down")
+			}
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !antUploadSuccess(payload) {
@@ -670,12 +673,15 @@ func antUploadError(status int, payload map[string]any, body []byte) error {
 		switch {
 		case strings.Contains(text, "same infohash"):
 			if viewURL := strings.TrimSpace(stringValue(payload["view"])); viewURL != "" {
-				return fmt.Errorf("trackers: ANT same infohash already exists: %s", viewURL)
+				return fmt.Errorf("trackers: ANT same infohash already exists: %s", commonhttp.RedactErrorDetail(viewURL))
 			}
 			return errors.New("trackers: ANT same infohash already exists")
 		case strings.Contains(text, "exact same"):
 			return errors.New("trackers: ANT exact same media file already exists")
 		}
+	}
+	if detail := commonhttp.ExtractHTTPErrorDetail(body); detail != "" {
+		return fmt.Errorf("trackers: ANT upload failed status=%d: %s", status, detail)
 	}
 	switch status {
 	case http.StatusForbidden:
@@ -686,9 +692,9 @@ func antUploadError(status int, payload map[string]any, body []byte) error {
 		return errors.New("trackers: ANT bad gateway")
 	}
 	if message := strings.TrimSpace(stringValue(payload["error"])); message != "" {
-		return fmt.Errorf("trackers: ANT api error: %s", message)
+		return fmt.Errorf("trackers: ANT api error: %s", commonhttp.RedactErrorDetail(message))
 	}
-	return fmt.Errorf("trackers: ANT upload failed status=%d body=%s", status, strings.TrimSpace(string(body)))
+	return commonhttp.UploadHTTPError("ANT", status, body)
 }
 
 func compactJSON(payload map[string]any) string {

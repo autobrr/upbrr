@@ -111,9 +111,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if len(matches) < 2 {
 		failurePath, _ := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "BTN", "upload-failure", responseBody, ".html")
 		if failurePath != "" {
-			return api.UploadSummary{}, fmt.Errorf("trackers: BTN upload failed status=%d url=%s failure=%s", resp.StatusCode, finalURL, failurePath)
+			return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responseBody), failurePath)
 		}
-		return api.UploadSummary{}, fmt.Errorf("trackers: BTN upload failed status=%d url=%s", resp.StatusCode, finalURL)
+		return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responseBody)
 	}
 
 	groupID := strings.TrimSpace(matches[1])

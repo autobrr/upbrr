@@ -15,12 +15,19 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+const maxHTTPErrorDetailLength = 700
+
+var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
 type FileField struct {
 	FieldName   string
@@ -369,6 +376,142 @@ func FileBytes(path string) ([]byte, error) {
 		return nil, fmt.Errorf("read file %q: %w", strings.TrimSpace(path), err)
 	}
 	return payload, nil
+}
+
+func UploadHTTPError(tracker string, status int, body []byte) error {
+	detail := ExtractHTTPErrorDetail(body)
+	tracker = strings.ToUpper(RedactErrorDetail(tracker))
+	if detail == "" {
+		return fmt.Errorf("trackers: %s upload failed status=%d", tracker, status)
+	}
+	return fmt.Errorf("trackers: %s upload failed status=%d: %s", tracker, status, detail)
+}
+
+func UploadHTTPErrorWithURL(tracker string, status int, url string, body []byte) error {
+	detail := ExtractHTTPErrorDetail(body)
+	tracker = strings.ToUpper(RedactErrorDetail(tracker))
+	url = RedactErrorDetail(url)
+	if detail == "" {
+		return fmt.Errorf("trackers: %s upload failed status=%d url=%s", tracker, status, url)
+	}
+	return fmt.Errorf("trackers: %s upload failed status=%d url=%s: %s", tracker, status, url, detail)
+}
+
+func RedactErrorDetail(value string) string {
+	return strings.TrimSpace(redaction.RedactValue(value, nil))
+}
+
+func ExtractHTTPErrorDetail(body []byte) string {
+	text := RedactErrorDetail(string(body))
+	if text == "" {
+		return ""
+	}
+
+	if detail := extractJSONErrorDetail([]byte(text)); detail != "" {
+		return detail
+	}
+	for _, block := range redaction.ExtractJSONBlocks(text) {
+		if block.Start < 0 || block.End > len(text) || block.Start >= block.End {
+			continue
+		}
+		if detail := extractJSONErrorDetail([]byte(text[block.Start:block.End])); detail != "" {
+			return detail
+		}
+	}
+
+	return compactHTTPErrorText(text)
+}
+
+func extractJSONErrorDetail(body []byte) string {
+	var decoded any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return ""
+	}
+	return compactHTTPErrorText(formatErrorValue(decoded, ""))
+}
+
+func formatErrorValue(value any, key string) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, candidate := range []string{"errors", "message", "status_message", "detail", "error_description", "reason", "error"} {
+			if nested, ok := valueForKey(typed, candidate); ok {
+				if formatted := formatErrorValue(nested, candidate); formatted != "" {
+					return formatted
+				}
+			}
+		}
+		return formatErrorMap(typed)
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if formatted := formatErrorValue(item, ""); formatted != "" {
+				parts = append(parts, formatted)
+			}
+		}
+		return strings.Join(parts, "; ")
+	case string:
+		return RedactErrorDetail(typed)
+	case nil:
+		return ""
+	default:
+		if isBooleanStatusKey(key) {
+			return ""
+		}
+		return RedactErrorDetail(fmt.Sprint(typed))
+	}
+}
+
+func isBooleanStatusKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "success", "status", "error":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatErrorMap(values map[string]any) string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if strings.Contains(strings.ToLower(key), "token") || strings.Contains(strings.ToLower(key), "key") {
+			continue
+		}
+		formatted := formatErrorValue(values[key], key)
+		if formatted == "" {
+			continue
+		}
+		parts = append(parts, strings.TrimSpace(key)+": "+formatted)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func valueForKey(values map[string]any, target string) (any, bool) {
+	for key, value := range values {
+		if strings.EqualFold(strings.TrimSpace(key), target) {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func compactHTTPErrorText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	text = RedactErrorDetail(text)
+	text = htmlTagPattern.ReplaceAllString(text, " ")
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) <= maxHTTPErrorDetailLength {
+		return text
+	}
+	return strings.TrimSpace(text[:maxHTTPErrorDetailLength]) + "..."
 }
 
 func firstNonEmpty(values ...string) string {

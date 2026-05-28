@@ -101,7 +101,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "RTF", "upload_failure", responseBody, ".json")
-	return api.UploadSummary{}, fmt.Errorf("trackers: RTF %s", firstNonEmpty(decoded.Message, fmt.Sprintf("upload failed with status %d", resp.StatusCode)))
+	return api.UploadSummary{}, fmt.Errorf("trackers: RTF %s", firstNonEmpty(commonhttp.ExtractHTTPErrorDetail(responseBody), commonhttp.RedactErrorDetail(decoded.Message), fmt.Sprintf("upload failed with status %d", resp.StatusCode)))
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

@@ -84,6 +84,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	var decoded uploadResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "SPD", "upload_failure", responseBody, ".txt")
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return api.UploadSummary{}, commonhttp.UploadHTTPError("SPD", resp.StatusCode, responseBody)
+		}
 		return api.UploadSummary{}, fmt.Errorf("trackers: SPD decode response: %w", err)
 	}
 	if resp.StatusCode == http.StatusOK && decoded.Status && !decoded.Error {
@@ -110,7 +113,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "SPD", "upload_failure", responseBody, ".json")
-	return api.UploadSummary{}, fmt.Errorf("trackers: SPD upload failed status=%d", resp.StatusCode)
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("SPD", resp.StatusCode, responseBody)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
