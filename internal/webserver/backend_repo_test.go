@@ -146,6 +146,34 @@ func TestNewBackendClearsPersistedUIState(t *testing.T) {
 	}
 }
 
+func TestBackendGetLogExclusionsReturnsEmptySliceWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "backend-log-exclusions.db")
+	repo, err := db.OpenWithLogger(repoPath, nil)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	backend := &Backend{repo: repo}
+	patterns, err := backend.GetLogExclusions()
+	if err != nil {
+		t.Fatalf("get log exclusions: %v", err)
+	}
+	if patterns == nil {
+		t.Fatal("expected non-nil empty exclusions")
+	}
+	if len(patterns) != 0 {
+		t.Fatalf("expected no exclusions, got %#v", patterns)
+	}
+}
+
 func TestBackendExportConfigRespectsAllowUnencryptedExport(t *testing.T) {
 	t.Parallel()
 

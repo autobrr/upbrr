@@ -943,7 +943,7 @@ func (b *Backend) GetLogExclusions() ([]string, error) {
 	err := config.LoadSectionFromDatabase(context.Background(), "log_exclusions", &exclusions, b.repo)
 	if err != nil {
 		if errorsIsNotFound(err) {
-			return nil, nil
+			return []string{}, nil
 		}
 		return nil, fmt.Errorf("web: %w", err)
 	}

@@ -146,6 +146,43 @@ func TestGetHistoryOverviewUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	}
 }
 
+func TestGetLogExclusionsReturnsEmptySliceWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	app := &App{repo: openGUIAppTestRepo(t)}
+
+	patterns, err := app.GetLogExclusions()
+	if err != nil {
+		t.Fatalf("get log exclusions: %v", err)
+	}
+	if patterns == nil {
+		t.Fatal("expected non-nil empty exclusions")
+	}
+	if len(patterns) != 0 {
+		t.Fatalf("expected no exclusions, got %#v", patterns)
+	}
+}
+
+func TestGetLogExclusionsReturnsEmptySliceWhenStoredEmpty(t *testing.T) {
+	t.Parallel()
+
+	app := &App{repo: openGUIAppTestRepo(t)}
+	if err := app.UpdateLogExclusions(nil); err != nil {
+		t.Fatalf("update log exclusions: %v", err)
+	}
+
+	patterns, err := app.GetLogExclusions()
+	if err != nil {
+		t.Fatalf("get log exclusions: %v", err)
+	}
+	if patterns == nil {
+		t.Fatal("expected non-nil empty exclusions")
+	}
+	if len(patterns) != 0 {
+		t.Fatalf("expected no exclusions, got %#v", patterns)
+	}
+}
+
 func openGUIAppTestRepo(t *testing.T) *db.SQLiteRepository {
 	t.Helper()
 

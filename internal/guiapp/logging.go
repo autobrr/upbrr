@@ -99,7 +99,7 @@ func (a *App) GetLogExclusions() ([]string, error) {
 	var exclusions LogExclusions
 	if err := config.LoadSectionFromDatabase(ctx, logExclusionsSection, &exclusions, a.repo); err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
-			return nil, nil
+			return []string{}, nil
 		}
 		return nil, fmt.Errorf("gui: %w", err)
 	}
@@ -207,7 +207,7 @@ func (a *App) rebindLogStreams(oldLogger *logging.Logger, newLogger *logging.Log
 
 func normalizePatterns(patterns []string) []string {
 	seen := make(map[string]struct{})
-	var normalized []string
+	normalized := make([]string, 0, len(patterns))
 	for _, pattern := range patterns {
 		trimmed := strings.TrimSpace(pattern)
 		if trimmed == "" {
