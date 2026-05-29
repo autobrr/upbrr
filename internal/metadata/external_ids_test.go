@@ -575,6 +575,49 @@ func TestResolveExternalIDsPassesLogoSettingsToTMDB(t *testing.T) {
 	}
 }
 
+func TestResolveExternalIDsRefetchesMissingTMDBLogo(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		metadata: tmdb.MetadataResult{
+			Title:    "Example",
+			Year:     2024,
+			TMDBType: "Movie",
+			Logo:     "https://image.tmdb.org/t/p/original/logo.png",
+			TMDBLogo: "logo.png",
+		},
+	}
+	svc := NewService(repo,
+		WithConfig(config.Config{Description: config.DescriptionSettingsConfig{AddLogo: true, LogoLanguage: "en"}}),
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:      "/media/file.mkv",
+		StoredDataFresh: true,
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/media/file.mkv",
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/media/file.mkv",
+			TMDB:       &api.TMDBMetadata{TMDBID: 42, Title: "Cached without logo"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tmdbClient.metaCalls != 1 {
+		t.Fatalf("expected one metadata refetch for logo, got %d", tmdbClient.metaCalls)
+	}
+	if result.ExternalMetadata.TMDB == nil || result.ExternalMetadata.TMDB.Logo == "" {
+		t.Fatalf("expected logo to be refreshed, got %#v", result.ExternalMetadata.TMDB)
+	}
+}
+
 func TestResolveExternalIDsUsesSceneTVmazeToResolveIMDb(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "From", Year: 2022}}

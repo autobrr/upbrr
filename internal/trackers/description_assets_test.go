@@ -306,6 +306,43 @@ func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T
 	}
 }
 
+func TestResolveDescriptionAssetsAppendsMenuSelectionToStoredSlots(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen1.png", Order: 0, Source: string(api.ScreenshotPurposeFinal)},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: string(api.ScreenshotPurposeMenu)},
+		},
+		screenshotSlots: []api.ScreenshotSlot{
+			{
+				SourcePath:          "/tmp/source",
+				SourceKind:          screenshotSlotSourceSelection,
+				OriginalKey:         "/tmp/screen1.png",
+				ImagePath:           "/tmp/screen1.png",
+				SectionKind:         screenshotSectionWrapped,
+				RenderInScreenshots: true,
+			},
+		},
+		uploads: []api.UploadedImageLink{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen1.png", Host: "imgbb", UsageScope: globalImageUsageScope, ImgURL: "https://img.example/screen1.png"},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Host: "imgbb", UsageScope: globalImageUsageScope, ImgURL: "https://img.example/menu1.png"},
+		},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("resolve description assets: %v", err)
+	}
+	if len(assets.MenuImages) != 1 || !strings.Contains(assets.MenuImages[0].ImgURL, "menu1.png") {
+		t.Fatalf("expected stored menu selection to render as menu image, got %#v", assets.MenuImages)
+	}
+	if len(assets.Screenshots) != 1 || !strings.Contains(assets.Screenshots[0].ImgURL, "screen1.png") {
+		t.Fatalf("expected normal screenshot to stay separate, got %#v", assets.Screenshots)
+	}
+}
+
 func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "override desc",

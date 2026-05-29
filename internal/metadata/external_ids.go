@@ -361,8 +361,19 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		return false
 	}
 
+	tmdbLogoFetchAttempted := false
+	shouldFetchTMDBMetadata := func() bool {
+		if ids.TMDBID == 0 {
+			return false
+		}
+		if metadata.TMDB == nil {
+			return true
+		}
+		return s.cfg.Description.AddLogo && strings.TrimSpace(metadata.TMDB.Logo) == "" && !tmdbLogoFetchAttempted
+	}
+
 	shouldRunFetchPass := func() bool {
-		if ids.TMDBID != 0 && metadata.TMDB == nil {
+		if shouldFetchTMDBMetadata() {
 			return true
 		}
 		if ids.IMDBID != 0 && metadata.IMDB == nil {
@@ -378,7 +389,10 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 
 	runFetchPass := func(allowTVmazeNameFallback bool) {
-		fetchTMDB := ids.TMDBID != 0 && metadata.TMDB == nil
+		fetchTMDB := shouldFetchTMDBMetadata()
+		if fetchTMDB && s.cfg.Description.AddLogo {
+			tmdbLogoFetchAttempted = true
+		}
 		fetchIMDB := ids.IMDBID != 0 && metadata.IMDB == nil
 		lookupTVDB := !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
 		lookupTVmaze := metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))

@@ -2064,6 +2064,10 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 			c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 		}
 	}
+	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta)
+	if err != nil {
+		return api.DescriptionBuilderPreview{}, err
+	}
 
 	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
@@ -2111,6 +2115,44 @@ func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGr
 		HasOverride:        hasOverride,
 		ImageHost:          entry.ImageHost,
 	}
+}
+
+func (c *Core) ensureDescriptionBuilderMetadata(ctx context.Context, req api.Request, path string, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	if c.services.Metadata == nil || !descriptionBuilderNeedsExternalMetadata(c.cfg, meta) {
+		return meta, nil
+	}
+	resolved, err := c.services.Metadata.ResolveExternalIDs(ctx, meta)
+	if err != nil {
+		return api.PreparedMetadata{}, fmt.Errorf("core: %w", err)
+	}
+	if req.Mode == api.ModeGUI && cacheableGUIPreparedMetaRequest(req) {
+		overrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
+		signature := overrideSignature(overrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
+		c.storeRefreshedDupeCache(path, signature, resolved)
+	}
+	return resolved, nil
+}
+
+func descriptionBuilderNeedsExternalMetadata(cfg config.Config, meta api.PreparedMetadata) bool {
+	if strings.TrimSpace(meta.SourcePath) == "" {
+		return false
+	}
+	if cfg.Description.AddLogo {
+		if meta.ExternalMetadata.TMDB == nil || strings.TrimSpace(meta.ExternalMetadata.TMDB.Logo) == "" {
+			return true
+		}
+	}
+	return cfg.Description.EpisodeOverview && strings.TrimSpace(meta.EpisodeOverview) == "" && descriptionBuilderEpisodeLike(meta)
+}
+
+func descriptionBuilderEpisodeLike(meta api.PreparedMetadata) bool {
+	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 {
+		return true
+	}
+	if strings.TrimSpace(meta.SeasonStr) != "" || strings.TrimSpace(meta.EpisodeStr) != "" || strings.TrimSpace(meta.DailyEpisodeDate) != "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV")
 }
 
 func augmentDescriptionBuilderPreviewHTML(rendered string, entry api.PreparationDescription, meta api.PreparedMetadata, logger api.Logger) string {
@@ -2266,6 +2308,10 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 		if req.Mode == api.ModeGUI {
 			c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 		}
+	}
+	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta)
+	if err != nil {
+		return api.DescriptionBuilderGroup{}, err
 	}
 
 	resolvedTrackers := req.Trackers
