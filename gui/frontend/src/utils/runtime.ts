@@ -118,6 +118,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
       App: {
         BrowsePath: () => call<string>("BrowseFile"),
         BrowseFile: () => call<string>("BrowseFile"),
+        BrowseImageFiles: () => call<string[]>("BrowseImageFiles"),
         BrowseFolder: () => call<string>("BrowseFolder"),
         BrowseDirectory: (path: string, mode: "file" | "folder") =>
           call("BrowseDirectory", { path, mode }),

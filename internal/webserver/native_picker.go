@@ -5,5 +5,6 @@ package webserver
 
 type nativePicker interface {
 	BrowseFile() (string, error)
+	BrowseImageFiles() ([]string, error)
 	BrowseFolder() (string, error)
 }

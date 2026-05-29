@@ -174,6 +174,10 @@ func videoFileDialogFilter() runtime.FileFilter {
 }
 
 func (a *App) BrowseFiles() ([]string, error) {
+	return a.BrowseImageFiles()
+}
+
+func (a *App) BrowseImageFiles() ([]string, error) {
 	if a == nil {
 		return nil, errors.New("app not initialized")
 	}

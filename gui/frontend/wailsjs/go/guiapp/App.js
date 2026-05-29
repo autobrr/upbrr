@@ -18,6 +18,10 @@ export function BrowseFolder() {
   return window['go']['guiapp']['App']['BrowseFolder']();
 }
 
+export function BrowseImageFiles() {
+  return window['go']['guiapp']['App']['BrowseImageFiles']();
+}
+
 export function BrowsePath() {
   return window['go']['guiapp']['App']['BrowsePath']();
 }

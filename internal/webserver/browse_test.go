@@ -22,17 +22,25 @@ import (
 )
 
 type stubNativePicker struct {
-	filePath    string
-	folderPath  string
-	fileErr     error
-	folderErr   error
-	fileCalls   int
-	folderCalls int
+	filePath        string
+	imageFilePaths  []string
+	folderPath      string
+	fileErr         error
+	imageFilesErr   error
+	folderErr       error
+	fileCalls       int
+	imageFilesCalls int
+	folderCalls     int
 }
 
 func (s *stubNativePicker) BrowseFile() (string, error) {
 	s.fileCalls++
 	return s.filePath, s.fileErr
+}
+
+func (s *stubNativePicker) BrowseImageFiles() ([]string, error) {
+	s.imageFilesCalls++
+	return s.imageFilePaths, s.imageFilesErr
 }
 
 func (s *stubNativePicker) BrowseFolder() (string, error) {
@@ -205,6 +213,27 @@ func TestBrowseFileRouteAllowsLocalhostSessions(t *testing.T) {
 	}
 	if got := strings.TrimSpace(recorder.Body.String()); !strings.Contains(got, `C:\\Media\\movie.mkv`) {
 		t.Fatalf("expected response to include selected path, got %q", got)
+	}
+}
+
+func TestBrowseImageFilesRouteAllowsLocalhostSessions(t *testing.T) {
+	picker := &stubNativePicker{imageFilePaths: []string{`C:\Menus\menu1.png`, `C:\Menus\menu2.webp`}}
+	server := testServerWithPicker(picker)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	recorder := httptest.NewRecorder()
+	req := newBrowseRequest("/api/app/BrowseImageFiles", "127.0.0.1:8080", "127.0.0.1:5050")
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse image files route returned %d", recorder.Code)
+	}
+	if picker.imageFilesCalls != 1 {
+		t.Fatalf("expected image picker to be called once, got %d", picker.imageFilesCalls)
+	}
+	if got := strings.TrimSpace(recorder.Body.String()); !strings.Contains(got, `C:\\Menus\\menu1.png`) || !strings.Contains(got, `C:\\Menus\\menu2.webp`) {
+		t.Fatalf("expected response to include selected image paths, got %q", got)
 	}
 }
 

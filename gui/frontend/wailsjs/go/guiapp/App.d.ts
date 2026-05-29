@@ -13,6 +13,8 @@ export function BrowseFiles():Promise<Array<string>>;
 
 export function BrowseFolder():Promise<string>;
 
+export function BrowseImageFiles():Promise<Array<string>>;
+
 export function BrowsePath():Promise<string>;
 
 export function CancelDupeCheck(arg1:string):Promise<void>;

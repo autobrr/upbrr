@@ -241,6 +241,7 @@ declare global {
             BrowsePath: () => Promise<string>;
             BrowseFile: () => Promise<string>;
             BrowseFiles: () => Promise<string[]>;
+            BrowseImageFiles: () => Promise<string[]>;
             BrowseFolder: () => Promise<string>;
             BrowseDirectory: (
               path: string,

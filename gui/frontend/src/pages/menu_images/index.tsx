@@ -25,9 +25,9 @@ export default function MenuImagesPage(props: Props) {
       const app = globalThis.go?.guiapp?.App;
       if (!app) return;
 
-      // Prefer BrowseFiles for multiple selection, fallback to BrowseFile
-      if (app.BrowseFiles) {
-        const selected = await app.BrowseFiles();
+      // Prefer the image-specific picker, then fall back to older local builds.
+      if (app.BrowseImageFiles || app.BrowseFiles) {
+        const selected = await (app.BrowseImageFiles || app.BrowseFiles)?.();
         if (selected && selected.length > 0) {
           const valid = selected.filter((s) => s.trim() !== "");
           if (valid.length > 0) {
