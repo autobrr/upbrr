@@ -6,6 +6,7 @@ package unit3d
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -83,6 +84,16 @@ func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig 
 	if logoURL != "" {
 		appendUniquePart(fmt.Sprintf("[center][img=%d]%s[/img][/center]", logoSize, logoURL), "logo")
 		logger.Tracef("trackers: unit3d desc part=logo size=%d", logoSize)
+	}
+
+	if episodeOverview := EpisodeOverviewBlock(meta, appConfig); episodeOverview != "" {
+		appendUniquePart(episodeOverview, "episode_overview")
+		logger.Tracef("trackers: unit3d desc part=episode_overview len=%d", len(episodeOverview))
+	}
+
+	if bluray := BlurayBlock(meta, appConfig); bluray != "" {
+		appendUniquePart(bluray, "bluray")
+		logger.Tracef("trackers: unit3d desc part=bluray")
 	}
 
 	if vobMediaInfo := DVDVOBMediaInfoBlock(meta); vobMediaInfo != "" {
@@ -358,6 +369,78 @@ func ResolveLogo(meta api.PreparedMetadata, appConfig config.Config) (string, in
 		size = 300
 	}
 	return logoURL, size
+}
+
+func EpisodeOverviewBlock(meta api.PreparedMetadata, appConfig config.Config) string {
+	if !appConfig.Description.EpisodeOverview {
+		return ""
+	}
+	overview := strings.TrimSpace(meta.EpisodeOverview)
+	if overview == "" {
+		return ""
+	}
+	return "[center]" + escapeBBCode(overview) + "[/center]"
+}
+
+func BlurayBlock(meta api.PreparedMetadata, appConfig config.Config) string {
+	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") && !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+		return ""
+	}
+	if meta.ExternalMetadata.Bluray == nil {
+		return ""
+	}
+	candidate := meta.ExternalMetadata.Bluray.SelectedCandidate()
+	if candidate == nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if appConfig.Description.AddBlurayLink {
+		if releaseURL := sanitizeBlurayReleaseURL(candidate.URL); releaseURL != "" {
+			parts = append(parts, "[center]"+releaseURL+"[/center]")
+		}
+	}
+	if appConfig.Description.UseBlurayImages && len(candidate.CoverImages) > 0 {
+		size := appConfig.Description.BlurayImageSize
+		if size <= 0 {
+			size = 250
+		}
+		imageTags := make([]string, 0, len(candidate.CoverImages))
+		for _, image := range candidate.CoverImages {
+			imageURL := sanitizeDescriptionURL(image.URL)
+			if imageURL == "" {
+				continue
+			}
+			imageTags = append(imageTags, fmt.Sprintf("[img=%d]%s[/img]", size, imageURL))
+		}
+		if len(imageTags) > 0 {
+			parts = append(parts, "[center]"+strings.Join(imageTags, " ")+"[/center]")
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func sanitizeBlurayReleaseURL(rawURL string) string {
+	return sanitizeDescriptionURL(rawURL)
+}
+
+func sanitizeDescriptionURL(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return ""
+	}
+	return escapeBBCode(parsed.String())
+}
+
+func escapeBBCode(value string) string {
+	return strings.NewReplacer("[", "%5B", "]", "%5D").Replace(value)
 }
 
 func UppbrrSignatureLink() (string, string) {

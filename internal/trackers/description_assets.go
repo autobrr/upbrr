@@ -169,64 +169,7 @@ func resolveDescriptionAssets(ctx context.Context, tracker string, meta api.Prep
 		logger.Tracef("trackers: description assets resolved desc_len=%d screenshots=%d", len(strings.TrimSpace(description)), len(screenshots))
 	}
 
-	var menuImages []api.ScreenshotImage
-	var normalScreenshots []api.ScreenshotImage
-
-	if len(screenshots) > 0 {
-		selections, _ := finalSelectionsFromSource(ctx, meta, repo, preloaded)
-		menuPaths := make(map[string]struct{})
-		for _, sel := range selections {
-			if sel.Source == string(api.ScreenshotPurposeMenu) && strings.TrimSpace(sel.ImagePath) != "" {
-				menuPaths[strings.TrimSpace(sel.ImagePath)] = struct{}{}
-			}
-		}
-
-		visitedMenuURLs := make(map[string]struct{})
-		for _, shot := range screenshots {
-			isMenu := false
-			path := strings.TrimSpace(shot.Path)
-			if path != "" {
-				if _, ok := menuPaths[path]; ok {
-					isMenu = true
-				}
-			}
-			if isMenu {
-				menuImages = append(menuImages, shot)
-				if u := strings.TrimSpace(shot.RawURL); u != "" {
-					visitedMenuURLs[u] = struct{}{}
-				} else if u := strings.TrimSpace(shot.ImgURL); u != "" {
-					visitedMenuURLs[u] = struct{}{}
-				}
-			}
-		}
-
-		for _, shot := range screenshots {
-			isMenu := false
-			path := strings.TrimSpace(shot.Path)
-			if path != "" {
-				if _, ok := menuPaths[path]; ok {
-					isMenu = true
-				}
-			}
-
-			if isMenu {
-				continue
-			}
-
-			// Defensive check: skip if the URL matches an identified menu image
-			u := strings.TrimSpace(shot.RawURL)
-			if u == "" {
-				u = strings.TrimSpace(shot.ImgURL)
-			}
-			if u != "" {
-				if _, ok := visitedMenuURLs[u]; ok {
-					continue
-				}
-			}
-
-			normalScreenshots = append(normalScreenshots, shot)
-		}
-	}
+	menuImages, normalScreenshots := splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
 
 	return DescriptionAssets{
 		Description: sanitizeTrackerDescription(tracker, description),
@@ -235,6 +178,75 @@ func resolveDescriptionAssets(ctx context.Context, tracker string, meta api.Prep
 		Slots:       slots,
 		Override:    overridden,
 	}, nil
+}
+
+func applyResolvedDescriptionScreenshots(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData, assets *DescriptionAssets, screenshots []api.ScreenshotImage) {
+	if assets == nil {
+		return
+	}
+	assets.MenuImages, assets.Screenshots = splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
+}
+
+func splitDescriptionScreenshots(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData, screenshots []api.ScreenshotImage) ([]api.ScreenshotImage, []api.ScreenshotImage) {
+	if len(screenshots) == 0 {
+		return nil, nil
+	}
+
+	selections, _ := finalSelectionsFromSource(ctx, meta, repo, preloaded)
+	menuPaths := make(map[string]struct{})
+	for _, sel := range selections {
+		if sel.Source == screenshotPurposeMenu && strings.TrimSpace(sel.ImagePath) != "" {
+			menuPaths[strings.TrimSpace(sel.ImagePath)] = struct{}{}
+		}
+	}
+
+	menuImages := make([]api.ScreenshotImage, 0)
+	visitedMenuURLs := make(map[string]struct{})
+	for _, shot := range screenshots {
+		if !screenshotMatchesMenuPath(shot, menuPaths) {
+			continue
+		}
+		menuImages = append(menuImages, shot)
+		if u := screenshotURLKey(shot); u != "" {
+			visitedMenuURLs[u] = struct{}{}
+		}
+	}
+
+	normalScreenshots := make([]api.ScreenshotImage, 0, len(screenshots)-len(menuImages))
+	for _, shot := range screenshots {
+		if screenshotMatchesMenuPath(shot, menuPaths) {
+			continue
+		}
+		if u := screenshotURLKey(shot); u != "" {
+			if _, ok := visitedMenuURLs[u]; ok {
+				continue
+			}
+		}
+		normalScreenshots = append(normalScreenshots, shot)
+	}
+	return menuImages, normalScreenshots
+}
+
+func screenshotMatchesMenuPath(shot api.ScreenshotImage, menuPaths map[string]struct{}) bool {
+	if len(menuPaths) == 0 {
+		return false
+	}
+	path := strings.TrimSpace(shot.Path)
+	if path == "" {
+		return false
+	}
+	_, ok := menuPaths[path]
+	return ok
+}
+
+func screenshotURLKey(shot api.ScreenshotImage) string {
+	if u := strings.TrimSpace(shot.RawURL); u != "" {
+		return u
+	}
+	if u := strings.TrimSpace(shot.ImgURL); u != "" {
+		return u
+	}
+	return strings.TrimSpace(shot.WebURL)
 }
 
 func resolveTrackerDescription(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger, preloaded *preloadedDescriptionAssetData) (string, bool) {

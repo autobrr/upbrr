@@ -2392,8 +2392,10 @@ func (s stubFS) ValidatePaths(_ context.Context, paths []string) ([]string, erro
 type stubMeta struct {
 	calls        int
 	refreshCalls int
+	resolveCalls int
 	options      api.UploadOptions
 	prepared     api.PreparedMetadata
+	resolved     api.PreparedMetadata
 }
 
 func (s *stubMeta) Prepare(_ context.Context, req api.Request) (api.PreparedMetadata, error) {
@@ -2436,6 +2438,10 @@ func (s *stubMeta) ApplyArrData(_ context.Context, meta api.PreparedMetadata) (a
 }
 
 func (s *stubMeta) ResolveExternalIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	s.resolveCalls++
+	if strings.TrimSpace(s.resolved.SourcePath) != "" {
+		return s.resolved, nil
+	}
 	return meta, nil
 }
 

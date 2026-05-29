@@ -347,7 +347,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 				results[idx] = result
 				continue
 			}
-			assets.Screenshots = resolution.screenshots
+			applyResolvedDescriptionScreenshots(ctx, meta, s.repo, nil, &assets, resolution.screenshots)
 			uploadSummary, err := definition.Upload(ctx, UploadRequest{
 				Tracker:       tracker,
 				Meta:          meta,
@@ -603,7 +603,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 			s.logger.Warnf("trackers: preparation assets failed for %s: %v", tracker, err)
 			assets = DescriptionAssets{}
 		}
-		assets.Screenshots = resolution.screenshots
+		applyResolvedDescriptionScreenshots(ctx, meta, s.repo, preloaded, &assets, resolution.screenshots)
 		result, err := builder.BuildDescription(ctx, DescriptionRequest{
 			Tracker:       tracker,
 			Meta:          meta,
@@ -754,7 +754,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			results = append(results, entry)
 			continue
 		}
-		assets.Screenshots = resolution.screenshots
+		applyResolvedDescriptionScreenshots(ctx, meta, s.repo, preloaded, &assets, resolution.screenshots)
 		preview, err := builder.BuildUploadDryRun(ctx, UploadRequest{
 			Tracker:       tracker,
 			Meta:          meta,

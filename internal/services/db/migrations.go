@@ -55,6 +55,7 @@ var migrationRegistry = []migrationStep{
 	{id: "2026_04_add_tracker_cookies", dependsOn: []string{"2026_04_normalize_description_overrides"}, apply: migrateAddTrackerCookies},
 	{id: "2026_04_add_release_category", dependsOn: []string{"2026_04_add_tracker_cookies"}, apply: migrateAddReleaseCategory},
 	{id: "2026_04_add_ui_state", dependsOn: []string{"2026_04_add_release_category"}, apply: migrateAddUIState},
+	{id: "2026_05_add_bluray_external_metadata", dependsOn: []string{"2026_04_add_ui_state"}, apply: migrateAddBlurayExternalMetadata},
 }
 
 var legacyVersionToMigrationIDs = map[int][]string{
@@ -321,6 +322,27 @@ func migrateAddUIState(ctx context.Context, exec migrationExecutor) error {
 		)
 	`)
 	if err != nil {
+		return fmt.Errorf("db: %w", err)
+	}
+	return nil
+}
+
+func migrateAddBlurayExternalMetadata(ctx context.Context, exec migrationExecutor) error {
+	tablePresent, err := tableExists(ctx, exec, "external_metadata")
+	if err != nil {
+		return err
+	}
+	if !tablePresent {
+		return nil
+	}
+	exists, err := tableColumnExists(ctx, exec, "external_metadata", "bluray_json")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE external_metadata ADD COLUMN bluray_json TEXT NOT NULL DEFAULT ""`); err != nil {
 		return fmt.Errorf("db: %w", err)
 	}
 	return nil
@@ -754,6 +776,7 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			imdb_json TEXT NOT NULL DEFAULT "",
 			tvdb_json TEXT NOT NULL DEFAULT "",
 			tvmaze_json TEXT NOT NULL DEFAULT "",
+			bluray_json TEXT NOT NULL DEFAULT "",
 			updated_at TEXT NOT NULL
 		)
 		`,

@@ -21,6 +21,7 @@ const (
 	screenshotSlotSourceDescription = "description"
 	screenshotSlotSourceSelection   = "final_selection"
 	screenshotSlotSourceTracker     = "tracker_metadata"
+	screenshotPurposeMenu           = string(api.ScreenshotPurposeMenu)
 
 	screenshotSectionWrapped    = "wrapped"
 	screenshotSectionComparison = "comparison"
@@ -71,6 +72,11 @@ func screenshotSlotsFromSource(
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			slots, err = appendStoredSelectionSlots(ctx, meta, repo, slots, preloaded)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if len(slots) == 0 {
 			return nil, nil
@@ -118,12 +124,33 @@ func filterStoredSlotsForSelectedImages(
 			filtered = append(filtered, slot)
 		}
 	}
+	appendSelectionOnlySlots(&filtered, selections)
 	uploads, err := uploadedImagesFromSource(ctx, meta, repo, preloaded)
 	if err != nil && !errorsIsNotFound(err) {
 		return nil, err
 	}
 	applyUploadedVariantsToSlots(filtered, uploads)
-	return filtered, nil
+	return normalizeSlotOrders(filtered), nil
+}
+
+func appendStoredSelectionSlots(
+	ctx context.Context,
+	meta api.PreparedMetadata,
+	repo api.MetadataRepository,
+	slots []api.ScreenshotSlot,
+	preloaded *preloadedDescriptionAssetData,
+) ([]api.ScreenshotSlot, error) {
+	selections, err := finalSelectionsFromSource(ctx, meta, repo, preloaded)
+	if err != nil && !errorsIsNotFound(err) {
+		return nil, err
+	}
+	appendSelectionOnlySlots(&slots, selections)
+	uploads, err := uploadedImagesFromSource(ctx, meta, repo, preloaded)
+	if err != nil && !errorsIsNotFound(err) {
+		return nil, err
+	}
+	applyUploadedVariantsToSlots(slots, uploads)
+	return normalizeSlotOrders(slots), nil
 }
 
 func selectedPathExists(selectedPaths map[string]struct{}, imagePath string) bool {

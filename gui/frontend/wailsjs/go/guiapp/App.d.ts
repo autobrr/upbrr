@@ -113,6 +113,8 @@ export function SavePlaylistSelection(arg1:string,arg2:Array<string>,arg3:boolea
 
 export function SaveUIState(arg1:string,arg2:string,arg3:api.UIState):Promise<void>;
 
+export function SelectBlurayCandidate(arg1:string,arg2:string):Promise<api.MetadataPreview>;
+
 export function StartDupeCheck(arg1:string,arg2:api.ExternalIDOverrides,arg3:api.ReleaseNameOverrides,arg4:Array<string>):Promise<string>;
 
 export function StartLogStream():Promise<string>;

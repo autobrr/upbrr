@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
+import BlurayCandidatesPage from "./pages/bluray_candidates";
 import DupeCheckPage from "./pages/dupe_check";
 import InputPage from "./pages/input";
 import HistoryPage from "./pages/history/index";
@@ -118,6 +119,7 @@ const emptyPreview: MetadataPreview = {
   },
   ExternalIDInfo: [],
   ExternalPreview: [],
+  Bluray: undefined,
   TrackerData: [],
 };
 
@@ -265,6 +267,7 @@ declare global {
               nameOverrides: ReleaseNameOverrides,
               trackers: string[],
             ) => Promise<MetadataPreview>;
+            SelectBlurayCandidate: (path: string, releaseID: string) => Promise<MetadataPreview>;
             FetchDescriptionBuilder: (
               path: string,
               overrides: ExternalIDOverrides,
@@ -561,6 +564,8 @@ export default function App() {
   const [uiStateID, setUIStateID] = useState(() => localStorage.getItem("ui-state-id") || "");
   const [liveUIStates, setLiveUIStates] = useState<UIStateRecord[]>([]);
   const [renderedDescriptions, setRenderedDescriptions] = useState<Record<string, boolean>>({});
+  const [bluraySelecting, setBluraySelecting] = useState(false);
+  const [bluraySelectionError, setBluraySelectionError] = useState("");
   const [lightboxImage, setLightboxImage] = useState<string>("");
   const [lightboxAlt, setLightboxAlt] = useState<string>("");
   const [lightboxFit, setLightboxFit] = useState<boolean>(true);
@@ -962,6 +967,7 @@ export default function App() {
   };
 
   const hasTrackerData = preview.TrackerData && preview.TrackerData.length > 0;
+  const hasBlurayData = Boolean(preview.Bluray);
   const hasPreview = Boolean(preview.SourcePath);
 
   useEffect(() => {
@@ -2275,9 +2281,15 @@ export default function App() {
     return payload;
   };
 
-  const applyPreviewResult = (result: MetadataPreview) => {
+  const applyPreviewResult = (
+    result: MetadataPreview,
+    options: { switchToInput?: boolean } = {},
+  ) => {
+    const { switchToInput = true } = options;
     setPreview(result);
-    setActiveTab("input");
+    if (switchToInput) {
+      setActiveTab("input");
+    }
     setIdEdits(buildIDEditState(result.ExternalIDs));
     setReleaseEdits(buildReleaseEditState(result.ReleaseNameOverrides || {}));
     setReleaseTouched(buildReleaseTouchedState(result.ReleaseNameOverrides || {}));
@@ -2542,6 +2554,7 @@ export default function App() {
     setBuilderRenderedByGroup({});
     setBuilderExpandedGroups({});
     setBuilderDirtyByGroup({});
+    setBluraySelectionError("");
     const fetcher = globalThis.go?.guiapp?.App?.FetchMetadata;
     if (!fetcher) {
       setError("Fetch metadata is unavailable in this build.");
@@ -2637,6 +2650,29 @@ export default function App() {
       setMetadataProgressActive(false);
       setMetadataResetting(false);
       setLoading(false);
+    }
+  };
+
+  const handleSelectBlurayCandidate = async (releaseID: string) => {
+    setBluraySelectionError("");
+    const selector = globalThis.go?.guiapp?.App?.SelectBlurayCandidate;
+    if (!selector) {
+      setBluraySelectionError("Blu-ray candidate selection is unavailable in this build.");
+      return;
+    }
+    const targetPath = (preview.SourcePath || path).trim();
+    if (!targetPath || !releaseID.trim()) {
+      setBluraySelectionError("Path and release candidate are required.");
+      return;
+    }
+    setBluraySelecting(true);
+    try {
+      const result = await selector(targetPath, releaseID.trim());
+      applyPreviewResult(result, { switchToInput: false });
+    } catch (err) {
+      setBluraySelectionError(String(err));
+    } finally {
+      setBluraySelecting(false);
     }
   };
 
@@ -4019,6 +4055,15 @@ export default function App() {
                 Tracker Data
               </button>
             ) : null}
+            {hasBlurayData ? (
+              <button
+                className={navButtonClass(activeTab === "bluray", true)}
+                type="button"
+                onClick={() => setActiveTab("bluray")}
+              >
+                Blu-ray.com
+              </button>
+            ) : null}
             {hasPreview ? (
               <button
                 className={navButtonClass(activeTab === "dupes", true)}
@@ -4291,6 +4336,15 @@ export default function App() {
               uploadedImageRecords={uploadImages.uploadedImageRecords}
               trackerImageLinks={screenshots.trackerImageLinks}
               handleDeleteUploadedImage={uploadImages.handleDeleteUploadedImage}
+            />
+          ) : activeTab === "bluray" ? (
+            <BlurayCandidatesPage
+              preview={preview}
+              selecting={bluraySelecting}
+              error={bluraySelectionError}
+              onSelect={(releaseID) => void handleSelectBlurayCandidate(releaseID)}
+              setLightboxImage={setLightboxImage}
+              setLightboxAlt={setLightboxAlt}
             />
           ) : activeTab === "description_builder" ? (
             <DescriptionBuilderPage

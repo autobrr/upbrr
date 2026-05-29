@@ -55,6 +55,10 @@ type App struct {
 	uploads     map[string]*trackerUploadJob
 }
 
+type blurayCandidateSelector interface {
+	SelectBlurayCandidate(ctx context.Context, sourcePath string, releaseID string) (api.MetadataPreview, error)
+}
+
 func NewApp(configPath string, configProvided bool) (*App, error) {
 	return NewAppWithContext(context.Background(), configPath, configProvided)
 }
@@ -372,6 +376,26 @@ func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.E
 	}
 
 	return wrapGUIResult(a.core.FetchMetadataPreview(progressCtx, req))
+}
+
+func (a *App) SelectBlurayCandidate(path string, releaseID string) (api.MetadataPreview, error) {
+	if err := a.requireCore(); err != nil {
+		return api.MetadataPreview{}, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return api.MetadataPreview{}, errors.New("path is required")
+	}
+	if strings.TrimSpace(releaseID) == "" {
+		return api.MetadataPreview{}, errors.New("release ID is required")
+	}
+	selector, ok := a.core.(blurayCandidateSelector)
+	if !ok {
+		return api.MetadataPreview{}, errors.New("blu-ray candidate selection is unavailable in this build")
+	}
+	ctx := a.runtimeContext()
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
+	defer cancel()
+	return wrapGUIResult(selector.SelectBlurayCandidate(ctx, path, releaseID))
 }
 
 func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (api.MetadataPreview, error) {

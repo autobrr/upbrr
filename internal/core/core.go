@@ -2064,6 +2064,10 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 			c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 		}
 	}
+	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta)
+	if err != nil {
+		return api.DescriptionBuilderPreview{}, err
+	}
 
 	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
@@ -2111,6 +2115,44 @@ func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGr
 		HasOverride:        hasOverride,
 		ImageHost:          entry.ImageHost,
 	}
+}
+
+func (c *Core) ensureDescriptionBuilderMetadata(ctx context.Context, req api.Request, path string, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	if c.services.Metadata == nil || !descriptionBuilderNeedsExternalMetadata(c.cfg, meta) {
+		return meta, nil
+	}
+	resolved, err := c.services.Metadata.ResolveExternalIDs(ctx, meta)
+	if err != nil {
+		return api.PreparedMetadata{}, fmt.Errorf("core: %w", err)
+	}
+	if req.Mode == api.ModeGUI && cacheableGUIPreparedMetaRequest(req) {
+		overrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
+		signature := overrideSignature(overrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
+		c.storeRefreshedDupeCache(path, signature, resolved)
+	}
+	return resolved, nil
+}
+
+func descriptionBuilderNeedsExternalMetadata(cfg config.Config, meta api.PreparedMetadata) bool {
+	if strings.TrimSpace(meta.SourcePath) == "" {
+		return false
+	}
+	if cfg.Description.AddLogo {
+		if meta.ExternalMetadata.TMDB == nil || strings.TrimSpace(meta.ExternalMetadata.TMDB.Logo) == "" {
+			return true
+		}
+	}
+	return cfg.Description.EpisodeOverview && strings.TrimSpace(meta.EpisodeOverview) == "" && descriptionBuilderEpisodeLike(meta)
+}
+
+func descriptionBuilderEpisodeLike(meta api.PreparedMetadata) bool {
+	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 {
+		return true
+	}
+	if strings.TrimSpace(meta.SeasonStr) != "" || strings.TrimSpace(meta.EpisodeStr) != "" || strings.TrimSpace(meta.DailyEpisodeDate) != "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV")
 }
 
 func augmentDescriptionBuilderPreviewHTML(rendered string, entry api.PreparationDescription, meta api.PreparedMetadata, logger api.Logger) string {
@@ -2267,6 +2309,10 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 			c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 		}
 	}
+	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta)
+	if err != nil {
+		return api.DescriptionBuilderGroup{}, err
+	}
 
 	resolvedTrackers := req.Trackers
 	if len(resolvedTrackers) == 0 {
@@ -2287,6 +2333,90 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 		}
 	}
 	return api.DescriptionBuilderGroup{}, internalerrors.ErrNotFound
+}
+
+func (c *Core) SelectBlurayCandidate(ctx context.Context, sourcePath string, releaseID string) (api.MetadataPreview, error) {
+	if err := ctx.Err(); err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: select blu-ray candidate canceled: %w", err)
+	}
+	if c.repo == nil {
+		return api.MetadataPreview{}, errors.New("core: repository not configured")
+	}
+	trimmedPath := strings.TrimSpace(sourcePath)
+	trimmedReleaseID := strings.TrimSpace(releaseID)
+	if trimmedPath == "" || trimmedReleaseID == "" {
+		return api.MetadataPreview{}, internalerrors.ErrInvalidInput
+	}
+	external, err := c.repo.GetExternalMetadata(ctx, trimmedPath)
+	if err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: load blu-ray metadata: %w", err)
+	}
+	if external.Bluray == nil || !external.Bluray.SelectCandidate(trimmedReleaseID, false, "manual") {
+		return api.MetadataPreview{}, internalerrors.ErrNotFound
+	}
+	external.UpdatedAt = time.Now().UTC()
+	external.Bluray.UpdatedAt = external.UpdatedAt
+
+	c.dupeMu.Lock()
+	cachePath := trimmedPath
+	entry, ok := c.dupeCache[cachePath]
+	if !ok {
+		cleanedPath := filepath.Clean(trimmedPath)
+		for key, candidate := range c.dupeCache {
+			if filepath.Clean(key) == cleanedPath {
+				cachePath = key
+				entry = candidate
+				ok = true
+				break
+			}
+		}
+	}
+	if ok {
+		entry.meta.ExternalMetadata.Bluray = external.Bluray
+		entry.meta.ExternalMetadata.UpdatedAt = external.UpdatedAt
+		applyBlurayCandidateToPreparedMeta(&entry.meta)
+	}
+	c.dupeMu.Unlock()
+	if !ok {
+		return api.MetadataPreview{}, internalerrors.ErrNotFound
+	}
+
+	if c.services.Metadata != nil {
+		if refreshed, refreshErr := c.services.Metadata.RefreshPreparedMetadata(ctx, entry.meta); refreshErr == nil {
+			entry.meta = refreshed
+		} else if c.logger != nil {
+			c.logger.Warnf("core: refresh metadata after blu-ray selection failed: %v", refreshErr)
+		}
+	}
+
+	if err := c.repo.SaveExternalMetadata(ctx, external); err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: save blu-ray selection: %w", err)
+	}
+
+	c.dupeMu.Lock()
+	entry.updatedAt = time.Now().UTC()
+	entry.requestRefreshed = true
+	c.dupeCache[cachePath] = entry
+	c.dupeMu.Unlock()
+
+	return buildMetadataPreview(entry.meta, c.cfg), nil
+}
+
+func applyBlurayCandidateToPreparedMeta(meta *api.PreparedMetadata) {
+	if meta == nil || meta.ExternalMetadata.Bluray == nil {
+		return
+	}
+	candidate := meta.ExternalMetadata.Bluray.SelectedCandidate()
+	if candidate == nil {
+		return
+	}
+	if region := strings.TrimSpace(candidate.Region); region != "" {
+		meta.Region = region
+		meta.Release.Region = region
+	}
+	if publisher := strings.TrimSpace(candidate.Publisher); publisher != "" {
+		meta.Distributor = strings.ToUpper(publisher)
+	}
 }
 
 func (c *Core) storeDupeCache(path string, signature string, meta api.PreparedMetadata) {
@@ -2874,8 +3004,26 @@ func deepCopyExternalMetadata(metadata api.ExternalMetadata) api.ExternalMetadat
 		IMDB:       deepCopyIMDBMetadata(metadata.IMDB),
 		TVDB:       deepCopyTVDBMetadata(metadata.TVDB),
 		TVmaze:     deepCopyTVmazeMetadata(metadata.TVmaze),
+		Bluray:     deepCopyBlurayMetadata(metadata.Bluray),
 		UpdatedAt:  metadata.UpdatedAt,
 	}
+}
+
+func deepCopyBlurayMetadata(metadata *api.BlurayMetadata) *api.BlurayMetadata {
+	if metadata == nil {
+		return nil
+	}
+	cloned := *metadata
+	cloned.Candidates = make([]api.BlurayReleaseCandidate, len(metadata.Candidates))
+	for idx, candidate := range metadata.Candidates {
+		cloned.Candidates[idx] = candidate
+		cloned.Candidates[idx].Warnings = append([]string(nil), candidate.Warnings...)
+		cloned.Candidates[idx].MatchNotes = append([]string(nil), candidate.MatchNotes...)
+		cloned.Candidates[idx].Specs.Audio = append([]string(nil), candidate.Specs.Audio...)
+		cloned.Candidates[idx].Specs.Subtitles = append([]string(nil), candidate.Specs.Subtitles...)
+		cloned.Candidates[idx].CoverImages = append([]api.BlurayImage(nil), candidate.CoverImages...)
+	}
+	return &cloned
 }
 
 func deepCopyTMDBMetadata(metadata *api.TMDBMetadata) *api.TMDBMetadata {
@@ -3474,6 +3622,7 @@ func buildMetadataPreview(meta api.PreparedMetadata, cfg config.Config) api.Meta
 		ExternalIDCandidates: meta.ExternalIDCandidates,
 		ExternalIDInfo:       buildExternalIDInfo(meta.ExternalIDs),
 		ExternalPreview:      buildExternalPreviews(meta.ExternalIDs, meta.ExternalMetadata),
+		Bluray:               deepCopyBlurayMetadata(meta.ExternalMetadata.Bluray),
 		TrackerData:          buildTrackerPreview(meta.TrackerData, cfg),
 	}
 }

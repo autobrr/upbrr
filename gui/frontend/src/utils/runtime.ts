@@ -155,6 +155,11 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             NameOverrides: nameOverrides,
             Trackers: trackers,
           }),
+        SelectBlurayCandidate: (path: string, releaseID: string) =>
+          call("SelectBlurayCandidate", {
+            Path: path,
+            ReleaseID: releaseID,
+          }),
         FetchDescriptionBuilder: (
           path: string,
           overrides: unknown,

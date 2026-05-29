@@ -115,6 +115,14 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		s.logger.Debugf("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
 	}
 
+	meta, err = s.applyBlurayMetadata(ctx, meta, bdinfo)
+	if err != nil {
+		return api.PreparedMetadata{}, err
+	}
+	if s.logger != nil && meta.ExternalMetadata.Bluray != nil {
+		s.logger.Debugf("metadata: blu-ray.com candidates=%d selected=%q score=%.1f threshold=%.1f", len(meta.ExternalMetadata.Bluray.Candidates), meta.ExternalMetadata.Bluray.SelectedReleaseID, meta.ExternalMetadata.Bluray.BestScore, meta.ExternalMetadata.Bluray.Threshold)
+	}
+
 	meta.Distributor = normalizeDistributor(meta.Distributor)
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details distributor=%q", meta.Distributor)

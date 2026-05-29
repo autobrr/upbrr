@@ -100,6 +100,14 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if strings.TrimSpace(metadata.SourcePath) == "" {
 			metadata.SourcePath = meta.SourcePath
 		}
+	} else {
+		storedMeta, err := s.repo.GetExternalMetadata(ctx, meta.SourcePath)
+		if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
+			return api.PreparedMetadata{}, fmt.Errorf("metadata: load stored external metadata: %w", err)
+		}
+		if err == nil {
+			metadata.Bluray = storedMeta.Bluray
+		}
 	}
 	candidates := api.ExternalIDCandidates{}
 	categoryPref := resolveCategoryPreference(meta)
@@ -361,8 +369,19 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		return false
 	}
 
+	tmdbLogoFetchAttempted := false
+	shouldFetchTMDBMetadata := func() bool {
+		if ids.TMDBID == 0 {
+			return false
+		}
+		if metadata.TMDB == nil {
+			return true
+		}
+		return s.cfg.Description.AddLogo && strings.TrimSpace(metadata.TMDB.Logo) == "" && !tmdbLogoFetchAttempted
+	}
+
 	shouldRunFetchPass := func() bool {
-		if ids.TMDBID != 0 && metadata.TMDB == nil {
+		if shouldFetchTMDBMetadata() {
 			return true
 		}
 		if ids.IMDBID != 0 && metadata.IMDB == nil {
@@ -378,7 +397,10 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 
 	runFetchPass := func(allowTVmazeNameFallback bool) {
-		fetchTMDB := ids.TMDBID != 0 && metadata.TMDB == nil
+		fetchTMDB := shouldFetchTMDBMetadata()
+		if fetchTMDB && s.cfg.Description.AddLogo {
+			tmdbLogoFetchAttempted = true
+		}
 		fetchIMDB := ids.IMDBID != 0 && metadata.IMDB == nil
 		lookupTVDB := !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
 		lookupTVmaze := metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
@@ -411,6 +433,8 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 					IMDbID:         ids.IMDBID,
 					TVDBID:         ids.TVDBID,
 					ManualLanguage: manualLanguage,
+					AddLogo:        s.cfg.Description.AddLogo,
+					LogoLanguages:  descriptionLogoLanguages(s.cfg.Description.LogoLanguage),
 					Filename:       filename,
 					Debug:          meta.Options.Debug,
 				})
@@ -636,11 +660,12 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			ids.SourceTVmaze,
 		)
 		s.logger.Debugf(
-			"metadata: external metadata fetched tmdb=%t imdb=%t tvdb=%t tvmaze=%t",
+			"metadata: external metadata fetched tmdb=%t imdb=%t tvdb=%t tvmaze=%t bluray=%t",
 			metadata.TMDB != nil,
 			metadata.IMDB != nil,
 			metadata.TVDB != nil,
 			metadata.TVmaze != nil,
+			metadata.Bluray != nil,
 		)
 	}
 
@@ -656,7 +681,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	if err := s.repo.SaveExternalIDs(ctx, ids); err != nil {
 		return api.PreparedMetadata{}, fmt.Errorf("metadata: save external ids: %w", err)
 	}
-	if metadata.TMDB != nil || metadata.IMDB != nil || metadata.TVDB != nil || metadata.TVmaze != nil {
+	if metadata.TMDB != nil || metadata.IMDB != nil || metadata.TVDB != nil || metadata.TVmaze != nil || metadata.Bluray != nil {
 		if err := s.repo.SaveExternalMetadata(ctx, metadata); err != nil {
 			return api.PreparedMetadata{}, fmt.Errorf("metadata: save external metadata: %w", err)
 		}
@@ -1015,6 +1040,20 @@ func formatOptionalInt(value int) string {
 		return ""
 	}
 	return strconv.Itoa(value)
+}
+
+func descriptionLogoLanguages(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';'
+	})
+	languages := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			languages = append(languages, trimmed)
+		}
+	}
+	return languages
 }
 
 func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBMetadata {
