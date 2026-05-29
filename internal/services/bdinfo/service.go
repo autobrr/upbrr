@@ -148,8 +148,8 @@ func New(logger api.Logger) *Service {
 }
 
 // ExecuteForPlaylist runs the embedded Go BDInfo scanner for a specific playlist and writes to the caller-provided path.
-func (s *Service) ExecuteForPlaylist(ctx context.Context, bdmvPath string, playlistFile string, outputPath string) (string, error) {
-	result, err := s.execute(ctx, bdmvPath, normalizePlaylistSelector(playlistFile), outputPath, true)
+func (s *Service) ExecuteForPlaylist(ctx context.Context, bdmvPath string, playlistFile string, outputPath string, summaryOnly bool) (string, error) {
+	result, err := s.execute(ctx, bdmvPath, normalizePlaylistSelector(playlistFile), outputPath, summaryOnly)
 	if err != nil {
 		return "", err
 	}
