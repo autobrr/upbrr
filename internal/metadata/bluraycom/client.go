@@ -5,6 +5,7 @@ package bluraycom
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -170,7 +171,7 @@ func (c *Client) fetch(ctx context.Context, targetURL string, referer string) (s
 	}
 	var extra [1]byte
 	n, err := resp.Body.Read(extra[:])
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("bluray.com: read truncation check %s: %w", targetURL, err)
 	}
 	if n > 0 {

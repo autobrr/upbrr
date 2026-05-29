@@ -67,7 +67,7 @@ func scoreDiscFormat(candidate *api.BlurayReleaseCandidate, bdinfo *discparse.BD
 		return 0
 	}
 	if strings.Contains(format, expected) || strings.Contains(strings.ReplaceAll(format, " ", ""), expected) {
-		*notes = append(*notes, fmt.Sprintf("disc format matches %s", strings.ToUpper(expected)))
+		*notes = append(*notes, "disc format matches "+strings.ToUpper(expected))
 		return 0
 	}
 	if strings.Contains(format, "bd") && !strings.ContainsAny(format, "0123456789") {
@@ -218,15 +218,16 @@ func audioTrackScore(local discparse.BDAudio, releaseTrack string) int {
 		return 0
 	}
 	format := normalizeAudioToken(local.Codec)
-	if format != "" && strings.Contains(release, format) {
+	switch {
+	case format != "" && strings.Contains(release, format):
 		score++
-	} else if strings.Contains(format, "dts") && strings.Contains(release, "dts") {
+	case strings.Contains(format, "dts") && strings.Contains(release, "dts"):
 		score++
-	} else if strings.Contains(format, "dolby") && strings.Contains(release, "dolby") {
+	case strings.Contains(format, "dolby") && strings.Contains(release, "dolby"):
 		score++
-	} else if strings.Contains(format, "truehd") && strings.Contains(release, "truehd") {
+	case strings.Contains(format, "truehd") && strings.Contains(release, "truehd"):
 		score++
-	} else if strings.Contains(strings.ToLower(local.Atmos), "atmos") && strings.Contains(release, "atmos") {
+	case strings.Contains(strings.ToLower(local.Atmos), "atmos") && strings.Contains(release, "atmos"):
 		score++
 	}
 	channels := strings.ToLower(local.Channels)

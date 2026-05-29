@@ -15,7 +15,10 @@ import (
 )
 
 func (s *Service) applyBlurayMetadata(ctx context.Context, meta api.PreparedMetadata, bdinfo *discparse.BDInfo) (api.PreparedMetadata, error) {
-	if !s.shouldLookupBluray(meta) {
+	if reason := s.blurayLookupSkipReason(meta); reason != "" {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: blu-ray.com lookup skipped: %s", reason)
+		}
 		meta = applySelectedBlurayCandidate(meta)
 		return meta, nil
 	}
@@ -95,23 +98,37 @@ func (s *Service) applyBlurayMetadata(ctx context.Context, meta api.PreparedMeta
 }
 
 func (s *Service) shouldLookupBluray(meta api.PreparedMetadata) bool {
-	if !s.cfg.Metadata.GetBlurayInfo || s.bluray == nil || s.repo == nil {
-		return false
+	return s.blurayLookupSkipReason(meta) == ""
+}
+
+func (s *Service) blurayLookupSkipReason(meta api.PreparedMetadata) string {
+	if !s.blurayLookupEnabled() {
+		return "metadata.get_bluray_info and description blu-ray options disabled"
+	}
+	if s.bluray == nil {
+		return "blu-ray.com client unavailable"
+	}
+	if s.repo == nil {
+		return "metadata repository unavailable"
 	}
 	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
 	if discType != "BDMV" && discType != "DVD" {
-		return false
+		return "source is not BDMV/DVD"
 	}
 	if meta.Options.DryRun {
-		return false
+		return "dry-run enabled"
 	}
 	if meta.ExternalIDs.IMDBID == 0 && (meta.ExternalMetadata.IMDB == nil || meta.ExternalMetadata.IMDB.IMDBID == 0) {
-		return false
+		return "IMDb ID missing"
 	}
 	if meta.ExternalMetadata.Bluray != nil && len(meta.ExternalMetadata.Bluray.Candidates) > 0 {
-		return true
+		return ""
 	}
-	return true
+	return ""
+}
+
+func (s *Service) blurayLookupEnabled() bool {
+	return s.cfg.Metadata.GetBlurayInfo || s.cfg.Description.AddBlurayLink || s.cfg.Description.UseBlurayImages
 }
 
 func (s *Service) reusableBlurayMetadata(meta api.PreparedMetadata, imdbID int) *api.BlurayMetadata {
