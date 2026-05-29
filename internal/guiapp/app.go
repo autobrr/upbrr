@@ -378,8 +378,14 @@ func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.E
 }
 
 func (a *App) SelectBlurayCandidate(path string, releaseID string) (api.MetadataPreview, error) {
-	if a == nil || a.core == nil {
-		return api.MetadataPreview{}, errors.New("app not initialized")
+	if err := a.requireCore(); err != nil {
+		return api.MetadataPreview{}, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return api.MetadataPreview{}, errors.New("path is required")
+	}
+	if strings.TrimSpace(releaseID) == "" {
+		return api.MetadataPreview{}, errors.New("release ID is required")
 	}
 	selector, ok := a.core.(blurayCandidateSelector)
 	if !ok {

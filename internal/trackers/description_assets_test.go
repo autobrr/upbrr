@@ -280,7 +280,7 @@ func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen1.png", Order: 0, Source: string(api.ScreenshotPurposeFinal)},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: string(api.ScreenshotPurposeMenu)},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: screenshotPurposeMenu},
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen2.png", Order: 2, Source: string(api.ScreenshotPurposeFinal)},
 		},
 	}
@@ -313,7 +313,7 @@ func TestResolveDescriptionAssetsAppendsMenuSelectionToStoredSlots(t *testing.T)
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen1.png", Order: 0, Source: string(api.ScreenshotPurposeFinal)},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: string(api.ScreenshotPurposeMenu)},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: screenshotPurposeMenu},
 		},
 		screenshotSlots: []api.ScreenshotSlot{
 			{

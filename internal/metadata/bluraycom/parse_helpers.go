@@ -4,6 +4,7 @@
 package bluraycom
 
 import (
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -239,6 +240,9 @@ func parseAudioLines(value string) []string {
 	out := make([]string, 0, len(lines))
 	for idx := 0; idx < len(lines); idx++ {
 		current := lines[idx]
+		// Blu-ray.com can split Atmos into current/next rows. If trackLanguagePrefix
+		// matches and cleanText-normalized current has Dolby Atmos while next has
+		// Dolby Digital or Dolby TrueHD, append one merged out entry and advance idx.
 		if idx+1 < len(lines) && strings.Contains(strings.ToLower(current), "atmos") {
 			next := lines[idx+1]
 			currentLang := trackLanguagePrefix(current)
@@ -411,12 +415,11 @@ func cleanImageURL(rawURL string) string {
 	if trimmed == "" {
 		return ""
 	}
-	extensions := []string{".jpg", ".jpeg", ".png", ".gif", ".webp"}
-	lower := strings.ToLower(trimmed)
-	for _, ext := range extensions {
-		if pos := strings.Index(lower, ext); pos >= 0 {
-			return trimmed[:pos+len(ext)]
-		}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return trimmed
 	}
-	return trimmed
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }

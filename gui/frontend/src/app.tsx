@@ -966,7 +966,7 @@ export default function App() {
   };
 
   const hasTrackerData = preview.TrackerData && preview.TrackerData.length > 0;
-  const hasBlurayData = Boolean(preview.Bluray && (preview.Bluray.Candidates || []).length > 0);
+  const hasBlurayData = Boolean(preview.Bluray);
   const hasPreview = Boolean(preview.SourcePath);
 
   useEffect(() => {
@@ -2280,9 +2280,15 @@ export default function App() {
     return payload;
   };
 
-  const applyPreviewResult = (result: MetadataPreview) => {
+  const applyPreviewResult = (
+    result: MetadataPreview,
+    options: { switchToInput?: boolean } = {},
+  ) => {
+    const { switchToInput = true } = options;
     setPreview(result);
-    setActiveTab("input");
+    if (switchToInput) {
+      setActiveTab("input");
+    }
     setIdEdits(buildIDEditState(result.ExternalIDs));
     setReleaseEdits(buildReleaseEditState(result.ReleaseNameOverrides || {}));
     setReleaseTouched(buildReleaseTouchedState(result.ReleaseNameOverrides || {}));
@@ -2661,12 +2667,7 @@ export default function App() {
     setBluraySelecting(true);
     try {
       const result = await selector(targetPath, releaseID.trim());
-      applyPreviewResult(result);
-      setBuilderPreview(emptyDescriptionBuilder);
-      setBuilderRawByGroup({});
-      setBuilderRenderedByGroup({});
-      setBuilderExpandedGroups({});
-      setBuilderDirtyByGroup({});
+      applyPreviewResult(result, { switchToInput: false });
     } catch (err) {
       setBluraySelectionError(String(err));
     } finally {

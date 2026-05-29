@@ -396,7 +396,8 @@ func (m *BlurayMetadata) SelectCandidate(releaseID string, auto bool, reason str
 	m.AutoSelected = auto
 	m.SelectionReason = strings.TrimSpace(reason)
 	for idx := range m.Candidates {
-		m.Candidates[idx].Accepted = strings.EqualFold(m.Candidates[idx].ReleaseID, m.SelectedReleaseID)
+		trimmedCandidate := strings.TrimSpace(m.Candidates[idx].ReleaseID)
+		m.Candidates[idx].Accepted = strings.EqualFold(trimmedCandidate, m.SelectedReleaseID)
 	}
 	return true
 }

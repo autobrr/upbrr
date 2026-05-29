@@ -82,6 +82,7 @@ export default function BlurayCandidatesPage(props: Props) {
             <div className="grid gap-3">
               {candidates.map((candidate) => {
                 const selected = candidate.ReleaseID === selectedID || candidate.Accepted;
+                const hasReleaseID = Boolean(candidate.ReleaseID);
                 return (
                   <section
                     className={`panel grid gap-3 ${selected ? "border-[var(--sidebar-active-border)]" : ""}`}
@@ -97,8 +98,10 @@ export default function BlurayCandidatesPage(props: Props) {
                       <button
                         className={selected ? "primary" : "ghost"}
                         type="button"
-                        disabled={selecting || selected}
-                        onClick={() => onSelect(candidate.ReleaseID)}
+                        disabled={selecting || selected || !hasReleaseID}
+                        onClick={() => {
+                          if (hasReleaseID) onSelect(candidate.ReleaseID);
+                        }}
                       >
                         {selected ? "Selected" : selecting ? "Selecting..." : "Select"}
                       </button>

@@ -21,6 +21,7 @@ const (
 	screenshotSlotSourceDescription = "description"
 	screenshotSlotSourceSelection   = "final_selection"
 	screenshotSlotSourceTracker     = "tracker_metadata"
+	screenshotPurposeMenu           = string(api.ScreenshotPurposeMenu)
 
 	screenshotSectionWrapped    = "wrapped"
 	screenshotSectionComparison = "comparison"

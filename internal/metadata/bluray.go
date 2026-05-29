@@ -67,10 +67,27 @@ func (s *Service) applyBlurayMetadata(ctx context.Context, meta api.PreparedMeta
 	if lookup.UpdatedAt.IsZero() {
 		lookup.UpdatedAt = time.Now().UTC()
 	}
-	meta.ExternalMetadata.Bluray = lookup
-	meta.ExternalMetadata.SourcePath = meta.SourcePath
-	meta.ExternalMetadata.UpdatedAt = lookup.UpdatedAt
-	if err := s.repo.SaveExternalMetadata(ctx, meta.ExternalMetadata); err != nil {
+	merged := meta.ExternalMetadata
+	if stored, err := s.repo.GetExternalMetadata(ctx, meta.SourcePath); err == nil {
+		if merged.TMDB != nil {
+			stored.TMDB = merged.TMDB
+		}
+		if merged.IMDB != nil {
+			stored.IMDB = merged.IMDB
+		}
+		if merged.TVDB != nil {
+			stored.TVDB = merged.TVDB
+		}
+		if merged.TVmaze != nil {
+			stored.TVmaze = merged.TVmaze
+		}
+		merged = stored
+	}
+	merged.Bluray = lookup
+	merged.SourcePath = meta.SourcePath
+	merged.UpdatedAt = lookup.UpdatedAt
+	meta.ExternalMetadata = merged
+	if err := s.repo.SaveExternalMetadata(ctx, merged); err != nil {
 		return api.PreparedMetadata{}, fmt.Errorf("metadata: save blu-ray metadata: %w", err)
 	}
 	meta = applySelectedBlurayCandidate(meta)

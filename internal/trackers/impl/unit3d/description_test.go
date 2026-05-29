@@ -88,7 +88,7 @@ func TestBuildUnit3DDescriptionAppliesDescriptionConfig(t *testing.T) {
 
 func TestBuildUnit3DDescriptionAddsLogoEpisodeOverviewAndMenuImages(t *testing.T) {
 	meta := api.PreparedMetadata{
-		EpisodeOverview: "Episode overview text",
+		EpisodeOverview: "Episode [b]overview[/b] text",
 		ExternalMetadata: api.ExternalMetadata{
 			TMDB: &api.TMDBMetadata{Logo: "https://image.tmdb.org/t/p/original/logo.png"},
 		},
@@ -110,7 +110,7 @@ func TestBuildUnit3DDescriptionAddsLogoEpisodeOverviewAndMenuImages(t *testing.T
 	}
 	for _, expected := range []string{
 		"[img=400]https://image.tmdb.org/t/p/original/logo.png[/img]",
-		"[center]Episode overview text[/center]",
+		"[center]Episode %5Bb%5Doverview%5B/b%5D text[/center]",
 		"Disc menu",
 		"[img=250]https://img.example/menu1.png[/img]",
 	} {
@@ -131,8 +131,9 @@ func TestBuildUnit3DDescriptionAddsBlurayLinkAndImages(t *testing.T) {
 						ReleaseID: "123",
 						URL:       "https://www.blu-ray.com/movies/Example-Blu-ray/123/",
 						CoverImages: []api.BlurayImage{
-							{Kind: "front", URL: "https://img.example/front.jpg"},
+							{Kind: "front", URL: "https://img.example/front[1].jpg"},
 							{Kind: "back", URL: "https://img.example/back.jpg"},
+							{Kind: "bad", URL: "javascript:alert(1)"},
 						},
 					},
 				},
@@ -153,12 +154,57 @@ func TestBuildUnit3DDescriptionAddsBlurayLinkAndImages(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"[center]https://www.blu-ray.com/movies/Example-Blu-ray/123/[/center]",
-		"[img=260]https://img.example/front.jpg[/img]",
+		"[img=260]https://img.example/front%5B1%5D.jpg[/img]",
 		"[img=260]https://img.example/back.jpg[/img]",
 	} {
 		if !strings.Contains(result, expected) {
 			t.Fatalf("expected %q in description, got %q", expected, result)
 		}
+	}
+	if strings.Contains(result, "javascript:alert") {
+		t.Fatalf("expected unsafe blu-ray image URL to be skipped, got %q", result)
+	}
+}
+
+func TestBuildUnit3DDescriptionSanitizesBlurayLink(t *testing.T) {
+	cfg := config.Config{
+		Description: config.DescriptionSettingsConfig{
+			AddBlurayLink: true,
+		},
+	}
+	meta := api.PreparedMetadata{
+		DiscType: "BDMV",
+		ExternalMetadata: api.ExternalMetadata{
+			Bluray: &api.BlurayMetadata{
+				SelectedReleaseID: "123",
+				Candidates: []api.BlurayReleaseCandidate{
+					{
+						ReleaseID: "123",
+						URL:       "https://www.blu-ray.com/movies/Example-[Bad]/123/",
+					},
+				},
+			},
+		},
+	}
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "[center]https://www.blu-ray.com/movies/Example-%5BBad%5D/123/[/center]") {
+		t.Fatalf("expected escaped blu-ray URL in description, got %q", result)
+	}
+	if strings.Contains(result, "Example-[Bad]") {
+		t.Fatalf("expected raw BBCode brackets to be escaped, got %q", result)
+	}
+
+	meta.ExternalMetadata.Bluray.Candidates[0].URL = "not a url"
+	result, err = buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result, "[center]not a url[/center]") {
+		t.Fatalf("expected invalid blu-ray URL to be skipped, got %q", result)
 	}
 }
 

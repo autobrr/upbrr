@@ -221,6 +221,12 @@ type blurayCandidateSelector interface {
 }
 
 func (b *Backend) SelectBlurayCandidate(path string, releaseID string) (api.MetadataPreview, error) {
+	if strings.TrimSpace(path) == "" {
+		return api.MetadataPreview{}, errors.New("path is required")
+	}
+	if strings.TrimSpace(releaseID) == "" {
+		return api.MetadataPreview{}, errors.New("release ID is required")
+	}
 	if err := b.requireCore(); err != nil {
 		return api.MetadataPreview{}, err
 	}

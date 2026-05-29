@@ -2356,9 +2356,6 @@ func (c *Core) SelectBlurayCandidate(ctx context.Context, sourcePath string, rel
 	}
 	external.UpdatedAt = time.Now().UTC()
 	external.Bluray.UpdatedAt = external.UpdatedAt
-	if err := c.repo.SaveExternalMetadata(ctx, external); err != nil {
-		return api.MetadataPreview{}, fmt.Errorf("core: save blu-ray selection: %w", err)
-	}
 
 	c.dupeMu.Lock()
 	cachePath := trimmedPath
@@ -2378,21 +2375,30 @@ func (c *Core) SelectBlurayCandidate(ctx context.Context, sourcePath string, rel
 		entry.meta.ExternalMetadata.Bluray = external.Bluray
 		entry.meta.ExternalMetadata.UpdatedAt = external.UpdatedAt
 		applyBlurayCandidateToPreparedMeta(&entry.meta)
-		if c.services.Metadata != nil {
-			if refreshed, refreshErr := c.services.Metadata.RefreshPreparedMetadata(ctx, entry.meta); refreshErr == nil {
-				entry.meta = refreshed
-			} else if c.logger != nil {
-				c.logger.Warnf("core: refresh metadata after blu-ray selection failed: %v", refreshErr)
-			}
-		}
-		entry.updatedAt = time.Now().UTC()
-		entry.requestRefreshed = true
-		c.dupeCache[cachePath] = entry
 	}
 	c.dupeMu.Unlock()
 	if !ok {
 		return api.MetadataPreview{}, internalerrors.ErrNotFound
 	}
+
+	if c.services.Metadata != nil {
+		if refreshed, refreshErr := c.services.Metadata.RefreshPreparedMetadata(ctx, entry.meta); refreshErr == nil {
+			entry.meta = refreshed
+		} else if c.logger != nil {
+			c.logger.Warnf("core: refresh metadata after blu-ray selection failed: %v", refreshErr)
+		}
+	}
+
+	if err := c.repo.SaveExternalMetadata(ctx, external); err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: save blu-ray selection: %w", err)
+	}
+
+	c.dupeMu.Lock()
+	entry.updatedAt = time.Now().UTC()
+	entry.requestRefreshed = true
+	c.dupeCache[cachePath] = entry
+	c.dupeMu.Unlock()
+
 	return buildMetadataPreview(entry.meta, c.cfg), nil
 }
 

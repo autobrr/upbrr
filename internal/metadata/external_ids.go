@@ -100,8 +100,14 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if strings.TrimSpace(metadata.SourcePath) == "" {
 			metadata.SourcePath = meta.SourcePath
 		}
-	} else if storedMeta, err := s.repo.GetExternalMetadata(ctx, meta.SourcePath); err == nil && storedMeta.Bluray != nil {
-		metadata.Bluray = storedMeta.Bluray
+	} else {
+		storedMeta, err := s.repo.GetExternalMetadata(ctx, meta.SourcePath)
+		if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
+			return api.PreparedMetadata{}, fmt.Errorf("metadata: load stored external metadata: %w", err)
+		}
+		if err == nil {
+			metadata.Bluray = storedMeta.Bluray
+		}
 	}
 	candidates := api.ExternalIDCandidates{}
 	categoryPref := resolveCategoryPreference(meta)

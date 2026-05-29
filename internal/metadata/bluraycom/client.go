@@ -20,7 +20,11 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const baseURL = "https://www.blu-ray.com"
+const (
+	baseURL                    = "https://www.blu-ray.com"
+	maxResponseBytes           = 16 << 20
+	maxFallbackReleaseSections = 3
+)
 
 var (
 	releaseIDPattern       = regexp.MustCompile(`(?i)blu-ray\.com/(?:movies|dvd)/.*?/(\d+)/`)
@@ -37,6 +41,7 @@ var (
 
 type Client struct {
 	httpClient *http.Client
+	logger     api.Logger
 }
 
 type LookupInput struct {
@@ -58,11 +63,15 @@ type movieLink struct {
 	ProductID   string
 }
 
-func NewClient(client *http.Client) *Client {
+func NewClient(client *http.Client, loggers ...api.Logger) *Client {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &Client{httpClient: client}
+	var logger api.Logger = api.NopLogger{}
+	if len(loggers) > 0 && loggers[0] != nil {
+		logger = loggers[0]
+	}
+	return &Client{httpClient: client, logger: logger}
 }
 
 func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMetadata, error) {
@@ -93,7 +102,7 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 		if fetchErr != nil {
 			continue
 		}
-		releases, parseErr := parseReleaseInfo(releasesHTML, input)
+		releases, parseErr := parseReleaseInfo(releasesHTML, input, c.logger)
 		if parseErr != nil {
 			continue
 		}
@@ -155,9 +164,17 @@ func (c *Client) fetch(ctx context.Context, targetURL string, referer string) (s
 		return "", fmt.Errorf("bluray.com: fetch %s: %w", targetURL, err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return "", fmt.Errorf("bluray.com: read %s: %w", targetURL, err)
+	}
+	var extra [1]byte
+	n, err := resp.Body.Read(extra[:])
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("bluray.com: read truncation check %s: %w", targetURL, err)
+	}
+	if n > 0 {
+		return "", fmt.Errorf("bluray.com: response for %s exceeds %d bytes", targetURL, maxResponseBytes)
 	}
 	text := string(body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -206,7 +223,7 @@ func parseMovieLinks(htmlText string) ([]movieLink, error) {
 	return results, nil
 }
 
-func parseReleaseInfo(htmlText string, input LookupInput) ([]api.BlurayReleaseCandidate, error) {
+func parseReleaseInfo(htmlText string, input LookupInput, loggers ...api.Logger) ([]api.BlurayReleaseCandidate, error) {
 	root, err := html.Parse(strings.NewReader(htmlText))
 	if err != nil {
 		return nil, fmt.Errorf("bluray.com: parse releases html: %w", err)
@@ -221,11 +238,22 @@ func parseReleaseInfo(htmlText string, input LookupInput) ([]api.BlurayReleaseCa
 		}
 	}
 	if len(sections) == 0 {
+		var logger api.Logger
+		if len(loggers) > 0 {
+			logger = loggers[0]
+		}
+		matchedHeaders := 0
 		for _, h3 := range allH3 {
 			title := textContent(h3)
 			if strings.Contains(title, "Blu-ray Editions") || strings.Contains(title, "DVD Editions") {
-				sections = append(sections, h3)
+				matchedHeaders++
+				if len(sections) < maxFallbackReleaseSections {
+					sections = append(sections, h3)
+				}
 			}
+		}
+		if matchedHeaders > 0 && logger != nil {
+			logger.Warnf("bluray.com: release section fallback used max_sections=%d matched_headers=%d", maxFallbackReleaseSections, matchedHeaders)
 		}
 	}
 

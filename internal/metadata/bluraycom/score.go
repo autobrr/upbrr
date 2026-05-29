@@ -6,6 +6,7 @@ package bluraycom
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -282,14 +283,12 @@ func scoreSubtitles(candidate *api.BlurayReleaseCandidate, bdinfo *discparse.BDI
 	available := append([]string{}, candidate.Specs.Subtitles...)
 	matches := 0
 	for _, localSub := range bdinfo.Subtitles {
-		local := strings.ToLower(strings.TrimSpace(localSub))
-		if local == "" {
+		if normalizeSubtitle(localSub) == "" {
 			continue
 		}
 		matchedIndex := -1
 		for idx, releaseSub := range available {
-			release := strings.ToLower(strings.TrimSpace(releaseSub))
-			if strings.Contains(local, release) || strings.Contains(release, local) {
+			if subtitlesMatch(localSub, releaseSub) {
 				matchedIndex = idx
 				break
 			}
@@ -310,4 +309,51 @@ func scoreSubtitles(candidate *api.BlurayReleaseCandidate, bdinfo *discparse.BDI
 	}
 	*notes = append(*notes, fmt.Sprintf("subtitles matched=%d missing=%d extra=%d (-%.1f)", matches, missing, len(available), penalty))
 	return penalty
+}
+
+func subtitlesMatch(left string, right string) bool {
+	leftNormalized := normalizeSubtitle(left)
+	rightNormalized := normalizeSubtitle(right)
+	if leftNormalized == "" || rightNormalized == "" {
+		return false
+	}
+	if leftNormalized == rightNormalized {
+		return true
+	}
+	return sameSubtitleTokens(strings.Fields(leftNormalized), strings.Fields(rightNormalized))
+}
+
+func normalizeSubtitle(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var builder strings.Builder
+	lastSpace := true
+	for _, r := range value {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			builder.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	return strings.Join(strings.Fields(builder.String()), " ")
+}
+
+func sameSubtitleTokens(left []string, right []string) bool {
+	if len(left) == 0 || len(left) != len(right) {
+		return false
+	}
+	counts := make(map[string]int, len(left))
+	for _, token := range left {
+		counts[token]++
+	}
+	for _, token := range right {
+		counts[token]--
+		if counts[token] < 0 {
+			return false
+		}
+	}
+	return true
 }

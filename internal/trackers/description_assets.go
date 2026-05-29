@@ -195,7 +195,7 @@ func splitDescriptionScreenshots(ctx context.Context, meta api.PreparedMetadata,
 	selections, _ := finalSelectionsFromSource(ctx, meta, repo, preloaded)
 	menuPaths := make(map[string]struct{})
 	for _, sel := range selections {
-		if sel.Source == string(api.ScreenshotPurposeMenu) && strings.TrimSpace(sel.ImagePath) != "" {
+		if sel.Source == screenshotPurposeMenu && strings.TrimSpace(sel.ImagePath) != "" {
 			menuPaths[strings.TrimSpace(sel.ImagePath)] = struct{}{}
 		}
 	}

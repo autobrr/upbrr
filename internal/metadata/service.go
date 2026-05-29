@@ -218,7 +218,7 @@ func NewService(repo db.MetadataRepository, opts ...Option) *Service {
 		service.tracker = trackerdata.NewClient(service.cfg, service.logger, nil)
 	}
 	if service.bluray == nil {
-		service.bluray = bluraycom.NewClient(nil)
+		service.bluray = bluraycom.NewClient(nil, service.logger)
 	}
 	return service
 }

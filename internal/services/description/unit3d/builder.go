@@ -6,6 +6,7 @@ package unit3d
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -378,7 +379,7 @@ func EpisodeOverviewBlock(meta api.PreparedMetadata, appConfig config.Config) st
 	if overview == "" {
 		return ""
 	}
-	return "[center]" + overview + "[/center]"
+	return "[center]" + escapeBBCode(overview) + "[/center]"
 }
 
 func BlurayBlock(meta api.PreparedMetadata, appConfig config.Config) string {
@@ -394,7 +395,7 @@ func BlurayBlock(meta api.PreparedMetadata, appConfig config.Config) string {
 	}
 	parts := make([]string, 0, 2)
 	if appConfig.Description.AddBlurayLink {
-		if releaseURL := strings.TrimSpace(candidate.URL); releaseURL != "" {
+		if releaseURL := sanitizeBlurayReleaseURL(candidate.URL); releaseURL != "" {
 			parts = append(parts, "[center]"+releaseURL+"[/center]")
 		}
 	}
@@ -405,7 +406,7 @@ func BlurayBlock(meta api.PreparedMetadata, appConfig config.Config) string {
 		}
 		imageTags := make([]string, 0, len(candidate.CoverImages))
 		for _, image := range candidate.CoverImages {
-			imageURL := strings.TrimSpace(image.URL)
+			imageURL := sanitizeDescriptionURL(image.URL)
 			if imageURL == "" {
 				continue
 			}
@@ -416,6 +417,30 @@ func BlurayBlock(meta api.PreparedMetadata, appConfig config.Config) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func sanitizeBlurayReleaseURL(rawURL string) string {
+	return sanitizeDescriptionURL(rawURL)
+}
+
+func sanitizeDescriptionURL(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return ""
+	}
+	return escapeBBCode(parsed.String())
+}
+
+func escapeBBCode(value string) string {
+	return strings.NewReplacer("[", "%5B", "]", "%5D").Replace(value)
 }
 
 func UppbrrSignatureLink() (string, string) {
