@@ -90,6 +90,11 @@ func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig 
 		logger.Tracef("trackers: unit3d desc part=episode_overview len=%d", len(episodeOverview))
 	}
 
+	if bluray := BlurayBlock(meta, appConfig); bluray != "" {
+		appendUniquePart(bluray, "bluray")
+		logger.Tracef("trackers: unit3d desc part=bluray")
+	}
+
 	if vobMediaInfo := DVDVOBMediaInfoBlock(meta); vobMediaInfo != "" {
 		appendUniquePart(vobMediaInfo, "dvd_vob_mediainfo")
 		logger.Tracef("trackers: unit3d desc part=dvd_vob_mediainfo")
@@ -374,6 +379,43 @@ func EpisodeOverviewBlock(meta api.PreparedMetadata, appConfig config.Config) st
 		return ""
 	}
 	return "[center]" + overview + "[/center]"
+}
+
+func BlurayBlock(meta api.PreparedMetadata, appConfig config.Config) string {
+	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") && !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+		return ""
+	}
+	if meta.ExternalMetadata.Bluray == nil {
+		return ""
+	}
+	candidate := meta.ExternalMetadata.Bluray.SelectedCandidate()
+	if candidate == nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if appConfig.Description.AddBlurayLink {
+		if releaseURL := strings.TrimSpace(candidate.URL); releaseURL != "" {
+			parts = append(parts, "[center]"+releaseURL+"[/center]")
+		}
+	}
+	if appConfig.Description.UseBlurayImages && len(candidate.CoverImages) > 0 {
+		size := appConfig.Description.BlurayImageSize
+		if size <= 0 {
+			size = 250
+		}
+		imageTags := make([]string, 0, len(candidate.CoverImages))
+		for _, image := range candidate.CoverImages {
+			imageURL := strings.TrimSpace(image.URL)
+			if imageURL == "" {
+				continue
+			}
+			imageTags = append(imageTags, fmt.Sprintf("[img=%d]%s[/img]", size, imageURL))
+		}
+		if len(imageTags) > 0 {
+			parts = append(parts, "[center]"+strings.Join(imageTags, " ")+"[/center]")
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func UppbrrSignatureLink() (string, string) {

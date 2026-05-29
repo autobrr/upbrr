@@ -121,6 +121,23 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
+	mux.HandleFunc("/api/app/SelectBlurayCandidate", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		var req struct {
+			Path      string
+			ReleaseID string
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		value, err := s.backend.SelectBlurayCandidate(req.Path, req.ReleaseID)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
 	mux.HandleFunc("/api/app/CheckDupes", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		var req struct {
 			Path          string

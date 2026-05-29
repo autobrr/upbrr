@@ -15,6 +15,7 @@ import (
 	"time"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func readSchemaMigrationIDs(t *testing.T, db *sql.DB) []string {
@@ -273,6 +274,13 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 			Year:   2024,
 			Type:   "movie",
 		},
+		Bluray: &api.BlurayMetadata{
+			IMDBID:            200,
+			SelectedReleaseID: "123",
+			Candidates: []api.BlurayReleaseCandidate{
+				{ReleaseID: "123", Title: "Example 4K", Score: 99.5},
+			},
+		},
 		UpdatedAt: idsStamp,
 	}); err != nil {
 		t.Fatalf("save external metadata: %v", err)
@@ -282,7 +290,7 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get external metadata: %v", err)
 	}
-	if metadata.TMDB == nil || metadata.TMDB.TMDBID != 100 || metadata.IMDB == nil || metadata.IMDB.IMDBID != 200 {
+	if metadata.TMDB == nil || metadata.TMDB.TMDBID != 100 || metadata.IMDB == nil || metadata.IMDB.IMDBID != 200 || metadata.Bluray == nil || metadata.Bluray.SelectedReleaseID != "123" {
 		t.Fatalf("unexpected external metadata: %#v", metadata)
 	}
 

@@ -100,6 +100,8 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if strings.TrimSpace(metadata.SourcePath) == "" {
 			metadata.SourcePath = meta.SourcePath
 		}
+	} else if storedMeta, err := s.repo.GetExternalMetadata(ctx, meta.SourcePath); err == nil && storedMeta.Bluray != nil {
+		metadata.Bluray = storedMeta.Bluray
 	}
 	candidates := api.ExternalIDCandidates{}
 	categoryPref := resolveCategoryPreference(meta)
@@ -652,11 +654,12 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			ids.SourceTVmaze,
 		)
 		s.logger.Debugf(
-			"metadata: external metadata fetched tmdb=%t imdb=%t tvdb=%t tvmaze=%t",
+			"metadata: external metadata fetched tmdb=%t imdb=%t tvdb=%t tvmaze=%t bluray=%t",
 			metadata.TMDB != nil,
 			metadata.IMDB != nil,
 			metadata.TVDB != nil,
 			metadata.TVmaze != nil,
+			metadata.Bluray != nil,
 		)
 	}
 
@@ -672,7 +675,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	if err := s.repo.SaveExternalIDs(ctx, ids); err != nil {
 		return api.PreparedMetadata{}, fmt.Errorf("metadata: save external ids: %w", err)
 	}
-	if metadata.TMDB != nil || metadata.IMDB != nil || metadata.TVDB != nil || metadata.TVmaze != nil {
+	if metadata.TMDB != nil || metadata.IMDB != nil || metadata.TVDB != nil || metadata.TVmaze != nil || metadata.Bluray != nil {
 		if err := s.repo.SaveExternalMetadata(ctx, metadata); err != nil {
 			return api.PreparedMetadata{}, fmt.Errorf("metadata: save external metadata: %w", err)
 		}

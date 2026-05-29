@@ -2335,6 +2335,84 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 	return api.DescriptionBuilderGroup{}, internalerrors.ErrNotFound
 }
 
+func (c *Core) SelectBlurayCandidate(ctx context.Context, sourcePath string, releaseID string) (api.MetadataPreview, error) {
+	if err := ctx.Err(); err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: select blu-ray candidate canceled: %w", err)
+	}
+	if c.repo == nil {
+		return api.MetadataPreview{}, errors.New("core: repository not configured")
+	}
+	trimmedPath := strings.TrimSpace(sourcePath)
+	trimmedReleaseID := strings.TrimSpace(releaseID)
+	if trimmedPath == "" || trimmedReleaseID == "" {
+		return api.MetadataPreview{}, internalerrors.ErrInvalidInput
+	}
+	external, err := c.repo.GetExternalMetadata(ctx, trimmedPath)
+	if err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: load blu-ray metadata: %w", err)
+	}
+	if external.Bluray == nil || !external.Bluray.SelectCandidate(trimmedReleaseID, false, "manual") {
+		return api.MetadataPreview{}, internalerrors.ErrNotFound
+	}
+	external.UpdatedAt = time.Now().UTC()
+	external.Bluray.UpdatedAt = external.UpdatedAt
+	if err := c.repo.SaveExternalMetadata(ctx, external); err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: save blu-ray selection: %w", err)
+	}
+
+	c.dupeMu.Lock()
+	cachePath := trimmedPath
+	entry, ok := c.dupeCache[cachePath]
+	if !ok {
+		cleanedPath := filepath.Clean(trimmedPath)
+		for key, candidate := range c.dupeCache {
+			if filepath.Clean(key) == cleanedPath {
+				cachePath = key
+				entry = candidate
+				ok = true
+				break
+			}
+		}
+	}
+	if ok {
+		entry.meta.ExternalMetadata.Bluray = external.Bluray
+		entry.meta.ExternalMetadata.UpdatedAt = external.UpdatedAt
+		applyBlurayCandidateToPreparedMeta(&entry.meta)
+		if c.services.Metadata != nil {
+			if refreshed, refreshErr := c.services.Metadata.RefreshPreparedMetadata(ctx, entry.meta); refreshErr == nil {
+				entry.meta = refreshed
+			} else if c.logger != nil {
+				c.logger.Warnf("core: refresh metadata after blu-ray selection failed: %v", refreshErr)
+			}
+		}
+		entry.updatedAt = time.Now().UTC()
+		entry.requestRefreshed = true
+		c.dupeCache[cachePath] = entry
+	}
+	c.dupeMu.Unlock()
+	if !ok {
+		return api.MetadataPreview{}, internalerrors.ErrNotFound
+	}
+	return buildMetadataPreview(entry.meta, c.cfg), nil
+}
+
+func applyBlurayCandidateToPreparedMeta(meta *api.PreparedMetadata) {
+	if meta == nil || meta.ExternalMetadata.Bluray == nil {
+		return
+	}
+	candidate := meta.ExternalMetadata.Bluray.SelectedCandidate()
+	if candidate == nil {
+		return
+	}
+	if region := strings.TrimSpace(candidate.Region); region != "" {
+		meta.Region = region
+		meta.Release.Region = region
+	}
+	if publisher := strings.TrimSpace(candidate.Publisher); publisher != "" {
+		meta.Distributor = strings.ToUpper(publisher)
+	}
+}
+
 func (c *Core) storeDupeCache(path string, signature string, meta api.PreparedMetadata) {
 	c.storeDupeCacheEntry(path, signature, meta, false)
 }
@@ -2920,8 +2998,26 @@ func deepCopyExternalMetadata(metadata api.ExternalMetadata) api.ExternalMetadat
 		IMDB:       deepCopyIMDBMetadata(metadata.IMDB),
 		TVDB:       deepCopyTVDBMetadata(metadata.TVDB),
 		TVmaze:     deepCopyTVmazeMetadata(metadata.TVmaze),
+		Bluray:     deepCopyBlurayMetadata(metadata.Bluray),
 		UpdatedAt:  metadata.UpdatedAt,
 	}
+}
+
+func deepCopyBlurayMetadata(metadata *api.BlurayMetadata) *api.BlurayMetadata {
+	if metadata == nil {
+		return nil
+	}
+	cloned := *metadata
+	cloned.Candidates = make([]api.BlurayReleaseCandidate, len(metadata.Candidates))
+	for idx, candidate := range metadata.Candidates {
+		cloned.Candidates[idx] = candidate
+		cloned.Candidates[idx].Warnings = append([]string(nil), candidate.Warnings...)
+		cloned.Candidates[idx].MatchNotes = append([]string(nil), candidate.MatchNotes...)
+		cloned.Candidates[idx].Specs.Audio = append([]string(nil), candidate.Specs.Audio...)
+		cloned.Candidates[idx].Specs.Subtitles = append([]string(nil), candidate.Specs.Subtitles...)
+		cloned.Candidates[idx].CoverImages = append([]api.BlurayImage(nil), candidate.CoverImages...)
+	}
+	return &cloned
 }
 
 func deepCopyTMDBMetadata(metadata *api.TMDBMetadata) *api.TMDBMetadata {
@@ -3520,6 +3616,7 @@ func buildMetadataPreview(meta api.PreparedMetadata, cfg config.Config) api.Meta
 		ExternalIDCandidates: meta.ExternalIDCandidates,
 		ExternalIDInfo:       buildExternalIDInfo(meta.ExternalIDs),
 		ExternalPreview:      buildExternalPreviews(meta.ExternalIDs, meta.ExternalMetadata),
+		Bluray:               deepCopyBlurayMetadata(meta.ExternalMetadata.Bluray),
 		TrackerData:          buildTrackerPreview(meta.TrackerData, cfg),
 	}
 }

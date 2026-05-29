@@ -306,6 +306,64 @@ export type ExternalPreview = {
   TVmaze?: TVmazeMetadata;
 };
 
+export type BlurayImage = {
+  Kind: string;
+  URL: string;
+};
+
+export type BluraySpecs = {
+  Video: {
+    Codec: string;
+    Resolution: string;
+  };
+  Audio: string[];
+  Subtitles: string[];
+  Discs: {
+    Type: string;
+    Count: number;
+    Format: string;
+  };
+  Playback: {
+    Region: string;
+    RegionNotes: string;
+  };
+};
+
+export type BlurayReleaseCandidate = {
+  ReleaseID: string;
+  ProductID: string;
+  MovieTitle: string;
+  MovieYear: string;
+  Title: string;
+  URL: string;
+  Price: string;
+  Publisher: string;
+  Country: string;
+  Region: string;
+  Score: number;
+  Accepted: boolean;
+  Warnings: string[];
+  MatchNotes: string[];
+  Specs: BluraySpecs;
+  CoverImages: BlurayImage[];
+  GenericDisc: boolean;
+  SpecsMissing: boolean;
+};
+
+export type BlurayMetadata = {
+  SourcePath: string;
+  IMDBID: number;
+  SearchURL: string;
+  SelectedReleaseID: string;
+  SelectedURL: string;
+  AutoSelected: boolean;
+  SelectionReason: string;
+  BestScore: number;
+  Threshold: number;
+  Candidates: BlurayReleaseCandidate[];
+  UpdatedAt: string;
+};
+
 export type TrackerPreview = {
   Tracker: string;
   TrackerID: string;
@@ -422,6 +480,7 @@ export type MetadataPreview = {
   ExternalIDCandidates: ExternalIDCandidates;
   ExternalIDInfo: ExternalIDInfo[];
   ExternalPreview: ExternalPreview[];
+  Bluray?: BlurayMetadata;
   TrackerData: TrackerPreview[];
 };
 

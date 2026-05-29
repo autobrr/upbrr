@@ -216,6 +216,23 @@ func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL s
 	return wrapWebResult(b.core.FetchMetadataPreview(progressCtx, req))
 }
 
+type blurayCandidateSelector interface {
+	SelectBlurayCandidate(ctx context.Context, sourcePath string, releaseID string) (api.MetadataPreview, error)
+}
+
+func (b *Backend) SelectBlurayCandidate(path string, releaseID string) (api.MetadataPreview, error) {
+	if err := b.requireCore(); err != nil {
+		return api.MetadataPreview{}, err
+	}
+	selector, ok := b.core.(blurayCandidateSelector)
+	if !ok {
+		return api.MetadataPreview{}, errors.New("blu-ray candidate selection is unavailable in this build")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return wrapWebResult(selector.SelectBlurayCandidate(ctx, path, releaseID))
+}
+
 func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.MetadataPreview{}, err

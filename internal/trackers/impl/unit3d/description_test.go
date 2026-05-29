@@ -120,6 +120,48 @@ func TestBuildUnit3DDescriptionAddsLogoEpisodeOverviewAndMenuImages(t *testing.T
 	}
 }
 
+func TestBuildUnit3DDescriptionAddsBlurayLinkAndImages(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DiscType: "BDMV",
+		ExternalMetadata: api.ExternalMetadata{
+			Bluray: &api.BlurayMetadata{
+				SelectedReleaseID: "123",
+				Candidates: []api.BlurayReleaseCandidate{
+					{
+						ReleaseID: "123",
+						URL:       "https://www.blu-ray.com/movies/Example-Blu-ray/123/",
+						CoverImages: []api.BlurayImage{
+							{Kind: "front", URL: "https://img.example/front.jpg"},
+							{Kind: "back", URL: "https://img.example/back.jpg"},
+						},
+					},
+				},
+			},
+		},
+	}
+	cfg := config.Config{
+		Description: config.DescriptionSettingsConfig{
+			AddBlurayLink:   true,
+			UseBlurayImages: true,
+			BlurayImageSize: 260,
+		},
+	}
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, expected := range []string{
+		"[center]https://www.blu-ray.com/movies/Example-Blu-ray/123/[/center]",
+		"[img=260]https://img.example/front.jpg[/img]",
+		"[img=260]https://img.example/back.jpg[/img]",
+	} {
+		if !strings.Contains(result, expected) {
+			t.Fatalf("expected %q in description, got %q", expected, result)
+		}
+	}
+}
+
 func TestBuildUnit3DDescriptionKeptIncludesScreenshots(t *testing.T) {
 	meta := api.PreparedMetadata{}
 	cfg := config.Config{Description: config.DescriptionSettingsConfig{ThumbnailSize: 350}}

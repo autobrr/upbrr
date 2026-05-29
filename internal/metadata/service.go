@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -46,6 +47,7 @@ type Service struct {
 	sonarr   ArrLookupClient
 	radarr   ArrLookupClient
 	tracker  TrackerDataLookup
+	bluray   *bluraycom.Client
 }
 
 type cachedBDMVSummary struct {
@@ -174,6 +176,12 @@ func WithTrackerDataLookup(lookup TrackerDataLookup) Option {
 	}
 }
 
+func WithBlurayClient(client *bluraycom.Client) Option {
+	return func(s *Service) {
+		s.bluray = client
+	}
+}
+
 func WithSRRDBPaths(dbPath string) Option {
 	return func(s *Service) {
 		cacheDir, nfoDir := resolveSRRDBPaths(dbPath)
@@ -208,6 +216,9 @@ func NewService(repo db.MetadataRepository, opts ...Option) *Service {
 	}
 	if service.tracker == nil {
 		service.tracker = trackerdata.NewClient(service.cfg, service.logger, nil)
+	}
+	if service.bluray == nil {
+		service.bluray = bluraycom.NewClient(nil)
 	}
 	return service
 }

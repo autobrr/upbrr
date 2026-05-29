@@ -214,6 +214,10 @@ export function SaveUIState(arg1, arg2, arg3) {
   return window['go']['guiapp']['App']['SaveUIState'](arg1, arg2, arg3);
 }
 
+export function SelectBlurayCandidate(arg1, arg2) {
+  return window['go']['guiapp']['App']['SelectBlurayCandidate'](arg1, arg2);
+}
+
 export function StartDupeCheck(arg1, arg2, arg3, arg4) {
   return window['go']['guiapp']['App']['StartDupeCheck'](arg1, arg2, arg3, arg4);
 }
