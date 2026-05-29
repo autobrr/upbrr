@@ -273,6 +273,39 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 	}
 }
 
+func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen1.png", Order: 0, Source: string(api.ScreenshotPurposeFinal)},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: string(api.ScreenshotPurposeMenu)},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen2.png", Order: 2, Source: string(api.ScreenshotPurposeFinal)},
+		},
+	}
+	assets := DescriptionAssets{}
+	resolved := []api.ScreenshotImage{
+		{Path: "/tmp/screen1.png", ImgURL: "https://img.example/screen1.png"},
+		{Path: "/tmp/menu1.png", ImgURL: "https://img.example/menu1.png"},
+		{Path: "/tmp/screen2.png", ImgURL: "https://img.example/screen2.png"},
+	}
+
+	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolved)
+
+	if len(assets.MenuImages) != 1 || !strings.Contains(assets.MenuImages[0].ImgURL, "menu1.png") {
+		t.Fatalf("expected menu image to stay separate, got %#v", assets.MenuImages)
+	}
+	if len(assets.Screenshots) != 2 {
+		t.Fatalf("expected two normal screenshots, got %#v", assets.Screenshots)
+	}
+	for _, shot := range assets.Screenshots {
+		if strings.Contains(shot.ImgURL, "menu1.png") {
+			t.Fatalf("menu image leaked into screenshots: %#v", assets.Screenshots)
+		}
+	}
+}
+
 func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "override desc",

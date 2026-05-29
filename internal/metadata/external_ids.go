@@ -411,6 +411,8 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 					IMDbID:         ids.IMDBID,
 					TVDBID:         ids.TVDBID,
 					ManualLanguage: manualLanguage,
+					AddLogo:        s.cfg.Description.AddLogo,
+					LogoLanguages:  descriptionLogoLanguages(s.cfg.Description.LogoLanguage),
 					Filename:       filename,
 					Debug:          meta.Options.Debug,
 				})
@@ -1015,6 +1017,20 @@ func formatOptionalInt(value int) string {
 		return ""
 	}
 	return strconv.Itoa(value)
+}
+
+func descriptionLogoLanguages(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';'
+	})
+	languages := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			languages = append(languages, trimmed)
+		}
+	}
+	return languages
 }
 
 func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBMetadata {

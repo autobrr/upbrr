@@ -85,6 +85,11 @@ func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig 
 		logger.Tracef("trackers: unit3d desc part=logo size=%d", logoSize)
 	}
 
+	if episodeOverview := EpisodeOverviewBlock(meta, appConfig); episodeOverview != "" {
+		appendUniquePart(episodeOverview, "episode_overview")
+		logger.Tracef("trackers: unit3d desc part=episode_overview len=%d", len(episodeOverview))
+	}
+
 	if vobMediaInfo := DVDVOBMediaInfoBlock(meta); vobMediaInfo != "" {
 		appendUniquePart(vobMediaInfo, "dvd_vob_mediainfo")
 		logger.Tracef("trackers: unit3d desc part=dvd_vob_mediainfo")
@@ -358,6 +363,17 @@ func ResolveLogo(meta api.PreparedMetadata, appConfig config.Config) (string, in
 		size = 300
 	}
 	return logoURL, size
+}
+
+func EpisodeOverviewBlock(meta api.PreparedMetadata, appConfig config.Config) string {
+	if !appConfig.Description.EpisodeOverview {
+		return ""
+	}
+	overview := strings.TrimSpace(meta.EpisodeOverview)
+	if overview == "" {
+		return ""
+	}
+	return "[center]" + overview + "[/center]"
 }
 
 func UppbrrSignatureLink() (string, string) {

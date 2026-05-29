@@ -86,6 +86,40 @@ func TestBuildUnit3DDescriptionAppliesDescriptionConfig(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DDescriptionAddsLogoEpisodeOverviewAndMenuImages(t *testing.T) {
+	meta := api.PreparedMetadata{
+		EpisodeOverview: "Episode overview text",
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{Logo: "https://image.tmdb.org/t/p/original/logo.png"},
+		},
+	}
+	cfg := config.Config{
+		Description: config.DescriptionSettingsConfig{
+			AddLogo:         true,
+			LogoSize:        400,
+			EpisodeOverview: true,
+			DiscMenuHeader:  "Disc menu",
+			ThumbnailSize:   250,
+		},
+	}
+	menuImages := []api.ScreenshotImage{{ImgURL: "https://img.example/menu1.png"}}
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", menuImages, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, expected := range []string{
+		"[img=400]https://image.tmdb.org/t/p/original/logo.png[/img]",
+		"[center]Episode overview text[/center]",
+		"Disc menu",
+		"[img=250]https://img.example/menu1.png[/img]",
+	} {
+		if !strings.Contains(result, expected) {
+			t.Fatalf("expected %q in description, got %q", expected, result)
+		}
+	}
+}
+
 func TestBuildUnit3DDescriptionKeptIncludesScreenshots(t *testing.T) {
 	meta := api.PreparedMetadata{}
 	cfg := config.Config{Description: config.DescriptionSettingsConfig{ThumbnailSize: 350}}
