@@ -7,9 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/anacrolix/torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
@@ -34,11 +36,12 @@ func NewService(logger api.Logger, tmpRoot string) *Service {
 func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.TorrentResult, error) {
 	select {
 	case <-ctx.Done():
-		return api.TorrentResult{}, ctx.Err()
+		return api.TorrentResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	s.logger.Debugf("torrent: preparing for %s", meta.SourcePath)
+	emitTorrentProgress(ctx, meta, "running", "Checking reusable torrent")
 	policy := resolveTrackerPolicy(meta)
 	forceRehash := torrentOverrideEnabled(meta.TorrentOverrides.Rehash)
 	reuseOnly := torrentOverrideEnabled(meta.TorrentOverrides.NoHash)
@@ -49,7 +52,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 		if err == nil && !info.IsDir() {
 			if err := validateCandidateTorrent(clientTorrent, policy, meta, s.logger); err == nil {
 				s.logger.Debugf("torrent: using client-provided torrent %s", clientTorrent)
-				return resultFromPath(clientTorrent)
+				return resultFromExistingTorrent(ctx, meta, clientTorrent, "Using client-provided torrent")
 			}
 		}
 	}
@@ -72,7 +75,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 			return api.TorrentResult{}, fmt.Errorf("torrent: provided torrent %q: %w", source, err)
 		}
 		s.logger.Debugf("torrent: using provided torrent %s", source)
-		return resultFromPath(source)
+		return resultFromExistingTorrent(ctx, meta, source, "Using provided torrent")
 	}
 
 	if !forceRehash && s.tmpRoot != "" {
@@ -84,7 +87,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 			if !info.IsDir() {
 				if err := validateCandidateTorrent(tmpTorrentPath, policy, meta, s.logger); err == nil {
 					s.logger.Debugf("torrent: reusing existing temp torrent %s", tmpTorrentPath)
-					return resultFromPath(tmpTorrentPath)
+					return resultFromExistingTorrent(ctx, meta, tmpTorrentPath, "Reusing existing torrent")
 				}
 			}
 		}
@@ -96,7 +99,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 			if !info.IsDir() {
 				if err := validateCandidateTorrent(candidate, policy, meta, s.logger); err == nil {
 					s.logger.Debugf("torrent: reusing existing torrent %s", candidate)
-					return resultFromPath(candidate)
+					return resultFromExistingTorrent(ctx, meta, candidate, "Reusing existing torrent")
 				}
 			}
 		}
@@ -109,7 +112,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 					if !info.IsDir() {
 						if err := validateCandidateTorrent(sibling, policy, meta, s.logger); err == nil {
 							s.logger.Debugf("torrent: reusing existing torrent %s", sibling)
-							return resultFromPath(sibling)
+							return resultFromExistingTorrent(ctx, meta, sibling, "Reusing existing torrent")
 						}
 					}
 				}
@@ -130,7 +133,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 
 	select {
 	case <-ctx.Done():
-		return api.TorrentResult{}, ctx.Err()
+		return api.TorrentResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -146,20 +149,89 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 		pieceOptions = policy.createOptions(meta)
 	}
 	s.logger.Debugf("torrent: creating torrent with max piece exponent %d", pieceOptions.maxPieceExp)
+	emitTorrentProgress(ctx, meta, "running", "Creating torrent with mkbrr")
 
 	info, err := mkbrr.Create(mkbrr.CreateOptions{
-		Path:           source,
-		OutputPath:     outputPath,
-		IsPrivate:      true,
-		MaxPieceLength: &pieceOptions.maxPieceExp,
-		PieceLengthExp: pieceOptions.pieceExp,
+		Path:             source,
+		OutputPath:       outputPath,
+		IsPrivate:        true,
+		MaxPieceLength:   &pieceOptions.maxPieceExp,
+		PieceLengthExp:   pieceOptions.pieceExp,
+		ProgressCallback: torrentProgressCallback(ctx, meta),
 	})
 	if err != nil {
+		emitTorrentProgress(ctx, meta, "failed", "Torrent creation failed")
 		return api.TorrentResult{}, fmt.Errorf("torrent: create %q: %w", source, err)
 	}
 	s.logger.Debugf("torrent: created torrent %s", info.Path)
+	emitTorrentProgress(ctx, meta, "completed", "Torrent ready")
 
 	return api.TorrentResult{Path: info.Path, InfoHash: info.InfoHash}, nil
+}
+
+func resultFromExistingTorrent(ctx context.Context, meta api.PreparedMetadata, path string, message string) (api.TorrentResult, error) {
+	result, err := resultFromPath(path)
+	if err != nil {
+		return api.TorrentResult{}, err
+	}
+	emitTorrentProgress(ctx, meta, "completed", message)
+	return result, nil
+}
+
+func emitTorrentProgress(ctx context.Context, meta api.PreparedMetadata, status string, message string) {
+	emitTorrentHashProgress(ctx, meta, status, message, 0, 0, 0)
+}
+
+func torrentProgressCallback(ctx context.Context, meta api.PreparedMetadata) mkbrr.ProgressCallback {
+	return func(completed, total int, hashRate float64) {
+		if total <= 0 {
+			emitTorrentHashProgress(ctx, meta, "running", "Preparing torrent pieces", completed, total, hashRate)
+			return
+		}
+		status := "running"
+		message := fmt.Sprintf("Hashing pieces... %d%% (%d/%d pieces)", progressPercent(completed, total), completed, total)
+		if hashRate > 0 {
+			message = fmt.Sprintf("Hashing pieces... [%.0f MiB/s] %d%% (%d/%d pieces)", hashRate, progressPercent(completed, total), completed, total)
+		}
+		if completed >= total {
+			status = "completed"
+			message = "Hashing complete"
+		}
+		emitTorrentHashProgress(ctx, meta, status, message, completed, total, hashRate)
+	}
+}
+
+func emitTorrentHashProgress(ctx context.Context, meta api.PreparedMetadata, status string, message string, completed int, total int, hashRate float64) {
+	tracker := ""
+	if len(meta.Trackers) == 1 {
+		tracker = meta.Trackers[0]
+	}
+	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
+		SourcePath:      meta.SourcePath,
+		Tracker:         tracker,
+		Task:            "torrent",
+		Status:          status,
+		Message:         message,
+		CompletedPieces: completed,
+		TotalPieces:     total,
+		Percent:         progressPercent(completed, total),
+		HashRateMiB:     hashRate,
+		Timestamp:       time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func progressPercent(completed int, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	percent := int(math.Round((float64(completed) / float64(total)) * 100))
+	if percent < 0 {
+		return 0
+	}
+	if percent > 100 {
+		return 100
+	}
+	return percent
 }
 
 func torrentOverrideEnabled(value *bool) bool {

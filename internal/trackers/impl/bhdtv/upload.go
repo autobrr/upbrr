@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -64,7 +65,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if artifactErr != nil && req.Logger != nil {
 			req.Logger.Warnf("trackers: BHDTV failure artifact write failed: %v", artifactErr)
 		}
-		message := firstNonEmpty(strings.TrimSpace(response.Message), strings.TrimSpace(response.Status), "upload response did not include a view URL")
+		message := firstNonEmpty(commonhttp.ExtractHTTPErrorDetail(responseBody), commonhttp.RedactErrorDetail(response.Message), commonhttp.RedactErrorDetail(response.Status), "upload response did not include a view URL")
 		if artifactPath != "" {
 			message += " (" + artifactPath + ")"
 		}
@@ -74,10 +75,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if strings.TrimSpace(req.TrackerConfig.MyAnnounceURL) != "" {
 		artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "BHDTV")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, req.TrackerConfig.MyAnnounceURL, viewURL, sourceFlag); err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		state.artifactPath = artifactPath
 	}
@@ -117,7 +118,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
 	select {
 	case <-ctx.Done():
-		return uploadState{}, ctx.Err()
+		return uploadState{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -131,10 +132,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		descriptionAssets = trackers.DescriptionAssets{}
 	}
 
-	screenBlock, err := buildDescription(req.Meta, descriptionAssets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	screenBlock := buildDescription(descriptionAssets)
 
 	mediaDump, err := resolveMediaDump(req.Meta)
 	if err != nil {
@@ -143,7 +141,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	fields := map[string]string{
@@ -209,28 +207,28 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: BHDTV write multipart field %q: %w", key, err)
 		}
 	}
 
 	file, err := os.Open(strings.TrimSpace(torrentPath))
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHDTV open torrent file: %w", err)
 	}
 	defer file.Close()
 
 	part, err := writer.CreateFormFile("file", filepath.Base(torrentPath))
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHDTV create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHDTV copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHDTV close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -410,7 +408,7 @@ func categoryOf(meta api.PreparedMetadata) string {
 	}
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(assets trackers.DescriptionAssets) string {
 	base := strings.ReplaceAll(strings.TrimSpace(assets.Description), "[img=250]", "[img=250x250]")
 	parts := make([]string, 0, 1+len(assets.Screenshots))
 	if base != "" {
@@ -424,7 +422,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 		}
 		parts = append(parts, fmt.Sprintf("[url=%s][img]%s[/img][/url]", webURL, imgURL))
 	}
-	return strings.Join(parts, " "), nil
+	return strings.Join(parts, " ")
 }
 
 func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name string) (string, error) {
@@ -433,11 +431,11 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 	}
 	tmpRoot, err := db.Subdir(req.AppConfig.MainSettings.DBPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, req.Meta, req.Meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	ext := ".txt"
 	if bytes.Contains(bytes.ToLower(payload), []byte("<html")) {
@@ -445,9 +443,12 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 	}
 	path := filepath.Join(tmpDir, "[BHDTV]"+name+ext)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BHDTV create failure artifact dir: %w", err)
 	}
-	return path, os.WriteFile(path, payload, 0o600)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return "", fmt.Errorf("trackers: BHDTV write failure artifact: %w", err)
+	}
+	return path, nil
 }
 
 func readBDInfoNoErr(_ string, meta api.PreparedMetadata) string {

@@ -6,6 +6,7 @@ package azfamily
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -34,14 +35,14 @@ func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadR
 func (d *Definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
-		return trackers.DescriptionResult{}, ctx.Err()
+		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return trackers.DescriptionResult{}, err
+			return trackers.DescriptionResult{}, fmt.Errorf("trackers: %w", err)
 		}
 		assets = trackers.DescriptionAssets{}
 	}

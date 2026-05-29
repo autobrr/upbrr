@@ -8,7 +8,7 @@ import (
 	"context"
 	"fmt"
 	"image"
-	_ "image/png"
+	_ "image/png" // register PNG decoder for screenshot metadata loading
 	"io/fs"
 	"net/url"
 	"os"
@@ -61,7 +61,7 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int) (api.ScreenshotPlan, error) {
 	select {
 	case <-ctx.Done():
-		return api.ScreenshotPlan{}, ctx.Err()
+		return api.ScreenshotPlan{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -101,7 +101,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 
 	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return api.ScreenshotPlan{}, err
+		return api.ScreenshotPlan{}, fmt.Errorf("screenshots: %w", err)
 	}
 
 	// Load existing screenshots from database that still exist on disk.
@@ -195,7 +195,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
 	select {
 	case <-ctx.Done():
-		return api.ScreenshotResult{}, ctx.Err()
+		return api.ScreenshotResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -215,7 +215,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 
 	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return api.ScreenshotResult{}, err
+		return api.ScreenshotResult{}, fmt.Errorf("screenshots: %w", err)
 	}
 
 	result := api.ScreenshotResult{
@@ -368,7 +368,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 	wg.Wait()
 
 	if err := ctx.Err(); err != nil {
-		return result, err
+		return result, fmt.Errorf("screenshots: generate canceled: %w", err)
 	}
 
 	sort.Slice(images, func(i, j int) bool { return images[i].Index < images[j].Index })
@@ -401,7 +401,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, timestampSeconds float64) (api.ScreenshotPreview, error) {
 	select {
 	case <-ctx.Done():
-		return api.ScreenshotPreview{}, ctx.Err()
+		return api.ScreenshotPreview{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -443,7 +443,7 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePath string) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -457,16 +457,16 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 
 	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("screenshots: %w", err)
 	}
 
 	absTarget, err := filepath.Abs(trimmed)
 	if err != nil {
-		return err
+		return fmt.Errorf("screenshots: resolve delete target path: %w", err)
 	}
 	absTmp, err := filepath.Abs(tmpDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("screenshots: resolve temp path: %w", err)
 	}
 	if absTarget != absTmp && !strings.HasPrefix(absTarget, absTmp+string(os.PathSeparator)) {
 		return internalerrors.ErrInvalidInput
@@ -481,7 +481,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 
 	if err := os.Remove(absTarget); err != nil {
 		if !os.IsNotExist(err) {
-			return err
+			return fmt.Errorf("screenshots: remove captured image: %w", err)
 		}
 		if s.logger != nil {
 			s.logger.Debugf("screenshots: image already missing: %s", absTarget)
@@ -599,7 +599,7 @@ func retrySQLiteBusy(ctx context.Context, attempts int, fn func() error) error {
 	var lastErr error
 	for i := 0; i < attempts; i++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("screenshots: sqlite retry canceled: %w", err)
 		}
 		err := fn()
 		if err == nil {
@@ -610,7 +610,7 @@ func retrySQLiteBusy(ctx context.Context, attempts int, fn func() error) error {
 			return err
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		}
 		time.Sleep(time.Duration(50*(i+1)) * time.Millisecond)
 	}
@@ -636,13 +636,13 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 	}
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("screenshots: %w", err)
 	}
 
 	selections := make([]api.ScreenshotFinalSelection, 0, len(images))
@@ -666,7 +666,10 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 		})
 	}
 
-	return s.repo.SaveFinalSelections(ctx, meta.SourcePath, selections)
+	if err := s.repo.SaveFinalSelections(ctx, meta.SourcePath, selections); err != nil {
+		return fmt.Errorf("screenshots: save final selections: %w", err)
+	}
+	return nil
 }
 
 func screenshotBaseName(meta api.PreparedMetadata) string {
@@ -699,7 +702,7 @@ func listExistingScreens(tmpDir, base string) []api.ScreenshotImage {
 		if err != nil {
 			continue
 		}
-		ts, _ := parseScreenshotTimestamp(match, base)
+		ts := parseScreenshotTimestamp(match, base)
 		results = append(results, api.ScreenshotImage{
 			Index:            parseScreenshotIndex(match, base),
 			TimestampSeconds: ts,
@@ -794,7 +797,7 @@ func buildScreenshotImage(pathValue string, index int) (api.ScreenshotImage, boo
 		return api.ScreenshotImage{}, false
 	}
 	basePrefix := screenshotBaseFromFilename(pathValue)
-	ts, _ := parseScreenshotTimestamp(pathValue, basePrefix)
+	ts := parseScreenshotTimestamp(pathValue, basePrefix)
 	img := api.ScreenshotImage{
 		Index:            index,
 		TimestampSeconds: ts,
@@ -1028,7 +1031,7 @@ func buildScreenshotFilename(base string, index int, timestampSeconds float64, p
 	return fmt.Sprintf("%s-%02d-%s.png", base, index, stamp)
 }
 
-func parseScreenshotTimestamp(path string, base string) (float64, bool) {
+func parseScreenshotTimestamp(path string, base string) float64 {
 	name := filepath.Base(path)
 	name = strings.TrimSuffix(name, filepath.Ext(name))
 	if base != "" {
@@ -1049,9 +1052,9 @@ func parseScreenshotTimestamp(path string, base string) (float64, bool) {
 		if err != nil {
 			continue
 		}
-		return float64(parsed) / 1000.0, true
+		return float64(parsed) / 1000.0
 	}
-	return 0, false
+	return 0
 }
 
 func screenshotBaseFromFilename(path string) string {

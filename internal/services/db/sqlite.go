@@ -40,7 +40,18 @@ func Open(path string) (*SQLiteRepository, error) {
 	return OpenWithLogger(path, nopLogger{})
 }
 
+func OpenContext(ctx context.Context, path string) (*SQLiteRepository, error) {
+	return OpenWithLoggerContext(ctx, path, nopLogger{})
+}
+
 func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
+	return OpenWithLoggerContext(context.Background(), path, logger)
+}
+
+func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQLiteRepository, error) {
+	if ctx == nil {
+		return nil, errors.New("db: context is required")
+	}
 	if logger == nil {
 		logger = nopLogger{}
 	}
@@ -56,30 +67,30 @@ func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
 		return nil, fmt.Errorf("db open: %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db ping: %w", err)
 	}
 
-	if _, err := db.Exec(pragmaForeignKeysOnSQL); err != nil {
+	if _, err := db.ExecContext(ctx, pragmaForeignKeysOnSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db pragma foreign_keys: %w", err)
 	}
-	if _, err := db.Exec(pragmaBusyTimeoutPrefix + strconv.Itoa(sqliteBusyTimeout)); err != nil {
+	if _, err := db.ExecContext(ctx, pragmaBusyTimeoutPrefix+strconv.Itoa(sqliteBusyTimeout)); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db pragma busy_timeout: %w", err)
 	}
 	if isMemorySQLitePath(path) {
 		// SQLite cannot use WAL for in-memory databases, so tests that use :memory:
 		// intentionally run with different journaling semantics than on-disk production DBs.
-		journalMode, err := queryCurrentJournalMode(db)
+		journalMode, err := queryCurrentJournalMode(ctx, db)
 		if err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("db pragma journal_mode: %w", err)
 		}
 		logger.Debugf("db: sqlite journal_mode is %s for in-memory database", journalMode)
 	} else {
-		journalMode, err := enableWALJournalMode(db)
+		journalMode, err := enableWALJournalMode(ctx, db)
 		if err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("db pragma journal_mode: %w", err)
@@ -100,7 +111,10 @@ func (r *SQLiteRepository) Close() error {
 	if r.logger != nil {
 		r.logger.Infof("db: closing sqlite")
 	}
-	return r.db.Close()
+	if err := r.db.Close(); err != nil {
+		return fmt.Errorf("db: close sqlite: %w", err)
+	}
+	return nil
 }
 
 // RawDB returns the underlying *sql.DB handle.
@@ -156,7 +170,7 @@ func retryBusyContext(ctx context.Context, logger Logger, operation string, atte
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("db: retry busy context canceled: %w", err)
 		}
 		err := fn()
 		if err == nil {
@@ -177,27 +191,27 @@ func retryBusyContext(ctx context.Context, logger Logger, operation string, atte
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-timer.C:
 		}
 	}
 	return lastErr
 }
 
-func enableWALJournalMode(db *sql.DB) (string, error) {
-	row := db.QueryRow(pragmaJournalModeWALSQL)
+func enableWALJournalMode(ctx context.Context, db *sql.DB) (string, error) {
+	row := db.QueryRowContext(ctx, pragmaJournalModeWALSQL)
 	var got string
 	if err := row.Scan(&got); err != nil {
-		return "", err
+		return "", fmt.Errorf("db: enable WAL journal mode: %w", err)
 	}
 	return got, nil
 }
 
-func queryCurrentJournalMode(db *sql.DB) (string, error) {
-	row := db.QueryRow(pragmaJournalModeSQL)
+func queryCurrentJournalMode(ctx context.Context, db *sql.DB) (string, error) {
+	row := db.QueryRowContext(ctx, pragmaJournalModeSQL)
 	var got string
 	if err := row.Scan(&got); err != nil {
-		return "", err
+		return "", fmt.Errorf("db: query current journal mode: %w", err)
 	}
 	return got, nil
 }
@@ -1202,24 +1216,24 @@ func nullStringPtr(value sql.NullString) *string {
 	if !value.Valid {
 		return nil
 	}
-	copy := value.String
-	return &copy
+	ptrValue := value.String
+	return &ptrValue
 }
 
 func nullIntPtr(value sql.NullInt64) *int {
 	if !value.Valid {
 		return nil
 	}
-	copy := int(value.Int64)
-	return &copy
+	ptrValue := int(value.Int64)
+	return &ptrValue
 }
 
 func nullBoolPtr(value sql.NullBool) *bool {
 	if !value.Valid {
 		return nil
 	}
-	copy := value.Bool
-	return &copy
+	ptrValue := value.Bool
+	return &ptrValue
 }
 
 func encodeFileList(paths []string) string {
@@ -1239,7 +1253,7 @@ func decodeFileList(value string) ([]string, error) {
 		return result, nil
 	}
 	if err := json.Unmarshal([]byte(value), &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: decode file list: %w", err)
 	}
 	return result, nil
 }
@@ -1264,7 +1278,7 @@ func decodeStringList(value string) ([]string, error) {
 	decoder.DisallowUnknownFields()
 	var result []string
 	if err := decoder.Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: decode string list: %w", err)
 	}
 	return result, nil
 }
@@ -1296,7 +1310,7 @@ func decodeOptionalJSON[T any](value string) (*T, error) {
 	decoder := json.NewDecoder(strings.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: decode optional JSON: %w", err)
 	}
 	return &result, nil
 }
@@ -1892,7 +1906,7 @@ func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, path string,
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db save final selections: context canceled: %w", err)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2010,7 +2024,7 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, path stri
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db replace screenshot slots: context canceled: %w", err)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2256,7 +2270,7 @@ func (r *SQLiteRepository) SaveUploadedImages(ctx context.Context, path string, 
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db save uploaded images: context canceled: %w", err)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2432,6 +2446,10 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			UNION
 			SELECT source_path FROM screenshots
 			UNION
+			SELECT source_path FROM screenshot_slots
+			UNION
+			SELECT source_path FROM screenshot_slot_variants
+			UNION
 			SELECT source_path FROM uploaded_images
 			UNION
 			SELECT source_path FROM upload_records
@@ -2467,7 +2485,7 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db purge content: context canceled: %w", err)
 	}
 	if r.logger != nil {
 		r.logger.Debugf("db: purge content data started path=%s", trimmedPath)
@@ -2495,6 +2513,8 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		{sql: `DELETE FROM tracker_rule_failures WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM screenshot_final_selections WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM screenshots WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM screenshot_slot_variants WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM screenshot_slots WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM uploaded_images WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM upload_records WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM file_metadata WHERE path = ?`, args: []any{trimmedPath}},

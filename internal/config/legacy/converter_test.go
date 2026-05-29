@@ -94,7 +94,7 @@ func TestCoerceToStringSlice(t *testing.T) {
 }
 
 func TestConvertDefaults(t *testing.T) {
-	legacy := &LegacyConfig{
+	legacy := &Config{
 		Default: map[string]any{
 			"tmdb_api":    "test-key",
 			"screens":     8,
@@ -136,7 +136,7 @@ func TestConvertDefaults(t *testing.T) {
 }
 
 func TestConvertTorrentClients(t *testing.T) {
-	legacy := &LegacyConfig{
+	legacy := &Config{
 		Default: map[string]any{
 			"tmdb_api": "test",
 			"screens":  6,
@@ -176,7 +176,7 @@ func TestConvertTorrentClients(t *testing.T) {
 }
 
 func TestConvertClientKeyAliases(t *testing.T) {
-	legacy := &LegacyConfig{
+	legacy := &Config{
 		Default: map[string]any{
 			"tmdb_api": "test",
 			"screens":  6,
@@ -209,7 +209,7 @@ func TestConvertClientKeyAliases(t *testing.T) {
 }
 
 func TestConvertTrackers(t *testing.T) {
-	legacy := &LegacyConfig{
+	legacy := &Config{
 		Default: map[string]any{
 			"tmdb_api": "test",
 			"screens":  6,
@@ -415,8 +415,8 @@ config = {
 }
 
 // marshalLegacyConfig creates a Python config.py format string from a
-// LegacyConfig for testing purposes.
-func marshalLegacyConfig(lc *LegacyConfig) []byte {
+// Config for testing purposes.
+func marshalLegacyConfig(lc *Config) []byte {
 	var sb []byte
 	sb = append(sb, "config = {\n"...)
 	sb = appendPythonSection(sb, "DEFAULT", lc.Default)

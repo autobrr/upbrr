@@ -66,9 +66,9 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 			},
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:     server.URL,
-			ApiUser: "user",
-			ApiKey:  "key",
+			URL:        server.URL,
+			PTPAPIUser: "user",
+			PTPAPIKey:  "key",
 		},
 		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
 		Logger:    api.NopLogger{},
@@ -232,7 +232,7 @@ func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	posterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	posterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write([]byte("poster-bytes"))
 	}))

@@ -18,7 +18,7 @@ func TestAniListSearchRetriesTimeouts(t *testing.T) {
 	attempts := 0
 	client := &Client{
 		http: &http.Client{
-			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				attempts++
 				if attempts < 3 {
 					return nil, timeoutError{err: errors.New("timeout")}
@@ -50,7 +50,7 @@ func TestAniListSearchDoesNotRetryNonTimeoutErrors(t *testing.T) {
 	attempts := 0
 	client := &Client{
 		http: &http.Client{
-			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				attempts++
 				return nil, errors.New("boom")
 			}),

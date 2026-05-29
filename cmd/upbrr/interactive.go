@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -34,12 +35,12 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 					return promptErr
 				}
 				if !confirm {
-					return err
+					return fmt.Errorf("upbrr: %w", err)
 				}
 				currentOpts.ConfirmBDMVRescan = true
 				continue
 			}
-			return err
+			return fmt.Errorf("upbrr: %w", err)
 		}
 
 		printMetadataPreview(preview)
@@ -82,7 +83,7 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 
 	review, err := coreSvc.BuildUploadReview(ctx, req)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	if currentOpts.Debug {
 		printDebugUploadReview(review)
@@ -96,7 +97,7 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 		req.TrackerQuestionnaireAnswers = questionnaireAnswers
 		review, err = coreSvc.BuildUploadReview(ctx, req)
 		if err != nil {
-			return err
+			return fmt.Errorf("upbrr: %w", err)
 		}
 	}
 
@@ -120,7 +121,7 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 	req.TrackerQuestionnaireAnswers = questionnaireAnswers
 
 	_, err = coreSvc.RunUploadPrepared(ctx, req)
-	return err
+	return fmt.Errorf("upbrr: %w", err)
 }
 
 func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, screens int) error {
@@ -131,7 +132,7 @@ func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions,
 
 	review, err := coreSvc.BuildUploadReview(ctx, req)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	if opts.Debug {
 		printDebugUploadReview(review)
@@ -212,7 +213,7 @@ func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.C
 	recheckReq.Trackers = trackers
 	summary, err := coreSvc.CheckDupes(ctx, recheckReq)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upbrr: %w", err)
 	}
 
 	resultByTracker := make(map[string]api.DupeCheckResult, len(summary.Results))
@@ -486,10 +487,10 @@ func promptLine(reader *bufio.Reader, prompt string) (string, error) {
 	fmt.Print(prompt)
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		if err.Error() == "EOF" && line != "" {
+		if errors.Is(err, io.EOF) && line != "" {
 			return line, nil
 		}
-		return "", err
+		return "", fmt.Errorf("read prompt line: %w", err)
 	}
 	return strings.TrimSpace(line), nil
 }

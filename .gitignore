@@ -7,6 +7,7 @@ internal/webserver/assets/
 internal/guiapp/assets/*
 !internal/guiapp/assets/.keep
 dist/
+tmp/
 .trunk/
 *.exe
 /scripts/__pycache__/
@@ -16,6 +17,7 @@ dist/
 .lefthook/
 
 # Lint / formatter caches
+lint-report.json
 gui/frontend/.eslintcache
 gui/frontend/node_modules/.cache/prettier/
 

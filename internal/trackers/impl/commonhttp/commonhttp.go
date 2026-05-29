@@ -15,12 +15,23 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// 700 chars keeps enough HTTP error context for short stack traces or JSON fragments
+// while avoiding oversized single-line log entries and stored history details.
+const maxHTTPErrorDetailLength = 700
+
+const maxHTTPErrorDetailDepth = 10
+
+var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
 type FileField struct {
 	FieldName   string
@@ -56,11 +67,11 @@ type CookieStore interface {
 // database. When both sources are available, startup file cookies win on conflicts so
 // a fresh startup bootstrap can override stale persisted values while still preserving
 // DB-only cookies.
-// A nil ctx is accepted and treated as context.Background(); callers should pass
-// an explicit request-scoped context whenever possible.
+// Callers must pass an explicit request-scoped context so cancellation and
+// deadlines are preserved through database cookie reads.
 func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string, cookieStore CookieStore, encryptionKey []byte) (map[string]string, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("commonhttp: context is required")
 	}
 
 	var storeCookies map[string]string
@@ -119,7 +130,7 @@ func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string,
 func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open Netscape cookie file: %w", err)
 	}
 	defer file.Close()
 
@@ -161,7 +172,7 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 		})
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scan Netscape cookie file: %w", err)
 	}
 	if len(cookies) == 0 {
 		return nil, errors.New("no valid cookies found")
@@ -172,11 +183,11 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 func LoadJSONCookieMap(path string) (map[string]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read JSON cookie file: %w", err)
 	}
 	var decoded map[string]any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read JSON cookie file: unmarshal: %w", err)
 	}
 	result := make(map[string]string, len(decoded))
 	for key, value := range decoded {
@@ -209,7 +220,7 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("write multipart field %q: %w", key, err)
 		}
 	}
 	for _, file := range files {
@@ -220,23 +231,23 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 		part, err := writer.CreateFormFile(file.FieldName, name)
 		if err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("create multipart file %q: %w", file.FieldName, err)
 		}
 		payload := file.Content
 		if len(payload) == 0 {
 			payload, err = os.ReadFile(strings.TrimSpace(file.Path))
 			if err != nil {
 				_ = writer.Close()
-				return nil, "", err
+				return nil, "", fmt.Errorf("read multipart file %q: %w", strings.TrimSpace(file.Path), err)
 			}
 		}
 		if _, err := part.Write(payload); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("write multipart file %q: %w", name, err)
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -253,7 +264,7 @@ func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) (
 		for _, value := range values {
 			if err := writer.WriteField(key, value); err != nil {
 				_ = writer.Close()
-				return nil, "", err
+				return nil, "", fmt.Errorf("write multipart field %q: %w", key, err)
 			}
 		}
 	}
@@ -265,23 +276,23 @@ func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) (
 		part, err := writer.CreateFormFile(file.FieldName, name)
 		if err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("create multipart file %q: %w", file.FieldName, err)
 		}
 		payload := file.Content
 		if len(payload) == 0 {
 			payload, err = os.ReadFile(strings.TrimSpace(file.Path))
 			if err != nil {
 				_ = writer.Close()
-				return nil, "", err
+				return nil, "", fmt.Errorf("read multipart file %q: %w", strings.TrimSpace(file.Path), err)
 			}
 		}
 		if _, err := part.Write(payload); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("write multipart file %q: %w", name, err)
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -301,14 +312,14 @@ func WriteFailureArtifact(meta api.PreparedMetadata, dbPath string, tracker stri
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-		return "", err
+		return "", fmt.Errorf("create failure artifact dir: %w", err)
 	}
 	safeTracker := strings.ToUpper(strings.TrimSpace(tracker))
 	if safeTracker == "" {
@@ -320,7 +331,7 @@ func WriteFailureArtifact(meta api.PreparedMetadata, dbPath string, tracker stri
 	}
 	path := filepath.Join(tmpDir, filename+ext)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
-		return "", err
+		return "", fmt.Errorf("write failure artifact: %w", err)
 	}
 	return path, nil
 }
@@ -350,7 +361,7 @@ func ReadFirstMatching(dir string, patterns ...string) ([]byte, string, error) {
 			}
 			payload, err := os.ReadFile(match)
 			if err != nil {
-				return nil, "", err
+				return nil, "", fmt.Errorf("read matching file %q: %w", match, err)
 			}
 			return payload, match, nil
 		}
@@ -361,10 +372,167 @@ func ReadFirstMatching(dir string, patterns ...string) ([]byte, string, error) {
 func FileBytes(path string) ([]byte, error) {
 	file, err := os.Open(strings.TrimSpace(path))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open file %q: %w", strings.TrimSpace(path), err)
 	}
 	defer file.Close()
-	return io.ReadAll(file)
+	payload, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("read file %q: %w", strings.TrimSpace(path), err)
+	}
+	return payload, nil
+}
+
+// HTTPError is a formatted tracker upload failure with redacted response detail.
+type HTTPError struct {
+	message string
+}
+
+func (e HTTPError) Error() string {
+	return e.message
+}
+
+func UploadHTTPError(tracker string, status int, body []byte) HTTPError {
+	detail := ExtractHTTPErrorDetail(body)
+	tracker = strings.ToUpper(RedactErrorDetail(tracker))
+	if detail == "" {
+		return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d", tracker, status)}
+	}
+	return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d: %s", tracker, status, detail)}
+}
+
+func UploadHTTPErrorWithURL(tracker string, status int, url string, body []byte) HTTPError {
+	detail := ExtractHTTPErrorDetail(body)
+	tracker = strings.ToUpper(RedactErrorDetail(tracker))
+	url = RedactErrorDetail(url)
+	if detail == "" {
+		return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d url=%s", tracker, status, url)}
+	}
+	return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d url=%s: %s", tracker, status, url, detail)}
+}
+
+func RedactErrorDetail(value string) string {
+	return strings.TrimSpace(redaction.RedactValue(value, nil))
+}
+
+func ExtractHTTPErrorDetail(body []byte) string {
+	text := RedactErrorDetail(string(body))
+	if text == "" {
+		return ""
+	}
+
+	if detail := extractJSONErrorDetail([]byte(text)); detail != "" {
+		return detail
+	}
+	for _, block := range redaction.ExtractJSONBlocks(text) {
+		if block.Start < 0 || block.End > len(text) || block.Start >= block.End {
+			continue
+		}
+		if detail := extractJSONErrorDetail([]byte(text[block.Start:block.End])); detail != "" {
+			return detail
+		}
+	}
+
+	return compactHTTPErrorText(text)
+}
+
+func extractJSONErrorDetail(body []byte) string {
+	var decoded any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return ""
+	}
+	return compactHTTPErrorText(formatErrorValue(decoded, "", 0))
+}
+
+func formatErrorValue(value any, key string, depth int) string {
+	if depth >= maxHTTPErrorDetailDepth {
+		return ""
+	}
+
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, candidate := range []string{"errors", "message", "status_message", "detail", "error_description", "reason", "error"} {
+			if nested, ok := valueForKey(typed, candidate); ok {
+				if formatted := formatErrorValue(nested, candidate, depth+1); formatted != "" {
+					return formatted
+				}
+			}
+		}
+		return formatErrorMap(typed, depth)
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if formatted := formatErrorValue(item, "", depth+1); formatted != "" {
+				parts = append(parts, formatted)
+			}
+		}
+		return strings.Join(parts, "; ")
+	case string:
+		return RedactErrorDetail(typed)
+	case nil:
+		return ""
+	default:
+		if isBooleanStatusKey(key) {
+			return ""
+		}
+		return RedactErrorDetail(fmt.Sprint(typed))
+	}
+}
+
+func isBooleanStatusKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "success", "status", "error":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatErrorMap(values map[string]any, depth int) string {
+	if depth >= maxHTTPErrorDetailDepth {
+		return ""
+	}
+
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if strings.Contains(strings.ToLower(key), "token") || strings.Contains(strings.ToLower(key), "key") {
+			continue
+		}
+		formatted := formatErrorValue(values[key], key, depth+1)
+		if formatted == "" {
+			continue
+		}
+		parts = append(parts, strings.TrimSpace(key)+": "+formatted)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func valueForKey(values map[string]any, target string) (any, bool) {
+	for key, value := range values {
+		if strings.EqualFold(strings.TrimSpace(key), target) {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func compactHTTPErrorText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	text = RedactErrorDetail(text)
+	text = htmlTagPattern.ReplaceAllString(text, " ")
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) <= maxHTTPErrorDetailLength {
+		return text
+	}
+	return strings.TrimSpace(text[:maxHTTPErrorDetailLength]) + "..."
 }
 
 func firstNonEmpty(values ...string) string {

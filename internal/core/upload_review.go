@@ -42,7 +42,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.UploadReview{}, err
+		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -110,7 +110,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 	} else {
 		summary, err := c.services.Dupes.Check(ctx, meta, resolvedTrackers)
 		if err != nil {
-			return api.UploadReview{}, err
+			return api.UploadReview{}, fmt.Errorf("core: %w", err)
 		}
 		summary = appendPathedDupeResults(summary, meta.MatchedTrackers)
 		applyDupeSummaryToPreparedMeta(&meta, summary)
@@ -121,13 +121,13 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 	dryRunMeta.IgnoreTrackerRuleFailures = true
 	torrent, err := c.services.Torrents.Create(ctx, dryRunMeta)
 	if err != nil {
-		return api.UploadReview{}, err
+		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
 	dryRunMeta.TorrentPath = torrent.Path
 
 	dryRunEntries, err := c.services.Trackers.BuildUploadDryRun(ctx, dryRunMeta, resolvedTrackers)
 	if err != nil {
-		return api.UploadReview{}, err
+		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
 	dryRunByTracker := make(map[string]api.TrackerDryRunEntry, len(dryRunEntries))
 	for _, entry := range dryRunEntries {
@@ -264,7 +264,7 @@ func (c *Core) applyRequestToCachedPreparedMeta(ctx context.Context, meta api.Pr
 	meta = applyRequestToPreparedMetaBeforeRefresh(meta, req, c.cfg, c.logger)
 	refreshed, err := c.services.Metadata.RefreshPreparedMetadata(ctx, meta)
 	if err != nil {
-		return api.PreparedMetadata{}, err
+		return api.PreparedMetadata{}, fmt.Errorf("core: %w", err)
 	}
 	refreshed.TrackerRuleFailures = filterTrackerRuleFailures(refreshed.TrackerRuleFailures, req.IgnoreTrackerRuleFailuresFor)
 	return refreshed, nil
@@ -433,7 +433,7 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 
 	blocked := removeTrackerBlockReason(cloneBlockedTrackers(meta.BlockedTrackers), api.TrackerBlockReasonDupe)
 	for _, result := range summary.Results {
-		if !result.HasDupes {
+		if !dupeResultBlocksTracker(result) {
 			continue
 		}
 
@@ -446,6 +446,16 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 		}
 	}
 	meta.BlockedTrackers = blocked
+}
+
+func dupeResultBlocksTracker(result api.DupeCheckResult) bool {
+	if result.HasDupes || result.Skipped {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
+		return true
+	}
+	return strings.TrimSpace(result.Error) != ""
 }
 
 func cloneBlockedTrackers(input map[string][]api.TrackerBlockReason) map[string][]api.TrackerBlockReason {

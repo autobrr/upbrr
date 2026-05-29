@@ -5,6 +5,7 @@ package guiapp
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -32,7 +33,7 @@ func (a *App) buildRunOptions(debug bool, runLogLevel string) (runOptions, error
 
 	normalized, err := api.ParseLogLevel(runLogLevel)
 	if err != nil {
-		return runOptions{}, err
+		return runOptions{}, fmt.Errorf("gui: %w", err)
 	}
 
 	return runOptions{
@@ -52,7 +53,7 @@ func (a *App) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
 	effectiveLogLevel := logging.ResolveEffectiveLevel(a.cfg.Logging.Level, opts.RunLogLevel, opts.Debug)
 	logger, err := logging.NewWithLevel(a.cfg.Logging, a.cfg.MainSettings.DBPath, effectiveLogLevel)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("gui: %w", err)
 	}
 
 	coreSvc, err := core.New(api.CoreDependencies{
@@ -65,7 +66,7 @@ func (a *App) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
 	})
 	if err != nil {
 		_ = logger.Close()
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("gui: %w", err)
 	}
 
 	return coreSvc, logger, nil

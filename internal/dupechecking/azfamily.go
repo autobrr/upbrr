@@ -62,7 +62,7 @@ func (h azNetworkHandler) lookupMediaCode(ctx context.Context, site azDupeSiteDe
 		endpoint := fmt.Sprintf("%s/ajax/movies/%s?term=%s", site.baseURL, categoryID, url.QueryEscape(term))
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("dupechecking: create %s media lookup request: %w", site.baseURL, err)
 		}
 		req.Header.Set("User-Agent", "upbrr")
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
@@ -71,7 +71,7 @@ func (h azNetworkHandler) lookupMediaCode(ctx context.Context, site azDupeSiteDe
 		}
 		resp, err := h.http.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("dupechecking: fetch %s media lookup: %w", site.baseURL, err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -81,7 +81,7 @@ func (h azNetworkHandler) lookupMediaCode(ctx context.Context, site azDupeSiteDe
 			Data []map[string]any `json:"data"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("dupechecking: decode %s media lookup: %w", site.baseURL, err)
 		}
 		return payload.Data, nil
 	}
@@ -118,7 +118,7 @@ func (h azNetworkHandler) fetchTorrentList(ctx context.Context, site azDupeSiteD
 		visited[pageURL] = struct{}{}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("dupechecking: create %s torrent list request: %w", site.baseURL, err)
 		}
 		req.Header.Set("User-Agent", "upbrr")
 		for _, cookie := range cookies {
@@ -126,12 +126,12 @@ func (h azNetworkHandler) fetchTorrentList(ctx context.Context, site azDupeSiteD
 		}
 		resp, err := h.http.Do(req)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("dupechecking: fetch %s torrent list: %w", site.baseURL, err)
 		}
 		root, err := xhtml.Parse(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("dupechecking: parse %s search response: %w", site.baseURL, err)
 		}
 		rows := findTorrentRows(root)
 		for _, row := range rows {
@@ -170,7 +170,11 @@ func loadAZFamilyCookies(ctx context.Context, cfg config.Config, tracker string,
 		return nil, fmt.Errorf("parse baseURL %q: %w", baseURL, err)
 	}
 	host := parsed.Hostname()
-	return cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, strings.ToUpper(strings.TrimSpace(tracker)), host)
+	loaded, err := cookies.LoadTrackerHTTPCookies(ctx, cfg.MainSettings.DBPath, strings.ToUpper(strings.TrimSpace(tracker)), host)
+	if err != nil {
+		return nil, fmt.Errorf("dupechecking: load AZ-family cookies: %w", err)
+	}
+	return loaded, nil
 }
 
 func lookupAZDupeTitle(meta api.PreparedMetadata) string {

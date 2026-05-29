@@ -30,7 +30,7 @@ var numericPattern = regexp.MustCompile(`\d+`)
 func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -130,7 +130,8 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		s.logger.Debugf("metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q", meta.Region, meta.VideoEncode, meta.VideoCodec, meta.BitDepth)
 	}
 
-	meta.Edition, meta.Repack, meta.WebDV = editionFromMeta(meta)
+	meta.Edition, meta.Repack = editionFromMeta(meta)
+	meta.WebDV = false
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
 	}
@@ -1386,7 +1387,7 @@ func videoEncodeFromMedia(doc mediaInfoDoc, typeValue string) (string, string, b
 	return videoEncode, videoCodec, encodedSettings != "", bitDepth
 }
 
-func editionFromMeta(meta api.PreparedMetadata) (string, string, bool) {
+func editionFromMeta(meta api.PreparedMetadata) (string, string) {
 	edition := strings.TrimSpace(resolveMultiPlaylistEdition(meta))
 	if edition == "" {
 		edition = strings.TrimSpace(meta.Edition)
@@ -1395,7 +1396,7 @@ func editionFromMeta(meta api.PreparedMetadata) (string, string, bool) {
 		edition = strings.TrimSpace(strings.Join(meta.Release.Edition, " "))
 	}
 	if edition == "" {
-		return "", "", false
+		return "", ""
 	}
 	repack := ""
 	if repackPattern.MatchString(edition) {
@@ -1403,7 +1404,7 @@ func editionFromMeta(meta api.PreparedMetadata) (string, string, bool) {
 		edition = strings.TrimSpace(repackPattern.ReplaceAllString(edition, ""))
 		edition = strings.ReplaceAll(edition, "  ", " ")
 	}
-	return edition, repack, false
+	return edition, repack
 }
 
 func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
@@ -1431,8 +1432,8 @@ func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
 				continue
 			}
 			if best == nil || diff < bestDiff {
-				copy := detail
-				best = &copy
+				detailCopy := detail
+				best = &detailCopy
 				bestDiff = diff
 			}
 		}

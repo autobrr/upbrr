@@ -55,7 +55,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		Path:      state.torrentPath,
 	}})
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBaseURL+"/upload", strings.NewReader(string(body)))
@@ -66,7 +66,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	httpReq.ContentLength = int64(len(body))
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
-	httpReq.Header.Set("X-API-KEY", strings.TrimSpace(req.TrackerConfig.APIKey))
+	httpReq.Header.Set("X-Api-Key", strings.TrimSpace(req.TrackerConfig.APIKey))
 
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(httpReq)
 	if err != nil {
@@ -78,6 +78,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	var decoded uploadResponse
 	if len(responseBody) > 0 {
 		if err := json.Unmarshal(responseBody, &decoded); err != nil {
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				return api.UploadSummary{}, commonhttp.UploadHTTPError("DC", resp.StatusCode, responseBody)
+			}
 			return api.UploadSummary{}, fmt.Errorf("trackers: DC decode response: %w", err)
 		}
 	}
@@ -89,10 +92,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "DC")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{
@@ -110,7 +113,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if _, artifactErr := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "DC", "upload_failure", responseBody, ".json"); artifactErr != nil && req.Logger != nil {
 		req.Logger.Warnf("trackers: DC failure artifact write failed: %v", artifactErr)
 	}
-	message := firstNonEmpty(strings.TrimSpace(decoded.Message), strings.TrimSpace(string(responseBody)), "upload failed")
+	message := firstNonEmpty(commonhttp.ExtractHTTPErrorDetail(responseBody), commonhttp.RedactErrorDetail(decoded.Message), commonhttp.RedactErrorDetail(string(responseBody)), "upload failed")
 	return api.UploadSummary{}, fmt.Errorf("trackers: DC %s", message)
 }
 
@@ -148,17 +151,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, assets)
 	mediaInfo, err := resolveMediaInfo(req.Meta)
 	if err != nil {
 		return uploadState{}, err
@@ -189,7 +189,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	return state, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 6)
 	if overview := resolveOverview(meta); overview != "" && strings.EqualFold(categoryOf(meta), "TV") && strings.TrimSpace(meta.EpisodeOverview) != "" {
 		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]\n[center]"+overview+"[/center]")
@@ -203,7 +203,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	if shots := screenshotBlock(assets.Screenshots); shots != "" {
 		parts = append(parts, shots)
 	}
-	return bbcode.FinalizeTrackerDescription("DC", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("DC", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func resolveCategoryID(meta api.PreparedMetadata) int {

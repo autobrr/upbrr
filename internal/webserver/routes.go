@@ -51,6 +51,20 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ session) {
+	if current, ok := s.developmentCurrentSession(r); ok {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"authenticated":           true,
+			"needsSetup":              false,
+			"username":                current.Username,
+			"csrfToken":               current.CSRFToken,
+			"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+			"browseRoot":              "",
+			"allowUnrestrictedBrowse": true,
+			"needsBrowsePolicy":       false,
+		})
+		return
+	}
+
 	exists, err := s.auth.Exists()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -363,11 +377,11 @@ func normalizeBrowsePolicyRoot(value string) (string, error) {
 	}
 	root, err := filepath.Abs(filepath.Clean(trimmed))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse root: resolve path: %w", err)
 	}
 	info, err := os.Stat(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse root: stat path: %w", err)
 	}
 	if !info.IsDir() {
 		return "", fmt.Errorf("browse root %q is not a directory", root)
@@ -444,7 +458,7 @@ func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, se
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if !s.verifySameOrigin(r) || !s.verifyCSRF(r, current) {
+			if !s.verifySameOrigin(r, current) || !s.verifyCSRF(r, current) {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf validation failed"})
 				return
 			}
@@ -455,10 +469,31 @@ func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, se
 
 func (s *Server) currentSession(r *http.Request) (session, bool) {
 	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil {
+	if err == nil && s.sessions != nil {
+		if current, ok := s.sessions.Get(cookie.Value); ok {
+			return current, true
+		}
+	}
+	return s.developmentCurrentSession(r)
+}
+
+func (s *Server) developmentCurrentSession(r *http.Request) (session, bool) {
+	if s == nil || !s.developmentNoAuth || !s.isLocalWebUIRequest(r) {
 		return session{}, false
 	}
-	return s.sessions.Get(cookie.Value)
+	current := s.developmentSession
+	if current.ID == "" || current.CSRFToken == "" {
+		return session{}, false
+	}
+	return current, true
+}
+
+func (s *Server) isDevelopmentSession(current session) bool {
+	return s != nil &&
+		s.developmentNoAuth &&
+		s.developmentSession.ID != "" &&
+		current.ID == s.developmentSession.ID &&
+		current.CSRFToken == s.developmentSession.CSRFToken
 }
 
 func (s *Server) writeSessionCookie(w http.ResponseWriter, r *http.Request, current session) {
@@ -486,14 +521,14 @@ func (s *Server) allowGeneralRequest(r *http.Request) bool {
 }
 
 func (s *Server) verifyCSRF(r *http.Request, current session) bool {
-	token := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
+	token := strings.TrimSpace(r.Header.Get("X-Csrf-Token"))
 	if token == "" {
 		return false
 	}
 	return token == current.CSRFToken
 }
 
-func (s *Server) verifySameOrigin(r *http.Request) bool {
+func (s *Server) verifySameOrigin(r *http.Request, current session) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		origin = strings.TrimSpace(r.Header.Get("Referer"))
@@ -505,7 +540,21 @@ func (s *Server) verifySameOrigin(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	return strings.EqualFold(parsed.Host, r.Host)
+	if strings.EqualFold(parsed.Host, r.Host) {
+		return true
+	}
+	return s.isDevelopmentSession(current) && isLoopbackHostPort(parsed.Host) && isLoopbackHostPort(r.Host)
+}
+
+func isLoopbackHostPort(host string) bool {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		return false
+	}
+	if parsedHost, _, err := net.SplitHostPort(trimmed); err == nil {
+		trimmed = parsedHost
+	}
+	return isLoopbackHostname(strings.Trim(trimmed, "[]"))
 }
 
 func (s *Server) clientIP(r *http.Request) string {
@@ -589,11 +638,18 @@ func (s *Server) isTrustedProxy(ip net.IP) bool {
 
 func decodeJSON(r *http.Request, dest any) error {
 	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(dest)
+	if err := json.NewDecoder(r.Body).Decode(dest); err != nil {
+		return fmt.Errorf("web: decode request JSON: %w", err)
+	}
+	return nil
 }
 
 func fsStat(root fs.FS, name string) (fs.FileInfo, error) {
-	return fs.Stat(root, name)
+	info, err := fs.Stat(root, name)
+	if err != nil {
+		return nil, fmt.Errorf("stat asset %q: %w", name, err)
+	}
+	return info, nil
 }
 
 func redactAuthUsername(username string) string {

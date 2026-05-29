@@ -69,7 +69,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, files)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
@@ -97,10 +97,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "BJS")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announce, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{
@@ -115,7 +115,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "BJS", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, fmt.Errorf("trackers: BJS upload failed status=%d", resp.StatusCode)
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("BJS", resp.StatusCode, responseBody)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -157,17 +157,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 	fields := buildFields(req.Meta, description, auth, questionnaireAnswers(req.Meta))
 	state := uploadState{
 		torrentPath:   torrentPath,
@@ -293,7 +290,7 @@ func validateFields(fields map[string]string) string {
 	return ""
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 5)
 	if logo := resolveLogo(meta); logo != "" {
 		parts = append(parts, "[center][img]"+logo+"[/img][/center]")
@@ -304,23 +301,23 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	if strings.TrimSpace(assets.Description) != "" {
 		parts = append(parts, strings.TrimSpace(assets.Description))
 	}
-	return bbcode.FinalizeTrackerDescription("BJS", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("BJS", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "BJS", "bj-share.info")
+	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "BJS", "bj-share.info"))
 }
 
 func fetchAuth(ctx context.Context, cookies []*http.Cookie) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uploadURL, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BJS auth token request build: %w", err)
 	}
 	req.Header.Set("User-Agent", "upbrr")
 	commonhttp.ApplyCookies(req, cookies)
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BJS auth token request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -761,7 +758,7 @@ func resolvePoster(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveScreens(meta api.PreparedMetadata) []string {
+func resolveScreens(_ api.PreparedMetadata) []string {
 	return nil
 }
 

@@ -89,10 +89,10 @@ func (h btHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 	baseURL := trackerBaseURL(h.cfg, "BT", "https://brasiltracker.org")
 
 	resp, stringBody, err := doTextGet(ctx, h.http, baseURL+"/torrents.php", url.Values{"searchstr": {searchStr}}, nil, cookies)
-	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("BT search request failed")}, nil
 	}
-	if resp.Request != nil && resp.Request.URL != nil && strings.Contains(strings.ToLower(resp.Request.URL.String()), "login") {
+	if strings.Contains(strings.ToLower(resp.FinalURL), "login") {
 		return nil, []string{noteSkip("BT authentication required")}, nil
 	}
 
@@ -138,13 +138,9 @@ func (h btHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 					}
 					return
 				}
-				if groupResp == nil || groupResp.StatusCode < 200 || groupResp.StatusCode >= 300 {
-					status := 0
-					if groupResp != nil {
-						status = groupResp.StatusCode
-					}
+				if !groupResp.ok() {
 					if h.logger != nil {
-						h.logger.Debugf("BT group link request returned non-success status %d for %s", status, link)
+						h.logger.Debugf("BT group link request returned non-success status %d for %s", groupResp.StatusCode, link)
 					}
 					return
 				}

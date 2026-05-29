@@ -111,7 +111,7 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 	payload := map[string]any{"query": query, "variables": variables}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("anilist: marshal search payload: %w", err)
 	}
 
 	var lastErr error
@@ -121,7 +121,7 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 			return response.Data.Page.Media, nil
 		}
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		}
 		if !isRetryableAniListError(err) || attempt == anilistRetryCount-1 {
 			return nil, err
@@ -142,13 +142,13 @@ func (c *Client) doAniListSearch(ctx context.Context, body []byte) (anilistRespo
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anilistURL, bytes.NewReader(body))
 	if err != nil {
-		return response, err
+		return response, fmt.Errorf("anilist: build search request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return response, err
+		return response, fmt.Errorf("anilist: execute search request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -156,7 +156,7 @@ func (c *Client) doAniListSearch(ctx context.Context, body []byte) (anilistRespo
 		return response, fmt.Errorf("anilist: http %d", resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return response, err
+		return response, fmt.Errorf("anilist: decode search response: %w", err)
 	}
 	return response, nil
 }

@@ -25,7 +25,10 @@ func (c *Client) lookupBTN(ctx context.Context, trackerID string) (Result, error
 		"method":  "getTorrentsSearch",
 		"params":  []any{apiToken, map[string]any{"id": trackerID}, 50},
 	}
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return Result{}, fmt.Errorf("trackerdata: btn encode request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.btnURL, bytes.NewReader(body))
 	if err != nil {
 		return Result{}, fmt.Errorf("trackerdata: btn request: %w", err)

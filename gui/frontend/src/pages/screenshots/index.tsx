@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { Dispatch, SetStateAction } from "react";
+import { Switch } from "../../components/ui/switch";
 import type {
   ConfigMap,
   ConfigValue,
@@ -11,7 +12,6 @@ import type {
   ScreenshotResult,
   ScreenshotSelection,
 } from "../../types";
-import "./styles.css";
 
 type Props = Readonly<{
   path: string;
@@ -155,14 +155,14 @@ export default function ScreenshotsPage(props: Props) {
           ) : null}
         </div>
         <div className="screens-actions__buttons">
-          <label className="screens-toggle">
-            <input
-              type="checkbox"
+          <div className="screens-toggle">
+            <span>Enable capture</span>
+            <Switch
+              aria-label="Enable capture"
               checked={screenshotsEnabled}
               onChange={(event) => setScreenshotsEnabled(event.target.checked)}
             />
-            <span>Enable capture</span>
-          </label>
+          </div>
           <button
             className="ghost"
             type="button"
@@ -199,37 +199,34 @@ export default function ScreenshotsPage(props: Props) {
                   }
                 />
               </label>
-              <label className="settings-toggle">
+              <div className="settings-toggle">
                 <span>Tonemap HDR</span>
-                <input
-                  type="checkbox"
+                <Switch
+                  aria-label="Tonemap HDR"
                   checked={Boolean(screenshotConfig.ToneMap)}
                   onChange={(event) => updateScreenshotConfigValue("ToneMap", event.target.checked)}
                 />
-                <span className="settings-toggle__pill" />
-              </label>
-              <label className="settings-toggle">
+              </div>
+              <div className="settings-toggle">
                 <span>Use libplacebo</span>
-                <input
-                  type="checkbox"
+                <Switch
+                  aria-label="Use libplacebo"
                   checked={Boolean(screenshotConfig.UseLibplacebo)}
                   onChange={(event) =>
                     updateScreenshotConfigValue("UseLibplacebo", event.target.checked)
                   }
                 />
-                <span className="settings-toggle__pill" />
-              </label>
-              <label className="settings-toggle">
+              </div>
+              <div className="settings-toggle">
                 <span>Frame overlay</span>
-                <input
-                  type="checkbox"
+                <Switch
+                  aria-label="Frame overlay"
                   checked={Boolean(screenshotConfig.FrameOverlay)}
                   onChange={(event) =>
                     updateScreenshotConfigValue("FrameOverlay", event.target.checked)
                   }
                 />
-                <span className="settings-toggle__pill" />
-              </label>
+              </div>
               <label className="settings-field">
                 <span>Overlay text size</span>
                 <input
@@ -283,17 +280,16 @@ export default function ScreenshotsPage(props: Props) {
                   }
                 />
               </label>
-              <label className="settings-toggle">
+              <div className="settings-toggle">
                 <span>Limit ffmpeg concurrency</span>
-                <input
-                  type="checkbox"
+                <Switch
+                  aria-label="Limit ffmpeg concurrency"
                   checked={Boolean(screenshotConfig.FFmpegLimit)}
                   onChange={(event) =>
                     updateScreenshotConfigValue("FFmpegLimit", event.target.checked)
                   }
                 />
-                <span className="settings-toggle__pill" />
-              </label>
+              </div>
               <label className="settings-field">
                 <span>FFmpeg concurrency</span>
                 <input

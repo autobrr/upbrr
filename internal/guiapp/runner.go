@@ -14,19 +14,22 @@ import (
 )
 
 type RunOptions struct {
-	StartupContext context.Context
 	Assets         fs.FS
 	ConfigPath     string
 	ConfigProvided bool
 }
 
 func Run(opts RunOptions) error {
+	return RunWithContext(context.Background(), opts)
+}
+
+func RunWithContext(ctx context.Context, opts RunOptions) error {
 	assets, err := resolveAssets(opts.Assets)
 	if err != nil {
 		return err
 	}
 
-	app, err := NewAppWithContext(opts.StartupContext, opts.ConfigPath, opts.ConfigProvided)
+	app, err := NewAppWithContext(ctx, opts.ConfigPath, opts.ConfigProvided)
 	if err != nil {
 		return err
 	}

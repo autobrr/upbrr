@@ -140,11 +140,16 @@ func stripSiteLinks(description string, site string) string {
 
 func siteLinkPattern(host string) *regexp.Regexp {
 	if cached, ok := unit3dSiteLinkCache.Load(host); ok {
-		return cached.(*regexp.Regexp)
+		if pattern, ok := cached.(*regexp.Regexp); ok {
+			return pattern
+		}
 	}
 	pattern := regexp.MustCompile(`(?i)\[url=https?://(?:www\.)?` + regexp.QuoteMeta(host) + `(?:/[^\]]*)?\]([^\[]+)\[/url\]`)
 	actual, _ := unit3dSiteLinkCache.LoadOrStore(host, pattern)
-	return actual.(*regexp.Regexp)
+	if pattern, ok := actual.(*regexp.Regexp); ok {
+		return pattern
+	}
+	return pattern
 }
 
 func containsImage(images []Image, targetURL string) bool {

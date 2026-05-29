@@ -29,7 +29,7 @@ func TestSearchAutoSelect(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNotFound)
 	})
-	mux.HandleFunc("/search/shows", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/search/shows", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{{
 			"show": map[string]any{
 				"id":        55,
@@ -66,7 +66,7 @@ func TestSearchAutoSelect(t *testing.T) {
 
 func TestEpisodeFallbackByDate(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/shows/55/episodebynumber", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/shows/55/episodebynumber", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 	mux.HandleFunc("/shows/55/episodesbydate", func(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +83,7 @@ func TestEpisodeFallbackByDate(t *testing.T) {
 			},
 		}})
 	})
-	mux.HandleFunc("/shows/55", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/shows/55", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"name":    "Example Show",
 			"summary": "<p>Series summary</p>",
@@ -151,10 +151,10 @@ func TestSearchManualIDLoadsExternalIDs(t *testing.T) {
 func TestSearchStrictIDOnlySkipsNameFallback(t *testing.T) {
 	searchCalls := 0
 	mux := http.NewServeMux()
-	mux.HandleFunc("/lookup/shows", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/lookup/shows", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
-	mux.HandleFunc("/search/shows", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/search/shows", func(w http.ResponseWriter, _ *http.Request) {
 		searchCalls++
 		_ = json.NewEncoder(w).Encode([]map[string]any{})
 	})

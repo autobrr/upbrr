@@ -12,8 +12,8 @@ import (
 	"unicode/utf8"
 )
 
-// LegacyConfig holds the parsed sections from a legacy Upload Assistant config.py.
-type LegacyConfig struct {
+// Config holds the parsed sections from a legacy Upload Assistant config.py.
+type Config struct {
 	Default        map[string]any
 	Trackers       map[string]any
 	TorrentClients map[string]any
@@ -22,7 +22,7 @@ type LegacyConfig struct {
 // ParseLegacyConfig extracts the `config = { ... }` assignment from the raw
 // content of a legacy Upload Assistant config.py file and returns the parsed
 // structure.
-func ParseLegacyConfig(data []byte) (*LegacyConfig, error) {
+func ParseLegacyConfig(data []byte) (*Config, error) {
 	src := string(data)
 
 	dictSrc, err := extractConfigDict(src)
@@ -41,7 +41,7 @@ func ParseLegacyConfig(data []byte) (*LegacyConfig, error) {
 		return nil, errors.New("legacy config: top-level value is not a dictionary")
 	}
 
-	result := &LegacyConfig{
+	result := &Config{
 		Default:        make(map[string]any),
 		Trackers:       make(map[string]any),
 		TorrentClients: make(map[string]any),

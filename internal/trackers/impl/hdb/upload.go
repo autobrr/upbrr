@@ -26,6 +26,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	descriptionhdb "github.com/autobrr/upbrr/internal/services/description/hdb"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -39,7 +40,7 @@ var hdbSuccessURLPattern = regexp.MustCompile(`(?i)details\.php\?id=(\d+)&upload
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
-		return api.UploadSummary{}, ctx.Err()
+		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -66,7 +67,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	descriptionText, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -85,10 +86,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, err
 	}
 
-	fields, err := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
-	if err != nil {
-		return api.UploadSummary{}, err
-	}
+	fields := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
 	body, contentType, err := buildMultipartPayload(fields, torrentPath)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -118,7 +116,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	matches := hdbSuccessURLPattern.FindStringSubmatch(finalURL)
 	if len(matches) < 2 {
 		bodyPreview, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return api.UploadSummary{}, fmt.Errorf("trackers: HDB upload failed status=%d url=%s body=%s", resp.StatusCode, finalURL, strings.TrimSpace(string(bodyPreview)))
+		return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("HDB", resp.StatusCode, finalURL, bodyPreview)
 	}
 
 	torrentID := strings.TrimSpace(matches[1])
@@ -148,7 +146,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
-		return api.TrackerDryRunEntry{}, ctx.Err()
+		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -175,7 +173,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 	descriptionText, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return api.TrackerDryRunEntry{}, err
+		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -189,10 +187,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 	uploadURL += hdbUploadPath
 
-	fields, err := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
-	if err != nil {
-		return api.TrackerDryRunEntry{}, err
-	}
+	fields := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
 
 	return api.TrackerDryRunEntry{
 		Tracker:          "HDB",
@@ -211,7 +206,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categoryID int, codecID int, mediumID int, description string) (map[string]string, error) {
+func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categoryID int, codecID int, mediumID int, description string) map[string]string {
 	fields := map[string]string{
 		"name":     resolveUploadName(meta),
 		"category": strconv.Itoa(categoryID),
@@ -256,7 +251,7 @@ func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categ
 		fields["tvdb_episode"] = strconv.Itoa(episode)
 	}
 
-	return fields, nil
+	return fields
 }
 
 func resolveDescriptionAssets(
@@ -270,7 +265,7 @@ func resolveDescriptionAssets(
 	if provided != nil {
 		return *provided, nil
 	}
-	return trackers.ResolveDescriptionAssets(ctx, tracker, meta, repo, logger)
+	return wrapTrackerResult(trackers.ResolveDescriptionAssets(ctx, tracker, meta, repo, logger))
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
@@ -308,29 +303,29 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: HDB write multipart field %q: %w", key, err)
 		}
 	}
 
 	file, err := os.Open(torrentPath)
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: HDB open torrent file: %w", err)
 	}
 	defer file.Close()
 
 	part, err := writer.CreateFormFile("file", filepath.Base(torrentPath))
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: HDB create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: HDB copy torrent file: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: HDB close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -388,14 +383,14 @@ func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker
 }
 
 func resolveHDBCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "HDB", "hdbits.org")
+	return wrapTrackerResult(cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "HDB", "hdbits.org"))
 }
 
 func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api.PreparedMetadata, torrentPath string, torrentID string, passkey string, cookies []*http.Cookie) error {
 	downloadURL := buildHDBDownloadURL(uploadURL, meta, torrentID, passkey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: HDB create personalized torrent request: %w", err)
 	}
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)
@@ -404,7 +399,7 @@ func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api
 	client := &http.Client{Timeout: 40 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: HDB download personalized torrent: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -412,15 +407,18 @@ func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: HDB read personalized torrent response: %w", err)
 	}
 	if len(body) == 0 {
 		return errors.New("empty torrent response")
 	}
 	if err := os.MkdirAll(filepath.Dir(torrentPath), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: HDB create torrent output dir: %w", err)
 	}
-	return os.WriteFile(torrentPath, body, 0o600)
+	if err := os.WriteFile(torrentPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: HDB write torrent output: %w", err)
+	}
+	return nil
 }
 
 func buildHDBDownloadURL(uploadURL string, meta api.PreparedMetadata, torrentID string, passkey string) string {

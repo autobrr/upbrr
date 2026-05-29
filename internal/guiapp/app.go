@@ -40,7 +40,7 @@ const bdinfoProgressEvent = "bdinfo:progress"
 const metadataProgressEvent = "metadata:progress"
 
 type App struct {
-	ctx         context.Context
+	runtimeCtx  *appRuntimeContext
 	cfg         config.Config
 	core        api.Core
 	coreInitErr error
@@ -60,32 +60,32 @@ func NewApp(configPath string, configProvided bool) (*App, error) {
 
 func NewAppWithContext(ctx context.Context, configPath string, configProvided bool) (*App, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("guiapp: context is required")
 	}
 	cfg, dbPath, err := configstore.Bootstrap(ctx, configPath, configProvided, true)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 
-	repo, err := db.OpenWithLogger(dbPath, logger)
+	repo, err := db.OpenWithLoggerContext(ctx, dbPath, logger)
 	if err != nil {
 		_ = logger.Close()
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 	if err := repo.MigrateContext(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 	if err := repo.ClearUIState(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 
 	var coreSvc api.Core
@@ -94,10 +94,9 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		coreInitErr = err
 		logger.Warnf("gui: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
-		coreSvc, err = core.New(api.CoreDependencies{
-			Context: ctx,
-			Config:  cfg,
-			Logger:  logger,
+		coreSvc, err = core.NewWithContext(ctx, api.CoreDependencies{
+			Config: cfg,
+			Logger: logger,
 			Services: api.ServiceSet{
 				Filesystem: filesystem.NewValidator(),
 			},
@@ -106,11 +105,12 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		if err != nil {
 			_ = repo.Close()
 			_ = logger.Close()
-			return nil, err
+			return nil, fmt.Errorf("gui: %w", err)
 		}
 	}
 
 	return &App{
+		runtimeCtx:  newAppRuntimeContext(ctx),
 		cfg:         cfg,
 		core:        coreSvc,
 		coreInitErr: coreInitErr,
@@ -123,10 +123,10 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 }
 
 func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
+	a.runtimeCtx.Store(ctx)
 }
 
-func (a *App) shutdown(ctx context.Context) {
+func (a *App) shutdown(_ context.Context) {
 	a.stopAllLogStreams()
 	a.stopAllDupeJobs()
 	a.stopAllUploadJobs()
@@ -145,16 +145,17 @@ func (a *App) BrowseFile() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
 	}
-	if a.ctx == nil {
-		return "", errors.New("app context not ready")
+	ctx, err := a.readyRuntimeContext()
+	if err != nil {
+		return "", err
 	}
 
-	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := runtime.OpenFileDialog(ctx, runtime.OpenDialogOptions{
 		Title:   "Select a file",
 		Filters: []runtime.FileFilter{videoFileDialogFilter()},
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: open file dialog: %w", err)
 	}
 	return selection, nil
 }
@@ -176,15 +177,16 @@ func (a *App) BrowseFolder() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
 	}
-	if a.ctx == nil {
-		return "", errors.New("app context not ready")
+	ctx, err := a.readyRuntimeContext()
+	if err != nil {
+		return "", err
 	}
 
-	selection, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := runtime.OpenDirectoryDialog(ctx, runtime.OpenDialogOptions{
 		Title: "Select a folder",
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: open directory dialog: %w", err)
 	}
 	return selection, nil
 }
@@ -206,22 +208,19 @@ func (a *App) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResp
 		return api.BrowseDirectoryResponse{}, errors.New("app not initialized")
 	}
 	fallback := guishared.BrowseDirectoryFallback(a.cfg.MainSettings.DBPath)
-	return guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback)
+	return wrapGUIResult(guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback))
 }
 
 func (a *App) ListUIStates() (api.UIStateList, error) {
 	if a == nil || a.repo == nil {
 		return api.UIStateList{}, errors.New("config repository not initialized")
 	}
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	states, err := a.repo.ListUIStates(ctx)
 	if err != nil {
-		return api.UIStateList{}, err
+		return api.UIStateList{}, fmt.Errorf("gui: %w", err)
 	}
 	return api.UIStateList{States: states}, nil
 }
@@ -235,7 +234,7 @@ func (a *App) GetUIState(id string) (api.UIStateRecord, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return a.repo.LoadUIState(ctx, id)
+	return wrapGUIResult(a.repo.LoadUIState(ctx, id))
 }
 
 func (a *App) SaveUIState(id string, label string, state api.UIState) error {
@@ -247,7 +246,7 @@ func (a *App) SaveUIState(id string, label string, state api.UIState) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return a.repo.SaveUIState(ctx, id, label, state)
+	return wrapGUIError(a.repo.SaveUIState(ctx, id, label, state))
 }
 
 func validateExternalURL(raw string) (string, error) {
@@ -280,8 +279,9 @@ func (a *App) OpenExternalURL(rawURL string) error {
 	if a == nil {
 		return errors.New("app not initialized")
 	}
-	if a.ctx == nil {
-		return errors.New("app context not ready")
+	ctx, err := a.readyRuntimeContext()
+	if err != nil {
+		return err
 	}
 
 	validatedURL, err := validateExternalURL(rawURL)
@@ -289,7 +289,7 @@ func (a *App) OpenExternalURL(rawURL string) error {
 		return fmt.Errorf("open external url: %w", err)
 	}
 
-	runtime.BrowserOpenURL(a.ctx, validatedURL)
+	runtime.BrowserOpenURL(ctx, validatedURL)
 	return nil
 }
 
@@ -301,14 +301,11 @@ func (a *App) DetectDiscType(path string) (string, error) {
 		return "", errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return filesystem.DetectDiscType(ctx, path)
+	return wrapGUIResult(filesystem.DetectDiscType(ctx, path))
 }
 
 func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (api.MetadataPreview, error) {
@@ -319,10 +316,7 @@ func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.E
 		return api.MetadataPreview{}, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	trimmedPath := strings.TrimSpace(path)
@@ -350,7 +344,7 @@ func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.E
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.FetchMetadataPreview(progressCtx, req)
+	return wrapGUIResult(a.core.FetchMetadataPreview(progressCtx, req))
 }
 
 func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (api.MetadataPreview, error) {
@@ -368,10 +362,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 		a.logger.Infof("gui: reset metadata started path=%s", trimmedPath)
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	progressCtx := api.WithMetadataProgressReporter(ctx, func(update api.MetadataProgressUpdate) {
@@ -497,7 +488,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 	}
 	preview, err := a.core.FetchMetadataPreview(progressCtx, req)
 	if err != nil {
-		return api.MetadataPreview{}, err
+		return api.MetadataPreview{}, fmt.Errorf("gui: %w", err)
 	}
 	if a.logger != nil {
 		a.logger.Infof("gui: reset metadata completed path=%s release=%s", trimmedPath, strings.TrimSpace(preview.ReleaseName))
@@ -539,11 +530,11 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 	}
 	absRoot, err := filepath.Abs(strings.TrimSpace(root))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cleanup path: resolve root path: %w", err)
 	}
 	absTarget, err := filepath.Abs(trimmed)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cleanup path: resolve target path: %w", err)
 	}
 	if absTarget == absRoot {
 		return false, nil
@@ -556,15 +547,15 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 			if os.IsNotExist(err) {
 				return false, nil
 			}
-			return false, err
+			return false, fmt.Errorf("cleanup path: stat target: %w", err)
 		}
 		if err := os.RemoveAll(absTarget); err != nil {
-			return false, err
+			return false, fmt.Errorf("cleanup path: remove target tree: %w", err)
 		}
 		return true, nil
 	}
 	if err := os.Remove(absTarget); err != nil && !os.IsNotExist(err) {
-		return false, err
+		return false, fmt.Errorf("cleanup path: remove target: %w", err)
 	}
 	if _, err := os.Stat(absTarget); err == nil {
 		return false, nil
@@ -591,10 +582,7 @@ func (a *App) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOve
 		return api.DupeCheckSummary{}, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	trimmedPath := strings.TrimSpace(path)
@@ -612,7 +600,7 @@ func (a *App) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOve
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.CheckDupes(ctx, req)
+	return wrapGUIResult(a.core.CheckDupes(ctx, req))
 }
 
 func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string) (api.PreparationPreview, error) {
@@ -623,10 +611,7 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 		return api.PreparationPreview{}, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	trimmedPath := strings.TrimSpace(path)
@@ -655,10 +640,10 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 		})
 	})
 
-	return a.core.FetchPreparationPreview(progressCtx, req)
+	return wrapGUIResult(a.core.FetchPreparationPreview(progressCtx, req))
 }
 
-func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	if err := a.requireCore(); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -666,14 +651,11 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		return api.TrackerDryRunPreview{}, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
-		return api.TrackerDryRunPreview{}, err
+		return api.TrackerDryRunPreview{}, fmt.Errorf("gui: tracker dry-run preview canceled: %w", err)
 	}
 	trimmedPath := strings.TrimSpace(path)
 	runOpts, err := a.buildRunOptions(debug, runLogLevel)
@@ -695,7 +677,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
 		Trackers:                    slices.Clone(trackers),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
-		IgnoreTrackerRuleFailures:   ignoreRuleFailures,
+		IgnoreTrackerRuleFailures:   false,
 		Options:                     buildRunUploadOptions(a.cfg, runOpts),
 		ExternalIDOverrides:         overrides,
 		ReleaseNameOverrides:        nameOverrides,
@@ -703,10 +685,13 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 	}
 	req.Options.DryRun = true
 	if err := guishared.SeedRunCorePreparedMeta(ctx, a.core, runCore, req); err != nil {
-		return api.TrackerDryRunPreview{}, err
+		return api.TrackerDryRunPreview{}, fmt.Errorf("gui: %w", err)
 	}
 
-	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
+	progressCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+		runtime.EventsEmit(ctx, trackerUploadProgressEvent, update)
+	})
+	progressCtx = bdinfo.WithProgressReporter(progressCtx, func(line string) {
 		if strings.TrimSpace(line) == "" {
 			return
 		}
@@ -716,7 +701,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		})
 	})
 
-	return runCore.FetchTrackerDryRunPreview(progressCtx, req)
+	return wrapGUIResult(runCore.FetchTrackerDryRunPreview(progressCtx, req))
 }
 
 func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string) (api.DescriptionBuilderPreview, error) {
@@ -727,10 +712,7 @@ func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverr
 		return api.DescriptionBuilderPreview{}, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -748,7 +730,7 @@ func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverr
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.FetchDescriptionBuilderPreview(ctx, req)
+	return wrapGUIResult(a.core.FetchDescriptionBuilderPreview(ctx, req))
 }
 
 func (a *App) RenderDescription(raw string) (string, error) {
@@ -756,14 +738,11 @@ func (a *App) RenderDescription(raw string) (string, error) {
 		return "", errors.New("app not initialized")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return a.core.RenderDescription(ctx, raw)
+	return wrapGUIResult(a.core.RenderDescription(ctx, raw))
 }
 
 func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, trackers []string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.DescriptionBuilderGroup, error) {
@@ -774,10 +753,7 @@ func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, 
 		return api.DescriptionBuilderGroup{}, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -791,7 +767,7 @@ func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, 
 	req.ExternalIDOverrides = overrides
 	req.ReleaseNameOverrides = nameOverrides
 
-	return a.core.SaveDescriptionOverride(ctx, req, raw)
+	return wrapGUIResult(a.core.SaveDescriptionOverride(ctx, req, raw))
 }
 
 func (a *App) DiscoverPlaylists(path string) ([]api.PlaylistInfo, error) {
@@ -802,14 +778,11 @@ func (a *App) DiscoverPlaylists(path string) ([]api.PlaylistInfo, error) {
 		return nil, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return a.core.DiscoverPlaylists(ctx, path)
+	return wrapGUIResult(a.core.DiscoverPlaylists(ctx, path))
 }
 
 func (a *App) SavePlaylistSelection(path string, playlists []string, useAll bool) error {
@@ -820,14 +793,11 @@ func (a *App) SavePlaylistSelection(path string, playlists []string, useAll bool
 		return errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return a.core.SavePlaylistSelection(ctx, path, playlists, useAll)
+	return wrapGUIError(a.core.SavePlaylistSelection(ctx, path, playlists, useAll))
 }
 
 func (a *App) LoadPlaylistSelection(path string) (api.PlaylistSelection, error) {
@@ -838,14 +808,11 @@ func (a *App) LoadPlaylistSelection(path string) (api.PlaylistSelection, error) 
 		return api.PlaylistSelection{}, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
-	return a.core.LoadPlaylistSelection(ctx, path)
+	return wrapGUIResult(a.core.LoadPlaylistSelection(ctx, path))
 }
 
 func (a *App) ListHistory() ([]api.HistoryEntry, error) {
@@ -853,10 +820,7 @@ func (a *App) ListHistory() ([]api.HistoryEntry, error) {
 		return nil, err
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -871,10 +835,7 @@ func (a *App) GetHistoryOverview(sourcePath string) (api.HistoryOverview, error)
 		return api.HistoryOverview{}, errors.New("source path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -890,10 +851,7 @@ func (a *App) DeleteHistoryRelease(sourcePath string) error {
 		return errors.New("source path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	if err := a.core.DeleteHistoryRelease(ctx, trimmedPath); err != nil {
@@ -910,10 +868,7 @@ func (a *App) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides
 		return api.ScreenshotPlan{}, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -929,7 +884,7 @@ func (a *App) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.FetchScreenshotPlan(ctx, req)
+	return wrapGUIResult(a.core.FetchScreenshotPlan(ctx, req))
 }
 
 func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
@@ -940,10 +895,7 @@ func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides
 		return api.ScreenshotResult{}, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -959,7 +911,7 @@ func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.GenerateScreenshots(ctx, req, selections, purpose)
+	return wrapGUIResult(a.core.GenerateScreenshots(ctx, req, selections, purpose))
 }
 
 func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.ScreenshotImage, error) {
@@ -970,10 +922,7 @@ func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverride
 		return nil, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -989,7 +938,7 @@ func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverride
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.ListUploadCandidates(ctx, req)
+	return wrapGUIResult(a.core.ListUploadCandidates(ctx, req))
 }
 
 func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.UploadedImageLink, error) {
@@ -1000,10 +949,7 @@ func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides,
 		return nil, errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -1019,7 +965,7 @@ func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.ListUploadedImages(ctx, req)
+	return wrapGUIResult(a.core.ListUploadedImages(ctx, req))
 }
 
 func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
@@ -1036,10 +982,7 @@ func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameO
 		return api.UploadImagesResult{}, errors.New("no images selected")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -1056,7 +999,7 @@ func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameO
 		Trackers:             slices.Clone(trackers),
 	}
 
-	return a.core.UploadImages(ctx, req, host, images)
+	return wrapGUIResult(a.core.UploadImages(ctx, req, host, images))
 }
 
 func (a *App) DeleteUploadedImage(path string, imagePath string, host string) error {
@@ -1073,10 +1016,7 @@ func (a *App) DeleteUploadedImage(path string, imagePath string, host string) er
 		return errors.New("host is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -1085,7 +1025,7 @@ func (a *App) DeleteUploadedImage(path string, imagePath string, host string) er
 		Mode:  api.ModeGUI,
 	}
 
-	return a.core.DeleteUploadedImage(ctx, req, imagePath, host)
+	return wrapGUIError(a.core.DeleteUploadedImage(ctx, req, imagePath, host))
 }
 
 func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, timestampSeconds float64) (string, error) {
@@ -1096,10 +1036,7 @@ func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverri
 		return "", errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -1117,7 +1054,7 @@ func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverri
 
 	preview, err := a.core.PreviewScreenshotFrame(ctx, req, timestampSeconds)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 	if len(preview.ImageBytes) == 0 {
 		return "", errors.New("preview image is empty")
@@ -1137,10 +1074,7 @@ func (a *App) DeleteScreenshot(path string, overrides api.ExternalIDOverrides, n
 		return errors.New("image path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -1156,7 +1090,7 @@ func (a *App) DeleteScreenshot(path string, overrides api.ExternalIDOverrides, n
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.DeleteScreenshot(ctx, req, imagePath)
+	return wrapGUIError(a.core.DeleteScreenshot(ctx, req, imagePath))
 }
 
 func (a *App) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, url string) error {
@@ -1170,10 +1104,7 @@ func (a *App) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrid
 		return errors.New("tracker image URL is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -1189,7 +1120,7 @@ func (a *App) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrid
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.DeleteTrackerImageURL(ctx, req, url)
+	return wrapGUIError(a.core.DeleteTrackerImageURL(ctx, req, url))
 }
 
 func (a *App) SaveFinalScreenshotSelections(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, images []api.ScreenshotImage) error {
@@ -1200,10 +1131,7 @@ func (a *App) SaveFinalScreenshotSelections(path string, overrides api.ExternalI
 		return errors.New("path is required")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 
@@ -1219,7 +1147,7 @@ func (a *App) SaveFinalScreenshotSelections(path string, overrides api.ExternalI
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return a.core.SaveFinalScreenshotSelections(ctx, req, images)
+	return wrapGUIError(a.core.SaveFinalScreenshotSelections(ctx, req, images))
 }
 
 func (a *App) ReadScreenshotImage(path string) (string, error) {
@@ -1232,7 +1160,7 @@ func (a *App) ReadScreenshotImage(path string) (string, error) {
 	}
 	payload, err := os.ReadFile(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read preview image: %w", err)
 	}
 	encoded := base64.StdEncoding.EncodeToString(payload)
 	return "data:image/png;base64," + encoded, nil
@@ -1246,17 +1174,14 @@ func (a *App) GetConfig() (string, error) {
 		return "", errors.New("config repository not initialized")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 
 	cfg, err := config.LoadFromDatabase(ctx, a.repo)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
 		cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
@@ -1268,7 +1193,7 @@ func (a *App) GetConfig() (string, error) {
 		cfg.Trackers.DefaultTrackers = config.CSVList{}
 	}
 
-	return config.ExportToJSON(cfg)
+	return wrapGUIResult(config.ExportToJSON(cfg))
 }
 
 func (a *App) GetDefaultConfig() (string, error) {
@@ -1278,10 +1203,10 @@ func (a *App) GetDefaultConfig() (string, error) {
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 
-	return config.ExportToJSON(cfg)
+	return wrapGUIResult(config.ExportToJSON(cfg))
 }
 
 func (a *App) ListKnownTrackers() ([]string, error) {
@@ -1313,10 +1238,10 @@ func (a *App) SaveConfig(payload string) error {
 
 	cfg, err := config.ImportFromJSONEncrypted(payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
 		cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
@@ -1325,15 +1250,12 @@ func (a *App) SaveConfig(payload string) error {
 		return errors.New("changing main_settings.db_path requires restart and is not supported in the GUI")
 	}
 	if err := cfg.Validate(); err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 
 	return a.applyConfig(*cfg)
@@ -1357,11 +1279,12 @@ func (a *App) ExportConfig() (string, error) {
 	if a.repo == nil {
 		return "", errors.New("config repository not initialized")
 	}
-	if a.ctx == nil {
-		return "", errors.New("app context not ready")
+	ctx, err := a.readyRuntimeContext()
+	if err != nil {
+		return "", err
 	}
 
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	path, err := runtime.SaveFileDialog(ctx, runtime.SaveDialogOptions{
 		Title:           "Export configuration",
 		DefaultFilename: "config-export.yaml",
 		Filters: []runtime.FileFilter{
@@ -1372,7 +1295,7 @@ func (a *App) ExportConfig() (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: save config dialog: %w", err)
 	}
 
 	trimmedPath := strings.TrimSpace(path)
@@ -1383,11 +1306,6 @@ func (a *App) ExportConfig() (string, error) {
 		trimmedPath += ".yaml"
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	allowPlaintext, err := a.allowUnencryptedExport()
 	if err != nil {
 		return "", err
@@ -1395,13 +1313,13 @@ func (a *App) ExportConfig() (string, error) {
 
 	if allowPlaintext {
 		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, trimmedPath, a.repo); err != nil {
-			return "", err
+			return "", fmt.Errorf("gui: %w", err)
 		}
 		return trimmedPath, nil
 	}
 
 	if err := config.ExportFromDatabaseToYAML(ctx, trimmedPath, a.repo); err != nil {
-		return "", err
+		return "", fmt.Errorf("gui: %w", err)
 	}
 
 	return trimmedPath, nil
@@ -1424,7 +1342,7 @@ func (a *App) allowUnencryptedExport() (bool, error) {
 	if errors.Is(err, authmaterial.ErrUnavailable) {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("gui: %w", err)
 }
 
 type ImportResult struct {
@@ -1514,7 +1432,7 @@ func (a *App) CreateWebAuth(username string, password string) (WebAuthStatus, er
 	}
 
 	if err := authmaterial.BootstrapAuthFile(dbPath, username, password); err != nil {
-		return WebAuthStatus{}, err
+		return WebAuthStatus{}, fmt.Errorf("gui: %w", err)
 	}
 
 	return a.GetWebAuthStatus()
@@ -1527,11 +1445,12 @@ func (a *App) ImportConfig() (ImportResult, error) {
 	if a.repo == nil {
 		return ImportResult{}, errors.New("config repository not initialized")
 	}
-	if a.ctx == nil {
-		return ImportResult{}, errors.New("app context not ready")
+	ctx, err := a.readyRuntimeContext()
+	if err != nil {
+		return ImportResult{}, err
 	}
 
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	path, err := runtime.OpenFileDialog(ctx, runtime.OpenDialogOptions{
 		Title: "Import configuration",
 		Filters: []runtime.FileFilter{
 			{DisplayName: "Config files", Pattern: "*.py;*.yaml;*.yml;*.json"},
@@ -1542,7 +1461,7 @@ func (a *App) ImportConfig() (ImportResult, error) {
 		return ImportResult{}, nil
 	}
 	if err != nil {
-		return ImportResult{}, err
+		return ImportResult{}, fmt.Errorf("gui: import config dialog: %w", err)
 	}
 	if strings.TrimSpace(path) == "" {
 		return ImportResult{}, nil
@@ -1550,7 +1469,7 @@ func (a *App) ImportConfig() (ImportResult, error) {
 
 	cfg, warnings, err := importer.ImportFromFile(path)
 	if err != nil {
-		return ImportResult{}, err
+		return ImportResult{}, fmt.Errorf("gui: %w", err)
 	}
 
 	cfg.MainSettings.DBPath = a.cfg.MainSettings.DBPath
@@ -1559,12 +1478,8 @@ func (a *App) ImportConfig() (ImportResult, error) {
 		return ImportResult{}, fmt.Errorf("validate imported config: %w", err)
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
-		return ImportResult{}, err
+		return ImportResult{}, fmt.Errorf("gui: %w", err)
 	}
 
 	config.ApplyEnvOverrides(cfg)
@@ -1580,9 +1495,10 @@ func (a *App) ImportConfig() (ImportResult, error) {
 }
 
 func (a *App) applyConfig(cfg config.Config) error {
-	rt, err := guishared.BuildRuntime(a.ctx, cfg, a.repo)
+	ctx := a.runtimeContext()
+	rt, err := guishared.BuildRuntime(ctx, cfg, a.repo)
 	if err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 
 	oldCore := a.core

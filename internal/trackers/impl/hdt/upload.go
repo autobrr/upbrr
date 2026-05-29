@@ -52,7 +52,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, files)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.baseURL+"/upload.php", bytes.NewReader(body))
 	if err != nil {
@@ -86,10 +86,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "HDT")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, "hd-torrents.org"); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{
@@ -104,7 +104,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "HDT", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, fmt.Errorf("trackers: HDT upload failed status=%d", resp.StatusCode)
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("HDT", resp.StatusCode, responseBody)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -146,17 +146,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 	fields := map[string]string{
 		"filename":  resolveName(req.Meta),
 		"category":  strconv.Itoa(resolveCategoryID(req.Meta)),
@@ -214,13 +211,13 @@ func loadCookies(ctx context.Context, dbPath string, baseURL string) ([]*http.Co
 	if parsed, err := url.Parse(baseURL); err == nil && parsed.Host != "" {
 		host = parsed.Host
 	}
-	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "HDT", host)
+	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "HDT", host))
 }
 
 func fetchToken(ctx context.Context, baseURL string, cookies []*http.Cookie) (string, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/upload.php", nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: HDT token request build: %w", err)
 	}
 	httpReq.Header.Set("User-Agent", "upbrr")
 	commonhttp.ApplyCookies(httpReq, cookies)
@@ -284,7 +281,7 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 	}
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 6)
 	if logo := resolveLogo(meta); logo != "" {
 		parts = append(parts, "[center][img]"+logo+"[/img][/center]")
@@ -298,7 +295,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 	if shots := screenshots(assets.Screenshots); shots != "" {
 		parts = append(parts, shots)
 	}
-	return bbcode.FinalizeTrackerDescription("HDT", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("HDT", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func resolveName(meta api.PreparedMetadata) string {

@@ -30,7 +30,7 @@ type ScreenshotFinalSelection struct {
 	ImagePath  string
 	Order      int
 	Source     string
-	SelectedAt time.Time
+	SelectedAt time.Time `ts_type:"string"`
 }
 
 type ScreenshotPlan struct {
@@ -67,7 +67,7 @@ type ScreenshotImage struct {
 	ImgURL     string    `json:"ImgURL,omitempty"`
 	RawURL     string    `json:"RawURL,omitempty"`
 	WebURL     string    `json:"WebURL,omitempty"`
-	UploadedAt time.Time `json:"UploadedAt,omitempty"`
+	UploadedAt time.Time `json:"UploadedAt,omitempty" ts_type:"string"`
 }
 
 type ScreenshotPreview struct {

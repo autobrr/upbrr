@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
 import type { PlaylistInfo } from "../../types";
-import "./styles.css";
 
 interface PlaylistSelectionPageProps {
   path: string;
@@ -39,7 +40,7 @@ const PlaylistSelectionPage = ({
       }
       const discovered = await discover(path);
       if (discovered) {
-        // Sort by score descending (highest first) and take top 10
+        // Sort by score descending (highest first) and take top 10.
         const sorted = discovered.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10);
         setPlaylists(sorted);
         if (sorted.length === 1) {
@@ -117,14 +118,14 @@ const PlaylistSelectionPage = ({
     }
   };
 
-  const displayCount = playlists.length; // Already limited to top 10 by score
+  const displayCount = playlists.length;
 
   if (loading) {
     return (
-      <div className="playlist-selection-container">
-        <div className="playlist-selection-content">
+      <div className="mx-auto max-w-2xl p-3">
+        <div className="panel">
           <h2>Discovering Playlists</h2>
-          <p>Scanning {path} for MPLS files...</p>
+          <p className="muted mt-1 text-sm">Scanning {path} for MPLS files...</p>
         </div>
       </div>
     );
@@ -132,14 +133,14 @@ const PlaylistSelectionPage = ({
 
   if (playlists.length === 0) {
     return (
-      <div className="playlist-selection-container">
-        <div className="playlist-selection-content">
+      <div className="mx-auto max-w-2xl p-3">
+        <div className="panel">
           <h2>No Playlists Found</h2>
-          <p>No MPLS playlists were found in {path}</p>
-          <div className="playlist-selection-actions">
-            <button onClick={onBack} className="btn-secondary">
+          <p className="muted mt-1 text-sm">No MPLS playlists were found in {path}</p>
+          <div className="mt-3 flex justify-end">
+            <Button onClick={onBack} type="button">
               Back
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -147,29 +148,49 @@ const PlaylistSelectionPage = ({
   }
 
   return (
-    <div className="playlist-selection-container">
-      <div className="playlist-selection-content">
+    <div className="mx-auto max-w-2xl p-3">
+      <div className="panel">
         <h2>Select BDMV Playlists</h2>
-        <p>Choose which playlists to use for {path}</p>
+        <p className="muted mt-1 text-sm [overflow-wrap:anywhere]">
+          Choose which playlists to use for {path}
+        </p>
 
-        {error && <div className="playlist-selection-error">{error}</div>}
-        {progressError && <div className="playlist-selection-error">{progressError}</div>}
-        <div className="playlist-selection-list">
+        {error ? (
+          <div className="mt-3 rounded border-l-4 border-red-500 bg-red-500/10 px-3 py-2 text-sm text-red-100">
+            {error}
+          </div>
+        ) : null}
+        {progressError ? (
+          <div className="mt-3 rounded border-l-4 border-red-500 bg-red-500/10 px-3 py-2 text-sm text-red-100">
+            {progressError}
+          </div>
+        ) : null}
+
+        <div className="my-3 overflow-hidden rounded-md border border-white/10">
           {playlists.slice(0, displayCount).map((playlist, index) => {
             const totalSize = playlist.items?.reduce((sum, item) => sum + item.size, 0) || 0;
             const fileCount = playlist.items?.length || 0;
+            const checkboxId = `playlist-${index}`;
             return (
-              <div key={playlist.file} className="playlist-selection-item">
-                <label className="playlist-selection-checkbox-label">
-                  <input
-                    type="checkbox"
+              <div
+                key={playlist.file}
+                className="grid gap-1 border-b border-white/10 px-3 py-2 last:border-b-0 hover:bg-white/5"
+              >
+                <div className="flex select-none items-center gap-2">
+                  <Checkbox
+                    id={checkboxId}
                     checked={selectedIndices.has(index)}
-                    onChange={() => handleTogglePlaylist(index)}
+                    onCheckedChange={() => handleTogglePlaylist(index)}
                     disabled={saving}
                   />
-                  <span className="playlist-selection-name">{playlist.file}</span>
-                </label>
-                <span className="playlist-selection-details">
+                  <label
+                    className="cursor-pointer font-semibold text-[var(--text)]"
+                    htmlFor={checkboxId}
+                  >
+                    {playlist.file}
+                  </label>
+                </div>
+                <span className="ml-6 text-xs text-[var(--muted)]">
                   {formatDuration(playlist.duration)} • {fileCount} files • {formatBytes(totalSize)}{" "}
                   • Score: {playlist.score.toFixed(2)}
                 </span>
@@ -178,38 +199,41 @@ const PlaylistSelectionPage = ({
           })}
         </div>
 
-        {playlists.length > 1 && (
-          <div className="playlist-selection-options">
-            <button
-              onClick={handleSelectAll}
-              className="btn-secondary"
-              disabled={saving || displayCount === 0}
-            >
+        {playlists.length > 1 ? (
+          <div className="my-3 flex flex-wrap gap-2">
+            <Button onClick={handleSelectAll} type="button" disabled={saving || displayCount === 0}>
               {useAll ? "Deselect All" : `Select All Top ${displayCount}`}
-            </button>
-            <button onClick={handleAutoSelect} className="btn-secondary" disabled={saving}>
+            </Button>
+            <Button onClick={handleAutoSelect} type="button" disabled={saving}>
               Auto-Select Best
-            </button>
+            </Button>
           </div>
-        )}
+        ) : null}
 
-        <div className="playlist-selection-actions">
-          <button onClick={onBack} className="btn-secondary" disabled={saving}>
+        <div className="mt-3 flex justify-end gap-2">
+          <Button onClick={onBack} type="button" disabled={saving}>
             Back
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={handleConfirm}
-            className="btn-primary"
+            variant="primary"
+            type="button"
             disabled={saving || selectedIndices.size === 0}
           >
             {saving ? (preparing ? "Preparing..." : "Saving...") : "Confirm Selection"}
-          </button>
+          </Button>
         </div>
 
         {preparing ? (
-          <div className="playlist-selection-progress" role="status" aria-live="polite">
-            <h3>BDInfo progress</h3>
-            <pre>{progressLines.length > 0 ? progressLines.join("\n") : "Starting BDInfo..."}</pre>
+          <div
+            className="mt-3 rounded-md border border-white/10 bg-white/5 p-2"
+            role="status"
+            aria-live="polite"
+          >
+            <h3 className="mb-1 text-sm font-semibold">BDInfo progress</h3>
+            <pre className="m-0 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-[var(--muted)] [overflow-wrap:anywhere]">
+              {progressLines.length > 0 ? progressLines.join("\n") : "Starting BDInfo..."}
+            </pre>
           </div>
         ) : null}
       </div>

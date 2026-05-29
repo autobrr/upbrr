@@ -28,6 +28,7 @@ import (
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -93,10 +94,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "AR")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, arSourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		id := firstNonEmpty(torrentID, groupID)
@@ -118,9 +119,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		_ = os.WriteFile(failurePath, bodyBytes, 0o600)
 	}
 	if failurePath != "" {
-		return api.UploadSummary{}, fmt.Errorf("trackers: AR upload failed status=%d url=%s failure=%s", resp.StatusCode, finalURL, failurePath)
+		return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("AR", resp.StatusCode, finalURL, bodyBytes), failurePath)
 	}
-	return api.UploadSummary{}, fmt.Errorf("trackers: AR upload failed status=%d url=%s", resp.StatusCode, finalURL)
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("AR", resp.StatusCode, finalURL, bodyBytes)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -154,13 +155,13 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun bool) (uploadState, *http.Client, error) {
 	select {
 	case <-ctx.Done():
-		return uploadState{}, nil, ctx.Err()
+		return uploadState{}, nil, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	var assets trackers.DescriptionAssets
 	if req.Assets != nil {
@@ -172,10 +173,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description, err := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
 
 	fields := map[string]string{
 		"submit": "true",
@@ -210,7 +208,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	return state, client, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.DescriptionAssets) string {
 	var parts []string
 	title := firstNonEmpty(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.Release.Title), pathutil.Base(meta.SourcePath))
 	parts = append(parts, fmt.Sprintf("[color=green][size=6]%s[/size][/color]", title))
@@ -220,7 +218,7 @@ func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.
 	}
 
 	mediaLabel := "MEDIAINFO"
-	mediaText := ""
+	var mediaText string
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV":
 		mediaLabel = "BDINFO"
@@ -250,7 +248,7 @@ func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.
 		parts = append(parts, "[color=red][size=4]Notes[/size][/color]\n"+notes)
 	}
 
-	return strings.TrimSpace(strings.Join(parts, "\n\n")), nil
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
 func buildDatabaseLinks(meta api.PreparedMetadata) string {
@@ -493,7 +491,7 @@ func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR create cookie jar: %w", err)
 	}
 	base, _ := url.Parse(arBaseURL + "/")
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
@@ -515,7 +513,7 @@ func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string
 		return nil, "", err
 	}
 	if err := os.WriteFile(authPath(dbPath), []byte(authKey), 0o600); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR write auth key: %w", err)
 	}
 	return client, authKey, nil
 }
@@ -537,17 +535,17 @@ func persistLoginCookies(ctx context.Context, dbPath string, logger api.Logger, 
 func validateSession(ctx context.Context, client *http.Client, dbPath string) (string, bool, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, arBrowseURL, nil)
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("trackers: AR session validation request build: %w", err)
 	}
 	httpReq.Header.Set("User-Agent", arUserAgent)
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("trackers: AR session validation request: %w", err)
 	}
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("trackers: AR read session response: %w", err)
 	}
 	body := string(bodyBytes)
 	if resp.StatusCode != http.StatusOK || arLoginFailurePattern.MatchString(body) {
@@ -561,7 +559,7 @@ func validateSession(ctx context.Context, client *http.Client, dbPath string) (s
 		return "", false, nil
 	}
 	if err := os.WriteFile(authPath(dbPath), []byte(authKey), 0o600); err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("trackers: AR write auth key: %w", err)
 	}
 	return authKey, true, nil
 }
@@ -575,7 +573,7 @@ func login(ctx context.Context, client *http.Client, cfg config.TrackerConfig, d
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, arLoginURL, strings.NewReader(values.Encode()))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: AR login request build: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	httpReq.Header.Set("User-Agent", arUserAgent)
@@ -586,7 +584,7 @@ func login(ctx context.Context, client *http.Client, cfg config.TrackerConfig, d
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: AR read login response: %w", err)
 	}
 	body := string(bodyBytes)
 	if resp.StatusCode != http.StatusOK || arLoginFailurePattern.MatchString(body) {
@@ -609,7 +607,7 @@ func login(ctx context.Context, client *http.Client, cfg config.TrackerConfig, d
 func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte, string, error) {
 	file, err := os.Open(strings.TrimSpace(torrentPath))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR open torrent file: %w", err)
 	}
 	defer file.Close()
 
@@ -617,18 +615,18 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	writer := multipart.NewWriter(body)
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: AR write multipart field %q: %w", key, err)
 		}
 	}
 	part, err := writer.CreateFormFile("file_input", filepath.Base(torrentPath))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: AR close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -667,11 +665,11 @@ func buildDownloadURL(torrentID string, fallback string) string {
 func readBDSummary(meta api.PreparedMetadata, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return readTextFile(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta)))
 }
@@ -679,11 +677,11 @@ func readBDSummary(meta api.PreparedMetadata, dbPath string) (string, error) {
 func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, "[AR]upload_failure.html"), nil
 }
@@ -708,11 +706,11 @@ func readAuthKey(dbPath string) string {
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "AR", "alpharatio.cc")
+	return wrapTrackerResult(cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "AR", "alpharatio.cc"))
 }
 
 func saveCookies(ctx context.Context, dbPath string, values []*http.Cookie) error {
-	return cookiepkg.SaveTrackerHTTPCookies(ctx, dbPath, "AR", values)
+	return wrapTrackerError(cookiepkg.SaveTrackerHTTPCookies(ctx, dbPath, "AR", values))
 }
 
 func extractAuthKey(body string) string {
@@ -752,7 +750,7 @@ func extractAuthKey(body string) string {
 func readTextFile(path string) (string, error) {
 	payload, err := os.ReadFile(strings.TrimSpace(path))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: AR read text file: %w", err)
 	}
 	return string(payload), nil
 }

@@ -3,7 +3,6 @@
 
 import LogSettingsPanel from "../../components/LogSettingsPanel";
 import type { ConfigMap, ConfigValue, FieldMeta } from "../../types";
-import "./styles.css";
 
 type Props = Readonly<{
   configData: ConfigMap | null;
@@ -41,12 +40,12 @@ export default function LoggingPage(props: Props) {
       </header>
 
       <section className="panel">
-        <div className="settings-header">
-          <div className="settings-meta">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-col gap-1">
             <p className="label">Logging controls</p>
             <p className="helper">Changes apply immediately and are saved to SQLite.</p>
           </div>
-          <div className="settings-actions">
+          <div className="flex items-center gap-2">
             <button
               className="ghost"
               type="button"
@@ -66,9 +65,9 @@ export default function LoggingPage(props: Props) {
           </div>
         </div>
 
-        <div className="settings-body">
+        <div className="min-w-0">
           {configData ? (
-            <div className="settings-form">
+            <div className="flex flex-col gap-3">
               <LogSettingsPanel
                 configData={configData}
                 renderField={renderField}
