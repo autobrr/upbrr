@@ -5,6 +5,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type { DupeCheckSummary } from "../../types";
 import { cn } from "../../utils/cn";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
@@ -115,13 +116,14 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               {availableTrackers.length ? (
                 availableTrackers.map((tracker) => (
                   <Badge
-                    className="text-[var(--text)]"
+                    className="text-[var(--text)] flex items-center gap-1"
                     style={{
                       backgroundColor: "color-mix(in srgb, var(--accent-2) 14%, transparent)",
                       borderColor: "color-mix(in srgb, var(--accent-2) 42%, transparent)",
                     }}
                     key={`available-${tracker}`}
                   >
+                    <TrackerIconImage tracker={tracker} />
                     {tracker}
                   </Badge>
                 ))
@@ -198,7 +200,8 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                   className="grid grid-cols-[minmax(72px,96px)_44px_minmax(0,1fr)] gap-2 px-2 py-2 text-sm md:grid-cols-[minmax(90px,140px)_58px_minmax(0,1fr)_116px] md:gap-3 md:px-3"
                   key={result.Tracker}
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex items-center gap-2">
+                    <TrackerIconImage tracker={result.Tracker} />
                     <p className="font-bold text-[var(--text)]">{result.Tracker}</p>
                   </div>
 

@@ -31,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/trackericon"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -1594,4 +1595,23 @@ func (a *App) requireHistoryRepo() error {
 		return errors.New("history repository not initialized")
 	}
 	return nil
+}
+
+func (a *App) GetTrackerIcon(trackerNameOrDomain string, customURL string) (string, error) {
+	if a == nil {
+		return "", errors.New("app not initialized")
+	}
+	ctx := a.runtimeContext()
+
+	domain, resolvedURL := config.ResolveTrackerDomain(&a.cfg, trackerNameOrDomain)
+	urlToUse := customURL
+	if urlToUse == "" {
+		urlToUse = resolvedURL
+	}
+
+	res, err := trackericon.GetTrackerIcon(ctx, a.cfg.MainSettings.DBPath, domain, urlToUse)
+	if err != nil {
+		return "", fmt.Errorf("gui: %w", err)
+	}
+	return res, nil
 }

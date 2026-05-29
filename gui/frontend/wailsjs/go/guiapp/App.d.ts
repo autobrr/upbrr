@@ -67,6 +67,8 @@ export function GetLogPath():Promise<string>;
 
 export function GetRecentLogs(arg1:number):Promise<Array<logging.Entry>>;
 
+export function GetTrackerIcon(arg1:string,arg2:string):Promise<string>;
+
 export function GetTrackerUploadSnapshot(arg1:string):Promise<guiapp.TrackerUploadSnapshot>;
 
 export function GetUIState(arg1:string):Promise<api.UIStateRecord>;

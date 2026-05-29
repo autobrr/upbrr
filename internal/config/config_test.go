@@ -403,6 +403,9 @@ func TestMergeMissingTrackerDefaults(t *testing.T) {
 	if got := cfg.Trackers.Trackers["AITHER"].APIKey; got != "existing" {
 		t.Fatalf("expected existing tracker config to be preserved, got %q", got)
 	}
+	if got := cfg.Trackers.Trackers["AITHER"].URL; got != "https://aither.cc" {
+		t.Fatalf("expected AITHER URL to be backfilled, got %q", got)
+	}
 }
 
 func TestResolveBTNAPITokenPrefersTrackerConfig(t *testing.T) {
@@ -462,5 +465,69 @@ func TestDisableUnsupportedTrackerImageRehosts(t *testing.T) {
 	}
 	if !cfg.Trackers.Trackers["HDB"].ImgRehost {
 		t.Fatal("expected HDB img_rehost to remain enabled")
+	}
+}
+
+func TestResolveTrackerDomain(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"AITHER": {URL: "https://aither.cc"},
+				"BLU":    {URL: "blutopia.cc"}, // no scheme
+			},
+		},
+	}
+
+	cases := []struct {
+		name         string
+		input        string
+		expectedHost string
+		expectedURL  string
+	}{
+		{
+			name:         "exact match with scheme",
+			input:        "AITHER",
+			expectedHost: "aither.cc",
+			expectedURL:  "https://aither.cc",
+		},
+		{
+			name:         "case-insensitive match",
+			input:        "aither",
+			expectedHost: "aither.cc",
+			expectedURL:  "https://aither.cc",
+		},
+		{
+			name:         "match without scheme",
+			input:        "BLU",
+			expectedHost: "blutopia.cc",
+			expectedURL:  "blutopia.cc",
+		},
+		{
+			name:         "unconfigured tracker is treated as raw domain",
+			input:        "my-random-domain.com",
+			expectedHost: "my-random-domain.com",
+			expectedURL:  "",
+		},
+		{
+			name:         "empty input",
+			input:        "",
+			expectedHost: "",
+			expectedURL:  "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gotHost, gotURL := ResolveTrackerDomain(cfg, tc.input)
+			if gotHost != tc.expectedHost {
+				t.Errorf("expected host %q, got %q", tc.expectedHost, gotHost)
+			}
+			if gotURL != tc.expectedURL {
+				t.Errorf("expected URL %q, got %q", tc.expectedURL, gotURL)
+			}
+		})
 	}
 }

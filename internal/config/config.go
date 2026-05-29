@@ -792,10 +792,15 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 		return errors.New("load embedded tracker defaults: embedded default trackers missing")
 	}
 	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
-		if _, ok := cfg.Trackers.Trackers[trackerName]; ok {
+		existing, ok := cfg.Trackers.Trackers[trackerName]
+		if !ok {
+			cfg.Trackers.Trackers[trackerName] = trackerCfg
 			continue
 		}
-		cfg.Trackers.Trackers[trackerName] = trackerCfg
+		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
+			existing.URL = trackerCfg.URL
+			cfg.Trackers.Trackers[trackerName] = existing
+		}
 	}
 	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" {
 		btnCfg := cfg.Trackers.Trackers["BTN"]
@@ -904,4 +909,33 @@ func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
 
 func (c TorrentClientConfig) UsesQuiProxy() bool {
 	return strings.TrimSpace(c.QuiProxyURL) != ""
+}
+
+// ResolveTrackerDomain resolves a tracker name or raw domain into a domain name and its configured URL.
+func ResolveTrackerDomain(cfg *Config, trackerNameOrDomain string) (string, string) {
+	name := strings.TrimSpace(trackerNameOrDomain)
+	if name == "" {
+		return "", ""
+	}
+
+	if cfg != nil && cfg.Trackers.Trackers != nil {
+		for k, v := range cfg.Trackers.Trackers {
+			if strings.EqualFold(k, name) {
+				u := strings.TrimSpace(v.URL)
+				if u != "" {
+					// Prepend scheme if missing to allow url.Parse to extract hostname
+					urlString := u
+					if !strings.Contains(urlString, "://") {
+						urlString = "http://" + urlString
+					}
+					if parsed, err := url.Parse(urlString); err == nil && parsed.Hostname() != "" {
+						return parsed.Hostname(), u
+					}
+					return u, u
+				}
+			}
+		}
+	}
+
+	return name, ""
 }

@@ -6,6 +6,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
 import { PillCheckbox } from "../../components/ui/checkbox";
 import { Switch } from "../../components/ui/switch";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type {
   DetailBlock,
   DetailItem,
@@ -1150,7 +1151,13 @@ export default function InputPage(props: Props) {
                             }))
                           }
                         >
-                          {tracker.name}
+                          <span className="flex items-center gap-1.5">
+                            <TrackerIconImage
+                              tracker={tracker.name}
+                              customUrl={tracker.config?.URL as string}
+                            />
+                            {tracker.name}
+                          </span>
                         </PillCheckbox>
                       ))}
                     </div>

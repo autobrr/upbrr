@@ -408,6 +408,7 @@ declare global {
             CancelTrackerUpload: (jobID: string) => Promise<void>;
             RetryFailedTrackerUpload: (jobID: string) => Promise<string>;
             GetTrackerUploadSnapshot: (jobID: string) => Promise<TrackerUploadSnapshot>;
+            GetTrackerIcon?: (domain: string, customURL: string) => Promise<string>;
           };
         };
       }

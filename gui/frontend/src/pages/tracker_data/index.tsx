@@ -4,6 +4,7 @@
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type { MetadataPreview, TrackerPreview } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 
@@ -85,7 +86,8 @@ export default function TrackerDataPage(props: Props) {
                 open={isPrimary}
               >
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
-                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                  <span className="flex items-center gap-2 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                    <TrackerIconImage tracker={item.Tracker} customUrl={item.TorrentURL} />
                     {item.Tracker || "Unknown"}
                   </span>
                   <span className="whitespace-nowrap text-sm font-medium text-[var(--muted)]">
@@ -98,16 +100,20 @@ export default function TrackerDataPage(props: Props) {
                       <p className="label">Tracker</p>
                       {item.TorrentURL ? (
                         <a
-                          className="tracker-link"
+                          className="tracker-link flex items-center gap-1.5"
                           href={item.TorrentURL}
                           target="_blank"
                           rel="noreferrer"
                           onClick={handleExternalLinkClick}
                         >
+                          <TrackerIconImage tracker={item.Tracker} customUrl={item.TorrentURL} />
                           {item.Tracker || "Unknown"}
                         </a>
                       ) : (
-                        <p className="value">{item.Tracker || "Unknown"}</p>
+                        <div className="value flex items-center gap-1.5">
+                          <TrackerIconImage tracker={item.Tracker} />
+                          <span>{item.Tracker || "Unknown"}</span>
+                        </div>
                       )}
                     </div>
                     <div>

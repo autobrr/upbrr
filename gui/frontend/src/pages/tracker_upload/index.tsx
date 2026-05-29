@@ -6,6 +6,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Switch } from "../../components/ui/switch";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type {
   MetadataPreview,
   TrackerDryRunPreview,
@@ -377,7 +378,13 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                       className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1.5"
                       key={tracker.name}
                     >
-                      <span className="value text-sm leading-5">{tracker.name}</span>
+                      <span className="value text-sm leading-5 flex items-center gap-1.5">
+                        <TrackerIconImage
+                          tracker={tracker.name}
+                          customUrl={tracker.config?.URL as string}
+                        />
+                        {tracker.name}
+                      </span>
                       <div className="flex flex-wrap items-center justify-end gap-1">
                         {state?.reasons.map((reason) => (
                           <span className={blockReasonClass} key={`${tracker.name}-${reason}`}>
@@ -418,7 +425,11 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                 key={tracker.name}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <TrackerIconImage
+                      tracker={tracker.name}
+                      customUrl={tracker.config?.URL as string}
+                    />
                     <p className="value text-base leading-5">{tracker.name}</p>
                     <span
                       className={cn(

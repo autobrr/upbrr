@@ -126,6 +126,10 @@ export function GetRecentLogs(arg1) {
   return window['go']['guiapp']['App']['GetRecentLogs'](arg1);
 }
 
+export function GetTrackerIcon(arg1, arg2) {
+  return window['go']['guiapp']['App']['GetTrackerIcon'](arg1, arg2);
+}
+
 export function GetTrackerUploadSnapshot(arg1) {
   return window['go']['guiapp']['App']['GetTrackerUploadSnapshot'](arg1);
 }
