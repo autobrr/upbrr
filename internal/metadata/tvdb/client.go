@@ -1132,20 +1132,20 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: build request for %s: %w", path, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: execute request for %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb read response body: %w", err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.refreshToken(ctx); err != nil {
@@ -1192,20 +1192,20 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	payload := map[string]string{"apikey": c.apiKey}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: marshal login payload: %w", err)
 	}
 
 	url := c.baseURL + "/login"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: build login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: execute login request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -1215,7 +1215,7 @@ func (c *Client) loginLocked(ctx context.Context) error {
 
 	var loginResp loginResponse
 	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		return err
+		return fmt.Errorf("tvdb: decode login response: %w", err)
 	}
 	if strings.TrimSpace(loginResp.Data.Token) == "" {
 		return errors.New("tvdb: login token missing")
@@ -1257,13 +1257,16 @@ func readEpisodesCache(path string) (EpisodesData, bool) {
 
 func writeEpisodesCache(path string, data EpisodesData) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("tvdb: create episodes cache dir: %w", err)
 	}
 	encoded, err := json.Marshal(data)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: marshal episodes cache: %w", err)
 	}
-	return os.WriteFile(path, encoded, 0o600)
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		return fmt.Errorf("tvdb: write episodes cache: %w", err)
+	}
+	return nil
 }
 
 func normalizeIMDbRemote(value string) string {
@@ -1373,7 +1376,7 @@ func (e *episodesDataResponse) UnmarshalJSON(data []byte) error {
 	case '[':
 		var episodes []episodeResponse
 		if err := json.Unmarshal(trimmed, &episodes); err != nil {
-			return err
+			return fmt.Errorf("tvdb: unmarshal episodes list: %w", err)
 		}
 		e.Episodes = episodes
 		e.Slug = ""
@@ -1384,7 +1387,7 @@ func (e *episodesDataResponse) UnmarshalJSON(data []byte) error {
 			Slug     string            `json:"slug"`
 		}
 		if err := json.Unmarshal(trimmed, &payload); err != nil {
-			return err
+			return fmt.Errorf("tvdb: unmarshal episodes payload: %w", err)
 		}
 		e.Episodes = payload.Episodes
 		e.Slug = payload.Slug
@@ -1418,7 +1421,7 @@ func (v *intOrString) UnmarshalJSON(data []byte) error {
 	if trimmed[0] == '"' {
 		var text string
 		if err := json.Unmarshal(trimmed, &text); err != nil {
-			return err
+			return fmt.Errorf("tvdb: unmarshal integer string: %w", err)
 		}
 		text = strings.TrimSpace(text)
 		if text == "" {
@@ -1435,7 +1438,7 @@ func (v *intOrString) UnmarshalJSON(data []byte) error {
 
 	var numeric int
 	if err := json.Unmarshal(trimmed, &numeric); err != nil {
-		return err
+		return fmt.Errorf("tvdb: unmarshal integer: %w", err)
 	}
 	*v = intOrString(numeric)
 	return nil

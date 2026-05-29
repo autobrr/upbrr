@@ -15,7 +15,7 @@ import (
 )
 
 func generateStableEncryptionSeed() (string, error) {
-	return authmaterial.GenerateSeed()
+	return wrapWebResult(authmaterial.GenerateSeed())
 }
 
 func (s *Server) rewrapProtectedDataForAuthChange(ctx context.Context, oldRecord, newRecord authRecord) error {
@@ -48,7 +48,7 @@ func (s *Server) rewrapProtectedDataForAuthChange(ctx context.Context, oldRecord
 
 	if pending.Stage == authmaterial.UpgradeStagePrepared {
 		if err := cookies.RewrapCookiesWithAuthChange(ctx, s.backend.repo.RawDB(), oldMaterial, newMaterial); err != nil {
-			return err
+			return fmt.Errorf("web: %w", err)
 		}
 		if err := s.auth.AdvancePendingUpgrade(oldRecord.Username, authmaterial.UpgradeStageCookiesRewrapped); err != nil {
 			return fmt.Errorf("auth rewrap: persist cookie phase: %w", err)
@@ -59,7 +59,7 @@ func (s *Server) rewrapProtectedDataForAuthChange(ctx context.Context, oldRecord
 	if pending.Stage == authmaterial.UpgradeStageCookiesRewrapped {
 		sourceMaterials := []authmaterial.Material{oldMaterial, newMaterial}
 		if err := config.RewrapSecretsInDatabaseWithFallback(ctx, s.backend.repo, sourceMaterials, newMaterial); err != nil {
-			return err
+			return fmt.Errorf("web: %w", err)
 		}
 		if err := s.auth.AdvancePendingUpgrade(oldRecord.Username, authmaterial.UpgradeStageDataRewrapped); err != nil {
 			return fmt.Errorf("auth rewrap: persist data phase: %w", err)

@@ -4,6 +4,7 @@
 package trackers
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -18,11 +19,11 @@ import (
 func ReadBDInfo(dbPath string, meta api.PreparedMetadata) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: resolve tmp root: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: resolve release tmp dir: %w", err)
 	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
 	if strings.TrimSpace(path) == "" {
@@ -61,7 +62,7 @@ func readTextFile(path string) (string, error) {
 	}
 	payload, err := os.ReadFile(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: read text file: %w", err)
 	}
 	return string(payload), nil
 }

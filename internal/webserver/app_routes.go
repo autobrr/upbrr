@@ -5,6 +5,7 @@ package webserver
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -53,7 +54,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.DetectDiscType(req.Path)
+		value, err := s.backend.DetectDiscType(r.Context(), req.Path)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -148,7 +149,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			Overrides            api.ExternalIDOverrides
 			NameOverrides        api.ReleaseNameOverrides
 			Trackers             []string
-			IgnoreRuleFailures   bool
 			IgnoreDupesFor       []string
 			QuestionnaireAnswers map[string]map[string]string
 			DescriptionGroups    []api.DescriptionBuilderGroup
@@ -159,7 +159,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.FetchTrackerDryRun(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreRuleFailures, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.RunLogLevel)
+		value, err := s.backend.FetchTrackerDryRun(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.RunLogLevel)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -306,7 +306,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		}
 	}))
 
-	mux.HandleFunc("/api/app/BrowseDirectory", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/BrowseDirectory", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
@@ -316,7 +316,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		policy, err := s.webBrowsePolicy()
+		policy, err := s.webBrowsePolicy(current)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -550,7 +550,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
-	mux.HandleFunc("/api/app/GetConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/GetConfig", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.GetConfig()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -559,7 +559,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/ExportConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/ExportConfig", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.ExportConfig()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -568,7 +568,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/GetDefaultConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/GetDefaultConfig", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.GetDefaultConfig()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -614,7 +614,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]any{"result": result, "warnings": warnings})
 	}))
 
-	mux.HandleFunc("/api/app/ListKnownTrackers", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/ListKnownTrackers", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.ListKnownTrackers()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -623,7 +623,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/GetImageHostPolicyMetadata", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/GetImageHostPolicyMetadata", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.GetImageHostPolicyMetadata()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -632,7 +632,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/ListHistory", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/ListHistory", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.ListHistory()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -668,7 +668,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
-	mux.HandleFunc("/api/app/GetLogPath", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/GetLogPath", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.GetLogPath()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -691,7 +691,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/StartLogStream", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+	mux.HandleFunc("/api/app/StartLogStream", s.requireSession(func(w http.ResponseWriter, _ *http.Request, current session) {
 		value, err := s.backend.StartLogStream(current.ID)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -710,7 +710,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
-	mux.HandleFunc("/api/app/GetLogExclusions", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/GetLogExclusions", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.GetLogExclusions()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -784,7 +784,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			Overrides            api.ExternalIDOverrides
 			NameOverrides        api.ReleaseNameOverrides
 			Trackers             []string
-			IgnoreRuleFailures   bool
 			IgnoreDupesFor       []string
 			QuestionnaireAnswers map[string]map[string]string
 			DescriptionGroups    []api.DescriptionBuilderGroup
@@ -795,7 +794,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.StartTrackerUpload(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreRuleFailures, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.RunLogLevel)
+		value, err := s.backend.StartTrackerUpload(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.RunLogLevel)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -850,7 +849,10 @@ type webBrowsePolicy struct {
 	AllowUnrestricted bool
 }
 
-func (s *Server) webBrowsePolicy() (webBrowsePolicy, error) {
+func (s *Server) webBrowsePolicy(current session) (webBrowsePolicy, error) {
+	if s != nil && s.isDevelopmentSession(current) {
+		return webBrowsePolicy{AllowUnrestricted: true}, nil
+	}
 	if s == nil || s.auth == nil {
 		return webBrowsePolicy{}, nil
 	}
@@ -859,7 +861,7 @@ func (s *Server) webBrowsePolicy() (webBrowsePolicy, error) {
 		if os.IsNotExist(err) {
 			return webBrowsePolicy{}, nil
 		}
-		return webBrowsePolicy{}, err
+		return webBrowsePolicy{}, fmt.Errorf("web: %w", err)
 	}
 	if record.AllowUnrestrictedBrowse {
 		return webBrowsePolicy{AllowUnrestricted: true}, nil

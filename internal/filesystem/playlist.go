@@ -61,7 +61,7 @@ func DiscoverPlaylists(ctx context.Context, bdmvRoot string) ([]PlaylistInfo, er
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() {
@@ -152,7 +152,7 @@ func calculatePlaylistScore(duration float64, items []PlaylistItem) float64 {
 func ParseMPLS(mpslPath string) (float64, []PlaylistItem, error) {
 	file, err := os.Open(mpslPath)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, fmt.Errorf("open MPLS playlist: %w", err)
 	}
 	defer file.Close()
 
@@ -394,7 +394,7 @@ func attachStreamSizes(playlistDir string, items []PlaylistItem) ([]PlaylistItem
 		if os.IsNotExist(err) {
 			return items, nil // No STREAM directory; return items as-is.
 		}
-		return nil, err
+		return nil, fmt.Errorf("read BD stream directory: %w", err)
 	}
 
 	for _, entry := range entries {

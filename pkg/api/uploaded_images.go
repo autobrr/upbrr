@@ -14,7 +14,7 @@ type UploadedImageLink struct {
 	RawURL     string
 	WebURL     string
 	SizeBytes  int64
-	UploadedAt time.Time
+	UploadedAt time.Time `ts_type:"string"`
 }
 
 // UploadImageHostFailure describes a single host-level image upload failure

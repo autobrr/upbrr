@@ -6,6 +6,7 @@ package trackers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -141,7 +142,7 @@ func LogDescriptionAssetResolutionFailure(logger api.Logger, tracker string, err
 
 func resolveDescriptionAssets(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger, preloaded *preloadedDescriptionAssetData) (DescriptionAssets, error) {
 	if err := ctx.Err(); err != nil {
-		return DescriptionAssets{}, err
+		return DescriptionAssets{}, fmt.Errorf("trackers: resolve description assets canceled: %w", err)
 	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		description := meta.DescriptionOverride
@@ -356,7 +357,7 @@ func matchingPreparationDescriptionGroupKeys(groups []api.DescriptionBuilderGrou
 		if key == "" {
 			continue
 		}
-		if !descriptionGroupMatchesTracker(group, canonicalGroup, normalizedTracker) {
+		if !descriptionGroupMatchesTracker(group, canonicalGroup) {
 			continue
 		}
 		_, host, usageScope := parsePreparationDescriptionGroupKey(key)
@@ -386,7 +387,7 @@ func matchingPreparationDescriptionGroupKeys(groups []api.DescriptionBuilderGrou
 	return keys
 }
 
-func descriptionGroupMatchesTracker(group api.DescriptionBuilderGroup, canonicalGroup string, normalizedTracker string) bool {
+func descriptionGroupMatchesTracker(group api.DescriptionBuilderGroup, canonicalGroup string) bool {
 	baseGroup, _, _ := parsePreparationDescriptionGroupKey(group.GroupKey)
 	return strings.EqualFold(strings.TrimSpace(baseGroup), canonicalGroup)
 }
@@ -473,7 +474,7 @@ func mergeTrackerMetadata(primary []api.TrackerMetadata, fallback []api.TrackerM
 
 func resolveDescriptionScreenshots(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger, preloaded *preloadedDescriptionAssetData) ([]api.ScreenshotSlot, []api.ScreenshotImage, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("trackers: resolve description screenshots canceled: %w", err)
 	}
 	slots, err := screenshotSlotsFromSource(ctx, tracker, meta, repo, logger, preloaded)
 	if err != nil {
@@ -505,7 +506,7 @@ func resolveDescriptionScreenshots(ctx context.Context, tracker string, meta api
 
 func preloadDescriptionAssetData(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository) (*preloadedDescriptionAssetData, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: preload description assets canceled: %w", err)
 	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return nil, nil
@@ -528,24 +529,24 @@ func preloadDescriptionAssetData(ctx context.Context, meta api.PreparedMetadata,
 		}
 	case errors.Is(err, internalerrors.ErrNotFound):
 	default:
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 
 	trackerRecords, err := repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	preloaded.trackerRecords = trackerRecords
 
 	selections, err := repo.ListFinalSelections(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	preloaded.selections = selections
 
 	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	preloaded.uploads = uploads
 
@@ -561,7 +562,7 @@ func preloadDescriptionAssetData(ctx context.Context, meta api.PreparedMetadata,
 
 func descriptionOverrideFromSource(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, groupKey string, preloaded *preloadedDescriptionAssetData) (api.DescriptionOverride, error) {
 	if err := ctx.Err(); err != nil {
-		return api.DescriptionOverride{}, err
+		return api.DescriptionOverride{}, fmt.Errorf("trackers: load description override canceled: %w", err)
 	}
 	normalizedGroupKey := normalizeDescriptionOverrideGroupKey(groupKey)
 	if preloaded != nil {
@@ -574,37 +575,37 @@ func descriptionOverrideFromSource(ctx context.Context, meta api.PreparedMetadat
 	if err == nil {
 		return override, nil
 	}
-	return api.DescriptionOverride{}, err
+	return api.DescriptionOverride{}, fmt.Errorf("trackers: %w", err)
 }
 
 func trackerMetadataFromSource(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData) ([]api.TrackerMetadata, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: load tracker metadata canceled: %w", err)
 	}
 	if preloaded != nil {
 		return preloaded.trackerRecords, nil
 	}
-	return repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
+	return wrapTrackerResult(repo.ListTrackerMetadataByPath(ctx, meta.SourcePath))
 }
 
 func finalSelectionsFromSource(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData) ([]api.ScreenshotFinalSelection, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: load final selections canceled: %w", err)
 	}
 	if preloaded != nil {
 		return preloaded.selections, nil
 	}
-	return repo.ListFinalSelections(ctx, meta.SourcePath)
+	return wrapTrackerResult(repo.ListFinalSelections(ctx, meta.SourcePath))
 }
 
 func uploadedImagesFromSource(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData) ([]api.UploadedImageLink, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: load uploaded images canceled: %w", err)
 	}
 	if preloaded != nil {
 		return preloaded.uploads, nil
 	}
-	return repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
+	return wrapTrackerResult(repo.ListUploadedImagesByPath(ctx, meta.SourcePath))
 }
 
 func resolveTrackerImageURLs(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger, preloaded *preloadedDescriptionAssetData) []string {
@@ -612,6 +613,12 @@ func resolveTrackerImageURLs(ctx context.Context, tracker string, meta api.Prepa
 		return nil
 	}
 	trackerKey := strings.TrimSpace(tracker)
+	if !meta.Options.KeepImages {
+		if logger != nil {
+			logger.Tracef("trackers: description assets tracker urls skipped keep_images=false tracker=%s", trackerKey)
+		}
+		return nil
+	}
 	records, err := trackerMetadataFromSource(ctx, meta, repo, preloaded)
 	if err == nil {
 		if len(records) > 0 {

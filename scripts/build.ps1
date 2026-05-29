@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+$wailsCli = "github.com/wailsapp/wails/v2/cmd/wails@v2.12.0"
 
 Write-Host "Building frontend..."
 Push-Location "gui/frontend"
@@ -37,9 +38,8 @@ if (Test-Path $sourceBin) {
 }
 
 Write-Host "Building GUI binary (portable exe)..."
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
 Push-Location "gui"
-wails build -platform windows/amd64
+go run $wailsCli build -platform windows/amd64
 Pop-Location
 
 Write-Host "Done. Binaries: dist/upbrr.exe (CLI) and gui/build/bin/upbrr-gui.exe (GUI)"

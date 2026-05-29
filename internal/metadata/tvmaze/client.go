@@ -272,7 +272,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 	if params != nil {
 		parsed, err := url.Parse(endpoint)
 		if err != nil {
-			return err
+			return fmt.Errorf("tvmaze: parse request endpoint: %w", err)
 		}
 		parsed.RawQuery = params.Encode()
 		reqURL = parsed.String()
@@ -280,12 +280,12 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvmaze: build request for %s: %w", endpoint, err)
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvmaze: execute request for %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
 
@@ -298,7 +298,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 
 	decoder := json.NewDecoder(resp.Body)
 	if err := decoder.Decode(target); err != nil {
-		return err
+		return fmt.Errorf("tvmaze: decode response: %w", err)
 	}
 	return nil
 }

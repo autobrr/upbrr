@@ -34,8 +34,8 @@ func (h ffHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 	if meta.Anime {
 		query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
 	}
-	resp, root, err := doHTMLGet(ctx, h.http, trackerBaseURL(h.cfg, "FF", "https://www.funfile.org")+"/torrents.php", url.Values{"searchstr": {query}}, nil, cookies)
-	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	resp, root, err := doHTMLGet(ctx, h.http, trackerBaseURL(h.cfg, "FF", "https://www.funfile.org")+"/torrents.php", url.Values{"searchstr": {query}}, cookies)
+	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("FF search failed")}, nil
 	}
 	groupLinks := findNodes(root, func(node *xhtml.Node) bool {
@@ -55,8 +55,8 @@ func (h ffHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 			continue
 		}
 		seen[groupLink] = struct{}{}
-		groupResp, groupRoot, err := doHTMLGet(ctx, h.http, groupLink, nil, nil, cookies)
-		if err != nil || groupResp == nil || groupResp.StatusCode < 200 || groupResp.StatusCode >= 300 {
+		groupResp, groupRoot, err := doHTMLGet(ctx, h.http, groupLink, nil, cookies)
+		if err != nil || !groupResp.ok() {
 			continue
 		}
 		torrents := findNodes(groupRoot, func(node *xhtml.Node) bool {

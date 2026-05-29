@@ -1,56 +1,71 @@
 # Project Guidelines
 
+## Source Of Truth
+
+- Contributor setup, platform notes, Makefile targets, build commands, tests, hooks, and commit format live in `CONTRIBUTING.md`.
+- Tool wiring lives in `Makefile`, `lefthook.yml`, `.golangci.yml`, `gui/frontend/package.json`, and `.github/workflows/*.yml`.
+- When docs disagree, prefer tool config over prose. Update prose instead of copying stale commands.
+
+## Quick Commands
+
+```bash
+make help               # Show supported targets
+make backend            # Fast build sanity check
+make test-go            # Full Go tests with race detector
+make test-frontend      # Frontend lint/dead-code/type/unit/format checks
+make lint               # Full Go lint
+make logpolicy          # Logging policy check
+make precommit          # Lefthook pre-commit
+make prepush            # Lefthook pre-push
+make gofix-check-changed # Inspect Go fix drift on changed packages
+git diff --check        # Whitespace/conflict-marker check
+```
+
+Use `CONTRIBUTING.md` for full command reference and platform details. Use narrow package/file checks first, then expand when touching shared behavior or release surfaces.
+
 ## Code Quality
 
-- Match the repository's existing style and keep changes narrow. Prefer fixing root causes over adding special cases.
-- Format Go code with gofmt and goimports. Keep the local import prefix set to github.com/autobrr/upbrr.
-- Treat .golangci.yml as the Go standard of record. New code should satisfy all linters, including ones currently disabled in repository-wide enforcement.
-- The disabled linters are intentional policy for existing code, not missed cleanup. Do not reshape existing code just to satisfy containedctx, noctx, revive, or other currently disabled linters unless there is a functional reason or the surrounding code already follows that pattern.
-- Do not silently swallow errors. Handle them explicitly by returning, wrapping, logging with intentional context, or making the ignore path obvious and justified in code.
-- Add logging to new functions where it helps explain meaningful state, decisions, failures, retries, or user-visible outcomes. When touching existing functions that lack appropriate logging, bring them up to the same standard when it is practical and relevant to the change.
-- The repository enforces logging hygiene with the `cmd/logpolicy` checker. Treat its rules as part of the logging contract, not as optional cleanup, and write or update logs so they pass without relying on follow-up fixes.
-- Always redact private, secret, or user-sensitive information from logs using the repository's redaction handling in `internal/redaction/redaction.go`. Never log credentials, tokens, API keys, passkeys, cookies, full payloads containing secrets, or other sensitive user data without applying that standard.
-- Keep log levels purposeful. `INFO` should provide concise, relevant progress or outcome details for end users during uploads. `DEBUG` should include richer decision-making context useful for developer troubleshooting. `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
-- When the checker flags a log line, fix the log message or level at the source instead of weakening the checker, bypassing it, or shifting the message to an equally noisy level.
-- Respect the current golangci-lint exclusions and formatter settings instead of reintroducing churn in files already covered by scoped exceptions.
-- For frontend changes, keep TypeScript and ESLint clean without weakening existing rules or bypassing type errors.
-- For frontend CSS changes, keep Stylelint clean and avoid leaving dead selectors, files, exports, or dependencies. The frontend dead-code check uses `knip.ts` and includes `src/**/*.{ts,tsx,css}`, with CSS parsed through Knip's CSS compiler hook.
-- When creating commits, use the repository's Conventional Commit policy enforced by `cmd/commitmsgcheck`: `type(scope): subject`, optional scope, lower-case imperative subject, no trailing period, max 115 characters. Allowed types are `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, and `revert`.
-- Treat `lefthook.yml` as the local preflight contract. Do not bypass hooks or validation unless the user explicitly asks for it or the bypass is only for a temporary local WIP action that will be validated before handoff.
+- Match repo style. Keep changes narrow. Fix root causes, not symptoms.
+- New Go code must satisfy enabled `.golangci.yml` linters and formatters. Avoid broad `nolint`.
+- Active checks include `noctx`, `contextcheck`, `containedctx`, `wrapcheck`, `revive`, `forcetypeassert`, `unparam`, `usetesting`, and `gosec`.
+- Use context-aware APIs. Propagate context where meaningful; terminate it deliberately when crossing into root/background work.
+- Wrap external-package errors where lint requires it. Handle errors by returning, wrapping, logging with useful context, or making intentional ignore paths obvious.
+- Avoid unchecked type assertions. Use `testing` helpers in tests. Justify narrow `nolint` at source.
+- Frontend changes must keep TypeScript, ESLint, Stylelint, and dead-code checks clean. Do not weaken rules or bypass type errors.
+- For embedded frontend visual checks, rebuild/sync embedded assets and rebuild the CLI binary before browser automation. Use the main embedded server port (`7480`) with `dist/upbrr.exe serve --dev-no-auth`; do not use the Vite-only dev server on `5173` for embedded parity checks. Stop the embedded server after inspection.
 
-## Validation
+## Logging
 
-- Run the relevant CI-aligned checks after changes.
-- PR validation includes commit-message validation, full Go tests, golangci-lint, logpolicy, and frontend lint/stylelint/type/format/dead-code checks as applicable. Use `lefthook.yml`, `CONTRIBUTING.md`, `gui/frontend/package.json`, and `.github/workflows/*` as the source of truth when deciding the exact check set.
-- For Go changes, run the narrowest relevant Go tests first, such as a package-scoped go test invocation for the affected area. When changes touch shared behavior, multiple packages, or cross-surface flows, expand to broader coverage up to: go test -v -timeout 20m ./...
-- For Go changes, run: golangci-lint run --timeout=5m ./...
-- For logging-related Go changes, or any change that adds, removes, or edits log lines under `internal`, also run: go run ./cmd/logpolicy
-- When preparing or checking commits, validate commit messages with `go run ./cmd/commitmsgcheck <commit-msg-file>` or, for a PR/range, `go run ./cmd/commitmsgcheck --from <base> --to <head>`.
-- If Lefthook is installed and the task includes staged changes or a push, use the matching hook as a quick local preflight where practical: `lefthook run pre-commit` or `lefthook run pre-push`.
-- Prefer the smallest relevant frontend validation for the files you changed, but keep lint and typecheck clean for the affected frontend surface. When frontend changes are broad, shared, or configuration-related, run the full gui/frontend checks called out below.
-- For gui/frontend changes, use gui/frontend as the working directory. Run pnpm install --frozen-lockfile whenever frontend dependencies or lockfiles may affect the change; otherwise run pnpm run lint, pnpm run lint:dead, pnpm run typecheck, and pnpm run format:check. When CSS changes, also run pnpm run lint:style.
-- For gui/frontend build logic, embedded assets, or Vite/TypeScript config changes, also run: pnpm run build
-- For Wails runtime/backend changes, validate with go run ./gui when practical. For GUI packaging, embedded assets, Wails config, or desktop integration changes, run pnpm run build in gui/frontend and the nearest relevant wails build validation
-- For packaging, release, Dockerfile, build-script, or cross-platform changes, review .github/workflows/build-binaries.yml and validate the directly affected local path you can exercise, such as scripts/build.sh, scripts/build.ps1, a CLI build, a GUI build, or a Docker build
+- Add logs where they explain meaningful state, decisions, failures, retries, or user-visible outcomes. Improve touched functions when practical and relevant.
+- Treat `cmd/logpolicy` as logging contract. Fix flagged log messages or levels at source; do not weaken checker or move noise sideways.
+- Redact secrets and user-sensitive data with `internal/redaction/redaction.go`.
+- Never log credentials, tokens, API keys, passkeys, cookies, or secret-bearing payloads without repository redaction standard.
+- Keep levels purposeful: `INFO` for concise user-facing upload progress/outcomes, `DEBUG` for troubleshooting context, `TRACE` for high-fidelity operational flow.
+
+## Go Fix
+
+- Do not apply `go fix` wholesale without review.
+- Prefer `make gofix-check-changed` and package-scoped `go fix -omitzero=false <packages>`.
+- Keep `omitzero` disabled unless a change explicitly reviews JSON output semantics.
 
 ## Product Invariants
 
-- This repository ships shared behavior across CLI, Wails GUI, and embedded web-serving mode. Preserve parity in request construction, option handling, and upload behavior where practical instead of letting one surface drift.
-- The application targets Windows, Linux, and macOS. Avoid OS-specific assumptions in paths, process handling, filesystem behavior, archives, and build logic unless the code is already intentionally platform-gated.
-- Preserve api.Mode usage and keep CLI, Wails GUI, and embedded web-serving flows aligned with shared request types under pkg/api and shared core behavior under internal.
-- Changes around upload options, tracker overrides, retries, or execution flags should be checked from both CLI and GUI entrypoints when the same behavior exists in both surfaces.
-- SQLite databases may be shared across branches during development. Keep migration handling compatible with permissive cross-branch usage instead of assuming every running build knows every applied migration ID.
-- Database migrations must remain additive, forward-only, and idempotent where practical. Prefer guarded table/index creation, additive columns, and safe backfills over destructive schema changes such as dropping, renaming, or tightening structures that older branches may still read.
+- Shared behavior spans CLI, Wails GUI, and embedded web-serving mode. Preserve parity in request construction, options, and upload behavior where practical.
+- App targets Windows, Linux, and macOS. Avoid OS-specific path, process, filesystem, archive, or build assumptions unless intentionally platform-gated.
+- Preserve `api.Mode` usage. Keep CLI, Wails GUI, and embedded web flows aligned with request types under `pkg/api` and shared core behavior under `internal`.
+- Upload options, tracker overrides, retries, and execution flags should be checked from CLI and GUI entrypoints when shared.
+- SQLite databases may be shared across branches during development. Keep migrations compatible with permissive cross-branch use.
+- Migrations must be additive, forward-only, and idempotent where practical. Prefer guarded table/index creation, additive columns, and safe backfills. Avoid destructive drop/rename/tighten changes older branches may still read.
 
 ## Unattended Safety
 
-- Treat unattended and unattended-confirm flows as safety-critical. They must stay non-blocking and conservative.
-- Do not introduce new interactive prompts, hidden confirmations, or ambiguous fallthrough behavior in unattended paths.
-- When a choice cannot be made safely in unattended mode, prefer dry-run, site-check, explicit skip behavior, or a clear failure over attempting an upload with uncertain state.
-- Preserve existing invariants such as site-check implying dry-run, debug implying safe non-upload behavior, and unattended flows keeping their current questionnaire/default-selection behavior unless the change explicitly updates those rules everywhere.
-- Preserve safe skip and override behavior for dupes, rule failures, screenshot/image-host uploads, torrent injection, and retry flows. If one surface supports a skip or override, keep parity in the other surface when that behavior is shared.
+- Treat unattended and unattended-confirm flows as safety-critical. They must remain non-blocking and conservative.
+- Do not add interactive prompts, hidden confirmations, or ambiguous fallthrough behavior in unattended paths.
+- If unattended mode cannot choose safely, prefer dry-run, site-check, explicit skip, or clear failure over uncertain upload.
+- Preserve invariants: site-check implies dry-run; debug implies safe non-upload behavior; unattended flows keep current questionnaire/default-selection behavior unless change updates those rules everywhere.
+- Preserve safe skip and override behavior for dupes, rule failures, screenshot/image-host uploads, torrent injection, and retries. If one shared surface supports skip/override, keep parity in other shared surface.
 
 ## Scope Notes
 
-- Keep guidance consistent with .golangci.yml, gui/frontend/package.json, and .github/workflows/*.yml rather than inventing new required steps.
-- If a change affects only one area, run the smallest set of relevant checks. If a change crosses backend, frontend, GUI, packaging, or unattended execution boundaries, expand validation accordingly.
+- Do not duplicate detailed contributor workflow from `CONTRIBUTING.md` here. Link or summarize only agent-critical deltas.
+- If change affects one area, run smallest relevant checks. If change crosses backend, frontend, GUI, packaging, or unattended execution, expand validation.

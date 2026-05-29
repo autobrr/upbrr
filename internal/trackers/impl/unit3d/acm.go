@@ -303,7 +303,7 @@ func buildACMDescription(ctx context.Context, meta api.PreparedMetadata, appConf
 		base = strings.TrimSpace(strings.Join([]string{header, base}, "\n"))
 	}
 
-	return descriptionunit3d.BuildDescription(ctx, meta, cfg, trackerConfig, logger, base, menuImages, screenshots)
+	return wrapTrackerResult(descriptionunit3d.BuildDescription(ctx, meta, cfg, trackerConfig, logger, base, menuImages, screenshots))
 }
 
 func resolveACMKeywords(meta api.PreparedMetadata) string {

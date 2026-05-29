@@ -81,7 +81,10 @@ func (c *Client) lookupHDB(
 }
 
 func (c *Client) hdbRequestFirst(ctx context.Context, payload map[string]any) (map[string]any, error) {
-	raw, _ := json.Marshal(payload)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("trackerdata: hdb encode request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.hdbURL, bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("trackerdata: hdb request: %w", err)

@@ -5,7 +5,6 @@ package is
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -34,7 +33,7 @@ func (definition) BuildDescription(ctx context.Context, req trackers.Description
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(trackers.UploadRequest{
+	description := buildDescription(trackers.UploadRequest{
 		Tracker:       req.Tracker,
 		Meta:          req.Meta,
 		TrackerConfig: req.TrackerConfig,
@@ -42,8 +41,5 @@ func (definition) BuildDescription(ctx context.Context, req trackers.Description
 		Logger:        req.Logger,
 		Repo:          req.Repo,
 	}, assets)
-	if err != nil {
-		return trackers.DescriptionResult{}, fmt.Errorf("trackers: IS description build: %w", err)
-	}
 	return trackers.DescriptionResult{Group: "is", Description: description}, nil
 }

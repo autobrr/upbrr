@@ -85,12 +85,11 @@ func (cs *CookieStore) saveCookie(ctx context.Context, execer cookieStoreExecer,
 
 // GetCookie retrieves and decrypts a single cookie from the database.
 func (cs *CookieStore) GetCookie(ctx context.Context, trackerID, cookieName string, key []byte) (string, error) {
+	if ctx == nil {
+		return "", errors.New("GetCookie: context is required")
+	}
 	if err := validateTrackerCookieInputs("GetCookie", trackerID, cookieName); err != nil {
 		return "", err
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
 	}
 
 	query := `SELECT encrypted_value, nonce, auth_tag FROM tracker_cookies WHERE tracker_id = ? AND cookie_name = ?`
@@ -127,7 +126,7 @@ func (cs *CookieStore) GetCookie(ctx context.Context, trackerID, cookieName stri
 // Returns a map[cookieName]cookieValue.
 func (cs *CookieStore) GetAllTrackerCookies(ctx context.Context, trackerID string, key []byte) (map[string]string, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("GetAllTrackerCookies: context is required")
 	}
 
 	query := `SELECT cookie_name, encrypted_value, nonce, auth_tag FROM tracker_cookies WHERE tracker_id = ?`
@@ -173,12 +172,11 @@ func (cs *CookieStore) GetAllTrackerCookies(ctx context.Context, trackerID strin
 
 // DeleteCookie removes a specific cookie from the database.
 func (cs *CookieStore) DeleteCookie(ctx context.Context, trackerID, cookieName string) error {
+	if ctx == nil {
+		return errors.New("DeleteCookie: context is required")
+	}
 	if err := validateTrackerCookieInputs("DeleteCookie", trackerID, cookieName); err != nil {
 		return err
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
 	}
 
 	query := `DELETE FROM tracker_cookies WHERE tracker_id = ? AND cookie_name = ?`
@@ -206,7 +204,7 @@ func (cs *CookieStore) DeleteAllTrackerCookiesTx(ctx context.Context, tx *sql.Tx
 
 func (cs *CookieStore) deleteAllTrackerCookies(ctx context.Context, execer cookieStoreExecer, trackerID string) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("DeleteAllTrackerCookies: context is required")
 	}
 
 	query := `DELETE FROM tracker_cookies WHERE tracker_id = ?`
@@ -221,7 +219,7 @@ func (cs *CookieStore) deleteAllTrackerCookies(ctx context.Context, execer cooki
 // RunInTransaction runs cookie store operations inside a single database transaction.
 func (cs *CookieStore) RunInTransaction(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("RunInTransaction: context is required")
 	}
 	if fn == nil {
 		return errors.New("RunInTransaction: callback is required")
@@ -256,7 +254,7 @@ func (cs *CookieStore) RunInTransaction(ctx context.Context, fn func(tx *sql.Tx)
 // HasCookies checks if a tracker has any cookies in the database.
 func (cs *CookieStore) HasCookies(ctx context.Context, trackerID string) (bool, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return false, errors.New("HasCookies: context is required")
 	}
 
 	var count int

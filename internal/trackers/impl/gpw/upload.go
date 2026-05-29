@@ -61,11 +61,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		Path:      state.torrentPath,
 	}})
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api.php?api_key="+req.TrackerConfig.APIKey+"&action=upload", bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: GPW upload request build: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -77,6 +77,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	responseBody, _ := io.ReadAll(resp.Body)
 	var decoded apiResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return api.UploadSummary{}, commonhttp.UploadHTTPError("GPW", resp.StatusCode, responseBody)
+		}
 		return api.UploadSummary{}, fmt.Errorf("trackers: GPW decode response: %w", err)
 	}
 	id := extractTorrentID(decoded.Response)
@@ -87,16 +90,16 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "GPW")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announce, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{Tracker: "GPW", TorrentID: id, TorrentURL: tURL, DownloadURL: tURL, TorrentPath: artifactPath}}}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "GPW", "upload_failure", responseBody, ".json")
-	return api.UploadSummary{}, fmt.Errorf("trackers: GPW %s", metautil.FirstNonEmptyTrimmed(decoded.Error, decoded.Message, "upload failed"))
+	return api.UploadSummary{}, fmt.Errorf("trackers: GPW %s", metautil.FirstNonEmptyTrimmed(commonhttp.ExtractHTTPErrorDetail(responseBody), commonhttp.RedactErrorDetail(decoded.Error), commonhttp.RedactErrorDetail(decoded.Message), "upload failed"))
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -135,17 +138,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req, assets)
 	groupID, _ := lookupGroupID(ctx, req.TrackerConfig.APIKey, req.Meta)
 	answers := questionnaireAnswers(req.Meta)
 	fields := buildFields(req, req.TrackerConfig, description, groupID, answers)
@@ -170,11 +170,11 @@ func lookupGroupID(ctx context.Context, apiKey string, meta api.PreparedMetadata
 	url := fmt.Sprintf("%s/api.php?api_key=%s&action=torrent&req=group&imdbID=tt%07d", baseURL, apiKey, meta.ExternalIDs.IMDBID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: GPW torrent URL lookup request build: %w", err)
 	}
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: GPW torrent URL lookup request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -289,7 +289,7 @@ func validateFields(groupID string, fields map[string]string) string {
 	return ""
 }
 
-func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
 	meta := req.Meta
 	parts := make([]string, 0, 3)
 	// custom header
@@ -354,7 +354,7 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 		descriptionunit3d.SaveDescriptionDebug(meta, "GPW", req.AppConfig.MainSettings.DBPath, finalDescription, req.Logger)
 	}
 
-	return finalDescription, nil
+	return finalDescription
 }
 
 func screenshotBlock(images []api.ScreenshotImage) string {

@@ -23,6 +23,7 @@ import (
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -81,10 +82,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "ASC")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		maybeAutoApprove(ctx, client, cookies, req.TrackerConfig, torrentID, req.Logger)
@@ -107,9 +108,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		_ = os.WriteFile(failurePath, bodyBytes, 0o600)
 	}
 	if failurePath != "" {
-		return api.UploadSummary{}, fmt.Errorf("trackers: ASC upload failed status=%d url=%s failure=%s", resp.StatusCode, finalURL, failurePath)
+		return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, bodyBytes), failurePath)
 	}
-	return api.UploadSummary{}, fmt.Errorf("trackers: ASC upload failed status=%d url=%s", resp.StatusCode, finalURL)
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, bodyBytes)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -146,7 +147,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun bool) (uploadState, []*http.Cookie, error) {
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
@@ -155,10 +156,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		assets = trackers.DescriptionAssets{}
 	}
 
-	description, err := buildDescription(ctx, req.Meta, req.AppConfig, assets, req.TrackerConfig.CustomLayout)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(ctx, req.Meta, req.AppConfig, assets, req.TrackerConfig.CustomLayout)
 
 	fields, releaseName := buildPayload(req.Meta, req.TrackerConfig, assets, description)
 	state := uploadState{
@@ -300,7 +298,7 @@ func parseUploadID(finalURL string, body string) string {
 func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte, string, error) {
 	file, err := os.Open(strings.TrimSpace(torrentPath))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ASC open torrent file: %w", err)
 	}
 	defer file.Close()
 
@@ -308,18 +306,18 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	writer := multipart.NewWriter(body)
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: ASC write multipart field %q: %w", key, err)
 		}
 	}
 	part, err := writer.CreateFormFile("torrent", filepath.Base(torrentPath))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ASC create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ASC copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ASC close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -387,11 +385,11 @@ func maybeSetInternal(ctx context.Context, client *http.Client, cookies []*http.
 func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, "[ASC]upload_failure.html"), nil
 }

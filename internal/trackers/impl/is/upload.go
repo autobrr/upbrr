@@ -64,7 +64,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, files)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
@@ -94,10 +94,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 			if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 				artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "IS")
 				if err != nil {
-					return api.UploadSummary{}, err
+					return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 				}
 				if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-					return api.UploadSummary{}, err
+					return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 				}
 			}
 			return api.UploadSummary{
@@ -114,7 +114,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{Uploaded: 1}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "IS", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, fmt.Errorf("trackers: IS upload failed status=%d", resp.StatusCode)
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("IS", resp.StatusCode, responseBody)
 }
 
 func successfulUploadResponse(finalURL string, responseBody string) (string, bool) {
@@ -159,7 +159,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, []*http.Cookie, error) {
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	cookies, err := loadCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
@@ -170,10 +170,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req, assets)
 	fields := map[string]string{
 		"UseNFOasDescr": "no",
 		"message":       buildMessage(req.Meta),
@@ -198,10 +195,10 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "IS", "immortalseed.me")
+	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "IS", "immortalseed.me"))
 }
 
-func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
 	meta := req.Meta
 	parts := make([]string, 0, 8)
 	if strings.TrimSpace(meta.EpisodeOverview) != "" {
@@ -238,7 +235,7 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 			parts = append(parts, "Screenshots:\n"+strings.Join(shotLines, "\n"))
 		}
 	}
-	return bbcode.FinalizeTrackerDescription("IS", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("IS", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func buildMessage(meta api.PreparedMetadata) string {

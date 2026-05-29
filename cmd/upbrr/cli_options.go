@@ -118,6 +118,7 @@ type cliOptions struct {
 
 type serveOptions struct {
 	ConfigPath string
+	DevNoAuth  bool
 }
 
 func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, error) {
@@ -269,7 +270,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.Channel, "channel", "", "Override SPD channel")
 
 	if err := fs.Parse(args); err != nil {
-		return cliOptions{}, nil, nil, err
+		return cliOptions{}, nil, nil, fmt.Errorf("parse CLI options: %w", err)
 	}
 
 	visited := make(map[string]bool)
@@ -388,7 +389,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	}
 	if visited["log-level"] {
 		if _, err := api.ParseLogLevel(opts.LogLevel); err != nil {
-			return cliOptions{}, nil, nil, err
+			return cliOptions{}, nil, nil, fmt.Errorf("upbrr: %w", err)
 		}
 	}
 	if visited["tmdb"] {
@@ -427,9 +428,10 @@ func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	fs.SetOutput(io.Discard)
 
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
+	fs.BoolVar(&opts.DevNoAuth, "dev-no-auth", false, "Development only: serve web UI without web authentication on loopback hosts")
 
 	if err := fs.Parse(args); err != nil {
-		return serveOptions{}, nil, err
+		return serveOptions{}, nil, fmt.Errorf("parse serve options: %w", err)
 	}
 
 	visited := make(map[string]bool)
@@ -455,7 +457,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 	if visited["log-level"] {
 		normalized, err := api.ParseLogLevel(opts.LogLevel)
 		if err != nil {
-			return api.Request{}, err
+			return api.Request{}, fmt.Errorf("upbrr: %w", err)
 		}
 		runLogLevel = normalized
 	}

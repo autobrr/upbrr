@@ -12,10 +12,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildUnit3DSearchParams(meta api.PreparedMetadata, tracker string) (url.Values, error) {
+func buildUnit3DSearchParams(meta api.PreparedMetadata, tracker string) url.Values {
 	tmdbID := meta.ExternalIDs.TMDBID
 	if tmdbID == 0 {
-		return nil, nil
+		return nil
 	}
 
 	category := strings.ToUpper(strings.TrimSpace(meta.ExternalIDs.Category))
@@ -27,7 +27,7 @@ func buildUnit3DSearchParams(meta api.PreparedMetadata, tracker string) (url.Val
 	}
 	categoryID := resolveUnit3DDupeCategoryID(tracker, category)
 	if categoryID == "" {
-		return nil, nil
+		return nil
 	}
 
 	typeValue := strings.ToUpper(strings.TrimSpace(meta.Type))
@@ -81,7 +81,7 @@ func buildUnit3DSearchParams(meta api.PreparedMetadata, tracker string) (url.Val
 		}
 	}
 
-	return params, nil
+	return params
 }
 
 func resolveUnit3DDupeCategoryID(tracker string, category string) string {

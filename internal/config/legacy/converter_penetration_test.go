@@ -26,7 +26,7 @@ func TestConvertNilLegacy(t *testing.T) {
 func TestConvertNilTemplate(t *testing.T) {
 	t.Parallel()
 
-	legacy := &LegacyConfig{Default: map[string]any{}}
+	legacy := &Config{Default: map[string]any{}}
 	if _, _, err := Convert(legacy, nil); err == nil {
 		t.Fatalf("expected error for nil template")
 	}

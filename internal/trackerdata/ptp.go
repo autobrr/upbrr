@@ -33,33 +33,32 @@ func (c *Client) lookupPTP(
 	if !ok {
 		return Result{}, nil
 	}
-	apiUser := strings.TrimSpace(cfg.ApiUser)
-	apiKey := strings.TrimSpace(cfg.ApiKey)
+	apiUser := strings.TrimSpace(cfg.PTPAPIUser)
+	apiKey := strings.TrimSpace(cfg.PTPAPIKey)
 	if apiUser == "" || apiKey == "" {
 		return Result{}, nil
 	}
 	headers := map[string]string{"ApiUser": apiUser, "ApiKey": apiKey}
 
 	foundID := strings.TrimSpace(trackerID)
-	infoHash := ""
-	imdbID := 0
+	var lookup ptpLookup
 
 	if foundID != "" {
-		lookup, err := c.ptpFetchByID(ctx, headers, foundID)
+		var err error
+		lookup, err = c.ptpFetchByID(ctx, headers, foundID)
 		if err != nil {
 			return Result{}, err
 		}
-		imdbID = lookup.imdbID
-		infoHash = lookup.infoHash
 	} else {
-		lookup, err := c.ptpSearch(ctx, headers, searchFileName)
+		var err error
+		lookup, err = c.ptpSearch(ctx, headers, searchFileName)
 		if err != nil {
 			return Result{}, err
 		}
 		foundID = lookup.trackerID
-		imdbID = lookup.imdbID
-		infoHash = lookup.infoHash
 	}
+	imdbID := lookup.imdbID
+	infoHash := lookup.infoHash
 	if imdbID == 0 && strings.TrimSpace(foundID) == "" {
 		return Result{}, nil
 	}

@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -221,7 +222,7 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 		parseBDInfoOutput = originalParseOutput
 	})
 
-	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 			{File: "00002.MPLS", Duration: 6000},
@@ -290,21 +291,21 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 
 	fullScans := 0
 	playlistScans := 0
-	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, outputDir string) (bdinfo.ScanResult, error) {
 		fullScans++
 		return bdinfo.ScanResult{
 			ReportPath: filepath.Join(outputDir, "BD_FULL.txt"),
 			ReportText: fullReport,
 		}, nil
 	}
-	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string) (string, error) {
+	executePlaylistBDInfo = func(_ *bdinfo.Service, _ context.Context, _ string, _ string, _ string, _ bool) (string, error) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
-	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
 		return map[string]interface{}{"summary": string(payload)}, nil
 	}
@@ -360,7 +361,7 @@ func TestLoadSelectedBDMVPlaylistsErrorsWhenRequestedPlaylistMissing(t *testing.
 		discoverBDMVPlaylists = originalDiscover
 	})
 
-	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 		}, nil
@@ -458,7 +459,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		parseBDInfoOutput = originalParseOutput
 	})
 
-	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 			{File: "00002.MPLS", Duration: 6000},
@@ -482,18 +483,18 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	}
 	fullScans := 0
 	playlistScans := 0
-	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, _ string) (bdinfo.ScanResult, error) {
 		fullScans++
 		return bdinfo.ScanResult{}, errors.New("unexpected full scan")
 	}
-	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputDir string) (string, error) {
+	executePlaylistBDInfo = func(_ *bdinfo.Service, _ context.Context, _ string, _ string, _ string, _ bool) (string, error) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
-	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
 		return map[string]interface{}{"summary": string(payload)}, nil
 	}
@@ -529,8 +530,138 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00002.MPLS"), "Playlist: 00002.MPLS")
 	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), "Playlist: 00001.MPLS")
 	assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00002.MPLS"), "extended summary two")
-	if got := meta.BDInfo["summary"]; !strings.Contains(got.(string), "Playlist: 00002.MPLS") {
+	got, ok := meta.BDInfo["summary"].(string)
+	if !ok {
+		t.Fatalf("expected BDInfo summary string, got %T", meta.BDInfo["summary"])
+	}
+	if !strings.Contains(got, "Playlist: 00002.MPLS") {
 		t.Fatalf("expected cached canonical summary for first selected playlist, got %#v", meta.BDInfo)
+	}
+}
+
+func TestPrepareBDMVSinglePlaylistFullScan(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "disc")
+	bdmvPath := filepath.Join(sourcePath, "BDMV")
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "PLAYLIST"), 0o755); err != nil {
+		t.Fatalf("mkdir playlist failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
+		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	repo := &stubRepo{
+		playlistSelection: db.PlaylistSelection{
+			SelectedPlaylists: []string{"00001.MPLS"},
+		},
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+
+	originalDiscover := discoverBDMVPlaylists
+	originalParse := parseBDMVPlaylist
+	originalFullScan := executeFullBDInfoScan
+	originalPlaylistScan := executePlaylistBDInfo
+	originalParseOutput := parseBDInfoOutput
+	t.Cleanup(func() {
+		discoverBDMVPlaylists = originalDiscover
+		parseBDMVPlaylist = originalParse
+		executeFullBDInfoScan = originalFullScan
+		executePlaylistBDInfo = originalPlaylistScan
+		parseBDInfoOutput = originalParseOutput
+	})
+
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{
+			{File: "00001.MPLS", Duration: 5400},
+		}, nil
+	}
+	parseBDMVPlaylist = func(_ string) (float64, []filesystem.PlaylistItem, error) {
+		return 5400, []filesystem.PlaylistItem{
+			{File: "00001.m2ts", Size: 100},
+		}, nil
+	}
+
+	fullScans := 0
+	playlistScans := 0
+	dummyFullReport := strings.Join([]string{
+		"DISC INFO:",
+		"DISC LABEL: DISC-ONE",
+		"FILES:",
+		"-------------",
+		"00001.m2ts        01:30:00     1,000,000,000",
+		"CHAPTERS:",
+		"[code]",
+		"table one",
+		"[/code]",
+		"[code]",
+		"extended summary one",
+		"[/code]",
+		"QUICK SUMMARY:",
+		"Playlist: 00001.MPLS",
+		"Disc Label: DISC-ONE",
+		"Length: 01:30:00.000",
+	}, "\n") + "\n"
+
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, _ string) (bdinfo.ScanResult, error) {
+		fullScans++
+		return bdinfo.ScanResult{}, errors.New("unexpected full scan")
+	}
+	executePlaylistBDInfo = func(_ *bdinfo.Service, _ context.Context, _ string, _ string, outputPath string, summaryOnly bool) (string, error) {
+		playlistScans++
+		if summaryOnly {
+			return "", errors.New("expected full scan, got summaryOnly = true")
+		}
+		// Simulate writing the full report to the outputPath
+		if err := os.WriteFile(outputPath, []byte(dummyFullReport), 0o600); err != nil {
+			return "", fmt.Errorf("write dummy full report: %w", err)
+		}
+		return outputPath, nil
+	}
+	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+		payload, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
+		}
+		return map[string]interface{}{"summary": string(payload)}, nil
+	}
+
+	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
+	if err != nil {
+		t.Fatalf("tmp dir: %v", err)
+	}
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+
+	if fullScans != 0 {
+		t.Fatalf("expected no full scan, got %d", fullScans)
+	}
+	if playlistScans != 1 {
+		t.Fatalf("expected exactly 1 playlist scan, got %d", playlistScans)
+	}
+
+	// Verify all three versions of the report are saved in tmpDir
+	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), "Playlist: 00001.MPLS")
+	assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00001.MPLS"), "extended summary one")
+	assertFileContains(t, paths.BDMVFullSummaryPath(tmpDir, "00001.MPLS"), "QUICK SUMMARY:")
+
+	got, ok := meta.BDInfo["summary"].(string)
+	if !ok {
+		t.Fatalf("expected BDInfo summary string, got %T", meta.BDInfo["summary"])
+	}
+	if !strings.Contains(got, "Playlist: 00001.MPLS") {
+		t.Fatalf("unexpected summary in BDInfo: %v", got)
 	}
 }
 
@@ -558,7 +689,7 @@ func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
 	t.Cleanup(func() {
 		discoverBDMVPlaylists = originalDiscover
 	})
-	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 			{File: "00002.MPLS", Duration: 6000},
@@ -622,13 +753,13 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 		executeFullBDInfoScan = originalFullScan
 		parseBDInfoOutput = originalParseOutput
 	})
-	discoverBDMVPlaylists = func(ctx context.Context, root string) ([]filesystem.PlaylistInfo, error) {
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 5400},
 			{File: "00002.MPLS", Duration: 6000},
 		}, nil
 	}
-	parseBDMVPlaylist = func(mplsPath string) (float64, []filesystem.PlaylistItem, error) {
+	parseBDMVPlaylist = func(_ string) (float64, []filesystem.PlaylistItem, error) {
 		return 6000, []filesystem.PlaylistItem{{File: "00003.m2ts", Size: 200}}, nil
 	}
 	fullReport := strings.Join([]string{
@@ -672,17 +803,17 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 		"[/code]",
 	}, "\n")
 	fullScans := 0
-	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, outputDir string) (bdinfo.ScanResult, error) {
 		fullScans++
 		return bdinfo.ScanResult{
 			ReportPath: filepath.Join(outputDir, "BD_FULL.txt"),
 			ReportText: fullReport,
 		}, nil
 	}
-	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
 		return map[string]interface{}{"summary": string(payload)}, nil
 	}
@@ -950,5 +1081,19 @@ func writeBDMVSummaryFixture(t *testing.T, tmpDir string, playlist string, extSu
 	extPath := paths.BDMVExtSummaryPath(tmpDir, playlist)
 	if err := os.WriteFile(extPath, []byte(extSummary+"\n"), 0o600); err != nil {
 		t.Fatalf("write ext fixture: %v", err)
+	}
+	fullPath := paths.BDMVFullSummaryPath(tmpDir, playlist)
+	fullReport := strings.Join([]string{
+		"QUICK SUMMARY:",
+		"Playlist: " + playlist,
+		"[code]",
+		"extended summary info",
+		"[/code]",
+		"[code]",
+		extSummary,
+		"[/code]",
+	}, "\n") + "\n"
+	if err := os.WriteFile(fullPath, []byte(fullReport), 0o600); err != nil {
+		t.Fatalf("write full summary fixture: %v", err)
 	}
 }

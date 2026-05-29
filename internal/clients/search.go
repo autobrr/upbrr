@@ -6,7 +6,6 @@ package clients
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -189,7 +188,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 	for _, name := range clients {
 		select {
 		case <-ctx.Done():
-			return api.ClientSearchResult{}, ctx.Err()
+			return api.ClientSearchResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -351,10 +350,11 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s proxy url is required", name)
 		}
 		s.logger.Tracef("clients: %s searching via qBittorrent proxy", name)
-		transport := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: clientCfg.QbitTLSSkipVerify()},
-		}
-		httpClient = &http.Client{Timeout: proxySearchTimeout, Transport: transport}
+		httpClient = qbittorrent.NewClient(qbittorrent.Config{
+			Host:          proxyBaseURL,
+			Timeout:       int(proxySearchTimeout.Seconds()),
+			TLSSkipVerify: clientCfg.QbitTLSSkipVerify(),
+		}).GetHTTPClient()
 	} else {
 		host := strings.TrimSpace(clientCfg.QbitHost())
 		if host == "" {
@@ -406,7 +406,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 	for _, torrent := range torrents {
 		select {
 		case <-ctx.Done():
-			return api.ClientSearchResult{}, nil, ctx.Err()
+			return api.ClientSearchResult{}, nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -478,7 +478,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 	sortMatchingTorrents(matches, priorityOrder)
 
 	bestMatch := matches[0]
-	foundPreferred := ""
+	var foundPreferred string
 	if constraints.preferSmall || constraints.preferMax16 {
 		bestMatch, foundPreferred = selectPreferredMatch(ctx, matches, propertiesCache, qbitClient, httpClient, proxyBaseURL, useProxy, constraints)
 	} else {
@@ -591,13 +591,17 @@ func buildProxySearchURL(proxyBase, searchTerm string) (string, error) {
 
 func fetchTorrentProperties(ctx context.Context, client *qbittorrent.Client, httpClient *http.Client, proxyBase, hash string, useProxy bool) (qbittorrent.TorrentProperties, error) {
 	if !useProxy {
-		return client.GetTorrentPropertiesCtx(ctx, hash)
+		props, err := client.GetTorrentPropertiesCtx(ctx, hash)
+		if err != nil {
+			return qbittorrent.TorrentProperties{}, fmt.Errorf("clients: get qbit torrent properties: %w", err)
+		}
+		return props, nil
 	}
 
 	propertiesURL := strings.TrimRight(proxyBase, "/") + "/api/v2/torrents/properties"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, propertiesURL, nil)
 	if err != nil {
-		return qbittorrent.TorrentProperties{}, err
+		return qbittorrent.TorrentProperties{}, fmt.Errorf("clients: proxy properties request: %w", err)
 	}
 	q := req.URL.Query()
 	q.Set("hash", hash)
@@ -605,7 +609,7 @@ func fetchTorrentProperties(ctx context.Context, client *qbittorrent.Client, htt
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return qbittorrent.TorrentProperties{}, err
+		return qbittorrent.TorrentProperties{}, fmt.Errorf("clients: proxy properties: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -618,7 +622,7 @@ func fetchTorrentProperties(ctx context.Context, client *qbittorrent.Client, htt
 
 	var props qbittorrent.TorrentProperties
 	if err := json.NewDecoder(resp.Body).Decode(&props); err != nil {
-		return qbittorrent.TorrentProperties{}, err
+		return qbittorrent.TorrentProperties{}, fmt.Errorf("clients: decode proxy torrent properties: %w", err)
 	}
 	return props, nil
 }
@@ -631,14 +635,14 @@ func fetchTorrentTrackers(ctx context.Context, client *qbittorrent.Client, httpC
 		trackersURL := strings.TrimRight(proxyBase, "/") + "/api/v2/torrents/trackers"
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, trackersURL, nil)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("clients: proxy trackers request: %w", err)
 		}
 		q := req.URL.Query()
 		q.Set("hash", hash)
 		req.URL.RawQuery = q.Encode()
 		resp, err := httpClient.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("clients: proxy trackers: %w", err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden {
@@ -649,12 +653,16 @@ func fetchTorrentTrackers(ctx context.Context, client *qbittorrent.Client, httpC
 		}
 		var trackers []qbittorrent.TorrentTracker
 		if err := json.NewDecoder(resp.Body).Decode(&trackers); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("clients: decode proxy torrent trackers: %w", err)
 		}
 		return trackers, nil
 	}
 
-	return client.GetTorrentTrackersCtx(ctx, hash)
+	trackers, err := client.GetTorrentTrackersCtx(ctx, hash)
+	if err != nil {
+		return nil, fmt.Errorf("clients: get qbit torrent trackers: %w", err)
+	}
+	return trackers, nil
 }
 
 func collectTrackerURLs(primary string, trackers []qbittorrent.TorrentTracker) []string {
@@ -992,7 +1000,7 @@ func (s *Service) selectValidTorrent(
 	for _, match := range matches {
 		select {
 		case <-ctx.Done():
-			return "", "", ctx.Err()
+			return "", "", fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -1013,7 +1021,7 @@ func (s *Service) selectValidTorrent(
 
 		outputPath, err := torrent.TempTorrentPath(tmpRoot, meta, meta.SourcePath)
 		if err != nil {
-			return "", "", err
+			return "", "", fmt.Errorf("clients: %w", err)
 		}
 
 		if info, err := os.Stat(outputPath); err == nil && !info.IsDir() {
@@ -1022,7 +1030,7 @@ func (s *Service) selectValidTorrent(
 				valid, pieceSize, infoHash, reason := validateTorrentData(meta, normalizedHash, data, constraints)
 				if valid && strings.EqualFold(infoHash, normalizedHash) {
 					s.logger.Debugf("clients: validated existing torrent for %s (piece=%d)", normalizedHash, pieceSize)
-					if shouldSelectPreferred(pieceSize, bestPiece, constraints) {
+					if shouldSelectPreferred(pieceSize, constraints) {
 						return normalizedHash, outputPath, nil
 					}
 					if shouldReplaceBest(pieceSize, bestPiece, constraints) {
@@ -1062,7 +1070,7 @@ func (s *Service) selectValidTorrent(
 		}
 		s.logger.Tracef("clients: validated exported torrent for %s (piece=%d)", normalizedHash, pieceSize)
 
-		if shouldSelectPreferred(pieceSize, bestPiece, constraints) {
+		if shouldSelectPreferred(pieceSize, constraints) {
 			path, err := writeTorrentFile(outputPath, data)
 			if err != nil {
 				return "", "", err
@@ -1155,7 +1163,11 @@ func exportTorrent(ctx context.Context, qbitClient *qbittorrent.Client, httpClie
 		if qbitClient == nil {
 			return nil, errors.New("clients: qbit client is required")
 		}
-		return qbitClient.ExportTorrentCtx(ctx, hash)
+		data, err := qbitClient.ExportTorrentCtx(ctx, hash)
+		if err != nil {
+			return nil, fmt.Errorf("clients: export qbit torrent: %w", err)
+		}
+		return data, nil
 	}
 
 	proxyURL := strings.TrimRight(proxyBase, "/") + "/api/v2/torrents/export"
@@ -1175,7 +1187,11 @@ func exportTorrent(ctx context.Context, qbitClient *qbittorrent.Client, httpClie
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("clients: proxy export status %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("clients: read proxy export body: %w", err)
+	}
+	return body, nil
 }
 
 func writeTorrentFile(path string, data []byte) (string, error) {
@@ -1192,7 +1208,7 @@ func writeTorrentFile(path string, data []byte) (string, error) {
 func sanitizeTorrentData(data []byte) ([]byte, error) {
 	metaInfo, err := metainfo.Load(bytes.NewReader(data))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("clients: parse torrent metadata: %w", err)
 	}
 	metaInfo.Comment = ""
 	metaInfo.Announce = ""
@@ -1201,7 +1217,7 @@ func sanitizeTorrentData(data []byte) ([]byte, error) {
 
 	var buf bytes.Buffer
 	if err := metaInfo.Write(&buf); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("clients: write sanitized torrent metadata: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -1326,12 +1342,12 @@ func commonPath(paths []string) string {
 	parts := splitPath(paths[0])
 	for _, value := range paths[1:] {
 		candidate := splitPath(value)
-		max := len(parts)
-		if len(candidate) < max {
-			max = len(candidate)
+		limit := len(parts)
+		if len(candidate) < limit {
+			limit = len(candidate)
 		}
 		idx := 0
-		for idx < max {
+		for idx < limit {
 			if !strings.EqualFold(parts[idx], candidate[idx]) {
 				break
 			}
@@ -1354,7 +1370,7 @@ func splitPath(value string) []string {
 	return strings.Split(trimmed, "/")
 }
 
-func shouldSelectPreferred(pieceSize int64, bestPiece int64, constraints pieceConstraints) bool {
+func shouldSelectPreferred(pieceSize int64, constraints pieceConstraints) bool {
 	if !constraints.preferSmall && !constraints.preferMax16 {
 		return true
 	}

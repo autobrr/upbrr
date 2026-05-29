@@ -59,7 +59,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}})
 
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
@@ -86,10 +86,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "BT")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announce, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{
@@ -104,7 +104,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "BT", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, fmt.Errorf("trackers: BT upload failed status=%d", resp.StatusCode)
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("BT", resp.StatusCode, responseBody)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -145,17 +145,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req, assets)
 	fields := buildFields(req, description, auth, req.TrackerConfig, assets)
 	state := uploadState{
 		torrentPath: torrentPath,
@@ -244,7 +241,7 @@ func buildFields(req trackers.UploadRequest, description string, auth string, tr
 	return fields
 }
 
-func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
 	meta := req.Meta
 	var parts []string
 
@@ -287,23 +284,23 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 		descriptionunit3d.SaveDescriptionDebug(meta, "BT", req.AppConfig.MainSettings.DBPath, finalized, req.Logger)
 	}
 
-	return finalized, nil
+	return finalized
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "BT", "brasiltracker.org")
+	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "BT", "brasiltracker.org"))
 }
 
 func fetchAuth(ctx context.Context, cookies []*http.Cookie) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uploadURL, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BT auth token request build: %w", err)
 	}
 	req.Header.Set("User-Agent", "upbrr")
 	commonhttp.ApplyCookies(req, cookies)
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BT auth token request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

@@ -31,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	descriptionmtv "github.com/autobrr/upbrr/internal/services/description/mtv"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -47,7 +48,7 @@ var mtvTokenPattern = regexp.MustCompile(`name="token"\s+value="([^"]{16,128})"`
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
-		return api.UploadSummary{}, ctx.Err()
+		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -90,7 +91,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	descText, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -134,13 +135,13 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{Uploaded: 1}, nil
 	}
 
-	return api.UploadSummary{}, fmt.Errorf("trackers: MTV upload failed status=%d url=%s body=%s", resp.StatusCode, finalURL, strings.TrimSpace(string(bodyPreview)))
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("MTV", resp.StatusCode, finalURL, bodyPreview)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
-		return api.TrackerDryRunEntry{}, ctx.Err()
+		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -157,7 +158,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 	descText, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return api.TrackerDryRunEntry{}, err
+		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -194,11 +195,11 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]string) (string, *http.Client, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV create auth cookie jar: %w", err)
 	}
 	parsedBase, err := url.Parse(baseURL)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV parse base URL: %w", err)
 	}
 	jarCookies := make([]*http.Cookie, 0, len(cookies))
 	for name, value := range cookies {
@@ -213,7 +214,7 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 	indexURL := strings.TrimRight(baseURL, "/") + mtvIndexPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV build auth request: %w", err)
 	}
 	req.Header.Set("User-Agent", mtvUserAgentWeb)
 
@@ -227,7 +228,7 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV read auth response: %w", err)
 	}
 	match := mtvAuthKeyPattern.FindStringSubmatch(string(body))
 	if len(match) < 2 {
@@ -237,24 +238,24 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 }
 
 func loadMTVCookies(ctx context.Context, dbPath string) (map[string]string, error) {
-	return cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "MTV")
+	return wrapTrackerResult(cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "MTV"))
 }
 
 func saveMTVCookies(ctx context.Context, dbPath string, values map[string]string) error {
-	return cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "MTV", values)
+	return wrapTrackerError(cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "MTV", values))
 }
 
 func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string) (string, *http.Client, map[string]string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, fmt.Errorf("trackers: MTV create login cookie jar: %w", err)
 	}
 	client := &http.Client{Timeout: 25 * time.Second, Jar: jar}
 
 	loginURL := strings.TrimRight(baseURL, "/") + "/login"
 	loginReq, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, fmt.Errorf("trackers: MTV build login page request: %w", err)
 	}
 	loginReq.Header.Set("User-Agent", mtvUserAgentWeb)
 	loginResp, err := client.Do(loginReq)
@@ -280,7 +281,7 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 
 	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, fmt.Errorf("trackers: MTV build login request: %w", err)
 	}
 	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	postReq.Header.Set("User-Agent", mtvUserAgentWeb)
@@ -306,7 +307,7 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 		twoFactorForm.Set("submit", "login")
 		twoReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/twofactor/login", strings.NewReader(twoFactorForm.Encode()))
 		if err != nil {
-			return "", nil, nil, err
+			return "", nil, nil, fmt.Errorf("trackers: MTV build 2FA login request: %w", err)
 		}
 		twoReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		twoReq.Header.Set("User-Agent", mtvUserAgentWeb)
@@ -330,7 +331,7 @@ func resolveAuthKeyFromClient(ctx context.Context, baseURL string, client *http.
 	indexURL := strings.TrimRight(baseURL, "/") + mtvIndexPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, indexURL, nil)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV build auth request: %w", err)
 	}
 	req.Header.Set("User-Agent", mtvUserAgentWeb)
 	resp, err := client.Do(req)
@@ -340,7 +341,7 @@ func resolveAuthKeyFromClient(ctx context.Context, baseURL string, client *http.
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("trackers: MTV read auth response: %w", err)
 	}
 	match := mtvAuthKeyPattern.FindStringSubmatch(string(body))
 	if len(match) < 2 {
@@ -374,7 +375,7 @@ func totpFromOTPURI(otpURI string, now time.Time) (string, error) {
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: MTV parse otp_uri: %w", err)
 	}
 	query := parsed.Query()
 	secret := strings.TrimSpace(query.Get("secret"))
@@ -387,12 +388,16 @@ func totpFromOTPURI(otpURI string, now time.Time) (string, error) {
 			interval = value
 		}
 	}
-	counter := uint64(now.Unix() / int64(interval))
+	counterTime := now.Unix() / int64(interval)
+	if counterTime < 0 {
+		return "", errors.New("totp counter before unix epoch")
+	}
+	counter := uint64(counterTime)
 
 	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
 	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: MTV decode otp secret: %w", err)
 	}
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, counter)
@@ -437,26 +442,26 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: MTV write multipart field %q: %w", key, err)
 		}
 	}
 	file, err := os.Open(torrentPath)
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: MTV open torrent file: %w", err)
 	}
 	defer file.Close()
 	part, err := writer.CreateFormFile("file_input", "[MTV].torrent")
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: MTV create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: MTV copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: MTV close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }

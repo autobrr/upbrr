@@ -25,10 +25,10 @@ var resolutionOrder = map[string]int{
 	"8640p": 11,
 }
 
-func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -49,7 +49,7 @@ func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, logger 
 func checkLUMERequirements(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -59,10 +59,10 @@ func checkLUMERequirements(ctx context.Context, meta api.PreparedMetadata, logge
 	return checkLUMEResolution(ctx, meta, logger)
 }
 
-func checkBHDRequirements(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkBHDRequirements(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -76,10 +76,10 @@ func checkBHDRequirements(ctx context.Context, meta api.PreparedMetadata, logger
 	return Pass()
 }
 
-func checkBLUContainer(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkBLUContainer(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -114,10 +114,10 @@ func isDolbyVisionOnly(meta api.PreparedMetadata) bool {
 	return strings.Contains(hdr, "DV") && !strings.Contains(hdr, "HDR")
 }
 
-func checkOTWGenres(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkOTWGenres(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -146,10 +146,10 @@ func checkOTWGenres(ctx context.Context, meta api.PreparedMetadata, logger api.L
 	return Pass()
 }
 
-func checkSHRIRegion(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkSHRIRegion(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -162,10 +162,10 @@ func checkSHRIRegion(ctx context.Context, meta api.PreparedMetadata, logger api.
 	return Pass()
 }
 
-func checkTTRSubtitleOnly(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkTTRSubtitleOnly(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -175,10 +175,10 @@ func checkTTRSubtitleOnly(ctx context.Context, meta api.PreparedMetadata, logger
 	return Pass()
 }
 
-func checkULCXRules(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkULCXRules(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 

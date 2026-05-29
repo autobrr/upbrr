@@ -32,7 +32,7 @@ const (
 func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -90,7 +90,7 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 	for _, tracker := range trackers {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, ctx.Err()
+			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if s.isTrackerCoolingDown(ctx, tracker, now) {
@@ -102,15 +102,27 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 		return meta, nil
 	}
 
-	if !shouldUseStrictPriorityLookup(meta) {
+	if !shouldUseStrictPriorityLookup(meta, eligible, s.cfg.Trackers.PreferredTracker) {
 		return s.enrichTrackerDataConcurrent(ctx, meta, eligible, now, unit3dClient)
 	}
 
 	return s.enrichTrackerDataPriority(ctx, meta, eligible, now, unit3dClient)
 }
 
-func shouldUseStrictPriorityLookup(meta api.PreparedMetadata) bool {
-	return len(meta.TrackerIDs) > 0
+func shouldUseStrictPriorityLookup(meta api.PreparedMetadata, eligible []string, preferred string) bool {
+	if len(meta.TrackerIDs) > 0 {
+		return true
+	}
+	preferred = strings.TrimSpace(preferred)
+	if preferred == "" {
+		return false
+	}
+	for _, tracker := range eligible {
+		if strings.EqualFold(strings.TrimSpace(tracker), preferred) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) enrichTrackerDataPriority(
@@ -124,7 +136,7 @@ func (s *Service) enrichTrackerDataPriority(
 	for _, tracker := range eligible {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, ctx.Err()
+			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -193,13 +205,14 @@ func (s *Service) enrichTrackerDataConcurrent(
 		workerCount = 1
 	}
 
+	lookupMeta := meta
 	var workers sync.WaitGroup
 	for idx := 0; idx < workerCount; idx++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
 			for tracker := range jobs {
-				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, meta, tracker, now, unit3dClient)
+				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, lookupMeta, tracker, now, unit3dClient)
 				results <- trackerLookupOutcome{
 					tracker:     tracker,
 					record:      record,
@@ -288,7 +301,7 @@ func (s *Service) lookupTrackerData(
 ) (api.TrackerMetadata, bool, bool, error) {
 	select {
 	case <-ctx.Done():
-		return api.TrackerMetadata{}, false, false, ctx.Err()
+		return api.TrackerMetadata{}, false, false, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -315,7 +328,7 @@ func (s *Service) lookupTrackerData(
 			meta.Options.KeepImages,
 		)
 		if err != nil {
-			return api.TrackerMetadata{}, false, false, err
+			return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
 		}
 		if !hasUnit3DData(result) {
 			if s.logger != nil {
@@ -388,7 +401,7 @@ func (s *Service) lookupTrackerData(
 		meta.Options.KeepImages,
 	)
 	if err != nil {
-		return api.TrackerMetadata{}, false, false, err
+		return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
 	}
 	if !result.HasData() {
 		if s.logger != nil {
@@ -663,7 +676,7 @@ func trackerLookupConfigured(tracker string, entry config.TrackerConfig) bool {
 		return len(strings.TrimSpace(entry.APIKey)) >= minTrackerTokenLen &&
 			len(strings.TrimSpace(entry.BhdRSSKey)) >= minTrackerTokenLen
 	case "PTP":
-		return strings.TrimSpace(entry.ApiUser) != "" && strings.TrimSpace(entry.ApiKey) != ""
+		return strings.TrimSpace(entry.PTPAPIUser) != "" && strings.TrimSpace(entry.PTPAPIKey) != ""
 	case "HDB":
 		return strings.TrimSpace(entry.Username) != "" && strings.TrimSpace(entry.Passkey) != ""
 	case "ANT":

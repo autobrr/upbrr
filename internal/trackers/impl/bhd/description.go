@@ -17,7 +17,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets) string {
 	base := strings.TrimSpace(assets.Description)
 	cleaned := bbcode.CleanBHDDescription(base, bbcode.BHDOptions{
 		Framestor: hasGroup(meta.Tag, "framestor"),
@@ -47,7 +47,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets track
 		parts = append(parts, screenshots)
 	}
 	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/align]`)
-	return strings.TrimSpace(strings.Join(parts, "\n\n")), nil
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
 func buildDiscSection(meta api.PreparedMetadata, dbPath string) string {

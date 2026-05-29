@@ -6,6 +6,7 @@ package trackers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -195,7 +196,7 @@ func (testHDBPreparationDefinition) BuildDescription(ctx context.Context, req De
 	}
 	description, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return DescriptionResult{}, err
+		return DescriptionResult{}, fmt.Errorf("trackers: %w", err)
 	}
 	return DescriptionResult{Group: "hdb", Description: description}, nil
 }
@@ -661,6 +662,7 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 	}
 	meta := api.PreparedMetadata{
 		SourcePath: `D:\TV\The.Pitt.S02E15.1080p.WEB-DL.mkv`,
+		Options:    api.UploadOptions{KeepImages: true},
 		TrackerData: []api.TrackerMetadata{{
 			Tracker:   "AITHER",
 			ImageURLs: []string{"https://ptpimg.me/4m092k.png", "https://ptpimg.me/7oj122.png"},

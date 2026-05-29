@@ -3,6 +3,7 @@
 
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
 import DupeCheckPage from "./pages/dupe_check";
@@ -19,6 +20,7 @@ import UploadImagesPage from "./pages/upload_images";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useUploadImages } from "./hooks/useUploadImages";
+import { cn } from "./utils/cn";
 import type {
   ConfigMap,
   BrowseDirectoryResponse,
@@ -52,8 +54,38 @@ import type {
   WebAuthStatus,
   UploadedImageLink,
   UploadImagesResult,
+  UploadProgressUpdate,
 } from "./types";
 import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
+
+const appLayoutClass =
+  "relative z-[1] block min-h-screen ml-[172px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
+
+const sidebarClass =
+  "fixed left-0 top-0 z-[1000] flex h-screen w-[172px] flex-col gap-2.5 border-r border-white/10 bg-[var(--panel)]/95 p-2.5 backdrop-blur max-[960px]:bottom-0 max-[960px]:top-auto max-[960px]:h-auto max-[960px]:w-full max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-2 max-[960px]:border-r-0 max-[960px]:border-t max-[960px]:p-2";
+
+const sidebarGroupClass =
+  "grid gap-1 rounded-lg border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.08)] p-1.5 max-[960px]:flex max-[960px]:flex-wrap max-[960px]:gap-1 max-[960px]:p-1";
+
+const sidebarFooterClass = `${sidebarGroupClass} mt-auto max-[960px]:mt-0`;
+
+const navButtonClass = (active: boolean, nested = false) =>
+  cn(
+    "w-full rounded-md border border-transparent bg-transparent px-2 py-1.5 text-left text-[0.84rem] font-semibold leading-tight text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--text)] max-[960px]:w-auto max-[960px]:py-1.5",
+    nested && "pl-4 text-[0.8rem] font-medium max-[960px]:pl-2",
+    active &&
+      "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] shadow-[0_8px_22px_rgba(245,185,66,0.18)] hover:bg-[var(--sidebar-active-bg)] hover:text-[var(--sidebar-active-text)]",
+  );
+
+const sidebarButtonClass = (active = false) =>
+  cn(
+    "flex min-h-[30px] w-full items-center justify-start gap-1.5 rounded-md border border-transparent bg-transparent px-2 py-1.5 text-[0.84rem] font-semibold leading-tight text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--text)] max-[960px]:w-auto max-[960px]:min-h-7 max-[960px]:py-1",
+    active &&
+      "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] shadow-[0_8px_22px_rgba(245,185,66,0.18)] hover:bg-[var(--sidebar-active-bg)] hover:text-[var(--sidebar-active-text)]",
+  );
+
+const liveButtonClass =
+  "border-[rgba(53,194,193,0.24)] bg-[rgba(53,194,193,0.1)] text-[var(--text)] hover:bg-[rgba(53,194,193,0.16)]";
 
 const emptyDupeSummary: DupeCheckSummary = {
   SourcePath: "",
@@ -154,6 +186,7 @@ const bdinfoProgressEvent = "bdinfo:progress";
 const metadataProgressEvent = "metadata:progress";
 const dupeCheckEventPrefix = "dupe:job:";
 const trackerUploadEventPrefix = "upload:job:";
+const trackerUploadProgressEvent = "upload:progress";
 const runLogLevels = ["error", "warn", "info", "debug", "trace"] as const;
 
 const progressUpdatePrefixes = new Set([
@@ -250,7 +283,6 @@ declare global {
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
               trackers: string[],
-              ignoreRuleFailures: boolean,
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
@@ -366,7 +398,6 @@ declare global {
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
               trackers: string[],
-              ignoreRuleFailures: boolean,
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
@@ -565,7 +596,6 @@ export default function App() {
   const [builderRefreshing, setBuilderRefreshing] = useState(false);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
-  const [overrideRuleBlocks, setOverrideRuleBlocks] = useState(false);
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
   const [trackerUploadError, setTrackerUploadError] = useState("");
   const [trackerUploadJobID, setTrackerUploadJobID] = useState("");
@@ -576,6 +606,9 @@ export default function App() {
   const [trackerDryRunError, setTrackerDryRunError] = useState("");
   const [trackerDryRunPreview, setTrackerDryRunPreview] =
     useState<TrackerDryRunPreview>(emptyTrackerDryRun);
+  const [trackerDryRunProgress, setTrackerDryRunProgress] = useState<UploadProgressUpdate | null>(
+    null,
+  );
   const [trackerQuestionnaireAnswers, setTrackerQuestionnaireAnswers] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -613,9 +646,7 @@ export default function App() {
   const [hostBrowser, setHostBrowser] = useState<BrowseDirectoryResponse | null>(null);
   const [hostBrowserLoading, setHostBrowserLoading] = useState(false);
   const [hostBrowserError, setHostBrowserError] = useState("");
-  const hostBrowserDialogRef = useRef<HTMLDivElement | null>(null);
   const hostBrowserEntryRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const hostBrowserPreviousFocusRef = useRef<HTMLElement | null>(null);
 
   const builderDirty = useMemo(
     () => Object.values(builderDirtyByGroup).some(Boolean),
@@ -709,14 +740,6 @@ export default function App() {
   useEffect(() => {
     if (!lightboxImage) return;
     setLightboxFit(true);
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setLightboxImage("");
-        setLightboxAlt("");
-      }
-    };
-    globalThis.addEventListener("keydown", handleKeyDown);
-    return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, [lightboxImage]);
 
   useEffect(() => {
@@ -1250,9 +1273,8 @@ export default function App() {
         if (!validTrackers.has(name)) return false;
         const normalized = name.toLowerCase().trim();
         if (!normalized) return false;
-        // overrideRuleBlocks can bypass known dupes and rule skips, but failed dupe checks stay blocked because the dupe state is unknown.
-        if (dupedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
-        if (ruleSkippedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
+        if (dupedTrackerSet.has(normalized)) return false;
+        if (ruleSkippedTrackerSet.has(normalized)) return false;
         if (failedDupeTrackerSet.has(normalized)) return false;
         return true;
       })
@@ -1263,7 +1285,6 @@ export default function App() {
     dupedTrackerSet,
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,
-    overrideRuleBlocks,
   ]);
 
   // Upload images workflow hook
@@ -1307,8 +1328,6 @@ export default function App() {
         setReleasePageTrackerSelection(state.releasePageTrackerSelection);
       }
       if (state.uploadToggles) setUploadToggles(state.uploadToggles);
-      if (typeof state.overrideRuleBlocks === "boolean")
-        setOverrideRuleBlocks(state.overrideRuleBlocks);
       if (typeof state.runDebug === "boolean") setRunDebug(state.runDebug);
       if (typeof state.runLogLevel === "string") setRunLogLevel(state.runLogLevel);
       if (typeof state.runLogLevelTouched === "boolean") {
@@ -1568,7 +1587,6 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
-      overrideRuleBlocks,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1655,7 +1673,6 @@ export default function App() {
     selectedProvider,
     releasePageTrackerSelection,
     uploadToggles,
-    overrideRuleBlocks,
     runDebug,
     runLogLevel,
     runLogLevelTouched,
@@ -1758,7 +1775,6 @@ export default function App() {
     resetScreenshots();
     resetUploadState();
     setUploadToggles({});
-    setOverrideRuleBlocks(false);
     setFinalDragIndex(null);
     setLiveCaptureLoading(false);
   }, [resetScreenshots, resetUploadState]);
@@ -1776,7 +1792,6 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
-      overrideRuleBlocks,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1814,7 +1829,6 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
-      overrideRuleBlocks,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1900,6 +1914,7 @@ export default function App() {
     setTrackerDryRunLoading(false);
     setTrackerDryRunError("");
     setTrackerDryRunPreview(emptyTrackerDryRun);
+    setTrackerDryRunProgress(null);
     setTrackerQuestionnaireAnswers({});
     setReleasePageTrackerSelection({});
     setRunDebug(false);
@@ -2344,21 +2359,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!hostBrowserMode) {
-      hostBrowserPreviousFocusRef.current?.focus();
-      hostBrowserPreviousFocusRef.current = null;
-      return;
-    }
-    if (!hostBrowserPreviousFocusRef.current) {
-      hostBrowserPreviousFocusRef.current = document.activeElement as HTMLElement | null;
-    }
-    if (hostBrowserLoading) {
+    if (!hostBrowserMode || hostBrowserLoading) {
       return;
     }
 
-    const focusTarget =
-      hostBrowserEntryRefs.current.find((entry) => entry !== null) || hostBrowserDialogRef.current;
-    focusTarget?.focus();
+    hostBrowserEntryRefs.current.find((entry) => entry !== null)?.focus();
   }, [hostBrowser?.currentPath, hostBrowser?.entries.length, hostBrowserLoading, hostBrowserMode]);
 
   const browseHostDirectory = async (nextPath: string) => {
@@ -2424,45 +2429,6 @@ export default function App() {
       event.preventDefault();
       event.stopPropagation();
       void selectHostPath(entry.path, entry.isDir);
-    }
-  };
-
-  const handleHostBrowserDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeHostBrowser();
-      return;
-    }
-    if (event.key !== "Tab") {
-      return;
-    }
-
-    const dialog = hostBrowserDialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    const focusable = Array.from(
-      dialog.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null);
-    if (focusable.length === 0) {
-      event.preventDefault();
-      dialog.focus();
-      return;
-    }
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-      return;
-    }
-    if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
     }
   };
 
@@ -3308,7 +3274,6 @@ export default function App() {
     setBuilderSaved("");
     setBuilderRefreshing(false);
     setBuilderAutoRequestKey("");
-    setOverrideRuleBlocks(false);
     setTrackerUploadRunning(false);
     setTrackerUploadError("");
     setTrackerUploadJobID("");
@@ -3316,6 +3281,7 @@ export default function App() {
     setTrackerDryRunLoading(false);
     setTrackerDryRunError("");
     setTrackerDryRunPreview(emptyTrackerDryRun);
+    setTrackerDryRunProgress(null);
     setMetadataProgressTarget("");
     setMetadataProgressActive(false);
     setMetadataProgressUpdates([]);
@@ -3435,10 +3401,7 @@ export default function App() {
           next[item.name] = false;
           return;
         }
-        if (
-          (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) &&
-          !overrideRuleBlocks
-        ) {
+        if (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) {
           next[item.name] = false;
           return;
         }
@@ -3460,7 +3423,6 @@ export default function App() {
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,
     releasePageTrackerSelection,
-    overrideRuleBlocks,
   ]);
 
   useEffect(() => {
@@ -3521,6 +3483,7 @@ export default function App() {
     setTrackerQuestionnaireAnswers({});
     setTrackerDryRunPreview(emptyTrackerDryRun);
     setTrackerDryRunError("");
+    setTrackerDryRunProgress(null);
   }, [path]);
 
   // NOTE: releasePageTrackerSelection is memory-only state tracking which trackers
@@ -3613,7 +3576,6 @@ export default function App() {
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
-        overrideRuleBlocks,
         ignoredDupeTrackers,
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
         builderPreview.Groups || [],
@@ -3634,7 +3596,6 @@ export default function App() {
     idOverrideState,
     releaseOverrideState,
     getSelectedUploadTrackers,
-    overrideRuleBlocks,
     ignoredDupeTrackers,
     trackerDryRunPreview,
     trackerQuestionnaireAnswers,
@@ -3684,13 +3645,24 @@ export default function App() {
       }
 
       setTrackerDryRunLoading(true);
+      setTrackerDryRunProgress({
+        sourcePath: path.trim(),
+        tracker: "",
+        task: "dry_run",
+        status: "running",
+        message: "Starting dry run",
+        completedPieces: 0,
+        totalPieces: 0,
+        percent: 0,
+        hashRateMiB: 0,
+        timestamp: new Date().toISOString(),
+      });
       try {
         const result = await fetcher(
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
           selectedTrackers,
-          overrideRuleBlocks,
           ignoredDupeTrackers,
           cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
           descriptionGroups,
@@ -3730,7 +3702,6 @@ export default function App() {
       idOverrideState,
       releaseOverrideState,
       getSelectedUploadTrackers,
-      overrideRuleBlocks,
       ignoredDupeTrackers,
       trackerQuestionnaireAnswers,
       runDebug,
@@ -3741,6 +3712,23 @@ export default function App() {
   const handleRunTrackerDryRun = useCallback(async () => {
     await runTrackerDryRun(builderPreview.Groups || []);
   }, [builderPreview, runTrackerDryRun]);
+
+  useEffect(() => {
+    const off = EventsOn(trackerUploadProgressEvent, (payload: any) => {
+      const update = payload as UploadProgressUpdate;
+      const updatePath = String(update?.sourcePath || "").trim();
+      if (updatePath && updatePath !== path.trim()) {
+        return;
+      }
+      setTrackerDryRunProgress(update);
+    });
+
+    return () => {
+      if (typeof off === "function") {
+        off();
+      }
+    };
+  }, [path]);
 
   const handleCancelTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
@@ -4010,11 +3998,11 @@ export default function App() {
     <div className="app-shell">
       <div className="gradient-orb orb-a" />
       <div className="gradient-orb orb-b" />
-      <div className="app-layout">
-        <aside className="side-panel">
-          <div className="side-panel__tabs">
+      <div className={appLayoutClass}>
+        <aside className={sidebarClass}>
+          <div className={sidebarGroupClass}>
             <button
-              className={`tab-button ${activeTab === "input" ? "active" : ""}`}
+              className={navButtonClass(activeTab === "input")}
               type="button"
               onClick={() => setActiveTab("input")}
             >
@@ -4022,7 +4010,7 @@ export default function App() {
             </button>
             {hasTrackerData ? (
               <button
-                className={`subtab-button ${activeTab === "tracker" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "tracker", true)}
                 type="button"
                 onClick={() => setActiveTab("tracker")}
               >
@@ -4031,7 +4019,7 @@ export default function App() {
             ) : null}
             {hasPreview ? (
               <button
-                className={`subtab-button ${activeTab === "dupes" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "dupes", true)}
                 type="button"
                 onClick={() => setActiveTab("dupes")}
               >
@@ -4040,7 +4028,7 @@ export default function App() {
             ) : null}
             {dupeChecked ? (
               <button
-                className={`subtab-button ${activeTab === "screenshots" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "screenshots", true)}
                 type="button"
                 onClick={() => setActiveTab("screenshots")}
               >
@@ -4058,7 +4046,7 @@ export default function App() {
             ) : null}
             {dupeChecked ? (
               <button
-                className={`subtab-button ${activeTab === "upload_images" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "upload_images", true)}
                 type="button"
                 onClick={() => setActiveTab("upload_images")}
               >
@@ -4067,7 +4055,7 @@ export default function App() {
             ) : null}
             {dupeChecked ? (
               <button
-                className={`subtab-button ${activeTab === "description_builder" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "description_builder", true)}
                 type="button"
                 onClick={() => setActiveTab("description_builder")}
               >
@@ -4076,7 +4064,7 @@ export default function App() {
             ) : null}
             {builderReady ? (
               <button
-                className={`subtab-button ${activeTab === "upload" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "upload", true)}
                 type="button"
                 onClick={() => setActiveTab("upload")}
               >
@@ -4084,44 +4072,44 @@ export default function App() {
               </button>
             ) : null}
           </div>
-          <div className="side-panel__footer">
+          <div className={sidebarFooterClass}>
             <button
-              className={`settings-button ${activeTab === "settings" ? "active" : ""}`}
+              className={sidebarButtonClass(activeTab === "settings")}
               type="button"
               onClick={() => setActiveTab("settings")}
             >
               <span>Settings</span>
             </button>
             <button
-              className={`settings-button ${activeTab === "logging" ? "active" : ""}`}
+              className={sidebarButtonClass(activeTab === "logging")}
               type="button"
               onClick={() => setActiveTab("logging")}
             >
               <span>Logging</span>
             </button>
             <button
-              className={`settings-button ${activeTab === "history" ? "active" : ""}`}
+              className={sidebarButtonClass(activeTab === "history")}
               type="button"
               onClick={() => setActiveTab("history")}
             >
               <span>History</span>
             </button>
             <button
-              className={`settings-button settings-button--state ${
-                uiStateMode === "live" ? "active" : ""
-              }`}
+              className={cn(sidebarButtonClass(false), "mt-1", liveButtonClass)}
               type="button"
               onClick={toggleUIStateMode}
               title={uiStateToggleTitle}
             >
-              <span>{uiStateToggleLabel}</span>
+              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                {uiStateToggleLabel}
+              </span>
             </button>
             <button
-              className="settings-button settings-button--theme"
+              className={cn(sidebarButtonClass(), "mt-0")}
               type="button"
               onClick={handleThemeToggle}
             >
-              <span className="theme-toggle">{getThemeIcon()}</span>
+              <span className="mr-0.5 text-base">{getThemeIcon()}</span>
               <span>{getThemeLabel()}</span>
             </button>
           </div>
@@ -4336,8 +4324,7 @@ export default function App() {
               dupedTrackerSet={dupedTrackerSet}
               ruleSkipReasons={ruleSkipReasons}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
-              overrideRuleBlocks={overrideRuleBlocks}
-              setOverrideRuleBlocks={setOverrideRuleBlocks}
+              failedDupeTrackerSet={failedDupeTrackerSet}
               uploadToggles={uploadToggles}
               setUploadToggles={setUploadToggles}
               namingOverrides={namingOverrides}
@@ -4348,6 +4335,7 @@ export default function App() {
               uploadSnapshot={trackerUploadSnapshot}
               dryRunLoading={trackerDryRunLoading}
               dryRunError={trackerDryRunError}
+              dryRunProgress={trackerDryRunProgress}
               dryRunPreview={trackerDryRunPreview}
               trackerQuestionnaireAnswers={trackerQuestionnaireAnswers}
               onQuestionnaireAnswerChange={updateTrackerQuestionnaireAnswer}
@@ -4407,20 +4395,19 @@ export default function App() {
             />
           )}
         </main>
-        {lightboxImage ? (
-          <div
-            className="lightbox-overlay"
-            role="dialog"
-            aria-modal="true"
-            onClick={() => {
+        <Dialog.Root
+          open={Boolean(lightboxImage)}
+          onOpenChange={(open) => {
+            if (!open) {
               setLightboxImage("");
               setLightboxAlt("");
-            }}
-          >
-            <div
-              className={`lightbox-content ${lightboxFit ? "fit" : "native"}`}
-              onClick={(event) => event.stopPropagation()}
-            >
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="lightbox-overlay" />
+            <Dialog.Content className={`lightbox-content ${lightboxFit ? "fit" : "native"}`}>
+              <Dialog.Title className="sr-only">{lightboxAlt || "Preview"}</Dialog.Title>
               <div className="lightbox-toolbar">
                 <button
                   className="lightbox-toggle"
@@ -4430,29 +4417,35 @@ export default function App() {
                   {lightboxFit ? "Actual size" : "Fit to screen"}
                 </button>
               </div>
-              <img src={lightboxImage} alt={lightboxAlt || "Preview"} />
-            </div>
-          </div>
-        ) : null}
-        {hostBrowserMode ? (
-          <div
-            className="host-browser-overlay"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Host file browser"
-            ref={hostBrowserDialogRef}
-            tabIndex={-1}
-            onKeyDown={handleHostBrowserDialogKeyDown}
-          >
-            <div className="host-browser-dialog">
+              <img className="lightbox-image" src={lightboxImage} alt={lightboxAlt || "Preview"} />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+        <Dialog.Root
+          open={Boolean(hostBrowserMode)}
+          onOpenChange={(open) => {
+            if (!open) closeHostBrowser();
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="host-browser-overlay" />
+            <Dialog.Content className="host-browser-dialog">
               <div className="host-browser-header">
                 <div>
-                  <p className="label">Host browser</p>
-                  <p className="mono host-browser-path">{hostBrowser?.currentPath || "Computer"}</p>
+                  <Dialog.Title asChild>
+                    <h2 className="label">Host browser</h2>
+                  </Dialog.Title>
+                  <Dialog.Description asChild>
+                    <p className="mono host-browser-path">
+                      {hostBrowser?.currentPath || "Computer"}
+                    </p>
+                  </Dialog.Description>
                 </div>
-                <button className="ghost" type="button" onClick={closeHostBrowser}>
-                  Close
-                </button>
+                <Dialog.Close asChild>
+                  <button className="ghost" type="button">
+                    Close
+                  </button>
+                </Dialog.Close>
               </div>
               <div className="host-browser-toolbar">
                 <button
@@ -4543,9 +4536,9 @@ export default function App() {
                   ))}
                 </div>
               ) : null}
-            </div>
-          </div>
-        ) : null}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
       </div>
     </div>
   );

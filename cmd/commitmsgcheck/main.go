@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -118,7 +119,7 @@ func validateRange(from, to string) (int, error) {
 	// --end-of-options (git ≥ 2.24) stops option parsing so a `-`-prefixed user input
 	// is treated as a revision rather than a flag. This guards against both accidental
 	// misuse and CodeQL-style command-injection concerns.
-	cmd := exec.Command("git", "rev-list", "--reverse", "--end-of-options", revisionRange)
+	cmd := exec.CommandContext(context.Background(), "git", "rev-list", "--reverse", "--end-of-options", revisionRange)
 	output, err := cmd.Output()
 	if err != nil {
 		return 1, fmt.Errorf(
@@ -146,7 +147,7 @@ func validateRange(from, to string) (int, error) {
 }
 
 func gitCommitMessage(sha string) (string, error) {
-	cmd := exec.Command("git", "show", "-s", "--format=%B", "--end-of-options", sha)
+	cmd := exec.CommandContext(context.Background(), "git", "show", "-s", "--format=%B", "--end-of-options", sha)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("read commit %s: %w", shortSHA(sha), commandError(err))

@@ -102,11 +102,11 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 			return "", err
 		}
 		if bdinfo != nil {
-			if filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo); err == nil {
-				return filePath, nil
-			} else {
+			filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo)
+			if err != nil {
 				return "", err
 			}
+			return filePath, nil
 		}
 	}
 
@@ -129,10 +129,10 @@ func loadMediaInfoDoc(path string) (mediaInfoDoc, error) {
 	}
 	payload, err := os.ReadFile(trimmed)
 	if err != nil {
-		return doc, err
+		return doc, fmt.Errorf("screenshots: read mediainfo document: %w", err)
 	}
 	if err := json.Unmarshal(payload, &doc); err != nil {
-		return doc, err
+		return doc, fmt.Errorf("screenshots: unmarshal mediainfo document: %w", err)
 	}
 	return doc, nil
 }
@@ -329,7 +329,7 @@ func loadBDInfo(tmpRoot string, meta api.PreparedMetadata) (*discparse.BDInfo, e
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("screenshots: %w", err)
 	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
 	if strings.TrimSpace(path) == "" {
@@ -337,7 +337,7 @@ func loadBDInfo(tmpRoot string, meta api.PreparedMetadata) (*discparse.BDInfo, e
 	}
 	payload, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("screenshots: read BDMV summary: %w", err)
 	}
 	summary, files, _ := discparse.SplitBDInfoReport(string(payload))
 	return discparse.ParseBDInfoSummary(summary, files, meta.SourcePath), nil
@@ -377,7 +377,7 @@ func selectBDMVFile(ctx context.Context, root string, info *discparse.BDInfo) (s
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() {
@@ -390,7 +390,7 @@ func selectBDMVFile(ctx context.Context, root string, info *discparse.BDInfo) (s
 		return nil
 	})
 	if walkErr != nil && !errors.Is(walkErr, context.Canceled) && !errors.Is(walkErr, errFound) {
-		return "", walkErr
+		return "", fmt.Errorf("screenshots: scan bdinfo files: %w", walkErr)
 	}
 	if found == "" {
 		return "", errors.New("screenshots: bdinfo file not found")
@@ -405,7 +405,7 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 	}
 	entries, err := os.ReadDir(videoTS)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("screenshots: read VIDEO_TS directory: %w", err)
 	}
 
 	vobSizes := map[string]int64{}
@@ -413,7 +413,7 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		name := entry.Name()
@@ -453,7 +453,7 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 func findVideoTS(ctx context.Context, root string) (string, error) {
 	info, err := os.Stat(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("screenshots: stat DVD root: %w", err)
 	}
 	if info.IsDir() {
 		if strings.EqualFold(filepath.Base(root), "VIDEO_TS") {
@@ -472,7 +472,7 @@ func findVideoTS(ctx context.Context, root string) (string, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() && strings.EqualFold(entry.Name(), "VIDEO_TS") {
@@ -482,7 +482,7 @@ func findVideoTS(ctx context.Context, root string) (string, error) {
 		return nil
 	})
 	if walkErr != nil && !errors.Is(walkErr, context.Canceled) && !errors.Is(walkErr, errFound) {
-		return "", walkErr
+		return "", fmt.Errorf("screenshots: scan VIDEO_TS: %w", walkErr)
 	}
 	if found == "" {
 		return "", errors.New("screenshots: VIDEO_TS not found")

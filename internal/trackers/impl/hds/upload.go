@@ -61,7 +61,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, files)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
@@ -92,10 +92,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "HDS")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{
@@ -111,7 +111,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "HDS", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, fmt.Errorf("trackers: HDS upload failed status=%d", resp.StatusCode)
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("HDS", resp.StatusCode, responseBody)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -141,7 +141,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, []*http.Cookie, error) {
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	cookies, err := loadCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
@@ -152,10 +152,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req, assets)
 	fields := map[string]string{
 		"category":      strconv.Itoa(resolveCategoryID(req.Meta)),
 		"filename":      metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Filename, pathutil.Base(req.Meta.SourcePath)),
@@ -185,7 +182,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "HDS", "hd-space.org")
+	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "HDS", "hd-space.org"))
 }
 
 func resolveCategoryID(meta api.PreparedMetadata) int {
@@ -235,7 +232,7 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 	}
 }
 
-func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
 	meta := req.Meta
 	parts := make([]string, 0, 12)
 
@@ -310,7 +307,7 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 		descriptionunit3d.SaveDescriptionDebug(meta, "HDS", req.AppConfig.MainSettings.DBPath, finalDescription, req.Logger)
 	}
 
-	return finalDescription, nil
+	return finalDescription
 }
 
 func resolveLogo(meta api.PreparedMetadata) string {

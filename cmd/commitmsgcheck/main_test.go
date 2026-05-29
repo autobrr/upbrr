@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -372,7 +373,7 @@ func TestCommandErrorUnwrapping(t *testing.T) {
 
 	dir := t.TempDir()
 	runGit(t, dir, "init", "--initial-branch=main", ".")
-	cmd := exec.Command("git", "show", "-s", "--format=%B", "nonexistent-ref-deadbeef")
+	cmd := exec.CommandContext(context.Background(), "git", "show", "-s", "--format=%B", "nonexistent-ref-deadbeef")
 	cmd.Dir = dir
 	_, err := cmd.Output()
 	if err == nil {
@@ -451,7 +452,7 @@ func equalSlices(a, b []string) bool {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(context.Background(), "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -461,7 +462,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 
 func revParse(t *testing.T, dir, rev string) string {
 	t.Helper()
-	cmd := exec.Command("git", "rev-parse", rev)
+	cmd := exec.CommandContext(context.Background(), "git", "rev-parse", rev)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

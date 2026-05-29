@@ -129,7 +129,7 @@ type PreparedMetadata struct {
 	PieceSizeConstraint         string
 	FoundPreferredPiece         string
 	StoredInfoHash              string
-	StoredUpdatedAt             time.Time
+	StoredUpdatedAt             time.Time `ts_type:"string"`
 	StoredDataFresh             bool
 	TrackerData                 []TrackerMetadata
 	ClientTorrentPath           string
@@ -282,7 +282,7 @@ type ExternalIDs struct {
 	SourceIMDB   string
 	SourceTVDB   string
 	SourceTVmaze string
-	UpdatedAt    time.Time
+	UpdatedAt    time.Time `ts_type:"string"`
 }
 
 type ExternalMetadata struct {
@@ -291,7 +291,7 @@ type ExternalMetadata struct {
 	IMDB       *IMDBMetadata
 	TVDB       *TVDBMetadata
 	TVmaze     *TVmazeMetadata
-	UpdatedAt  time.Time
+	UpdatedAt  time.Time `ts_type:"string"`
 }
 
 type TMDBMetadata struct {

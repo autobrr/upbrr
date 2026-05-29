@@ -319,7 +319,7 @@ func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, s
 	client = httpclient.CloneWithTimeout(client, httpclient.UploadTimeout)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://imgbox.com/", nil)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("imgbox create csrf request: %w", err)
 	}
 	for key, value := range imgboxHeaders("", nil) {
 		req.Header.Set(key, value)
@@ -327,7 +327,7 @@ func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, s
 	resp, err := client.Do(req)
 	if err != nil {
 		closeResponseBody(resp)
-		return "", "", err
+		return "", "", fmt.Errorf("imgbox send csrf request: %w", err)
 	}
 	body, err := readAndCloseResponseBody(resp)
 	if err != nil {
@@ -354,7 +354,7 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 	client = httpclient.CloneWithTimeout(client, httpclient.UploadTimeout)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://imgbox.com/ajax/token/generate", nil)
 	if err != nil {
-		return imgboxUploadToken{}, err
+		return imgboxUploadToken{}, fmt.Errorf("imgbox create token request: %w", err)
 	}
 	headers := imgboxHeaders(cookie, map[string]string{"X-CSRF-Token": csrfToken})
 	for key, value := range headers {
@@ -363,7 +363,7 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 	resp, err := client.Do(req)
 	if err != nil {
 		closeResponseBody(resp)
-		return imgboxUploadToken{}, err
+		return imgboxUploadToken{}, fmt.Errorf("imgbox send token request: %w", err)
 	}
 	body, err := readAndCloseResponseBody(resp)
 	if err != nil {
@@ -1033,7 +1033,7 @@ func (u *shareXUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 func postForm(ctx context.Context, client *http.Client, target string, data url.Values, headers map[string]string) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: create form request for %s: %w", target, err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	for key, value := range headers {
@@ -1042,7 +1042,7 @@ func postForm(ctx context.Context, client *http.Client, target string, data url.
 	resp, err := client.Do(req)
 	if err != nil {
 		closeResponseBody(resp)
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: send form request to %s: %w", target, err)
 	}
 	body, err := readAndCloseResponseBody(resp)
 	if err != nil {
@@ -1066,7 +1066,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 	for _, key := range fieldKeys {
 		value := fields[key]
 		if err := writer.WriteField(key, value); err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: write multipart field %q: %w", key, err)
 		}
 	}
 	fileFieldKeys := make([]string, 0, len(fileFields))
@@ -1078,28 +1078,28 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 		filePath := fileFields[fileField]
 		file, err := os.Open(filePath)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: open multipart file: %w", err)
 		}
 		part, err := writer.CreateFormFile(fileField, filepath.Base(filePath))
 		if err != nil {
 			_ = file.Close()
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: create multipart file %q: %w", fileField, err)
 		}
 		if _, err := io.Copy(part, file); err != nil {
 			_ = file.Close()
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: copy multipart file: %w", err)
 		}
 		if err := file.Close(); err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: close multipart file: %w", err)
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: close multipart writer: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: create multipart request for %s: %w", target, err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	for key, value := range headers {
@@ -1109,7 +1109,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 	resp, err := client.Do(req)
 	if err != nil {
 		closeResponseBody(resp)
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: send multipart request to %s: %w", target, err)
 	}
 	bodyBytes, err := readAndCloseResponseBody(resp)
 	if err != nil {
@@ -1123,7 +1123,11 @@ func readAndCloseResponseBody(resp *http.Response) ([]byte, error) {
 		return nil, nil
 	}
 	defer closeResponseBody(resp)
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("image hosting: read response body: %w", err)
+	}
+	return body, nil
 }
 
 func closeResponseBody(resp *http.Response) {
@@ -1137,7 +1141,7 @@ func closeResponseBody(resp *http.Response) {
 func readBase64(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("image hosting: read base64 file: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
 }

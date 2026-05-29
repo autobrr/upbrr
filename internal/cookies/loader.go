@@ -23,7 +23,7 @@ import (
 
 func LoadTrackerCookieMap(ctx context.Context, dbPath string, trackerID string) (map[string]string, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("cookies: context is required")
 	}
 
 	normalizedTrackerID := strings.TrimSpace(trackerID)
@@ -62,7 +62,7 @@ func LoadTrackerCookieMap(ctx context.Context, dbPath string, trackerID string) 
 
 func LoadTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string, domain string) ([]*http.Cookie, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("cookies: context is required")
 	}
 
 	normalizedTrackerID := strings.TrimSpace(trackerID)
@@ -101,7 +101,7 @@ func LoadTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string
 
 func SaveTrackerCookieMap(ctx context.Context, dbPath string, trackerID string, values map[string]string) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("cookies: context is required")
 	}
 
 	normalizedTrackerID := strings.TrimSpace(trackerID)
@@ -146,7 +146,7 @@ func SaveTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string
 
 func DeleteTrackerCookies(ctx context.Context, dbPath string, trackerID string) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("cookies: context is required")
 	}
 
 	normalizedTrackerID := strings.TrimSpace(trackerID)
@@ -192,7 +192,7 @@ func CookieMapToHTTPCookies(values map[string]string, domain string) []*http.Coo
 }
 
 func openTrackerCookieStore(ctx context.Context, dbPath string) (*CookieStore, []byte, *servicedb.SQLiteRepository, error) {
-	repo, err := servicedb.OpenWithLogger(dbPath, api.NopLogger{})
+	repo, err := servicedb.OpenWithLoggerContext(ctx, dbPath, api.NopLogger{})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("cookies: open db: %w", err)
 	}
