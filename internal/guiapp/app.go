@@ -1288,15 +1288,18 @@ func (a *App) SaveConfig(payload string) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("gui: %w", err)
 	}
+	runtimeCfg := *cfg
+	config.ApplyEnvOverrides(&runtimeCfg)
+	runtimeCfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
+	if err := runtimeCfg.Validate(); err != nil {
+		return fmt.Errorf("gui: %w", err)
+	}
 
 	ctx := a.runtimeContext()
 	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
 		return fmt.Errorf("gui: %w", err)
 	}
 
-	runtimeCfg := *cfg
-	config.ApplyEnvOverrides(&runtimeCfg)
-	runtimeCfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
 	return a.applyConfig(runtimeCfg)
 }
 
@@ -1517,14 +1520,18 @@ func (a *App) ImportConfig() (ImportResult, error) {
 	if err := cfg.Validate(); err != nil {
 		return ImportResult{}, fmt.Errorf("validate imported config: %w", err)
 	}
+	runtimeCfg := *cfg
+	config.ApplyEnvOverrides(&runtimeCfg)
+	runtimeCfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
+	if err := runtimeCfg.Validate(); err != nil {
+		return ImportResult{}, fmt.Errorf("validate imported config: %w", err)
+	}
 
 	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
 		return ImportResult{}, fmt.Errorf("gui: %w", err)
 	}
 
-	config.ApplyEnvOverrides(cfg)
-	cfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
-	if err := a.applyConfig(*cfg); err != nil {
+	if err := a.applyConfig(runtimeCfg); err != nil {
 		return ImportResult{}, err
 	}
 

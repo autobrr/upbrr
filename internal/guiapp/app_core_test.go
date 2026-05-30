@@ -117,6 +117,56 @@ func TestSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
 	}
 }
 
+func TestSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
+	t.Setenv("UA_DEFAULT_SCREENS", "0")
+
+	repoPath := filepath.Join(t.TempDir(), "save-config-env.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	initial := config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+
+	updated := initial
+	updated.ScreenshotHandling.Screens = 4
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	err = app.SaveConfig(payload)
+	if err == nil {
+		t.Fatal("expected env-derived runtime validation error")
+	}
+	if !strings.Contains(err.Error(), "screenshot_handling.screens") {
+		t.Fatalf("expected screens validation error, got %v", err)
+	}
+	if got := app.currentConfig().ScreenshotHandling.Screens; got != 1 {
+		t.Fatalf("expected runtime config to remain unchanged, got screens=%d", got)
+	}
+	if app.currentCore() != nil {
+		t.Fatal("expected runtime core not to be rebuilt")
+	}
+	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); loadErr == nil {
+		t.Fatal("expected invalid runtime config to be rejected before database save")
+	}
+}
+
 func TestListHistoryUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	t.Parallel()
 

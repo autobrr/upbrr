@@ -838,12 +838,15 @@ func (b *Backend) SaveConfig(payload string) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("web: %w", err)
 	}
-	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
-		return fmt.Errorf("web: %w", err)
-	}
 	runtimeCfg := *cfg
 	config.ApplyEnvOverrides(&runtimeCfg)
 	runtimeCfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
+	if err := runtimeCfg.Validate(); err != nil {
+		return fmt.Errorf("web: %w", err)
+	}
+	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
+		return fmt.Errorf("web: %w", err)
+	}
 	return b.applyConfig(runtimeCfg)
 }
 
@@ -871,14 +874,18 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 	if err := cfg.Validate(); err != nil {
 		return "", nil, fmt.Errorf("validate imported config: %w", err)
 	}
+	runtimeCfg := *cfg
+	config.ApplyEnvOverrides(&runtimeCfg)
+	runtimeCfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
+	if err := runtimeCfg.Validate(); err != nil {
+		return "", nil, fmt.Errorf("validate imported config: %w", err)
+	}
 
 	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
 		return "", nil, fmt.Errorf("web: %w", err)
 	}
 
-	config.ApplyEnvOverrides(cfg)
-	cfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
-	if err := b.applyConfig(*cfg); err != nil {
+	if err := b.applyConfig(runtimeCfg); err != nil {
 		return "", nil, err
 	}
 
