@@ -4,7 +4,7 @@
 package pathutil
 
 import (
-	"path"
+	"path" //nolint:depguard // Normalizes slash-style metadata paths, not local filesystem paths.
 	"strings"
 )
 

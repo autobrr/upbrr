@@ -409,7 +409,7 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 			}
 			ctx := context.Background()
 			for item := 0; item < 10; item++ {
-				sourcePath := filepath.Join("C:\\shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
+				sourcePath := testStoredPath("shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
 				if err := repo.Save(ctx, FileMetadata{
 					Path:      sourcePath,
 					Title:     fmt.Sprintf("Title %d-%d", idx, item),
@@ -439,7 +439,7 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 	ctx := context.Background()
 	for idx := range repos {
 		for item := 0; item < 10; item++ {
-			sourcePath := filepath.Join("C:\\shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
+			sourcePath := testStoredPath("shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
 			if _, err := repos[0].GetByPath(ctx, sourcePath); err != nil {
 				t.Fatalf("get %s: %v", sourcePath, err)
 			}
@@ -465,7 +465,7 @@ func TestSQLiteRepositoryConcurrentReadsOnDisk(t *testing.T) {
 
 	ctx := context.Background()
 	for i := 0; i < 25; i++ {
-		sourcePath := filepath.Join("C:\\reads", fmt.Sprintf("release-%d.mkv", i))
+		sourcePath := testStoredPath("reads", fmt.Sprintf("release-%d.mkv", i))
 		if err := writerRepo.Save(ctx, FileMetadata{
 			Path:      sourcePath,
 			Title:     fmt.Sprintf("Title %d", i),
@@ -498,7 +498,7 @@ func TestSQLiteRepositoryConcurrentReadsOnDisk(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for item := 0; item < 25; item++ {
-				sourcePath := filepath.Join("C:\\reads", fmt.Sprintf("release-%d.mkv", item))
+				sourcePath := testStoredPath("reads", fmt.Sprintf("release-%d.mkv", item))
 				got, err := repo.GetByPath(ctx, sourcePath)
 				if err != nil {
 					errCh <- fmt.Errorf("reader %d get %d: %w", idx, item, err)
@@ -556,7 +556,7 @@ func TestSQLiteRepositoryReadsOverlapWithWriteTransaction(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	sourcePath := filepath.Join("C:\\overlap", "release.mkv")
+	sourcePath := testStoredPath("overlap", "release.mkv")
 	if err := writerRepo.Save(ctx, FileMetadata{
 		Path:      sourcePath,
 		Title:     "Before",
@@ -682,7 +682,7 @@ func TestIsBusyErrorUnwrapsSQLiteErrors(t *testing.T) {
 	}()
 
 	err = contendingRepo.Save(ctx, FileMetadata{
-		Path:      filepath.Join("C:\\locked", "file.mkv"),
+		Path:      testStoredPath("locked", "file.mkv"),
 		Title:     "Locked",
 		UpdatedAt: time.Now().UTC(),
 	})
@@ -1810,4 +1810,8 @@ func intPtr(value int) *int {
 func boolPtr(value bool) *bool {
 	ptrValue := value
 	return &ptrValue
+}
+
+func testStoredPath(parts ...string) string {
+	return filepath.ToSlash(filepath.Join(parts...))
 }

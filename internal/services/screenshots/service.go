@@ -12,7 +12,7 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
-	"path"
+	"path" //nolint:depguard // Extracts URL path components from screenshot URLs.
 	"path/filepath"
 	"runtime"
 	"sort"

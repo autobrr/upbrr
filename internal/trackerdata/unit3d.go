@@ -15,7 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
+	"path" //nolint:depguard // Builds Unit3D API URL paths, not local filesystem paths.
 	"strconv"
 	"strings"
 	"sync"

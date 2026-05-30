@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path" //nolint:depguard // Parses Unit3D URL path IDs, not local filesystem paths.
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -296,7 +297,7 @@ func extractUnit3DTorrentID(raw string) string {
 
 	parsed, err := url.Parse(trimmed)
 	if err == nil {
-		base := filepath.Base(parsed.Path)
+		base := path.Base(parsed.Path)
 		if id := extractLeadingNumericToken(base); id != "" {
 			return id
 		}
@@ -305,7 +306,7 @@ func extractUnit3DTorrentID(raw string) string {
 		}
 	}
 
-	if id := extractLeadingNumericToken(filepath.Base(trimmed)); id != "" {
+	if id := extractLeadingNumericToken(path.Base(trimmed)); id != "" {
 		return id
 	}
 

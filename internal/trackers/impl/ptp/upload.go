@@ -19,6 +19,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path" //nolint:depguard // Reads poster URL path extension, not local filesystem extension.
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -464,7 +465,7 @@ func downloadPoster(ctx context.Context, meta api.PreparedMetadata, dbPath strin
 
 func posterExtension(imageURL string, contentType string) string {
 	if parsed, err := url.Parse(imageURL); err == nil {
-		switch ext := strings.ToLower(filepath.Ext(parsed.Path)); ext {
+		switch ext := strings.ToLower(path.Ext(parsed.Path)); ext {
 		case ".jpg", ".jpeg", ".png", ".webp":
 			return ext
 		}

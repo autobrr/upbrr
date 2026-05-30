@@ -12,7 +12,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
+	"path" //nolint:depguard // Extracts tracker response URL path basename.
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -56,7 +57,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, []commonhttp.FileField{{
 		FieldName: "torrent",
-		FileName:  path.Base(state.torrentPath),
+		FileName:  filepath.Base(state.torrentPath),
 		Path:      state.torrentPath,
 	}})
 	if err != nil {

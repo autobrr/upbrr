@@ -5,6 +5,7 @@ package ar
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestPersistLoginCookiesAllowsPlaintextFallbackWhenAuthHelperUnavailable(t *
 	t.Parallel()
 
 	logger := &captureLogger{}
-	err := persistLoginCookies(context.Background(), t.TempDir()+"/upbrr.db", logger, nil)
+	err := persistLoginCookies(context.Background(), filepath.Join(t.TempDir(), "upbrr.db"), logger, nil)
 	if err != nil {
 		t.Fatalf("expected plaintext fallback, got %v", err)
 	}
