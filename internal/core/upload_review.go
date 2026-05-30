@@ -90,7 +90,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		return api.UploadReview{}, fmt.Errorf("core: upload review requires prepared metadata for %s", uniquePaths[0])
 	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, singleReq.Trackers, singleReq.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, singleReq.Trackers, meta.TrackersRemove, c.logger)
 
 	dupeResults := make(map[string]api.DupeCheckResult)
 	if singleReq.SkipDupeCheck {
@@ -219,6 +219,9 @@ func applyRequestToPreparedMetaBeforeRefresh(meta api.PreparedMetadata, req api.
 
 func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger, rebuildDerivedFields bool) api.PreparedMetadata {
 	meta = deepCopyPreparedMetadata(meta)
+	existingTrackerIDs := cloneStringMap(meta.TrackerIDs)
+	existingTrackersRemove := append([]string{}, meta.TrackersRemove...)
+	existingMatchedTrackers := append([]string{}, meta.MatchedTrackers...)
 	meta.Mode = req.Mode
 	meta.Options = req.Options
 	meta.Paths = append([]string{}, req.Paths...)
@@ -226,8 +229,9 @@ func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req 
 		meta.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
 	}
 	meta.Trackers = append([]string{}, req.Trackers...)
-	meta.TrackersRemove = append([]string{}, req.TrackersRemove...)
-	meta.TrackerIDs = cloneStringMap(req.TrackerIDOverrides)
+	meta.TrackersRemove = mergeTrackerRemovals(req.TrackersRemove, existingTrackersRemove)
+	meta.TrackersRemove = mergeTrackerRemovals(meta.TrackersRemove, existingMatchedTrackers)
+	meta.TrackerIDs = mergeTrackerIDOverrides(existingTrackerIDs, req.TrackerIDOverrides)
 	meta.DescriptionOverride = strings.TrimSpace(req.DescriptionOverrideRaw)
 	meta.MetadataOverrides = req.MetadataOverrides
 	meta.TrackerConfigOverrides = req.TrackerConfigOverrides
@@ -254,6 +258,35 @@ func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req 
 		meta.BlockedTrackers = removeTrackerBlockReasonForTrackers(meta.BlockedTrackers, api.TrackerBlockReasonDupe, req.IgnoreDupesFor)
 	}
 	return meta
+}
+
+func mergeTrackerIDOverrides(existing map[string]string, overrides map[string]string) map[string]string {
+	normalizedExisting := make(map[string]string, len(existing))
+	for key, value := range existing {
+		trimmedKey := strings.ToLower(strings.TrimSpace(key))
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		normalizedExisting[trimmedKey] = trimmedValue
+	}
+
+	merged := cloneStringMap(normalizedExisting)
+	if merged == nil {
+		merged = make(map[string]string)
+	}
+	for key, value := range overrides {
+		trimmedKey := strings.ToLower(strings.TrimSpace(key))
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		merged[trimmedKey] = trimmedValue
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 func (c *Core) applyRequestToCachedPreparedMeta(ctx context.Context, meta api.PreparedMetadata, req api.Request) (api.PreparedMetadata, error) {

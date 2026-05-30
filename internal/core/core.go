@@ -436,23 +436,21 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 			return fmt.Errorf("core: %w", searchErr)
 		}
 
+		if applyTrackerData {
+			resetPreparedClientData(&meta, singleReq)
+		}
 		meta.FoundTrackerMatch = meta.FoundTrackerMatch || searchResult.FoundTrackerMatch
 		meta.MatchedTrackers = mergeTrackerRemovals(meta.MatchedTrackers, searchResult.MatchedTrackers)
 		meta.TrackersRemove = mergeTrackerRemovals(meta.TrackersRemove, searchResult.MatchedTrackers)
+		markTrackerDataMatches(&meta, searchResult.MatchedTrackers)
 
 		if !applyTrackerData {
 			return nil
 		}
 
-		if searchResult.InfoHash == "" && len(searchResult.TorrentComments) == 0 {
+		if !applyPathedTorrentData(&meta, searchResult) {
 			return nil
 		}
-		meta.InfoHash = searchResult.InfoHash
-		meta.ClientTorrentPath = searchResult.TorrentPath
-		meta.TrackerIDs = searchResult.TrackerIDs
-		meta.TorrentComments = searchResult.TorrentComments
-		meta.PieceSizeConstraint = searchResult.PieceSizeConstraint
-		meta.FoundPreferredPiece = searchResult.FoundPreferredPiece
 		return nil
 	}
 
@@ -463,18 +461,18 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 			return api.DupeCheckSummary{}, err
 		}
 	case storedApplied:
-		c.logger.Debugf("core: running pathed search for tracker presence with stored tracker data present for %s", meta.SourcePath)
-		if err := runPathedSearch(false); err != nil {
+		c.logger.Debugf("core: running pathed search with stored tracker data present for %s", meta.SourcePath)
+		if err := runPathedSearch(true); err != nil {
 			return api.DupeCheckSummary{}, err
 		}
 	case meta.StoredDataFresh:
 		if meta.InfoHash == "" && meta.StoredInfoHash != "" {
 			meta.InfoHash = meta.StoredInfoHash
-			c.logger.Debugf("core: using stored infohash before pathed tracker-presence search for %s", meta.SourcePath)
+			c.logger.Debugf("core: using stored infohash before pathed search for %s", meta.SourcePath)
 		} else {
-			c.logger.Debugf("core: running pathed search for tracker presence with fresh stored metadata snapshot for %s", meta.SourcePath)
+			c.logger.Debugf("core: running pathed search with fresh stored metadata snapshot for %s", meta.SourcePath)
 		}
-		if err := runPathedSearch(false); err != nil {
+		if err := runPathedSearch(true); err != nil {
 			return api.DupeCheckSummary{}, err
 		}
 	default:
@@ -1668,20 +1666,18 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 		if searchErr != nil {
 			return fmt.Errorf("core: %w", searchErr)
 		}
+		if applyTrackerData {
+			resetPreparedClientData(&meta, singleReq)
+		}
 		meta.FoundTrackerMatch = meta.FoundTrackerMatch || searchResult.FoundTrackerMatch
 		meta.MatchedTrackers = mergeTrackerRemovals(meta.MatchedTrackers, searchResult.MatchedTrackers)
 		meta.TrackersRemove = mergeTrackerRemovals(meta.TrackersRemove, searchResult.MatchedTrackers)
+		markTrackerDataMatches(&meta, searchResult.MatchedTrackers)
 		if !applyTrackerData {
 			c.logger.Debugf("core: pathed search merged tracker presence only for %s", meta.SourcePath)
 			return nil
 		}
-		if searchResult.InfoHash != "" || len(searchResult.TorrentComments) > 0 {
-			meta.InfoHash = searchResult.InfoHash
-			meta.ClientTorrentPath = searchResult.TorrentPath
-			meta.TrackerIDs = searchResult.TrackerIDs
-			meta.TorrentComments = searchResult.TorrentComments
-			meta.PieceSizeConstraint = searchResult.PieceSizeConstraint
-			meta.FoundPreferredPiece = searchResult.FoundPreferredPiece
+		if applyPathedTorrentData(&meta, searchResult) {
 			c.logger.Debugf("core: pathed torrents resolved for %s", meta.SourcePath)
 		} else {
 			c.logger.Debugf("core: pathed search returned no matches for %s", meta.SourcePath)
@@ -1696,18 +1692,18 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 			return api.MetadataPreview{}, err
 		}
 	case storedApplied:
-		c.logger.Debugf("core: running pathed search for tracker presence with stored tracker data present for %s", meta.SourcePath)
-		if err := runPathedSearch(false); err != nil {
+		c.logger.Debugf("core: running pathed search with stored tracker data present for %s", meta.SourcePath)
+		if err := runPathedSearch(true); err != nil {
 			return api.MetadataPreview{}, err
 		}
 	case meta.StoredDataFresh:
 		if meta.InfoHash == "" && meta.StoredInfoHash != "" {
 			meta.InfoHash = meta.StoredInfoHash
-			c.logger.Debugf("core: using stored infohash before pathed tracker-presence search for %s", meta.SourcePath)
+			c.logger.Debugf("core: using stored infohash before pathed search for %s", meta.SourcePath)
 		} else {
-			c.logger.Debugf("core: running pathed search for tracker presence with fresh stored metadata snapshot for %s", meta.SourcePath)
+			c.logger.Debugf("core: running pathed search with fresh stored metadata snapshot for %s", meta.SourcePath)
 		}
-		if err := runPathedSearch(false); err != nil {
+		if err := runPathedSearch(true); err != nil {
 			return api.MetadataPreview{}, err
 		}
 	case meta.InfoHash != "":
@@ -1830,7 +1826,7 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.PreparationPreview{}, err
 		} else if ok {
-			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, cached.TrackersRemove, c.logger)
 			c.logger.Debugf("core: preparation resolved trackers %v", resolvedTrackers)
 			return wrapCoreResult(c.services.Trackers.BuildPreparation(ctx, cached, resolvedTrackers))
 		}
@@ -1856,7 +1852,7 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 		c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	c.logger.Debugf("core: preparation resolved trackers %v", resolvedTrackers)
 	return wrapCoreResult(c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers))
 }
@@ -1948,7 +1944,7 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	}
 	meta.TorrentPath = torrent.Path
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	entries, err := c.services.Trackers.BuildUploadDryRun(ctx, meta, resolvedTrackers)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
@@ -2069,7 +2065,7 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 		return api.DescriptionBuilderPreview{}, err
 	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
 	if err != nil {
 		c.logger.Errorf("core: description builder preparation failed source=%s: %v", meta.SourcePath, err)
@@ -2316,7 +2312,7 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 
 	resolvedTrackers := req.Trackers
 	if len(resolvedTrackers) == 0 {
-		resolvedTrackers = trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+		resolvedTrackers = trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	}
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
 	if err != nil {
@@ -2560,6 +2556,79 @@ func (c *Core) applyStoredTrackerData(ctx context.Context, meta *api.PreparedMet
 	}
 
 	return true, nil
+}
+
+func resetPreparedClientData(meta *api.PreparedMetadata, req api.Request) {
+	if meta == nil {
+		return
+	}
+	meta.FoundTrackerMatch = false
+	meta.MatchedTrackers = nil
+	meta.TrackersRemove = mergeTrackerRemovals(nil, req.TrackersRemove)
+	meta.TorrentComments = nil
+	meta.ClientTorrentPath = ""
+	meta.PieceSizeConstraint = ""
+	meta.FoundPreferredPiece = ""
+	meta.InfoHash = cachedInfoHash(*meta)
+	meta.TrackerIDs = cloneStringMap(req.TrackerIDOverrides)
+	applyTorrentOverridesToPreparedMeta(meta)
+	for idx := range meta.TrackerData {
+		meta.TrackerData[idx].Matched = false
+	}
+}
+
+func cachedInfoHash(meta api.PreparedMetadata) string {
+	if value := strings.TrimSpace(meta.StoredInfoHash); value != "" {
+		return value
+	}
+	for _, record := range meta.TrackerData {
+		if value := strings.TrimSpace(record.InfoHash); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func markTrackerDataMatches(meta *api.PreparedMetadata, matchedTrackers []string) {
+	if meta == nil || len(matchedTrackers) == 0 || len(meta.TrackerData) == 0 {
+		return
+	}
+	for idx := range meta.TrackerData {
+		if matchedTrackerForUpload(matchedTrackers, meta.TrackerData[idx].Tracker) {
+			meta.TrackerData[idx].Matched = true
+		}
+	}
+}
+
+func applyPathedTorrentData(meta *api.PreparedMetadata, searchResult api.ClientSearchResult) bool {
+	if meta == nil || !hasPathedTorrentData(searchResult) {
+		return false
+	}
+	if infoHash := strings.TrimSpace(searchResult.InfoHash); infoHash != "" {
+		meta.InfoHash = infoHash
+	}
+	if torrentPath := strings.TrimSpace(searchResult.TorrentPath); torrentPath != "" {
+		meta.ClientTorrentPath = torrentPath
+	}
+	if len(searchResult.TrackerIDs) > 0 {
+		meta.TrackerIDs = mergeTrackerIDOverrides(searchResult.TrackerIDs, meta.TrackerIDs)
+	}
+	if len(searchResult.TorrentComments) > 0 {
+		meta.TorrentComments = append([]api.TorrentMatch{}, searchResult.TorrentComments...)
+	}
+	meta.PieceSizeConstraint = searchResult.PieceSizeConstraint
+	meta.FoundPreferredPiece = searchResult.FoundPreferredPiece
+	meta.StoredDataFresh = false
+	return true
+}
+
+func hasPathedTorrentData(searchResult api.ClientSearchResult) bool {
+	return strings.TrimSpace(searchResult.InfoHash) != "" ||
+		strings.TrimSpace(searchResult.TorrentPath) != "" ||
+		len(searchResult.TrackerIDs) > 0 ||
+		len(searchResult.TorrentComments) > 0 ||
+		strings.TrimSpace(searchResult.PieceSizeConstraint) != "" ||
+		strings.TrimSpace(searchResult.FoundPreferredPiece) != ""
 }
 
 func (c *Core) getDupeCache(path string, signature string) (api.PreparedMetadata, bool) {
@@ -4177,7 +4246,7 @@ func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.P
 		return nil, errors.New("core: tracker service not configured")
 	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)

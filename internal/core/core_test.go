@@ -24,6 +24,15 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
+func containsCoreString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFirstRequestedTracker(t *testing.T) {
 	t.Parallel()
 
@@ -757,12 +766,25 @@ func TestRunUploadSkipsPathedSearchWithFreshStoredSnapshot(t *testing.T) {
 func TestFetchMetadataPreviewRunsPathedSearchWithStoredTrackerData(t *testing.T) {
 	t.Parallel()
 
-	client := &stubClient{}
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		InfoHash: "abc123",
+		TrackerIDs: map[string]string{
+			"aither": "111",
+		},
+		FoundTrackerMatch: true,
+		TorrentComments: []api.TorrentMatch{{
+			Hash: "abc123",
+			Name: "Fixture Title 2024 BluRay 1080p DTS x264-FixtureGroup",
+		}},
+		MatchedTrackers: []string{"AITHER"},
+		TorrentPath:     "/downloads/Fixture Title",
+	}}
+	metaSvc := &stubMeta{}
 	core, err := New(api.CoreDependencies{
 		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
 		Services: api.ServiceSet{
 			Filesystem: &stubFS{},
-			Metadata:   &stubMeta{},
+			Metadata:   metaSvc,
 			Clients:    client,
 		},
 		Repository: trackerRepo{},
@@ -779,7 +801,22 @@ func TestFetchMetadataPreviewRunsPathedSearchWithStoredTrackerData(t *testing.T)
 		t.Fatalf("fetch metadata preview: %v", err)
 	}
 	if client.searchCalls != 1 {
-		t.Fatalf("expected pathed search to run once for tracker presence, got %d calls", client.searchCalls)
+		t.Fatalf("expected pathed search to run once for fresh client data, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected tracker enrichment once, got %d calls", metaSvc.enrichCalls)
+	}
+	if got := metaSvc.enrichMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected fresh AITHER tracker id, got %q", got)
+	}
+	if got := metaSvc.enrichMeta.TrackerIDs["blu"]; got != "" {
+		t.Fatalf("expected stale stored BLU tracker id cleared, got %q", got)
+	}
+	if containsCoreString(metaSvc.enrichMeta.MatchedTrackers, "BLU") {
+		t.Fatalf("expected stale stored BLU match cleared, got %v", metaSvc.enrichMeta.MatchedTrackers)
+	}
+	if !containsCoreString(metaSvc.enrichMeta.TrackersRemove, "AITHER") {
+		t.Fatalf("expected fresh AITHER removal, got %v", metaSvc.enrichMeta.TrackersRemove)
 	}
 }
 
@@ -882,6 +919,277 @@ func TestFetchMetadataPreviewRunsPathedSearchWithFreshStoredSnapshot(t *testing.
 	}
 	if client.searchCalls != 1 {
 		t.Fatalf("expected pathed search to run once for tracker presence, got %d calls", client.searchCalls)
+	}
+}
+
+func TestFetchMetadataPreviewUsesPathedTrackerDataWithFreshStoredSnapshot(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		InfoHash: "abc123",
+		TrackerIDs: map[string]string{
+			"aither": "111",
+		},
+		FoundTrackerMatch: true,
+		TorrentComments: []api.TorrentMatch{{
+			Hash: "abc123",
+			Name: "Fixture Title 2024 BluRay 1080p DTS x264-FixtureGroup",
+		}},
+		MatchedTrackers: []string{"AITHER"},
+		TorrentPath:     "/downloads/Fixture Title",
+	}}
+	metaSvc := &stubMeta{prepared: api.PreparedMetadata{
+		StoredDataFresh: true,
+	}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    client,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.FetchMetadataPreview(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected pathed search to run once, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected tracker enrichment once, got %d calls", metaSvc.enrichCalls)
+	}
+	if metaSvc.enrichMeta.StoredDataFresh {
+		t.Fatalf("expected client torrent data to invalidate fresh snapshot for tracker enrichment")
+	}
+	if got := metaSvc.enrichMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected pathed tracker id, got %q", got)
+	}
+	if got := metaSvc.enrichMeta.InfoHash; got != "abc123" {
+		t.Fatalf("expected pathed infohash, got %q", got)
+	}
+	if len(metaSvc.enrichMeta.TorrentComments) != 1 {
+		t.Fatalf("expected pathed torrent comments, got %d", len(metaSvc.enrichMeta.TorrentComments))
+	}
+	if !metaSvc.enrichMeta.FoundTrackerMatch {
+		t.Fatalf("expected tracker match flag")
+	}
+}
+
+func TestFetchMetadataPreviewUsesPathedPieceGuidanceWithFreshStoredSnapshot(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		PieceSizeConstraint: "16MiB",
+		FoundPreferredPiece: "16MiB",
+	}}
+	metaSvc := &stubMeta{prepared: api.PreparedMetadata{
+		StoredDataFresh: true,
+	}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    client,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.FetchMetadataPreview(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected pathed search to run once, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected tracker enrichment once, got %d calls", metaSvc.enrichCalls)
+	}
+	if metaSvc.enrichMeta.StoredDataFresh {
+		t.Fatalf("expected piece guidance to invalidate fresh snapshot for tracker enrichment")
+	}
+	if got := metaSvc.enrichMeta.PieceSizeConstraint; got != "16MiB" {
+		t.Fatalf("expected piece size constraint from pathed search, got %q", got)
+	}
+	if got := metaSvc.enrichMeta.FoundPreferredPiece; got != "16MiB" {
+		t.Fatalf("expected preferred piece from pathed search, got %q", got)
+	}
+	if got := metaSvc.enrichMeta.InfoHash; got != "" {
+		t.Fatalf("expected no infohash required for piece guidance, got %q", got)
+	}
+	if len(metaSvc.enrichMeta.TrackerIDs) != 0 {
+		t.Fatalf("expected no tracker ids required for piece guidance, got %#v", metaSvc.enrichMeta.TrackerIDs)
+	}
+	if len(metaSvc.enrichMeta.TorrentComments) != 0 {
+		t.Fatalf("expected no torrent comments required for piece guidance, got %#v", metaSvc.enrichMeta.TorrentComments)
+	}
+}
+
+func TestApplyPathedTorrentDataAppliesPieceGuidanceOnly(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{StoredDataFresh: true}
+
+	if !applyPathedTorrentData(&meta, api.ClientSearchResult{
+		PieceSizeConstraint: "16MiB",
+		FoundPreferredPiece: "16MiB",
+	}) {
+		t.Fatalf("expected piece guidance to count as pathed torrent data")
+	}
+	if meta.StoredDataFresh {
+		t.Fatalf("expected piece guidance to invalidate stored snapshot")
+	}
+	if meta.PieceSizeConstraint != "16MiB" {
+		t.Fatalf("expected piece constraint copied, got %q", meta.PieceSizeConstraint)
+	}
+	if meta.FoundPreferredPiece != "16MiB" {
+		t.Fatalf("expected preferred piece copied, got %q", meta.FoundPreferredPiece)
+	}
+}
+
+func TestCheckDupesUsesPathedTrackerDataWithFreshStoredSnapshot(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		InfoHash: "abc123",
+		TrackerIDs: map[string]string{
+			"aither": "111",
+		},
+		FoundTrackerMatch: true,
+		TorrentComments: []api.TorrentMatch{{
+			Hash: "abc123",
+			Name: "Fixture Title 2024 BluRay 1080p DTS x264-FixtureGroup",
+		}},
+		MatchedTrackers: []string{"AITHER"},
+	}}
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata: &stubMeta{prepared: api.PreparedMetadata{
+				StoredDataFresh: true,
+			}},
+			Clients: client,
+			Dupes:   dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.CheckDupes(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected pathed search to run once, got %d calls", client.searchCalls)
+	}
+	if dupes.lastMeta.StoredDataFresh {
+		t.Fatalf("expected client torrent data to invalidate fresh snapshot for dupe metadata")
+	}
+	if got := dupes.lastMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected pathed tracker id, got %q", got)
+	}
+	if got := dupes.lastMeta.InfoHash; got != "abc123" {
+		t.Fatalf("expected pathed infohash, got %q", got)
+	}
+}
+
+func TestFetchPreparationPreviewUsesCachedClientDataForCachedMeta(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	metaSvc := &stubMeta{}
+	trackerSvc := &stubTrackers{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    client,
+			Trackers:   trackerSvc,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	sourcePath := "/tmp/a"
+	core.storeDupeCache(sourcePath, "", api.PreparedMetadata{
+		SourcePath:        sourcePath,
+		Paths:             []string{sourcePath},
+		Mode:              api.ModeGUI,
+		Trackers:          []string{"AITHER", "RF", "BLU"},
+		MatchedTrackers:   []string{"AITHER", "RF"},
+		TrackersRemove:    []string{"AITHER", "RF"},
+		FoundTrackerMatch: true,
+		TrackerIDs: map[string]string{
+			"aither": "111",
+			"rf":     "222",
+		},
+	})
+
+	_, err = core.FetchPreparationPreview(context.Background(), api.Request{
+		Paths:    []string{sourcePath},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER", "RF", "BLU"},
+	})
+	if err != nil {
+		t.Fatalf("fetch preparation preview: %v", err)
+	}
+	if client.searchCalls != 0 {
+		t.Fatalf("expected cached preparation to skip fresh client search, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 0 {
+		t.Fatalf("expected cached preparation to skip tracker enrichment, got %d calls", metaSvc.enrichCalls)
+	}
+	if trackerSvc.prepCalls != 1 {
+		t.Fatalf("expected preparation build once, got %d calls", trackerSvc.prepCalls)
+	}
+	if got := trackerSvc.lastMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected cached AITHER tracker id, got %q", got)
+	}
+	if got := trackerSvc.lastMeta.TrackerIDs["rf"]; got != "222" {
+		t.Fatalf("expected cached RF tracker id, got %q", got)
+	}
+	if !containsCoreString(trackerSvc.lastMeta.MatchedTrackers, "AITHER") {
+		t.Fatalf("expected cached AITHER match, got %v", trackerSvc.lastMeta.MatchedTrackers)
+	}
+	if !containsCoreString(trackerSvc.lastMeta.MatchedTrackers, "RF") {
+		t.Fatalf("expected cached RF match, got %v", trackerSvc.lastMeta.MatchedTrackers)
+	}
+	if !containsCoreString(trackerSvc.lastMeta.TrackersRemove, "AITHER") {
+		t.Fatalf("expected cached AITHER removal, got %v", trackerSvc.lastMeta.TrackersRemove)
+	}
+	if !containsCoreString(trackerSvc.lastMeta.TrackersRemove, "RF") {
+		t.Fatalf("expected cached RF removal, got %v", trackerSvc.lastMeta.TrackersRemove)
+	}
+	if containsCoreString(trackerSvc.lastTrackers, "AITHER") {
+		t.Fatalf("expected matched tracker excluded from preparation, got %v", trackerSvc.lastTrackers)
+	}
+	if containsCoreString(trackerSvc.lastTrackers, "RF") {
+		t.Fatalf("expected RF excluded from preparation, got %v", trackerSvc.lastTrackers)
 	}
 }
 
@@ -2465,10 +2773,13 @@ func (s stubFS) ValidatePaths(_ context.Context, paths []string) ([]string, erro
 
 type stubMeta struct {
 	calls        int
+	enrichCalls  int
 	refreshCalls int
 	resolveCalls int
 	options      api.UploadOptions
 	prepared     api.PreparedMetadata
+	enrichMeta   api.PreparedMetadata
+	enriched     api.PreparedMetadata
 	resolved     api.PreparedMetadata
 }
 
@@ -2500,6 +2811,11 @@ func (s *stubMeta) RefreshPreparedMetadata(_ context.Context, meta api.PreparedM
 }
 
 func (s *stubMeta) EnrichTrackerData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	s.enrichCalls++
+	s.enrichMeta = meta
+	if strings.TrimSpace(s.enriched.SourcePath) != "" {
+		return s.enriched, nil
+	}
 	return meta, nil
 }
 
@@ -2600,10 +2916,12 @@ func (s *stubDupes) Check(_ context.Context, meta api.PreparedMetadata, trackers
 }
 
 type stubTrackers struct {
-	calls       int
-	dryRunCalls int
-	lastMeta    api.PreparedMetadata
-	summary     api.UploadSummary
+	calls        int
+	prepCalls    int
+	dryRunCalls  int
+	lastMeta     api.PreparedMetadata
+	lastTrackers []string
+	summary      api.UploadSummary
 }
 
 func (s *stubTrackers) Upload(_ context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
@@ -2625,12 +2943,16 @@ func (s *stubTrackers) Upload(_ context.Context, meta api.PreparedMetadata) (api
 	return s.summary, nil
 }
 
-func (s *stubTrackers) BuildPreparation(context.Context, api.PreparedMetadata, []string) (api.PreparationPreview, error) {
+func (s *stubTrackers) BuildPreparation(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.PreparationPreview, error) {
+	s.prepCalls++
+	s.lastMeta = meta
+	s.lastTrackers = append([]string{}, trackers...)
 	return api.PreparationPreview{}, nil
 }
 
-func (s *stubTrackers) BuildUploadDryRun(_ context.Context, meta api.PreparedMetadata, _ []string) ([]api.TrackerDryRunEntry, error) {
+func (s *stubTrackers) BuildUploadDryRun(_ context.Context, meta api.PreparedMetadata, trackers []string) ([]api.TrackerDryRunEntry, error) {
 	s.dryRunCalls++
 	s.lastMeta = meta
+	s.lastTrackers = append([]string{}, trackers...)
 	return []api.TrackerDryRunEntry{}, nil
 }
