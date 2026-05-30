@@ -197,6 +197,69 @@ func TestBackendFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
 	}
 }
 
+func TestBackendSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "backend-save-config.db")
+	repo, err := db.OpenWithLogger(repoPath, nil)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	initial := config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+	backend := &Backend{
+		cfg:  initial,
+		repo: repo,
+		hub:  newEventHub(),
+	}
+	t.Cleanup(func() {
+		if coreSvc := backend.currentCore(); coreSvc != nil {
+			_ = coreSvc.Close()
+		}
+		if logger := backend.currentLogger(); logger != nil {
+			_ = logger.Close()
+		}
+	})
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	updated.Metadata.KeepImages = true
+	updated.ScreenshotHandling.Screens = 5
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	if err := backend.SaveConfig(payload); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	runtimeCfg := backend.currentConfig()
+	if !runtimeCfg.Metadata.SkipAutoTorrent || !runtimeCfg.Metadata.KeepImages {
+		t.Fatalf("expected metadata settings applied, got %#v", runtimeCfg.Metadata)
+	}
+	if runtimeCfg.ScreenshotHandling.Screens != 5 {
+		t.Fatalf("expected screenshots=5, got %d", runtimeCfg.ScreenshotHandling.Screens)
+	}
+	if backend.currentCore() == nil {
+		t.Fatal("expected runtime core to be rebuilt")
+	}
+	options := buildRunUploadOptions(runtimeCfg, runOptions{})
+	if !options.SkipAutoTorrent || !options.KeepImages || options.Screens != 5 {
+		t.Fatalf("expected upload options from saved config, got %#v", options)
+	}
+}
+
 func TestBuildRunUploadOptionsPropagatesSkipAutoTorrent(t *testing.T) {
 	t.Parallel()
 

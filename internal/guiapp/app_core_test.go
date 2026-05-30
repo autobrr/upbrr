@@ -56,6 +56,67 @@ func TestFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
 	}
 }
 
+func TestSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "save-config.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+	initial := config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+	t.Cleanup(func() {
+		if coreSvc := app.currentCore(); coreSvc != nil {
+			_ = coreSvc.Close()
+		}
+		if logger := app.currentLogger(); logger != nil {
+			_ = logger.Close()
+		}
+	})
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	updated.Metadata.OnlyID = true
+	updated.ScreenshotHandling.Screens = 4
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	if err := app.SaveConfig(payload); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	runtimeCfg := app.currentConfig()
+	if !runtimeCfg.Metadata.SkipAutoTorrent || !runtimeCfg.Metadata.OnlyID {
+		t.Fatalf("expected metadata settings applied, got %#v", runtimeCfg.Metadata)
+	}
+	if runtimeCfg.ScreenshotHandling.Screens != 4 {
+		t.Fatalf("expected screenshots=4, got %d", runtimeCfg.ScreenshotHandling.Screens)
+	}
+	if app.currentCore() == nil {
+		t.Fatal("expected runtime core to be rebuilt")
+	}
+	options := buildRunUploadOptions(runtimeCfg, runOptions{})
+	if !options.SkipAutoTorrent || !options.OnlyID || options.Screens != 4 {
+		t.Fatalf("expected upload options from saved config, got %#v", options)
+	}
+}
+
 func TestListHistoryUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	t.Parallel()
 
