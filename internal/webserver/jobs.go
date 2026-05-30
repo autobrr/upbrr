@@ -281,14 +281,10 @@ func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 	})
 
 	req := api.Request{
-		Paths:    []string{job.sourcePath},
-		Mode:     api.ModeGUI,
-		Trackers: job.trackers,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Paths:                []string{job.sourcePath},
+		Mode:                 api.ModeGUI,
+		Trackers:             job.trackers,
+		Options:              buildBaseMetadataOptions(b.cfg),
 		ExternalIDOverrides:  job.overrides,
 		ReleaseNameOverrides: job.nameOverrides,
 	}

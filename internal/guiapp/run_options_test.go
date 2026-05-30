@@ -33,6 +33,7 @@ type closeCounterCore struct {
 	exportErr    error
 	importedMeta api.PreparedMetadata
 	importedReq  api.Request
+	fetchReq     api.Request
 }
 
 func (c *closeCounterCore) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -43,7 +44,8 @@ func (c *closeCounterCore) RunUploadPrepared(context.Context, api.Request) (api.
 	return api.Result{}, nil
 }
 
-func (c *closeCounterCore) FetchMetadataPreview(context.Context, api.Request) (api.MetadataPreview, error) {
+func (c *closeCounterCore) FetchMetadataPreview(_ context.Context, req api.Request) (api.MetadataPreview, error) {
+	c.fetchReq = req
 	return api.MetadataPreview{}, nil
 }
 
@@ -196,6 +198,17 @@ func TestBuildRunOptionsRejectsInvalidLogLevel(t *testing.T) {
 	app := &App{}
 	if _, err := app.buildRunOptions(false, "verbose"); err == nil {
 		t.Fatal("expected invalid log level to fail")
+	}
+}
+
+func TestBuildRunUploadOptionsPropagatesSkipAutoTorrent(t *testing.T) {
+	t.Parallel()
+
+	options := buildRunUploadOptions(config.Config{
+		Metadata: config.MetadataConfig{SkipAutoTorrent: true},
+	}, runOptions{})
+	if !options.SkipAutoTorrent {
+		t.Fatalf("expected skip_auto_torrent upload option, got %#v", options)
 	}
 }
 

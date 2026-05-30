@@ -543,7 +543,7 @@ func TestRunUploadDefaultsScreens(t *testing.T) {
 			Clients:    &stubClient{},
 			Trackers:   tracker,
 		},
-		Repository: &stubRepo{},
+		Repository: trackerRepo{},
 	})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
@@ -701,7 +701,7 @@ func TestRunUploadSkipsPathedSearchWithStoredInfoHash(t *testing.T) {
 			Clients:  client,
 			Trackers: &stubTrackers{},
 		},
-		Repository: &stubRepo{},
+		Repository: trackerRepo{},
 	})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
@@ -794,13 +794,13 @@ func TestFetchMetadataPreviewSkipAutoTorrentSkipsPathedSearch(t *testing.T) {
 			Metadata:   &stubMeta{},
 			Clients:    client,
 		},
-		Repository: &stubRepo{},
+		Repository: trackerRepo{},
 	})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
 	}
 
-	_, err = core.FetchMetadataPreview(context.Background(), api.Request{
+	preview, err := core.FetchMetadataPreview(context.Background(), api.Request{
 		Paths: []string{"/tmp/a"},
 		Mode:  api.ModeGUI,
 		Options: api.UploadOptions{
@@ -812,6 +812,45 @@ func TestFetchMetadataPreviewSkipAutoTorrentSkipsPathedSearch(t *testing.T) {
 	}
 	if client.searchCalls != 0 {
 		t.Fatalf("expected pathed search skipped, got %d calls", client.searchCalls)
+	}
+	if len(preview.TrackerData) != 0 {
+		t.Fatalf("expected stored tracker metadata ignored, got %#v", preview.TrackerData)
+	}
+}
+
+func TestFetchMetadataPreviewSkipAutoTorrentFromConfigSkipsPathedSearch(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			Metadata:           config.MetadataConfig{SkipAutoTorrent: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Clients:    client,
+		},
+		Repository: trackerRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	preview, err := core.FetchMetadataPreview(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if client.searchCalls != 0 {
+		t.Fatalf("expected pathed search skipped from config, got %d calls", client.searchCalls)
+	}
+	if len(preview.TrackerData) != 0 {
+		t.Fatalf("expected stored tracker metadata ignored, got %#v", preview.TrackerData)
 	}
 }
 
@@ -917,6 +956,41 @@ func TestCheckDupesSkipAutoTorrentSkipsPathedSearch(t *testing.T) {
 	}
 	if client.searchCalls != 0 {
 		t.Fatalf("expected pathed search skipped, got %d calls", client.searchCalls)
+	}
+}
+
+func TestCheckDupesSkipAutoTorrentFromConfigSkipsPathedSearch(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			Metadata:           config.MetadataConfig{SkipAutoTorrent: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Clients:    client,
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.CheckDupes(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("check duplicates: %v", err)
+	}
+	if client.searchCalls != 0 {
+		t.Fatalf("expected pathed search skipped from config, got %d calls", client.searchCalls)
 	}
 }
 

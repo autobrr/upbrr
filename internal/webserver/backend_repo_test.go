@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestBackendApplyConfigKeepsSharedRepositoryUsable(t *testing.T) {
@@ -171,6 +172,39 @@ func TestBackendGetLogExclusionsReturnsEmptySliceWhenMissing(t *testing.T) {
 	}
 	if len(patterns) != 0 {
 		t.Fatalf("expected no exclusions, got %#v", patterns)
+	}
+}
+
+func TestBackendFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &preparedMetaTestCore{}
+	backend := &Backend{
+		cfg: config.Config{
+			Metadata:           config.MetadataConfig{SkipAutoTorrent: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 3},
+		},
+		core: coreSvc,
+		hub:  newEventHub(),
+	}
+
+	_, err := backend.FetchMetadata("session", "C:\\releases\\Example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, false)
+	if err != nil {
+		t.Fatalf("fetch metadata: %v", err)
+	}
+	if !coreSvc.fetchReq.Options.SkipAutoTorrent {
+		t.Fatalf("expected skip_auto_torrent request option, got %#v", coreSvc.fetchReq.Options)
+	}
+}
+
+func TestBuildRunUploadOptionsPropagatesSkipAutoTorrent(t *testing.T) {
+	t.Parallel()
+
+	options := buildRunUploadOptions(config.Config{
+		Metadata: config.MetadataConfig{SkipAutoTorrent: true},
+	}, runOptions{})
+	if !options.SkipAutoTorrent {
+		t.Fatalf("expected skip_auto_torrent upload option, got %#v", options)
 	}
 }
 

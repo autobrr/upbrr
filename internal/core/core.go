@@ -2466,6 +2466,10 @@ func (c *Core) applyStoredTrackerData(ctx context.Context, meta *api.PreparedMet
 	if c.repo == nil || meta == nil {
 		return false, nil
 	}
+	if meta.Options.SkipAutoTorrent {
+		c.logger.Debugf("core: skip_auto_torrent enabled, ignoring stored tracker metadata for %s", meta.SourcePath)
+		return false, nil
+	}
 	path := strings.TrimSpace(meta.SourcePath)
 	if path == "" {
 		return false, nil

@@ -73,11 +73,12 @@ func (a *App) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
 }
 func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions {
 	return api.UploadOptions{
-		Debug:       opts.Debug,
-		DryRun:      opts.Debug,
-		RunLogLevel: opts.RunLogLevel,
-		Screens:     cfg.ScreenshotHandling.Screens,
-		OnlyID:      cfg.Metadata.OnlyID,
-		KeepImages:  cfg.Metadata.KeepImages,
+		Debug:           opts.Debug,
+		DryRun:          opts.Debug,
+		RunLogLevel:     opts.RunLogLevel,
+		Screens:         cfg.ScreenshotHandling.Screens,
+		SkipAutoTorrent: cfg.Metadata.SkipAutoTorrent,
+		OnlyID:          cfg.Metadata.OnlyID,
+		KeepImages:      cfg.Metadata.KeepImages,
 	}
 }

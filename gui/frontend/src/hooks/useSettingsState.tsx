@@ -938,6 +938,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   useEffect(() => {
     if (
       (activeTab === "input" ||
+        activeTab === "tracker" ||
         activeTab === "settings" ||
         activeTab === "logging" ||
         activeTab === "upload" ||

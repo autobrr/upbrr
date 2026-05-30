@@ -35,6 +35,27 @@ func TestFetchMetadataReportsCoreValidationFailure(t *testing.T) {
 	}
 }
 
+func TestFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &closeCounterCore{}
+	app := &App{
+		cfg: config.Config{
+			Metadata:           config.MetadataConfig{SkipAutoTorrent: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 3},
+		},
+		core: coreSvc,
+	}
+
+	_, err := app.FetchMetadata("C:\\releases\\Example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil)
+	if err != nil {
+		t.Fatalf("fetch metadata: %v", err)
+	}
+	if !coreSvc.fetchReq.Options.SkipAutoTorrent {
+		t.Fatalf("expected skip_auto_torrent request option, got %#v", coreSvc.fetchReq.Options)
+	}
+}
+
 func TestListHistoryUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	t.Parallel()
 
