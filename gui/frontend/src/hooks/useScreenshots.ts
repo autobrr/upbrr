@@ -32,7 +32,6 @@ export const useScreenshots = ({
   // State: UI controls
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [screenshotsError, setScreenshotsError] = useState("");
-  const [screenshotsEnabled, setScreenshotsEnabled] = useState(false);
   const [screenshotsSettingsSaving, setScreenshotsSettingsSaving] = useState(false);
   const [showFrameSelections, setShowFrameSelections] = useState(false);
 
@@ -680,7 +679,6 @@ export const useScreenshots = ({
     setScreenshotSelections([]);
     setScreenshotsLoading(false);
     setScreenshotsError("");
-    setScreenshotsEnabled(false);
     setShowFrameSelections(false);
     setPreviewLoadingIndex(null);
     setPreviewImages([]);
@@ -747,7 +745,6 @@ export const useScreenshots = ({
     screenshotSelections,
     screenshotsLoading,
     screenshotsError,
-    screenshotsEnabled,
     screenshotsSettingsSaving,
     showFrameSelections,
     livePreviewSeconds,
@@ -777,7 +774,6 @@ export const useScreenshots = ({
     setScreenshotSelections,
     setScreenshotsLoading,
     setScreenshotsError,
-    setScreenshotsEnabled,
     setScreenshotsSettingsSaving,
     setShowFrameSelections,
     setLivePreviewSeconds,

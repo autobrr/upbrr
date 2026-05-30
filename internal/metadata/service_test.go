@@ -207,7 +207,8 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
+	mediaInfo := &recordingMediaInfo{}
+	service := NewService(repo, WithMediaInfoExporter(mediaInfo), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
 
 	originalDiscover := discoverBDMVPlaylists
 	originalParse := parseBDMVPlaylist
@@ -324,8 +325,12 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 	if playlistScans != 0 {
 		t.Fatalf("expected 0 playlist scans, got %d", playlistScans)
 	}
-	if got, want := meta.VideoPath, filepath.Join(bdmvPath, "STREAM", "00003.m2ts"); got != want {
+	wantMainFile := filepath.Join(bdmvPath, "STREAM", "00003.m2ts")
+	if got, want := meta.VideoPath, wantMainFile; got != want {
 		t.Fatalf("expected main file %q, got %q", want, got)
+	}
+	if mediaInfo.request.VideoPath != wantMainFile {
+		t.Fatalf("expected mediainfo target %q, got %q", wantMainFile, mediaInfo.request.VideoPath)
 	}
 	wantFiles := []string{
 		filepath.Join(bdmvPath, "STREAM", "00001.m2ts"),
@@ -856,6 +861,15 @@ type stubRepo struct {
 type stubMediaInfo struct{}
 
 func (stubMediaInfo) Export(context.Context, mediainfo.Request) (mediainfo.Result, error) {
+	return mediainfo.Result{}, nil
+}
+
+type recordingMediaInfo struct {
+	request mediainfo.Request
+}
+
+func (r *recordingMediaInfo) Export(_ context.Context, req mediainfo.Request) (mediainfo.Result, error) {
+	r.request = req
 	return mediainfo.Result{}, nil
 }
 

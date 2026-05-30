@@ -1268,10 +1268,8 @@ export default function App() {
     livePreviewImage,
     setLivePreviewImage,
     livePreviewRequestId,
-    screenshotsEnabled,
     setScreenshotPlan,
     setScreenshotSelections,
-    setScreenshotsEnabled,
     screenshotsSettingsSaving,
     setScreenshotsSettingsSaving,
     setShowFrameSelections,
@@ -1361,9 +1359,6 @@ export default function App() {
       if (state.prepPreview) setPrepPreview({ ...emptyPreparation, ...state.prepPreview });
       if (state.screenshotPlan !== undefined) setScreenshotPlan(state.screenshotPlan);
       if (state.screenshotSelections) setScreenshotSelections(state.screenshotSelections);
-      if (typeof state.screenshotsEnabled === "boolean") {
-        setScreenshotsEnabled(state.screenshotsEnabled);
-      }
       if (typeof state.showFrameSelections === "boolean") {
         setShowFrameSelections(state.showFrameSelections);
       }
@@ -1393,7 +1388,6 @@ export default function App() {
       setFinalResult,
       setScreenshotPlan,
       setScreenshotSelections,
-      setScreenshotsEnabled,
       setShowFrameSelections,
       setUploadHost,
       setUploadSelections,
@@ -1618,7 +1612,6 @@ export default function App() {
       prepPreview,
       screenshotPlan: screenshots.screenshotPlan,
       screenshotSelections: screenshots.screenshotSelections,
-      screenshotsEnabled: screenshots.screenshotsEnabled,
       showFrameSelections: screenshots.showFrameSelections,
       finalResult: screenshots.finalResult,
       deletedTrackerImages: screenshots.deletedTrackerImages,
@@ -1704,7 +1697,6 @@ export default function App() {
     prepPreview,
     screenshots.screenshotPlan,
     screenshots.screenshotSelections,
-    screenshots.screenshotsEnabled,
     screenshots.showFrameSelections,
     screenshots.finalResult,
     screenshots.deletedTrackerImages,
@@ -1823,7 +1815,6 @@ export default function App() {
       prepPreview,
       screenshotPlan: screenshots.screenshotPlan,
       screenshotSelections: screenshots.screenshotSelections,
-      screenshotsEnabled: screenshots.screenshotsEnabled,
       showFrameSelections: screenshots.showFrameSelections,
       finalResult: screenshots.finalResult,
       deletedTrackerImages: screenshots.deletedTrackerImages,
@@ -1860,7 +1851,6 @@ export default function App() {
       prepPreview,
       screenshots.screenshotPlan,
       screenshots.screenshotSelections,
-      screenshots.screenshotsEnabled,
       screenshots.showFrameSelections,
       screenshots.finalResult,
       screenshots.deletedTrackerImages,
@@ -2975,10 +2965,6 @@ export default function App() {
 
   const runLivePreviewAt = async (timestampSeconds: number) => {
     setLivePreviewError("");
-    if (!screenshotsEnabled) {
-      setLivePreviewError("Enable screenshot capture to generate previews.");
-      return;
-    }
     if (!path.trim()) {
       setLivePreviewError("Please select a file or folder.");
       return;
@@ -3034,10 +3020,6 @@ export default function App() {
 
   const handlePreviewSelection = async (selection: ScreenshotSelection) => {
     screenshots.setScreenshotsError("");
-    if (!screenshotsEnabled) {
-      screenshots.setScreenshotsError("Enable screenshot capture to generate previews.");
-      return;
-    }
     if (!path.trim()) {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
@@ -3070,10 +3052,6 @@ export default function App() {
 
   const handleCapturePreviewFrame = async () => {
     screenshots.setScreenshotsError("");
-    if (!screenshotsEnabled) {
-      screenshots.setScreenshotsError("Enable screenshot capture to save previews.");
-      return;
-    }
     if (!path.trim()) {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
@@ -3204,10 +3182,6 @@ export default function App() {
 
   const handleGenerateScreenshots = async () => {
     screenshots.setScreenshotsError("");
-    if (!screenshotsEnabled) {
-      screenshots.setScreenshotsError("Enable screenshot capture to generate screenshots.");
-      return;
-    }
     if (!path.trim()) {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
@@ -4288,8 +4262,6 @@ export default function App() {
               screenshotPlan={screenshots.screenshotPlan}
               screenshotsLoading={screenshots.screenshotsLoading}
               screenshotsError={screenshots.screenshotsError}
-              screenshotsEnabled={screenshotsEnabled}
-              setScreenshotsEnabled={setScreenshotsEnabled}
               loadScreenshotPlan={screenshots.loadScreenshotPlan}
               handleGenerateScreenshots={handleGenerateScreenshots}
               screenshotConfig={screenshotConfig}

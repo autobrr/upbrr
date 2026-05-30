@@ -962,7 +962,6 @@ export type UIState = {
   prepPreview?: PreparationPreview;
   screenshotPlan?: ScreenshotPlan | null;
   screenshotSelections?: ScreenshotSelection[];
-  screenshotsEnabled?: boolean;
   showFrameSelections?: boolean;
   previewImages?: ScreenshotPreviewImage[];
   existingImages?: ScreenshotPreviewImage[];
