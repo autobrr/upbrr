@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
 import { PillCheckbox } from "../../components/ui/checkbox";
@@ -27,6 +27,7 @@ import type {
   TMDBNetwork,
   TrackerUploadItem,
 } from "../../types";
+import type { SourcePathHistoryEntry } from "../../utils/inputHistory";
 
 const compactInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
@@ -561,7 +562,9 @@ type IDEdits = {
 
 type Props = Readonly<{
   path: string;
-  setPath: Dispatch<SetStateAction<string>>;
+  handleSourcePathChange: (path: string) => void;
+  sourcePathHistory: SourcePathHistoryEntry[];
+  handleSourcePathHistorySelect: (entry: SourcePathHistoryEntry) => void;
   sourceLookupURL: string;
   setSourceLookupURL: Dispatch<SetStateAction<string>>;
   browseAvailable: boolean;
@@ -603,7 +606,9 @@ type Props = Readonly<{
 export default function InputPage(props: Props) {
   const {
     path,
-    setPath,
+    handleSourcePathChange,
+    sourcePathHistory,
+    handleSourcePathHistorySelect,
     sourceLookupURL,
     setSourceLookupURL,
     browseAvailable,
@@ -641,6 +646,42 @@ export default function InputPage(props: Props) {
     runLogLevelTouched,
     setRunLogLevelTouched,
   } = props;
+
+  const [sourcePathHistoryOpen, setSourcePathHistoryOpen] = useState(false);
+  const sourcePathHistoryRef = useRef<HTMLDivElement | null>(null);
+  const sourcePathHistoryAvailable = sourcePathHistory.length > 0;
+
+  useEffect(() => {
+    if (!sourcePathHistoryOpen) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || sourcePathHistoryRef.current?.contains(target)) {
+        return;
+      }
+      setSourcePathHistoryOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [sourcePathHistoryOpen]);
+
+  useEffect(() => {
+    if (!sourcePathHistoryAvailable) {
+      setSourcePathHistoryOpen(false);
+    }
+  }, [sourcePathHistoryAvailable]);
+
+  const openSourcePathHistory = () => {
+    if (sourcePathHistoryAvailable) {
+      setSourcePathHistoryOpen(true);
+    }
+  };
+
+  const selectSourcePathHistory = (entry: SourcePathHistoryEntry) => {
+    setSourcePathHistoryOpen(false);
+    handleSourcePathHistorySelect(entry);
+  };
 
   const hasPreview =
     preview.ReleaseName || (preview.ExternalIDInfo && preview.ExternalIDInfo.length > 0);
@@ -850,19 +891,53 @@ export default function InputPage(props: Props) {
                 </span>
               </label>
 
-              <label className="grid gap-1.5 text-sm text-[var(--muted)]" htmlFor="source-path">
-                <span>Source path</span>
-                <input
-                  id="source-path"
-                  className={compactInputClass}
-                  value={path}
-                  onChange={(event) => setPath(event.target.value)}
-                  placeholder="Select a file or folder"
-                />
+              <div className="grid gap-1.5 text-sm text-[var(--muted)]" ref={sourcePathHistoryRef}>
+                <label htmlFor="source-path">Source path</label>
+                <div className="source-path-input-shell">
+                  <input
+                    id="source-path"
+                    className={`${compactInputClass} source-path-input`}
+                    value={path}
+                    onChange={(event) => handleSourcePathChange(event.target.value)}
+                    onFocus={openSourcePathHistory}
+                    onClick={openSourcePathHistory}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setSourcePathHistoryOpen(false);
+                      }
+                    }}
+                    placeholder="Select a file or folder"
+                    aria-autocomplete="list"
+                    aria-expanded={sourcePathHistoryOpen}
+                    aria-haspopup="listbox"
+                    aria-controls="source-path-history"
+                  />
+                  {sourcePathHistoryOpen ? (
+                    <div
+                      id="source-path-history"
+                      className="source-path-history"
+                      role="listbox"
+                      aria-label="Source path history"
+                    >
+                      {sourcePathHistory.map((entry) => (
+                        <button
+                          key={entry.path}
+                          className="source-path-history__item"
+                          type="button"
+                          role="option"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => selectSourcePathHistory(entry)}
+                        >
+                          <span className="mono">{entry.path}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
                 <span className="text-xs leading-tight text-[var(--muted)]">
                   {discHint || "File, disc folder, or Season Pack folder."}
                 </span>
-              </label>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2 max-[1100px]:justify-start">

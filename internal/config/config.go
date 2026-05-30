@@ -34,12 +34,37 @@ type Config struct {
 	TorrentClients     map[string]TorrentClientConfig `yaml:"torrent_clients"`
 }
 
+const DefaultInputHistoryLimit = 20
+
 type MainSettingsConfig struct {
 	UpdateNotification  bool   `yaml:"update_notification"`
 	VerboseNotification bool   `yaml:"verbose_notification"`
 	TMDBAPI             string `yaml:"tmdb_api"`
 	TrackerPassChecks   int    `yaml:"tracker_pass_checks"`
+	InputHistoryLimit   int    `yaml:"input_history_limit"`
 	DBPath              string `yaml:"db_path"`
+}
+
+type mainSettingsConfigAlias MainSettingsConfig
+
+func (c *MainSettingsConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw mainSettingsConfigAlias
+	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	if err := value.Decode(&raw); err != nil {
+		return fmt.Errorf("config: decode main settings yaml: %w", err)
+	}
+	*c = MainSettingsConfig(raw)
+	return nil
+}
+
+func (c *MainSettingsConfig) UnmarshalJSON(data []byte) error {
+	var raw mainSettingsConfigAlias
+	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("config: decode main settings json: %w", err)
+	}
+	*c = MainSettingsConfig(raw)
+	return nil
 }
 
 type ImageHostingConfig struct {
@@ -669,6 +694,9 @@ type TorrentClientConfig struct {
 func (c Config) Validate() error {
 	if c.MainSettings.TMDBAPI == "" {
 		return errors.New("config: main_settings.tmdb_api is required")
+	}
+	if c.MainSettings.InputHistoryLimit < 0 {
+		return errors.New("config: main_settings.input_history_limit must be zero or greater")
 	}
 	if c.ScreenshotHandling.Screens <= 0 {
 		return errors.New("config: screenshot_handling.screens must be greater than zero")
