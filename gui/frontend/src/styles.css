@@ -137,8 +137,7 @@ body {
   font-weight: 500;
 }
 
-.settings-toggle,
-.screens-toggle {
+.settings-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;

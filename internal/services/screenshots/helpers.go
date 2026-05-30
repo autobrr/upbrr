@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -35,6 +36,8 @@ type mediaInfoDoc struct {
 	} `json:"media"`
 }
 
+var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
+
 func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot string) (videoInfo, error) {
 	info := videoInfo{}
 
@@ -55,6 +58,12 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		if filePath, ok, err := selectBDMVFileFromMetadata(ctx, meta); err != nil {
+			return info, err
+		} else if ok {
+			info.SourcePath = filePath
+		}
+
 		bdinfo, err := loadBDInfo(tmpRoot, meta)
 		if err != nil {
 			return info, err
@@ -66,8 +75,11 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 			if info.FrameRate <= 0 {
 				info.FrameRate = parseFPS(bdinfo)
 			}
-			if filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo); err == nil {
-				info.SourcePath = filePath
+			if info.SourcePath == "" {
+				filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo)
+				if err == nil {
+					info.SourcePath = filePath
+				}
 			}
 		}
 	}
@@ -97,6 +109,12 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		if filePath, ok, err := selectBDMVFileFromMetadata(ctx, meta); err != nil {
+			return "", err
+		} else if ok {
+			return filePath, nil
+		}
+
 		bdinfo, err := loadBDInfo(tmpRoot, meta)
 		if err != nil {
 			return "", err
@@ -119,6 +137,83 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 	}
 
 	return basePath, nil
+}
+
+func selectBDMVFileFromMetadata(ctx context.Context, meta api.PreparedMetadata) (string, bool, error) {
+	if fileName := largestSelectedBDMVPlaylistItem(meta.SelectedBDMVPlaylists); fileName != "" {
+		if videoPath := strings.TrimSpace(meta.VideoPath); videoPath != "" && strings.EqualFold(filepath.Base(videoPath), fileName) {
+			return videoPath, true, nil
+		}
+
+		filePath, err := findBDMVFile(ctx, meta.SourcePath, fileName)
+		if err != nil {
+			return "", false, err
+		}
+		return filePath, true, nil
+	}
+
+	if videoPath := strings.TrimSpace(meta.VideoPath); videoPath != "" {
+		return videoPath, true, nil
+	}
+
+	return "", false, nil
+}
+
+func largestSelectedBDMVPlaylistItem(playlists []api.PlaylistInfo) string {
+	largestFile := ""
+	largestSize := int64(-1)
+	for _, playlist := range playlists {
+		for _, item := range playlist.Items {
+			fileName := strings.TrimSpace(item.File)
+			if fileName == "" || item.Size <= largestSize {
+				continue
+			}
+			largestFile = fileName
+			largestSize = item.Size
+		}
+	}
+	if largestSize <= 0 {
+		return ""
+	}
+	return largestFile
+}
+
+func findBDMVFile(ctx context.Context, root string, fileName string) (string, error) {
+	trimmedRoot := strings.TrimSpace(root)
+	if trimmedRoot == "" {
+		return "", errors.New("screenshots: BDMV root required")
+	}
+	trimmedFile := strings.TrimSpace(fileName)
+	if trimmedFile == "" {
+		return "", errors.New("screenshots: BDMV file required")
+	}
+
+	var found string
+	walkErr := filepath.WalkDir(trimmedRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context canceled: %w", ctx.Err())
+		default:
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if strings.EqualFold(entry.Name(), trimmedFile) {
+			found = path
+			return errFound
+		}
+		return nil
+	})
+	if walkErr != nil && !errors.Is(walkErr, context.Canceled) && !errors.Is(walkErr, errFound) {
+		return "", fmt.Errorf("screenshots: scan BDMV files: %w", walkErr)
+	}
+	if found == "" {
+		return "", errors.New("screenshots: BDMV file not found")
+	}
+	return found, nil
 }
 
 func loadMediaInfoDoc(path string) (mediaInfoDoc, error) {
@@ -254,14 +349,38 @@ func parseDurationValue(value string) float64 {
 	if strings.Contains(trimmed, ":") {
 		return parseDurationSeconds(trimmed)
 	}
+	if seconds := parseDurationTokens(trimmed); seconds > 0 {
+		return seconds
+	}
 	seconds := parseFloat(trimmed)
 	if seconds <= 0 {
 		return 0
 	}
-	if seconds > 10000 {
-		return seconds / 1000
-	}
 	return seconds
+}
+
+func parseDurationTokens(value string) float64 {
+	var total float64
+	for _, match := range durationTokenPattern.FindAllStringSubmatch(value, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		amount := parseFloat(match[1])
+		if amount <= 0 {
+			continue
+		}
+		switch strings.ToLower(match[2]) {
+		case "h", "hr", "hrs", "hour", "hours":
+			total += amount * 3600
+		case "m", "min", "mins", "minute", "minutes":
+			total += amount * 60
+		case "s", "sec", "secs", "second", "seconds":
+			total += amount
+		case "ms", "msec", "msecs", "millisecond", "milliseconds":
+			total += amount / 1000
+		}
+	}
+	return total
 }
 
 func parseDurationSeconds(value string) float64 {
@@ -370,32 +489,7 @@ func selectBDMVFile(ctx context.Context, root string, info *discparse.BDInfo) (s
 		return "", errors.New("screenshots: no bdinfo file selected")
 	}
 
-	var found string
-	walkErr := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context canceled: %w", ctx.Err())
-		default:
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if strings.EqualFold(entry.Name(), longest) {
-			found = path
-			return errFound
-		}
-		return nil
-	})
-	if walkErr != nil && !errors.Is(walkErr, context.Canceled) && !errors.Is(walkErr, errFound) {
-		return "", fmt.Errorf("screenshots: scan bdinfo files: %w", walkErr)
-	}
-	if found == "" {
-		return "", errors.New("screenshots: bdinfo file not found")
-	}
-	return found, nil
+	return findBDMVFile(ctx, root, longest)
 }
 
 func selectDVDVOB(ctx context.Context, root string) (string, error) {
