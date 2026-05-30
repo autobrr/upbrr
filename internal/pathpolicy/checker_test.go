@@ -190,6 +190,50 @@ func check(dbPath string) bool {
 	}
 }
 
+func TestCheckRepositoryFlagsAdHocPathGuards(t *testing.T) {
+	root := t.TempDir()
+	writeSample(t, root, "internal/sample/sample.go", `package sample
+
+func pathWithinRoot(root string, target string) bool {
+	return root == target
+}
+
+func samePath(left string, right string) bool {
+	return left == right
+}
+`)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	}
+	messages := strings.Join(violationMessages(violations), "\n")
+	if !strings.Contains(messages, "internal/pathutil") {
+		t.Fatalf("expected pathutil violation, got %q", messages)
+	}
+}
+
+func TestCheckRepositoryAllowsPathutilPathGuards(t *testing.T) {
+	root := t.TempDir()
+	writeSample(t, root, "internal/pathutil/pathutil.go", `package pathutil
+
+func IsWithinRoot(root string, target string) bool {
+	return root == target
+}
+`)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryAllowsIntentionalPathPolicyComments(t *testing.T) {
 	root := t.TempDir()
 	writeSample(t, root, "internal/sample/sample_test.go", `package sample

@@ -3,7 +3,7 @@
 ## Source Of Truth
 
 - Contributor setup/platform notes/Makefile targets/build commands/tests/hooks/commit format: `CONTRIBUTING.md`.
-- Tool wiring: `Makefile`, `lefthook.yml`, `.golangci.yml`, `gui/frontend/package.json`, `.github/workflows/*.yml`.
+- Tool wiring: `Makefile`, `lefthook.yml`, `.golangci.yml`, `gui/frontend/package.json`, `.github/workflows/*`.
 - Docs disagree? Tool config wins. Update prose; don't copy stale commands.
 
 ## Quick Commands
@@ -40,8 +40,9 @@ Use `CONTRIBUTING.md` for full command reference/platform details. Start narrow 
 - Use `filepath` for local filesystem paths. Use `path` only for slash-delimited torrent paths, URLs, or API payloads explicitly defined to use `/`.
 - Torrent/API -> local filesystem boundary: validate slash paths first, then convert deliberately with `filepath.FromSlash`.
 - Security/path traversal checks reject POSIX + Windows absolute/escaping forms on every OS: leading `/`, leading `\`, drive-letter paths, UNC paths, `..` segments.
+- Use `internal/pathutil.IsWithinRoot` / `SamePath` for local root containment/equality. Do not add ad-hoc `filepath.Rel` + string-prefix guards.
 - Tests must not build local paths with hardcoded OS-rooted literals. Use `t.TempDir`, `filepath.Join`, `filepath.ToSlash` for cross-platform assertions.
-- `cmd/pathpolicy` flags hardcoded OS-rooted literals in `filepath` calls, string-built local paths, `path` on local paths, `filepath` on URL/API slash paths, slash-data filesystem calls, and slash assertions without `filepath.ToSlash`.
+- `cmd/pathpolicy` flags hardcoded OS-rooted literals in `filepath` calls, string-built local paths, `path` on local paths, `filepath` on URL/API slash paths, slash-data filesystem calls, slash assertions without `filepath.ToSlash`, and ad-hoc local path guards outside `internal/pathutil`.
 - Legit stdlib `path` imports require import-local `//nolint:depguard // <slash-data reason>`. Rare `pathpolicy` cases require `//pathpolicy:allow <reason>` on same/previous line. Fix source first; don't weaken checkers.
 
 ## Logging

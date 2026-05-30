@@ -141,6 +141,8 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch typed := node.(type) {
+		case *ast.FuncDecl:
+			c.checkFuncDecl(typed)
 		case *ast.CallExpr:
 			c.checkCall(typed)
 		case *ast.BinaryExpr:
@@ -151,6 +153,16 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 	c.finishAllows()
 
 	return c.violations, nil
+}
+
+func (c *checker) checkFuncDecl(fn *ast.FuncDecl) {
+	if fn.Name == nil || !isAdHocPathGuardName(fn.Name.Name) {
+		return
+	}
+	if c.relPath == "internal/pathutil/pathutil.go" {
+		return
+	}
+	c.addViolation(fn.Name.Pos(), "use internal/pathutil for local path containment/equality instead of ad hoc filepath.Rel/string checks")
 }
 
 func (c *checker) collectAllows(file *ast.File) {
@@ -637,6 +649,15 @@ func selectorChainHasName(expr ast.Expr, needle string) bool {
 		return strings.Contains(strings.ToLower(typed.Name), needle)
 	case *ast.SelectorExpr:
 		return strings.Contains(strings.ToLower(typed.Sel.Name), needle) || selectorChainHasName(typed.X, needle)
+	default:
+		return false
+	}
+}
+
+func isAdHocPathGuardName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "iswithinroot", "ispathwithinroot", "pathwithinroot", "pathwithin", "samepath":
+		return true
 	default:
 		return false
 	}

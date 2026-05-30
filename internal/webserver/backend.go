@@ -26,6 +26,7 @@ import (
 	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -1122,11 +1123,11 @@ func (b *Backend) applyConfig(cfg config.Config) error {
 
 func (b *Backend) isPathWithinManagedDirs(candidate string) bool {
 	tmpDir, err := db.Subdir(b.currentConfig().MainSettings.DBPath, "tmp")
-	if err == nil && pathWithinRoot(tmpDir, candidate) {
+	if err == nil && pathutil.IsWithinRoot(tmpDir, candidate) {
 		return true
 	}
 	logPath, err := logging.LogPath(b.currentConfig().MainSettings.DBPath)
-	if err == nil && pathWithinRoot(filepath.Dir(logPath), candidate) {
+	if err == nil && pathutil.IsWithinRoot(filepath.Dir(logPath), candidate) {
 		return true
 	}
 	return false
@@ -1145,7 +1146,7 @@ func resolveContentTmpRoot(tmpRoot string, candidate string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if !pathWithinRoot(absTmpRoot, absCandidate) {
+	if !pathutil.IsWithinRoot(absTmpRoot, absCandidate) {
 		return "", false
 	}
 	rel, err := filepath.Rel(absTmpRoot, absCandidate)
@@ -1172,7 +1173,7 @@ func removeIfWithinRoot(root string, target string, recursive bool) error {
 	if err != nil {
 		return fmt.Errorf("cleanup path: resolve target path: %w", err)
 	}
-	if absTarget == absRoot || !pathWithinRoot(absRoot, absTarget) {
+	if absTarget == absRoot || !pathutil.IsWithinRoot(absRoot, absTarget) {
 		return nil
 	}
 	if recursive {
@@ -1191,17 +1192,6 @@ func removeIfWithinRoot(root string, target string, recursive bool) error {
 		return fmt.Errorf("cleanup path: remove target: %w", err)
 	}
 	return nil
-}
-
-func pathWithinRoot(root string, target string) bool {
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return false
-	}
-	if rel == "." {
-		return true
-	}
-	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel)
 }
 
 func errorsIsNotFound(err error) bool {

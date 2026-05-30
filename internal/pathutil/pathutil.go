@@ -5,6 +5,8 @@ package pathutil
 
 import (
 	"path" //nolint:depguard // Normalizes slash-style metadata paths, not local filesystem paths.
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -28,4 +30,86 @@ func Base(value string) string {
 		return ""
 	}
 	return path.Base(cleaned)
+}
+
+// IsWithinRoot reports whether target resolves to root or a descendant of root.
+// It first checks lexical paths, then repeats the check with symlinks resolved
+// through the nearest existing path prefix so missing child paths under a
+// symlink cannot escape the root.
+func IsWithinRoot(root string, target string) bool {
+	rootAbs, ok := cleanAbs(root)
+	if !ok {
+		return false
+	}
+	targetAbs, ok := cleanAbs(target)
+	if !ok {
+		return false
+	}
+	if !isWithinCleanRoot(rootAbs, targetAbs) {
+		return false
+	}
+
+	rootReal, rootOK := evalExistingPrefix(rootAbs)
+	targetReal, targetOK := evalExistingPrefix(targetAbs)
+	if !rootOK || !targetOK {
+		return true
+	}
+	return isWithinCleanRoot(rootReal, targetReal)
+}
+
+// SamePath compares local filesystem paths with the host OS path semantics.
+func SamePath(left string, right string) bool {
+	leftAbs, leftOK := cleanAbs(left)
+	rightAbs, rightOK := cleanAbs(right)
+	if !leftOK || !rightOK {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(leftAbs, rightAbs)
+	}
+	return leftAbs == rightAbs
+}
+
+func cleanAbs(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", false
+	}
+	abs, err := filepath.Abs(filepath.Clean(trimmed))
+	if err != nil {
+		return "", false
+	}
+	return filepath.Clean(abs), true
+}
+
+func isWithinCleanRoot(root string, target string) bool {
+	if filepath.VolumeName(root) != filepath.VolumeName(target) {
+		return false
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func evalExistingPrefix(value string) (string, bool) {
+	cleaned := filepath.Clean(value)
+	current := cleaned
+	missing := make([]string, 0)
+	for {
+		resolved, ok := resolveExistingPath(current)
+		if ok {
+			for idx := len(missing) - 1; idx >= 0; idx-- {
+				resolved = filepath.Join(resolved, missing[idx])
+			}
+			return filepath.Clean(resolved), true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
