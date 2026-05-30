@@ -893,7 +893,7 @@ export default function InputPage(props: Props) {
 
               <div className="grid gap-1.5 text-sm text-[var(--muted)]" ref={sourcePathHistoryRef}>
                 <label htmlFor="source-path">Source path</label>
-                <div className="source-path-input-shell">
+                <div className="source-path-input-shell source-path-input-shell--drop-target">
                   <input
                     id="source-path"
                     className={`${compactInputClass} source-path-input`}

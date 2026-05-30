@@ -4,6 +4,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
 import BlurayCandidatesPage from "./pages/bluray_candidates";
@@ -205,6 +206,12 @@ const dupeCheckEventPrefix = "dupe:job:";
 const trackerUploadEventPrefix = "upload:job:";
 const trackerUploadProgressEvent = "upload:progress";
 const runLogLevels = ["error", "warn", "info", "debug", "trace"] as const;
+
+type SourcePathSelection = {
+  path: string;
+  mode: SourcePathMode;
+  waitsForPlaylistSelection: boolean;
+};
 
 const progressUpdatePrefixes = new Set([
   "scanning",
@@ -674,6 +681,7 @@ export default function App() {
   const freshUIStateCanPromoteRef = useRef(false);
   const uiStateSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uiStateResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sourcePathDropHandlerRef = useRef<(paths: string[]) => void>(() => undefined);
   const [hostBrowserMode, setHostBrowserMode] = useState<"file" | "folder" | null>(null);
   const [hostBrowser, setHostBrowser] = useState<BrowseDirectoryResponse | null>(null);
   const [hostBrowserLoading, setHostBrowserLoading] = useState(false);
@@ -2593,9 +2601,15 @@ export default function App() {
   };
 
   // Auto-detect BDMV and show playlist selection
-  const handlePathSelected = async (selectedPath: string, mode?: SourcePathMode) => {
+  const handlePathSelected = async (
+    selectedPath: string,
+    mode?: SourcePathMode,
+  ): Promise<SourcePathSelection | null> => {
     freshUIStateCanPromoteRef.current = false;
     const trimmedPath = selectedPath.trim();
+    if (!trimmedPath) {
+      return null;
+    }
     const selectedMode = mode ?? inferSourcePathMode(trimmedPath);
     setPath(trimmedPath);
     setSourcePathMode(selectedMode);
@@ -2611,14 +2625,14 @@ export default function App() {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
       setActiveTab("input");
-      return;
+      return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: false };
     }
 
     if (discType !== "BDMV") {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
       setActiveTab("input");
-      return;
+      return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: false };
     }
 
     const upperPath = trimmedPath.toUpperCase();
@@ -2631,6 +2645,7 @@ export default function App() {
     // Set the path for playlist discovery (component will discover the playlists)
     setPlaylistSelectionPath(bdmvPath);
     setShowPlaylistSelection(true);
+    return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: true };
   };
 
   const handleSourcePathHistorySelect = async (entry: SourcePathHistoryEntry) => {
@@ -2675,6 +2690,7 @@ export default function App() {
     overrides: ExternalIDOverrides,
     nameOverrides: ReleaseNameOverrides,
     hideExternalIDInputUIOnSuccess = false,
+    options: { targetPath?: string; targetMode?: SourcePathMode } = {},
   ) => {
     setError("");
     setDupeChecked(false);
@@ -2692,11 +2708,11 @@ export default function App() {
       setError("Fetch metadata is unavailable in this build.");
       return;
     }
-    if (!path.trim()) {
+    const targetPath = (options.targetPath ?? path).trim();
+    if (!targetPath) {
       setError("Please select a file or folder.");
       return;
     }
-    const targetPath = path.trim();
     setMetadataProgressTarget(targetPath);
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
@@ -2710,7 +2726,10 @@ export default function App() {
         getSelectedTrackers(),
       );
       applyPreviewResult(result);
-      rememberSourcePath(targetPath, sourcePathMode ?? inferSourcePathMode(targetPath));
+      rememberSourcePath(
+        targetPath,
+        options.targetMode ?? sourcePathMode ?? inferSourcePathMode(targetPath),
+      );
       freshUIStateCanPromoteRef.current = uiStateMode === "fresh";
       setShowExternalIDInputUI(!hideExternalIDInputUIOnSuccess);
     } catch (err) {
@@ -2724,6 +2743,50 @@ export default function App() {
   const handleFetch = async () => {
     await runFetch({}, {}, false);
   };
+
+  const handleSourcePathDrop = async (paths: string[]) => {
+    if (loading) {
+      setError("Metadata fetch is already running.");
+      return;
+    }
+    const droppedPath = paths.find((candidate) => candidate.trim())?.trim() || "";
+    if (!droppedPath) {
+      setError("Dropped file path was empty.");
+      return;
+    }
+    setError("");
+    const selection = await handlePathSelected(droppedPath);
+    if (!selection || selection.waitsForPlaylistSelection) {
+      return;
+    }
+    await runFetch({}, {}, false, {
+      targetPath: selection.path,
+      targetMode: selection.mode,
+    });
+  };
+
+  sourcePathDropHandlerRef.current = (paths: string[]) => {
+    void handleSourcePathDrop(paths);
+  };
+
+  useEffect(() => {
+    const runtime = (
+      globalThis as typeof globalThis & {
+        runtime?: { OnFileDrop?: unknown; OnFileDropOff?: unknown };
+      }
+    ).runtime;
+    if (browserMode || typeof runtime?.OnFileDrop !== "function") {
+      return;
+    }
+    OnFileDrop((_x, _y, paths) => {
+      sourcePathDropHandlerRef.current(paths);
+    }, true);
+    return () => {
+      if (typeof runtime.OnFileDropOff === "function") {
+        OnFileDropOff();
+      }
+    };
+  }, [browserMode]);
 
   const clearEditAttributesState = () => {
     setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));

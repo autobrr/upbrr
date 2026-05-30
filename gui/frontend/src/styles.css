@@ -1681,8 +1681,27 @@ h2 {
   position: relative;
 }
 
+.source-path-input-shell--drop-target {
+  --wails-drop-target: drop;
+}
+
 .source-path-input {
   width: 100%;
+}
+
+.source-path-input-shell--drop-target.wails-drop-target-active .source-path-input,
+.source-path-input-shell--drop-target .source-path-input.wails-drop-target-active {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px rgba(245, 185, 66, 0.55),
+    0 0 0 4px rgba(245, 185, 66, 0.18);
+}
+
+:root.light .source-path-input-shell--drop-target.wails-drop-target-active .source-path-input,
+:root.light .source-path-input-shell--drop-target .source-path-input.wails-drop-target-active {
+  box-shadow:
+    0 0 0 1px rgba(217, 119, 6, 0.5),
+    0 0 0 4px rgba(217, 119, 6, 0.16);
 }
 
 .source-path-history {
