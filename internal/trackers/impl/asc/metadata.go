@@ -4,7 +4,9 @@
 package asc
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -78,6 +80,48 @@ func resolveQuality(meta api.PreparedMetadata) string {
 }
 
 func resolveResolution(meta api.PreparedMetadata) map[string]string {
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		heightStr := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(meta.Release.Resolution), "p"), "i")
+		heightNum, err := strconv.Atoi(heightStr)
+		if err == nil && heightNum > 0 {
+			widthNum := int(math.Round((16.0 / 9.0) * float64(heightNum)))
+			return map[string]string{
+				"width":  strconv.Itoa(widthNum),
+				"height": strconv.Itoa(heightNum),
+			}
+		}
+	}
+
+	if meta.MediaInfoJSONPath != "" {
+		if payload, err := os.ReadFile(meta.MediaInfoJSONPath); err == nil {
+			type mediaInfoDoc struct {
+				Media struct {
+					Track []map[string]any `json:"track"`
+				} `json:"media"`
+			}
+			var doc mediaInfoDoc
+			if err := json.Unmarshal(payload, &doc); err == nil {
+				for _, track := range doc.Media.Track {
+					trackType, _ := track["@type"].(string)
+					if strings.ToLower(trackType) == "video" {
+						widthVal := track["Width"]
+						heightVal := track["Height"]
+
+						widthStr := parseDimensionStr(widthVal)
+						heightStr := parseDimensionStr(heightVal)
+
+						if widthStr != "" && heightStr != "" {
+							return map[string]string{
+								"width":  widthStr,
+								"height": heightStr,
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	height := parseResolutionHeight(meta.Release.Resolution)
 	if height == 0 {
 		height = parseResolutionHeight(meta.ReleaseName)
@@ -94,22 +138,27 @@ func resolveResolution(meta api.PreparedMetadata) map[string]string {
 
 func resolveVideoCodec(meta api.PreparedMetadata) string {
 	codec := strings.ToUpper(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.VideoEncode, meta.VideoCodec)))
+	codecClean := codec
 	if strings.Contains(codec, "264") {
-		codec = "H264"
+		codecClean = "H264"
 	} else if strings.Contains(codec, "265") {
-		codec = "HEVC"
+		codecClean = "HEVC"
 	}
 	switch {
-	case strings.Contains(strings.ToUpper(meta.HDR), "HDR") && (codec == "HEVC" || codec == "H265"):
+	case strings.Contains(strings.ToUpper(meta.HDR), "HDR") && (codecClean == "HEVC" || codecClean == "H265"):
 		return "28"
-	case strings.Contains(strings.ToUpper(meta.HDR), "HDR") && (codec == "AVC" || codec == "H264"):
+	case strings.Contains(strings.ToUpper(meta.HDR), "HDR") && (codecClean == "AVC" || codecClean == "H264"):
 		return "32"
 	case strings.Contains(codec, "AV1"):
 		return "29"
-	case strings.Contains(codec, "HEVC"), strings.Contains(codec, "H265"):
+	case strings.Contains(codec, "HEVC"):
 		return "27"
-	case strings.Contains(codec, "AVC"), strings.Contains(codec, "H264"):
+	case strings.Contains(codec, "H265"):
+		return "18"
+	case strings.Contains(codec, "AVC"):
 		return "30"
+	case strings.Contains(codec, "H264"):
+		return "17"
 	case strings.Contains(codec, "VC-1"):
 		return "21"
 	case strings.Contains(codec, "MPEG-2"):
@@ -219,11 +268,17 @@ func resolveUploadTitle(meta api.PreparedMetadata) string {
 }
 
 func resolveDisplayTitle(meta api.PreparedMetadata) string {
+	var ptBR api.TMDBLocalizedData
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			ptBR = localized
+		}
+	}
 	if tmdb := meta.ExternalMetadata.TMDB; tmdb != nil {
-		main := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(tmdb.Title, meta.Release.Title))
+		main := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(ptBR.Title, tmdb.Title, meta.Release.Title))
 		alt := strings.TrimSpace(tmdb.OriginalTitle)
 		if categoryOf(meta) == "TV" {
-			alt = strings.TrimSpace(tmdb.Title)
+			alt = strings.TrimSpace(metautil.FirstNonEmptyTrimmed(tmdb.Title, meta.Release.Title))
 		}
 		if main != "" && alt != "" && !strings.EqualFold(main, alt) {
 			return main + " (" + alt + ")"
@@ -236,9 +291,17 @@ func resolveDisplayTitle(meta api.PreparedMetadata) string {
 }
 
 func resolvePoster(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.TMDB != nil {
+		if meta.ExternalMetadata.TMDB.Localized != nil {
+			if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok && strings.TrimSpace(localized.Poster) != "" {
+				return strings.TrimSpace(localized.Poster)
+			}
+		}
+		if strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster) != "" {
+			return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
+		}
+	}
 	switch {
-	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
 	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover) != "":
 		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover)
 	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.Poster) != "":
@@ -253,6 +316,18 @@ func resolvePoster(meta api.PreparedMetadata) string {
 func resolveOverview(meta api.PreparedMetadata, answers map[string]string) string {
 	if strings.TrimSpace(answers["overview"]) != "" {
 		return strings.TrimSpace(answers["overview"])
+	}
+	var ptBR api.TMDBLocalizedData
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			ptBR = localized
+		}
+	}
+	if categoryOf(meta) == "TV" && ptBR.EpisodeOverview != "" {
+		return strings.TrimSpace(ptBR.EpisodeOverview)
+	}
+	if ptBR.Overview != "" {
+		return strings.TrimSpace(ptBR.Overview)
 	}
 	switch {
 	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Overview) != "":
@@ -272,6 +347,15 @@ func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string 
 	if strings.TrimSpace(answers["genre"]) != "" {
 		return strings.TrimSpace(answers["genre"])
 	}
+	var ptBR api.TMDBLocalizedData
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			ptBR = localized
+		}
+	}
+	if ptBR.Genres != "" {
+		return strings.TrimSpace(ptBR.Genres)
+	}
 	switch {
 	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "":
 		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
@@ -288,7 +372,12 @@ func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string 
 
 func resolveTrailer(meta api.PreparedMetadata) string {
 	value := ""
-	if meta.ExternalMetadata.TMDB != nil {
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if ptBR, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok && ptBR.TrailerURL != "" {
+			value = ptBR.TrailerURL
+		}
+	}
+	if value == "" && meta.ExternalMetadata.TMDB != nil {
 		value = strings.TrimSpace(meta.ExternalMetadata.TMDB.YouTube)
 	}
 	if value == "" {
@@ -523,4 +612,18 @@ func readTextFile(path string) (string, error) {
 func readTextFileNoErr(path string) string {
 	value, _ := readTextFile(path)
 	return value
+}
+
+func parseDimensionStr(val any) string {
+	if val == nil {
+		return ""
+	}
+	s := fmt.Sprintf("%v", val)
+	var digits strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	return digits.String()
 }

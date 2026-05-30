@@ -6,14 +6,18 @@ package bt
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
@@ -24,6 +28,10 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -171,6 +179,12 @@ func buildFields(req trackers.UploadRequest, description string, auth string, tr
 	meta := req.Meta
 	hasPT, subtitleIDs := resolveSubtitle(meta)
 	width, height := resolveResolution(meta)
+	var ptBR api.TMDBLocalizedData
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			ptBR = localized
+		}
+	}
 	fields := map[string][]string{
 		"audio_c":     {resolveAudioCodec(meta)},
 		"audio":       {resolveAudio(meta)},
@@ -187,14 +201,14 @@ func buildFields(req trackers.UploadRequest, description string, auth string, tr
 		"mediainfo":   {trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, meta)},
 		"resolucao_1": {width},
 		"resolucao_2": {height},
-		"sinopse":     {resolveOverview(meta)},
+		"sinopse":     {resolveOverview(meta, ptBR)},
 		"submit":      {"true"},
-		"tags":        {resolveTags(meta)},
+		"tags":        {resolveTags(meta, ptBR)},
 		"title":       {resolveTitle(meta)},
 		"type":        {resolveType(meta)},
 		"video_c":     {resolveVideoCodec(meta)},
 		"year":        {strconv.Itoa(resolveYear(meta))},
-		"youtube":     {resolveYouTube(meta)},
+		"youtube":     {resolveYouTube(meta, ptBR)},
 	}
 
 	fields["subtitles[]"] = append(fields["subtitles[]"], subtitleIDs...)
@@ -208,7 +222,7 @@ func buildFields(req trackers.UploadRequest, description string, auth string, tr
 		fields["adulto"] = []string{"0"}
 		fields["imdb_input"] = []string{resolveIMDbText(meta)}
 		fields["nota_imdb"] = []string{resolveIMDbRating(meta)}
-		fields["title_br"] = []string{resolveLocalizedTitle(meta)}
+		fields["title_br"] = []string{resolveLocalizedTitle(meta, ptBR)}
 	}
 	if meta.Scene {
 		fields["scene"] = []string{"on"}
@@ -231,6 +245,9 @@ func buildFields(req trackers.UploadRequest, description string, auth string, tr
 		fields["fundo_torrent"] = []string{resolveBackdrop(meta)}
 		fields["rating"] = []string{resolveIMDbRating(meta)}
 		fields["releasedate"] = []string{strconv.Itoa(resolveYear(meta))}
+		fields["horas"] = []string{""}
+		fields["minutos"] = []string{""}
+		fields["vote"] = []string{""}
 	}
 	if trackerCfg.Anon {
 		fields["anonymous"] = []string{"1"}
@@ -256,8 +273,20 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 	}
 
 	// TV Episode details
-	if episode := strings.TrimSpace(meta.EpisodeOverview); episode != "" {
-		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]")
+	epTitle := meta.EpisodeTitle
+	epOverview := meta.EpisodeOverview
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if ptBR, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			if ptBR.EpisodeTitle != "" {
+				epTitle = ptBR.EpisodeTitle
+			}
+			if ptBR.EpisodeOverview != "" {
+				epOverview = ptBR.EpisodeOverview
+			}
+		}
+	}
+	if episode := strings.TrimSpace(epOverview); episode != "" {
+		parts = append(parts, "[center]"+strings.TrimSpace(epTitle)+"[/center]")
 		parts = append(parts, "[center]"+episode+"[/center]")
 	}
 
@@ -576,6 +605,42 @@ func resolveSubtitle(meta api.PreparedMetadata) (string, []string) {
 }
 
 func resolveResolution(meta api.PreparedMetadata) (string, string) {
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		heightStr := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(meta.Release.Resolution), "p"), "i")
+		heightNum, err := strconv.Atoi(heightStr)
+		if err == nil && heightNum > 0 {
+			widthNum := int(math.Round((16.0 / 9.0) * float64(heightNum)))
+			return strconv.Itoa(widthNum), strconv.Itoa(heightNum)
+		}
+	}
+
+	if meta.MediaInfoJSONPath != "" {
+		if payload, err := os.ReadFile(meta.MediaInfoJSONPath); err == nil {
+			type mediaInfoDoc struct {
+				Media struct {
+					Track []map[string]any `json:"track"`
+				} `json:"media"`
+			}
+			var doc mediaInfoDoc
+			if err := json.Unmarshal(payload, &doc); err == nil {
+				for _, track := range doc.Media.Track {
+					trackType, _ := track["@type"].(string)
+					if strings.ToLower(trackType) == "video" {
+						widthVal := track["Width"]
+						heightVal := track["Height"]
+
+						widthStr := parseDimensionStr(widthVal)
+						heightStr := parseDimensionStr(heightVal)
+
+						if widthStr != "" && heightStr != "" {
+							return widthStr, heightStr
+						}
+					}
+				}
+			}
+		}
+	}
+
 	height := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(meta.Release.Resolution), "p"), "i")
 	switch height {
 	case "2160":
@@ -593,121 +658,158 @@ func resolveResolution(meta api.PreparedMetadata) (string, string) {
 	}
 }
 
-func resolveVideoCodec(meta api.PreparedMetadata) string {
-	value := strings.ToLower(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.VideoEncode, meta.VideoCodec)))
-	switch {
-	case strings.Contains(value, "265"), strings.Contains(value, "hevc"):
-		return "x265"
-	case strings.Contains(value, "264"), strings.Contains(value, "avc"):
-		return "x264"
-	case strings.Contains(value, "vp9"):
-		return "VP9"
-	case strings.Contains(value, "mpeg-2"):
-		return "MPEG-2"
-	case strings.Contains(value, "vc-1"):
-		return "VC-1"
-	default:
-		return metautil.FirstNonEmptyTrimmed(meta.VideoCodec, "Outro")
+func parseDimensionStr(val any) string {
+	if val == nil {
+		return ""
 	}
+	s := fmt.Sprintf("%v", val)
+	var digits strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	return digits.String()
+}
+
+func resolveVideoCodec(meta api.PreparedMetadata) string {
+	videoEncode := strings.ToLower(strings.TrimSpace(meta.VideoEncode))
+	codecFinal := strings.TrimSpace(meta.VideoCodec)
+	isHDR := meta.HDR != ""
+
+	encodeMap := []struct{ Key, Value string }{
+		{"x265", "x265"},
+		{"h.265", "H.265"},
+		{"x264", "x264"},
+		{"h.264", "H.264"},
+		{"vp9", "VP9"},
+		{"xvid", "XviD"},
+	}
+
+	for _, item := range encodeMap {
+		if strings.Contains(videoEncode, item.Key) {
+			if (item.Value == "x265" || item.Value == "H.265") && isHDR {
+				return item.Value + " HDR"
+			}
+			return item.Value
+		}
+	}
+
+	codecLower := strings.ToLower(codecFinal)
+	codecMap := []struct{ Key, Value string }{
+		{"hevc", "x265"},
+		{"avc", "x264"},
+		{"mpeg-2", "MPEG-2"},
+		{"vc-1", "VC-1"},
+	}
+
+	for _, item := range codecMap {
+		if strings.Contains(codecLower, item.Key) {
+			if item.Value == "x265" && isHDR {
+				return "x265 HDR"
+			}
+			return item.Value
+		}
+	}
+
+	if codecFinal != "" {
+		return codecFinal
+	}
+	return "Outro"
 }
 
 func resolveAudioCodec(meta api.PreparedMetadata) string {
-	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
-	switch {
-	case strings.Contains(audio, "DTS:X"):
-		return "DTS-X"
-	case strings.Contains(audio, "ATMOS"):
-		return "E-AC-3 JOC"
-	case strings.Contains(audio, "TRUEHD"):
-		return "TrueHD"
-	case strings.Contains(audio, "DTS-HD"):
-		return "DTS-HD"
-	case strings.Contains(audio, "FLAC"):
-		return "FLAC"
-	case strings.Contains(audio, "LPCM"), strings.Contains(audio, "PCM"):
-		return "PCM"
-	case strings.Contains(audio, "DTS"):
-		return "DTS"
-	case strings.Contains(audio, "DD+"), strings.Contains(audio, "E-AC-3"):
-		return "E-AC-3"
-	case strings.Contains(audio, "DD"), strings.Contains(audio, "AC3"):
-		return "AC3"
-	case strings.Contains(audio, "AAC"):
-		return "AAC"
-	default:
+	priorityOrder := []string{
+		"DTS-X", "E-AC-3 JOC", "TrueHD", "DTS-HD", "PCM", "FLAC", "DTS-ES",
+		"DTS", "E-AC-3", "AC3", "AAC", "Opus", "Vorbis", "MP3", "MP2",
+	}
+
+	codecMap := map[string][]string{
+		"DTS-X":      {"DTS:X"},
+		"E-AC-3 JOC": {"DD+ 5.1 Atmos", "DD+ 7.1 Atmos", "ATMOS"},
+		"TrueHD":     {"TRUEHD"},
+		"DTS-HD":     {"DTS-HD"},
+		"PCM":        {"LPCM", "PCM"},
+		"FLAC":       {"FLAC"},
+		"DTS-ES":     {"DTS-ES"},
+		"DTS":        {"DTS"},
+		"E-AC-3":     {"DD+", "E-AC-3"},
+		"AC3":        {"DD", "AC3"},
+		"AAC":        {"AAC"},
+		"Opus":       {"OPUS"},
+		"Vorbis":     {"VORBIS"},
+		"MP2":        {"MP2"},
+		"MP3":        {"MP3"},
+	}
+
+	audioDescription := strings.ToUpper(strings.TrimSpace(meta.Audio))
+	if audioDescription == "" {
 		return "Outro"
 	}
+
+	for _, codecName := range priorityOrder {
+		searchTerms := codecMap[codecName]
+		for _, term := range searchTerms {
+			if strings.Contains(audioDescription, term) {
+				return codecName
+			}
+		}
+	}
+
+	return "Outro"
 }
 
 func resolveBitrate(meta api.PreparedMetadata) string {
 	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
-	if discType == "BDMV" {
-		size := meta.SourceSize
-		switch {
-		case size > 66000000000:
-			return "BD100"
-		case size > 50000000000:
-			return "BD66"
-		case size > 25000000000:
-			return "BD50"
-		default:
-			return "BD25"
+	if strings.ToUpper(strings.TrimSpace(meta.Type)) == "DISC" || discType == "BDMV" || discType == "DVD" {
+		if discType == "BDMV" {
+			size := meta.SourceSize
+			switch {
+			case size > 66000000000:
+				return "BD100"
+			case size > 50000000000:
+				return "BD66"
+			case size > 25000000000:
+				return "BD50"
+			default:
+				return "BD25"
+			}
+		}
+		if discType == "DVD" {
+			dvdSize := strings.ToUpper(strings.TrimSpace(meta.Release.Size))
+			if dvdSize == "DVD9" || dvdSize == "DVD5" {
+				return dvdSize
+			}
+			return "DVD9"
 		}
 	}
-	if discType == "HDDVD" {
-		return "HD-DVD"
+
+	sourceType := strings.ToLower(strings.TrimSpace(meta.Type))
+	keywordMap := map[string]string{
+		"remux":  "Remux",
+		"webdl":  "WEB-DL",
+		"webrip": "WEBRip",
+		"web":    "WEB",
+		"encode": "Blu-ray",
+		"bdrip":  "BDRip",
+		"brrip":  "BRRip",
+		"hdtv":   "HDTV",
+		"sdtv":   "SDTV",
+		"dvdrip": "DVDRip",
+		"hd-dvd": "HD-DVD",
+		"tvrip":  "TVRip",
 	}
 
-	dvdSize := strings.ToUpper(strings.TrimSpace(meta.Release.Size))
-	if dvdSize == "DVD9" || dvdSize == "DVD5" {
-		return dvdSize
-	}
-
-	for _, other := range meta.Release.Other {
-		if strings.EqualFold(other, "remux") {
-			return "Remux"
-		}
+	if val, ok := keywordMap[sourceType]; ok {
+		return val
 	}
 
 	source := strings.ToLower(strings.TrimSpace(meta.Release.Source))
-	switch source {
-	case "bdrip":
-		return "BDRip"
-	case "bluray", "blu-ray":
-		return "Blu-ray"
-	case "brrip":
-		return "BRRip"
-	case "mhd":
-		return "mHD"
-	case "web-dl":
-		return "WEB-DL"
-	case "webrip":
-		return "WEBRip"
-	case "web":
-		return "WEB"
-	case "dvdrip":
-		return "DVDRip"
-	case "dvdscr":
-		return "DVDScr"
-	case "hdrip":
-		return "HDRip"
-	case "hdtc":
-		return "HDTC"
-	case "hdtv":
-		return "HDTV"
-	case "pdtv":
-		return "PDTV"
-	case "sdtv":
-		return "SDTV"
-	case "tc":
-		return "TC"
-	case "tvrip":
-		return "TVRip"
-	case "vhsrip":
-		return "VHSRip"
-	default:
-		return "Outro"
+	if val, ok := keywordMap[source]; ok {
+		return val
 	}
+
+	return "Outro"
 }
 
 func resolveEdition(meta api.PreparedMetadata) string {
@@ -725,22 +827,36 @@ func resolveEdition(meta api.PreparedMetadata) string {
 		return "Unrated"
 	case strings.Contains(edition, "imax"):
 		return "IMAX"
+	case strings.Contains(edition, "noir"):
+		return "Noir"
+	case strings.Contains(edition, "remaster"):
+		return "Remastered"
 	default:
 		return ""
 	}
 }
 
-func resolveTags(meta api.PreparedMetadata) string {
+func removeDiacritics(s string) string {
+	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	result, _, _ := transform.String(t, s)
+	return result
+}
+
+func resolveTags(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
 	genreText := strings.TrimSpace(meta.Release.Genre)
-	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "" {
+	switch {
+	case ptBR.Genres != "":
+		genreText = strings.TrimSpace(ptBR.Genres)
+	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "":
 		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
-	} else if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres) != "" {
+	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres) != "":
 		genreText = strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres)
 	}
 	genres := strings.Split(genreText, ",")
 	out := make([]string, 0, len(genres))
 	for _, genre := range genres {
-		tag := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(genre), " ", "."))
+		cleaned := removeDiacritics(genre)
+		tag := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(cleaned), " ", "."))
 		if tag != "" {
 			out = append(out, tag)
 		}
@@ -749,36 +865,145 @@ func resolveTags(meta api.PreparedMetadata) string {
 }
 
 func resolveRuntime(meta api.PreparedMetadata) int {
+	if meta.MediaInfoTextPath != "" {
+		if payload, err := os.ReadFile(meta.MediaInfoTextPath); err == nil {
+			if minutes := parseMediaInfoDurationMinutes(string(payload)); minutes > 0 {
+				return minutes
+			}
+		}
+	}
+	if meta.DVDVOBMediaInfoText != "" {
+		if minutes := parseMediaInfoDurationMinutes(meta.DVDVOBMediaInfoText); minutes > 0 {
+			return minutes
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") && meta.BDInfo != nil {
+		if minutes := parseBDInfoLengthMinutes(meta.BDInfo["length"]); minutes > 0 {
+			return minutes
+		}
+	}
 	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.RuntimeMinutes > 0 {
 		return meta.ExternalMetadata.IMDB.RuntimeMinutes
 	}
 	if meta.ExternalMetadata.TMDB != nil {
 		return meta.ExternalMetadata.TMDB.Runtime
 	}
+	if meta.ExternalMetadata.TVmaze != nil {
+		return meta.ExternalMetadata.TVmaze.Runtime
+	}
 	return 0
 }
 
+func parseMediaInfoDurationMinutes(content string) int {
+	re := regexp.MustCompile(`(?im)^duration\s*:\s*(.+)$`)
+	match := re.FindStringSubmatch(content)
+	if len(match) < 2 {
+		return 0
+	}
+	val := strings.ToLower(strings.TrimSpace(match[1]))
+
+	hours := 0
+	minutes := 0
+
+	hRe := regexp.MustCompile(`(\d+)\s*h`)
+	mRe := regexp.MustCompile(`(\d+)\s*m`)
+
+	if hMatch := hRe.FindStringSubmatch(val); len(hMatch) == 2 {
+		hours, _ = strconv.Atoi(hMatch[1])
+	}
+	if mMatch := mRe.FindStringSubmatch(val); len(mMatch) == 2 {
+		minutes, _ = strconv.Atoi(mMatch[1])
+	}
+
+	total := hours*60 + minutes
+	if total > 0 {
+		return total
+	}
+
+	if ms, err := strconv.ParseFloat(strings.Fields(val)[0], 64); err == nil && ms > 10000 {
+		return int(math.Round(ms / 60000.0))
+	}
+
+	return 0
+}
+
+func parseBDInfoLengthMinutes(value interface{}) int {
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "" || text == "<nil>" {
+		return 0
+	}
+	parts := strings.Split(text, ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	hours, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if err != nil || hours < 0 {
+		return 0
+	}
+	minutes, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err != nil || minutes < 0 {
+		return 0
+	}
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+	if err != nil || seconds < 0 {
+		return 0
+	}
+	totalSeconds := hours*3600 + minutes*60 + seconds
+	if totalSeconds <= 0 {
+		return 0
+	}
+	return int(math.Round(totalSeconds / 60.0))
+}
+
 func resolveDirectors(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Directors) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Directors, ", ")
-	}
-	if meta.ExternalMetadata.IMDB != nil && len(meta.ExternalMetadata.IMDB.Directors) > 0 {
-		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Directors))
-		for _, person := range meta.ExternalMetadata.IMDB.Directors {
-			if strings.TrimSpace(person.Name) != "" {
-				names = append(names, strings.TrimSpace(person.Name))
-			}
+	var directors []string
+	seen := make(map[string]struct{})
+
+	addDirector := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
 		}
-		return strings.Join(names, ", ")
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			directors = append(directors, name)
+		}
 	}
+
+	if meta.ExternalMetadata.TMDB != nil {
+		for _, name := range meta.ExternalMetadata.TMDB.Directors {
+			addDirector(name)
+		}
+	}
+	if meta.ExternalMetadata.IMDB != nil {
+		for _, person := range meta.ExternalMetadata.IMDB.Directors {
+			addDirector(person.Name)
+		}
+	}
+
+	if len(directors) > 0 {
+		limit := len(directors)
+		if limit > 5 {
+			limit = 5
+		}
+		return strings.Join(directors[:limit], ", ")
+	}
+
 	return "N/A"
 }
 
 func resolvePoster(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
+	if meta.ExternalMetadata.TMDB != nil {
+		if meta.ExternalMetadata.TMDB.Localized != nil {
+			if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok && strings.TrimSpace(localized.Poster) != "" {
+				return strings.TrimSpace(localized.Poster)
+			}
+		}
+		if strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster) != "" {
+			return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
+		}
 	}
-	if meta.ExternalMetadata.IMDB != nil {
+	if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover) != "" {
 		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover)
 	}
 	return ""
@@ -816,7 +1041,10 @@ func isSeen(seen map[string]struct{}, url string) bool {
 	return ok
 }
 
-func resolveOverview(meta api.PreparedMetadata) string {
+func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	if ptBR.Overview != "" {
+		return strings.TrimSpace(ptBR.Overview)
+	}
 	if meta.ExternalMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Overview)
 	}
@@ -826,11 +1054,42 @@ func resolveOverview(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveYouTube(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.YouTube)
+func resolveYouTube(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	youtube := ""
+	if ptBR.TrailerURL != "" {
+		youtube = strings.TrimSpace(ptBR.TrailerURL)
+	} else if meta.ExternalMetadata.TMDB != nil {
+		youtube = strings.TrimSpace(meta.ExternalMetadata.TMDB.YouTube)
 	}
-	return ""
+
+	if strings.Contains(youtube, "youtube.com") || strings.Contains(youtube, "youtu.be") {
+		switch {
+		case strings.Contains(youtube, "v="):
+			parts := strings.Split(youtube, "v=")
+			if len(parts) > 1 {
+				youtube = parts[1]
+			}
+		case strings.Contains(youtube, "embed/"):
+			parts := strings.Split(youtube, "embed/")
+			if len(parts) > 1 {
+				youtube = parts[1]
+			}
+		case strings.Contains(youtube, "youtu.be/"):
+			parts := strings.Split(youtube, "youtu.be/")
+			if len(parts) > 1 {
+				youtube = parts[1]
+			}
+		}
+	}
+
+	if idx := strings.Index(youtube, "&"); idx != -1 {
+		youtube = youtube[:idx]
+	}
+	if idx := strings.Index(youtube, "?"); idx != -1 {
+		youtube = youtube[:idx]
+	}
+	youtube = strings.ReplaceAll(youtube, "/", "")
+	return youtube
 }
 
 func resolveLogo(meta api.PreparedMetadata) string {
@@ -857,7 +1116,10 @@ func resolveTitle(meta api.PreparedMetadata) string {
 	return meta.Release.Title
 }
 
-func resolveLocalizedTitle(meta api.PreparedMetadata) string {
+func resolveLocalizedTitle(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	if ptBR.Title != "" {
+		return metautil.FirstNonEmptyTrimmed(ptBR.Title, meta.ExternalMetadata.TMDB.OriginalTitle)
+	}
 	if meta.ExternalMetadata.TMDB != nil {
 		return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Title, meta.ExternalMetadata.TMDB.OriginalTitle)
 	}
@@ -865,70 +1127,214 @@ func resolveLocalizedTitle(meta api.PreparedMetadata) string {
 }
 
 func resolveLanguage(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB == nil || strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage) == "" {
+	var lang string
+	if meta.ExternalMetadata.TMDB != nil {
+		lang = strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
+	}
+	if lang == "" {
+		if len(meta.Release.Language) > 0 {
+			lang = meta.Release.Language[0]
+		}
+	}
+	lang = strings.ToLower(lang)
+	if lang == "" {
 		return ""
 	}
-	lang := strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
-	switch lang {
-	case "en":
-		return "Inglês"
-	case "pt":
-		return "Português"
-	case "es":
-		return "Espanhol"
-	case "fr":
-		return "Francês"
-	case "de":
-		return "Alemão"
-	case "it":
-		return "Italiano"
-	case "ja":
-		return "Japonês"
-	case "ko":
-		return "Coreano"
-	case "zh":
-		return "Chinês"
-	case "ru":
-		return "Russo"
-	case "hi":
-		return "Hindi"
-	case "tr":
-		return "Turco"
-	case "nl":
-		return "Holandês"
-	case "pl":
-		return "Polonês"
-	case "sv":
-		return "Sueco"
-	case "da":
-		return "Dinamarquês"
-	case "no":
-		return "Norueguês"
-	case "fi":
-		return "Finlandês"
-	case "hu":
-		return "Húngaro"
-	case "cs":
-		return "Tcheco"
-	case "th":
-		return "Tailandês"
-	case "vi":
-		return "Vietnamita"
-	case "id":
-		return "Indonésio"
-	case "el":
-		return "Grego"
-	case "he":
-		return "Hebraico"
-	case "ar":
-		return "Árabe"
-	case "ro":
-		return "Romeno"
-	case "uk":
-		return "Ucraniano"
-	default:
-		return lang
+
+	langMap := map[string]string{
+		"aa": "Afar",
+		"ab": "Abcázio",
+		"ae": "Avéstico",
+		"af": "Africânder",
+		"ak": "Acã",
+		"am": "Amárico",
+		"an": "Aragonês",
+		"ar": "Árabe",
+		"as": "Assamês",
+		"av": "Avárico",
+		"ay": "Aimará",
+		"az": "Azerbaijano",
+		"ba": "Basquir",
+		"be": "Bielorrusso",
+		"bg": "Búlgaro",
+		"bh": "Maithili",
+		"bi": "Bislamábichlamar",
+		"bm": "Bâmbara",
+		"bn": "Bengali ou bangla",
+		"bo": "Tibetano",
+		"br": "Bretão",
+		"bs": "Bósnio",
+		"ca": "Catalão",
+		"ce": "Tchechenoou checheno",
+		"ch": "Chamorro",
+		"co": "Corso",
+		"cr": "Cree",
+		"cs": "Tcheco",
+		"cu": "Eslavo eclesiástico",
+		"cv": "Tchuvache",
+		"cy": "Galês",
+		"da": "Dinamarquês",
+		"de": "Alemão",
+		"dv": "Diveí",
+		"dz": "Dzongkha",
+		"ee": "Jeje",
+		"el": "Grego moderno(desde 1453)",
+		"en": "Inglês",
+		"eo": "Esperanto",
+		"es": "Castelhano",
+		"et": "Estoniano",
+		"eu": "Basco",
+		"fa": "Persa",
+		"ff": "Fula",
+		"fi": "Finlandês",
+		"fj": "Fidjiano",
+		"fo": "Feroêsou feróico",
+		"fr": "Francês",
+		"fy": "Frisãoocidental",
+		"ga": "Irlandês",
+		"gd": "Gaélico escocês",
+		"gl": "Galego",
+		"gn": "Guarani",
+		"gu": "Gujarati",
+		"gv": "Manês",
+		"ha": "Hauçá",
+		"he": "Hebraico",
+		"hi": "Hindi",
+		"ho": "Hiri Motu",
+		"hr": "Croata",
+		"ht": "Crioulo haitiano",
+		"hu": "Húngaro",
+		"hy": "Armênio",
+		"hz": "Hereró",
+		"ia": "Interlíngua",
+		"id": "Indonésio",
+		"ie": "Interlíngua",
+		"ig": "Ibo",
+		"ii": "YideSichuan",
+		"ik": "Inupiaq",
+		"io": "Ido",
+		"is": "Islandês",
+		"it": "Italiano",
+		"iu": "Inuktitut",
+		"ja": "Japonês",
+		"jv": "Javanês",
+		"ka": "Georgiano",
+		"kg": "Kongo",
+		"ki": "Kikuyu",
+		"kj": "Oshikwanyama",
+		"kk": "Cazaque",
+		"kl": "Groenlandês",
+		"km": "Khmer",
+		"kn": "Canarês",
+		"ko": "Coreano",
+		"kr": "Kanuri ou canúri",
+		"ks": "Caxemir",
+		"ku": "Curdo",
+		"kv": "Komi",
+		"kw": "Córnico",
+		"ky": "Quirguiz",
+		"la": "Latim",
+		"lb": "Luxemburguês",
+		"lg": "Luganda",
+		"li": "Limburguês",
+		"ln": "Lingala",
+		"lo": "Laociano",
+		"lt": "Lituano",
+		"lu": "Luba-catanga",
+		"lv": "Letão",
+		"mg": "Malgaxe",
+		"mh": "Marshallês",
+		"mi": "Maori",
+		"mk": "Macedônio",
+		"ml": "Malaiala",
+		"mn": "Mongol",
+		"mo": "Moldavo",
+		"mr": "Marata",
+		"ms": "Malaio",
+		"mt": "Maltês",
+		"my": "Birmanês",
+		"na": "Nauruano",
+		"nb": "Bokmål norueguês",
+		"nd": "Ndebele do norte",
+		"ne": "Nepali, nepalês",
+		"ng": "Ndonga",
+		"nl": "Holandês",
+		"nn": "Novo norueguês",
+		"no": "Norueguês",
+		"nr": "Ndebele do sul",
+		"nv": "Navajo",
+		"ny": "Nianja",
+		"oc": "Occitano(depois 1500)",
+		"oj": "Chippewa",
+		"om": "Oromo",
+		"or": "Oriá",
+		"os": "Oseto",
+		"pa": "Panjabi",
+		"pi": "Páli",
+		"pl": "Polaco",
+		"ps": "Pachto",
+		"pt": "Português",
+		"qu": "Quíchua",
+		"rm": "Reto-romano",
+		"rn": "Kirundi",
+		"ro": "Romeno",
+		"ru": "Russo",
+		"rw": "Quiniaruanda",
+		"sa": "Sânscrito",
+		"sc": "Sardo",
+		"sd": "Sindi",
+		"se": "Samido norte",
+		"sg": "Sango",
+		"sh": "Servo-croata",
+		"si": "Cingalês",
+		"sk": "Eslovaco",
+		"sl": "Esloveno",
+		"sm": "Samoano",
+		"sn": "Chona",
+		"so": "Somali",
+		"sq": "Albanês",
+		"sr": "Sérvio",
+		"ss": "Suázi",
+		"st": "Soto do sul",
+		"su": "Sundanês",
+		"sv": "Sueco",
+		"sw": "Suaíli",
+		"ta": "Tâmil",
+		"te": "Telugu",
+		"tg": "Tajique",
+		"th": "Tailandês",
+		"ti": "Tigrínia",
+		"tk": "Turcomano",
+		"tl": "Tagalo",
+		"tn": "Tswana",
+		"to": "Tonganês",
+		"tr": "Turco",
+		"ts": "Tsonga",
+		"tt": "Tártaro",
+		"tw": "Twi",
+		"ty": "Taitiano",
+		"ug": "Uigur",
+		"uk": "Ucraniano",
+		"ur": "Urdu",
+		"uz": "Uzbeque",
+		"ve": "Venda",
+		"vi": "Vietnamita",
+		"vo": "Volapuque",
+		"wa": "Valão",
+		"wo": "Uolofe",
+		"xh": "Xhosa",
+		"yi": "Iídiche",
+		"yo": "Iorubá",
+		"za": "Zhuang",
+		"zh": "Chinês",
+		"zu": "Zulu",
 	}
+
+	if name, ok := langMap[lang]; ok {
+		return name
+	}
+
+	return lang
 }
 
 func resolveBackdrop(meta api.PreparedMetadata) string {

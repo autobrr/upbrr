@@ -1,14 +1,14 @@
 export namespace api {
-
+	
 	export class BlurayDiscSpec {
 	    Type: string;
 	    Count: number;
 	    Format: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BlurayDiscSpec(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Type = source["Type"];
@@ -19,11 +19,11 @@ export namespace api {
 	export class BlurayImage {
 	    Kind: string;
 	    URL: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BlurayImage(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Kind = source["Kind"];
@@ -33,11 +33,11 @@ export namespace api {
 	export class BlurayPlaybackSpec {
 	    Region: string;
 	    RegionNotes: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BlurayPlaybackSpec(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Region = source["Region"];
@@ -47,11 +47,11 @@ export namespace api {
 	export class BlurayVideoSpec {
 	    Codec: string;
 	    Resolution: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BlurayVideoSpec(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Codec = source["Codec"];
@@ -64,11 +64,11 @@ export namespace api {
 	    Subtitles: string[];
 	    Discs: BlurayDiscSpec;
 	    Playback: BlurayPlaybackSpec;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BluraySpecs(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Video = this.convertValues(source["Video"], BlurayVideoSpec);
@@ -77,7 +77,7 @@ export namespace api {
 	        this.Discs = this.convertValues(source["Discs"], BlurayDiscSpec);
 	        this.Playback = this.convertValues(source["Playback"], BlurayPlaybackSpec);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -115,11 +115,11 @@ export namespace api {
 	    CoverImages: BlurayImage[];
 	    GenericDisc: boolean;
 	    SpecsMissing: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BlurayReleaseCandidate(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ReleaseID = source["ReleaseID"];
@@ -141,7 +141,7 @@ export namespace api {
 	        this.GenericDisc = source["GenericDisc"];
 	        this.SpecsMissing = source["SpecsMissing"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -172,11 +172,11 @@ export namespace api {
 	    Threshold: number;
 	    Candidates: BlurayReleaseCandidate[];
 	    UpdatedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BlurayMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -191,7 +191,7 @@ export namespace api {
 	        this.Candidates = this.convertValues(source["Candidates"], BlurayReleaseCandidate);
 	        this.UpdatedAt = source["UpdatedAt"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -210,21 +210,21 @@ export namespace api {
 		    return a;
 		}
 	}
-
-
-
-
+	
+	
+	
+	
 	export class BrowseDirectoryEntry {
 	    name: string;
 	    path: string;
 	    isDir: boolean;
 	    size: number;
 	    modifiedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BrowseDirectoryEntry(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -239,11 +239,11 @@ export namespace api {
 	    parentPath: string;
 	    mode: string;
 	    entries: BrowseDirectoryEntry[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new BrowseDirectoryResponse(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.currentPath = source["currentPath"];
@@ -251,7 +251,7 @@ export namespace api {
 	        this.mode = source["mode"];
 	        this.entries = this.convertValues(source["entries"], BrowseDirectoryEntry);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -273,11 +273,11 @@ export namespace api {
 	export class ImageHostWarning {
 	    Host: string;
 	    Message: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ImageHostWarning(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Host = source["Host"];
@@ -291,11 +291,11 @@ export namespace api {
 	    Warnings: ImageHostWarning[];
 	    Reuploaded: boolean;
 	    Message: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ImageHostFeedback(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Status = source["Status"];
@@ -305,7 +305,7 @@ export namespace api {
 	        this.Reuploaded = source["Reuploaded"];
 	        this.Message = source["Message"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -331,11 +331,11 @@ export namespace api {
 	    RawDescriptionHTML: string;
 	    HasOverride: boolean;
 	    ImageHost: ImageHostFeedback;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DescriptionBuilderGroup(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.GroupKey = source["GroupKey"];
@@ -345,7 +345,7 @@ export namespace api {
 	        this.HasOverride = source["HasOverride"];
 	        this.ImageHost = this.convertValues(source["ImageHost"], ImageHostFeedback);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -367,17 +367,17 @@ export namespace api {
 	export class DescriptionBuilderPreview {
 	    SourcePath: string;
 	    Groups: DescriptionBuilderGroup[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DescriptionBuilderPreview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
 	        this.Groups = this.convertValues(source["Groups"], DescriptionBuilderGroup);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -401,11 +401,11 @@ export namespace api {
 	    GroupKey: string;
 	    Description: string;
 	    UpdatedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DescriptionOverride(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -420,11 +420,11 @@ export namespace api {
 	    Link: string;
 	    Tracker: string;
 	    Internal: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DupeEpisodeMatch(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
@@ -450,11 +450,11 @@ export namespace api {
 	    SeasonPackID: string;
 	    SeasonPackContainsEpisode: boolean;
 	    MatchedEpisodeIDs: DupeEpisodeMatch[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DupeMatch(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.FilenameMatch = source["FilenameMatch"];
@@ -473,7 +473,7 @@ export namespace api {
 	        this.SeasonPackContainsEpisode = source["SeasonPackContainsEpisode"];
 	        this.MatchedEpisodeIDs = this.convertValues(source["MatchedEpisodeIDs"], DupeEpisodeMatch);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -509,11 +509,11 @@ export namespace api {
 	    Internal: boolean;
 	    BDInfo: string;
 	    Description: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DupeEntry(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Name = source["Name"];
@@ -548,11 +548,11 @@ export namespace api {
 	    Status: string;
 	    Error: string;
 	    CheckedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DupeCheckResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Tracker = source["Tracker"];
@@ -569,7 +569,7 @@ export namespace api {
 	        this.Error = source["Error"];
 	        this.CheckedAt = source["CheckedAt"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -592,18 +592,18 @@ export namespace api {
 	    SourcePath: string;
 	    Results: DupeCheckResult[];
 	    Notes: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DupeCheckSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
 	        this.Results = this.convertValues(source["Results"], DupeCheckResult);
 	        this.Notes = source["Notes"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -622,9 +622,9 @@ export namespace api {
 		    return a;
 		}
 	}
-
-
-
+	
+	
+	
 	export class ExternalIDCandidate {
 	    Provider: string;
 	    ID: number;
@@ -636,11 +636,11 @@ export namespace api {
 	    Overview: string;
 	    PosterURL: string;
 	    Similarity: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExternalIDCandidate(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Provider = source["Provider"];
@@ -660,11 +660,11 @@ export namespace api {
 	    IMDB: ExternalIDCandidate[];
 	    TMDBAutoSelected: boolean;
 	    IMDBAutoSelected: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExternalIDCandidates(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.TMDB = this.convertValues(source["TMDB"], ExternalIDCandidate);
@@ -672,7 +672,7 @@ export namespace api {
 	        this.TMDBAutoSelected = source["TMDBAutoSelected"];
 	        this.IMDBAutoSelected = source["IMDBAutoSelected"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -695,11 +695,11 @@ export namespace api {
 	    Provider: string;
 	    ID: number;
 	    Source: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExternalIDInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Provider = source["Provider"];
@@ -713,11 +713,11 @@ export namespace api {
 	    TVDBID?: number;
 	    TVmazeID?: number;
 	    MALID?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExternalIDOverrides(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.TMDBID = source["TMDBID"];
@@ -739,11 +739,11 @@ export namespace api {
 	    SourceTVDB: string;
 	    SourceTVmaze: string;
 	    UpdatedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExternalIDs(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -787,11 +787,11 @@ export namespace api {
 	    BackdropMedium: string;
 	    IMDBID: number;
 	    TVDBID: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TVmazeMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.TVmazeID = source["TVmazeID"];
@@ -848,11 +848,11 @@ export namespace api {
 	    EpisodeOverview: string;
 	    EpisodeOverviewEnglish: string;
 	    EpisodeAired: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TVDBMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.TVDBID = source["TVDBID"];
@@ -885,11 +885,11 @@ export namespace api {
 	    Season: number;
 	    Year: number;
 	    YearRange: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IMDBSeasonSummary(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Season = source["Season"];
@@ -901,11 +901,11 @@ export namespace api {
 	    Year: number;
 	    Month: number;
 	    Day: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IMDBReleaseDate(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Year = source["Year"];
@@ -920,11 +920,11 @@ export namespace api {
 	    ReleaseDate: IMDBReleaseDate;
 	    Season: number;
 	    EpisodeText: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IMDBEpisode(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
@@ -934,7 +934,7 @@ export namespace api {
 	        this.Season = source["Season"];
 	        this.EpisodeText = source["EpisodeText"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -958,11 +958,11 @@ export namespace api {
 	    Country: string;
 	    Language: string;
 	    Attributes: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IMDBAKA(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Title = source["Title"];
@@ -976,11 +976,11 @@ export namespace api {
 	    Seconds: number;
 	    Minutes: number;
 	    Attributes: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IMDBEditionDetail(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.DisplayName = source["DisplayName"];
@@ -992,11 +992,11 @@ export namespace api {
 	export class IMDBPerson {
 	    ID: string;
 	    Name: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IMDBPerson(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
@@ -1034,11 +1034,11 @@ export namespace api {
 	    SoundMixes: string[];
 	    TVYear: number;
 	    OriginalLanguage: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IMDBMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.IMDBID = source["IMDBID"];
@@ -1072,7 +1072,7 @@ export namespace api {
 	        this.TVYear = source["TVYear"];
 	        this.OriginalLanguage = source["OriginalLanguage"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1091,16 +1091,40 @@ export namespace api {
 		    return a;
 		}
 	}
+	export class TMDBLocalizedData {
+	    Title: string;
+	    Overview: string;
+	    EpisodeTitle: string;
+	    EpisodeOverview: string;
+	    TrailerURL: string;
+	    Genres: string;
+	    ContentRating: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TMDBLocalizedData(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Title = source["Title"];
+	        this.Overview = source["Overview"];
+	        this.EpisodeTitle = source["EpisodeTitle"];
+	        this.EpisodeOverview = source["EpisodeOverview"];
+	        this.TrailerURL = source["TrailerURL"];
+	        this.Genres = source["Genres"];
+	        this.ContentRating = source["ContentRating"];
+	    }
+	}
 	export class TMDBNetwork {
 	    ID: number;
 	    Name: string;
 	    LogoPath: string;
 	    OriginCountry: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TMDBNetwork(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
@@ -1112,11 +1136,11 @@ export namespace api {
 	export class TMDBCountry {
 	    ISO3166: string;
 	    Name: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TMDBCountry(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ISO3166 = source["ISO3166"];
@@ -1128,11 +1152,11 @@ export namespace api {
 	    Name: string;
 	    LogoPath: string;
 	    OriginCountry: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TMDBCompany(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ID = source["ID"];
@@ -1179,11 +1203,12 @@ export namespace api {
 	    Networks: TMDBNetwork[];
 	    IMDbMismatch: boolean;
 	    MismatchedIMDbID: number;
-
+	    Localized: Record<string, TMDBLocalizedData>;
+	
 	    static createFrom(source: any = {}) {
 	        return new TMDBMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.TMDBID = source["TMDBID"];
@@ -1223,8 +1248,9 @@ export namespace api {
 	        this.Networks = this.convertValues(source["Networks"], TMDBNetwork);
 	        this.IMDbMismatch = source["IMDbMismatch"];
 	        this.MismatchedIMDbID = source["MismatchedIMDbID"];
+	        this.Localized = this.convertValues(source["Localized"], TMDBLocalizedData, true);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1251,11 +1277,11 @@ export namespace api {
 	    TVmaze?: TVmazeMetadata;
 	    Bluray?: BlurayMetadata;
 	    UpdatedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExternalMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1266,7 +1292,7 @@ export namespace api {
 	        this.Bluray = this.convertValues(source["Bluray"], BlurayMetadata);
 	        this.UpdatedAt = source["UpdatedAt"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1317,11 +1343,11 @@ export namespace api {
 	    IMDB?: IMDBMetadata;
 	    TVDB?: TVDBMetadata;
 	    TVmaze?: TVmazeMetadata;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ExternalPreview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Provider = source["Provider"];
@@ -1356,7 +1382,7 @@ export namespace api {
 	        this.TVDB = this.convertValues(source["TVDB"], TVDBMetadata);
 	        this.TVmaze = this.convertValues(source["TVmaze"], TVmazeMetadata);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1412,11 +1438,11 @@ export namespace api {
 	    Disc: string;
 	    Edition: string[];
 	    Other: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FileMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Path = source["Path"];
@@ -1466,11 +1492,11 @@ export namespace api {
 	    LatestUploadStatus: string;
 	    LatestUploadAt: string;
 	    RuleFailureCount: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new HistoryEntry(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1488,11 +1514,11 @@ export namespace api {
 	    Status: string;
 	    CreatedAt: string;
 	    SourcePath: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UploadRecord(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Tracker = source["Tracker"];
@@ -1511,11 +1537,11 @@ export namespace api {
 	    WebURL: string;
 	    SizeBytes: number;
 	    UploadedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UploadedImageLink(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1535,11 +1561,11 @@ export namespace api {
 	    Order: number;
 	    Source: string;
 	    SelectedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScreenshotFinalSelection(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1558,11 +1584,11 @@ export namespace api {
 	    Height: number;
 	    Purpose: string;
 	    CapturedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Screenshot(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1581,11 +1607,11 @@ export namespace api {
 	    Rule: string;
 	    Reason: string;
 	    CreatedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerRuleFailure(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1610,11 +1636,11 @@ export namespace api {
 	    Filename: string;
 	    Matched: boolean;
 	    UpdatedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerMetadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1638,11 +1664,11 @@ export namespace api {
 	    SelectedPlaylists: string[];
 	    UseAll: boolean;
 	    UpdatedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PlaylistSelection(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1674,11 +1700,11 @@ export namespace api {
 	    NoDual?: boolean;
 	    DualAudio?: boolean;
 	    Region?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ReleaseNameOverrides(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Category = source["Category"];
@@ -1727,11 +1753,11 @@ export namespace api {
 	    FinalSelections: ScreenshotFinalSelection[];
 	    UploadedImages: UploadedImageLink[];
 	    UploadHistory: UploadRecord[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new HistoryOverview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1756,7 +1782,7 @@ export namespace api {
 	        this.UploadedImages = this.convertValues(source["UploadedImages"], UploadedImageLink);
 	        this.UploadHistory = this.convertValues(source["UploadHistory"], UploadRecord);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1775,15 +1801,15 @@ export namespace api {
 		    return a;
 		}
 	}
-
-
-
-
-
-
-
-
-
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	export class TrackerPreview {
 	    Tracker: string;
 	    TrackerID: string;
@@ -1800,11 +1826,11 @@ export namespace api {
 	    Filename: string;
 	    Matched: boolean;
 	    UpdatedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerPreview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Tracker = source["Tracker"];
@@ -1836,11 +1862,11 @@ export namespace api {
 	    ExternalPreview: ExternalPreview[];
 	    Bluray?: BlurayMetadata;
 	    TrackerData: TrackerPreview[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new MetadataPreview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -1855,7 +1881,7 @@ export namespace api {
 	        this.Bluray = this.convertValues(source["Bluray"], BlurayMetadata);
 	        this.TrackerData = this.convertValues(source["TrackerData"], TrackerPreview);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1877,11 +1903,11 @@ export namespace api {
 	export class PlaylistItem {
 	    file: string;
 	    size: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PlaylistItem(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.file = source["file"];
@@ -1894,11 +1920,11 @@ export namespace api {
 	    items: PlaylistItem[];
 	    score: number;
 	    edition: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PlaylistInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.file = source["file"];
@@ -1907,7 +1933,7 @@ export namespace api {
 	        this.score = source["score"];
 	        this.edition = source["edition"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1926,8 +1952,8 @@ export namespace api {
 		    return a;
 		}
 	}
-
-
+	
+	
 	export class PreparationDescription {
 	    GroupKey: string;
 	    Trackers: string[];
@@ -1937,11 +1963,11 @@ export namespace api {
 	    DescriptionHTML: string;
 	    HasOverride: boolean;
 	    ImageHost: ImageHostFeedback;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PreparationDescription(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.GroupKey = source["GroupKey"];
@@ -1953,7 +1979,7 @@ export namespace api {
 	        this.HasOverride = source["HasOverride"];
 	        this.ImageHost = this.convertValues(source["ImageHost"], ImageHostFeedback);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1975,17 +2001,17 @@ export namespace api {
 	export class PreparationPreview {
 	    SourcePath: string;
 	    Descriptions: PreparationDescription[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PreparationPreview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
 	        this.Descriptions = this.convertValues(source["Descriptions"], PreparationDescription);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2004,23 +2030,23 @@ export namespace api {
 		    return a;
 		}
 	}
-
-
+	
+	
 	export class ScreenshotError {
 	    Index: number;
 	    Message: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScreenshotError(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Index = source["Index"];
 	        this.Message = source["Message"];
 	    }
 	}
-
+	
 	export class ScreenshotImage {
 	    Index: number;
 	    TimestampSeconds: number;
@@ -2033,11 +2059,11 @@ export namespace api {
 	    RawURL?: string;
 	    WebURL?: string;
 	    UploadedAt?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScreenshotImage(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Index = source["Index"];
@@ -2058,11 +2084,11 @@ export namespace api {
 	    URL: string;
 	    Path: string;
 	    Host: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScreenshotLinkedImage(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Tracker = source["Tracker"];
@@ -2076,11 +2102,11 @@ export namespace api {
 	    TimestampSeconds: number;
 	    Frame: number;
 	    Source: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScreenshotSelection(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Index = source["Index"];
@@ -2102,11 +2128,11 @@ export namespace api {
 	    PreviewImages: ScreenshotImage[];
 	    MetadataTimestamp: string;
 	    RequiresManualFrames: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScreenshotPlan(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -2122,7 +2148,7 @@ export namespace api {
 	        this.MetadataTimestamp = source["MetadataTimestamp"];
 	        this.RequiresManualFrames = source["RequiresManualFrames"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2148,11 +2174,11 @@ export namespace api {
 	    Tonemapped: boolean;
 	    UsedLibplacebo: boolean;
 	    Errors: ScreenshotError[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ScreenshotResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
@@ -2162,7 +2188,7 @@ export namespace api {
 	        this.UsedLibplacebo = source["UsedLibplacebo"];
 	        this.Errors = this.convertValues(source["Errors"], ScreenshotError);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2181,13 +2207,14 @@ export namespace api {
 		    return a;
 		}
 	}
-
-
-
-
-
-
-
+	
+	
+	
+	
+	
+	
+	
+	
 	export class TrackerQuestionnaireField {
 	    Key: string;
 	    Label: string;
@@ -2197,11 +2224,11 @@ export namespace api {
 	    Placeholder: string;
 	    Help: string;
 	    Required: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerQuestionnaireField(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Key = source["Key"];
@@ -2217,17 +2244,17 @@ export namespace api {
 	export class TrackerQuestionnaire {
 	    Tracker: string;
 	    Fields: TrackerQuestionnaireField[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerQuestionnaire(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Tracker = source["Tracker"];
 	        this.Fields = this.convertValues(source["Fields"], TrackerQuestionnaireField);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2250,11 +2277,11 @@ export namespace api {
 	    Field: string;
 	    Path: string;
 	    Present: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerDryRunFile(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Field = source["Field"];
@@ -2274,11 +2301,11 @@ export namespace api {
 	    Files: TrackerDryRunFile[];
 	    Questionnaire?: TrackerQuestionnaire;
 	    ImageHost: ImageHostFeedback;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerDryRunEntry(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Tracker = source["Tracker"];
@@ -2293,7 +2320,7 @@ export namespace api {
 	        this.Questionnaire = this.convertValues(source["Questionnaire"], TrackerQuestionnaire);
 	        this.ImageHost = this.convertValues(source["ImageHost"], ImageHostFeedback);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2312,21 +2339,21 @@ export namespace api {
 		    return a;
 		}
 	}
-
+	
 	export class TrackerDryRunPreview {
 	    SourcePath: string;
 	    Trackers: TrackerDryRunEntry[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerDryRunPreview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.SourcePath = source["SourcePath"];
 	        this.Trackers = this.convertValues(source["Trackers"], TrackerDryRunEntry);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2345,21 +2372,21 @@ export namespace api {
 		    return a;
 		}
 	}
-
-
-
-
-
+	
+	
+	
+	
+	
 	export class UIStateRecord {
 	    id: string;
 	    label: string;
 	    updatedAt: string;
 	    state: Record<string, any>;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UIStateRecord(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -2370,16 +2397,16 @@ export namespace api {
 	}
 	export class UIStateList {
 	    states: UIStateRecord[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UIStateList(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.states = this.convertValues(source["states"], UIStateRecord);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2398,17 +2425,17 @@ export namespace api {
 		    return a;
 		}
 	}
-
+	
 	export class UploadImageHostFailure {
 	    Host: string;
 	    UsageScope: string;
 	    Trackers: string[];
 	    Message: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UploadImageHostFailure(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Host = source["Host"];
@@ -2420,17 +2447,17 @@ export namespace api {
 	export class UploadImagesResult {
 	    Links: UploadedImageLink[];
 	    Failures: UploadImageHostFailure[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new UploadImagesResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Links = this.convertValues(source["Links"], UploadedImageLink);
 	        this.Failures = this.convertValues(source["Failures"], UploadImageHostFailure);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2449,12 +2476,12 @@ export namespace api {
 		    return a;
 		}
 	}
-
+	
 
 }
 
 export namespace guiapp {
-
+	
 	export class DupeCheckTrackerState {
 	    tracker: string;
 	    status: string;
@@ -2462,11 +2489,11 @@ export namespace guiapp {
 	    result: api.DupeCheckResult;
 	    startedAt: string;
 	    finishedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DupeCheckTrackerState(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.tracker = source["tracker"];
@@ -2476,7 +2503,7 @@ export namespace guiapp {
 	        this.startedAt = source["startedAt"];
 	        this.finishedAt = source["finishedAt"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2506,11 +2533,11 @@ export namespace guiapp {
 	    error: string;
 	    startedAt: string;
 	    finishedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DupeCheckSnapshot(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.jobID = source["jobID"];
@@ -2524,7 +2551,7 @@ export namespace guiapp {
 	        this.startedAt = source["startedAt"];
 	        this.finishedAt = source["finishedAt"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2543,15 +2570,15 @@ export namespace guiapp {
 		    return a;
 		}
 	}
-
+	
 	export class ImportResult {
 	    message: string;
 	    warnings: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ImportResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.message = source["message"];
@@ -2571,11 +2598,11 @@ export namespace guiapp {
 	    uploadedCount: number;
 	    startedAt: string;
 	    finishedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerUploadTrackerState(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.tracker = source["tracker"];
@@ -2609,11 +2636,11 @@ export namespace guiapp {
 	    error: string;
 	    startedAt: string;
 	    finishedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TrackerUploadSnapshot(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.jobID = source["jobID"];
@@ -2633,7 +2660,7 @@ export namespace guiapp {
 	        this.startedAt = source["startedAt"];
 	        this.finishedAt = source["finishedAt"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -2652,7 +2679,7 @@ export namespace guiapp {
 		    return a;
 		}
 	}
-
+	
 	export class WebAuthStatus {
 	    path: string;
 	    exists: boolean;
@@ -2664,11 +2691,11 @@ export namespace guiapp {
 	    allowUnrestrictedBrowse: boolean;
 	    encryptionEnabled: boolean;
 	    message: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WebAuthStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
@@ -2687,16 +2714,16 @@ export namespace guiapp {
 }
 
 export namespace imagehostpolicy {
-
+	
 	export class Metadata {
 	    UploadHosts: string[];
 	    TrackerUploadHosts: Record<string, Array<string>>;
 	    OwnedHosts: Record<string, string>;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Metadata(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.UploadHosts = source["UploadHosts"];
@@ -2708,17 +2735,17 @@ export namespace imagehostpolicy {
 }
 
 export namespace logging {
-
+	
 	export class Entry {
 	    id: number;
 	    time: string;
 	    level: string;
 	    message: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Entry(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];

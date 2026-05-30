@@ -51,6 +51,7 @@ type TMDBClient interface {
 	GetEpisodeDetails(ctx context.Context, tmdbID, season, episode int) (tmdb.EpisodeDetails, error)
 	GetSeasonDetails(ctx context.Context, tmdbID, season int) (tmdb.SeasonDetails, error)
 	DailyToSeasonEpisode(ctx context.Context, tmdbID int, date time.Time) (int, int, error)
+	GetLocalizedData(ctx context.Context, input tmdb.LocalizedDataInput) (map[string]any, error)
 }
 
 type IMDBClient interface {
@@ -634,6 +635,68 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 
 	meta = s.applyTVEpisodeMetadata(ctx, meta, &ids, &metadata, tmdbClient, tvdbClient, tvmazeClient)
+
+	needsPTBR := false
+	for _, t := range meta.Trackers {
+		lower := strings.ToLower(strings.TrimSpace(t))
+		if lower == "bjs" || lower == "bt" || lower == "asc" {
+			needsPTBR = true
+			break
+		}
+	}
+	if !needsPTBR {
+		for _, t := range meta.MatchedTrackers {
+			lower := strings.ToLower(strings.TrimSpace(t))
+			if lower == "bjs" || lower == "bt" || lower == "asc" {
+				needsPTBR = true
+				break
+			}
+		}
+	}
+
+	if needsPTBR && ids.TMDBID != 0 {
+		var mainData, seasonData, episodeData map[string]any
+		mainData, _ = tmdbClient.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
+			TMDBID:           ids.TMDBID,
+			Category:         ids.Category,
+			DataType:         "main",
+			Language:         "pt-BR",
+			AppendToResponse: "credits,videos,content_ratings",
+		})
+
+		isTV := strings.EqualFold(ids.Category, "TV")
+		if isTV && meta.SeasonInt > 0 {
+			seasonData, _ = tmdbClient.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
+				TMDBID:           ids.TMDBID,
+				Season:           meta.SeasonInt,
+				Category:         "TV",
+				DataType:         "season",
+				Language:         "pt-BR",
+				AppendToResponse: "credits",
+			})
+			if meta.EpisodeInt > 0 {
+				episodeData, _ = tmdbClient.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
+					TMDBID:           ids.TMDBID,
+					Season:           meta.SeasonInt,
+					Episode:          meta.EpisodeInt,
+					Category:         "TV",
+					DataType:         "episode",
+					Language:         "pt-BR",
+					AppendToResponse: "credits",
+				})
+			}
+		}
+
+		if mainData != nil || seasonData != nil || episodeData != nil {
+			localized := parseTMDBLocalizedData(mainData, seasonData, episodeData)
+			if metadata.TMDB != nil {
+				if metadata.TMDB.Localized == nil {
+					metadata.TMDB.Localized = make(map[string]api.TMDBLocalizedData)
+				}
+				metadata.TMDB.Localized["pt-BR"] = localized
+			}
+		}
+	}
 
 	if tmdbErr != nil && s.logger != nil {
 		s.logger.Warnf("metadata: tmdb metadata lookup failed: %v", tmdbErr)

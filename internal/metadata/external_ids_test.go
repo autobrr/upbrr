@@ -213,6 +213,7 @@ type stubTMDB struct {
 	dailySeason   int
 	dailyEpisode  int
 	dailyErr      error
+	localizedData map[string]any
 	searchErr     error
 	findErr       error
 	searchCalls   int
@@ -260,6 +261,10 @@ func (s *stubTMDB) GetSeasonDetails(_ context.Context, _, _ int) (tmdb.SeasonDet
 
 func (s *stubTMDB) DailyToSeasonEpisode(_ context.Context, _ int, _ time.Time) (int, int, error) {
 	return s.dailySeason, s.dailyEpisode, s.dailyErr
+}
+
+func (s *stubTMDB) GetLocalizedData(_ context.Context, _ tmdb.LocalizedDataInput) (map[string]any, error) {
+	return s.localizedData, s.dailyErr
 }
 
 type stubIMDB struct {

@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
@@ -24,6 +26,10 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -184,6 +190,12 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 func buildFields(meta api.PreparedMetadata, description string, auth string, answers map[string]string) map[string]string {
 	width, height := resolveResolution(meta)
 	runtimeMinutes := resolveRuntime(meta)
+	var ptBR api.TMDBLocalizedData
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			ptBR = localized
+		}
+	}
 	fields := map[string]string{
 		"audio":            resolveAudio(meta),
 		"auth":             auth,
@@ -198,16 +210,16 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 		"imdblink":         resolveIDLink(meta),
 		"qualidade":        resolveQuality(meta),
 		"release":          strings.TrimSpace(meta.ServiceLongName),
-		"remaster_title":   strings.TrimSpace(meta.Edition),
+		"remaster_title":   resolveRemasterTitle(meta),
 		"resolucaoh":       height,
 		"resolucaow":       width,
-		"sinopse":          metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["overview"]), resolveOverview(meta)),
+		"sinopse":          metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["overview"]), resolveOverview(meta, ptBR)),
 		"submit":           "true",
-		"tags":             metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta)),
+		"tags":             metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta, ptBR)),
 		"tipolegenda":      resolveSubtitle(meta),
 		"title":            metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.OriginalTitle, meta.Release.Title),
-		"titulobrasileiro": metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Title, meta.Release.Title),
-		"traileryoutube":   resolveYouTube(meta),
+		"titulobrasileiro": metautil.FirstNonEmptyTrimmed(ptBR.Title, meta.ExternalMetadata.TMDB.Title, meta.Release.Title),
+		"traileryoutube":   resolveYouTube(meta, ptBR),
 		"type":             resolveType(meta),
 		"year":             resolveYearLabel(meta),
 	}
@@ -307,9 +319,21 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 	}
 
 	// TV Episode details
-	if strings.TrimSpace(meta.EpisodeOverview) != "" {
-		parts = append(parts, "[align=center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/align]")
-		parts = append(parts, "[align=center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/align]")
+	epTitle := meta.EpisodeTitle
+	epOverview := meta.EpisodeOverview
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if ptBR, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			if ptBR.EpisodeTitle != "" {
+				epTitle = ptBR.EpisodeTitle
+			}
+			if ptBR.EpisodeOverview != "" {
+				epOverview = ptBR.EpisodeOverview
+			}
+		}
+	}
+	if strings.TrimSpace(epOverview) != "" {
+		parts = append(parts, "[align=center]"+strings.TrimSpace(epTitle)+"[/align]")
+		parts = append(parts, "[align=center]"+strings.TrimSpace(epOverview)+"[/align]")
 	}
 
 	// File information
@@ -409,20 +433,218 @@ func resolveAudio(meta api.PreparedMetadata) string {
 }
 
 func resolveLanguage(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		switch strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)) {
-		case "pt":
-			return "Português"
-		case "en":
-			return "Inglês"
-		case "ja":
-			return "Japonês"
-		case "ko":
-			return "Coreano"
-		default:
-			return strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
-		}
+	if meta.ExternalMetadata.TMDB == nil {
+		return "Outro"
 	}
+
+	langCode := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage))
+	if langCode == "" {
+		return "Outro"
+	}
+
+	if langCode == "pt" {
+		for _, country := range meta.ExternalMetadata.TMDB.OriginCountry {
+			if strings.ToUpper(strings.TrimSpace(country)) == "PT" {
+				return "Português (pt)"
+			}
+		}
+		return "Português"
+	}
+
+	// All ISO 639-1 to Portuguese whitelist names
+	langMap := map[string]string{
+		"aa": "Afar",
+		"ab": "Abcázio",
+		"ae": "Avéstico",
+		"af": "Africânder",
+		"ak": "Acã",
+		"am": "Amárico",
+		"an": "Aragonês",
+		"ar": "Árabe",
+		"as": "Assamês",
+		"av": "Avárico",
+		"ay": "Aimará",
+		"az": "Azerbaijano",
+		"ba": "Basquir",
+		"be": "Bielorrusso",
+		"bg": "Búlgaro",
+		"bh": "Maithili",
+		"bi": "Bislamábichlamar",
+		"bm": "Bâmbara",
+		"bn": "Bengali ou bangla",
+		"bo": "Tibetano",
+		"br": "Bretão",
+		"bs": "Bósnio",
+		"ca": "Catalão",
+		"ce": "Tchechenoou checheno",
+		"ch": "Chamorro",
+		"co": "Corso",
+		"cr": "Cree",
+		"cs": "Tcheco",
+		"cu": "Eslavo eclesiástico",
+		"cv": "Tchuvache",
+		"cy": "Galês",
+		"da": "Dinamarquês",
+		"de": "Alemão",
+		"dv": "Diveí",
+		"dz": "Dzongkha",
+		"ee": "Jeje",
+		"el": "Grego moderno(desde 1453)",
+		"en": "Inglês",
+		"eo": "Esperanto",
+		"es": "Castelhano",
+		"et": "Estoniano",
+		"eu": "Basco",
+		"fa": "Persa",
+		"ff": "Fula",
+		"fi": "Finlandês",
+		"fj": "Fidjiano",
+		"fo": "Feroêsou feróico",
+		"fr": "Francês",
+		"fy": "Frisãoocidental",
+		"ga": "Irlandês",
+		"gd": "Gaélico escocês",
+		"gl": "Galego",
+		"gn": "Guarani",
+		"gu": "Gujarati",
+		"gv": "Manês",
+		"ha": "Hauçá",
+		"he": "Hebraico",
+		"hi": "Hindi",
+		"ho": "Hiri Motu",
+		"hr": "Croata",
+		"ht": "Crioulo haitiano",
+		"hu": "Húngaro",
+		"hy": "Armênio",
+		"hz": "Hereró",
+		"ia": "Interlíngua",
+		"id": "Indonésio",
+		"ie": "Interlíngua",
+		"ig": "Ibo",
+		"ii": "YideSichuan",
+		"ik": "Inupiaq",
+		"io": "Ido",
+		"is": "Islandês",
+		"it": "Italiano",
+		"iu": "Inuktitut",
+		"ja": "Japonês",
+		"jv": "Javanês",
+		"ka": "Georgiano",
+		"kg": "Kongo",
+		"ki": "Kikuyu",
+		"kj": "Oshikwanyama",
+		"kk": "Cazaque",
+		"kl": "Groenlandês",
+		"km": "Khmer",
+		"kn": "Canarês",
+		"ko": "Coreano",
+		"kr": "Kanuri ou canúri",
+		"ks": "Caxemir",
+		"ku": "Curdo",
+		"kv": "Komi",
+		"kw": "Córnico",
+		"ky": "Quirguiz",
+		"la": "Latim",
+		"lb": "Luxemburguês",
+		"lg": "Luganda",
+		"li": "Limburguês",
+		"ln": "Lingala",
+		"lo": "Laociano",
+		"lt": "Lituano",
+		"lu": "Luba-catanga",
+		"lv": "Letão",
+		"mg": "Malgaxe",
+		"mh": "Marshallês",
+		"mi": "Maori",
+		"mk": "Macedônio",
+		"ml": "Malaiala",
+		"mn": "Mongol",
+		"mo": "Moldavo",
+		"mr": "Marata",
+		"ms": "Malaio",
+		"mt": "Maltês",
+		"my": "Birmanês",
+		"na": "Nauruano",
+		"nb": "Bokmål norueguês",
+		"nd": "Ndebele do norte",
+		"ne": "Nepali, nepalês",
+		"ng": "Ndonga",
+		"nl": "Holandês",
+		"nn": "Novo norueguês",
+		"no": "Norueguês",
+		"nr": "Ndebele do sul",
+		"nv": "Navajo",
+		"ny": "Nianja",
+		"oc": "Occitano(depois 1500)",
+		"oj": "Chippewa",
+		"om": "Oromo",
+		"or": "Oriá",
+		"os": "Oseto",
+		"pa": "Panjabi",
+		"pi": "Páli",
+		"pl": "Polaco",
+		"ps": "Pachto",
+		"pt": "Português",
+		"qu": "Quíchua",
+		"rm": "Reto-romano",
+		"rn": "Kirundi",
+		"ro": "Romeno",
+		"ru": "Russo",
+		"rw": "Quiniaruanda",
+		"sa": "Sânscrito",
+		"sc": "Sardo",
+		"sd": "Sindi",
+		"se": "Samido norte",
+		"sg": "Sango",
+		"sh": "Servo-croata",
+		"si": "Cingalês",
+		"sk": "Eslovaco",
+		"sl": "Esloveno",
+		"sm": "Samoano",
+		"sn": "Chona",
+		"so": "Somali",
+		"sq": "Albanês",
+		"sr": "Sérvio",
+		"ss": "Suázi",
+		"st": "Soto do sul",
+		"su": "Sundanês",
+		"sv": "Sueco",
+		"sw": "Suaíli",
+		"ta": "Tâmil",
+		"te": "Telugu",
+		"tg": "Tajique",
+		"th": "Tailandês",
+		"ti": "Tigrínia",
+		"tk": "Turcomano",
+		"tl": "Tagalo",
+		"tn": "Tswana",
+		"to": "Tonganês",
+		"tr": "Turco",
+		"ts": "Tsonga",
+		"tt": "Tártaro",
+		"tw": "Twi",
+		"ty": "Taitiano",
+		"ug": "Uigur",
+		"uk": "Ucraniano",
+		"ur": "Urdu",
+		"uz": "Uzbeque",
+		"ve": "Venda",
+		"vi": "Vietnamita",
+		"vo": "Volapuque",
+		"wa": "Valão",
+		"wo": "Uolofe",
+		"xh": "Xhosa",
+		"yi": "Iídiche",
+		"yo": "Iorubá",
+		"za": "Zhuang",
+		"zh": "Chinês",
+		"zu": "Zulu",
+	}
+
+	if name, ok := langMap[langCode]; ok {
+		return name
+	}
+
 	return "Outro"
 }
 
@@ -656,7 +878,10 @@ func resolveIDLink(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveOverview(meta api.PreparedMetadata) string {
+func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	if ptBR.Overview != "" {
+		return strings.TrimSpace(ptBR.Overview)
+	}
 	if meta.ExternalMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Overview)
 	}
@@ -666,15 +891,32 @@ func resolveOverview(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveTags(meta api.PreparedMetadata) string {
+func resolveTags(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
 	genreText := strings.TrimSpace(meta.Release.Genre)
-	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "" {
+	if ptBR.Genres != "" {
+		genreText = strings.TrimSpace(ptBR.Genres)
+	} else if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "" {
 		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
 	}
-	return strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(genreText, ", ", "."), " ", "."))
+	if genreText == "" {
+		return ""
+	}
+
+	genres := strings.Split(genreText, ",")
+	for i, g := range genres {
+		g = strings.TrimSpace(g)
+		t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+		g, _, _ = transform.String(t, g)
+		g = strings.ReplaceAll(g, " ", ".")
+		genres[i] = strings.ToLower(g)
+	}
+	return strings.Join(genres, ", ")
 }
 
-func resolveYouTube(meta api.PreparedMetadata) string {
+func resolveYouTube(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	if ptBR.TrailerURL != "" {
+		return strings.TrimSpace(ptBR.TrailerURL)
+	}
 	if meta.ExternalMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ExternalMetadata.TMDB.YouTube)
 	}
@@ -695,18 +937,115 @@ func resolveNetworks(meta api.PreparedMetadata) string {
 }
 
 func resolveReleaseDate(meta api.PreparedMetadata) string {
+	rawDate := ""
 	if meta.ExternalMetadata.TMDB != nil {
-		return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.ReleaseDate, meta.ExternalMetadata.TMDB.FirstAirDate)
+		rawDate = metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.ReleaseDate, meta.ExternalMetadata.TMDB.FirstAirDate)
+	}
+	if rawDate == "" {
+		return ""
+	}
+	t, err := time.Parse("2006-01-02", rawDate)
+	if err == nil {
+		return t.Format("02 Jan 2006")
 	}
 	return ""
 }
 
 func resolveYearLabel(meta api.PreparedMetadata) string {
 	year := resolveYear(meta)
-	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.EndYear > 0 {
-		return fmt.Sprintf("%d-%d", year, meta.ExternalMetadata.IMDB.EndYear)
+	if strings.EqualFold(categoryOf(meta), "TV") {
+		if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.EndYear > 0 {
+			return fmt.Sprintf("%d-%d", year, meta.ExternalMetadata.IMDB.EndYear)
+		}
+		return fmt.Sprintf("%d-", year)
 	}
-	return fmt.Sprintf("%d-", year)
+	return strconv.Itoa(year)
+}
+
+func resolveRemasterTitle(meta api.PreparedMetadata) string {
+	var tags []string
+
+	edition := strings.TrimSpace(meta.Edition)
+	editionLower := strings.ToLower(edition)
+	editionMap := map[string]string{
+		"director's cut": "Director's Cut",
+		"extended":       "Extended Edition",
+		"imax":           "IMAX",
+		"open matte":     "Open Matte",
+		"noir":           "Noir Edition",
+		"theatrical":     "Theatrical Cut",
+		"uncut":          "Uncut",
+		"unrated":        "Unrated",
+		"uncensored":     "Uncensored",
+	}
+	for keyword, label := range editionMap {
+		if strings.Contains(editionLower, keyword) {
+			tags = append(tags, label)
+			break
+		}
+	}
+
+	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
+	if strings.Contains(audio, "ATMOS") {
+		tags = append(tags, "Dolby Atmos")
+	}
+
+	if meta.BitDepth == "10" {
+		tags = append(tags, "10-bit")
+	}
+
+	hdr := strings.ToUpper(strings.TrimSpace(meta.HDR))
+	if strings.Contains(hdr, "DV") || strings.Contains(hdr, "DOLBY VISION") {
+		tags = append(tags, "Dolby Vision")
+	}
+	if strings.Contains(hdr, "HDR10+") {
+		tags = append(tags, "HDR10+")
+	}
+	if strings.Contains(hdr, "HDR") && !strings.Contains(hdr, "HDR10+") {
+		tags = append(tags, "HDR10")
+	}
+
+	if strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX") {
+		tags = append(tags, "Remux")
+	}
+
+	if meta.HasCommentary {
+		tags = append(tags, "Com comentários")
+	}
+
+	priority := []string{
+		"Dolby Atmos",
+		"Remux",
+		"Director's Cut",
+		"Extended Edition",
+		"IMAX",
+		"Open Matte",
+		"Noir Edition",
+		"Theatrical Cut",
+		"Uncut",
+		"Unrated",
+		"Uncensored",
+		"10-bit",
+		"Dolby Vision",
+		"HDR10+",
+		"HDR10",
+		"Com extras",
+		"Com comentários",
+	}
+
+	tagSet := make(map[string]bool)
+	for _, t := range tags {
+		tagSet[t] = true
+	}
+
+	var ordered []string
+	for _, p := range priority {
+		if tagSet[p] {
+			ordered = append(ordered, p)
+		}
+	}
+
+	return strings.Join(ordered, " / ")
 }
 
 func resolveYear(meta api.PreparedMetadata) int {
@@ -720,7 +1059,13 @@ func resolveYear(meta api.PreparedMetadata) int {
 }
 
 func resolveAdult(meta api.PreparedMetadata) string {
-	genres := strings.ToLower(resolveTags(meta) + " " + metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Keywords, ""))
+	var ptBR api.TMDBLocalizedData
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			ptBR = localized
+		}
+	}
+	genres := strings.ToLower(resolveTags(meta, ptBR) + " " + metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Keywords, ""))
 	if meta.Anime && strings.Contains(genres, "hentai") {
 		return "1"
 	}
@@ -800,6 +1145,11 @@ func resolveLogo(meta api.PreparedMetadata) string {
 
 func resolvePoster(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil {
+		if meta.ExternalMetadata.TMDB.Localized != nil {
+			if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok && strings.TrimSpace(localized.Poster) != "" {
+				return strings.TrimSpace(localized.Poster)
+			}
+		}
 		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
 	}
 	return ""

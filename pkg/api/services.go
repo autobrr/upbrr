@@ -440,6 +440,18 @@ type TMDBMetadata struct {
 	Networks            []TMDBNetwork
 	IMDbMismatch        bool
 	MismatchedIMDbID    int
+	Localized           map[string]TMDBLocalizedData
+}
+
+type TMDBLocalizedData struct {
+	Title           string
+	Overview        string
+	EpisodeTitle    string
+	EpisodeOverview string
+	TrailerURL      string
+	Genres          string
+	ContentRating   string
+	Poster          string
 }
 
 type TMDBCompany struct {
