@@ -64,10 +64,29 @@ func SamePath(left string, right string) bool {
 	if !leftOK || !rightOK {
 		return false
 	}
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(leftAbs, rightAbs)
+	if sameCleanPath(leftAbs, rightAbs) {
+		return true
 	}
-	return leftAbs == rightAbs
+	leftReal, leftRealOK := evalExistingPrefix(leftAbs)
+	rightReal, rightRealOK := evalExistingPrefix(rightAbs)
+	return leftRealOK && rightRealOK && sameCleanPath(leftReal, rightReal)
+}
+
+func sameCleanPath(left string, right string) bool {
+	left = normalizeCleanLocalPath(left)
+	right = normalizeCleanLocalPath(right)
+	if filepath.VolumeName(left) != filepath.VolumeName(right) {
+		return false
+	}
+	return left == right
+}
+
+func normalizeCleanLocalPath(value string) string {
+	cleaned := filepath.Clean(value)
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(cleaned)
+	}
+	return cleaned
 }
 
 func cleanAbs(value string) (string, bool) {
@@ -83,6 +102,8 @@ func cleanAbs(value string) (string, bool) {
 }
 
 func isWithinCleanRoot(root string, target string) bool {
+	root = normalizeCleanLocalPath(root)
+	target = normalizeCleanLocalPath(target)
 	if filepath.VolumeName(root) != filepath.VolumeName(target) {
 		return false
 	}

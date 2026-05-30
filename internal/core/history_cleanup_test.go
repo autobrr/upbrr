@@ -161,3 +161,31 @@ func TestCoreDeleteAllHistoryReleasesPurgesEveryStoredPath(t *testing.T) {
 		t.Fatalf("unexpected purged paths: %#v", repo.purgedPaths)
 	}
 }
+
+func TestRemoveIfWithinRootKeepsAliasedRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sentinel := filepath.Join(root, "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	alias := filepath.Join(root, "self")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlink unavailable on this host: %v", err)
+	}
+
+	removed, err := removeIfWithinRoot(root, alias, true)
+	if err != nil {
+		t.Fatalf("remove aliased root: %v", err)
+	}
+	if removed {
+		t.Fatalf("expected aliased root to be kept")
+	}
+	if _, err := os.Lstat(alias); err != nil {
+		t.Fatalf("expected alias to remain: %v", err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("expected root contents to remain: %v", err)
+	}
+}

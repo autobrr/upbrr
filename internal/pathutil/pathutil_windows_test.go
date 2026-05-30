@@ -60,3 +60,35 @@ func TestIsWithinRootRejectsWindowsJunctionEscapes(t *testing.T) {
 
 	assertEscapingLinkRejected(t, root, link)
 }
+
+func TestIsWithinRootAllowsWindowsCaseVariants(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	child := filepath.Join(root, "ChildDir")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatalf("mkdir child: %v", err)
+	}
+
+	rootVariant := swapASCIIPathCase(root)
+	childVariant := swapASCIIPathCase(child)
+	if !IsWithinRoot(rootVariant, childVariant) {
+		t.Fatalf("expected case-variant child path to be within root")
+	}
+	if !SamePath(root, rootVariant) {
+		t.Fatalf("expected case-variant root paths to match")
+	}
+}
+
+func swapASCIIPathCase(value string) string {
+	swapped := []byte(value)
+	for idx, char := range swapped {
+		switch {
+		case char >= 'a' && char <= 'z':
+			swapped[idx] = char - 'a' + 'A'
+		case char >= 'A' && char <= 'Z':
+			swapped[idx] = char - 'A' + 'a'
+		}
+	}
+	return string(swapped)
+}

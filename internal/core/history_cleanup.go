@@ -223,7 +223,7 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 	if err != nil {
 		return false, fmt.Errorf("cleanup history artifact: resolve target path: %w", err)
 	}
-	if absTarget == absRoot {
+	if pathutil.SamePath(absRoot, absTarget) {
 		return false, nil
 	}
 	if !pathutil.IsWithinRoot(absRoot, absTarget) {

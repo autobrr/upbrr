@@ -90,3 +90,21 @@ func TestSamePathUsesHostSemantics(t *testing.T) {
 		t.Fatalf("expected different paths not to match")
 	}
 }
+
+func TestSamePathResolvesSymlinkAliases(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	alias := filepath.Join(parent, "root-alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlink unavailable on this host: %v", err)
+	}
+
+	if !SamePath(root, alias) {
+		t.Fatalf("expected symlink alias to match root")
+	}
+}

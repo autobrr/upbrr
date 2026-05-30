@@ -252,7 +252,7 @@ func (c *checker) checkFilepathCall(name string, call *ast.CallExpr) {
 	}
 	for _, arg := range call.Args {
 		if hasSlashDataPathSignal(arg) {
-			c.addViolation(arg.Pos(), "slash-delimited URL/API paths must use path APIs or filepath.FromSlash at local filesystem boundaries")
+			c.addViolation(arg.Pos(), "slash-delimited torrent/API/URL paths must use path APIs or filepath.FromSlash at local filesystem boundaries")
 		}
 	}
 }
@@ -335,6 +335,13 @@ func (c *checker) checkBinary(expr *ast.BinaryExpr) {
 		}
 		if hasLocalPathSignal(expr) && !hasSlashDataSignal(expr) {
 			c.addViolation(expr.Pos(), "use filepath.Join instead of string concatenation to build local filesystem paths")
+		}
+	case token.EQL, token.NEQ:
+		if c.relPath == "internal/pathutil/pathutil.go" {
+			return
+		}
+		if isRootTargetPathEquality(expr.X, expr.Y) {
+			c.addViolation(expr.Pos(), "use pathutil.SamePath instead of lexical equality for local filesystem root/target paths")
 		}
 	default:
 		return
@@ -592,7 +599,7 @@ func isLocalPathName(name string) bool {
 	if lower == "" || isSlashDataName(lower) {
 		return false
 	}
-	if strings.Contains(lower, "filepath") || strings.Contains(lower, "dbpath") || strings.Contains(lower, "sourcepath") || strings.Contains(lower, "targetpath") || strings.Contains(lower, "outputpath") || strings.Contains(lower, "artifactpath") || strings.Contains(lower, "configpath") || strings.Contains(lower, "torrentpath") || strings.Contains(lower, "mediainfopath") {
+	if strings.Contains(lower, "filepath") || strings.Contains(lower, "dbpath") || strings.Contains(lower, "sourcepath") || strings.Contains(lower, "targetpath") || strings.Contains(lower, "outputpath") || strings.Contains(lower, "artifactpath") || strings.Contains(lower, "configpath") || strings.Contains(lower, "mediainfopath") {
 		return true
 	}
 	if strings.Contains(lower, "pathparts") || strings.Contains(lower, "fileparts") || strings.Contains(lower, "dirparts") {
@@ -609,6 +616,7 @@ func isLocalPathName(name string) bool {
 func isSlashDataPathName(name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	return strings.Contains(lower, "slashpath") ||
+		strings.Contains(lower, "torrentcontentpath") ||
 		strings.Contains(lower, "apipath") ||
 		strings.Contains(lower, "urlpath") ||
 		strings.Contains(lower, "remotepath") ||
@@ -661,4 +669,43 @@ func isAdHocPathGuardName(name string) bool {
 	default:
 		return false
 	}
+}
+
+func isRootTargetPathEquality(left ast.Expr, right ast.Expr) bool {
+	leftName, leftOK := rootTargetPathName(left)
+	rightName, rightOK := rootTargetPathName(right)
+	if !leftOK || !rightOK {
+		return false
+	}
+	return isRootPathName(leftName) && isTargetPathName(rightName) ||
+		isTargetPathName(leftName) && isRootPathName(rightName)
+}
+
+func rootTargetPathName(expr ast.Expr) (string, bool) {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		return pathGuardEqualityName(typed.Name)
+	case *ast.SelectorExpr:
+		return pathGuardEqualityName(typed.Sel.Name)
+	}
+	return "", false
+}
+
+func pathGuardEqualityName(name string) (string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" || isSlashDataName(lower) {
+		return "", false
+	}
+	if isRootPathName(lower) || isTargetPathName(lower) || isLocalPathName(lower) {
+		return lower, true
+	}
+	return "", false
+}
+
+func isRootPathName(name string) bool {
+	return strings.Contains(name, "root")
+}
+
+func isTargetPathName(name string) bool {
+	return strings.Contains(name, "target") || strings.Contains(name, "candidate")
 }

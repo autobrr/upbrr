@@ -111,6 +111,21 @@ func check(t *testing.T, dbPath string, fileParts []string) {
 	}
 }
 
+func TestPathSignalClassifiesTorrentPaths(t *testing.T) {
+	if isLocalPathName("torrentPath") {
+		t.Fatalf("torrentPath should not be classified as a local path signal")
+	}
+	if isLocalPathName("torrentContentPath") {
+		t.Fatalf("torrentContentPath should not be classified as a local path signal")
+	}
+	if !isSlashDataPathName("torrentContentPath") {
+		t.Fatalf("torrentContentPath should be classified as slash-delimited data")
+	}
+	if !isLocalPathName("torrentFilePath") {
+		t.Fatalf("torrentFilePath should remain classified as a local path signal")
+	}
+}
+
 func TestCheckRepositoryFlagsWrongPathPackageForPathKind(t *testing.T) {
 	root := t.TempDir()
 	writeSample(t, root, "internal/sample/sample.go", `package sample
@@ -121,10 +136,13 @@ import (
 	"path/filepath"
 )
 
-func check(state struct{ torrentPath string }, raw string) {
+func check(state struct{ torrentPath string }, torrentContentPath string, torrentFilePath string, raw string) {
 	_ = path.Base(state.torrentPath)
+	_ = path.Base(torrentContentPath)
+	_ = path.Base(torrentFilePath)
 	parsed, _ := url.Parse(raw)
 	_ = filepath.Base(parsed.Path)
+	_ = filepath.Base(torrentContentPath)
 }
 `)
 
@@ -132,14 +150,14 @@ func check(state struct{ torrentPath string }, raw string) {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 2 {
-		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 3 {
+		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
 	}
 	messages := strings.Join(violationMessages(violations), "\n")
 	if !strings.Contains(messages, "use filepath for local filesystem paths") {
 		t.Fatalf("expected path package violation, got %q", messages)
 	}
-	if !strings.Contains(messages, "slash-delimited URL/API paths") {
+	if !strings.Contains(messages, "slash-delimited torrent/API/URL paths") {
 		t.Fatalf("expected filepath slash-data violation, got %q", messages)
 	}
 }
@@ -195,7 +213,7 @@ func TestCheckRepositoryFlagsAdHocPathGuards(t *testing.T) {
 	writeSample(t, root, "internal/sample/sample.go", `package sample
 
 func pathWithinRoot(root string, target string) bool {
-	return root == target
+	return len(root) <= len(target)
 }
 
 func samePath(left string, right string) bool {
@@ -213,6 +231,27 @@ func samePath(left string, right string) bool {
 	messages := strings.Join(violationMessages(violations), "\n")
 	if !strings.Contains(messages, "internal/pathutil") {
 		t.Fatalf("expected pathutil violation, got %q", messages)
+	}
+}
+
+func TestCheckRepositoryFlagsLexicalRootTargetPathEquality(t *testing.T) {
+	root := t.TempDir()
+	writeSample(t, root, "internal/sample/sample.go", `package sample
+
+func check(absRoot string, absTarget string) bool {
+	return absTarget == absRoot
+}
+`)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "pathutil.SamePath") {
+		t.Fatalf("expected SamePath violation, got %q", violations[0].Message)
 	}
 }
 
@@ -294,7 +333,7 @@ func writeSample(t *testing.T, root string, path string, content string) {
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		t.Fatalf("mkdir sample dir: %v", err)
 	}
-	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(fullPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 }
