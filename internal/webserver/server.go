@@ -133,9 +133,21 @@ func (s *Server) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(ctx, "tcp", s.server.Addr)
+	if err != nil {
+		return fmt.Errorf("webserver: listen %s: %w", s.server.Addr, err)
+	}
+	return s.serve(ctx, listener)
+}
+
+func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 	errCh := make(chan error, 1)
+	s.server.BaseContext = func(net.Listener) context.Context {
+		return ctx
+	}
 	go func() {
-		errCh <- s.server.ListenAndServe()
+		errCh <- s.server.Serve(listener)
 	}()
 
 	if s.cliCfg.OpenBrowser {
