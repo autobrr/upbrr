@@ -12,9 +12,8 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
-	"path"
+	"path" //nolint:depguard // Extracts URL path components from screenshot URLs.
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -563,7 +563,7 @@ func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.Prep
 			}
 			candidate := filepath.Join(tmpDir, trackerDir, fileName)
 			candidateAbs, err := filepath.Abs(candidate)
-			if err == nil && pathsEqual(candidateAbs, absTarget) {
+			if err == nil && pathutil.SamePath(candidateAbs, absTarget) {
 				removed = true
 				if s.logger != nil {
 					s.logger.Tracef("screenshots: tracker image match tracker=%s file=%s", strings.TrimSpace(record.Tracker), candidateAbs)
@@ -626,15 +626,6 @@ func retrySQLiteBusy(ctx context.Context, attempts int, fn func() error) error {
 
 func isSQLiteBusyError(err error) bool {
 	return db.IsBusyError(err)
-}
-
-func pathsEqual(left string, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
 }
 
 func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMetadata, images []api.ScreenshotImage) error {
@@ -869,10 +860,10 @@ func isPathWithinDir(root string, target string) bool {
 	if err != nil {
 		return false
 	}
-	if targetAbs == rootAbs {
+	if pathutil.SamePath(rootAbs, targetAbs) {
 		return true
 	}
-	return strings.HasPrefix(targetAbs, rootAbs+string(os.PathSeparator))
+	return pathutil.IsWithinRoot(rootAbs, targetAbs)
 }
 
 func selectionSourceLabel(img api.ScreenshotImage) string {

@@ -2,9 +2,9 @@
 
 ## Source Of Truth
 
-- Contributor setup, platform notes, Makefile targets, build commands, tests, hooks, and commit format live in `CONTRIBUTING.md`.
-- Tool wiring lives in `Makefile`, `lefthook.yml`, `.golangci.yml`, `gui/frontend/package.json`, and `.github/workflows/*.yml`.
-- When docs disagree, prefer tool config over prose. Update prose instead of copying stale commands.
+- Contributor setup/platform notes/Makefile targets/build commands/tests/hooks/commit format: `CONTRIBUTING.md`.
+- Tool wiring: `Makefile`, `lefthook.yml`, `.golangci.yml`, `gui/frontend/package.json`, `.github/workflows/*`.
+- Docs disagree? Tool config wins. Update prose; don't copy stale commands.
 
 ## Quick Commands
 
@@ -13,59 +13,70 @@ make help               # Show supported targets
 make backend            # Fast build sanity check
 make test-go            # Full Go tests with race detector
 make test-frontend      # Frontend lint/dead-code/type/unit/format checks
-make lint               # Full Go lint
+make lint               # Path policy + full Go lint
 make logpolicy          # Logging policy check
+make pathpolicy         # Path portability policy check
 make precommit          # Lefthook pre-commit
 make prepush            # Lefthook pre-push
 make gofix-check-changed # Inspect Go fix drift on changed packages
 git diff --check        # Whitespace/conflict-marker check
 ```
 
-Use `CONTRIBUTING.md` for full command reference and platform details. Use narrow package/file checks first, then expand when touching shared behavior or release surfaces.
+Use `CONTRIBUTING.md` for full command reference/platform details. Start narrow package/file checks; expand for shared behavior or release surfaces.
 
 ## Code Quality
 
-- Match repo style. Keep changes narrow. Fix root causes, not symptoms.
-- New Go code must satisfy enabled `.golangci.yml` linters and formatters. Avoid broad `nolint`.
-- Active checks include `noctx`, `contextcheck`, `containedctx`, `wrapcheck`, `revive`, `forcetypeassert`, `unparam`, `usetesting`, and `gosec`.
-- Use context-aware APIs. Propagate context where meaningful; terminate it deliberately when crossing into root/background work.
-- Wrap external-package errors where lint requires it. Handle errors by returning, wrapping, logging with useful context, or making intentional ignore paths obvious.
+- Match repo style. Narrow changes. Fix root cause, not symptoms.
+- New Go code must satisfy `.golangci.yml` linters/formatters. Avoid broad `nolint`.
+- Active checks: `depguard`, `noctx`, `contextcheck`, `containedctx`, `wrapcheck`, `revive`, `forcetypeassert`, `unparam`, `usetesting`, `gosec`, `logpolicy`, `pathpolicy`.
+- Use context-aware APIs. Propagate context where meaningful; terminate deliberately crossing root/background work.
+- Wrap external-package errors where lint requires. Handle errors by return/wrap/log useful context, or make intentional ignore obvious.
 - Avoid unchecked type assertions. Use `testing` helpers in tests. Justify narrow `nolint` at source.
-- Frontend changes must keep TypeScript, ESLint, Stylelint, and dead-code checks clean. Do not weaken rules or bypass type errors.
-- For embedded frontend visual checks, rebuild/sync embedded assets and rebuild the CLI binary before browser automation. Use the main embedded server port (`7480`) with `dist/upbrr.exe serve --dev-no-auth`; do not use the Vite-only dev server on `5173` for embedded parity checks. Stop the embedded server after inspection.
+- Frontend: keep TypeScript, ESLint, Stylelint, dead-code clean. Don't weaken rules or bypass type errors.
+- Embedded frontend visual checks: rebuild/sync embedded assets + CLI before browser automation. Use main embedded port `7480` with `dist/upbrr.exe serve --dev-no-auth`; avoid Vite-only `5173` for embedded parity. Stop server after inspection.
+
+## Path Portability
+
+- Use `filepath` for local filesystem paths. Use `path` only for slash-delimited torrent paths, URLs, or API payloads explicitly defined to use `/`.
+- Torrent/API -> local filesystem boundary: validate slash paths first, then convert deliberately with `filepath.FromSlash`.
+- Security/path traversal checks reject POSIX + Windows absolute/escaping forms on every OS: leading `/`, leading `\`, drive-letter paths, UNC paths, `..` segments.
+- Use `internal/pathutil.IsWithinRoot` / `SamePath` for local root containment/equality. Do not add ad-hoc `filepath.Rel` + string-prefix guards.
+- Tests must not build local paths with hardcoded OS-rooted literals. Use `t.TempDir`, `filepath.Join`, `filepath.ToSlash` for cross-platform assertions.
+- `cmd/pathpolicy` flags hardcoded OS-rooted literals in `filepath` calls, string-built local paths, `path` on local paths, `filepath` on URL/API slash paths, slash-data filesystem calls, slash assertions without `filepath.ToSlash`, and ad-hoc local path guards outside `internal/pathutil`.
+- Legit stdlib `path` imports require import-local `//nolint:depguard // <slash-data reason>`. Rare `pathpolicy` cases require `//pathpolicy:allow <reason>` on same/previous line. Fix source first; don't weaken checkers.
 
 ## Logging
 
-- Add logs where they explain meaningful state, decisions, failures, retries, or user-visible outcomes. Improve touched functions when practical and relevant.
-- Treat `cmd/logpolicy` as logging contract. Fix flagged log messages or levels at source; do not weaken checker or move noise sideways.
-- Redact secrets and user-sensitive data with `internal/redaction/redaction.go`.
-- Never log credentials, tokens, API keys, passkeys, cookies, or secret-bearing payloads without repository redaction standard.
-- Keep levels purposeful: `INFO` for concise user-facing upload progress/outcomes, `DEBUG` for troubleshooting context, `TRACE` for high-fidelity operational flow.
+- Add logs for meaningful state, decisions, failures, retries, user-visible outcomes. Improve touched funcs when relevant.
+- Treat `cmd/logpolicy` as logging contract. Fix flagged logs/levels at source; don't weaken checker or move noise sideways.
+- Redact secrets/user-sensitive data with `internal/redaction/redaction.go`.
+- Never log credentials, tokens, API keys, passkeys, cookies, or secret-bearing payloads without repo redaction standard.
+- Levels: `INFO` concise user-facing upload progress/outcomes; `DEBUG` troubleshooting context; `TRACE` high-fidelity operational flow.
 
 ## Go Fix
 
-- Do not apply `go fix` wholesale without review.
+- Don't apply `go fix` wholesale without review.
 - Prefer `make gofix-check-changed` and package-scoped `go fix -omitzero=false <packages>`.
-- Keep `omitzero` disabled unless a change explicitly reviews JSON output semantics.
+- Keep `omitzero` disabled unless change explicitly reviews JSON output semantics.
 
 ## Product Invariants
 
-- Shared behavior spans CLI, Wails GUI, and embedded web-serving mode. Preserve parity in request construction, options, and upload behavior where practical.
-- App targets Windows, Linux, and macOS. Avoid OS-specific path, process, filesystem, archive, or build assumptions unless intentionally platform-gated.
-- Preserve `api.Mode` usage. Keep CLI, Wails GUI, and embedded web flows aligned with request types under `pkg/api` and shared core behavior under `internal`.
-- Upload options, tracker overrides, retries, and execution flags should be checked from CLI and GUI entrypoints when shared.
-- SQLite databases may be shared across branches during development. Keep migrations compatible with permissive cross-branch use.
-- Migrations must be additive, forward-only, and idempotent where practical. Prefer guarded table/index creation, additive columns, and safe backfills. Avoid destructive drop/rename/tighten changes older branches may still read.
+- Shared behavior spans CLI, Wails GUI, embedded web-serving mode. Preserve parity in request construction, options, upload behavior where practical.
+- App targets Windows, Linux, macOS. Avoid OS-specific path/process/filesystem/archive/build assumptions unless intentionally platform-gated.
+- Preserve `api.Mode` usage. Align CLI, Wails GUI, embedded web flows with request types under `pkg/api` and shared core behavior under `internal`.
+- Upload options, tracker overrides, retries, execution flags: check CLI + GUI entrypoints when shared.
+- SQLite DBs may be shared across branches during dev. Keep migrations compatible with permissive cross-branch use.
+- Migrations additive, forward-only, idempotent where practical. Prefer guarded table/index creation, additive columns, safe backfills. Avoid destructive drop/rename/tighten changes older branches may still read.
 
 ## Unattended Safety
 
-- Treat unattended and unattended-confirm flows as safety-critical. They must remain non-blocking and conservative.
-- Do not add interactive prompts, hidden confirmations, or ambiguous fallthrough behavior in unattended paths.
-- If unattended mode cannot choose safely, prefer dry-run, site-check, explicit skip, or clear failure over uncertain upload.
-- Preserve invariants: site-check implies dry-run; debug implies safe non-upload behavior; unattended flows keep current questionnaire/default-selection behavior unless change updates those rules everywhere.
-- Preserve safe skip and override behavior for dupes, rule failures, screenshot/image-host uploads, torrent injection, and retries. If one shared surface supports skip/override, keep parity in other shared surface.
+- Unattended/unattended-confirm flows safety-critical. Keep non-blocking + conservative.
+- No interactive prompts, hidden confirmations, ambiguous fallthrough in unattended paths.
+- If unattended cannot choose safely, prefer dry-run, site-check, explicit skip, or clear failure over uncertain upload.
+- Preserve invariants: site-check implies dry-run; debug implies safe non-upload; unattended flows keep current questionnaire/default-selection behavior unless change updates rules everywhere.
+- Preserve safe skip/override for dupes, rule failures, screenshot/image-host uploads, torrent injection, retries. If one shared surface supports skip/override, keep parity in other shared surface.
 
 ## Scope Notes
 
-- Do not duplicate detailed contributor workflow from `CONTRIBUTING.md` here. Link or summarize only agent-critical deltas.
-- If change affects one area, run smallest relevant checks. If change crosses backend, frontend, GUI, packaging, or unattended execution, expand validation.
+- Don't duplicate detailed contributor workflow from `CONTRIBUTING.md`; link/summarize agent-critical deltas only.
+- If change affects one area, run smallest relevant checks. If change crosses backend/frontend/GUI/packaging/unattended execution, expand validation.

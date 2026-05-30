@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path" //nolint:depguard // Builds URL paths, not local filesystem paths.
 	"path/filepath"
 	"reflect"
 	"slices"

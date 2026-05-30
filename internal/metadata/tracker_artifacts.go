@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path" //nolint:depguard // Extracts URL path components from tracker image URLs.
 	"path/filepath"
 	"strings"
 	"sync"

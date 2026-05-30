@@ -1,4 +1,4 @@
-.PHONY: help build backend frontend frontend-bundle gui dev dev-frontend test test-go test-frontend lint lint-json logpolicy precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
+.PHONY: help build backend frontend frontend-bundle gui dev dev-frontend test test-go test-frontend lint lint-json logpolicy pathpolicy precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
 
 ifeq ($(OS),Windows_NT)
 EXE := .exe
@@ -41,9 +41,10 @@ help:
 	@echo   make test-frontend      Run frontend lint/type/format/dead-code/unit checks
 	@$(BLANK)
 	@echo Linting
-	@echo   make lint               Run full Go lint
+	@echo   make lint               Run path policy and full Go lint
 	@echo   make lint-json          Write Go lint JSON to lint-report.json
 	@echo   make logpolicy          Run logging policy check
+	@echo   make pathpolicy         Run path portability policy check
 	@$(BLANK)
 	@echo Pre-commit
 	@echo   make precommit          Run Lefthook pre-commit
@@ -96,7 +97,7 @@ test-frontend:
 	pnpm --dir gui/frontend run test:unit
 	pnpm --dir gui/frontend run format:check
 
-lint:
+lint: pathpolicy
 	golangci-lint run $(GOLANGCI_FLAGS) ./...
 
 lint-json:
@@ -104,6 +105,9 @@ lint-json:
 
 logpolicy:
 	go run ./cmd/logpolicy
+
+pathpolicy:
+	go run ./cmd/pathpolicy
 
 precommit:
 	lefthook run pre-commit

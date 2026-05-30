@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path"
+	"path" //nolint:depguard // Extracts URL path components from image host URLs.
 	"path/filepath"
 	"strings"
 
