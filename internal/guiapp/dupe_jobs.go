@@ -171,9 +171,10 @@ func (a *App) runDupeCheckJob(ctx context.Context, eventCtx context.Context, job
 		Mode:     api.ModeGUI,
 		Trackers: job.trackers,
 		Options: api.UploadOptions{
-			Screens:    a.cfg.ScreenshotHandling.Screens,
-			OnlyID:     a.cfg.Metadata.OnlyID,
-			KeepImages: a.cfg.Metadata.KeepImages,
+			Screens:         a.cfg.ScreenshotHandling.Screens,
+			SkipAutoTorrent: a.cfg.Metadata.SkipAutoTorrent,
+			OnlyID:          a.cfg.Metadata.OnlyID,
+			KeepImages:      a.cfg.Metadata.KeepImages,
 		},
 		ExternalIDOverrides:  job.overrides,
 		ReleaseNameOverrides: job.nameOverrides,

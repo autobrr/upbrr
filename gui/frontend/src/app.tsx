@@ -57,7 +57,11 @@ import type {
   UploadImagesResult,
   UploadProgressUpdate,
 } from "./types";
-import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
+import {
+  formatLabel,
+  isSkipAutoTorrentEnabled,
+  normalizeDefaultTrackerList,
+} from "./utils/settings";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[172px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -965,9 +969,17 @@ export default function App() {
     return "Dark";
   };
 
-  const hasTrackerData = preview.TrackerData && preview.TrackerData.length > 0;
+  const skipAutoTorrentEnabled = isSkipAutoTorrentEnabled(configData);
+  const hasTrackerData =
+    !skipAutoTorrentEnabled && preview.TrackerData && preview.TrackerData.length > 0;
   const hasBlurayData = Boolean(preview.Bluray);
   const hasPreview = Boolean(preview.SourcePath);
+
+  useEffect(() => {
+    if (skipAutoTorrentEnabled && activeTab === "tracker") {
+      setActiveTab("input");
+    }
+  }, [activeTab, skipAutoTorrentEnabled]);
 
   useEffect(() => {
     setDupeIgnore((prev) => {
@@ -1863,76 +1875,102 @@ export default function App() {
     ],
   );
 
-  const resetFreshWorkflowState = useCallback(() => {
-    freshUIStateCanPromoteRef.current = false;
-    if (uiStateSaveTimerRef.current) {
-      clearTimeout(uiStateSaveTimerRef.current);
-    }
-    setPath("");
-    setSourceLookupURL("");
-    setLoading(false);
-    setMetadataResetting(false);
-    setError("");
-    setPreview(emptyPreview);
-    setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
-    setReleaseEdits(buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
-    setReleaseTouched(buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
-    setShowExternalIDInputUI(true);
-    setSelectedProvider("");
-    setActiveTab("input");
-    setRenderedDescriptions({});
-    setLightboxImage("");
-    setLightboxAlt("");
-    setShowPlaylistSelection(false);
-    setPlaylistSelectionPath("");
-    setPlaylistAutoPreparing(false);
-    setPlaylistPreparationError("");
-    setBdinfoProgressLines([]);
-    setMetadataProgressTarget("");
-    setMetadataProgressActive(false);
-    setMetadataProgressUpdates([]);
-    setDupeSummary(emptyDupeSummary);
-    setDupeLoading(false);
-    setDupeError("");
-    setDupeChecked(false);
-    setDupeCheckJobID("");
-    setDupeCheckSnapshot(null);
-    setDupeIgnore({});
-    setDupeTrackerFlags({});
-    setPrepPreview(emptyPreparation);
-    setPrepError("");
-    setBuilderPreview(emptyDescriptionBuilder);
-    setBuilderRawByGroup({});
-    setBuilderRenderedByGroup({});
-    setBuilderExpandedGroups({});
-    setBuilderLoading(false);
-    setBuilderError("");
-    setBuilderDirtyByGroup({});
-    setBuilderRenderLoading(false);
-    setBuilderSaved("");
-    setBuilderSaving(false);
-    setBuilderRefreshing(false);
-    setBuilderAutoRequestKey("");
-    resetScreenshotState();
-    setTrackerUploadRunning(false);
-    setTrackerUploadError("");
-    setTrackerUploadJobID("");
-    setTrackerUploadSnapshot(null);
-    setTrackerDryRunLoading(false);
-    setTrackerDryRunError("");
-    setTrackerDryRunPreview(emptyTrackerDryRun);
-    setTrackerDryRunProgress(null);
-    setTrackerQuestionnaireAnswers({});
-    setReleasePageTrackerSelection({});
-    setRunDebug(false);
-    setRunLogLevel(configuredRunLogLevel);
-    setRunLogLevelTouched(false);
-    setLiveCaptureLoading(false);
-    setHostBrowserMode(null);
-    setHostBrowser(null);
-    setHostBrowserLoading(false);
-    setHostBrowserError("");
-  }, [configuredRunLogLevel, resetScreenshotState]);
+  const resetFreshWorkflowState = useCallback(
+    (nextActiveTab = "input") => {
+      freshUIStateCanPromoteRef.current = false;
+      if (uiStateSaveTimerRef.current) {
+        clearTimeout(uiStateSaveTimerRef.current);
+      }
+      setPath("");
+      setSourceLookupURL("");
+      setLoading(false);
+      setMetadataResetting(false);
+      setError("");
+      setPreview(emptyPreview);
+      setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
+      setReleaseEdits(buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
+      setReleaseTouched(buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
+      setShowExternalIDInputUI(true);
+      setSelectedProvider("");
+      setActiveTab(nextActiveTab);
+      setRenderedDescriptions({});
+      setLightboxImage("");
+      setLightboxAlt("");
+      setShowPlaylistSelection(false);
+      setPlaylistSelectionPath("");
+      setPlaylistAutoPreparing(false);
+      setPlaylistPreparationError("");
+      setBdinfoProgressLines([]);
+      setMetadataProgressTarget("");
+      setMetadataProgressActive(false);
+      setMetadataProgressUpdates([]);
+      setDupeSummary(emptyDupeSummary);
+      setDupeLoading(false);
+      setDupeError("");
+      setDupeChecked(false);
+      setDupeCheckJobID("");
+      setDupeCheckSnapshot(null);
+      setDupeIgnore({});
+      setDupeTrackerFlags({});
+      setPrepPreview(emptyPreparation);
+      setPrepError("");
+      setBuilderPreview(emptyDescriptionBuilder);
+      setBuilderRawByGroup({});
+      setBuilderRenderedByGroup({});
+      setBuilderExpandedGroups({});
+      setBuilderLoading(false);
+      setBuilderError("");
+      setBuilderDirtyByGroup({});
+      setBuilderRenderLoading(false);
+      setBuilderSaved("");
+      setBuilderSaving(false);
+      setBuilderRefreshing(false);
+      setBuilderAutoRequestKey("");
+      resetScreenshotState();
+      setTrackerUploadRunning(false);
+      setTrackerUploadError("");
+      setTrackerUploadJobID("");
+      setTrackerUploadSnapshot(null);
+      setTrackerDryRunLoading(false);
+      setTrackerDryRunError("");
+      setTrackerDryRunPreview(emptyTrackerDryRun);
+      setTrackerDryRunProgress(null);
+      setTrackerQuestionnaireAnswers({});
+      setReleasePageTrackerSelection({});
+      setRunDebug(false);
+      setRunLogLevel(configuredRunLogLevel);
+      setRunLogLevelTouched(false);
+      setLiveCaptureLoading(false);
+      setHostBrowserMode(null);
+      setHostBrowser(null);
+      setHostBrowserLoading(false);
+      setHostBrowserError("");
+    },
+    [configuredRunLogLevel, resetScreenshotState],
+  );
+
+  const handleHistoryReleaseDeleted = useCallback(
+    (deletedPath: string) => {
+      const deletedKey = uiStateSourceKey({ path: deletedPath });
+      if (!deletedKey) {
+        return;
+      }
+      if (uiStateSourceKey(buildCurrentUIState()) !== deletedKey) {
+        return;
+      }
+      localStorage.setItem("ui-state-mode", "fresh");
+      localStorage.removeItem("ui-state-id");
+      suspendUIStateSaves();
+      resetFreshWorkflowState("history");
+      setUIStateID("");
+      setUIStateMode("fresh");
+      resumeUIStateSavesSoon();
+      void refreshLiveUIStates().catch((err) => {
+        console.error("Failed to refresh UI states after history delete:", err);
+      });
+    },
+    [buildCurrentUIState, refreshLiveUIStates, resetFreshWorkflowState, uiStateSourceKey],
+  );
 
   const toggleUIStateMode = async () => {
     let states = liveUIStates;
@@ -4227,7 +4265,7 @@ export default function App() {
               sectionFieldMeta={sectionFieldMeta}
             />
           ) : activeTab === "history" ? (
-            <HistoryPage />
+            <HistoryPage onReleaseDeleted={handleHistoryReleaseDeleted} />
           ) : activeTab === "dupes" ? (
             <DupeCheckPage
               path={path}
@@ -4399,7 +4437,15 @@ export default function App() {
               onCancelUpload={handleCancelTrackerUpload}
               onRetryFailed={handleRetryFailedTrackerUpload}
             />
-          ) : activeTab === "input" ? (
+          ) : activeTab === "tracker" && hasTrackerData ? (
+            <TrackerDataPage
+              preview={preview}
+              renderedDescriptions={renderedDescriptions}
+              setRenderedDescriptions={setRenderedDescriptions}
+              setLightboxImage={setLightboxImage}
+              setLightboxAlt={setLightboxAlt}
+            />
+          ) : (
             <InputPage
               path={path}
               setPath={setPath}
@@ -4439,14 +4485,6 @@ export default function App() {
               setRunLogLevel={setRunLogLevel}
               runLogLevelTouched={runLogLevelTouched}
               setRunLogLevelTouched={setRunLogLevelTouched}
-            />
-          ) : (
-            <TrackerDataPage
-              preview={preview}
-              renderedDescriptions={renderedDescriptions}
-              setRenderedDescriptions={setRenderedDescriptions}
-              setLightboxImage={setLightboxImage}
-              setLightboxAlt={setLightboxAlt}
             />
           )}
         </main>

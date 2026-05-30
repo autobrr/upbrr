@@ -1368,6 +1368,25 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if err := repo.CreateUploadRecord(ctx, UploadRecord{Tracker: "BLU", Status: "pending", SourcePath: otherPath}); err != nil {
 		t.Fatalf("save upload record other: %v", err)
 	}
+	if err := repo.SaveUIState(ctx, "target-state", "Target", api.UIState{
+		"path": targetPath,
+		"preview": map[string]any{
+			"SourcePath":  targetPath,
+			"TrackerData": []any{map[string]any{"Tracker": "BLU", "TrackerID": "123"}},
+		},
+	}); err != nil {
+		t.Fatalf("save target ui state: %v", err)
+	}
+	if err := repo.SaveUIState(ctx, "target-upload-state", "Target upload", api.UIState{
+		"trackerUploadSnapshot": map[string]any{"sourcePath": targetPath},
+	}); err != nil {
+		t.Fatalf("save target upload ui state: %v", err)
+	}
+	if err := repo.SaveUIState(ctx, "other-state", "Other", api.UIState{
+		"path": otherPath,
+	}); err != nil {
+		t.Fatalf("save other ui state: %v", err)
+	}
 
 	if err := repo.PurgeContentData(ctx, targetPath); err != nil {
 		t.Fatalf("purge content: %v", err)
@@ -1422,6 +1441,13 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}
 	if len(pending) != 1 || pending[0].SourcePath != otherPath {
 		t.Fatalf("expected only other upload record remaining, got %#v", pending)
+	}
+	uiStates, err := repo.ListUIStates(ctx)
+	if err != nil {
+		t.Fatalf("list ui states: %v", err)
+	}
+	if len(uiStates) != 1 || uiStates[0].ID != "other-state" {
+		t.Fatalf("expected only other ui state remaining, got %#v", uiStates)
 	}
 }
 
