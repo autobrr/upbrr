@@ -597,6 +597,7 @@ func loadCookies(ctx context.Context, client *http.Client, dbPath string, baseUR
 	}
 	jarCookies := make([]*http.Cookie, 0, len(values))
 	for name, value := range values {
+		//nolint:gosec // client cookies
 		jarCookies = append(jarCookies, &http.Cookie{Name: name, Value: value, Domain: parsed.Hostname(), Path: "/"})
 	}
 	client.Jar.SetCookies(parsed, jarCookies)

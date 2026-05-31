@@ -231,7 +231,6 @@ func (b *Backend) StartDupeCheck(sessionID string, path string, overrides api.Ex
 		startedAt:     time.Now().UTC(),
 	}
 
-	//nolint:gosec // The cancel func is stored on the job and invoked on completion/cancel paths.
 	jobCtx, cancel := context.WithCancel(context.Background())
 	job.cancel = cancel
 
@@ -450,7 +449,6 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	for _, tracker := range resolvedTrackers {
 		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
 	}
-	//nolint:gosec // The cancel func is stored on the job and invoked on completion/cancel paths.
 	jobCtx, cancel := context.WithCancel(context.Background())
 	job.cancel = cancel
 

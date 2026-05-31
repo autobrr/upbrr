@@ -187,6 +187,7 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 		if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 			return nil, errors.New("trackers: FF cookies not found")
 		}
+		//nolint:gosec // client cookies
 		return []*http.Cookie{{Name: "dryrun", Value: "1", Domain: ".funfile.org", Path: "/"}}, nil
 	}
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {

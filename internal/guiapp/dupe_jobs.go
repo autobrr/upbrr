@@ -98,7 +98,6 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 	}
 
 	baseCtx := a.runtimeContext()
-	//nolint:gosec // The cancel func is stored on the job and invoked on completion/cancel paths.
 	jobCtx, cancel := context.WithCancel(baseCtx)
 	job.cancel = cancel
 

@@ -181,6 +181,7 @@ func CookieMapToHTTPCookies(values map[string]string, domain string) []*http.Coo
 		if trimmedName == "" || value == "" {
 			continue
 		}
+		//nolint:gosec // client-side cookies loaded from files do not require strict server security flags
 		result = append(result, &http.Cookie{
 			Name:   trimmedName,
 			Value:  value,

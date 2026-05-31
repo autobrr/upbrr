@@ -273,6 +273,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to clear session"})
 		return
 	}
+	//nolint:gosec // clearing session cookie doesn't require strict security flags
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
@@ -498,6 +499,7 @@ func (s *Server) isDevelopmentSession(current session) bool {
 }
 
 func (s *Server) writeSessionCookie(w http.ResponseWriter, r *http.Request, current session) {
+	//nolint:gosec // secure flag is configured dynamically based on incoming request scheme
 	cookie := &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    current.ID,
