@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path" //nolint:depguard // Extracts response URL path basename, not local filesystem basename.
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -103,14 +104,14 @@ func fetchTagID(ctx context.Context, site siteDefinition, state sessionState, wo
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, site.BaseURL+"/ajax/tags?term="+url.QueryEscape(word), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s tag lookup request build: %w", site.Name, err)
 	}
 	req.Header.Set("Referer", site.BaseURL+"/upload")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("User-Agent", azCookieUserAgent)
 	resp, err := state.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s tag lookup request: %w", site.Name, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -120,7 +121,7 @@ func fetchTagID(ctx context.Context, site siteDefinition, state sessionState, wo
 		Data []map[string]any `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s decode tag lookup response: %w", site.Name, err)
 	}
 	for _, item := range payload.Data {
 		if strings.EqualFold(stringValue(item["tag"]), word) {
@@ -133,7 +134,7 @@ func fetchTagID(ctx context.Context, site siteDefinition, state sessionState, wo
 func uploadScreenshots(ctx context.Context, site siteDefinition, state sessionState, req trackers.UploadRequest) ([]string, error) {
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	limit := 3
 	if req.Meta.TVPack {
@@ -168,17 +169,17 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 	_ = writer.WriteField("qqtotalfilesize", strconv.Itoa(len(imageBytes)))
 	part, err := writer.CreateFormFile("qqfile", filename)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s create screenshot form file: %w", site.Name, err)
 	}
 	if _, err := part.Write(imageBytes); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s write screenshot upload part: %w", site.Name, err)
 	}
 	if err := writer.Close(); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s close screenshot multipart writer: %w", site.Name, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, site.BaseURL+"/ajax/image/upload", body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s screenshot upload request build: %w", site.Name, err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Referer", site.BaseURL)
@@ -188,7 +189,7 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 	req.Header.Set("User-Agent", azCookieUserAgent)
 	resp, err := state.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s screenshot upload request: %w", site.Name, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -200,7 +201,7 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 		Error   string `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %s decode screenshot upload response: %w", site.Name, err)
 	}
 	if !payload.Success {
 		return "", fmt.Errorf("%s", strings.TrimSpace(payload.Error))
@@ -223,11 +224,11 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: screenshot download request build: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: screenshot download request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -235,9 +236,9 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: read screenshot response body: %w", err)
 	}
-	filename := filepath.Base(strings.TrimSpace(resp.Request.URL.Path))
+	filename := path.Base(strings.TrimSpace(resp.Request.URL.Path))
 	if filename == "" || filename == "." || filename == "/" {
 		filename = "screenshot.png"
 	}

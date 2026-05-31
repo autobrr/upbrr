@@ -6,6 +6,7 @@ package dupechecking
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -22,11 +23,11 @@ type testSearchHandler struct {
 	err     error
 }
 
-func (h testSearchHandler) Search(ctx context.Context, meta api.PreparedMetadata, tracker string) ([]api.DupeEntry, []string, error) {
+func (h testSearchHandler) Search(ctx context.Context, _ api.PreparedMetadata, _ string) ([]api.DupeEntry, []string, error) {
 	if h.delay > 0 {
 		select {
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			return nil, nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-time.After(h.delay):
 		}
 	}

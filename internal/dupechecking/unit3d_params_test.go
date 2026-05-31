@@ -19,10 +19,7 @@ func TestBuildUnit3DSearchParamsSkipsResolutionForOTW(t *testing.T) {
 		ReleaseName: "Show.S01E02.1080p.WEB-DL.H264-GRP",
 	}
 
-	params, err := buildUnit3DSearchParams(meta, "OTW")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	params := buildUnit3DSearchParams(meta, "OTW")
 	if _, ok := params["resolutions[]"]; ok {
 		t.Fatalf("did not expect OTW resolution filter, got %#v", params["resolutions[]"])
 	}
@@ -41,10 +38,7 @@ func TestBuildUnit3DSearchParamsKeepsResolutionForOtherTrackers(t *testing.T) {
 		ReleaseName: "Show.S01E02.1080p.WEB-DL.H264-GRP",
 	}
 
-	params, err := buildUnit3DSearchParams(meta, "AITHER")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	params := buildUnit3DSearchParams(meta, "AITHER")
 	if got := params["resolutions[]"]; len(got) != 2 || got[0] != "3" || got[1] != "4" {
 		t.Fatalf("expected 1080p/1080i search filters, got %#v", got)
 	}
@@ -60,10 +54,7 @@ func TestBuildUnit3DSearchParamsUsesEMUWTrackerMappings(t *testing.T) {
 		ReleaseName: "Movie.2025.540p.WEB-DL.H264-GRP",
 	}
 
-	params, err := buildUnit3DSearchParams(meta, "EMUW")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	params := buildUnit3DSearchParams(meta, "EMUW")
 	if got := params.Get("name"); got != "" {
 		t.Fatalf("expected empty movie search name, got %q", got)
 	}
@@ -91,10 +82,7 @@ func TestBuildUnit3DSearchParamsUsesEMUWPaired1080Resolution(t *testing.T) {
 		ReleaseName: "Show.S02E03.1080i.HDTV.H264-GRP",
 	}
 
-	params, err := buildUnit3DSearchParams(meta, "EMUW")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	params := buildUnit3DSearchParams(meta, "EMUW")
 	if got := params.Get("name"); got != " S02" {
 		t.Fatalf("expected season search name, got %q", got)
 	}

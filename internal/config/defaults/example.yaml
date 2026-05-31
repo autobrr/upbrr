@@ -3,6 +3,7 @@ main_settings:
   verbose_notification: false
   tmdb_api: ""
   tracker_pass_checks: 1
+  input_history_limit: 20
   db_path: ""
 
 image_hosting:

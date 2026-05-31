@@ -16,6 +16,7 @@ import (
 
 type stubDescriptionBuilderTrackers struct {
 	called      bool
+	prepareMeta api.PreparedMetadata
 	preview     api.PreparationPreview
 	dryRunMeta  api.PreparedMetadata
 	uploadMeta  api.PreparedMetadata
@@ -29,6 +30,7 @@ func (s *stubDescriptionBuilderTrackers) Upload(_ context.Context, meta api.Prep
 
 func (s *stubDescriptionBuilderTrackers) BuildPreparation(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.PreparationPreview, error) {
 	s.called = true
+	s.prepareMeta = meta
 	if strings.TrimSpace(s.preview.SourcePath) == "" {
 		s.preview.SourcePath = meta.SourcePath
 	}
@@ -201,6 +203,59 @@ func TestFetchDescriptionBuilderPreviewFallsBackToPrepareInGUI(t *testing.T) {
 	}
 	if preview.SourcePath != "/tmp/source" {
 		t.Fatalf("expected source path to be set, got %q", preview.SourcePath)
+	}
+}
+
+func TestFetchDescriptionBuilderPreviewRefreshesMissingLogoMetadata(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{}
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Paths:      []string{"/tmp/source"},
+		Mode:       api.ModeGUI,
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/tmp/source",
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/tmp/source",
+			TMDB:       &api.TMDBMetadata{TMDBID: 42, Title: "Cached without logo"},
+		},
+	}
+	refreshed := prepared
+	refreshed.ExternalMetadata.TMDB = &api.TMDBMetadata{TMDBID: 42, Logo: "https://image.tmdb.org/t/p/original/logo.png"}
+	metaSvc := &stubMeta{prepared: prepared, resolved: refreshed}
+	core := &Core{
+		cfg: config.Config{
+			Description:        config.DescriptionSettingsConfig{AddLogo: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	_, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+		Paths:   []string{"/tmp/source"},
+		Mode:    api.ModeGUI,
+		Options: api.UploadOptions{Screens: 1},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if metaSvc.resolveCalls != 1 {
+		t.Fatalf("expected description builder to refresh missing logo metadata, got %d calls", metaSvc.resolveCalls)
+	}
+	if trackerSvc.prepareMeta.ExternalMetadata.TMDB == nil || trackerSvc.prepareMeta.ExternalMetadata.TMDB.Logo == "" {
+		t.Fatalf("expected tracker preparation to receive refreshed logo metadata, got %#v", trackerSvc.prepareMeta.ExternalMetadata.TMDB)
 	}
 }
 

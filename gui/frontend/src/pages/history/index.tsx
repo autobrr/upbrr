@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { HistoryEntry, HistoryOverview } from "../../types";
-import "./styles.css";
+import { cn } from "../../utils/cn";
 
 const formatDate = (value: string) => {
   if (!value) {
@@ -51,7 +51,11 @@ const releaseLabelFromOverview = (overview: HistoryOverview) => {
   return extras ? `${title} (${extras})` : title;
 };
 
-export default function HistoryPage() {
+type Props = {
+  onReleaseDeleted?: (sourcePath: string) => void;
+};
+
+export default function HistoryPage({ onReleaseDeleted }: Props) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -172,7 +176,9 @@ export default function HistoryPage() {
     setDeleting(true);
     setError("");
     try {
-      await deleteHistoryRelease(selectedPath);
+      const deletedPath = selectedPath;
+      await deleteHistoryRelease(deletedPath);
+      onReleaseDeleted?.(deletedPath);
       const refreshed = (await listHistory()) || [];
       setEntries(refreshed);
       if (!refreshed.length) {
@@ -196,12 +202,12 @@ export default function HistoryPage() {
         </p>
       </header>
 
-      <section className="panel history-shell">
-        <aside className="history-list-panel">
-          <div className="history-list-header">
+      <section className="panel grid min-h-[560px] gap-3 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
+        <aside className="rounded-lg border border-white/10 bg-white/5 p-3">
+          <div className="mb-2">
             <p className="label">Stored releases</p>
             <p className="helper">Most recently updated first</p>
-            <label className="history-search-field">
+            <label className="mt-2 grid gap-1.5">
               <span className="label">Search by title</span>
               <input
                 type="text"
@@ -220,17 +226,31 @@ export default function HistoryPage() {
             <p className="muted">No releases match the current title filter.</p>
           ) : null}
 
-          <div className="history-list">
+          <div className="grid max-h-[520px] gap-1.5 overflow-y-auto">
             {filteredEntries.map((entry) => (
               <button
                 key={entry.SourcePath}
                 type="button"
-                className={`history-item ${entry.SourcePath === selectedPath ? "active" : ""}`}
+                className={cn(
+                  "grid w-full gap-1 rounded-md border px-3 py-2 text-left transition",
+                  entry.SourcePath === selectedPath
+                    ? "border-[var(--accent-2)] bg-[rgba(53,194,193,0.16)] text-[var(--text)] shadow-[inset_3px_0_0_var(--accent-2),0_0_16px_rgba(53,194,193,0.16)]"
+                    : "border-white/10 bg-black/15 text-[var(--muted)] hover:border-white/20 hover:bg-white/5 hover:text-[var(--text)]",
+                )}
                 onClick={() => setSelectedPath(entry.SourcePath)}
               >
-                <span className="history-item-title">{releaseLabel(entry)}</span>
-                <span className="history-item-meta">{entry.LatestUploadStatus || "Stored"}</span>
-                <span className="history-item-meta">
+                <span
+                  className={cn(
+                    "font-semibold",
+                    entry.SourcePath === selectedPath ? "text-[var(--text)]" : "text-inherit",
+                  )}
+                >
+                  {releaseLabel(entry)}
+                </span>
+                <span className="text-xs text-[var(--muted)]">
+                  {entry.LatestUploadStatus || "Stored"}
+                </span>
+                <span className="text-xs text-[var(--muted)]">
                   Updated {formatDate(entry.MetadataUpdatedAt)}
                 </span>
               </button>
@@ -238,7 +258,7 @@ export default function HistoryPage() {
           </div>
         </aside>
 
-        <div className="history-detail-panel">
+        <div className="overflow-y-auto rounded-lg border border-white/10 bg-white/5 p-3">
           {detailLoading ? <p className="muted">Loading overview...</p> : null}
 
           {!detailLoading && !overview ? (
@@ -246,11 +266,11 @@ export default function HistoryPage() {
           ) : null}
 
           {overview ? (
-            <div className="history-detail-stack">
-              <div className="history-detail-actions">
+            <div className="grid gap-3">
+              <div className="flex justify-end">
                 <button
                   type="button"
-                  className="ghost history-delete-button"
+                  className="ghost border-red-400/45 text-[var(--danger)]"
                   disabled={deleting || detailLoading || !selectedPath}
                   onClick={() => {
                     void handleDeleteRelease();
@@ -289,13 +309,13 @@ export default function HistoryPage() {
                 </div>
               </div>
 
-              <div className="history-grid">
-                <article className="history-card">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2 [&_h3]:mb-2 [&_h3]:mt-0 [&_h3]:text-sm">
+                <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
                   <h3>Path</h3>
                   <p className="mono">{overview.SourcePath}</p>
                 </article>
 
-                <article className="history-card">
+                <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5 [&_p]:mb-1 [&_p]:mt-0">
                   <h3>External IDs</h3>
                   <p>TMDB: {overview.ExternalIDs?.TMDBID || 0}</p>
                   <p>IMDb: {overview.ExternalIDs?.IMDBID || 0}</p>
@@ -303,7 +323,7 @@ export default function HistoryPage() {
                   <p>TVmaze: {overview.ExternalIDs?.TVmazeID || 0}</p>
                 </article>
 
-                <article className="history-card">
+                <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5 [&_p]:mb-1 [&_p]:mt-0">
                   <h3>Counts</h3>
                   <p>Tracker metadata: {overview.TrackerMetadata?.length || 0}</p>
                   <p>Rule failures: {overview.TrackerRuleFailures?.length || 0}</p>
@@ -313,16 +333,18 @@ export default function HistoryPage() {
                   <p>Upload history: {overview.UploadHistory?.length || 0}</p>
                 </article>
 
-                <article className="history-card history-card--wide">
+                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
                   <h3>Description Overrides</h3>
                   {descriptionOverrides.length ? (
-                    <ul className="history-simple-list">
+                    <ul className="m-0 grid gap-1 pl-4">
                       {descriptionOverrides.map((override, index) => {
                         const groupKey = override.GroupKey?.trim() || "default";
                         return (
                           <li key={`${groupKey}-${override.UpdatedAt}-${index}`}>
                             <strong>{groupKey}</strong>
-                            <pre>{override.Description?.trim() || "(empty)"}</pre>
+                            <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
+                              {override.Description?.trim() || "(empty)"}
+                            </pre>
                           </li>
                         );
                       })}
@@ -332,10 +354,10 @@ export default function HistoryPage() {
                   )}
                 </article>
 
-                <article className="history-card history-card--wide">
+                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
                   <h3>Upload History</h3>
                   {overview.UploadHistory?.length ? (
-                    <ul className="history-simple-list">
+                    <ul className="m-0 grid gap-1 pl-4">
                       {overview.UploadHistory.map((row, index) => (
                         <li key={`${row.Tracker}-${row.CreatedAt}-${index}`}>
                           <strong>{row.Tracker || "UNKNOWN"}</strong> — {row.Status || "unknown"} —{" "}
@@ -348,10 +370,10 @@ export default function HistoryPage() {
                   )}
                 </article>
 
-                <article className="history-card history-card--wide">
+                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
                   <h3>Tracker Rule Failures</h3>
                   {overview.TrackerRuleFailures?.length ? (
-                    <ul className="history-simple-list">
+                    <ul className="m-0 grid gap-1 pl-4">
                       {overview.TrackerRuleFailures.map((failure, index) => (
                         <li key={`${failure.Tracker}-${failure.Rule}-${index}`}>
                           <strong>{failure.Tracker || "UNKNOWN"}</strong>: {failure.Rule}{" "}
@@ -364,19 +386,25 @@ export default function HistoryPage() {
                   )}
                 </article>
 
-                <article className="history-card history-card--wide">
+                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
                   <h3>External Metadata (raw)</h3>
-                  <pre>{JSON.stringify(overview.ExternalMetadata || {}, null, 2)}</pre>
+                  <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
+                    {JSON.stringify(overview.ExternalMetadata || {}, null, 2)}
+                  </pre>
                 </article>
 
-                <article className="history-card history-card--wide">
+                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
                   <h3>Release Overrides (raw)</h3>
-                  <pre>{JSON.stringify(overview.ReleaseNameOverrides || {}, null, 2)}</pre>
+                  <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
+                    {JSON.stringify(overview.ReleaseNameOverrides || {}, null, 2)}
+                  </pre>
                 </article>
 
-                <article className="history-card history-card--wide">
+                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
                   <h3>Metadata (raw)</h3>
-                  <pre>{JSON.stringify(overview.Metadata || {}, null, 2)}</pre>
+                  <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
+                    {JSON.stringify(overview.Metadata || {}, null, 2)}
+                  </pre>
                 </article>
               </div>
             </div>

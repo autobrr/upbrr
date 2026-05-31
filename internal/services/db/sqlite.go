@@ -40,7 +40,18 @@ func Open(path string) (*SQLiteRepository, error) {
 	return OpenWithLogger(path, nopLogger{})
 }
 
+func OpenContext(ctx context.Context, path string) (*SQLiteRepository, error) {
+	return OpenWithLoggerContext(ctx, path, nopLogger{})
+}
+
 func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
+	return OpenWithLoggerContext(context.Background(), path, logger)
+}
+
+func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQLiteRepository, error) {
+	if ctx == nil {
+		return nil, errors.New("db: context is required")
+	}
 	if logger == nil {
 		logger = nopLogger{}
 	}
@@ -56,30 +67,30 @@ func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
 		return nil, fmt.Errorf("db open: %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db ping: %w", err)
 	}
 
-	if _, err := db.Exec(pragmaForeignKeysOnSQL); err != nil {
+	if _, err := db.ExecContext(ctx, pragmaForeignKeysOnSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db pragma foreign_keys: %w", err)
 	}
-	if _, err := db.Exec(pragmaBusyTimeoutPrefix + strconv.Itoa(sqliteBusyTimeout)); err != nil {
+	if _, err := db.ExecContext(ctx, pragmaBusyTimeoutPrefix+strconv.Itoa(sqliteBusyTimeout)); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("db pragma busy_timeout: %w", err)
 	}
 	if isMemorySQLitePath(path) {
 		// SQLite cannot use WAL for in-memory databases, so tests that use :memory:
 		// intentionally run with different journaling semantics than on-disk production DBs.
-		journalMode, err := queryCurrentJournalMode(db)
+		journalMode, err := queryCurrentJournalMode(ctx, db)
 		if err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("db pragma journal_mode: %w", err)
 		}
 		logger.Debugf("db: sqlite journal_mode is %s for in-memory database", journalMode)
 	} else {
-		journalMode, err := enableWALJournalMode(db)
+		journalMode, err := enableWALJournalMode(ctx, db)
 		if err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("db pragma journal_mode: %w", err)
@@ -100,7 +111,10 @@ func (r *SQLiteRepository) Close() error {
 	if r.logger != nil {
 		r.logger.Infof("db: closing sqlite")
 	}
-	return r.db.Close()
+	if err := r.db.Close(); err != nil {
+		return fmt.Errorf("db: close sqlite: %w", err)
+	}
+	return nil
 }
 
 // RawDB returns the underlying *sql.DB handle.
@@ -156,7 +170,7 @@ func retryBusyContext(ctx context.Context, logger Logger, operation string, atte
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("db: retry busy context canceled: %w", err)
 		}
 		err := fn()
 		if err == nil {
@@ -177,27 +191,27 @@ func retryBusyContext(ctx context.Context, logger Logger, operation string, atte
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-timer.C:
 		}
 	}
 	return lastErr
 }
 
-func enableWALJournalMode(db *sql.DB) (string, error) {
-	row := db.QueryRow(pragmaJournalModeWALSQL)
+func enableWALJournalMode(ctx context.Context, db *sql.DB) (string, error) {
+	row := db.QueryRowContext(ctx, pragmaJournalModeWALSQL)
 	var got string
 	if err := row.Scan(&got); err != nil {
-		return "", err
+		return "", fmt.Errorf("db: enable WAL journal mode: %w", err)
 	}
 	return got, nil
 }
 
-func queryCurrentJournalMode(db *sql.DB) (string, error) {
-	row := db.QueryRow(pragmaJournalModeSQL)
+func queryCurrentJournalMode(ctx context.Context, db *sql.DB) (string, error) {
+	row := db.QueryRowContext(ctx, pragmaJournalModeSQL)
 	var got string
 	if err := row.Scan(&got); err != nil {
-		return "", err
+		return "", fmt.Errorf("db: query current journal mode: %w", err)
 	}
 	return got, nil
 }
@@ -664,7 +678,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 	}
 
 	row := r.db.QueryRowContext(ctx, `
-		SELECT source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, updated_at
+		SELECT source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, bluray_json, updated_at
 		FROM external_metadata
 		WHERE source_path = ?
 	`, path)
@@ -674,6 +688,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 	var imdbJSON string
 	var tvdbJSON string
 	var tvmazeJSON string
+	var blurayJSON string
 	var updatedAt string
 	if err := row.Scan(
 		&metadata.SourcePath,
@@ -681,6 +696,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 		&imdbJSON,
 		&tvdbJSON,
 		&tvmazeJSON,
+		&blurayJSON,
 		&updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -701,6 +717,9 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 	}
 	if metadata.TVmaze, err = decodeOptionalJSON[TVmazeMetadata](tvmazeJSON); err != nil {
 		return ExternalMetadata{}, fmt.Errorf("db decode tvmaze metadata: %w", err)
+	}
+	if metadata.Bluray, err = decodeOptionalJSON[api.BlurayMetadata](blurayJSON); err != nil {
+		return ExternalMetadata{}, fmt.Errorf("db decode bluray metadata: %w", err)
 	}
 	if updatedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
@@ -728,17 +747,19 @@ func (r *SQLiteRepository) SaveExternalMetadata(ctx context.Context, metadata Ex
 	imdbJSON := encodeOptionalJSON(metadata.IMDB)
 	tvdbJSON := encodeOptionalJSON(metadata.TVDB)
 	tvmazeJSON := encodeOptionalJSON(metadata.TVmaze)
+	blurayJSON := encodeOptionalJSON(metadata.Bluray)
 
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO external_metadata (
-			source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, updated_at
+			source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, bluray_json, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			tmdb_json = excluded.tmdb_json,
 			imdb_json = excluded.imdb_json,
 			tvdb_json = excluded.tvdb_json,
 			tvmaze_json = excluded.tvmaze_json,
+			bluray_json = excluded.bluray_json,
 			updated_at = excluded.updated_at
 	`,
 		metadata.SourcePath,
@@ -746,6 +767,7 @@ func (r *SQLiteRepository) SaveExternalMetadata(ctx context.Context, metadata Ex
 		imdbJSON,
 		tvdbJSON,
 		tvmazeJSON,
+		blurayJSON,
 		timestamp.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -1202,24 +1224,24 @@ func nullStringPtr(value sql.NullString) *string {
 	if !value.Valid {
 		return nil
 	}
-	copy := value.String
-	return &copy
+	ptrValue := value.String
+	return &ptrValue
 }
 
 func nullIntPtr(value sql.NullInt64) *int {
 	if !value.Valid {
 		return nil
 	}
-	copy := int(value.Int64)
-	return &copy
+	ptrValue := int(value.Int64)
+	return &ptrValue
 }
 
 func nullBoolPtr(value sql.NullBool) *bool {
 	if !value.Valid {
 		return nil
 	}
-	copy := value.Bool
-	return &copy
+	ptrValue := value.Bool
+	return &ptrValue
 }
 
 func encodeFileList(paths []string) string {
@@ -1239,7 +1261,7 @@ func decodeFileList(value string) ([]string, error) {
 		return result, nil
 	}
 	if err := json.Unmarshal([]byte(value), &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: decode file list: %w", err)
 	}
 	return result, nil
 }
@@ -1264,7 +1286,7 @@ func decodeStringList(value string) ([]string, error) {
 	decoder.DisallowUnknownFields()
 	var result []string
 	if err := decoder.Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: decode string list: %w", err)
 	}
 	return result, nil
 }
@@ -1296,7 +1318,7 @@ func decodeOptionalJSON[T any](value string) (*T, error) {
 	decoder := json.NewDecoder(strings.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: decode optional JSON: %w", err)
 	}
 	return &result, nil
 }
@@ -1892,7 +1914,7 @@ func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, path string,
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db save final selections: context canceled: %w", err)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2010,7 +2032,7 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, path stri
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db replace screenshot slots: context canceled: %w", err)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2256,7 +2278,7 @@ func (r *SQLiteRepository) SaveUploadedImages(ctx context.Context, path string, 
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db save uploaded images: context canceled: %w", err)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -2432,6 +2454,10 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			UNION
 			SELECT source_path FROM screenshots
 			UNION
+			SELECT source_path FROM screenshot_slots
+			UNION
+			SELECT source_path FROM screenshot_slot_variants
+			UNION
 			SELECT source_path FROM uploaded_images
 			UNION
 			SELECT source_path FROM upload_records
@@ -2467,7 +2493,7 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		return internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("db purge content: context canceled: %w", err)
 	}
 	if r.logger != nil {
 		r.logger.Debugf("db: purge content data started path=%s", trimmedPath)
@@ -2495,6 +2521,8 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		{sql: `DELETE FROM tracker_rule_failures WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM screenshot_final_selections WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM screenshots WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM screenshot_slot_variants WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM screenshot_slots WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM uploaded_images WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM upload_records WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM file_metadata WHERE path = ?`, args: []any{trimmedPath}},
@@ -2512,6 +2540,12 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		}
 	}
 
+	uiStateRows, err := r.purgeUIStatesForSourcePathTx(ctx, tx, trimmedPath)
+	if err != nil {
+		return err
+	}
+	totalRemoved += uiStateRows
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("db purge content: commit: %w", err)
 	}
@@ -2519,6 +2553,95 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		r.logger.Debugf("db: purge content data completed path=%s rows_removed=%d", trimmedPath, totalRemoved)
 	}
 	return nil
+}
+
+func (r *SQLiteRepository) purgeUIStatesForSourcePathTx(ctx context.Context, tx *sql.Tx, path string) (int64, error) {
+	sourceKey := normalizeUIStateSourcePath(path)
+	if sourceKey == "" {
+		return 0, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT id, data FROM ui_states`)
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: list ui states: %w", err)
+	}
+	defer rows.Close()
+
+	matchedIDs := make([]string, 0)
+	for rows.Next() {
+		var id string
+		var payload string
+		if err := rows.Scan(&id, &payload); err != nil {
+			return 0, fmt.Errorf("db purge content: scan ui state: %w", err)
+		}
+		matched, err := uiStatePayloadMatchesSourcePath(payload, sourceKey)
+		if err != nil {
+			if r.logger != nil {
+				r.logger.Warnf("db: purge content skipped malformed ui state id=%s error=%v", id, err)
+			}
+			continue
+		}
+		if matched {
+			matchedIDs = append(matchedIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("db purge content: iterate ui states: %w", err)
+	}
+
+	var removed int64
+	for _, id := range matchedIDs {
+		result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE id = ?`, id)
+		if err != nil {
+			return removed, fmt.Errorf("db purge content: delete ui state: %w", err)
+		}
+		resultRows, err := result.RowsAffected()
+		if err == nil {
+			removed += resultRows
+		}
+	}
+
+	return removed, nil
+}
+
+func uiStatePayloadMatchesSourcePath(payload string, sourceKey string) (bool, error) {
+	var state map[string]any
+	if err := json.Unmarshal([]byte(payload), &state); err != nil {
+		return false, fmt.Errorf("unmarshal ui state: %w", err)
+	}
+
+	candidates := []string{
+		uiStateStringAt(state, "path"),
+		uiStateStringAt(state, "preview", "SourcePath"),
+		uiStateStringAt(state, "dupeSummary", "SourcePath"),
+		uiStateStringAt(state, "dupeCheckSnapshot", "sourcePath"),
+		uiStateStringAt(state, "prepPreview", "SourcePath"),
+		uiStateStringAt(state, "trackerDryRunPreview", "SourcePath"),
+		uiStateStringAt(state, "trackerUploadSnapshot", "sourcePath"),
+	}
+	for _, candidate := range candidates {
+		if normalizeUIStateSourcePath(candidate) == sourceKey {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func uiStateStringAt(root map[string]any, path ...string) string {
+	var current any = root
+	for _, key := range path {
+		currentMap, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = currentMap[key]
+	}
+	value, _ := current.(string)
+	return value
+}
+
+func normalizeUIStateSourcePath(path string) string {
+	return strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
 }
 
 func resolvePath(path string) (string, error) {

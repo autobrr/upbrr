@@ -126,3 +126,112 @@ func TestResolveImageHostPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestNeededImageUploadTargetsChoosesSharedApprovedHost(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+			Host2: "imgbox",
+		},
+	}, []string{"STC", "GPW"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one shared target, got %#v", targets)
+	}
+	if targets[0].Host != "imgbox" {
+		t.Fatalf("expected imgbox to satisfy both trackers, got %#v", targets[0])
+	}
+	if got, want := targets[0].Trackers, []string{"STC", "GPW"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("expected trackers %v, got %v", want, got)
+	}
+}
+
+func TestNeededImageUploadTargetsUsesConfiguredHostPriority(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "pixhost",
+			Host2: "imgbox",
+			Host3: "imgbb",
+		},
+	}, []string{"OE"}, "ptpimg")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one target, got %#v", targets)
+	}
+	if targets[0].Host != "imgbox" {
+		t.Fatalf("expected first configured OE-approved host imgbox, got %#v", targets[0])
+	}
+}
+
+func TestNeededImageUploadTargetsDoesNotUseUnconfiguredPolicyHost(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+	}, []string{"PTP"}, "imgbox")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("expected no target when no configured host is PTP-approved, got %#v", targets)
+	}
+}
+
+func TestNeededImageUploadTargetsAllowsTrackerConfiguredHost(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"OE": {ImageHost: "imgbox"},
+			},
+		},
+	}, []string{"OE"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbox" {
+		t.Fatalf("expected tracker configured image host imgbox, got %#v", targets)
+	}
+}
+
+func TestNeededImageUploadTargetsDoesNotShareTrackerConfiguredHostUnlessGloballyConfigured(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"OE":  {ImageHost: "imgbox"},
+				"STC": {},
+			},
+		},
+	}, []string{"OE", "STC"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("expected direct and global targets, got %#v", targets)
+	}
+	if targets[0].Host != "imgbox" || len(targets[0].Trackers) != 1 || targets[0].Trackers[0] != "OE" {
+		t.Fatalf("expected imgbox only for OE, got %#v", targets[0])
+	}
+	if targets[1].Host != "imgbb" || len(targets[1].Trackers) != 1 || targets[1].Trackers[0] != "STC" {
+		t.Fatalf("expected imgbb only for STC, got %#v", targets[1])
+	}
+}

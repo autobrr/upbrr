@@ -9,11 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	_ "image/png" // register PNG decoder for tracker image validation
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path" //nolint:depguard // Extracts URL path components from tracker image URLs.
 	"path/filepath"
 	"strings"
 	"sync"
@@ -206,11 +207,11 @@ func buildImageFilename(rawURL string, index int) string {
 func downloadImage(ctx context.Context, client *http.Client, rawURL string, outPath string, expectedHeight int, isDVD bool) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("metadata: build image download request: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("metadata: execute image download request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -226,7 +227,7 @@ func downloadImage(ctx context.Context, client *http.Client, rawURL string, outP
 	limited := io.LimitReader(resp.Body, unit3dMaxImageBytes)
 	payload, err := io.ReadAll(limited)
 	if err != nil {
-		return err
+		return fmt.Errorf("read image body: %w", err)
 	}
 	if len(payload) == 0 {
 		return errors.New("empty image")
@@ -243,7 +244,10 @@ func downloadImage(ctx context.Context, client *http.Client, rawURL string, outP
 			return err
 		}
 	}
-	return os.WriteFile(outPath, payload, 0o600)
+	if err := os.WriteFile(outPath, payload, 0o600); err != nil {
+		return fmt.Errorf("metadata: write screenshot artifact: %w", err)
+	}
+	return nil
 }
 
 func parseResolutionHeight(resolution string) int {

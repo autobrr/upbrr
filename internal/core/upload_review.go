@@ -42,7 +42,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.UploadReview{}, err
+		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -90,7 +90,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		return api.UploadReview{}, fmt.Errorf("core: upload review requires prepared metadata for %s", uniquePaths[0])
 	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, singleReq.Trackers, singleReq.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, singleReq.Trackers, meta.TrackersRemove, c.logger)
 
 	dupeResults := make(map[string]api.DupeCheckResult)
 	if singleReq.SkipDupeCheck {
@@ -110,7 +110,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 	} else {
 		summary, err := c.services.Dupes.Check(ctx, meta, resolvedTrackers)
 		if err != nil {
-			return api.UploadReview{}, err
+			return api.UploadReview{}, fmt.Errorf("core: %w", err)
 		}
 		summary = appendPathedDupeResults(summary, meta.MatchedTrackers)
 		applyDupeSummaryToPreparedMeta(&meta, summary)
@@ -121,13 +121,13 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 	dryRunMeta.IgnoreTrackerRuleFailures = true
 	torrent, err := c.services.Torrents.Create(ctx, dryRunMeta)
 	if err != nil {
-		return api.UploadReview{}, err
+		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
 	dryRunMeta.TorrentPath = torrent.Path
 
 	dryRunEntries, err := c.services.Trackers.BuildUploadDryRun(ctx, dryRunMeta, resolvedTrackers)
 	if err != nil {
-		return api.UploadReview{}, err
+		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
 	dryRunByTracker := make(map[string]api.TrackerDryRunEntry, len(dryRunEntries))
 	for _, entry := range dryRunEntries {
@@ -219,6 +219,9 @@ func applyRequestToPreparedMetaBeforeRefresh(meta api.PreparedMetadata, req api.
 
 func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger, rebuildDerivedFields bool) api.PreparedMetadata {
 	meta = deepCopyPreparedMetadata(meta)
+	existingTrackerIDs := cloneStringMap(meta.TrackerIDs)
+	existingTrackersRemove := append([]string{}, meta.TrackersRemove...)
+	existingMatchedTrackers := append([]string{}, meta.MatchedTrackers...)
 	meta.Mode = req.Mode
 	meta.Options = req.Options
 	meta.Paths = append([]string{}, req.Paths...)
@@ -226,8 +229,9 @@ func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req 
 		meta.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
 	}
 	meta.Trackers = append([]string{}, req.Trackers...)
-	meta.TrackersRemove = append([]string{}, req.TrackersRemove...)
-	meta.TrackerIDs = cloneStringMap(req.TrackerIDOverrides)
+	meta.TrackersRemove = mergeTrackerRemovals(req.TrackersRemove, existingTrackersRemove)
+	meta.TrackersRemove = mergeTrackerRemovals(meta.TrackersRemove, existingMatchedTrackers)
+	meta.TrackerIDs = mergeTrackerIDOverrides(existingTrackerIDs, req.TrackerIDOverrides)
 	meta.DescriptionOverride = strings.TrimSpace(req.DescriptionOverrideRaw)
 	meta.MetadataOverrides = req.MetadataOverrides
 	meta.TrackerConfigOverrides = req.TrackerConfigOverrides
@@ -256,6 +260,35 @@ func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req 
 	return meta
 }
 
+func mergeTrackerIDOverrides(existing map[string]string, overrides map[string]string) map[string]string {
+	normalizedExisting := make(map[string]string, len(existing))
+	for key, value := range existing {
+		trimmedKey := strings.ToLower(strings.TrimSpace(key))
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		normalizedExisting[trimmedKey] = trimmedValue
+	}
+
+	merged := cloneStringMap(normalizedExisting)
+	if merged == nil {
+		merged = make(map[string]string)
+	}
+	for key, value := range overrides {
+		trimmedKey := strings.ToLower(strings.TrimSpace(key))
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		merged[trimmedKey] = trimmedValue
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
 func (c *Core) applyRequestToCachedPreparedMeta(ctx context.Context, meta api.PreparedMetadata, req api.Request) (api.PreparedMetadata, error) {
 	if c.services.Metadata == nil {
 		meta = applyRequestToPreparedMeta(meta, req, c.cfg, c.logger)
@@ -264,7 +297,7 @@ func (c *Core) applyRequestToCachedPreparedMeta(ctx context.Context, meta api.Pr
 	meta = applyRequestToPreparedMetaBeforeRefresh(meta, req, c.cfg, c.logger)
 	refreshed, err := c.services.Metadata.RefreshPreparedMetadata(ctx, meta)
 	if err != nil {
-		return api.PreparedMetadata{}, err
+		return api.PreparedMetadata{}, fmt.Errorf("core: %w", err)
 	}
 	refreshed.TrackerRuleFailures = filterTrackerRuleFailures(refreshed.TrackerRuleFailures, req.IgnoreTrackerRuleFailuresFor)
 	return refreshed, nil
@@ -433,7 +466,7 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 
 	blocked := removeTrackerBlockReason(cloneBlockedTrackers(meta.BlockedTrackers), api.TrackerBlockReasonDupe)
 	for _, result := range summary.Results {
-		if !result.HasDupes {
+		if !dupeResultBlocksTracker(result) {
 			continue
 		}
 
@@ -446,6 +479,16 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 		}
 	}
 	meta.BlockedTrackers = blocked
+}
+
+func dupeResultBlocksTracker(result api.DupeCheckResult) bool {
+	if result.HasDupes || result.Skipped {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
+		return true
+	}
+	return strings.TrimSpace(result.Error) != ""
 }
 
 func cloneBlockedTrackers(input map[string][]api.TrackerBlockReason) map[string][]api.TrackerBlockReason {

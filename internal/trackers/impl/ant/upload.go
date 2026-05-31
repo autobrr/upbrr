@@ -18,18 +18,21 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const antUploadURL = "https://anthelion.me/api.php"
 
 var antTorrentIDPattern = regexp.MustCompile(`id=(\d+)`)
-var antDefaultSignaturePattern = regexp.MustCompile(`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/Audionut/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`)
+var antDefaultSignaturePattern = regexp.MustCompile(`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/(?:Audionut|autobrr)/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`)
 var antEmptyURLPattern = regexp.MustCompile(`(?is)\[url=[^\]]*]\s*\[/url\]`)
 
 var antBannedReleaseGroups = map[string]struct{}{
@@ -83,7 +86,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	payload := map[string]any{}
 	if len(bodyBytes) > 0 {
 		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			return api.UploadSummary{}, errors.New("trackers: ANT json decode error, the API is probably down")
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return api.UploadSummary{}, errors.New("trackers: ANT json decode error, the API is probably down")
+			}
 		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !antUploadSuccess(payload) {
@@ -103,10 +108,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "ANT")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, viewURL, "ANT"); err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 
@@ -148,7 +153,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
 	select {
 	case <-ctx.Done():
-		return uploadState{}, ctx.Err()
+		return uploadState{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" {
@@ -160,17 +165,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 	descriptionAssets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		descriptionAssets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, descriptionAssets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req, descriptionAssets)
 
 	answers := questionnaireAnswers(req.Meta)
 	typeName, typeID := resolveType(req.Meta, answers)
@@ -232,25 +234,76 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
+	meta := req.Meta
+	var parts []string
+
+	// Base description
 	base := strings.TrimSpace(antDefaultSignaturePattern.ReplaceAllString(assets.Description, ""))
-	if base == "" {
-		return "", nil
-	}
-
 	report := bbcode.CleanPTPDescription(base, meta.DiscType)
-	if len(report.Images) > 0 {
-		return "", nil
+	userDesc := strings.TrimSpace(report.Description)
+	if userDesc == "" && base != "" && len(report.Images) == 0 {
+		userDesc = base
 	}
 
-	body := strings.TrimSpace(report.Description)
-	if body == "" {
-		body = base
+	if userDesc != "" {
+		// Custom Header
+		if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+			parts = append(parts, header)
+		}
+
+		// Logo
+		logoURL, _ := unit3d.ResolveLogo(meta, req.AppConfig)
+		if logoURL != "" {
+			if strings.HasSuffix(logoURL, ".svg") {
+				logoURL = strings.ReplaceAll(logoURL, ".svg", ".png")
+			}
+			parts = append(parts, "[align=center][img]"+logoURL+"[/img][/align]")
+		}
+
+		// User Description
+		parts = append(parts, userDesc)
 	}
 
-	finalized := bbcode.FinalizeTrackerDescription("ANT", body)
+	// Disc menus
+	if len(assets.MenuImages) > 0 {
+		if header := strings.TrimSpace(req.AppConfig.Description.DiscMenuHeader); header != "" {
+			parts = append(parts, header)
+		}
+		var shotParts []string
+		for _, img := range assets.MenuImages {
+			url := metautil.FirstNonEmptyTrimmed(img.RawURL, img.ImgURL, img.WebURL)
+			if url != "" {
+				shotParts = append(shotParts, "[img]"+url+"[/img]")
+			}
+		}
+		if len(shotParts) > 0 {
+			parts = append(parts, "[align=center]"+strings.Join(shotParts, " ")+"[/align]")
+		}
+	}
+
+	// Tonemapped Header
+	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && unit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+		parts = append(parts, tonemapHeader)
+	}
+
+	// Join and finalize
+	description := strings.Join(parts, "\n\n")
+
+	finalized := bbcode.FinalizeTrackerDescription("ANT", description)
+
+	// Character replacements
+	replacer := strings.NewReplacer("•", "-", "’", "'", "–", "-")
+	finalized = replacer.Replace(finalized)
+
 	finalized = strings.TrimSpace(antEmptyURLPattern.ReplaceAllString(finalized, ""))
-	return finalized, nil
+
+	// Debug saving
+	if meta.Options.Debug {
+		unit3d.SaveDescriptionDebug(meta, "ANT", req.AppConfig.MainSettings.DBPath, finalized, req.Logger)
+	}
+
+	return finalized
 }
 
 func resolveMediaFields(meta api.PreparedMetadata, dbPath string) (map[string]string, error) {
@@ -303,9 +356,9 @@ func resolveBDInfoPath(meta api.PreparedMetadata, dbPath string) (string, error)
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
-	return paths.PrimaryBDMVSummaryPath(tmpRoot, meta)
+	return wrapTrackerResult(paths.PrimaryBDMVSummaryPath(tmpRoot, meta))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata, state uploadState) *api.TrackerQuestionnaire {
@@ -332,7 +385,7 @@ func buildQuestionnaire(meta api.PreparedMetadata, state uploadState) *api.Track
 			Label:       "Upload Screenshots",
 			Kind:        "select",
 			Options:     []string{"no", "yes"},
-			Value:       firstNonEmpty(strings.TrimSpace(current["adult_screens"]), "no"),
+			Value:       metautil.FirstNonEmptyTrimmed(strings.TrimSpace(current["adult_screens"]), "no"),
 			Placeholder: "Select yes or no",
 			Help:        "Set to yes to include screenshots for adult content",
 			Required:    true,
@@ -624,33 +677,33 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 				}
 				if err := writer.WriteField(key, trimmed); err != nil {
 					_ = writer.Close()
-					return nil, "", err
+					return nil, "", fmt.Errorf("trackers: ANT write multipart field %q: %w", key, err)
 				}
 			}
 			continue
 		}
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: ANT write multipart field %q: %w", key, err)
 		}
 	}
 	file, err := os.Open(torrentPath)
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT open torrent file: %w", err)
 	}
 	defer file.Close()
 	part, err := writer.CreateFormFile("file_input", "torrent.torrent")
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: ANT close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -673,12 +726,15 @@ func antUploadError(status int, payload map[string]any, body []byte) error {
 		switch {
 		case strings.Contains(text, "same infohash"):
 			if viewURL := strings.TrimSpace(stringValue(payload["view"])); viewURL != "" {
-				return fmt.Errorf("trackers: ANT same infohash already exists: %s", viewURL)
+				return fmt.Errorf("trackers: ANT same infohash already exists: %s", commonhttp.RedactErrorDetail(viewURL))
 			}
 			return errors.New("trackers: ANT same infohash already exists")
 		case strings.Contains(text, "exact same"):
 			return errors.New("trackers: ANT exact same media file already exists")
 		}
+	}
+	if detail := commonhttp.ExtractHTTPErrorDetail(body); detail != "" {
+		return fmt.Errorf("trackers: ANT upload failed status=%d: %s", status, detail)
 	}
 	switch status {
 	case http.StatusForbidden:
@@ -689,9 +745,9 @@ func antUploadError(status int, payload map[string]any, body []byte) error {
 		return errors.New("trackers: ANT bad gateway")
 	}
 	if message := strings.TrimSpace(stringValue(payload["error"])); message != "" {
-		return fmt.Errorf("trackers: ANT api error: %s", message)
+		return fmt.Errorf("trackers: ANT api error: %s", commonhttp.RedactErrorDetail(message))
 	}
-	return fmt.Errorf("trackers: ANT upload failed status=%d body=%s", status, strings.TrimSpace(string(body)))
+	return commonhttp.UploadHTTPError("ANT", status, body)
 }
 
 func compactJSON(payload map[string]any) string {
@@ -729,13 +785,4 @@ func dedupeStrings(values []string) []string {
 		result = append(result, trimmed)
 	}
 	return result
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

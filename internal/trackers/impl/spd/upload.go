@@ -19,9 +19,12 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -64,11 +67,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 
 	body, err := json.Marshal(state.payload)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: SPD marshal upload payload: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, strings.NewReader(string(body)))
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: SPD build upload request: %w", err)
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -84,6 +87,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	var decoded uploadResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "SPD", "upload_failure", responseBody, ".txt")
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return api.UploadSummary{}, commonhttp.UploadHTTPError("SPD", resp.StatusCode, responseBody)
+		}
 		return api.UploadSummary{}, fmt.Errorf("trackers: SPD decode response: %w", err)
 	}
 	if resp.StatusCode == http.StatusOK && decoded.Status && !decoded.Error {
@@ -110,7 +116,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "SPD", "upload_failure", responseBody, ".json")
-	return api.UploadSummary{}, fmt.Errorf("trackers: SPD upload failed status=%d", resp.StatusCode)
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("SPD", resp.StatusCode, responseBody)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -148,33 +154,31 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req, assets)
 	channelID, blockedReason, questionnaire := resolveChannel(ctx, req)
 	torrentBytes, err := os.ReadFile(torrentPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: SPD read torrent file: %w", err)
 	}
+	releaseName := normalizeName(metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename))
 	payload := map[string]any{
-		"bdInfo":           resolveBDInfo(req.Meta),
-		"coverPhotoUrl":    firstNonEmpty(req.Meta.ExternalMetadata.TMDB.Backdrop, req.Meta.ExternalMetadata.TMDB.Poster),
+		"bdInfo":           trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, req.Meta),
+		"coverPhotoUrl":    metautil.FirstNonEmptyTrimmed(req.Meta.ExternalMetadata.TMDB.Backdrop, req.Meta.ExternalMetadata.TMDB.Poster),
 		"description":      genresText(req.Meta),
 		"media_info":       commonhttp.ReadOptionalFile(strings.TrimSpace(req.Meta.MediaInfoTextPath)),
-		"name":             normalizeName(firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename)),
+		"name":             releaseName,
 		"nfo":              "",
-		"plot":             firstNonEmpty(req.Meta.EpisodeOverview, req.Meta.ExternalMetadata.TMDB.Overview),
-		"poster":           firstNonEmpty(req.Meta.ExternalMetadata.TMDB.Poster),
+		"plot":             metautil.FirstNonEmptyTrimmed(req.Meta.EpisodeOverview, req.Meta.ExternalMetadata.TMDB.Overview),
+		"poster":           metautil.FirstNonEmptyTrimmed(req.Meta.ExternalMetadata.TMDB.Poster),
 		"technicalDetails": description,
-		"screenshots":      screenshots(assets.Screenshots),
+		"screenshots":      combineUniqueScreenshots(assets.MenuImages, assets.Screenshots),
 		"type":             resolveCategory(req.Meta),
 		"url":              imdbURL(req.Meta),
 		"channel":          channelID,
@@ -183,7 +187,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	return uploadState{
 		torrentPath:   torrentPath,
 		description:   description,
-		releaseName:   payload["name"].(string),
+		releaseName:   releaseName,
 		payload:       payload,
 		questionnaire: questionnaire,
 		blockedReason: blockedReason,
@@ -192,7 +196,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 func resolveChannel(ctx context.Context, req trackers.UploadRequest) (string, string, *api.TrackerQuestionnaire) {
 	answers := questionnaireAnswers(req.Meta)
-	input := firstNonEmpty(strings.TrimSpace(answers["channel"]), strings.TrimSpace(req.TrackerConfig.Channel))
+	input := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["channel"]), strings.TrimSpace(req.TrackerConfig.Channel))
 	if input == "" {
 		return "1", "", nil
 	}
@@ -214,19 +218,19 @@ func resolveChannel(ctx context.Context, req trackers.UploadRequest) (string, st
 func lookupChannelID(ctx context.Context, apiKey string, input string) (string, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/channel?search="+url.QueryEscape(input), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: SPD build channel lookup request: %w", err)
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Authorization", strings.TrimSpace(apiKey))
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(httpReq)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: SPD channel lookup request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	var decoded []channelResult
 	if err := json.Unmarshal(body, &decoded); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: SPD unmarshal channel lookup response: %w", err)
 	}
 	for _, item := range decoded {
 		if strings.EqualFold(strings.TrimSpace(item.Tag), strings.TrimSpace(input)) {
@@ -236,19 +240,58 @@ func lookupChannelID(ctx context.Context, apiKey string, input string) (string, 
 	return "", errors.New("channel not found")
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	parts := make([]string, 0, 4)
-	if title := strings.TrimSpace(meta.EpisodeTitle); title != "" {
-		parts = append(parts, "[center]"+title+"[/center]")
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
+	meta := req.Meta
+	var parts []string
+
+	// Avoid unnecessary descriptions
+	if strings.TrimSpace(assets.Description) != "" || strings.TrimSpace(meta.EpisodeOverview) != "" {
+		// Custom Header
+		if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+			parts = append(parts, header)
+		}
+
+		// Logo
+		if logo, logoSize := descriptionunit3d.ResolveLogo(meta, req.AppConfig); logo != "" {
+			parts = append(parts, fmt.Sprintf("[center][img=%d]https://image.tmdb.org/t/p/w300/%s[/img][/center]", logoSize, logo))
+		}
+
+		// TV Details
+		if strings.TrimSpace(meta.EpisodeOverview) != "" {
+			parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]")
+			parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/center]")
+		}
+
+		// User Description
+		if strings.TrimSpace(assets.Description) != "" {
+			parts = append(parts, strings.TrimSpace(assets.Description))
+		}
 	}
-	if overview := strings.TrimSpace(meta.EpisodeOverview); overview != "" {
-		parts = append(parts, "[center]"+overview+"[/center]")
+
+	// Tonemapped Header
+	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && descriptionunit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+		parts = append(parts, tonemapHeader)
 	}
-	if base := strings.TrimSpace(assets.Description); base != "" {
-		parts = append(parts, base)
+
+	// custom user signature
+	if signature := strings.TrimSpace(req.AppConfig.Description.CustomSignature); signature != "" {
+		parts = append(parts, signature)
 	}
-	parts = append(parts, "[url=https://github.com/autobrr/upbrr]upbrr[/url]")
-	return bbcode.FinalizeTrackerDescription("SPD", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+
+	// Signature
+	link, text := descriptionunit3d.UppbrrSignatureLink()
+	parts = append(parts, fmt.Sprintf("[url=%s]%s[/url]", link, text))
+
+	// Join and finalize
+	description := strings.Join(parts, "\n\n")
+	finalized := bbcode.FinalizeTrackerDescription("SPD", description)
+
+	// Debug saving
+	if meta.Options.Debug {
+		descriptionunit3d.SaveDescriptionDebug(meta, "SPD", req.AppConfig.MainSettings.DBPath, finalized, req.Logger)
+	}
+
+	return finalized
 }
 
 func resolveCategory(meta api.PreparedMetadata) string {
@@ -312,21 +355,30 @@ func hasRomanian(meta api.PreparedMetadata) bool {
 	return false
 }
 
-func screenshots(images []api.ScreenshotImage) []string {
-	out := make([]string, 0, len(images))
-	for _, image := range images {
-		if raw := strings.TrimSpace(firstNonEmpty(image.RawURL, image.ImgURL)); raw != "" {
-			out = append(out, raw)
+func combineUniqueScreenshots(menu []api.ScreenshotImage, normal []api.ScreenshotImage) []string {
+	var out []string
+	seen := make(map[string]struct{})
+
+	for _, image := range menu {
+		u := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL))
+		if u != "" && !isSeen(seen, u) {
+			out = append(out, u)
+			seen[u] = struct{}{}
+		}
+	}
+	for _, image := range normal {
+		u := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL))
+		if u != "" && !isSeen(seen, u) {
+			out = append(out, u)
+			seen[u] = struct{}{}
 		}
 	}
 	return out
 }
 
-func resolveBDInfo(meta api.PreparedMetadata) string {
-	if strings.EqualFold(meta.DiscType, "BDMV") {
-		return commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath))
-	}
-	return ""
+func isSeen(seen map[string]struct{}, url string) bool {
+	_, ok := seen[url]
+	return ok
 }
 
 func normalizeName(input string) string {
@@ -352,22 +404,25 @@ func imdbURL(meta api.PreparedMetadata) string {
 func downloadTrackerTorrent(ctx context.Context, urlValue string, apiKey string, output string) error {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, urlValue, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: SPD build torrent download request: %w", err)
 	}
 	httpReq.Header.Set("Authorization", strings.TrimSpace(apiKey))
 	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(httpReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: SPD torrent download request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: SPD read torrent response: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: SPD create torrent output dir: %w", err)
 	}
-	return os.WriteFile(output, body, 0o600)
+	if err := os.WriteFile(output, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: SPD write torrent output: %w", err)
+	}
+	return nil
 }
 
 func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
@@ -390,17 +445,8 @@ func isSD(res string) bool {
 	return strings.HasPrefix(strings.TrimSpace(res), "480") || strings.HasPrefix(strings.TrimSpace(res), "576") || strings.HasPrefix(strings.TrimSpace(res), "540")
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
 func genresText(meta api.PreparedMetadata) string {
-	return firstNonEmpty(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
 }
 
 func keywordsText(meta api.PreparedMetadata) string {

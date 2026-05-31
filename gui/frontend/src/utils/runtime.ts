@@ -118,6 +118,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
       App: {
         BrowsePath: () => call<string>("BrowseFile"),
         BrowseFile: () => call<string>("BrowseFile"),
+        BrowseImageFiles: () => call<string[]>("BrowseImageFiles"),
         BrowseFolder: () => call<string>("BrowseFolder"),
         BrowseDirectory: (path: string, mode: "file" | "folder") =>
           call("BrowseDirectory", { path, mode }),
@@ -154,6 +155,11 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             NameOverrides: nameOverrides,
             Trackers: trackers,
           }),
+        SelectBlurayCandidate: (path: string, releaseID: string) =>
+          call("SelectBlurayCandidate", {
+            Path: path,
+            ReleaseID: releaseID,
+          }),
         FetchDescriptionBuilder: (
           path: string,
           overrides: unknown,
@@ -187,7 +193,6 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           overrides: unknown,
           nameOverrides: unknown,
           trackers: string[],
-          ignoreRuleFailures: boolean,
           ignoreDupesFor: string[],
           questionnaireAnswers: Record<string, Record<string, string>>,
           descriptionGroups: unknown,
@@ -199,7 +204,6 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             Overrides: overrides,
             NameOverrides: nameOverrides,
             Trackers: trackers,
-            IgnoreRuleFailures: ignoreRuleFailures,
             IgnoreDupesFor: ignoreDupesFor,
             QuestionnaireAnswers: questionnaireAnswers,
             DescriptionGroups: descriptionGroups,
@@ -287,6 +291,18 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             Overrides: overrides,
             NameOverrides: nameOverrides,
             Images: images,
+          }),
+        ImportMenuImages: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          paths: string[],
+        ) =>
+          call("ImportMenuImages", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            Paths: paths,
           }),
         ReadScreenshotImage: (path: string) => call("ReadScreenshotImage", { Path: path }),
         ListUploadCandidates: (path: string, overrides: unknown, nameOverrides: unknown) =>
@@ -414,7 +430,6 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           overrides: unknown,
           nameOverrides: unknown,
           trackers: string[],
-          ignoreRuleFailures: boolean,
           ignoreDupesFor: string[],
           questionnaireAnswers: Record<string, Record<string, string>>,
           descriptionGroups: unknown,
@@ -426,7 +441,6 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             Overrides: overrides,
             NameOverrides: nameOverrides,
             Trackers: trackers,
-            IgnoreRuleFailures: ignoreRuleFailures,
             IgnoreDupesFor: ignoreDupesFor,
             QuestionnaireAnswers: questionnaireAnswers,
             DescriptionGroups: descriptionGroups,

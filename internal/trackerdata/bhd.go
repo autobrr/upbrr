@@ -116,7 +116,10 @@ func (c *Client) bhdRequestFirst(ctx context.Context, endpoint string, payload m
 }
 
 func (c *Client) bhdRequest(ctx context.Context, endpoint string, payload map[string]any) (map[string]any, error) {
-	raw, _ := json.Marshal(payload)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("trackerdata: bhd encode request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("trackerdata: bhd request: %w", err)

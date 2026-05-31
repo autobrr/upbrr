@@ -6,6 +6,7 @@ package trackerdata
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,7 +27,11 @@ func (t rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	clone.URL.Scheme = t.base.Scheme
 	clone.URL.Host = t.base.Host
 	clone.Host = t.base.Host
-	return t.rt.RoundTrip(clone)
+	resp, err := t.rt.RoundTrip(clone)
+	if err != nil {
+		return resp, fmt.Errorf("rewrite host round trip: %w", err)
+	}
+	return resp, nil
 }
 
 func TestLookupBTN(t *testing.T) {
@@ -154,7 +159,7 @@ func TestLookupPTPAndHDB(t *testing.T) {
 
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"PTP": {ApiUser: "user", ApiKey: "key"},
+			"PTP": {PTPAPIUser: "user", PTPAPIKey: "key"},
 			"HDB": {Username: "user", Passkey: "pass"},
 		}},
 	}
@@ -199,7 +204,7 @@ func TestLookupANTSendsAPIKeyHeader(t *testing.T) {
 		if got := query.Get("filename"); got != "Example.Release.mkv" {
 			t.Fatalf("unexpected filename query value: got %q", got)
 		}
-		if got := r.Header.Get("X-API-Key"); got != "token" {
+		if got := r.Header.Get("X-Api-Key"); got != "token" {
 			t.Fatalf("unexpected X-API-Key header: got %q want %q", got, "token")
 		}
 		if got := r.Header.Get("User-Agent"); got == "" {
@@ -298,7 +303,7 @@ func TestLookupHDBSkipsUnfilteredSearch(t *testing.T) {
 	t.Parallel()
 
 	requested := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requested = true
 		http.Error(w, "unexpected request", http.StatusInternalServerError)
 	}))
@@ -335,7 +340,7 @@ func TestLookupBHDSkipsUnfilteredSearch(t *testing.T) {
 	t.Parallel()
 
 	requested := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requested = true
 		http.Error(w, "unexpected request", http.StatusInternalServerError)
 	}))

@@ -4,7 +4,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { DescriptionBuilderPreview } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
-import "./styles.css";
 
 type Props = {
   path: string;
@@ -68,8 +67,8 @@ export default function DescriptionBuilderPage(props: Props) {
   const groups = builderPreview.Groups || [];
 
   return (
-    <section className="builder-panel">
-      <header className="builder-header">
+    <section className="flex flex-col gap-3">
+      <header className="max-w-3xl">
         <p className="eyebrow">Description Builder</p>
         <h1>Customize Description</h1>
         <p className="subtitle">
@@ -78,10 +77,10 @@ export default function DescriptionBuilderPage(props: Props) {
         </p>
       </header>
 
-      <section className="panel builder-actions">
-        <div>
+      <section className="panel flex flex-wrap items-center justify-between gap-3 py-3">
+        <div className="min-w-0">
           <p className="label">Source path</p>
-          <p className="value dupe-path">{path || "No path selected"}</p>
+          <p className="value [overflow-wrap:anywhere] text-sm">{path || "No path selected"}</p>
         </div>
         <button
           className="ghost"
@@ -97,8 +96,8 @@ export default function DescriptionBuilderPage(props: Props) {
       {builderSaved ? <p className="success">{builderSaved}</p> : null}
 
       {builderLoading && groups.length === 0 ? (
-        <section className="panel builder-preview">
-          <div className="builder-preview__header">
+        <section className="panel">
+          <div className="mb-2 flex flex-col gap-1">
             <h2>Building Descriptions</h2>
           </div>
           <p className="muted">
@@ -106,7 +105,7 @@ export default function DescriptionBuilderPage(props: Props) {
           </p>
         </section>
       ) : groups.length === 0 ? (
-        <section className="panel builder-preview">
+        <section className="panel">
           <p className="muted">No tracker descriptions generated yet.</p>
         </section>
       ) : (
@@ -122,8 +121,8 @@ export default function DescriptionBuilderPage(props: Props) {
           const imageHostWarnings = group.ImageHost?.Warnings || [];
 
           return (
-            <section className="panel builder-preview" key={reactKey}>
-              <div className="builder-editor__header">
+            <section className="panel grid gap-3" key={reactKey}>
+              <div className="mb-1 flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2>{label}</h2>
                   <p className="muted">
@@ -135,14 +134,19 @@ export default function DescriptionBuilderPage(props: Props) {
                     <p className="muted">{group.ImageHost.Message}</p>
                   ) : null}
                   {group.ImageHost?.Status === "warning" && group.ImageHost?.Message ? (
-                    <p className="builder-image-warning">{group.ImageHost.Message}</p>
+                    <p className="m-0 mt-1 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-[0.82rem] text-amber-100 [overflow-wrap:anywhere]">
+                      {group.ImageHost.Message}
+                    </p>
                   ) : null}
                   {imageHostWarnings.map((warning, index) => {
                     const host = String(warning.Host || "").trim();
                     const message = String(warning.Message || "").trim();
                     if (!host && !message) return null;
                     return (
-                      <p className="builder-image-warning" key={`${host || "host"}-${index}`}>
+                      <p
+                        className="m-0 mt-1 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-[0.82rem] text-amber-100 [overflow-wrap:anywhere]"
+                        key={`${host || "host"}-${index}`}
+                      >
                         {host ? `${host} failed` : "Image host warning"}
                         {message ? `: ${message}` : ""}
                       </p>
@@ -165,7 +169,7 @@ export default function DescriptionBuilderPage(props: Props) {
 
               {expanded ? (
                 <>
-                  <div className="builder-actions__buttons">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       className="ghost"
                       type="button"
@@ -192,15 +196,15 @@ export default function DescriptionBuilderPage(props: Props) {
                     </button>
                   </div>
 
-                  <section className="panel builder-editor">
-                    <div className="builder-editor__header">
+                  <section className="panel">
+                    <div className="mb-2 flex flex-col gap-1">
                       <h2>Raw Description</h2>
                       <p className="muted">
                         This saved raw description is the upload source of truth for {label}.
                       </p>
                     </div>
                     <textarea
-                      className="builder-textarea"
+                      className="min-h-[170px] w-full resize-y rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[0.95rem] leading-6 text-[var(--text)]"
                       value={raw}
                       onChange={(event) => {
                         const nextValue = event.target.value;
@@ -210,8 +214,8 @@ export default function DescriptionBuilderPage(props: Props) {
                     />
                   </section>
 
-                  <section className="panel builder-preview">
-                    <div className="builder-preview__header">
+                  <section className="panel">
+                    <div className="mb-2 flex flex-col gap-1">
                       <h2>Rendered Raw Preview</h2>
                     </div>
                     {renderedHTML ? (

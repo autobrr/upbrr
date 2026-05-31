@@ -204,7 +204,7 @@ func parseSRRDBIMDbID(raw string) int {
 func parseNFOExternalIDs(path string) (nfoExternalIDs, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nfoExternalIDs{}, err
+		return nfoExternalIDs{}, fmt.Errorf("metadata: read NFO file: %w", err)
 	}
 	return parseNFOExternalIDsText(string(data)), nil
 }

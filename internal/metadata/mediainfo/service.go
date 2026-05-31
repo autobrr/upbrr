@@ -69,7 +69,7 @@ func NewService(logger api.Logger, analyzer Analyzer) *Service {
 func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	select {
 	case <-ctx.Done():
-		return Result{}, ctx.Err()
+		return Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -83,7 +83,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 
 	tmpDir, _, err := paths.ReleaseTempDir(req.TempRoot, api.PreparedMetadata{Release: req.Release}, req.SourcePath)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("metadata: %w", err)
 	}
 	textPath := filepath.Join(tmpDir, "mediainfo.txt")
 	jsonPath := filepath.Join(tmpDir, "MediaInfo.json")
@@ -158,16 +158,16 @@ type moduleAnalyzer struct{}
 func (moduleAnalyzer) Analyze(_ context.Context, target string) (string, []byte, error) {
 	report, err := gomediainfo.AnalyzeFile(target)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("mediainfo: analyze file: %w", err)
 	}
 	reports := []gomediainfo.Report{report}
 	text, err := gomediainfo.Render(reports, gomediainfo.OutputText)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("mediainfo: render text: %w", err)
 	}
 	json, err := gomediainfo.Render(reports, gomediainfo.OutputJSON)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("mediainfo: render json: %w", err)
 	}
 	return text, []byte(json), nil
 }
@@ -255,7 +255,7 @@ func findVideoTS(ctx context.Context, root string) (string, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() && strings.EqualFold(entry.Name(), "VIDEO_TS") {
@@ -266,7 +266,7 @@ func findVideoTS(ctx context.Context, root string) (string, error) {
 	})
 	if walkErr != nil && !errors.Is(walkErr, foundErr) {
 		if errors.Is(walkErr, context.Canceled) || errors.Is(walkErr, context.DeadlineExceeded) {
-			return "", walkErr
+			return "", fmt.Errorf("mediainfo: scan dvd interrupted: %w", walkErr)
 		}
 		return "", fmt.Errorf("mediainfo: scan dvd: %w", walkErr)
 	}
@@ -288,7 +288,7 @@ func selectBestIFO(ctx context.Context, videoTS string) (string, string, string,
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return "", "", "", ctx.Err()
+			return "", "", "", fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		name := entry.Name()

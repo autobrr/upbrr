@@ -1,7 +1,8 @@
 import type { KnipConfig } from "knip";
 
 const config: KnipConfig = {
-  project: ["src/**/*.{ts,tsx,css}"],
+  entry: ["vitest.config.ts", "src/test/setup.ts"],
+  project: ["src/**/*.{ts,tsx,css}", "vitest.config.ts"],
   compilers: {
     ".css": (_filename, contents) => contents,
   },

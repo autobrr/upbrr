@@ -67,11 +67,17 @@ func TestRedactPrivateInfoJSON(t *testing.T) {
 		"entries": []any{"passkey", "value"},
 	}
 
-	redacted := RedactPrivateInfo(input, nil).(map[string]any)
+	redacted, ok := RedactPrivateInfo(input, nil).(map[string]any)
+	if !ok {
+		t.Fatalf("expected redacted value to be map[string]any")
+	}
 	if redacted["token"] != "[REDACTED]" {
 		t.Fatalf("expected token redacted, got %#v", redacted["token"])
 	}
-	nested := redacted["nested"].(map[string]any)
+	nested, ok := redacted["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested redacted value to be map[string]any")
+	}
 	if nested["password"] != "[REDACTED]" {
 		t.Fatalf("expected password redacted, got %#v", nested["password"])
 	}

@@ -120,6 +120,29 @@ func TestApplyRequestToPreparedMetaClearsDupeBlocksForIgnoredTrackers(t *testing
 	}
 }
 
+func TestApplyDupeSummaryBlocksSkippedAndFailedTrackers(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{}
+	applyDupeSummaryToPreparedMeta(&meta, api.DupeCheckSummary{
+		Results: []api.DupeCheckResult{
+			{Tracker: "BTN", Skipped: true, SkipReason: "BTN only supports TV dupe search"},
+			{Tracker: "RTF", Status: "failed", Error: "dupe search failed"},
+			{Tracker: "OE", Status: "completed"},
+		},
+	})
+
+	if got := meta.BlockedTrackers["BTN"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
+		t.Fatalf("expected BTN skipped dupe block, got %#v", meta.BlockedTrackers)
+	}
+	if got := meta.BlockedTrackers["RTF"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
+		t.Fatalf("expected RTF failed dupe block, got %#v", meta.BlockedTrackers)
+	}
+	if _, ok := meta.BlockedTrackers["OE"]; ok {
+		t.Fatalf("expected completed OE dupe check not to block, got %#v", meta.BlockedTrackers)
+	}
+}
+
 func TestApplyRequestToPreparedMetaPreservesCachedDescriptionGroupsWhenRequestOmitted(t *testing.T) {
 	t.Parallel()
 
@@ -343,5 +366,36 @@ func TestApplyRequestToPreparedMetaDoesNotMutateCachedExternalMetadata(t *testin
 	}
 	if result.ExternalMetadata.TMDB == nil || result.ExternalMetadata.TMDB.OriginalLanguage != "ja" {
 		t.Fatalf("expected request-scoped metadata override to apply, got %#v", result.ExternalMetadata)
+	}
+}
+
+func TestMergeTrackerIDOverridesNormalizesExistingKeys(t *testing.T) {
+	t.Parallel()
+
+	spacedExistingKey := " AITHER "
+	spacedOverrideKey := " RF "
+	existing := map[string]string{
+		spacedExistingKey: " 10001 ",
+		"RF":              " ",
+		"":                "10002",
+	}
+	overrides := map[string]string{
+		"aither":          "20001",
+		spacedOverrideKey: " 20002 ",
+	}
+
+	merged := mergeTrackerIDOverrides(existing, overrides)
+
+	if len(merged) != 2 {
+		t.Fatalf("expected two normalized tracker ids, got %#v", merged)
+	}
+	if got := merged["aither"]; got != "20001" {
+		t.Fatalf("expected override to replace normalized existing id, got %q", got)
+	}
+	if got := merged["rf"]; got != "20002" {
+		t.Fatalf("expected normalized override id, got %q", got)
+	}
+	if _, ok := merged[" AITHER "]; ok {
+		t.Fatalf("expected unnormalized existing key removed, got %#v", merged)
 	}
 }

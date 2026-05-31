@@ -45,7 +45,7 @@ func SourceSize(ctx context.Context, sourcePath, discType string, fileList []str
 	for _, path := range paths {
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return 0, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		info, err := os.Stat(path)
@@ -76,7 +76,7 @@ func discTreeSize(ctx context.Context, root string) (int64, error) {
 	}
 
 	var total int64
-	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if os.IsNotExist(walkErr) {
 				return nil
@@ -85,7 +85,7 @@ func discTreeSize(ctx context.Context, root string) (int64, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() {
@@ -105,7 +105,7 @@ func discTreeSize(ctx context.Context, root string) (int64, error) {
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return 0, err
+			return 0, fmt.Errorf("filesystem: size walk interrupted: %w", err)
 		}
 		return 0, fmt.Errorf("filesystem: size walk: %w", err)
 	}

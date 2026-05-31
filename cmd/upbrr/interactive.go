@@ -8,9 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -34,12 +37,12 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 					return promptErr
 				}
 				if !confirm {
-					return err
+					return fmt.Errorf("upbrr: %w", err)
 				}
 				currentOpts.ConfirmBDMVRescan = true
 				continue
 			}
-			return err
+			return fmt.Errorf("upbrr: %w", err)
 		}
 
 		printMetadataPreview(preview)
@@ -82,7 +85,7 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 
 	review, err := coreSvc.BuildUploadReview(ctx, req)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	if currentOpts.Debug {
 		printDebugUploadReview(review)
@@ -96,7 +99,7 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 		req.TrackerQuestionnaireAnswers = questionnaireAnswers
 		review, err = coreSvc.BuildUploadReview(ctx, req)
 		if err != nil {
-			return err
+			return fmt.Errorf("upbrr: %w", err)
 		}
 	}
 
@@ -120,7 +123,7 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 	req.TrackerQuestionnaireAnswers = questionnaireAnswers
 
 	_, err = coreSvc.RunUploadPrepared(ctx, req)
-	return err
+	return fmt.Errorf("upbrr: %w", err)
 }
 
 func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, screens int) error {
@@ -131,7 +134,7 @@ func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions,
 
 	review, err := coreSvc.BuildUploadReview(ctx, req)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	if opts.Debug {
 		printDebugUploadReview(review)
@@ -212,7 +215,7 @@ func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.C
 	recheckReq.Trackers = trackers
 	summary, err := coreSvc.CheckDupes(ctx, recheckReq)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upbrr: %w", err)
 	}
 
 	resultByTracker := make(map[string]api.DupeCheckResult, len(summary.Results))
@@ -442,7 +445,7 @@ func printDryRunDetails(entry api.TrackerDryRunEntry) {
 			if file.Present {
 				status = "present"
 			}
-			fmt.Printf("- %s [%s]: %s\n", file.Field, status, firstNonEmpty(strings.TrimSpace(file.Path), "(none)"))
+			fmt.Printf("- %s [%s]: %s\n", file.Field, status, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(file.Path), "(none)"))
 		}
 	}
 	if len(entry.Payload) > 0 {
@@ -461,15 +464,6 @@ func printDryRunDetails(entry api.TrackerDryRunEntry) {
 	}
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) (bool, error) {
 	line, err := promptLine(reader, prompt)
 	if err != nil {
@@ -486,10 +480,10 @@ func promptLine(reader *bufio.Reader, prompt string) (string, error) {
 	fmt.Print(prompt)
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		if err.Error() == "EOF" && line != "" {
+		if errors.Is(err, io.EOF) && line != "" {
 			return line, nil
 		}
-		return "", err
+		return "", fmt.Errorf("read prompt line: %w", err)
 	}
 	return strings.TrimSpace(line), nil
 }

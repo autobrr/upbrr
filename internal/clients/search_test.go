@@ -147,6 +147,86 @@ func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 	}
 }
 
+func TestSearchPathedTorrentsProxyStripsSymbolsFromSearch(t *testing.T) {
+	t.Parallel()
+
+	searchQueries := make([]string, 0)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/search":
+			search := r.URL.Query().Get("search")
+			searchQueries = append(searchQueries, search)
+			if strings.Contains(search, "\u2122") {
+				_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
+				return
+			}
+			items := []qbittorrent.Torrent{
+				{
+					Hash:        strings.Repeat("a", 40),
+					Name:        "Fixture Title 2024 2160p AUS UHD Blu-ray DV HDR HEVC DTS-HD MA 5.1-FixtureGroup",
+					Tracker:     "https://tracker.beyond-hd.me/announce/redacted",
+					Comment:     "https://beyond-hd.me/details/10001",
+					Trackers:    []qbittorrent.TorrentTracker{{Url: "https://tracker.beyond-hd.me/announce/redacted", Status: qbittorrent.TrackerStatusOK}},
+					NumComplete: 2,
+				},
+				{
+					Hash:        strings.Repeat("b", 40),
+					Name:        "Fixture Title 2024 2160p AUS UHD Blu-ray DV HDR HEVC DTS-HD MA 5.1-FixtureGroup",
+					Tracker:     "https://passthepopcorn.me/announce/redacted",
+					Comment:     "https://passthepopcorn.me/torrents.php?id=100&torrentid=10002",
+					Trackers:    []qbittorrent.TorrentTracker{{Url: "https://passthepopcorn.me/announce/redacted", Status: qbittorrent.TrackerStatusOK}},
+					NumComplete: 1,
+				},
+			}
+			_ = json.NewEncoder(w).Encode(items)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{TMDBAPI: "x", DBPath: t.TempDir()},
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{"qbit"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:        "qui",
+				QuiProxyURL: server.URL,
+			},
+		},
+	}
+
+	svc := NewService(cfg, api.NopLogger{})
+	result, err := svc.SearchPathedTorrents(context.Background(), api.PreparedMetadata{
+		SourcePath: `D:\Movies\Fixture Title 2024 2160p AUS UHD Blu-ray DV HDR HEVC DTS-HD MA 5.1-FixtureGroup` + "\u2122",
+		DiscType:   "BDMV",
+	})
+	if err != nil {
+		t.Fatalf("search pathed torrents: %v", err)
+	}
+	if len(searchQueries) != 1 {
+		t.Fatalf("expected one proxy search, got %d", len(searchQueries))
+	}
+	if strings.Contains(searchQueries[0], "\u2122") {
+		t.Fatalf("expected proxy search term without trademark symbol, got %q", searchQueries[0])
+	}
+	if result.TrackerIDs["bhd"] != "10001" {
+		t.Fatalf("expected BHD tracker id, got %q", result.TrackerIDs["bhd"])
+	}
+	if result.TrackerIDs["ptp"] != "10002" {
+		t.Fatalf("expected PTP tracker id, got %q", result.TrackerIDs["ptp"])
+	}
+	if !containsString(result.MatchedTrackers, "BHD") {
+		t.Fatalf("expected BHD in matched trackers, got %v", result.MatchedTrackers)
+	}
+	if !containsString(result.MatchedTrackers, "PTP") {
+		t.Fatalf("expected PTP in matched trackers, got %v", result.MatchedTrackers)
+	}
+}
+
 func TestMatchTrackerURLsMatchesBTNLandOfTVAnnounce(t *testing.T) {
 	t.Parallel()
 
@@ -162,6 +242,115 @@ func TestEnsureMatchedTrackersForKnownIDsAddsBTN(t *testing.T) {
 	matched := ensureMatchedTrackersForKnownIDs(nil, map[string]string{"btn": "2202392"})
 	if !containsString(matched, "BTN") {
 		t.Fatalf("expected BTN in matched trackers, got %v", matched)
+	}
+}
+
+func TestExtractTrackerMatchesHandlesReelFlixAliasComment(t *testing.T) {
+	t.Parallel()
+
+	matches, found := extractTrackerMatches(
+		"https://reelflix.xyz/torrents/10003",
+		[]string{"https://reelflix.cc/announce/redacted"},
+		true,
+		[]string{"rf"},
+	)
+
+	if !found {
+		t.Fatalf("expected RF tracker match")
+	}
+	if len(matches) != 1 || matches[0].ID != "rf" || matches[0].TrackerID != "10003" {
+		t.Fatalf("expected RF tracker id 10003, got %#v", matches)
+	}
+}
+
+func TestExtractTrackerMatchesHandlesRetroFlixBrowseComment(t *testing.T) {
+	t.Parallel()
+
+	matches, found := extractTrackerMatches(
+		"https://retroflix.club/browse/t/10004",
+		[]string{"http://peer.retroflix.club/announce.php?passkey=redacted"},
+		true,
+		[]string{"rtf"},
+	)
+
+	if !found {
+		t.Fatalf("expected RTF tracker match")
+	}
+	if len(matches) != 1 || matches[0].ID != "rtf" || matches[0].TrackerID != "10004" {
+		t.Fatalf("expected RTF tracker id 10004, got %#v", matches)
+	}
+}
+
+func TestExtractTrackerMatchesIncludesPatternsOutsidePriority(t *testing.T) {
+	t.Parallel()
+
+	matches, found := extractTrackerMatches(
+		"https://retroflix.club/browse/t/10004",
+		[]string{"http://peer.retroflix.club/announce.php?passkey=redacted"},
+		true,
+		trackers.TrackerPriority(),
+	)
+
+	if !found {
+		t.Fatalf("expected RTF tracker match")
+	}
+	if len(matches) != 1 || matches[0].ID != "rtf" || matches[0].TrackerID != "10004" {
+		t.Fatalf("expected RTF tracker id 10004, got %#v", matches)
+	}
+}
+
+func TestTorrentMatchesMetaAllowsSymbolDrift(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		SourcePath: `D:\Movies\Fixture Title 2024 2160p AUS UHD Blu-ray DV HDR HEVC DTS-HD MA 5.1-FixtureGroup` + "\u2122",
+		DiscType:   "BDMV",
+	}
+	torrent := qbittorrent.Torrent{
+		Name: "Fixture Title 2024 2160p AUS UHD Blu-ray DV HDR HEVC DTS-HD MA 5.1-FixtureGroup",
+	}
+
+	if !torrentMatchesMeta(torrent, meta) {
+		t.Fatalf("expected trademark-only name drift to match")
+	}
+}
+
+func TestTorrentMatchesMetaAllowsSeparatorDrift(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		SourcePath: `/tmp/Movie.Title.2024`,
+		FileList:   []string{`/tmp/Movie.Title.2024.mkv`},
+	}
+	torrent := qbittorrent.Torrent{Name: "Movie Title 2024.mkv"}
+
+	if !torrentMatchesMeta(torrent, meta) {
+		t.Fatalf("expected separator-only file name drift to match")
+	}
+}
+
+func TestTorrentMatchesMetaRejectsExtraTokens(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{SourcePath: `/tmp/Movie.Title.2024`}
+	torrent := qbittorrent.Torrent{Name: "Movie Title 2024 Remux"}
+
+	if torrentMatchesMeta(torrent, meta) {
+		t.Fatalf("expected extra torrent name tokens to be rejected")
+	}
+}
+
+func TestTorrentMatchesMetaUsesContentPathBasename(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{SourcePath: `/tmp/Movie.Title.2024`}
+	torrent := qbittorrent.Torrent{
+		Name:        "Tracker renamed folder",
+		ContentPath: `/downloads/Movie Title 2024`,
+	}
+
+	if !torrentMatchesMeta(torrent, meta) {
+		t.Fatalf("expected content path basename to match")
 	}
 }
 

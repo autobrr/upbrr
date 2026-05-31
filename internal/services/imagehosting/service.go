@@ -43,7 +43,7 @@ func NewService(cfg config.Config, logger api.Logger, repo api.MetadataRepositor
 
 func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata) ([]api.ScreenshotImage, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: list candidates canceled: %w", err)
 	}
 	if s == nil || s.repo == nil {
 		return nil, errors.New("image hosting: repository not configured")
@@ -55,13 +55,13 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 	// First, get all screenshots from the database
 	screens, err := s.repo.ListScreenshotsByPath(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: %w", err)
 	}
 
 	// Then, get all previously uploaded images
 	uploaded, err := s.repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: %w", err)
 	}
 
 	// Build a map of uploaded images by path for quick lookup
@@ -103,6 +103,49 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 		images = append(images, img)
 	}
 
+	// Also include final selections (like menu images that didn't go through screenshot generation)
+	selections, err := s.repo.ListFinalSelections(ctx, meta.SourcePath)
+	if err == nil {
+		seenPaths := make(map[string]struct{}, len(images))
+		for _, img := range images {
+			seenPaths[img.Path] = struct{}{}
+		}
+
+		for _, sel := range selections {
+			pathValue := strings.TrimSpace(sel.ImagePath)
+			if pathValue == "" || !isAllowedImageExt(pathValue) {
+				continue
+			}
+			if _, exists := seenPaths[pathValue]; exists {
+				continue
+			}
+			info, statErr := os.Stat(pathValue)
+			if statErr != nil || info.IsDir() {
+				continue
+			}
+
+			img := api.ScreenshotImage{
+				Path:             pathValue,
+				TimestampSeconds: 0, // Fallback since it wasn't a generated frame
+				Width:            0,
+				Height:           0,
+				SizeBytes:        info.Size(),
+			}
+
+			if uploadInfo, exists := uploadedByPath[pathValue]; exists {
+				img.Host = uploadInfo.Host
+				img.ImgURL = uploadInfo.ImgURL
+				img.RawURL = uploadInfo.RawURL
+				img.WebURL = uploadInfo.WebURL
+				img.UploadedAt = uploadInfo.UploadedAt
+				s.logger.Tracef("image hosting: found uploaded final selection %s (host: %s)", filepath.Base(pathValue), uploadInfo.Host)
+			}
+
+			images = append(images, img)
+			seenPaths[pathValue] = struct{}{}
+		}
+	}
+
 	sort.Slice(images, func(i, j int) bool {
 		return images[i].TimestampSeconds < images[j].TimestampSeconds
 	})
@@ -113,7 +156,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 
 func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
 	if s == nil {
 		return nil, errors.New("image hosting: service not configured")
@@ -143,7 +186,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 		return nil, internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
 
 	s.logger.Infof("image hosting: uploading %d images to %s", len(images), normalizedHost)
@@ -158,7 +201,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 		}
 		absPath, err := filepath.Abs(pathValue)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("image hosting: resolve image path: %w", err)
 		}
 		if !isAllowedImageExt(absPath) {
 			return nil, internalerrors.ErrInvalidInput
@@ -169,7 +212,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 		}
 		info, err := os.Stat(absPath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("image hosting: stat image path: %w", err)
 		}
 		if info.IsDir() {
 			return nil, internalerrors.ErrInvalidInput
@@ -227,7 +270,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 			s.logger.Debugf("image hosting: persisting %d upload records to database", len(results))
 			if err := s.repo.SaveUploadedImages(ctx, meta.SourcePath, normalizedHost, results); err != nil {
 				s.logger.Errorf("image hosting: failed to save upload records: %v", err)
-				return nil, err
+				return nil, fmt.Errorf("image hosting: %w", err)
 			}
 			summary, err := syncScreenshotSlotVariants(ctx, s.repo, meta.SourcePath, results)
 			if err != nil {
@@ -348,7 +391,7 @@ dispatchLoop:
 
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
 
 	totalDuration := time.Since(uploadStart)
@@ -361,7 +404,7 @@ dispatchLoop:
 		s.logger.Debugf("image hosting: persisting %d upload records to database", len(orderedResults))
 		if err := s.repo.SaveUploadedImages(ctx, meta.SourcePath, normalizedHost, orderedResults); err != nil {
 			s.logger.Errorf("image hosting: failed to save upload records: %v", err)
-			return nil, err
+			return nil, fmt.Errorf("image hosting: %w", err)
 		}
 		summary, err := syncScreenshotSlotVariants(ctx, s.repo, meta.SourcePath, orderedResults)
 		if err != nil {
@@ -382,9 +425,17 @@ dispatchLoop:
 
 func uploadBatch(ctx context.Context, batch batchUploader, meta api.PreparedMetadata, imagePaths []string) ([]uploadResult, error) {
 	if named, ok := batch.(namedBatchUploader); ok {
-		return named.UploadBatchWithName(ctx, imagePaths, resolveGalleryName(meta))
+		results, err := named.UploadBatchWithName(ctx, imagePaths, resolveGalleryName(meta))
+		if err != nil {
+			return nil, fmt.Errorf("image hosting: upload named batch: %w", err)
+		}
+		return results, nil
 	}
-	return batch.UploadBatch(ctx, imagePaths)
+	results, err := batch.UploadBatch(ctx, imagePaths)
+	if err != nil {
+		return nil, fmt.Errorf("image hosting: upload batch: %w", err)
+	}
+	return results, nil
 }
 
 func resolveGalleryName(meta api.PreparedMetadata) string {
@@ -438,13 +489,16 @@ func syncScreenshotSlotVariants(ctx context.Context, repo api.MetadataRepository
 		return trackers.SlotUploadAttachmentResult{}, nil
 	}
 	slots, err := repo.ListScreenshotSlotsByPath(ctx, sourcePath)
-	if err != nil || len(slots) == 0 {
-		return trackers.SlotUploadAttachmentResult{}, err
+	if err != nil {
+		return trackers.SlotUploadAttachmentResult{}, fmt.Errorf("image hosting: %w", err)
+	}
+	if len(slots) == 0 {
+		return trackers.SlotUploadAttachmentResult{}, nil
 	}
 	summary := trackers.ApplyUploadedVariantsToSlots(slots, uploaded)
 	if summary.FallbackMatched > 0 {
 		if err := repo.ReplaceScreenshotSlots(ctx, sourcePath, slots); err != nil {
-			return summary, err
+			return summary, fmt.Errorf("image hosting: %w", err)
 		}
 	}
 	slotByPath := make(map[string]int, len(slots))
@@ -471,5 +525,8 @@ func syncScreenshotSlotVariants(ctx context.Context, repo api.MetadataRepository
 			UploadedAt: image.UploadedAt,
 		})
 	}
-	return summary, repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants)
+	if err := repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants); err != nil {
+		return summary, fmt.Errorf("image hosting: upsert screenshot slot variants: %w", err)
+	}
+	return summary, nil
 }
