@@ -454,6 +454,17 @@ type TMDBLocalizedData struct {
 	Poster          string
 }
 
+// ExtractLocalizedPTBR returns the pt-BR localized data from the given
+// metadata, or an empty value when none is available.
+func ExtractLocalizedPTBR(meta PreparedMetadata) TMDBLocalizedData {
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if v, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			return v
+		}
+	}
+	return TMDBLocalizedData{}
+}
+
 type TMDBCompany struct {
 	ID            int
 	Name          string

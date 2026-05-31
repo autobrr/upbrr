@@ -664,17 +664,21 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 
 	if needsPTBR && ids.TMDBID != 0 {
 		var mainData, seasonData, episodeData map[string]any
-		mainData, _ = tmdbClient.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
+		var localizedErr error
+		mainData, localizedErr = tmdbClient.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
 			TMDBID:           ids.TMDBID,
 			Category:         ids.Category,
 			DataType:         "main",
 			Language:         "pt-BR",
 			AppendToResponse: "credits,videos,content_ratings",
 		})
+		if localizedErr != nil && s.logger != nil {
+			s.logger.Debugf("metadata: pt-BR main localized data fetch failed: %v", localizedErr)
+		}
 
 		isTV := strings.EqualFold(ids.Category, "TV")
 		if isTV && meta.SeasonInt > 0 {
-			seasonData, _ = tmdbClient.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
+			seasonData, localizedErr = tmdbClient.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
 				TMDBID:           ids.TMDBID,
 				Season:           meta.SeasonInt,
 				Category:         "TV",
@@ -682,8 +686,11 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 				Language:         "pt-BR",
 				AppendToResponse: "credits",
 			})
+			if localizedErr != nil && s.logger != nil {
+				s.logger.Debugf("metadata: pt-BR season localized data fetch failed: %v", localizedErr)
+			}
 			if meta.EpisodeInt > 0 {
-				episodeData, _ = tmdbClient.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
+				episodeData, localizedErr = tmdbClient.GetLocalizedData(ctx, tmdb.LocalizedDataInput{
 					TMDBID:           ids.TMDBID,
 					Season:           meta.SeasonInt,
 					Episode:          meta.EpisodeInt,
@@ -692,6 +699,9 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 					Language:         "pt-BR",
 					AppendToResponse: "credits",
 				})
+				if localizedErr != nil && s.logger != nil {
+					s.logger.Debugf("metadata: pt-BR episode localized data fetch failed: %v", localizedErr)
+				}
 			}
 		}
 

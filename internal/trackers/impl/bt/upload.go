@@ -179,12 +179,7 @@ func buildFields(req trackers.UploadRequest, description string, auth string, tr
 	meta := req.Meta
 	hasPT, subtitleIDs := resolveSubtitle(meta)
 	width, height := resolveResolution(meta)
-	var ptBR api.TMDBLocalizedData
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
-		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
-			ptBR = localized
-		}
-	}
+	ptBR := api.ExtractLocalizedPTBR(meta)
 	fields := map[string][]string{
 		"audio_c":     {resolveAudioCodec(meta)},
 		"audio":       {resolveAudio(meta)},
@@ -275,15 +270,12 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 	// TV Episode details
 	epTitle := meta.EpisodeTitle
 	epOverview := meta.EpisodeOverview
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
-		if ptBR, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
-			if ptBR.EpisodeTitle != "" {
-				epTitle = ptBR.EpisodeTitle
-			}
-			if ptBR.EpisodeOverview != "" {
-				epOverview = ptBR.EpisodeOverview
-			}
-		}
+	ptBR := api.ExtractLocalizedPTBR(meta)
+	if ptBR.EpisodeTitle != "" {
+		epTitle = ptBR.EpisodeTitle
+	}
+	if ptBR.EpisodeOverview != "" {
+		epOverview = ptBR.EpisodeOverview
 	}
 	if episode := strings.TrimSpace(epOverview); episode != "" {
 		parts = append(parts, "[center]"+strings.TrimSpace(epTitle)+"[/center]")
@@ -659,17 +651,7 @@ func resolveResolution(meta api.PreparedMetadata) (string, string) {
 }
 
 func parseDimensionStr(val any) string {
-	if val == nil {
-		return ""
-	}
-	s := fmt.Sprintf("%v", val)
-	var digits strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			digits.WriteRune(r)
-		}
-	}
-	return digits.String()
+	return metautil.ParseDimensionStr(val)
 }
 
 func resolveVideoCodec(meta api.PreparedMetadata) string {
@@ -1118,7 +1100,10 @@ func resolveTitle(meta api.PreparedMetadata) string {
 
 func resolveLocalizedTitle(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
 	if ptBR.Title != "" {
-		return metautil.FirstNonEmptyTrimmed(ptBR.Title, meta.ExternalMetadata.TMDB.OriginalTitle)
+		if meta.ExternalMetadata.TMDB != nil {
+			return metautil.FirstNonEmptyTrimmed(ptBR.Title, meta.ExternalMetadata.TMDB.OriginalTitle)
+		}
+		return ptBR.Title
 	}
 	if meta.ExternalMetadata.TMDB != nil {
 		return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Title, meta.ExternalMetadata.TMDB.OriginalTitle)
@@ -1141,200 +1126,7 @@ func resolveLanguage(meta api.PreparedMetadata) string {
 		return ""
 	}
 
-	langMap := map[string]string{
-		"aa": "Afar",
-		"ab": "Abcázio",
-		"ae": "Avéstico",
-		"af": "Africânder",
-		"ak": "Acã",
-		"am": "Amárico",
-		"an": "Aragonês",
-		"ar": "Árabe",
-		"as": "Assamês",
-		"av": "Avárico",
-		"ay": "Aimará",
-		"az": "Azerbaijano",
-		"ba": "Basquir",
-		"be": "Bielorrusso",
-		"bg": "Búlgaro",
-		"bh": "Maithili",
-		"bi": "Bislamábichlamar",
-		"bm": "Bâmbara",
-		"bn": "Bengali ou bangla",
-		"bo": "Tibetano",
-		"br": "Bretão",
-		"bs": "Bósnio",
-		"ca": "Catalão",
-		"ce": "Tchechenoou checheno",
-		"ch": "Chamorro",
-		"co": "Corso",
-		"cr": "Cree",
-		"cs": "Tcheco",
-		"cu": "Eslavo eclesiástico",
-		"cv": "Tchuvache",
-		"cy": "Galês",
-		"da": "Dinamarquês",
-		"de": "Alemão",
-		"dv": "Diveí",
-		"dz": "Dzongkha",
-		"ee": "Jeje",
-		"el": "Grego moderno(desde 1453)",
-		"en": "Inglês",
-		"eo": "Esperanto",
-		"es": "Castelhano",
-		"et": "Estoniano",
-		"eu": "Basco",
-		"fa": "Persa",
-		"ff": "Fula",
-		"fi": "Finlandês",
-		"fj": "Fidjiano",
-		"fo": "Feroêsou feróico",
-		"fr": "Francês",
-		"fy": "Frisãoocidental",
-		"ga": "Irlandês",
-		"gd": "Gaélico escocês",
-		"gl": "Galego",
-		"gn": "Guarani",
-		"gu": "Gujarati",
-		"gv": "Manês",
-		"ha": "Hauçá",
-		"he": "Hebraico",
-		"hi": "Hindi",
-		"ho": "Hiri Motu",
-		"hr": "Croata",
-		"ht": "Crioulo haitiano",
-		"hu": "Húngaro",
-		"hy": "Armênio",
-		"hz": "Hereró",
-		"ia": "Interlíngua",
-		"id": "Indonésio",
-		"ie": "Interlíngua",
-		"ig": "Ibo",
-		"ii": "YideSichuan",
-		"ik": "Inupiaq",
-		"io": "Ido",
-		"is": "Islandês",
-		"it": "Italiano",
-		"iu": "Inuktitut",
-		"ja": "Japonês",
-		"jv": "Javanês",
-		"ka": "Georgiano",
-		"kg": "Kongo",
-		"ki": "Kikuyu",
-		"kj": "Oshikwanyama",
-		"kk": "Cazaque",
-		"kl": "Groenlandês",
-		"km": "Khmer",
-		"kn": "Canarês",
-		"ko": "Coreano",
-		"kr": "Kanuri ou canúri",
-		"ks": "Caxemir",
-		"ku": "Curdo",
-		"kv": "Komi",
-		"kw": "Córnico",
-		"ky": "Quirguiz",
-		"la": "Latim",
-		"lb": "Luxemburguês",
-		"lg": "Luganda",
-		"li": "Limburguês",
-		"ln": "Lingala",
-		"lo": "Laociano",
-		"lt": "Lituano",
-		"lu": "Luba-catanga",
-		"lv": "Letão",
-		"mg": "Malgaxe",
-		"mh": "Marshallês",
-		"mi": "Maori",
-		"mk": "Macedônio",
-		"ml": "Malaiala",
-		"mn": "Mongol",
-		"mo": "Moldavo",
-		"mr": "Marata",
-		"ms": "Malaio",
-		"mt": "Maltês",
-		"my": "Birmanês",
-		"na": "Nauruano",
-		"nb": "Bokmål norueguês",
-		"nd": "Ndebele do norte",
-		"ne": "Nepali, nepalês",
-		"ng": "Ndonga",
-		"nl": "Holandês",
-		"nn": "Novo norueguês",
-		"no": "Norueguês",
-		"nr": "Ndebele do sul",
-		"nv": "Navajo",
-		"ny": "Nianja",
-		"oc": "Occitano(depois 1500)",
-		"oj": "Chippewa",
-		"om": "Oromo",
-		"or": "Oriá",
-		"os": "Oseto",
-		"pa": "Panjabi",
-		"pi": "Páli",
-		"pl": "Polaco",
-		"ps": "Pachto",
-		"pt": "Português",
-		"qu": "Quíchua",
-		"rm": "Reto-romano",
-		"rn": "Kirundi",
-		"ro": "Romeno",
-		"ru": "Russo",
-		"rw": "Quiniaruanda",
-		"sa": "Sânscrito",
-		"sc": "Sardo",
-		"sd": "Sindi",
-		"se": "Samido norte",
-		"sg": "Sango",
-		"sh": "Servo-croata",
-		"si": "Cingalês",
-		"sk": "Eslovaco",
-		"sl": "Esloveno",
-		"sm": "Samoano",
-		"sn": "Chona",
-		"so": "Somali",
-		"sq": "Albanês",
-		"sr": "Sérvio",
-		"ss": "Suázi",
-		"st": "Soto do sul",
-		"su": "Sundanês",
-		"sv": "Sueco",
-		"sw": "Suaíli",
-		"ta": "Tâmil",
-		"te": "Telugu",
-		"tg": "Tajique",
-		"th": "Tailandês",
-		"ti": "Tigrínia",
-		"tk": "Turcomano",
-		"tl": "Tagalo",
-		"tn": "Tswana",
-		"to": "Tonganês",
-		"tr": "Turco",
-		"ts": "Tsonga",
-		"tt": "Tártaro",
-		"tw": "Twi",
-		"ty": "Taitiano",
-		"ug": "Uigur",
-		"uk": "Ucraniano",
-		"ur": "Urdu",
-		"uz": "Uzbeque",
-		"ve": "Venda",
-		"vi": "Vietnamita",
-		"vo": "Volapuque",
-		"wa": "Valão",
-		"wo": "Uolofe",
-		"xh": "Xhosa",
-		"yi": "Iídiche",
-		"yo": "Iorubá",
-		"za": "Zhuang",
-		"zh": "Chinês",
-		"zu": "Zulu",
-	}
-
-	if name, ok := langMap[lang]; ok {
-		return name
-	}
-
-	return lang
+	return metautil.ISO639PortugueseName(lang, lang)
 }
 
 func resolveBackdrop(meta api.PreparedMetadata) string {

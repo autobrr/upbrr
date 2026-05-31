@@ -46,7 +46,7 @@ func parseTMDBLocalizedData(mainData, seasonData, episodeData map[string]any) ap
 					if video, ok := results[i].(map[string]any); ok {
 						if site, ok := video["site"].(string); ok && site == "YouTube" {
 							if key, ok := video["key"].(string); ok && key != "" {
-								result.TrailerURL = "http://www.youtube.com/watch?v=" + key
+								result.TrailerURL = "https://www.youtube.com/watch?v=" + key
 								break
 							}
 						}

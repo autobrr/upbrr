@@ -268,12 +268,7 @@ func resolveUploadTitle(meta api.PreparedMetadata) string {
 }
 
 func resolveDisplayTitle(meta api.PreparedMetadata) string {
-	var ptBR api.TMDBLocalizedData
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
-		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
-			ptBR = localized
-		}
-	}
+	ptBR := api.ExtractLocalizedPTBR(meta)
 	if tmdb := meta.ExternalMetadata.TMDB; tmdb != nil {
 		main := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(ptBR.Title, tmdb.Title, meta.Release.Title))
 		alt := strings.TrimSpace(tmdb.OriginalTitle)
@@ -317,12 +312,7 @@ func resolveOverview(meta api.PreparedMetadata, answers map[string]string) strin
 	if strings.TrimSpace(answers["overview"]) != "" {
 		return strings.TrimSpace(answers["overview"])
 	}
-	var ptBR api.TMDBLocalizedData
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
-		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
-			ptBR = localized
-		}
-	}
+	ptBR := api.ExtractLocalizedPTBR(meta)
 	if categoryOf(meta) == "TV" && ptBR.EpisodeOverview != "" {
 		return strings.TrimSpace(ptBR.EpisodeOverview)
 	}
@@ -347,12 +337,7 @@ func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string 
 	if strings.TrimSpace(answers["genre"]) != "" {
 		return strings.TrimSpace(answers["genre"])
 	}
-	var ptBR api.TMDBLocalizedData
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
-		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
-			ptBR = localized
-		}
-	}
+	ptBR := api.ExtractLocalizedPTBR(meta)
 	if ptBR.Genres != "" {
 		return strings.TrimSpace(ptBR.Genres)
 	}
@@ -372,10 +357,9 @@ func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string 
 
 func resolveTrailer(meta api.PreparedMetadata) string {
 	value := ""
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
-		if ptBR, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok && ptBR.TrailerURL != "" {
-			value = ptBR.TrailerURL
-		}
+	ptBR := api.ExtractLocalizedPTBR(meta)
+	if ptBR.TrailerURL != "" {
+		value = ptBR.TrailerURL
 	}
 	if value == "" && meta.ExternalMetadata.TMDB != nil {
 		value = strings.TrimSpace(meta.ExternalMetadata.TMDB.YouTube)
@@ -615,15 +599,5 @@ func readTextFileNoErr(path string) string {
 }
 
 func parseDimensionStr(val any) string {
-	if val == nil {
-		return ""
-	}
-	s := fmt.Sprintf("%v", val)
-	var digits strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			digits.WriteRune(r)
-		}
-	}
-	return digits.String()
+	return metautil.ParseDimensionStr(val)
 }

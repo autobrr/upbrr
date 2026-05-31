@@ -190,12 +190,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 func buildFields(meta api.PreparedMetadata, description string, auth string, answers map[string]string) map[string]string {
 	width, height := resolveResolution(meta)
 	runtimeMinutes := resolveRuntime(meta)
-	var ptBR api.TMDBLocalizedData
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
-		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
-			ptBR = localized
-		}
-	}
+	ptBR := api.ExtractLocalizedPTBR(meta)
 	fields := map[string]string{
 		"audio":            resolveAudio(meta),
 		"auth":             auth,
@@ -451,201 +446,7 @@ func resolveLanguage(meta api.PreparedMetadata) string {
 		return "Português"
 	}
 
-	// All ISO 639-1 to Portuguese whitelist names
-	langMap := map[string]string{
-		"aa": "Afar",
-		"ab": "Abcázio",
-		"ae": "Avéstico",
-		"af": "Africânder",
-		"ak": "Acã",
-		"am": "Amárico",
-		"an": "Aragonês",
-		"ar": "Árabe",
-		"as": "Assamês",
-		"av": "Avárico",
-		"ay": "Aimará",
-		"az": "Azerbaijano",
-		"ba": "Basquir",
-		"be": "Bielorrusso",
-		"bg": "Búlgaro",
-		"bh": "Maithili",
-		"bi": "Bislamábichlamar",
-		"bm": "Bâmbara",
-		"bn": "Bengali ou bangla",
-		"bo": "Tibetano",
-		"br": "Bretão",
-		"bs": "Bósnio",
-		"ca": "Catalão",
-		"ce": "Tchechenoou checheno",
-		"ch": "Chamorro",
-		"co": "Corso",
-		"cr": "Cree",
-		"cs": "Tcheco",
-		"cu": "Eslavo eclesiástico",
-		"cv": "Tchuvache",
-		"cy": "Galês",
-		"da": "Dinamarquês",
-		"de": "Alemão",
-		"dv": "Diveí",
-		"dz": "Dzongkha",
-		"ee": "Jeje",
-		"el": "Grego moderno(desde 1453)",
-		"en": "Inglês",
-		"eo": "Esperanto",
-		"es": "Castelhano",
-		"et": "Estoniano",
-		"eu": "Basco",
-		"fa": "Persa",
-		"ff": "Fula",
-		"fi": "Finlandês",
-		"fj": "Fidjiano",
-		"fo": "Feroêsou feróico",
-		"fr": "Francês",
-		"fy": "Frisãoocidental",
-		"ga": "Irlandês",
-		"gd": "Gaélico escocês",
-		"gl": "Galego",
-		"gn": "Guarani",
-		"gu": "Gujarati",
-		"gv": "Manês",
-		"ha": "Hauçá",
-		"he": "Hebraico",
-		"hi": "Hindi",
-		"ho": "Hiri Motu",
-		"hr": "Croata",
-		"ht": "Crioulo haitiano",
-		"hu": "Húngaro",
-		"hy": "Armênio",
-		"hz": "Hereró",
-		"ia": "Interlíngua",
-		"id": "Indonésio",
-		"ie": "Interlíngua",
-		"ig": "Ibo",
-		"ii": "YideSichuan",
-		"ik": "Inupiaq",
-		"io": "Ido",
-		"is": "Islandês",
-		"it": "Italiano",
-		"iu": "Inuktitut",
-		"ja": "Japonês",
-		"jv": "Javanês",
-		"ka": "Georgiano",
-		"kg": "Kongo",
-		"ki": "Kikuyu",
-		"kj": "Oshikwanyama",
-		"kk": "Cazaque",
-		"kl": "Groenlandês",
-		"km": "Khmer",
-		"kn": "Canarês",
-		"ko": "Coreano",
-		"kr": "Kanuri ou canúri",
-		"ks": "Caxemir",
-		"ku": "Curdo",
-		"kv": "Komi",
-		"kw": "Córnico",
-		"ky": "Quirguiz",
-		"la": "Latim",
-		"lb": "Luxemburguês",
-		"lg": "Luganda",
-		"li": "Limburguês",
-		"ln": "Lingala",
-		"lo": "Laociano",
-		"lt": "Lituano",
-		"lu": "Luba-catanga",
-		"lv": "Letão",
-		"mg": "Malgaxe",
-		"mh": "Marshallês",
-		"mi": "Maori",
-		"mk": "Macedônio",
-		"ml": "Malaiala",
-		"mn": "Mongol",
-		"mo": "Moldavo",
-		"mr": "Marata",
-		"ms": "Malaio",
-		"mt": "Maltês",
-		"my": "Birmanês",
-		"na": "Nauruano",
-		"nb": "Bokmål norueguês",
-		"nd": "Ndebele do norte",
-		"ne": "Nepali, nepalês",
-		"ng": "Ndonga",
-		"nl": "Holandês",
-		"nn": "Novo norueguês",
-		"no": "Norueguês",
-		"nr": "Ndebele do sul",
-		"nv": "Navajo",
-		"ny": "Nianja",
-		"oc": "Occitano(depois 1500)",
-		"oj": "Chippewa",
-		"om": "Oromo",
-		"or": "Oriá",
-		"os": "Oseto",
-		"pa": "Panjabi",
-		"pi": "Páli",
-		"pl": "Polaco",
-		"ps": "Pachto",
-		"pt": "Português",
-		"qu": "Quíchua",
-		"rm": "Reto-romano",
-		"rn": "Kirundi",
-		"ro": "Romeno",
-		"ru": "Russo",
-		"rw": "Quiniaruanda",
-		"sa": "Sânscrito",
-		"sc": "Sardo",
-		"sd": "Sindi",
-		"se": "Samido norte",
-		"sg": "Sango",
-		"sh": "Servo-croata",
-		"si": "Cingalês",
-		"sk": "Eslovaco",
-		"sl": "Esloveno",
-		"sm": "Samoano",
-		"sn": "Chona",
-		"so": "Somali",
-		"sq": "Albanês",
-		"sr": "Sérvio",
-		"ss": "Suázi",
-		"st": "Soto do sul",
-		"su": "Sundanês",
-		"sv": "Sueco",
-		"sw": "Suaíli",
-		"ta": "Tâmil",
-		"te": "Telugu",
-		"tg": "Tajique",
-		"th": "Tailandês",
-		"ti": "Tigrínia",
-		"tk": "Turcomano",
-		"tl": "Tagalo",
-		"tn": "Tswana",
-		"to": "Tonganês",
-		"tr": "Turco",
-		"ts": "Tsonga",
-		"tt": "Tártaro",
-		"tw": "Twi",
-		"ty": "Taitiano",
-		"ug": "Uigur",
-		"uk": "Ucraniano",
-		"ur": "Urdu",
-		"uz": "Uzbeque",
-		"ve": "Venda",
-		"vi": "Vietnamita",
-		"vo": "Volapuque",
-		"wa": "Valão",
-		"wo": "Uolofe",
-		"xh": "Xhosa",
-		"yi": "Iídiche",
-		"yo": "Iorubá",
-		"za": "Zhuang",
-		"zh": "Chinês",
-		"zu": "Zulu",
-	}
-
-	if name, ok := langMap[langCode]; ok {
-		return name
-	}
-
-	return "Outro"
+	return metautil.ISO639PortugueseName(langCode, "Outro")
 }
 
 func resolveSubtitle(meta api.PreparedMetadata) string {
@@ -967,20 +768,20 @@ func resolveRemasterTitle(meta api.PreparedMetadata) string {
 
 	edition := strings.TrimSpace(meta.Edition)
 	editionLower := strings.ToLower(edition)
-	editionMap := map[string]string{
-		"director's cut": "Director's Cut",
-		"extended":       "Extended Edition",
-		"imax":           "IMAX",
-		"open matte":     "Open Matte",
-		"noir":           "Noir Edition",
-		"theatrical":     "Theatrical Cut",
-		"uncut":          "Uncut",
-		"unrated":        "Unrated",
-		"uncensored":     "Uncensored",
+	editionEntries := []struct{ keyword, label string }{
+		{"director's cut", "Director's Cut"},
+		{"extended", "Extended Edition"},
+		{"imax", "IMAX"},
+		{"open matte", "Open Matte"},
+		{"noir", "Noir Edition"},
+		{"theatrical", "Theatrical Cut"},
+		{"uncut", "Uncut"},
+		{"unrated", "Unrated"},
+		{"uncensored", "Uncensored"},
 	}
-	for keyword, label := range editionMap {
-		if strings.Contains(editionLower, keyword) {
-			tags = append(tags, label)
+	for _, entry := range editionEntries {
+		if strings.Contains(editionLower, entry.keyword) {
+			tags = append(tags, entry.label)
 			break
 		}
 	}
@@ -1059,13 +860,12 @@ func resolveYear(meta api.PreparedMetadata) int {
 }
 
 func resolveAdult(meta api.PreparedMetadata) string {
-	var ptBR api.TMDBLocalizedData
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
-		if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
-			ptBR = localized
-		}
+	ptBR := api.ExtractLocalizedPTBR(meta)
+	keywords := ""
+	if meta.ExternalMetadata.TMDB != nil {
+		keywords = metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Keywords, "")
 	}
-	genres := strings.ToLower(resolveTags(meta, ptBR) + " " + metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Keywords, ""))
+	genres := strings.ToLower(resolveTags(meta, ptBR) + " " + keywords)
 	if meta.Anime && strings.Contains(genres, "hentai") {
 		return "1"
 	}
