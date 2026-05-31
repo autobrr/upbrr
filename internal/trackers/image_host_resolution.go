@@ -49,6 +49,7 @@ func ensureDescriptionImageHostWithData(
 	images api.ImageHostingService,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	preferredHosts ...string,
 ) (descriptionImageHostResolution, error) {
 	policy, err := resolveImageHostPolicy(tracker, trackerCfg, meta.ImageHostOverrides)
 	if err != nil {
@@ -71,7 +72,11 @@ func ensureDescriptionImageHostWithData(
 	}
 
 	if len(policy.allowed) == 0 {
-		screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, imageHostPolicy{})
+		selectionPolicy := imageHostPolicy{}
+		if host := firstPreferredDescriptionImageHost(preferredHosts); host != "" {
+			selectionPolicy.preferred = []string{host}
+		}
+		screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy)
 		if err != nil {
 			return descriptionImageHostResolution{}, err
 		}
@@ -112,6 +117,19 @@ func ensureDescriptionImageHostWithData(
 		feedback.Status = "warning"
 		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but no local screenshots are available to rehost.", tracker, strings.Join(policy.allowed, ", "))
 		return descriptionImageHostResolution{feedback: feedback}, nil
+	}
+
+	for _, host := range uploadAttemptHosts(policy) {
+		usageScope := usageScopeForHost(host)
+		screenshots, err := reusableUploadedScreenshotsForHost(ctx, tracker, meta, repo, preloaded, host, usageScope, sourceImages)
+		if err != nil {
+			return descriptionImageHostResolution{}, err
+		}
+		if len(screenshots) > 0 {
+			feedback.SelectedHost = host
+			feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(policy))
+			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
+		}
 	}
 
 	if images == nil {
@@ -193,6 +211,78 @@ func ensureDescriptionImageHostWithData(
 		feedback.Message = fmt.Sprintf("%s could not find an allowed screenshot host to upload to (%s).", tracker, attemptHosts)
 	}
 	return descriptionImageHostResolution{feedback: feedback, blocking: true}, nil
+}
+
+func firstPreferredDescriptionImageHost(hosts []string) string {
+	for _, host := range hosts {
+		normalized := strings.ToLower(strings.TrimSpace(host))
+		if normalized != "" {
+			return normalized
+		}
+	}
+	return ""
+}
+
+func reusableUploadedScreenshotsForHost(
+	ctx context.Context,
+	tracker string,
+	meta api.PreparedMetadata,
+	repo api.MetadataRepository,
+	preloaded *preloadedDescriptionAssetData,
+	host string,
+	usageScope string,
+	sourceImages []api.ScreenshotImage,
+) ([]api.ScreenshotImage, error) {
+	if repo == nil || len(sourceImages) == 0 {
+		return nil, nil
+	}
+	uploads, err := uploadedImagesFromSource(ctx, meta, repo, preloaded)
+	if err != nil {
+		if errorsIsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	byPath := make(map[string]api.UploadedImageLink, len(uploads))
+	for _, upload := range uploads {
+		if !strings.EqualFold(strings.TrimSpace(upload.Host), strings.TrimSpace(host)) {
+			continue
+		}
+		if !strings.EqualFold(normalizeUsageScope(upload.UsageScope), normalizeUsageScope(usageScope)) {
+			continue
+		}
+		if !uploadEligibleForTracker(upload.UsageScope, tracker) {
+			continue
+		}
+		pathValue := strings.TrimSpace(upload.ImagePath)
+		if pathValue == "" || strings.TrimSpace(upload.ImgURL) == "" {
+			continue
+		}
+		byPath[pathValue] = upload
+	}
+	if len(byPath) == 0 {
+		return nil, nil
+	}
+	screenshots := make([]api.ScreenshotImage, 0, len(sourceImages))
+	for _, image := range sourceImages {
+		pathValue := strings.TrimSpace(image.Path)
+		if pathValue == "" {
+			return nil, nil
+		}
+		upload, ok := byPath[pathValue]
+		if !ok {
+			return nil, nil
+		}
+		screenshots = append(screenshots, api.ScreenshotImage{
+			Index:  image.Index,
+			Path:   pathValue,
+			Host:   strings.TrimSpace(upload.Host),
+			ImgURL: strings.TrimSpace(upload.ImgURL),
+			RawURL: strings.TrimSpace(upload.RawURL),
+			WebURL: strings.TrimSpace(upload.WebURL),
+		})
+	}
+	return screenshots, nil
 }
 
 func cleanupUploadedImages(ctx context.Context, repo api.MetadataRepository, sourcePath string, uploaded []api.UploadedImageLink, logger api.Logger) {

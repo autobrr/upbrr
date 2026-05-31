@@ -181,6 +181,34 @@ func (s stubPreparationDefinition) BuildDescription(context.Context, Description
 	return DescriptionResult{Group: s.group, Description: s.description}, nil
 }
 
+type hostAwareDescriptionDefinition struct {
+	name  string
+	group string
+}
+
+func (s hostAwareDescriptionDefinition) Name() string {
+	return s.name
+}
+
+func (s hostAwareDescriptionDefinition) Upload(context.Context, UploadRequest) (api.UploadSummary, error) {
+	return api.UploadSummary{Uploaded: 1}, nil
+}
+
+func (s hostAwareDescriptionDefinition) BuildDescription(_ context.Context, req DescriptionRequest) (DescriptionResult, error) {
+	host := "none"
+	if req.Assets != nil && len(req.Assets.Screenshots) > 0 {
+		host = strings.ToLower(strings.TrimSpace(req.Assets.Screenshots[0].Host))
+		if host == "" {
+			host = "none"
+		}
+	}
+
+	return DescriptionResult{
+		Group:       s.group,
+		Description: "unit3d screenshot host: " + host,
+	}, nil
+}
+
 func (testHDBPreparationDefinition) Name() string {
 	return "HDB"
 }
@@ -460,7 +488,7 @@ func TestBuildPreparationSplitsSameGroupWhenRawDescriptionDiffers(t *testing.T) 
 	}
 }
 
-func TestBuildPreparationSplitsSameGroupWhenImageHostFeedbackDiffers(t *testing.T) {
+func TestBuildPreparationGroupsSameDescriptionWhenImageHostFeedbackDiffers(t *testing.T) {
 	t.Parallel()
 
 	registry := NewRegistry()
@@ -478,14 +506,197 @@ func TestBuildPreparationSplitsSameGroupWhenImageHostFeedbackDiffers(t *testing.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(preview.Descriptions) != 2 {
-		t.Fatalf("expected image-host feedback mismatch to split, got %d groups", len(preview.Descriptions))
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected matching descriptions to group despite image-host feedback mismatch, got %d groups", len(preview.Descriptions))
 	}
-	if len(preview.Descriptions[0].ImageHost.AllowedHosts) != 0 {
-		t.Fatalf("expected AITHER image host policy to be empty, got %#v", preview.Descriptions[0].ImageHost)
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "AITHER,PTP" {
+		t.Fatalf("expected both trackers in group, got %q", got)
 	}
-	if len(preview.Descriptions[1].ImageHost.AllowedHosts) == 0 {
+	if len(preview.Descriptions[0].ImageHost.AllowedHosts) == 0 {
 		t.Fatalf("expected PTP image host policy to be captured")
+	}
+}
+
+func TestBuildPreparationGroupsUnit3DWhenImageHostMessageOnlyDiffers(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "unit3d", description: "same description"},
+		stubPreparationDefinition{name: "HHD", group: "unit3d", description: "same description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {ImageHost: "imgbox", ImgRehost: true},
+				"HHD":    {ImageHost: "imgbox", ImgRehost: true},
+			},
+		},
+	}
+	repo := &stubRepo{}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, []string{"AITHER", "HHD"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected image-host message-only diff to group, got %d groups", len(preview.Descriptions))
+	}
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "AITHER,HHD" {
+		t.Fatalf("expected both unit3d trackers in group, got %q", got)
+	}
+	if preview.Descriptions[0].ImageHost.Status != "warning" {
+		t.Fatalf("expected image host warning status, got %q", preview.Descriptions[0].ImageHost.Status)
+	}
+	if len(preview.Descriptions[0].ImageHost.AllowedHosts) != 1 || preview.Descriptions[0].ImageHost.AllowedHosts[0] != "imgbox" {
+		t.Fatalf("expected allowed host imgbox policy to be preserved, got %#v", preview.Descriptions[0].ImageHost.AllowedHosts)
+	}
+}
+
+func TestBuildPreparationUnit3DGroupsOnConfiguredHostPreference(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		hostAwareDescriptionDefinition{name: "HHD", group: "unit3d"},
+		hostAwareDescriptionDefinition{name: "LUME", group: "unit3d"},
+		hostAwareDescriptionDefinition{name: "RAS", group: "unit3d"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	imagePath := filepath.Join(t.TempDir(), "screen.png")
+	olderUpload := time.Now().Add(-time.Hour)
+	newerUpload := time.Now()
+	repo := &stubRepo{
+		screenshotSlots: []api.ScreenshotSlot{
+			{
+				SourcePath:          sourcePath,
+				SlotOrder:           0,
+				SourceKind:          screenshotSlotSourceSelection,
+				ImagePath:           imagePath,
+				RenderInScreenshots: true,
+				Variants: []api.ScreenshotSlotVariant{
+					{
+						SourcePath: sourcePath,
+						SlotOrder:  0,
+						Host:       "pixhost",
+						UsageScope: globalImageUsageScope,
+						ImagePath:  imagePath,
+						ImgURL:     "https://pixhost/old.png",
+						RawURL:     "https://pixhost/raw-old.png",
+						WebURL:     "https://pixhost/old",
+						UploadedAt: olderUpload,
+					},
+					{
+						SourcePath: sourcePath,
+						SlotOrder:  0,
+						Host:       "imgbb",
+						UsageScope: globalImageUsageScope,
+						ImagePath:  imagePath,
+						ImgURL:     "https://imgbb/new.png",
+						RawURL:     "https://imgbb/raw-new.png",
+						WebURL:     "https://imgbb/new",
+						UploadedAt: newerUpload,
+					},
+				},
+			},
+		},
+		uploads: []api.UploadedImageLink{
+			{
+				Host:       "pixhost",
+				UsageScope: globalImageUsageScope,
+				ImagePath:  imagePath,
+				ImgURL:     "https://pixhost/old.png",
+				RawURL:     "https://pixhost/raw-old.png",
+				WebURL:     "https://pixhost/old",
+				UploadedAt: olderUpload,
+			},
+			{
+				Host:       "imgbb",
+				UsageScope: globalImageUsageScope,
+				ImagePath:  imagePath,
+				ImgURL:     "https://imgbb/new.png",
+				RawURL:     "https://imgbb/raw-new.png",
+				WebURL:     "https://imgbb/new",
+				UploadedAt: newerUpload,
+			},
+		},
+	}
+
+	cfg := config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "pixhost",
+			Host2: "imgbb",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"HHD": {ImageHost: "pixhost", ImgRehost: true},
+			},
+		},
+	}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, []string{"HHD", "LUME", "RAS"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected configured-host preference to collapse HHD+LUME+RAS into one group, got %d", len(preview.Descriptions))
+	}
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "HHD,LUME,RAS" {
+		t.Fatalf("expected both unit3d trackers in group, got %q", got)
+	}
+	if preview.Descriptions[0].GroupKey != "unit3d|pixhost|global" {
+		t.Fatalf("expected preferred pixhost group key, got %q", preview.Descriptions[0].GroupKey)
+	}
+	if preview.Descriptions[0].Description != "unit3d screenshot host: pixhost" {
+		t.Fatalf("expected host-resolved description, got %q", preview.Descriptions[0].Description)
+	}
+}
+
+func TestPreparationDescriptionGroupMergesUnit3DHostVariantsWhenDescriptionMatches(t *testing.T) {
+	t.Parallel()
+
+	grouped := make(map[string]*api.PreparationDescription)
+	order := make([]string, 0, 2)
+	first := api.PreparationDescription{
+		RawDescription:     "raw",
+		RawDescriptionHTML: "<p>raw</p>",
+		Description:        "same description",
+		DescriptionHTML:    "<p>same description</p>",
+		ImageHost:          api.ImageHostFeedback{Status: "reused", SelectedHost: "pixhost", AllowedHosts: []string{"pixhost"}},
+	}
+	second := first
+	second.ImageHost = api.ImageHostFeedback{Status: "reused", SelectedHost: "imgbb", AllowedHosts: []string{"imgbb"}}
+	second.RawDescriptionHTML = "<div>raw</div>"
+	second.DescriptionHTML = "<div>same description</div>"
+
+	firstEntry := preparationDescriptionGroup(grouped, &order, "unit3d|pixhost|global", first)
+	firstEntry.Trackers = append(firstEntry.Trackers, "HHD")
+	secondEntry := preparationDescriptionGroup(grouped, &order, "unit3d|imgbb|global", second)
+	secondEntry.Trackers = append(secondEntry.Trackers, "LUME")
+	secondEntry.ImageHost = mergePreparationImageHostFeedback(secondEntry.ImageHost, second.ImageHost)
+
+	if firstEntry != secondEntry {
+		t.Fatal("expected matching unit3d descriptions to share one group across image-host key variants")
+	}
+	if len(order) != 1 {
+		t.Fatalf("expected one ordered group, got %d", len(order))
+	}
+	if got := strings.Join(firstEntry.Trackers, ","); got != "HHD,LUME" {
+		t.Fatalf("expected both trackers in merged group, got %q", got)
+	}
+	if len(firstEntry.ImageHost.AllowedHosts) != 2 {
+		t.Fatalf("expected merged image host policy data, got %#v", firstEntry.ImageHost.AllowedHosts)
 	}
 }
 

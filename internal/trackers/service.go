@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -544,6 +543,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		s.logger.Warnf("trackers: preparation preload failed for %s: %v", meta.SourcePath, err)
 		preloaded = nil
 	}
+	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, s.logger)
 
 	grouped := make(map[string]*api.PreparationDescription)
 	order := make([]string, 0, len(resolved))
@@ -594,7 +594,18 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		}
 		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
-		resolution, err := ensureDescriptionImageHostWithData(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger, preloaded)
+		resolution, err := ensureDescriptionImageHostWithData(
+			ctx,
+			tracker,
+			meta,
+			s.cfg,
+			trackerCfg,
+			s.repo,
+			s.images,
+			s.logger,
+			preloaded,
+			preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))],
+		)
 		if err != nil {
 			s.logger.Warnf("trackers: preparation image host resolution failed for %s: %v", tracker, err)
 			placeholder("", tracker, fmt.Sprintf("image host error: %v", err))
@@ -642,9 +653,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		entry := preparationDescriptionGroup(grouped, &order, groupKey, candidate)
 
 		entry.Trackers = append(entry.Trackers, tracker)
-		if entry.ImageHost.Status == "" {
-			entry.ImageHost = resolution.feedback
-		}
+		entry.ImageHost = mergePreparationImageHostFeedback(entry.ImageHost, resolution.feedback)
 		if descriptionText == "" {
 			placeholderCount++
 		} else {
@@ -668,6 +677,39 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 	results = stabilizePreparationDescriptionGroupKeys(results)
 
 	return api.PreparationPreview{SourcePath: meta.SourcePath, Descriptions: results}, nil
+}
+
+func preparationImageHostPreferences(appCfg config.Config, meta api.PreparedMetadata, trackers []string, logger api.Logger) map[string]string {
+	if meta.ImageHostOverrides.PreferredHost != nil {
+		return nil
+	}
+	targets, err := NeededImageUploadTargets(appCfg, trackers, "")
+	if err != nil {
+		if logger != nil {
+			logger.Warnf("trackers: preparation image host target resolution failed: %v", err)
+		}
+		return nil
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	preferred := make(map[string]string, len(trackers))
+	for _, target := range targets {
+		host := strings.ToLower(strings.TrimSpace(target.Host))
+		if host == "" {
+			continue
+		}
+		for _, tracker := range target.Trackers {
+			name := strings.ToUpper(strings.TrimSpace(tracker))
+			if name == "" {
+				continue
+			}
+			if _, exists := preferred[name]; !exists {
+				preferred[name] = host
+			}
+		}
+	}
+	return preferred
 }
 
 func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetadata, trackersList []string) ([]api.TrackerDryRunEntry, error) {
@@ -985,6 +1027,9 @@ func preparationDescriptionGroup(grouped map[string]*api.PreparationDescription,
 	if baseKey == "" {
 		baseKey = "description"
 	}
+	if entry := matchingUnit3DPreparationDescriptionGroup(grouped, *order, baseKey, candidate); entry != nil {
+		return entry
+	}
 
 	if entry, ok := grouped[baseKey]; ok && preparationDescriptionsMatch(*entry, candidate) {
 		return entry
@@ -1004,6 +1049,31 @@ func preparationDescriptionGroup(grouped map[string]*api.PreparationDescription,
 	}
 }
 
+func matchingUnit3DPreparationDescriptionGroup(grouped map[string]*api.PreparationDescription, order []string, groupKey string, candidate api.PreparationDescription) *api.PreparationDescription {
+	if preparationDescriptionBaseGroup(groupKey) != "unit3d" {
+		return nil
+	}
+	for _, key := range order {
+		if preparationDescriptionBaseGroup(key) != "unit3d" {
+			continue
+		}
+		entry := grouped[key]
+		if entry == nil || !preparationDescriptionsMatch(*entry, candidate) {
+			continue
+		}
+		return entry
+	}
+	return nil
+}
+
+func preparationDescriptionBaseGroup(groupKey string) string {
+	baseGroup, _, _ := parsePreparationDescriptionGroupKey(groupKey)
+	if baseGroup == "" {
+		baseGroup = strings.ToLower(strings.TrimSpace(groupKey))
+	}
+	return baseGroup
+}
+
 func addPreparationDescriptionGroup(grouped map[string]*api.PreparationDescription, order *[]string, groupKey string, candidate api.PreparationDescription) *api.PreparationDescription {
 	entry := candidate
 	entry.GroupKey = groupKey
@@ -1015,11 +1085,124 @@ func addPreparationDescriptionGroup(grouped map[string]*api.PreparationDescripti
 
 func preparationDescriptionsMatch(left api.PreparationDescription, right api.PreparationDescription) bool {
 	return left.RawDescription == right.RawDescription &&
-		left.RawDescriptionHTML == right.RawDescriptionHTML &&
 		left.Description == right.Description &&
-		left.DescriptionHTML == right.DescriptionHTML &&
-		left.HasOverride == right.HasOverride &&
-		reflect.DeepEqual(left.ImageHost, right.ImageHost)
+		left.HasOverride == right.HasOverride
+}
+
+func mergePreparationImageHostFeedback(left api.ImageHostFeedback, right api.ImageHostFeedback) api.ImageHostFeedback {
+	if left.Status == "" {
+		return right
+	}
+	if right.Status == "" {
+		return left
+	}
+
+	merged := left
+	if imageHostStatusRank(right.Status) > imageHostStatusRank(merged.Status) {
+		merged.Status = right.Status
+	}
+	if strings.TrimSpace(merged.SelectedHost) == "" {
+		merged.SelectedHost = strings.TrimSpace(right.SelectedHost)
+	} else if strings.TrimSpace(right.SelectedHost) != "" && !strings.EqualFold(strings.TrimSpace(merged.SelectedHost), strings.TrimSpace(right.SelectedHost)) {
+		merged.SelectedHost = ""
+	}
+	merged.AllowedHosts = appendUniqueStrings(merged.AllowedHosts, right.AllowedHosts)
+	merged.Warnings = appendUniqueImageHostWarnings(merged.Warnings, right.Warnings)
+	merged.Reuploaded = merged.Reuploaded || right.Reuploaded
+
+	leftMessage := strings.TrimSpace(merged.Message)
+	rightMessage := strings.TrimSpace(right.Message)
+	switch {
+	case leftMessage == "":
+		merged.Message = rightMessage
+	case rightMessage == "" || leftMessage == rightMessage:
+		merged.Message = leftMessage
+	default:
+		merged.Message = "Multiple image-host states apply to this description group."
+	}
+
+	return merged
+}
+
+func imageHostStatusRank(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "warning":
+		return 3
+	case "reuploaded":
+		return 2
+	case "reused":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func appendUniqueStrings(values []string, additions []string) []string {
+	if len(additions) == 0 {
+		return values
+	}
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	out := make([]string, 0, len(values)+len(additions))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	for _, value := range additions {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func appendUniqueImageHostWarnings(values []api.ImageHostWarning, additions []api.ImageHostWarning) []api.ImageHostWarning {
+	if len(additions) == 0 {
+		return values
+	}
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	out := make([]api.ImageHostWarning, 0, len(values)+len(additions))
+	for _, value := range values {
+		host := strings.TrimSpace(value.Host)
+		message := strings.TrimSpace(value.Message)
+		if host == "" && message == "" {
+			continue
+		}
+		key := strings.ToLower(host) + "\x00" + message
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, api.ImageHostWarning{Host: host, Message: message})
+	}
+	for _, value := range additions {
+		host := strings.TrimSpace(value.Host)
+		message := strings.TrimSpace(value.Message)
+		if host == "" && message == "" {
+			continue
+		}
+		key := strings.ToLower(host) + "\x00" + message
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, api.ImageHostWarning{Host: host, Message: message})
+	}
+	return out
 }
 
 func preparationVariantGroupKey(groupKey string, variant int) string {
