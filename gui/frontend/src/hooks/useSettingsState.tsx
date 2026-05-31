@@ -512,6 +512,7 @@ const sensitiveKeyHints = [
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   MainSettings: {
     TrackerPassChecks: { key: "TrackerPassChecks", advanced: true },
+    InputHistoryLimit: { key: "InputHistoryLimit", label: "Input history limit", type: "number" },
     DBPath: { key: "DBPath", advanced: true },
   },
   Metadata: {
@@ -938,6 +939,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   useEffect(() => {
     if (
       (activeTab === "input" ||
+        activeTab === "tracker" ||
         activeTab === "settings" ||
         activeTab === "logging" ||
         activeTab === "upload" ||

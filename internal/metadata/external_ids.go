@@ -95,6 +95,9 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			ids.SourcePath = meta.SourcePath
 		}
 	}
+	if meta.Options.SkipAutoTorrent {
+		clearTrackerSourcedExternalIDs(&ids)
+	}
 	metadata := api.ExternalMetadata{SourcePath: meta.SourcePath}
 	if meta.StoredDataFresh && strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) {
 		metadata = meta.ExternalMetadata
@@ -125,7 +128,10 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	overrideTVDB, clearedTVDB := applyOverrideID(&ids.TVDBID, &ids.SourceTVDB, meta.ExternalIDOverrides.TVDBID)
 	overrideTVmaze, _ := applyOverrideID(&ids.TVmazeID, &ids.SourceTVmaze, meta.ExternalIDOverrides.TVmazeID)
 
-	trackerTMDB, trackerIMDB, trackerTVDB := resolveTrackerIDs(meta.TrackerData)
+	trackerTMDB, trackerIMDB, trackerTVDB := 0, 0, 0
+	if !meta.Options.SkipAutoTorrent || meta.SourceLookupActive {
+		trackerTMDB, trackerIMDB, trackerTVDB = resolveTrackerIDs(meta.TrackerData)
+	}
 	if !overrideTMDB && !clearedTMDB {
 		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, trackerTMDB, "tracker")
 	}
@@ -629,7 +635,9 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		}
 	}
 
-	runFetchPass(false)
+	if shouldRunFetchPass() {
+		runFetchPass(false)
+	}
 	if shouldRunFetchPass() {
 		runFetchPass(true)
 	}
@@ -754,6 +762,28 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	meta.ExternalIDCandidates = candidates
 	meta.ExternalMetadata = metadata
 	return meta, nil
+}
+
+func clearTrackerSourcedExternalIDs(ids *api.ExternalIDs) {
+	if ids == nil {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(ids.SourceTMDB), "tracker") {
+		ids.TMDBID = 0
+		ids.SourceTMDB = ""
+	}
+	if strings.EqualFold(strings.TrimSpace(ids.SourceIMDB), "tracker") {
+		ids.IMDBID = 0
+		ids.SourceIMDB = ""
+	}
+	if strings.EqualFold(strings.TrimSpace(ids.SourceTVDB), "tracker") {
+		ids.TVDBID = 0
+		ids.SourceTVDB = ""
+	}
+	if strings.EqualFold(strings.TrimSpace(ids.SourceTVmaze), "tracker") {
+		ids.TVmazeID = 0
+		ids.SourceTVmaze = ""
+	}
 }
 
 func mapTMDBCandidates(items []tmdb.Candidate, category string) []api.ExternalIDCandidate {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -111,7 +112,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 		itemPath := filepath.Join(current, entry.Name())
 		if root != "" {
 			itemRealPath, err := filepath.EvalSymlinks(itemPath)
-			if err != nil || !pathWithin(root, itemRealPath) {
+			if err != nil || !pathutil.IsWithinRoot(root, itemRealPath) {
 				continue
 			}
 		}
@@ -160,7 +161,7 @@ func normalizedBrowseRoots(rootPaths []string) ([]string, error) {
 		}
 		duplicate := false
 		for _, existing := range roots {
-			if samePath(existing, root) {
+			if pathutil.SamePath(existing, root) {
 				duplicate = true
 				break
 			}
@@ -230,18 +231,18 @@ func browseConfiguredRoots(mode string, roots []string) api.BrowseDirectoryRespo
 }
 
 func parentPathWithinRoot(current string, root string) string {
-	if root != "" && samePath(current, root) {
+	if root != "" && pathutil.SamePath(current, root) {
 		return ""
 	}
 	parent := parentPath(current)
-	if root != "" && !pathWithin(root, parent) {
+	if root != "" && !pathutil.IsWithinRoot(root, parent) {
 		return ""
 	}
 	return parent
 }
 
 func parentPathWithinRoots(current string, root string, roots []string) string {
-	if len(roots) > 1 && root != "" && samePath(current, root) {
+	if len(roots) > 1 && root != "" && pathutil.SamePath(current, root) {
 		return ""
 	}
 	return parentPathWithinRoot(current, root)
@@ -249,7 +250,7 @@ func parentPathWithinRoots(current string, root string, roots []string) string {
 
 func containingRoot(roots []string, target string) string {
 	for _, root := range roots {
-		if pathWithin(root, target) {
+		if pathutil.IsWithinRoot(root, target) {
 			return root
 		}
 	}
@@ -265,29 +266,6 @@ func parentPath(current string) string {
 		return current
 	}
 	return parent
-}
-
-func pathWithin(root string, target string) bool {
-	if strings.TrimSpace(root) == "" {
-		return true
-	}
-	if samePath(root, target) {
-		return true
-	}
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
-}
-
-func samePath(left string, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
 }
 
 func browseWindowsRoots(mode string) api.BrowseDirectoryResponse {

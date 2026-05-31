@@ -144,7 +144,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
-	if err := guishared.SeedRunCorePreparedMeta(baseCtx, a.core, runCore, seedReq); err != nil {
+	if err := guishared.SeedRunCorePreparedMeta(baseCtx, a.currentCore(), runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
 		return "", fmt.Errorf("gui: %w", err)
@@ -396,7 +396,7 @@ func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob,
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
 		IgnoreTrackerRuleFailures:   false,
-		Options:                     buildRunUploadOptions(a.cfg, job.runOptions),
+		Options:                     buildRunUploadOptions(a.currentConfig(), job.runOptions),
 		ExternalIDOverrides:         job.overrides,
 		ReleaseNameOverrides:        job.nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),

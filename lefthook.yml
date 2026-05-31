@@ -6,7 +6,7 @@ min_version: 2.1.0
 
 # Execution model:
 # - Top-level jobs (frontend, go) run in parallel — they touch disjoint file sets.
-# - Within each group, jobs are piped so format runs before lint/logpolicy reads the file.
+# - Within each group, jobs are piped so format runs before lint/policy checks read the file.
 # - stage_fixed re-stages formatter output; lefthook serializes the git index updates.
 
 pre-commit:
@@ -48,6 +48,11 @@ pre-commit:
             run: go run ./cmd/logpolicy
             fail_text: "Log policy check failed. Review log lines added/changed under internal/."
 
+          - name: pathpolicy
+            glob: "**/*.go"
+            run: go run ./cmd/pathpolicy
+            fail_text: "Path policy check failed. Avoid hardcoded OS-rooted local paths in filepath calls."
+
 pre-push:
   parallel: true
   jobs:
@@ -59,8 +64,8 @@ pre-push:
 
     - name: go-lint
       glob: "**/*.go"
-      run: golangci-lint run --timeout=5m ./...
-      fail_text: "golangci-lint failed. Run `golangci-lint run --timeout=5m ./...` locally."
+      run: make lint
+      fail_text: "Go lint failed. Run `make lint` locally."
 
 commit-msg:
   jobs:

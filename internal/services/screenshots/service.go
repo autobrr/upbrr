@@ -12,9 +12,8 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
-	"path"
+	"path" //nolint:depguard // Extracts URL path components from screenshot URLs.
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -104,8 +104,14 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 		return api.ScreenshotPlan{}, fmt.Errorf("screenshots: %w", err)
 	}
 
+	baselineSelections := manualSelections
+	if len(baselineSelections) == 0 {
+		baselineSelections = buildScreenshotSelections(total, plan.DurationSeconds, plan.FrameRate, meta)
+	}
+	base := screenshotBaseName(meta)
+	baselineByIndex := screenshotSelectionsByIndex(baselineSelections)
+
 	// Load existing screenshots from database that still exist on disk.
-	var existingTimestamps []float64
 	var missingIndexTimestamps []float64
 	var existingIndices map[int]struct{}
 	if s.repo != nil {
@@ -113,7 +119,6 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 		if err != nil {
 			s.logger.Debugf("screenshots: failed to load existing screenshots: %v", err)
 		} else {
-			existingTimestamps = make([]float64, 0, len(dbScreenshots))
 			existingIndices = make(map[int]struct{}, len(dbScreenshots))
 			kept := 0
 			for _, shot := range dbScreenshots {
@@ -124,11 +129,16 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 				if info, statErr := os.Stat(pathValue); statErr != nil || info.IsDir() {
 					continue
 				}
-				existingTimestamps = append(existingTimestamps[:len(existingTimestamps):len(existingTimestamps)], shot.Timestamp)
-				if index, ok := parseScreenshotIndexStrict(pathValue, screenshotBaseName(meta)); ok {
-					existingIndices[index] = struct{}{}
+				timestamp := shot.Timestamp
+				if timestamp <= 0 {
+					timestamp = parseScreenshotTimestamp(pathValue, base)
+				}
+				if index, ok := parseScreenshotIndexStrict(pathValue, base); ok {
+					if selection, found := baselineByIndex[index]; found && screenshotTimestampMatchesSelection(timestamp, selection, plan.FrameRate) {
+						existingIndices[index] = struct{}{}
+					}
 				} else {
-					missingIndexTimestamps = append(missingIndexTimestamps, shot.Timestamp)
+					missingIndexTimestamps = append(missingIndexTimestamps, timestamp)
 				}
 				kept++
 			}
@@ -136,10 +146,6 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 		}
 	}
 
-	baselineSelections := manualSelections
-	if len(baselineSelections) == 0 {
-		baselineSelections = buildScreenshotSelections(total, plan.DurationSeconds, plan.FrameRate, meta)
-	}
 	if existingIndices == nil {
 		existingIndices = make(map[int]struct{})
 	}
@@ -159,7 +165,9 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 				}
 			}
 			if bestIndex >= 0 {
-				existingIndices[bestIndex] = struct{}{}
+				if selection, found := baselineByIndex[bestIndex]; found && screenshotTimestampMatchesSelection(existingTs, selection, plan.FrameRate) {
+					existingIndices[bestIndex] = struct{}{}
+				}
 			}
 		}
 	}
@@ -177,14 +185,13 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 
 	plan.SuggestedSelections = suggestions
 
-	base := screenshotBaseName(meta)
-	plan.ExistingScreenshots = listExistingScreens(tmpDir, base)
+	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
 	plan.TrackerImageLinks = buildTrackerImageLinks(meta, tmpDir)
 	plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
 		listTrackerScreens(tmpDir, base),
 		plan.TrackerImageLinks,
 	)
-	plan.FinalSelections = s.loadFinalSelections(ctx, meta, tmpDir)
+	plan.FinalSelections = filterScreenshotsMatchingSelections(s.loadFinalSelections(ctx, meta, tmpDir), baselineSelections, plan.FrameRate)
 
 	// Automatically include tracker images in final selections
 	plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, plan.TrackerImageLinks)
@@ -556,7 +563,7 @@ func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.Prep
 			}
 			candidate := filepath.Join(tmpDir, trackerDir, fileName)
 			candidateAbs, err := filepath.Abs(candidate)
-			if err == nil && pathsEqual(candidateAbs, absTarget) {
+			if err == nil && pathutil.SamePath(candidateAbs, absTarget) {
 				removed = true
 				if s.logger != nil {
 					s.logger.Tracef("screenshots: tracker image match tracker=%s file=%s", strings.TrimSpace(record.Tracker), candidateAbs)
@@ -621,15 +628,6 @@ func isSQLiteBusyError(err error) bool {
 	return db.IsBusyError(err)
 }
 
-func pathsEqual(left string, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
-}
-
 func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMetadata, images []api.ScreenshotImage) error {
 	if s.repo == nil {
 		return nil
@@ -683,6 +681,45 @@ func selectionTimestamp(selection api.ScreenshotSelection, frameRate float64) fl
 		ts = float64(selection.Frame) / frameRate
 	}
 	return ts
+}
+
+func screenshotSelectionsByIndex(selections []api.ScreenshotSelection) map[int]api.ScreenshotSelection {
+	byIndex := make(map[int]api.ScreenshotSelection, len(selections))
+	for _, selection := range selections {
+		byIndex[selection.Index] = selection
+	}
+	return byIndex
+}
+
+func screenshotTimestampMatchesSelection(timestamp float64, selection api.ScreenshotSelection, frameRate float64) bool {
+	expected := selectionTimestamp(selection, frameRate)
+	if timestamp <= 0 || expected <= 0 {
+		return false
+	}
+	tolerance := 0.5
+	if frameRate > 0 {
+		frameTolerance := 1 / frameRate
+		if frameTolerance > tolerance {
+			tolerance = frameTolerance
+		}
+	}
+	return abs(timestamp-expected) <= tolerance
+}
+
+func filterScreenshotsMatchingSelections(images []api.ScreenshotImage, selections []api.ScreenshotSelection, frameRate float64) []api.ScreenshotImage {
+	if len(images) == 0 || len(selections) == 0 {
+		return nil
+	}
+	byIndex := screenshotSelectionsByIndex(selections)
+	filtered := make([]api.ScreenshotImage, 0, len(images))
+	for _, image := range images {
+		selection, ok := byIndex[image.Index]
+		if !ok || !screenshotTimestampMatchesSelection(image.TimestampSeconds, selection, frameRate) {
+			continue
+		}
+		filtered = append(filtered, image)
+	}
+	return filtered
 }
 
 func listExistingScreens(tmpDir, base string) []api.ScreenshotImage {
@@ -823,10 +860,10 @@ func isPathWithinDir(root string, target string) bool {
 	if err != nil {
 		return false
 	}
-	if targetAbs == rootAbs {
+	if pathutil.SamePath(rootAbs, targetAbs) {
 		return true
 	}
-	return strings.HasPrefix(targetAbs, rootAbs+string(os.PathSeparator))
+	return pathutil.IsWithinRoot(rootAbs, targetAbs)
 }
 
 func selectionSourceLabel(img api.ScreenshotImage) string {

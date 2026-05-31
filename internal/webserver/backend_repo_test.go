@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestBackendApplyConfigKeepsSharedRepositoryUsable(t *testing.T) {
@@ -171,6 +172,153 @@ func TestBackendGetLogExclusionsReturnsEmptySliceWhenMissing(t *testing.T) {
 	}
 	if len(patterns) != 0 {
 		t.Fatalf("expected no exclusions, got %#v", patterns)
+	}
+}
+
+func TestBackendFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &preparedMetaTestCore{}
+	backend := &Backend{
+		cfg: config.Config{
+			Metadata:           config.MetadataConfig{SkipAutoTorrent: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 3},
+		},
+		core: coreSvc,
+		hub:  newEventHub(),
+	}
+
+	_, err := backend.FetchMetadata("session", "C:\\releases\\Example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, false)
+	if err != nil {
+		t.Fatalf("fetch metadata: %v", err)
+	}
+	if !coreSvc.fetchReq.Options.SkipAutoTorrent {
+		t.Fatalf("expected skip_auto_torrent request option, got %#v", coreSvc.fetchReq.Options)
+	}
+}
+
+func TestBackendSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "backend-save-config.db")
+	repo, err := db.OpenWithLogger(repoPath, nil)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	initial := config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+	backend := &Backend{
+		cfg:  initial,
+		repo: repo,
+		hub:  newEventHub(),
+	}
+	t.Cleanup(func() {
+		if coreSvc := backend.currentCore(); coreSvc != nil {
+			_ = coreSvc.Close()
+		}
+		if logger := backend.currentLogger(); logger != nil {
+			_ = logger.Close()
+		}
+	})
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	updated.Metadata.KeepImages = true
+	updated.ScreenshotHandling.Screens = 5
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	if err := backend.SaveConfig(payload); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	runtimeCfg := backend.currentConfig()
+	if !runtimeCfg.Metadata.SkipAutoTorrent || !runtimeCfg.Metadata.KeepImages {
+		t.Fatalf("expected metadata settings applied, got %#v", runtimeCfg.Metadata)
+	}
+	if runtimeCfg.ScreenshotHandling.Screens != 5 {
+		t.Fatalf("expected screenshots=5, got %d", runtimeCfg.ScreenshotHandling.Screens)
+	}
+	if backend.currentCore() == nil {
+		t.Fatal("expected runtime core to be rebuilt")
+	}
+	options := buildRunUploadOptions(runtimeCfg, runOptions{})
+	if !options.SkipAutoTorrent || !options.KeepImages || options.Screens != 5 {
+		t.Fatalf("expected upload options from saved config, got %#v", options)
+	}
+}
+
+func TestBackendSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
+	t.Setenv("UA_DEFAULT_SCREENS", "0")
+
+	repoPath := filepath.Join(t.TempDir(), "backend-save-config-env.db")
+	repo, err := db.OpenWithLogger(repoPath, nil)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	initial := config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+	backend := &Backend{
+		cfg:  initial,
+		repo: repo,
+		hub:  newEventHub(),
+	}
+
+	updated := initial
+	updated.ScreenshotHandling.Screens = 5
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	err = backend.SaveConfig(payload)
+	if err == nil {
+		t.Fatal("expected env-derived runtime validation error")
+	}
+	if !strings.Contains(err.Error(), "screenshot_handling.screens") {
+		t.Fatalf("expected screens validation error, got %v", err)
+	}
+	if got := backend.currentConfig().ScreenshotHandling.Screens; got != 1 {
+		t.Fatalf("expected runtime config to remain unchanged, got screens=%d", got)
+	}
+	if backend.currentCore() != nil {
+		t.Fatal("expected runtime core not to be rebuilt")
+	}
+	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); loadErr == nil {
+		t.Fatal("expected invalid runtime config to be rejected before database save")
+	}
+}
+
+func TestBuildRunUploadOptionsPropagatesSkipAutoTorrent(t *testing.T) {
+	t.Parallel()
+
+	options := buildRunUploadOptions(config.Config{
+		Metadata: config.MetadataConfig{SkipAutoTorrent: true},
+	}, runOptions{})
+	if !options.SkipAutoTorrent {
+		t.Fatalf("expected skip_auto_torrent upload option, got %#v", options)
 	}
 }
 

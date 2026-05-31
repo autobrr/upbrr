@@ -21,6 +21,7 @@ linters:
     - canonicalheader
     - contextcheck
     - copyloopvar
+    - depguard
     - durationcheck
     - errname
     - errchkjson
@@ -72,6 +73,13 @@ linters:
         - alltime
         - hardlink
         - hardlinked
+
+    depguard:
+      rules:
+        local-filesystem-paths:
+          deny:
+            - pkg: "path$"
+              desc: use filepath for local filesystem paths; path is allowed only for slash-delimited URL, torrent, or API payload paths
 
   exclusions:
     generated: lax

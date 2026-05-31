@@ -489,8 +489,11 @@ func syncScreenshotSlotVariants(ctx context.Context, repo api.MetadataRepository
 		return trackers.SlotUploadAttachmentResult{}, nil
 	}
 	slots, err := repo.ListScreenshotSlotsByPath(ctx, sourcePath)
-	if err != nil || len(slots) == 0 {
+	if err != nil {
 		return trackers.SlotUploadAttachmentResult{}, fmt.Errorf("image hosting: %w", err)
+	}
+	if len(slots) == 0 {
+		return trackers.SlotUploadAttachmentResult{}, nil
 	}
 	summary := trackers.ApplyUploadedVariantsToSlots(slots, uploaded)
 	if summary.FallbackMatched > 0 {

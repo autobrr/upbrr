@@ -418,6 +418,138 @@ func TestResolveExternalIDsPrecedence(t *testing.T) {
 	}
 }
 
+func TestResolveExternalIDsSkipAutoTorrentIgnoresTrackerSourcedIDs(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Example", Year: 2024}}
+	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt0000888", Title: "Example", Year: 2024}}
+	tvdbClient := &stubTVDB{}
+	tvmazeClient := &stubTVmaze{}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:      "/media/file.mkv",
+		StoredDataFresh: true,
+		Options:         api.UploadOptions{SkipAutoTorrent: true},
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/media/file.mkv",
+			TMDBID:     1,
+			SourceTMDB: "tracker",
+			IMDBID:     2,
+			SourceIMDB: "tracker",
+			TVDBID:     3,
+			SourceTVDB: "tracker",
+			Category:   "MOVIE",
+		},
+		MediaInfoTMDBID: 999,
+		MediaInfoIMDBID: 888,
+		MediaInfoTVDBID: 777,
+		TrackerData: []api.TrackerMetadata{{
+			TMDBID: 4,
+			IMDBID: 5,
+			TVDBID: 6,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if result.ExternalIDs.TMDBID != 999 || result.ExternalIDs.SourceTMDB != "mediainfo" {
+		t.Fatalf("expected tmdb from mediainfo, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalIDs.IMDBID != 888 || result.ExternalIDs.SourceIMDB != "mediainfo" {
+		t.Fatalf("expected imdb from mediainfo, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalIDs.TVDBID != 777 || result.ExternalIDs.SourceTVDB != "mediainfo" {
+		t.Fatalf("expected tvdb from mediainfo, got %#v", result.ExternalIDs)
+	}
+	if tmdbClient.findCalls != 0 || tmdbClient.searchCalls != 0 || tmdbClient.metaCalls != 1 {
+		t.Fatalf("expected one tmdb metadata fetch only, got find=%d search=%d metadata=%d", tmdbClient.findCalls, tmdbClient.searchCalls, tmdbClient.metaCalls)
+	}
+	if imdbClient.searchCalls != 0 || imdbClient.infoCalls != 1 {
+		t.Fatalf("expected one imdb info fetch only, got search=%d info=%d", imdbClient.searchCalls, imdbClient.infoCalls)
+	}
+	if tvdbClient.calls != 0 {
+		t.Fatalf("expected tvdb external lookup skipped, got %d", tvdbClient.calls)
+	}
+	if len(tvdbClient.seriesLangCalls) != 1 {
+		t.Fatalf("expected one tvdb metadata fetch, got %d", len(tvdbClient.seriesLangCalls))
+	}
+	if tvmazeClient.calls != 0 {
+		t.Fatalf("expected tvmaze lookup skipped, got %d", tvmazeClient.calls)
+	}
+
+	reuseTMDBClient := &stubTMDB{}
+	reuseIMDBClient := &stubIMDB{}
+	reuseTVDBClient := &stubTVDB{}
+	reuseTVmazeClient := &stubTVmaze{}
+	reuseSvc := NewService(repo,
+		WithTMDBClient(reuseTMDBClient),
+		WithIMDBClient(reuseIMDBClient),
+		WithTVDBClient(reuseTVDBClient),
+		WithTVmazeClient(reuseTVmazeClient),
+	)
+
+	reused, err := reuseSvc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:      "/media/file.mkv",
+		StoredDataFresh: true,
+		Options:         api.UploadOptions{SkipAutoTorrent: true},
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/media/file.mkv",
+			TMDBID:     1,
+			SourceTMDB: "tracker",
+			IMDBID:     2,
+			SourceIMDB: "tracker",
+			TVDBID:     3,
+			SourceTVDB: "tracker",
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/media/file.mkv",
+			TMDB:       &api.TMDBMetadata{TMDBID: 999, Title: "Stored TMDB"},
+			IMDB:       &api.IMDBMetadata{IMDBID: 888, Title: "Stored IMDb"},
+			TVDB:       &api.TVDBMetadata{TVDBID: 777, Name: "Stored TVDB"},
+		},
+		MediaInfoTMDBID: 999,
+		MediaInfoIMDBID: 888,
+		MediaInfoTVDBID: 777,
+		TrackerData: []api.TrackerMetadata{{
+			TMDBID: 4,
+			IMDBID: 5,
+			TVDBID: 6,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("resolve reused metadata: %v", err)
+	}
+	if reused.ExternalMetadata.TMDB == nil || reused.ExternalMetadata.TMDB.Title != "Stored TMDB" {
+		t.Fatalf("expected stored tmdb metadata reused, got %#v", reused.ExternalMetadata.TMDB)
+	}
+	if reused.ExternalMetadata.IMDB == nil || reused.ExternalMetadata.IMDB.Title != "Stored IMDb" {
+		t.Fatalf("expected stored imdb metadata reused, got %#v", reused.ExternalMetadata.IMDB)
+	}
+	if reused.ExternalMetadata.TVDB == nil || reused.ExternalMetadata.TVDB.Name != "Stored TVDB" {
+		t.Fatalf("expected stored tvdb metadata reused, got %#v", reused.ExternalMetadata.TVDB)
+	}
+	if reuseTMDBClient.findCalls != 0 || reuseTMDBClient.searchCalls != 0 || reuseTMDBClient.metaCalls != 0 {
+		t.Fatalf("expected tmdb calls skipped for stored metadata, got find=%d search=%d metadata=%d", reuseTMDBClient.findCalls, reuseTMDBClient.searchCalls, reuseTMDBClient.metaCalls)
+	}
+	if reuseIMDBClient.searchCalls != 0 || reuseIMDBClient.infoCalls != 0 {
+		t.Fatalf("expected imdb calls skipped for stored metadata, got search=%d info=%d", reuseIMDBClient.searchCalls, reuseIMDBClient.infoCalls)
+	}
+	if reuseTVDBClient.calls != 0 || len(reuseTVDBClient.seriesLangCalls) != 0 {
+		t.Fatalf("expected tvdb calls skipped for stored metadata, got external=%d metadata=%d", reuseTVDBClient.calls, len(reuseTVDBClient.seriesLangCalls))
+	}
+	if reuseTVmazeClient.calls != 0 {
+		t.Fatalf("expected tvmaze calls skipped for stored metadata, got %d", reuseTVmazeClient.calls)
+	}
+}
+
 func TestResolveExternalIDsPropagatesAuthoritativeMovieTVCategoryToRelease(t *testing.T) {
 	repo := &fakeRepo{
 		fileMetadata: api.FileMetadata{

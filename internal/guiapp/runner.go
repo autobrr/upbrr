@@ -45,6 +45,9 @@ func RunWithContext(ctx context.Context, opts RunOptions) error {
 		},
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop: true,
+		},
 		Bind: []interface{}{
 			app,
 		},

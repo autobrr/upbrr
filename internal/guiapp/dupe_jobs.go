@@ -62,7 +62,7 @@ type dupeCheckJob struct {
 }
 
 func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (string, error) {
-	if a == nil || a.core == nil {
+	if a == nil || a.currentCore() == nil {
 		return "", errors.New("app not initialized")
 	}
 	trimmedPath := strings.TrimSpace(path)
@@ -153,7 +153,7 @@ func (a *App) CancelDupeCheck(jobID string) error {
 }
 
 func (a *App) runDupeCheckJob(ctx context.Context, eventCtx context.Context, job *dupeCheckJob) {
-	if a == nil || a.core == nil || job == nil {
+	if a == nil || a.currentCore() == nil || job == nil {
 		return
 	}
 
@@ -170,16 +170,13 @@ func (a *App) runDupeCheckJob(ctx context.Context, eventCtx context.Context, job
 		Paths:    []string{job.sourcePath},
 		Mode:     api.ModeGUI,
 		Trackers: job.trackers,
-		Options: api.UploadOptions{
-			Screens:    a.cfg.ScreenshotHandling.Screens,
-			OnlyID:     a.cfg.Metadata.OnlyID,
-			KeepImages: a.cfg.Metadata.KeepImages,
-		},
+		Options:  a.baseUploadOptions(),
+
 		ExternalIDOverrides:  job.overrides,
 		ReleaseNameOverrides: job.nameOverrides,
 	}
 
-	summary, err := a.core.CheckDupes(progressCtx, req)
+	summary, err := a.currentCore().CheckDupes(progressCtx, req)
 
 	job.mu.Lock()
 	job.finishedAt = time.Now().UTC()

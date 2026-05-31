@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path" //nolint:depguard // Extracts response URL path basename, not local filesystem basename.
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -237,7 +238,7 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 	if err != nil {
 		return nil, "", fmt.Errorf("trackers: read screenshot response body: %w", err)
 	}
-	filename := filepath.Base(strings.TrimSpace(resp.Request.URL.Path))
+	filename := path.Base(strings.TrimSpace(resp.Request.URL.Path))
 	if filename == "" || filename == "." || filename == "/" {
 		filename = "screenshot.png"
 	}

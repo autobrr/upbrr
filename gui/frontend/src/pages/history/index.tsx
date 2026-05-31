@@ -51,7 +51,11 @@ const releaseLabelFromOverview = (overview: HistoryOverview) => {
   return extras ? `${title} (${extras})` : title;
 };
 
-export default function HistoryPage() {
+type Props = {
+  onReleaseDeleted?: (sourcePath: string) => void;
+};
+
+export default function HistoryPage({ onReleaseDeleted }: Props) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -172,7 +176,9 @@ export default function HistoryPage() {
     setDeleting(true);
     setError("");
     try {
-      await deleteHistoryRelease(selectedPath);
+      const deletedPath = selectedPath;
+      await deleteHistoryRelease(deletedPath);
+      onReleaseDeleted?.(deletedPath);
       const refreshed = (await listHistory()) || [];
       setEntries(refreshed);
       if (!refreshed.length) {

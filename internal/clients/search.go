@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -48,6 +49,10 @@ var (
 	unit3dTrackerIDPattern = regexp.MustCompile(`/(\d+)`)
 	trackerIDPatterns      = buildTrackerIDPatterns()
 )
+
+var trackerIDCommentAliases = map[string][]string{
+	"rf": {"https://reelflix.xyz"},
+}
 
 var trackerURLPatterns = map[string][]string{
 	"acm":    {"https://eiga.moi"},
@@ -133,6 +138,7 @@ func buildTrackerIDPatterns() map[string]trackerPattern {
 		"btn": {url: "https://broadcasthe.net", pattern: regexp.MustCompile(`id=(\d+)`)},
 		"bhd": {url: "https://beyond-hd.me", pattern: regexp.MustCompile(`details/(\d+)`)},
 		"ptp": {url: "passthepopcorn.me", pattern: regexp.MustCompile(`torrentid=(\d+)`)},
+		"rtf": {url: "https://retroflix.club", pattern: regexp.MustCompile(`(?i)retroflix\.club/browse/t/(\d+)`)},
 	}
 
 	for _, tracker := range trackers.Unit3DTrackers() {
@@ -145,6 +151,10 @@ func buildTrackerIDPatterns() map[string]trackerPattern {
 			continue
 		}
 		patterns[key] = trackerPattern{url: strings.ToLower(baseURL), pattern: unit3dTrackerIDPattern}
+	}
+	if pattern, ok := patterns["rf"]; ok {
+		pattern.pattern = regexp.MustCompile(`(?i)reelflix\.(?:cc|xyz)/torrents/(\d+)`)
+		patterns["rf"] = pattern
 	}
 
 	return patterns
@@ -410,7 +420,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		default:
 		}
 
-		if !torrentNameMatches(torrent.Name, meta) {
+		if !torrentMatchesMeta(torrent, meta) {
 			continue
 		}
 		nameMatched++
@@ -516,7 +526,26 @@ func buildSearchTerm(meta api.PreparedMetadata) string {
 	}
 	search := strings.ReplaceAll(base, "[", ".")
 	search = strings.ReplaceAll(search, "]", ".")
-	return search
+	return sanitizeSearchTerm(search)
+}
+
+func sanitizeSearchTerm(value string) string {
+	var builder strings.Builder
+	for _, r := range value {
+		if unicode.IsSymbol(r) {
+			continue
+		}
+		builder.WriteRune(r)
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+func torrentMatchesMeta(torrent qbittorrent.Torrent, meta api.PreparedMetadata) bool {
+	if torrentNameMatches(torrent.Name, meta) {
+		return true
+	}
+	contentBase := pathutil.Base(torrent.ContentPath)
+	return contentBase != "" && torrentNameMatches(contentBase, meta)
 }
 
 func torrentNameMatches(name string, meta api.PreparedMetadata) bool {
@@ -526,9 +555,28 @@ func torrentNameMatches(name string, meta api.PreparedMetadata) bool {
 	base := pathutil.Base(meta.SourcePath)
 	if meta.DiscType == "" && len(meta.FileList) == 1 {
 		fileBase := pathutil.Base(meta.FileList[0])
-		return strings.EqualFold(name, fileBase) || strings.EqualFold(name, base)
+		return torrentNameEquals(name, fileBase) || torrentNameEquals(name, base)
 	}
-	return strings.EqualFold(name, base)
+	return torrentNameEquals(name, base)
+}
+
+func torrentNameEquals(left string, right string) bool {
+	if strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right)) {
+		return true
+	}
+	leftCanonical := canonicalTorrentName(left)
+	rightCanonical := canonicalTorrentName(right)
+	return leftCanonical != "" && rightCanonical != "" && leftCanonical == rightCanonical
+}
+
+func canonicalTorrentName(value string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
 }
 
 func searchProxyTorrents(ctx context.Context, client *http.Client, proxyBase, searchTerm string) ([]qbittorrent.Torrent, error) {
@@ -688,12 +736,12 @@ func extractTrackerMatches(comment string, trackerURLs []string, hasWorkingTrack
 	trackerFound := false
 	lowerComment := strings.ToLower(comment)
 
-	for _, trackerID := range priority {
+	for _, trackerID := range trackerIDExtractionOrder(priority) {
 		pattern, ok := trackerIDPatterns[trackerID]
 		if !ok {
 			continue
 		}
-		if !hasWorkingTracker || !strings.Contains(lowerComment, strings.ToLower(pattern.url)) {
+		if !hasWorkingTracker || !trackerPatternMatchesComment(trackerID, lowerComment, pattern) {
 			continue
 		}
 		match := pattern.pattern.FindStringSubmatch(comment)
@@ -715,6 +763,48 @@ func extractTrackerMatches(comment string, trackerURLs []string, hasWorkingTrack
 	}
 
 	return matches, trackerFound
+}
+
+func trackerIDExtractionOrder(priority []string) []string {
+	seen := make(map[string]struct{}, len(priority)+len(trackerIDPatterns))
+	ordered := make([]string, 0, len(priority)+len(trackerIDPatterns))
+	for _, trackerID := range priority {
+		key := strings.ToLower(strings.TrimSpace(trackerID))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		ordered = append(ordered, key)
+	}
+
+	keys := make([]string, 0, len(trackerIDPatterns))
+	for key := range trackerIDPatterns {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		ordered = append(ordered, key)
+	}
+	return ordered
+}
+
+func trackerPatternMatchesComment(trackerID string, lowerComment string, pattern trackerPattern) bool {
+	if strings.Contains(lowerComment, strings.ToLower(pattern.url)) {
+		return true
+	}
+	for _, alias := range trackerIDCommentAliases[strings.ToLower(strings.TrimSpace(trackerID))] {
+		if strings.Contains(lowerComment, strings.ToLower(strings.TrimSpace(alias))) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchTrackerURLs(trackerURLs []string) []string {
@@ -1267,7 +1357,7 @@ func validateTorrentPaths(meta api.PreparedMetadata, info metainfo.Info) (bool, 
 	if meta.DiscType != "" {
 		common := commonPath(torrentFiles)
 		base := pathutil.Base(metaPath)
-		if base != "" && strings.Contains(strings.ToLower(common), strings.ToLower(base)) {
+		if torrentPathContainsSourceBase(common, base) {
 			return true, false
 		}
 		return false, false
@@ -1292,6 +1382,19 @@ func validateTorrentPaths(meta api.PreparedMetadata, info metainfo.Info) (bool, 
 	}
 
 	return false, false
+}
+
+func torrentPathContainsSourceBase(path string, base string) bool {
+	trimmedBase := strings.TrimSpace(base)
+	if trimmedBase == "" {
+		return false
+	}
+	if strings.Contains(strings.ToLower(path), strings.ToLower(trimmedBase)) {
+		return true
+	}
+	canonicalPath := canonicalTorrentName(path)
+	canonicalBase := canonicalTorrentName(trimmedBase)
+	return canonicalPath != "" && canonicalBase != "" && strings.Contains(canonicalPath, canonicalBase)
 }
 
 func buildTorrentFileList(info metainfo.Info) []string {
