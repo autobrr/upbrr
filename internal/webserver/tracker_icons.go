@@ -55,6 +55,15 @@ func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ ses
 		mime = mimePart[5 : len(mimePart)-7]
 	}
 
+	switch mime {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/x-icon", "image/bmp", "image/vnd.microsoft.icon":
+		// Safe image MIME
+	default:
+		// Not a safe image MIME, fallback or reject to avoid serving active content
+		http.Error(w, "invalid image type", http.StatusUnsupportedMediaType)
+		return
+	}
+
 	data, err := base64.StdEncoding.DecodeString(base64Data)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -62,7 +71,8 @@ func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ ses
 	}
 
 	w.Header().Set("Cache-Control", "public, max-age=604800") // 7 days browser cache
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", mime)
-	//nolint:gosec // Tainted icon data is safe to serve with explicit image content-type
+	//nolint:gosec // Tainted icon data is safe to serve with explicit image content-type and nosniff
 	_, _ = w.Write(data)
 }

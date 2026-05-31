@@ -648,6 +648,38 @@ export default function InputPage(props: Props) {
     setRunLogLevelTouched,
   } = props;
 
+  const [useFavicons, setUseFavicons] = useState(true);
+  const [faviconOnly, setFaviconOnly] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const fetchConfig = async () => {
+      try {
+        const getConfig = globalThis.go?.guiapp?.App?.GetConfig;
+        if (getConfig) {
+          const raw = await getConfig();
+          if (active && raw) {
+            const data = JSON.parse(raw);
+            if (data?.MainSettings) {
+              if (typeof data.MainSettings.UseFavicons === "boolean") {
+                setUseFavicons(data.MainSettings.UseFavicons);
+              }
+              if (typeof data.MainSettings.FaviconOnly === "boolean") {
+                setFaviconOnly(data.MainSettings.FaviconOnly);
+              }
+            }
+          }
+        }
+      } catch (_err) {
+        // ignore
+      }
+    };
+    fetchConfig();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const [sourcePathHistoryOpen, setSourcePathHistoryOpen] = useState(false);
   const sourcePathHistoryRef = useRef<HTMLDivElement | null>(null);
   const sourcePathHistoryAvailable = sourcePathHistory.length > 0;
@@ -1227,11 +1259,17 @@ export default function InputPage(props: Props) {
                           }
                         >
                           <span className="flex items-center gap-1.5">
-                            <TrackerIconImage
-                              tracker={tracker.name}
-                              customUrl={tracker.config?.URL as string}
-                            />
-                            {tracker.name}
+                            {useFavicons ? (
+                              <TrackerIconImage
+                                tracker={tracker.name}
+                                customUrl={
+                                  typeof tracker.config?.FaviconURL === "string"
+                                    ? tracker.config.FaviconURL
+                                    : undefined
+                                }
+                              />
+                            ) : null}
+                            {faviconOnly && useFavicons ? null : tracker.name}
                           </span>
                         </PillCheckbox>
                       ))}

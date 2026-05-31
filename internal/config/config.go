@@ -43,6 +43,8 @@ type MainSettingsConfig struct {
 	TrackerPassChecks   int    `yaml:"tracker_pass_checks"`
 	InputHistoryLimit   int    `yaml:"input_history_limit"`
 	DBPath              string `yaml:"db_path"`
+	UseFavicons         bool   `yaml:"use_favicons"`
+	FaviconOnly         bool   `yaml:"favicon_only"`
 }
 
 type mainSettingsConfigAlias MainSettingsConfig
@@ -50,6 +52,7 @@ type mainSettingsConfigAlias MainSettingsConfig
 func (c *MainSettingsConfig) UnmarshalYAML(value *yaml.Node) error {
 	var raw mainSettingsConfigAlias
 	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	raw.UseFavicons = true
 	if err := value.Decode(&raw); err != nil {
 		return fmt.Errorf("config: decode main settings yaml: %w", err)
 	}
@@ -60,6 +63,7 @@ func (c *MainSettingsConfig) UnmarshalYAML(value *yaml.Node) error {
 func (c *MainSettingsConfig) UnmarshalJSON(data []byte) error {
 	var raw mainSettingsConfigAlias
 	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	raw.UseFavicons = true
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("config: decode main settings json: %w", err)
 	}
@@ -212,6 +216,7 @@ type TrackerConfig struct {
 	AnnounceURL         string                 `yaml:"announce_url" json:"AnnounceURL"`
 	MyAnnounceURL       string                 `yaml:"my_announce_url" json:"MyAnnounceURL"`
 	URL                 string                 `yaml:"url" json:"URL"`
+	FaviconURL          string                 `yaml:"favicon_url" json:"FaviconURL"`
 	UploaderStatus      bool                   `yaml:"uploader_status" json:"UploaderStatus"`
 	CustomLayout        string                 `yaml:"custom_layout" json:"CustomLayout"`
 	TagForCustomRelease string                 `yaml:"tag_for_custom_release" json:"TagForCustomRelease"`
@@ -959,7 +964,7 @@ func ResolveTrackerDomain(cfg *Config, trackerNameOrDomain string) (string, stri
 					if parsed, err := url.Parse(urlString); err == nil && parsed.Hostname() != "" {
 						return parsed.Hostname(), u
 					}
-					return u, u
+					return "", u
 				}
 			}
 		}

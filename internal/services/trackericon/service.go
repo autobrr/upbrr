@@ -54,9 +54,13 @@ func GetTrackerIcon(ctx context.Context, dbPath string, domain string, customURL
 	if info, err := os.Stat(filePath); err == nil {
 		if info.Size() == 0 {
 			// Negative cache hit (domain failed to fetch in previous sessions)
-			return "", errors.New("icon failed to download in a previous attempt (negative cached)")
+			if time.Since(info.ModTime()) < 24*time.Hour {
+				return "", errors.New("icon failed to download in a previous attempt (negative cached)")
+			}
+			// Older than 24h: allow fetching to try again
+		} else {
+			return loadAndEncode(filePath)
 		}
-		return loadAndEncode(filePath)
 	}
 
 	// Not cached, let's fetch it!
