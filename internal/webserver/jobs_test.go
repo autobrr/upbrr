@@ -19,6 +19,7 @@ type preparedMetaTestCore struct {
 	exportErr    error
 	importedMeta api.PreparedMetadata
 	importedReq  api.Request
+	fetchReq     api.Request
 }
 
 func (c *preparedMetaTestCore) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -29,7 +30,8 @@ func (c *preparedMetaTestCore) RunUploadPrepared(context.Context, api.Request) (
 	return api.Result{}, nil
 }
 
-func (c *preparedMetaTestCore) FetchMetadataPreview(context.Context, api.Request) (api.MetadataPreview, error) {
+func (c *preparedMetaTestCore) FetchMetadataPreview(_ context.Context, req api.Request) (api.MetadataPreview, error) {
+	c.fetchReq = req
 	return api.MetadataPreview{}, nil
 }
 

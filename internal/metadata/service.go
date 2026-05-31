@@ -1178,7 +1178,7 @@ func safeWriteFile(dir string, path string, data []byte) error {
 	cleanDir := filepath.Clean(dir)
 	cleanPath := filepath.Clean(path)
 	rel, err := filepath.Rel(cleanDir, cleanPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return fmt.Errorf("path traversal detected: %s is not within %s", path, dir)
 	}
 	//nolint:gosec // Path is validated against path traversal using filepath.Rel.

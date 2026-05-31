@@ -281,19 +281,15 @@ func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 	})
 
 	req := api.Request{
-		Paths:    []string{job.sourcePath},
-		Mode:     api.ModeGUI,
-		Trackers: job.trackers,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Paths:                []string{job.sourcePath},
+		Mode:                 api.ModeGUI,
+		Trackers:             job.trackers,
+		Options:              b.baseUploadOptions(),
 		ExternalIDOverrides:  job.overrides,
 		ReleaseNameOverrides: job.nameOverrides,
 	}
 
-	summary, err := b.core.CheckDupes(progressCtx, req)
+	summary, err := b.currentCore().CheckDupes(progressCtx, req)
 	job.mu.Lock()
 	job.finishedAt = time.Now().UTC()
 	job.cancel = nil
@@ -426,7 +422,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	}
 	seedCtx, cancel := context.WithTimeout(context.Background(), seedPreparedMetaTimeout)
 	defer cancel()
-	if err := guishared.SeedRunCorePreparedMeta(seedCtx, b.core, runCore, seedReq); err != nil {
+	if err := guishared.SeedRunCorePreparedMeta(seedCtx, b.currentCore(), runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
 		return "", fmt.Errorf("web: %w", err)
@@ -662,7 +658,7 @@ func (b *Backend) runSingleTrackerUpload(ctx context.Context, job *trackerUpload
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
 		IgnoreTrackerRuleFailures:   false,
-		Options:                     buildRunUploadOptions(b.cfg, job.runOptions),
+		Options:                     buildRunUploadOptions(b.currentConfig(), job.runOptions),
 		ExternalIDOverrides:         job.overrides,
 		ReleaseNameOverrides:        job.nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),

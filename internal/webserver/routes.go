@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path" //nolint:depguard // Cleans HTTP route paths, not local filesystem paths.
 	"path/filepath"
 	"runtime"
 	"strings"

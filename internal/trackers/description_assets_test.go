@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,8 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/paths"
+	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -414,6 +418,34 @@ func TestResolveDescriptionAssetsLoadsStoredCompositeGroupOverride(t *testing.T)
 	}
 	if !assets.Override {
 		t.Fatalf("expected stored composite override to be treated as override")
+	}
+}
+
+func TestResolveDescriptionAssetsUsesTrackerMatchedVariantGroup(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DescriptionGroups: []api.DescriptionBuilderGroup{
+			{
+				GroupKey:       "unit3d",
+				Trackers:       []string{"AITHER"},
+				RawDescription: "aither raw description",
+			},
+			{
+				GroupKey:       "unit3d|variant:2|global",
+				Trackers:       []string{"HHD"},
+				RawDescription: "hhd raw description",
+			},
+		},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HHD", meta, nil, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "hhd raw description" {
+		t.Fatalf("expected HHD variant group description, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected variant group description to be treated as override")
 	}
 }
 
@@ -1118,6 +1150,66 @@ func TestEnsureDescriptionImageHostReusesAllowedHost(t *testing.T) {
 	}
 	if resolution.feedback.Reuploaded {
 		t.Fatal("expected screenshots to be reused")
+	}
+}
+
+func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	meta := api.PreparedMetadata{
+		SourcePath: sourcePath,
+		TrackerData: []api.TrackerMetadata{{
+			Tracker:   "HHD",
+			ImageURLs: []string{"https://source.example/screen1.png", "https://source.example/screen2.png"},
+		}},
+	}
+	tmpRoot, err := dbsvc.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	releaseDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, sourcePath)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	firstPath := filepath.Join(releaseDir, "hhd", buildTrackerArtifactImageName(meta.TrackerData[0].ImageURLs[0], 0))
+	secondPath := filepath.Join(releaseDir, "hhd", buildTrackerArtifactImageName(meta.TrackerData[0].ImageURLs[1], 1))
+	if err := os.MkdirAll(filepath.Dir(firstPath), 0o700); err != nil {
+		t.Fatalf("tracker artifact dir: %v", err)
+	}
+	for _, pathValue := range []string{firstPath, secondPath} {
+		if err := os.WriteFile(pathValue, []byte("image"), 0o600); err != nil {
+			t.Fatalf("write local image: %v", err)
+		}
+	}
+	repo := &stubRepo{
+		uploads: []api.UploadedImageLink{
+			{SourcePath: sourcePath, ImagePath: firstPath, Host: "pixhost", UsageScope: "global", ImgURL: "https://pixhost/1.png", RawURL: "https://pixhost/raw1.png", WebURL: "https://pixhost/view1"},
+			{SourcePath: sourcePath, ImagePath: secondPath, Host: "pixhost", UsageScope: "global", ImgURL: "https://pixhost/2.png", RawURL: "https://pixhost/raw2.png", WebURL: "https://pixhost/view2"},
+		},
+	}
+	images := &stubImageService{}
+
+	resolution, err := ensureDescriptionImageHost(
+		context.Background(),
+		"HHD",
+		meta,
+		config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		config.TrackerConfig{ImageHost: "pixhost"},
+		repo,
+		images,
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(images.calls) != 0 {
+		t.Fatalf("expected existing uploaded records to be reused without upload, got calls %v", images.calls)
+	}
+	if resolution.feedback.SelectedHost != "pixhost" {
+		t.Fatalf("expected pixhost reuse, got %q", resolution.feedback.SelectedHost)
+	}
+	if len(resolution.screenshots) != 2 {
+		t.Fatalf("expected two reused screenshots, got %d", len(resolution.screenshots))
 	}
 }
 

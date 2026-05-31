@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { formatLabel, normalizeDefaultTrackerList } from "./settings";
+import { formatLabel, isSkipAutoTorrentEnabled, normalizeDefaultTrackerList } from "./settings";
 
 describe("formatLabel", () => {
   it("keeps underscore labels as space-separated words", () => {
@@ -27,5 +27,32 @@ describe("normalizeDefaultTrackerList", () => {
 
   it("returns an empty list for unsupported values", () => {
     expect(normalizeDefaultTrackerList({ enabled: true })).toEqual([]);
+  });
+});
+
+describe("isSkipAutoTorrentEnabled", () => {
+  it("reads the exported Metadata.SkipAutoTorrent flag", () => {
+    expect(isSkipAutoTorrentEnabled({ Metadata: { SkipAutoTorrent: true } })).toBe(true);
+  });
+
+  it("returns false when metadata config is unavailable", () => {
+    expect(isSkipAutoTorrentEnabled(null)).toBe(false);
+    expect(isSkipAutoTorrentEnabled({ Metadata: null })).toBe(false);
+  });
+
+  it("returns false when Metadata is not a config object", () => {
+    expect(isSkipAutoTorrentEnabled({ Metadata: [] })).toBe(false);
+    expect(isSkipAutoTorrentEnabled({ Metadata: "foo" })).toBe(false);
+    expect(isSkipAutoTorrentEnabled({ Metadata: 123 })).toBe(false);
+  });
+
+  it("returns false when SkipAutoTorrent is false or missing", () => {
+    const configWithUndefined = {
+      Metadata: { SkipAutoTorrent: undefined },
+    } as unknown as Parameters<typeof isSkipAutoTorrentEnabled>[0];
+
+    expect(isSkipAutoTorrentEnabled({ Metadata: { SkipAutoTorrent: false } })).toBe(false);
+    expect(isSkipAutoTorrentEnabled({ Metadata: {} })).toBe(false);
+    expect(isSkipAutoTorrentEnabled(configWithUndefined)).toBe(false);
   });
 });

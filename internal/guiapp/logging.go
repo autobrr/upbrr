@@ -40,18 +40,19 @@ func (a *App) GetLogPath() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
 	}
-	return wrapGUIResult(logging.LogPath(a.cfg.MainSettings.DBPath))
+	return wrapGUIResult(logging.LogPath(a.currentConfig().MainSettings.DBPath))
 }
 
 func (a *App) GetRecentLogs(limit int) ([]logging.Entry, error) {
-	if a == nil || a.logger == nil {
+	logger := a.currentLogger()
+	if logger == nil {
 		return nil, errors.New("logger not initialized")
 	}
-	return a.logger.Recent(limit), nil
+	return logger.Recent(limit), nil
 }
 
 func (a *App) StartLogStream() (string, error) {
-	if a == nil || a.logger == nil {
+	if a == nil || a.currentLogger() == nil {
 		return "", errors.New("logger not initialized")
 	}
 
@@ -126,12 +127,13 @@ func (a *App) UpdateLogExclusions(patterns []string) error {
 }
 
 func (a *App) startStreamLocked(session *logStreamSession) {
-	if session == nil || a.logger == nil {
+	logger := a.currentLogger()
+	if session == nil || logger == nil {
 		return
 	}
 
-	subID, ch := a.logger.Subscribe(0)
-	session.logger = a.logger
+	subID, ch := logger.Subscribe(0)
+	session.logger = logger
 	session.subID = subID
 
 	ctx := a.runtimeContext()

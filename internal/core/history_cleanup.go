@@ -13,6 +13,7 @@ import (
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -195,7 +196,7 @@ func resolveContentTmpRoot(tmpRoot string, candidate string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if !pathWithinRoot(absTmpRoot, absCandidate) {
+	if !pathutil.IsWithinRoot(absTmpRoot, absCandidate) {
 		return "", false
 	}
 	rel, err := filepath.Rel(absTmpRoot, absCandidate)
@@ -222,10 +223,10 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 	if err != nil {
 		return false, fmt.Errorf("cleanup history artifact: resolve target path: %w", err)
 	}
-	if absTarget == absRoot {
+	if pathutil.SamePath(absRoot, absTarget) {
 		return false, nil
 	}
-	if !pathWithinRoot(absRoot, absTarget) {
+	if !pathutil.IsWithinRoot(absRoot, absTarget) {
 		return false, nil
 	}
 	if recursive {
@@ -264,15 +265,4 @@ func removeIfWithinRoots(roots []string, target string, recursive bool) (bool, e
 		}
 	}
 	return false, nil
-}
-
-func pathWithinRoot(root string, target string) bool {
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return false
-	}
-	if rel == "." {
-		return true
-	}
-	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel)
 }
