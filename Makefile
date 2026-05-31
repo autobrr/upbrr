@@ -111,6 +111,11 @@ pathpolicy:
 
 precommit:
 	lefthook run pre-commit
+	git diff --check
+	$(MAKE) gofix-check-changed
+	$(MAKE) lint
+	$(MAKE) logpolicy
+	$(MAKE) test-frontend
 
 prepush:
 	lefthook run pre-push

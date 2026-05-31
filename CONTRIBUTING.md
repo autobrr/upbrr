@@ -58,7 +58,7 @@ Notes:
 
 ## Git hooks (Lefthook)
 
-All contributors should install the git hooks once. They run Prettier, ESLint, golangci-lint, the log-policy checker, the path-portability checker, and the repo's commit-message validator locally so issues surface before CI sees them.
+All contributors should install the git hooks once. They run Prettier, ESLint, golangci-lint formatting, the log-policy checker, the path-portability checker, and the repo's commit-message validator locally so issues surface before CI sees them.
 
 ```sh
 # Go-only contributors (no Node required):
@@ -71,7 +71,7 @@ cd gui/frontend && pnpm install && cd ../..
 lefthook install
 ```
 
-What runs when:
+What runs when Git invokes hooks:
 
 - `pre-commit` — on **staged files only**: `prettier --write` (gui/frontend), `eslint` (gui/frontend/src), `golangci-lint fmt` (Go), `go run ./cmd/logpolicy` (when `internal/**` Go files change), and `go run ./cmd/pathpolicy` (when Go files change). Formatters auto-re-stage their fixes.
 - `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the path-portability checker before golangci-lint. These checks run locally without CI. Disabled workflow templates under `.github/workflows/*.yml22` mirror the Go test/pathpolicy OS matrix for later CI re-enable.
@@ -80,9 +80,11 @@ What runs when:
 Makefile shortcuts:
 
 ```sh
-make precommit
-make prepush
+make precommit  # staged hook + stronger local validation
+make prepush    # Lefthook pre-push
 ```
+
+`make precommit` is intentionally stronger than the Git `pre-commit` hook. It runs `lefthook run pre-commit`, then `git diff --check`, `make gofix-check-changed`, `make lint`, `make logpolicy`, and `make test-frontend`. Use it before committing code changes when you want unstaged and full-repo lint/type/dead-code/unit/format issues caught locally.
 
 Bypass (use sparingly, e.g. for emergency fixes or WIP commits):
 
@@ -204,6 +206,7 @@ pnpm --dir gui/frontend run lint:style
 ```
 
 Alternatively, `make precommit` and `make prepush` run the configured Lefthook checks.
+`make precommit` also runs stronger local validation: whitespace/conflict-marker checks, changed-package Go fix drift, full Go lint/path policy, log policy, and frontend lint/dead-code/type/unit/format checks. For Go behavior changes, run focused `go test` commands or `make test-go` as well.
 
 ## Project conventions
 

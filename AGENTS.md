@@ -16,14 +16,14 @@ make test-frontend      # Frontend lint/dead-code/type/unit/format checks
 make lint               # Path policy + full Go lint
 make logpolicy          # Logging policy check
 make pathpolicy         # Path portability policy check
-make precommit          # Lefthook pre-commit
+make precommit          # Strong local validation before commit
 make prepush            # Lefthook pre-push
 make gofix-check-changed # Inspect Go fix drift on changed packages
 git diff --check        # Whitespace/conflict-marker check
 ```
 
 Use `CONTRIBUTING.md` for full command reference/platform details. Start narrow package/file checks; expand for shared behavior or release surfaces.
-Before committing code changes, run targeted tests plus any broader hook that can catch unstaged/full-repo issues. For Go changes touching lint-sensitive code, run `make prepush` or `make lint` before final commit; `make precommit` alone is not full validation.
+Before committing code changes, run targeted tests plus `make precommit`. It runs the staged Lefthook pre-commit hook, whitespace checks, changed-package Go fix drift, full Go lint/path policy, log policy, and frontend lint/dead-code/type/unit/format checks. For Go behavior changes, also run focused `go test` or `make test-go` as risk requires.
 
 ## Code Quality
 
