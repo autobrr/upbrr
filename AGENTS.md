@@ -23,6 +23,7 @@ git diff --check        # Whitespace/conflict-marker check
 ```
 
 Use `CONTRIBUTING.md` for full command reference/platform details. Start narrow package/file checks; expand for shared behavior or release surfaces.
+Before committing code changes, run targeted tests plus any broader hook that can catch unstaged/full-repo issues. For Go changes touching lint-sensitive code, run `make prepush` or `make lint` before final commit; `make precommit` alone is not full validation.
 
 ## Code Quality
 

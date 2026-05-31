@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -629,26 +631,15 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		}
 		groupKey = preparationGroupKey(groupKey, resolution.feedback.SelectedHost, resolution.usageScope)
 
-		entry, exists := grouped[groupKey]
-		switch {
-		case !exists:
-			entry = &api.PreparationDescription{
-				GroupKey:           groupKey,
-				Trackers:           []string{},
-				RawDescription:     strings.TrimSpace(assets.Description),
-				RawDescriptionHTML: description.Render(strings.TrimSpace(assets.Description)),
-				Description:        descriptionText,
-				DescriptionHTML:    description.Render(descriptionText),
-				HasOverride:        assets.Override,
-				ImageHost:          resolution.feedback,
-			}
-			grouped[groupKey] = entry
-			order = append(order, groupKey)
-		case entry.Description != descriptionText:
-			s.logger.Warnf("trackers: preparation group %s description mismatch (tracker=%s)", groupKey, tracker)
-		case entry.RawDescription != strings.TrimSpace(assets.Description):
-			s.logger.Warnf("trackers: preparation group %s raw description mismatch (tracker=%s)", groupKey, tracker)
+		candidate := api.PreparationDescription{
+			RawDescription:     strings.TrimSpace(assets.Description),
+			RawDescriptionHTML: description.Render(strings.TrimSpace(assets.Description)),
+			Description:        descriptionText,
+			DescriptionHTML:    description.Render(descriptionText),
+			HasOverride:        assets.Override,
+			ImageHost:          resolution.feedback,
 		}
+		entry := preparationDescriptionGroup(grouped, &order, groupKey, candidate)
 
 		entry.Trackers = append(entry.Trackers, tracker)
 		if entry.ImageHost.Status == "" {
@@ -985,6 +976,64 @@ func preparationGroupKey(group string, host string, usageScope string) string {
 		return trimmedGroup
 	}
 	return trimmedGroup + "|" + trimmedHost + "|" + trimmedScope
+}
+
+func preparationDescriptionGroup(grouped map[string]*api.PreparationDescription, order *[]string, groupKey string, candidate api.PreparationDescription) *api.PreparationDescription {
+	baseKey := strings.TrimSpace(groupKey)
+	if baseKey == "" {
+		baseKey = "description"
+	}
+
+	if entry, ok := grouped[baseKey]; ok && preparationDescriptionsMatch(*entry, candidate) {
+		return entry
+	}
+	if _, ok := grouped[baseKey]; !ok {
+		return addPreparationDescriptionGroup(grouped, order, baseKey, candidate)
+	}
+
+	for variant := 2; ; variant++ {
+		key := preparationVariantGroupKey(baseKey, variant)
+		if entry, ok := grouped[key]; ok && preparationDescriptionsMatch(*entry, candidate) {
+			return entry
+		}
+		if _, ok := grouped[key]; !ok {
+			return addPreparationDescriptionGroup(grouped, order, key, candidate)
+		}
+	}
+}
+
+func addPreparationDescriptionGroup(grouped map[string]*api.PreparationDescription, order *[]string, groupKey string, candidate api.PreparationDescription) *api.PreparationDescription {
+	entry := candidate
+	entry.GroupKey = groupKey
+	entry.Trackers = []string{}
+	grouped[groupKey] = &entry
+	*order = append(*order, groupKey)
+	return &entry
+}
+
+func preparationDescriptionsMatch(left api.PreparationDescription, right api.PreparationDescription) bool {
+	return left.RawDescription == right.RawDescription &&
+		left.RawDescriptionHTML == right.RawDescriptionHTML &&
+		left.Description == right.Description &&
+		left.DescriptionHTML == right.DescriptionHTML &&
+		left.HasOverride == right.HasOverride &&
+		reflect.DeepEqual(left.ImageHost, right.ImageHost)
+}
+
+func preparationVariantGroupKey(groupKey string, variant int) string {
+	trimmed := strings.TrimSpace(groupKey)
+	if variant <= 1 {
+		return trimmed
+	}
+	parts := strings.SplitN(trimmed, "|", 3)
+	if len(parts) == 3 {
+		host := strings.TrimSpace(parts[1])
+		if host == "" {
+			host = "variant"
+		}
+		return strings.TrimSpace(parts[0]) + "|" + host + "#" + strconv.Itoa(variant) + "|" + strings.TrimSpace(parts[2])
+	}
+	return trimmed + "|variant:" + strconv.Itoa(variant) + "|" + globalImageUsageScope
 }
 
 func normalizeTrackers(values []string) []string {

@@ -417,6 +417,34 @@ func TestResolveDescriptionAssetsLoadsStoredCompositeGroupOverride(t *testing.T)
 	}
 }
 
+func TestResolveDescriptionAssetsUsesTrackerMatchedVariantGroup(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DescriptionGroups: []api.DescriptionBuilderGroup{
+			{
+				GroupKey:       "unit3d",
+				Trackers:       []string{"AITHER"},
+				RawDescription: "aither raw description",
+			},
+			{
+				GroupKey:       "unit3d|variant:2|global",
+				Trackers:       []string{"HHD"},
+				RawDescription: "hhd raw description",
+			},
+		},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HHD", meta, nil, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "hhd raw description" {
+		t.Fatalf("expected HHD variant group description, got %q", assets.Description)
+	}
+	if !assets.Override {
+		t.Fatalf("expected variant group description to be treated as override")
+	}
+}
+
 func TestResolveDescriptionAssetsDoesNotFallbackToLegacyDefaultGroupOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "legacy default desc",

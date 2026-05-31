@@ -338,6 +338,134 @@ func TestBuildUploadDryRunNoBuilderMarkedUnsupported(t *testing.T) {
 	}
 }
 
+func TestBuildPreparationGroupsExactMatchingUnit3DDescriptions(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "unit3d", description: "same description"},
+		stubPreparationDefinition{name: "HHD", group: "unit3d", description: "same description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{}, []string{"AITHER", "HHD"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected exact matching unit3d descriptions to group, got %d groups", len(preview.Descriptions))
+	}
+	group := preview.Descriptions[0]
+	if group.GroupKey != "unit3d" {
+		t.Fatalf("expected canonical unit3d group key, got %q", group.GroupKey)
+	}
+	if got := strings.Join(group.Trackers, ","); got != "AITHER,HHD" {
+		t.Fatalf("expected both trackers in group, got %q", got)
+	}
+}
+
+func TestBuildPreparationSplitsSameGroupWhenDescriptionDiffers(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "unit3d", description: "aither description"},
+		stubPreparationDefinition{name: "HHD", group: "unit3d", description: "hhd description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{}, []string{"AITHER", "HHD"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 2 {
+		t.Fatalf("expected mismatched descriptions to split, got %d groups", len(preview.Descriptions))
+	}
+	if preview.Descriptions[0].GroupKey == preview.Descriptions[1].GroupKey {
+		t.Fatalf("expected unique group keys, got %q", preview.Descriptions[0].GroupKey)
+	}
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "AITHER" {
+		t.Fatalf("expected first group to contain AITHER, got %q", got)
+	}
+	if got := strings.Join(preview.Descriptions[1].Trackers, ","); got != "HHD" {
+		t.Fatalf("expected second group to contain HHD, got %q", got)
+	}
+}
+
+func TestBuildPreparationSplitsSameGroupWhenRawDescriptionDiffers(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "unit3d", description: "same final description"},
+		stubPreparationDefinition{name: "BLU", group: "unit3d", description: "same final description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "AITHER", Description: "aither raw description"},
+			{Tracker: "BLU", Description: "blu raw description"},
+		},
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, []string{"AITHER", "BLU"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 2 {
+		t.Fatalf("expected raw description mismatch to split, got %d groups", len(preview.Descriptions))
+	}
+	if preview.Descriptions[0].RawDescription != "aither raw description" {
+		t.Fatalf("expected AITHER raw description, got %q", preview.Descriptions[0].RawDescription)
+	}
+	if preview.Descriptions[1].RawDescription != "blu raw description" {
+		t.Fatalf("expected BLU raw description, got %q", preview.Descriptions[1].RawDescription)
+	}
+}
+
+func TestBuildPreparationSplitsSameGroupWhenImageHostFeedbackDiffers(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "shared", description: "same description"},
+		stubPreparationDefinition{name: "PTP", group: "shared", description: "same description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{}, []string{"AITHER", "PTP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 2 {
+		t.Fatalf("expected image-host feedback mismatch to split, got %d groups", len(preview.Descriptions))
+	}
+	if len(preview.Descriptions[0].ImageHost.AllowedHosts) != 0 {
+		t.Fatalf("expected AITHER image host policy to be empty, got %#v", preview.Descriptions[0].ImageHost)
+	}
+	if len(preview.Descriptions[1].ImageHost.AllowedHosts) == 0 {
+		t.Fatalf("expected PTP image host policy to be captured")
+	}
+}
+
 func TestApplyTrackerConfigOverrides(t *testing.T) {
 	t.Parallel()
 
