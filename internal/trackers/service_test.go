@@ -398,6 +398,29 @@ func TestBuildPreparationSplitsSameGroupWhenDescriptionDiffers(t *testing.T) {
 	if got := strings.Join(preview.Descriptions[1].Trackers, ","); got != "HHD" {
 		t.Fatalf("expected second group to contain HHD, got %q", got)
 	}
+	if preview.Descriptions[0].GroupKey != "unit3d|aither|tracker:AITHER" {
+		t.Fatalf("expected stable AITHER group key, got %q", preview.Descriptions[0].GroupKey)
+	}
+	if preview.Descriptions[1].GroupKey != "unit3d|hhd|tracker:HHD" {
+		t.Fatalf("expected stable HHD group key, got %q", preview.Descriptions[1].GroupKey)
+	}
+
+	reversed, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{}, []string{"HHD", "AITHER"})
+	if err != nil {
+		t.Fatalf("unexpected reversed error: %v", err)
+	}
+	groupKeyByTracker := make(map[string]string, len(reversed.Descriptions))
+	for _, group := range reversed.Descriptions {
+		for _, tracker := range group.Trackers {
+			groupKeyByTracker[tracker] = group.GroupKey
+		}
+	}
+	if groupKeyByTracker["AITHER"] != "unit3d|aither|tracker:AITHER" {
+		t.Fatalf("expected reversed AITHER stable group key, got %q", groupKeyByTracker["AITHER"])
+	}
+	if groupKeyByTracker["HHD"] != "unit3d|hhd|tracker:HHD" {
+		t.Fatalf("expected reversed HHD stable group key, got %q", groupKeyByTracker["HHD"])
+	}
 }
 
 func TestBuildPreparationSplitsSameGroupWhenRawDescriptionDiffers(t *testing.T) {

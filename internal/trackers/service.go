@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -665,6 +665,8 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		results = append(results, *entry)
 	}
 
+	results = stabilizePreparationDescriptionGroupKeys(results)
+
 	return api.PreparationPreview{SourcePath: meta.SourcePath, Descriptions: results}, nil
 }
 
@@ -1031,9 +1033,72 @@ func preparationVariantGroupKey(groupKey string, variant int) string {
 		if host == "" {
 			host = "variant"
 		}
-		return strings.TrimSpace(parts[0]) + "|" + host + "#" + strconv.Itoa(variant) + "|" + strings.TrimSpace(parts[2])
+		return fmt.Sprintf("%s|%s#%d|%s", strings.TrimSpace(parts[0]), host, variant, strings.TrimSpace(parts[2]))
 	}
-	return trimmed + "|variant:" + strconv.Itoa(variant) + "|" + globalImageUsageScope
+	return fmt.Sprintf("%s|variant:%d|%s", trimmed, variant, globalImageUsageScope)
+}
+
+func stabilizePreparationDescriptionGroupKeys(descriptions []api.PreparationDescription) []api.PreparationDescription {
+	if len(descriptions) < 2 {
+		return descriptions
+	}
+
+	countByBase := make(map[string]int, len(descriptions))
+	for _, entry := range descriptions {
+		baseGroup, _, _ := parsePreparationDescriptionGroupKey(entry.GroupKey)
+		if baseGroup == "" {
+			baseGroup = strings.ToLower(strings.TrimSpace(entry.GroupKey))
+		}
+		if baseGroup == "" {
+			continue
+		}
+		countByBase[baseGroup]++
+	}
+
+	for idx := range descriptions {
+		baseGroup, _, _ := parsePreparationDescriptionGroupKey(descriptions[idx].GroupKey)
+		if baseGroup == "" {
+			baseGroup = strings.ToLower(strings.TrimSpace(descriptions[idx].GroupKey))
+		}
+		if baseGroup == "" || countByBase[baseGroup] <= 1 {
+			continue
+		}
+		descriptions[idx].GroupKey = stablePreparationDescriptionGroupKey(baseGroup, descriptions[idx].Trackers)
+	}
+	return descriptions
+}
+
+func stablePreparationDescriptionGroupKey(baseGroup string, trackers []string) string {
+	base := strings.TrimSpace(baseGroup)
+	normalized := normalizedPreparationGroupTrackers(trackers)
+	if len(normalized) == 0 {
+		return preparationGroupKey(base, "variant", globalImageUsageScope)
+	}
+	if len(normalized) == 1 {
+		return preparationGroupKey(base, strings.ToLower(normalized[0]), trackerImageUsageScope(normalized[0]))
+	}
+	return preparationGroupKey(base, strings.ToLower(strings.Join(normalized, "+")), globalImageUsageScope)
+}
+
+func normalizedPreparationGroupTrackers(trackers []string) []string {
+	if len(trackers) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(trackers))
+	normalized := make([]string, 0, len(trackers))
+	for _, tracker := range trackers {
+		value := strings.ToUpper(strings.TrimSpace(tracker))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	sort.Strings(normalized)
+	return normalized
 }
 
 func normalizeTrackers(values []string) []string {
