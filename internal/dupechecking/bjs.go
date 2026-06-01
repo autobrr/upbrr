@@ -14,6 +14,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -32,8 +33,8 @@ func (h bjsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	if err != nil {
 		return nil, []string{noteSkip("missing valid BJS cookies")}, nil
 	}
-	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/torrents.php", url.Values{"searchstr": {imdb}}, nil, cookies)
-	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/torrents.php", url.Values{"searchstr": {imdb}}, cookies)
+	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("BJS search failed")}, nil
 	}
 	mainColumn := firstNode(root, func(node *xhtml.Node) bool {
@@ -118,7 +119,7 @@ func updateBJSContext(row *xhtml.Node, currentSeason *string, currentResolution 
 }
 
 func shouldProcessBJSRow(currentSeason string, currentResolution string, currentEpisode string, currentPack bool, meta api.PreparedMetadata) bool {
-	category := strings.ToUpper(strings.TrimSpace(firstNonEmpty(meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category)))
+	category := strings.ToUpper(metautil.FirstNonEmptyTrimmed(meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category))
 	switch category {
 	case "TV":
 		if meta.SeasonInt <= 0 || strings.TrimSpace(currentSeason) == "" {

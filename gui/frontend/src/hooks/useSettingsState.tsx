@@ -3,10 +3,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { Button } from "../components/ui/button";
+import { PillCheckbox } from "../components/ui/checkbox";
+import { Switch } from "../components/ui/switch";
 import type { ConfigMap, ConfigValue, FieldMeta, ImageHostPolicyMetadata } from "../types";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
+
+const settingsInputClass =
+  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+
+const settingsSelectClass = `${settingsInputClass} cursor-pointer`;
 
 type UseSettingsStateOptions = {
   activeTab: string;
@@ -504,6 +512,7 @@ const sensitiveKeyHints = [
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   MainSettings: {
     TrackerPassChecks: { key: "TrackerPassChecks", advanced: true },
+    InputHistoryLimit: { key: "InputHistoryLimit", label: "Input history limit", type: "number" },
     DBPath: { key: "DBPath", advanced: true },
   },
   Metadata: {
@@ -930,6 +939,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   useEffect(() => {
     if (
       (activeTab === "input" ||
+        activeTab === "tracker" ||
         activeTab === "settings" ||
         activeTab === "logging" ||
         activeTab === "upload" ||
@@ -983,6 +993,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         {value.map((entry, index) => (
           <div className="settings-array-row" key={`${path.join(".")}-${index}`}>
             <input
+              className={settingsInputClass}
               value={entry === null ? "" : String(entry)}
               onChange={(event) => {
                 const updated = [...value];
@@ -990,8 +1001,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                 updateConfigValue(path, updated);
               }}
             />
-            <button
-              className="ghost"
+            <Button
               type="button"
               onClick={() => {
                 const updated = [...value];
@@ -1000,16 +1010,12 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               }}
             >
               Remove
-            </button>
+            </Button>
           </div>
         ))}
-        <button
-          className="ghost"
-          type="button"
-          onClick={() => updateConfigValue(path, [...value, ""])}
-        >
+        <Button type="button" onClick={() => updateConfigValue(path, [...value, ""])}>
           Add item
-        </button>
+        </Button>
       </div>
     );
   };
@@ -1022,6 +1028,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         <label className="settings-field" key={path.join(".")}>
           <span>{displayLabel}</span>
           <select
+            className={settingsSelectClass}
             value={value === null ? "" : String(value ?? "")}
             onChange={(event) => updateConfigValue(path, event.target.value)}
           >
@@ -1036,15 +1043,14 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
     if (typeHint === "boolean" || typeof value === "boolean") {
       return (
-        <label className="settings-toggle" key={path.join(".")}>
+        <div className="settings-switch-row" key={path.join(".")}>
           <span>{displayLabel}</span>
-          <input
-            type="checkbox"
+          <Switch
+            aria-label={displayLabel}
             checked={Boolean(value)}
             onChange={(event) => updateConfigValue(path, event.target.checked)}
           />
-          <span className="settings-toggle__pill" />
-        </label>
+        </div>
       );
     }
     if (typeHint === "number" || typeof value === "number") {
@@ -1053,6 +1059,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         <label className="settings-field" key={path.join(".")}>
           <span>{displayLabel}</span>
           <input
+            className={settingsInputClass}
             type="number"
             value={numericValue}
             onChange={(event) => updateConfigValue(path, Number(event.target.value))}
@@ -1085,6 +1092,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       <label className="settings-field" key={path.join(".")}>
         <span>{displayLabel}</span>
         <input
+          className={settingsInputClass}
           value={value === null ? "" : String(value ?? "")}
           onChange={(event) => updateConfigValue(path, event.target.value)}
         />
@@ -1126,8 +1134,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
         <div className="settings-map__header">
           <p className="label">Entries</p>
-          <button
-            className="ghost"
+          <Button
             type="button"
             onClick={() => {
               const name = globalThis.prompt("New entry name");
@@ -1140,7 +1147,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             }}
           >
             Add entry
-          </button>
+          </Button>
         </div>
 
         <div className="settings-map__grid">
@@ -1151,8 +1158,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               <div className="settings-card" key={`${sectionKey}-${key}`}>
                 <div className="settings-card__header">
                   <p className="value">{key}</p>
-                  <button
-                    className="ghost"
+                  <Button
                     type="button"
                     onClick={() => {
                       if (options?.entriesKey) {
@@ -1163,7 +1169,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                     }}
                   >
                     Remove
-                  </button>
+                  </Button>
                 </div>
                 <div className="settings-grid">
                   {Object.entries(value)
@@ -1414,14 +1420,13 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                 <div className="tracker-selection-container">
                   <div className="tracker-pills">
                     {trackerNames.map((tracker) => (
-                      <label key={tracker} className="tracker-pill">
-                        <input
-                          type="checkbox"
-                          checked={normalizedDefaultTrackers.includes(tracker)}
-                          onChange={(event) => toggleDefaultTracker(tracker, event.target.checked)}
-                        />
-                        <span className="pill-label">{tracker}</span>
-                      </label>
+                      <PillCheckbox
+                        key={tracker}
+                        checked={normalizedDefaultTrackers.includes(tracker)}
+                        onCheckedChange={(checked) => toggleDefaultTracker(tracker, checked)}
+                      >
+                        {tracker}
+                      </PillCheckbox>
                     ))}
                   </div>
                 </div>
@@ -1434,6 +1439,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             <div style={{ paddingTop: "0.5rem" }}>
               <div className="settings-map__controls">
                 <select
+                  className={settingsSelectClass}
                   value={preferredTracker}
                   onChange={(event) => updatePreferredTracker(event.target.value)}
                 >
@@ -1444,14 +1450,13 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                     </option>
                   ))}
                 </select>
-                <button
-                  className="ghost"
+                <Button
                   type="button"
                   disabled={preferredTracker === ""}
                   onClick={() => updatePreferredTracker("")}
                 >
                   Clear
-                </button>
+                </Button>
               </div>
               <p className="muted" style={{ marginTop: "0.5rem" }}>
                 Moves the selected tracker to the top of tracker-data lookup and qBit tracker
@@ -1464,6 +1469,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             <p className="label">Entries</p>
             <div className="settings-map__controls">
               <select
+                className={settingsSelectClass}
                 value={trackerAddSelection}
                 onChange={(event) => setTrackerAddSelection(event.target.value)}
                 disabled={availableTrackers.length === 0}
@@ -1475,8 +1481,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                   </option>
                 ))}
               </select>
-              <button
-                className="ghost"
+              <Button
                 type="button"
                 disabled={!trackerAddSelection}
                 onClick={() => {
@@ -1492,7 +1497,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                 }}
               >
                 Add entry
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -1516,8 +1521,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                   >
                     <summary className="settings-card__summary">
                       <span className="settings-card__summary-name">{key}</span>
-                      <button
-                        className="ghost"
+                      <Button
                         type="button"
                         onClick={(event) => {
                           event.preventDefault();
@@ -1536,7 +1540,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                         }}
                       >
                         Remove
-                      </button>
+                      </Button>
                     </summary>
                     <div className="settings-card__body">
                       <div className="settings-grid">
@@ -1591,6 +1595,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               <label className="settings-field" key={field}>
                 <span>{`Host ${index + 1}`}</span>
                 <select
+                  className={settingsSelectClass}
                   value={String(imageCfg[field] ?? "")}
                   onChange={(event) =>
                     updateConfigValue(["ImageHosting", field], event.target.value)

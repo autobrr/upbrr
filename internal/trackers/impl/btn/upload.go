@@ -26,6 +26,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -68,11 +69,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, err
 	}
 
-	uploadCtx, err := newUploadContext(req)
+	uploadCtx, err := newUploadContext(ctx, req)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
-	if err := login(uploadCtx, req.TrackerConfig); err != nil {
+	if err := login(ctx, uploadCtx, req.TrackerConfig); err != nil {
 		return api.UploadSummary{}, err
 	}
 
@@ -83,7 +84,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 
 	body, contentType, err := commonhttp.BuildMultipartPayload(data, []commonhttp.FileField{{FieldName: "file_input", Path: torrentPath, FileName: "torrent.torrent"}})
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadCtx.uploadURL, bytes.NewReader(body))
@@ -111,9 +112,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if len(matches) < 2 {
 		failurePath, _ := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "BTN", "upload-failure", responseBody, ".html")
 		if failurePath != "" {
-			return api.UploadSummary{}, fmt.Errorf("trackers: BTN upload failed status=%d url=%s failure=%s", resp.StatusCode, finalURL, failurePath)
+			return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responseBody), failurePath)
 		}
-		return api.UploadSummary{}, fmt.Errorf("trackers: BTN upload failed status=%d url=%s", resp.StatusCode, finalURL)
+		return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responseBody)
 	}
 
 	groupID := strings.TrimSpace(matches[1])
@@ -156,7 +157,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		return api.TrackerDryRunEntry{}, err
 	}
 
-	uploadCtx, err := newUploadContext(req)
+	uploadCtx, err := newUploadContext(ctx, req)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -192,28 +193,28 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-func newUploadContext(req trackers.UploadRequest) (uploadContext, error) {
+func newUploadContext(ctx context.Context, req trackers.UploadRequest) (uploadContext, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return uploadContext{}, err
+		return uploadContext{}, fmt.Errorf("trackers: BTN create cookie jar: %w", err)
 	}
 	client := &http.Client{Timeout: 45 * time.Second, Jar: jar}
 	baseURL := strings.TrimRight(strings.TrimSpace(req.TrackerConfig.URL), "/")
 	if baseURL == "" {
 		baseURL = btnDefaultBaseURL
 	}
-	ctx := uploadContext{
+	uploadCtx := uploadContext{
 		baseURL:   baseURL,
 		uploadURL: baseURL + btnUploadPath,
 		apiToken:  config.ResolveBTNAPIToken(req.AppConfig),
 		apiURL:    resolveBTNAPIURL(req.TrackerConfig),
 		client:    client,
 	}
-	_ = loadCookies(client, req.AppConfig.MainSettings.DBPath, baseURL)
-	return ctx, nil
+	loadCookies(ctx, client, req.AppConfig.MainSettings.DBPath, baseURL)
+	return uploadCtx, nil
 }
 
-func login(uploadCtx uploadContext, cfg config.TrackerConfig) error {
+func login(ctx context.Context, uploadCtx uploadContext, cfg config.TrackerConfig) error {
 	values := url.Values{}
 	values.Set("username", strings.TrimSpace(cfg.Username))
 	values.Set("password", strings.TrimSpace(cfg.Password))
@@ -221,7 +222,7 @@ func login(uploadCtx uploadContext, cfg config.TrackerConfig) error {
 	if code, err := resolve2FACode(strings.TrimSpace(cfg.OTPURI)); err == nil && code != "" {
 		values.Set("codenumber", code)
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, strings.TrimRight(uploadCtx.baseURL, "/")+btnLoginPath, strings.NewReader(values.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(uploadCtx.baseURL, "/")+btnLoginPath, strings.NewReader(values.Encode()))
 	if err != nil {
 		return fmt.Errorf("trackers: BTN login request: %w", err)
 	}
@@ -248,7 +249,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadCtx.uploadURL, strings.NewReader(autofillPayload.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: BTN autofill request build: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -263,7 +264,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 	}
 	htmlPayload, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: BTN read autofill response: %w", err)
 	}
 	fields := extractAutofillFields(string(htmlPayload))
 	if !validateAutofill(fields) {
@@ -289,19 +290,19 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"submit":       "true",
 		"type":         resolveUploadType(req.Meta),
 		"scenename":    applyBTNNameMapping(resolveUploadName(req.Meta), bitrate, media),
-		"seriesid":     firstNonEmpty(fields["seriesid"]),
-		"artist":       firstNonEmpty(fields["artist"]),
-		"title":        firstNonEmpty(fields["title"]),
-		"actors":       firstNonEmpty(fields["actors"]),
+		"seriesid":     metautil.FirstNonEmptyTrimmed(fields["seriesid"]),
+		"artist":       metautil.FirstNonEmptyTrimmed(fields["artist"]),
+		"title":        metautil.FirstNonEmptyTrimmed(fields["title"]),
+		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
 		"origin":       resolveOrigin(resolveUploadName(req.Meta)),
-		"year":         firstNonEmpty(fields["year"]),
-		"tags":         firstNonEmpty(fields["tags"], "action"),
-		"image":        firstNonEmpty(fields["image"]),
+		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
+		"tags":         metautil.FirstNonEmptyTrimmed(fields["tags"], "action"),
+		"image":        metautil.FirstNonEmptyTrimmed(fields["image"]),
 		"album_desc":   buildAlbumDesc(req.Meta, fields),
 		"format":       format,
 		"bitrate":      bitrate,
 		"media":        media,
-		"resolution":   firstNonEmpty(fields["resolution"], "SD"),
+		"resolution":   metautil.FirstNonEmptyTrimmed(fields["resolution"], "SD"),
 		"release_desc": description,
 		"tvdb":         "autofilled",
 	}
@@ -360,10 +361,10 @@ func validateAutofill(fields map[string]string) bool {
 
 func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
-		return firstNonEmpty(fields["album_desc"])
+		return metautil.FirstNonEmptyTrimmed(fields["album_desc"])
 	}
-	overview := firstNonEmpty(strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
-	aired := firstNonEmpty(strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
+	overview := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
+	aired := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
 	season := meta.SeasonInt
 	episode := meta.EpisodeInt
 	if season <= 0 {
@@ -372,7 +373,7 @@ func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string 
 	if episode <= 0 {
 		episode = meta.Release.Episode
 	}
-	episodeTitle := firstNonEmpty(strings.TrimSpace(meta.EpisodeTitle), "TBA")
+	episodeTitle := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeTitle), "TBA")
 	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
 }
 
@@ -462,11 +463,11 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, baseURL st
 	downloadURL := strings.TrimRight(baseURL, "/") + "/torrents.php?action=download&id=" + url.QueryEscape(strings.TrimSpace(torrentID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN torrent download request build: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN torrent download request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -474,15 +475,18 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, baseURL st
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN read torrent response: %w", err)
 	}
 	if len(body) == 0 || body[0] != 'd' {
 		return errors.New("not a torrent payload")
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN create torrent output dir: %w", err)
 	}
-	return os.WriteFile(outputPath, body, 0o600)
+	if err := os.WriteFile(outputPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: BTN write torrent output: %w", err)
+	}
+	return nil
 }
 
 func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken string, req trackers.UploadRequest, groupID string, outputPath string) error {
@@ -503,15 +507,18 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		"method":  "getTorrentsSearch",
 		"params":  []any{apiToken, filter, 50},
 	}
-	encoded, _ := json.Marshal(payload)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API search encode: %w", err)
+	}
 	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(encoded))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API search request build: %w", err)
 	}
 	apiReq.Header.Set("Content-Type", "application/json")
 	apiResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(apiReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API search request: %w", err)
 	}
 	defer apiResp.Body.Close()
 	if apiResp.StatusCode < 200 || apiResp.StatusCode >= 300 {
@@ -523,12 +530,12 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(apiResp.Body).Decode(&response); err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN decode torrent search response: %w", err)
 	}
 	selectedID := ""
 	for id, torrentData := range response.Result.Torrents {
 		if strings.TrimSpace(groupID) != "" {
-			torrentGroup := firstNonEmpty(fmt.Sprint(torrentData["GroupID"]), fmt.Sprint(torrentData["groupId"]))
+			torrentGroup := metautil.FirstNonEmptyTrimmed(fmt.Sprint(torrentData["GroupID"]), fmt.Sprint(torrentData["groupId"]))
 			if strings.TrimSpace(torrentGroup) != strings.TrimSpace(groupID) {
 				continue
 			}
@@ -546,48 +553,53 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		"method":  "getTorrentById",
 		"params":  []any{apiToken, selectedID},
 	}
-	downloadEncoded, _ := json.Marshal(downloadPayload)
+	downloadEncoded, err := json.Marshal(downloadPayload)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API download encode: %w", err)
+	}
 	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(downloadEncoded))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API download request build: %w", err)
 	}
 	downloadReq.Header.Set("Content-Type", "application/json")
 	downloadResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(downloadReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API download request: %w", err)
 	}
 	defer downloadResp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(downloadResp.Body, 8*1024*1024))
 	if err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API read torrent response: %w", err)
 	}
 	if len(body) == 0 || body[0] != 'd' {
 		return errors.New("trackers: BTN API did not return torrent payload")
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return err
+		return fmt.Errorf("trackers: BTN API create torrent output dir: %w", err)
 	}
-	return os.WriteFile(outputPath, body, 0o600)
+	if err := os.WriteFile(outputPath, body, 0o600); err != nil {
+		return fmt.Errorf("trackers: BTN API write torrent output: %w", err)
+	}
+	return nil
 }
 
-func loadCookies(client *http.Client, dbPath string, baseURL string) error {
+func loadCookies(ctx context.Context, client *http.Client, dbPath string, baseURL string) {
 	if client == nil || client.Jar == nil {
-		return nil
+		return
 	}
-	values, err := cookies.LoadTrackerCookieMap(context.Background(), dbPath, "BTN")
+	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "BTN")
 	if err != nil {
-		return nil
+		return
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
-		return nil
+		return
 	}
 	jarCookies := make([]*http.Cookie, 0, len(values))
 	for name, value := range values {
 		jarCookies = append(jarCookies, &http.Cookie{Name: name, Value: value, Domain: parsed.Hostname(), Path: "/"})
 	}
 	client.Jar.SetCookies(parsed, jarCookies)
-	return nil
 }
 
 func resolve2FACode(otpURI string) (string, error) {
@@ -597,7 +609,7 @@ func resolve2FACode(otpURI string) (string, error) {
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BTN parse otp_uri: %w", err)
 	}
 	secret := strings.TrimSpace(parsed.Query().Get("secret"))
 	if secret == "" {
@@ -612,9 +624,13 @@ func resolve2FACode(otpURI string) (string, error) {
 	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
 	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BTN decode otp secret: %w", err)
 	}
-	counter := uint64(time.Now().Unix() / int64(period))
+	counterTime := time.Now().Unix() / int64(period)
+	if counterTime < 0 {
+		return "", errors.New("totp counter before unix epoch")
+	}
+	counter := uint64(counterTime)
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, counter)
 	mac := hmac.New(sha1.New, secretBytes)
@@ -641,15 +657,6 @@ func stripHTML(value string) string {
 	cleaned := replacer.Replace(value)
 	cleaned = regexp.MustCompile(`(?s)<[^>]*>`).ReplaceAllString(cleaned, "")
 	return strings.TrimSpace(cleaned)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func mapContainer(meta api.PreparedMetadata, fields map[string]string) string {
@@ -706,7 +713,7 @@ func mapSource(meta api.PreparedMetadata, fields map[string]string) string {
 	source := strings.ToLower(strings.TrimSpace(meta.Source))
 	typeName := strings.ToUpper(strings.TrimSpace(meta.Type))
 	resolution := strings.ToUpper(strings.TrimSpace(meta.Release.Resolution))
-	mapped := ""
+	var mapped string
 	switch {
 	case strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD"):
 		mapped = "DVD9"

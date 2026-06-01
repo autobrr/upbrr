@@ -111,7 +111,7 @@ func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers
 	for completed < total {
 		select {
 		case <-ctx.Done():
-			return api.DupeCheckSummary{}, ctx.Err()
+			return api.DupeCheckSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		case result := <-results:
 			completed++
 			summary.Results = append(summary.Results, result)

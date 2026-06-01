@@ -5,6 +5,7 @@ package asc
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
@@ -15,7 +16,7 @@ import (
 func LoadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, string, error) {
 	loaded, err := cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, sourceFlag, "cliente.amigos-share.club")
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: %w", err)
 	}
 	return loaded, "", nil
 }

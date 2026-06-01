@@ -421,12 +421,3 @@ func padASC2(value int) string {
 	}
 	return strconv.Itoa(value)
 }
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}

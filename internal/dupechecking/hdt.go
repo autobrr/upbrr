@@ -13,6 +13,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -40,11 +41,11 @@ func (h hdtHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		params.Set("search", query)
 		params.Set("options", "2")
 	} else {
-		params.Set("search", firstNonEmpty(meta.Release.Title, meta.ReleaseName))
+		params.Set("search", metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName))
 		params.Set("options", "3")
 	}
-	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/torrents.php", params, nil, cookies)
-	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/torrents.php", params, cookies)
+	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("HDT search failed")}, nil
 	}
 	rows := findNodes(root, func(node *xhtml.Node) bool {

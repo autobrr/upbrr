@@ -19,6 +19,10 @@ func (unsupportedNativePicker) BrowseFile() (string, error) {
 	return "", errNativeBrowseWindowsOnly
 }
 
+func (unsupportedNativePicker) BrowseImageFiles() ([]string, error) {
+	return nil, errNativeBrowseWindowsOnly
+}
+
 func (unsupportedNativePicker) BrowseFolder() (string, error) {
 	return "", errNativeBrowseWindowsOnly
 }

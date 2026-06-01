@@ -19,7 +19,7 @@ var episodePattern = regexp.MustCompile(`(?i)[e](\d{1,3})`)
 var dailyEpisodePattern = regexp.MustCompile(`(?i)\b((?:19|20)\d{2})[.\-_/\s](\d{1,2})[.\-_/\s](\d{1,2})\b`)
 var otwEpisodePattern = regexp.MustCompile(`(?i)e\d{2}`)
 
-func FilterDupes(dupes []api.DupeEntry, meta api.PreparedMetadata, tracker string, cfg config.Config, logger api.Logger) ([]api.DupeEntry, api.DupeMatch) {
+func FilterDupes(dupes []api.DupeEntry, meta api.PreparedMetadata, tracker string, _ config.Config, _ api.Logger) ([]api.DupeEntry, api.DupeMatch) {
 	match := api.DupeMatch{}
 	if len(dupes) == 0 {
 		return nil, match

@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	completedJobRetention   = 24 * time.Hour
-	maxCompletedDupeJobs    = 200
-	maxCompletedUploadJobs  = 200
-	seedPreparedMetaTimeout = 30 * time.Second
+	completedJobRetention      = 24 * time.Hour
+	maxCompletedDupeJobs       = 200
+	maxCompletedUploadJobs     = 200
+	seedPreparedMetaTimeout    = 30 * time.Second
+	trackerUploadProgressEvent = "upload:progress"
 )
 
 type DupeCheckTrackerState struct {
@@ -68,24 +69,37 @@ type dupeCheckJob struct {
 }
 
 type TrackerUploadTrackerState struct {
-	Tracker       string `json:"tracker"`
-	Status        string `json:"status"`
-	Message       string `json:"message"`
-	UploadedCount int    `json:"uploadedCount"`
-	StartedAt     string `json:"startedAt"`
-	FinishedAt    string `json:"finishedAt"`
+	Tracker         string  `json:"tracker"`
+	Status          string  `json:"status"`
+	Task            string  `json:"task"`
+	TaskStatus      string  `json:"taskStatus"`
+	Message         string  `json:"message"`
+	CompletedPieces int     `json:"completedPieces"`
+	TotalPieces     int     `json:"totalPieces"`
+	Percent         int     `json:"percent"`
+	HashRateMiB     float64 `json:"hashRateMiB"`
+	UploadedCount   int     `json:"uploadedCount"`
+	StartedAt       string  `json:"startedAt"`
+	FinishedAt      string  `json:"finishedAt"`
 }
 
 type TrackerUploadSnapshot struct {
-	JobID          string                      `json:"jobID"`
-	SourcePath     string                      `json:"sourcePath"`
-	Status         string                      `json:"status"`
-	Trackers       []TrackerUploadTrackerState `json:"trackers"`
-	FailedTrackers []string                    `json:"failedTrackers"`
-	UploadedCount  int                         `json:"uploadedCount"`
-	Error          string                      `json:"error"`
-	StartedAt      string                      `json:"startedAt"`
-	FinishedAt     string                      `json:"finishedAt"`
+	JobID                  string                      `json:"jobID"`
+	SourcePath             string                      `json:"sourcePath"`
+	Status                 string                      `json:"status"`
+	CurrentTask            string                      `json:"currentTask"`
+	CurrentTaskStatus      string                      `json:"currentTaskStatus"`
+	CurrentMessage         string                      `json:"currentMessage"`
+	CurrentCompletedPieces int                         `json:"currentCompletedPieces"`
+	CurrentTotalPieces     int                         `json:"currentTotalPieces"`
+	CurrentPercent         int                         `json:"currentPercent"`
+	CurrentHashRateMiB     float64                     `json:"currentHashRateMiB"`
+	Trackers               []TrackerUploadTrackerState `json:"trackers"`
+	FailedTrackers         []string                    `json:"failedTrackers"`
+	UploadedCount          int                         `json:"uploadedCount"`
+	Error                  string                      `json:"error"`
+	StartedAt              string                      `json:"startedAt"`
+	FinishedAt             string                      `json:"finishedAt"`
 }
 
 type trackerUploadJob struct {
@@ -103,16 +117,28 @@ type trackerUploadJob struct {
 	descriptionGroups    []api.DescriptionBuilderGroup
 	trackers             []string
 	ignoreDupesFor       []string
-	ignoreRuleFailures   bool
 	states               map[string]TrackerUploadTrackerState
 	failedTrackers       []string
 	uploadedCount        int
 	status               string
+	currentTask          string
+	currentTaskStatus    string
+	currentMessage       string
+	currentCompleted     int
+	currentTotal         int
+	currentPercent       int
+	currentHashRateMiB   float64
+	lastSnapshotEmit     time.Time
+	snapshotThrottle     time.Duration
 	errorMessage         string
 	startedAt            time.Time
 	finishedAt           time.Time
 	cancel               context.CancelFunc
 }
+
+const trackerUploadSnapshotThrottle = 200 * time.Millisecond
+
+const trackerUploadHashRateEmitDeltaMiB = 1.0
 
 func normalizeTrackerList(trackers []string) []string {
 	seen := make(map[string]struct{})
@@ -255,19 +281,15 @@ func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 	})
 
 	req := api.Request{
-		Paths:    []string{job.sourcePath},
-		Mode:     api.ModeGUI,
-		Trackers: job.trackers,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Paths:                []string{job.sourcePath},
+		Mode:                 api.ModeGUI,
+		Trackers:             job.trackers,
+		Options:              b.baseUploadOptions(),
 		ExternalIDOverrides:  job.overrides,
 		ReleaseNameOverrides: job.nameOverrides,
 	}
 
-	summary, err := b.core.CheckDupes(progressCtx, req)
+	summary, err := b.currentCore().CheckDupes(progressCtx, req)
 	job.mu.Lock()
 	job.finishedAt = time.Now().UTC()
 	job.cancel = nil
@@ -369,7 +391,7 @@ func (j *trackerUploadJob) closeResources() {
 	})
 }
 
-func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (string, error) {
+func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (string, error) {
 	if err := b.requireCore(); err != nil {
 		return "", err
 	}
@@ -400,10 +422,10 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	}
 	seedCtx, cancel := context.WithTimeout(context.Background(), seedPreparedMetaTimeout)
 	defer cancel()
-	if err := guishared.SeedRunCorePreparedMeta(seedCtx, b.core, runCore, seedReq); err != nil {
+	if err := guishared.SeedRunCorePreparedMeta(seedCtx, b.currentCore(), runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
-		return "", err
+		return "", fmt.Errorf("web: %w", err)
 	}
 
 	jobID := randomJobID()
@@ -420,10 +442,10 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 		descriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
 		trackers:             resolvedTrackers,
 		ignoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
-		ignoreRuleFailures:   ignoreRuleFailures,
 		states:               make(map[string]TrackerUploadTrackerState, len(resolvedTrackers)),
 		status:               "queued",
 		startedAt:            time.Now().UTC(),
+		snapshotThrottle:     trackerUploadSnapshotThrottle,
 	}
 	for _, tracker := range resolvedTrackers {
 		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
@@ -470,7 +492,6 @@ func (b *Backend) RetryFailedTrackerUpload(jobID string) (string, error) {
 	nameOverrides := job.nameOverrides
 	questionnaireAnswers := cloneQuestionnaireAnswers(job.questionnaireAnswers)
 	descriptionGroups := api.CloneDescriptionBuilderGroups(job.descriptionGroups)
-	ignoreRuleFailures := job.ignoreRuleFailures
 	ignoreDupesFor := append([]string(nil), job.ignoreDupesFor...)
 	runOptions := job.runOptions
 	job.mu.Unlock()
@@ -478,7 +499,7 @@ func (b *Backend) RetryFailedTrackerUpload(jobID string) (string, error) {
 	if len(failedTrackers) == 0 {
 		return "", errors.New("no failed trackers to retry")
 	}
-	return b.StartTrackerUpload(sessionID, sourcePath, overrides, nameOverrides, failedTrackers, ignoreRuleFailures, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.RunLogLevel)
+	return b.StartTrackerUpload(sessionID, sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.RunLogLevel)
 }
 
 func (b *Backend) GetTrackerUploadSnapshot(jobID string) (TrackerUploadSnapshot, error) {
@@ -510,7 +531,10 @@ func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob
 		job.mu.Unlock()
 		b.emitTrackerUploadSnapshot(job)
 
-		result, err := b.runSingleTrackerUpload(ctx, job, tracker)
+		progressCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+			b.applyTrackerUploadProgress(job, update)
+		})
+		result, err := b.runSingleTrackerUpload(progressCtx, job, tracker)
 		if err != nil {
 			if ctx.Err() != nil {
 				break
@@ -559,6 +583,73 @@ func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob
 	b.scheduleTrackerUploadJobCleanup(job)
 }
 
+func (b *Backend) applyTrackerUploadProgress(job *trackerUploadJob, update api.UploadProgressUpdate) {
+	if b == nil || job == nil {
+		return
+	}
+	tracker := strings.TrimSpace(update.Tracker)
+	if tracker == "" && len(job.trackers) == 1 {
+		tracker = job.trackers[0]
+	}
+
+	job.mu.Lock()
+	now := time.Now()
+	previousStatus := job.currentTaskStatus
+	previousPercent := job.currentPercent
+	previousHashRate := job.currentHashRateMiB
+	job.currentTask = strings.TrimSpace(update.Task)
+	job.currentTaskStatus = strings.TrimSpace(update.Status)
+	job.currentMessage = strings.TrimSpace(update.Message)
+	job.currentCompleted = update.CompletedPieces
+	job.currentTotal = update.TotalPieces
+	job.currentPercent = update.Percent
+	job.currentHashRateMiB = update.HashRateMiB
+	throttle := job.snapshotThrottle
+	if throttle <= 0 {
+		throttle = trackerUploadSnapshotThrottle
+	}
+	shouldEmit := job.lastSnapshotEmit.IsZero() ||
+		now.Sub(job.lastSnapshotEmit) >= throttle ||
+		previousPercent != job.currentPercent ||
+		previousStatus != job.currentTaskStatus ||
+		absFloat64(previousHashRate-job.currentHashRateMiB) >= trackerUploadHashRateEmitDeltaMiB
+	if tracker != "" {
+		state := job.states[tracker]
+		state.Tracker = tracker
+		state.Task = job.currentTask
+		state.TaskStatus = job.currentTaskStatus
+		state.CompletedPieces = update.CompletedPieces
+		state.TotalPieces = update.TotalPieces
+		state.Percent = update.Percent
+		state.HashRateMiB = update.HashRateMiB
+		if job.currentMessage != "" {
+			state.Message = job.currentMessage
+		}
+		if state.Status == "queued" && strings.EqualFold(job.currentTaskStatus, "running") {
+			state.Status = "running"
+		}
+		if state.StartedAt == "" && state.Status == "running" {
+			state.StartedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		job.states[tracker] = state
+	}
+	if shouldEmit {
+		job.lastSnapshotEmit = now
+	}
+	job.mu.Unlock()
+
+	if shouldEmit {
+		b.emitTrackerUploadSnapshot(job)
+	}
+}
+
+func absFloat64(value float64) float64 {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
 func (b *Backend) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob, tracker string) (api.Result, error) {
 	req := api.Request{
 		Paths:                       []string{job.sourcePath},
@@ -566,13 +657,13 @@ func (b *Backend) runSingleTrackerUpload(ctx context.Context, job *trackerUpload
 		DescriptionGroups:           api.CloneDescriptionBuilderGroups(job.descriptionGroups),
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
-		IgnoreTrackerRuleFailures:   job.ignoreRuleFailures,
-		Options:                     buildRunUploadOptions(b.cfg, job.runOptions),
+		IgnoreTrackerRuleFailures:   false,
+		Options:                     buildRunUploadOptions(b.currentConfig(), job.runOptions),
 		ExternalIDOverrides:         job.overrides,
 		ReleaseNameOverrides:        job.nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
 	}
-	return job.core.RunUploadPrepared(ctx, req)
+	return wrapWebResult(job.core.RunUploadPrepared(ctx, req))
 }
 
 func upsertDupeSummaryResult(summary *api.DupeCheckSummary, result api.DupeCheckResult) {
@@ -764,15 +855,22 @@ func buildTrackerUploadSnapshot(job *trackerUploadJob) TrackerUploadSnapshot {
 		trackers = append(trackers, job.states[tracker])
 	}
 	return TrackerUploadSnapshot{
-		JobID:          job.id,
-		SourcePath:     job.sourcePath,
-		Status:         job.status,
-		Trackers:       trackers,
-		FailedTrackers: append([]string(nil), job.failedTrackers...),
-		UploadedCount:  job.uploadedCount,
-		Error:          job.errorMessage,
-		StartedAt:      job.startedAt.Format(time.RFC3339),
-		FinishedAt:     formatTime(job.finishedAt),
+		JobID:                  job.id,
+		SourcePath:             job.sourcePath,
+		Status:                 job.status,
+		CurrentTask:            job.currentTask,
+		CurrentTaskStatus:      job.currentTaskStatus,
+		CurrentMessage:         job.currentMessage,
+		CurrentCompletedPieces: job.currentCompleted,
+		CurrentTotalPieces:     job.currentTotal,
+		CurrentPercent:         job.currentPercent,
+		CurrentHashRateMiB:     job.currentHashRateMiB,
+		Trackers:               trackers,
+		FailedTrackers:         append([]string(nil), job.failedTrackers...),
+		UploadedCount:          job.uploadedCount,
+		Error:                  job.errorMessage,
+		StartedAt:              job.startedAt.Format(time.RFC3339),
+		FinishedAt:             formatTime(job.finishedAt),
 	}
 }
 

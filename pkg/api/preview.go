@@ -21,6 +21,7 @@ type MetadataPreview struct {
 	ExternalIDCandidates ExternalIDCandidates
 	ExternalIDInfo       []ExternalIDInfo
 	ExternalPreview      []ExternalPreview
+	Bluray               *BlurayMetadata
 	TrackerData          []TrackerPreview
 }
 

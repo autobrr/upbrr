@@ -4,6 +4,7 @@
 package webserver
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,17 +22,25 @@ import (
 )
 
 type stubNativePicker struct {
-	filePath    string
-	folderPath  string
-	fileErr     error
-	folderErr   error
-	fileCalls   int
-	folderCalls int
+	filePath        string
+	imageFilePaths  []string
+	folderPath      string
+	fileErr         error
+	imageFilesErr   error
+	folderErr       error
+	fileCalls       int
+	imageFilesCalls int
+	folderCalls     int
 }
 
 func (s *stubNativePicker) BrowseFile() (string, error) {
 	s.fileCalls++
 	return s.filePath, s.fileErr
+}
+
+func (s *stubNativePicker) BrowseImageFiles() ([]string, error) {
+	s.imageFilesCalls++
+	return s.imageFilePaths, s.imageFilesErr
 }
 
 func (s *stubNativePicker) BrowseFolder() (string, error) {
@@ -119,12 +128,12 @@ func setTestBrowsePolicy(t *testing.T, server *Server, dbPath string, root strin
 }
 
 func newBrowseRequest(path string, host string, remoteAddr string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(`{}`))
 	req.Host = host
 	req.RemoteAddr = remoteAddr
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://"+host)
-	req.Header.Set("X-CSRF-Token", "test-csrf")
+	req.Header.Set("X-Csrf-Token", "test-csrf")
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
 	return req
 }
@@ -164,7 +173,7 @@ func TestHandleAuthStatusIncludesNativeBrowseCapability(t *testing.T) {
 		picker: &stubNativePicker{},
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
 	req.Host = "127.0.0.1:8080"
 	req.RemoteAddr = "127.0.0.1:5050"
 
@@ -207,6 +216,27 @@ func TestBrowseFileRouteAllowsLocalhostSessions(t *testing.T) {
 	}
 }
 
+func TestBrowseImageFilesRouteAllowsLocalhostSessions(t *testing.T) {
+	picker := &stubNativePicker{imageFilePaths: []string{`C:\Menus\menu1.png`, `C:\Menus\menu2.webp`}}
+	server := testServerWithPicker(picker)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	recorder := httptest.NewRecorder()
+	req := newBrowseRequest("/api/app/BrowseImageFiles", "127.0.0.1:8080", "127.0.0.1:5050")
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse image files route returned %d", recorder.Code)
+	}
+	if picker.imageFilesCalls != 1 {
+		t.Fatalf("expected image picker to be called once, got %d", picker.imageFilesCalls)
+	}
+	if got := strings.TrimSpace(recorder.Body.String()); !strings.Contains(got, `C:\\Menus\\menu1.png`) || !strings.Contains(got, `C:\\Menus\\menu2.webp`) {
+		t.Fatalf("expected response to include selected image paths, got %q", got)
+	}
+}
+
 func TestBrowseFileRouteRejectsRemoteSessions(t *testing.T) {
 	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
 	server := testServerWithPicker(picker)
@@ -228,6 +258,73 @@ func TestBrowseFileRouteRejectsRemoteSessions(t *testing.T) {
 	}
 }
 
+func TestDevelopmentNoAuthAppRouteAllowsLoopbackWithCSRF(t *testing.T) {
+	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
+	server := &Server{
+		picker:            picker,
+		generalLimiter:    newFixedWindowLimiter(100, time.Minute),
+		developmentNoAuth: true,
+		developmentSession: session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: "dev-csrf",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		},
+	}
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5050"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("X-Csrf-Token", "dev-csrf")
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse file route returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if picker.fileCalls != 1 {
+		t.Fatalf("expected picker to be called once, got %d", picker.fileCalls)
+	}
+}
+
+func TestDevelopmentNoAuthAppRouteRejectsMissingCSRF(t *testing.T) {
+	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
+	server := &Server{
+		picker:            picker,
+		generalLimiter:    newFixedWindowLimiter(100, time.Minute),
+		developmentNoAuth: true,
+		developmentSession: session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: "dev-csrf",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		},
+	}
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:8080"
+	req.RemoteAddr = "127.0.0.1:5050"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://127.0.0.1:8080")
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden status, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if picker.fileCalls != 0 {
+		t.Fatalf("expected picker not to be called, got %d calls", picker.fileCalls)
+	}
+}
+
 func TestUIStateRoutePersistsSharedState(t *testing.T) {
 	repo, dbPath := openBrowseTestRepo(t)
 	server := testServerWithBackend(t, repo, config.Config{
@@ -245,7 +342,7 @@ func TestUIStateRoutePersistsSharedState(t *testing.T) {
 		t.Fatalf("save ui state returned %d: %s", recorder.Code, recorder.Body.String())
 	}
 
-	get := httptest.NewRequest(http.MethodGet, "/api/app/UIState?id=state-a", nil)
+	get := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState?id=state-a", nil)
 	get.Host = "example.com:8080"
 	get.RemoteAddr = "192.168.1.25:5050"
 	get.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
@@ -270,7 +367,7 @@ func TestUIStateRoutePersistsSharedState(t *testing.T) {
 		t.Fatalf("save second ui state returned %d: %s", recorder.Code, recorder.Body.String())
 	}
 
-	list := httptest.NewRequest(http.MethodGet, "/api/app/UIState", nil)
+	list := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState", nil)
 	list.Host = "example.com:8080"
 	list.RemoteAddr = "192.168.1.25:5050"
 	list.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
@@ -312,7 +409,7 @@ func TestUIStateRouteRejectsUnauthenticatedAndBadCSRF(t *testing.T) {
 		{
 			name: "unauthenticated",
 			request: func() *http.Request {
-				return httptest.NewRequest(http.MethodGet, "/api/app/UIState", nil)
+				return httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState", nil)
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},
@@ -320,7 +417,7 @@ func TestUIStateRouteRejectsUnauthenticatedAndBadCSRF(t *testing.T) {
 			name: "bad csrf",
 			request: func() *http.Request {
 				req := newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
-				req.Header.Del("X-CSRF-Token")
+				req.Header.Del("X-Csrf-Token")
 				return req
 			},
 			expectedStatus: http.StatusForbidden,

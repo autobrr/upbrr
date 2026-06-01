@@ -23,10 +23,11 @@ Install the following on your machine:
 - [Go](https://golang.org/dl/) — see [go.mod](./go.mod) for the required version
 - [Node.js](https://nodejs.org) (20 LTS or newer)
 - [pnpm](https://pnpm.io/installation) (10 or newer — version is pinned in `gui/frontend/package.json` via `packageManager`)
+- [GNU Make](https://www.gnu.org/software/make/) — top-level shortcuts for builds, checks, formatting, and hooks
 - [golangci-lint](https://golangci-lint.run/) — used by hooks and CI
 - [Lefthook](https://github.com/evilmartians/lefthook) — git hooks runner (see [Git hooks](#git-hooks-lefthook))
-- [Wails CLI](https://wails.io/) `v2.10.1` for desktop builds
-  - Install with `go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1`
+- [Wails CLI](https://wails.io/) `v2.12.0` for desktop builds
+  - Build scripts invoke `go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0`
 
 On Linux, Wails builds also need GTK/WebKit development packages. The full list is in [`.github/workflows/build-binaries.yml`](./.github/workflows/build-binaries.yml) — key packages are `build-essential`, `libgtk-3-dev`, `libwebkit2gtk-4.0-dev` (or `4.1-dev`), `libglib2.0-dev`, and `pkg-config`.
 
@@ -40,8 +41,8 @@ Every script, hook, and VS Code task runs on macOS, Linux, and Windows using nat
 
 Notes:
 
-- CLI binaries are named `upbrr` on Unix and `upbrr.exe` on Windows. The VS Code `build-cli` task picks the right suffix automatically.
-- Use `scripts/build.sh` on macOS/Linux and `scripts/build.ps1` on Windows — they produce the same artifacts.
+- CLI binaries are named `upbrr` on Unix and `upbrr.exe` on Windows. The Makefile picks the right suffix automatically for `make backend`.
+- Prefer `make build` for full local builds. It dispatches to `scripts/build.sh` on macOS/Linux and `scripts/build.ps1` on Windows; use the scripts directly only when debugging script behavior.
 - Line endings are normalised via `.gitattributes` and `.editorconfig`.
 
 ## How to contribute
@@ -57,7 +58,7 @@ Notes:
 
 ## Git hooks (Lefthook)
 
-All contributors should install the git hooks once. They run Prettier, ESLint, golangci-lint, the log-policy checker, and the repo's commit-message validator locally so issues surface before CI sees them.
+All contributors should install the git hooks once. They run Prettier, ESLint, golangci-lint formatting, the log-policy checker, the path-portability checker, and the repo's commit-message validator locally so issues surface before CI sees them.
 
 ```sh
 # Go-only contributors (no Node required):
@@ -70,11 +71,20 @@ cd gui/frontend && pnpm install && cd ../..
 lefthook install
 ```
 
-What runs when:
+What runs when Git invokes hooks:
 
-- `pre-commit` — on **staged files only**: `prettier --write` (gui/frontend), `eslint` (gui/frontend/src), `golangci-lint fmt` (Go), `go run ./cmd/logpolicy` (when `internal/**` Go files change). Formatters auto-re-stage their fixes.
-- `pre-push` — full-project: `pnpm run typecheck` and `golangci-lint run ./...`. Mirrors CI.
+- `pre-commit` — on **staged files only**: `prettier --write` (gui/frontend), `eslint` (gui/frontend/src), `golangci-lint fmt` (Go), `go run ./cmd/logpolicy` (when `internal/**` Go files change), and `go run ./cmd/pathpolicy` (when Go files change). Formatters auto-re-stage their fixes.
+- `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the path-portability checker before golangci-lint. These checks run locally without CI. Disabled workflow templates under `.github/workflows/*.yml22` mirror the Go test/pathpolicy OS matrix for later CI re-enable.
 - `commit-msg` — `go run ./cmd/commitmsgcheck` enforces [Conventional Commits](https://www.conventionalcommits.org/) without requiring Node.js or `pnpm install`.
+
+Makefile shortcuts:
+
+```sh
+make precommit  # staged hook + stronger local validation
+make prepush    # Lefthook pre-push
+```
+
+`make precommit` is intentionally stronger than the Git `pre-commit` hook. It runs `lefthook run pre-commit`, then `git diff --check`, `make gofix-check-changed`, `make lint`, `make logpolicy`, and `make test-frontend`. Use it before committing code changes when you want unstaged and full-repo lint/type/dead-code/unit/format issues caught locally.
 
 Bypass (use sparingly, e.g. for emergency fixes or WIP commits):
 
@@ -118,13 +128,24 @@ git clone https://github.com/<your-user>/upbrr && cd upbrr
 ### Frontend
 
 ```sh
-cd gui/frontend
-pnpm install
-pnpm run dev          # Vite dev server
-pnpm run lint         # ESLint
-pnpm run typecheck    # tsc --noEmit
-pnpm run format:check # Prettier
+pnpm --dir gui/frontend install --frozen-lockfile
+make dev-frontend      # Vite dev server
+make test-frontend     # ESLint, dead-code, typecheck, Vitest, Prettier
+
+# CSS changes:
+pnpm --dir gui/frontend run lint:style
 ```
+
+For embedded web visual checks, test the embedded build rather than the Vite-only server. Rebuild the frontend, sync it into embedded assets, rebuild the CLI, then run the auth-disabled embedded server on the main port:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1
+.\dist\upbrr.exe serve --dev-no-auth
+```
+
+Use `http://localhost:7480` for Playwright or browser automation. Avoid `5173` for embedded parity checks; stale embedded assets can otherwise hide or misrepresent frontend changes.
+
+Stop the embedded server after inspection so later runs do not reuse an old process.
 
 ### Backend
 
@@ -134,6 +155,9 @@ go run ./cmd/upbrr
 
 # Run the embedded web server:
 go run ./cmd/upbrr serve
+
+# Run the embedded web server without web auth for local frontend development:
+go run ./cmd/upbrr serve --dev-no-auth
 
 # Launch the Wails desktop GUI:
 go run ./cmd/upbrr --gui
@@ -146,47 +170,43 @@ go run ./gui
 Full build (CLI + Wails GUI + embedded frontend):
 
 ```sh
-# macOS/Linux:
-./scripts/build.sh
-
-# Windows (PowerShell):
-.\scripts\build.ps1
+make build
 ```
 
-Both scripts install frontend deps, build the React frontend, sync it into `internal/guiapp/assets`, then build the CLI into `dist/` and the Wails GUI into `gui/build/bin/`.
+`make build` runs the platform build script, installs frontend deps, builds the React frontend, syncs it into `internal/guiapp/assets`, then builds the CLI into `dist/` and the Wails GUI into `gui/build/bin/`.
 
 Individual pieces:
 
 ```sh
-# CLI only:
-go build -o dist/upbrr ./cmd/upbrr        # Unix
-go build -o dist/upbrr.exe ./cmd/upbrr    # Windows
-
-# Frontend only:
-pnpm --dir gui/frontend run build
-
-# Wails GUI only (after the frontend build):
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
-cd gui && wails build
+make backend          # CLI only
+make frontend         # Typecheck + frontend bundle
+make frontend-bundle  # Vite bundle only
+make gui              # Wails GUI with current embedded assets
 ```
 
 ## Tests and checks
 
-Run the same checks CI runs:
+Run the local checks before pushing:
 
 ```sh
-# Go
-go test -v -timeout 20m ./...
-golangci-lint run --timeout=5m
-go run ./cmd/logpolicy
-
-# Frontend (from gui/frontend/)
-pnpm run lint
-pnpm run typecheck
-pnpm run format:check
+make test-go            # Go tests with race detector
+make test-frontend      # Frontend checks including Vitest
+make lint               # Path policy, then golangci-lint
+make logpolicy
+make pathpolicy
 ```
 
-Alternatively, `lefthook run pre-commit --all-files` and `lefthook run pre-push` will execute the same set via the hooks.
+Useful focused checks:
+
+```sh
+go test -race -v -timeout 20m <package>
+make gofix-check-changed
+make gofix-changed
+pnpm --dir gui/frontend run lint:style
+```
+
+Alternatively, `make precommit` and `make prepush` run the configured Lefthook checks.
+`make precommit` also runs stronger local validation: whitespace/conflict-marker checks, changed-package Go fix drift, full Go lint/path policy, log policy, and frontend lint/dead-code/type/unit/format checks. For Go behavior changes, run focused `go test` commands or `make test-go` as well.
 
 ## Project conventions
 
@@ -195,6 +215,22 @@ Alternatively, `lefthook run pre-commit --all-files` and `lefthook run pre-push`
 - Tracker-specific code lives primarily under `internal/trackers/impl`. Shared tracker behaviour goes in `internal/trackers`, not in the impls.
 - `pkg/api` holds request/response types shared across surfaces.
 - The repo currently includes generated and built assets in a few locations; review changes carefully and avoid committing build output by accident.
+
+### Path portability
+
+upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go code or tests unless the value is explicitly a torrent-internal path, URL path, or remote API payload path.
+
+- Use `filepath.Join`, `filepath.Clean`, `filepath.Rel`, `filepath.Separator`, and related `filepath` APIs for local filesystem paths.
+- Use `path` only for slash-delimited data formats, such as torrent-internal file names, URLs, or API payloads defined to use `/`.
+- At boundaries between torrent/API paths and local filesystem paths, normalize deliberately: validate slash paths first, then convert with `filepath.FromSlash`.
+- Security/path traversal checks must reject both POSIX and Windows absolute or escaping forms on every OS: leading `/`, leading `\`, drive-letter paths, UNC paths, and `..` segments.
+- Use `internal/pathutil.IsWithinRoot` and `internal/pathutil.SamePath` for local root containment and path equality. Do not add ad-hoc `filepath.Rel` plus string-prefix guards; `pathpolicy` rejects those helper names outside `internal/pathutil`.
+- Tests should not assert raw `"/foo/"` substrings against local filesystem paths. Use `filepath.ToSlash(path)` for cross-platform assertions, or build expected paths with `filepath.Join`.
+- Tests should not pass hardcoded OS-rooted literals such as `C:\...`, `\\server\share`, or `/tmp/...` into `filepath` calls. Use `t.TempDir` or existing path variables.
+- Do not build local filesystem paths with string concatenation, `fmt.Sprintf`, or `strings.Join(..., "/")`. Use `filepath.Join`.
+- Use `path.Base`, `path.Ext`, and related `path` APIs for URL/API paths. Use `filepath.Base`, `filepath.Ext`, and related `filepath` APIs for local paths. Legit stdlib `path` imports need import-local `//nolint:depguard // <slash-data reason>`.
+
+`make pathpolicy` runs the repo-local AST checker for hardcoded OS-rooted literals in `filepath` calls, string-built local paths, wrong `path`/`filepath` package use, slash-data filesystem calls, slash assertions without `filepath.ToSlash`, and ad-hoc local path guard helpers outside `internal/pathutil`. Rare intentional checker exceptions need `//pathpolicy:allow <reason>` on the same or previous line. `make lint`, pre-commit, and pre-push run it automatically.
 
 ## AI agent instructions
 

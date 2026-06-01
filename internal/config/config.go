@@ -34,12 +34,37 @@ type Config struct {
 	TorrentClients     map[string]TorrentClientConfig `yaml:"torrent_clients"`
 }
 
+const DefaultInputHistoryLimit = 20
+
 type MainSettingsConfig struct {
 	UpdateNotification  bool   `yaml:"update_notification"`
 	VerboseNotification bool   `yaml:"verbose_notification"`
 	TMDBAPI             string `yaml:"tmdb_api"`
 	TrackerPassChecks   int    `yaml:"tracker_pass_checks"`
+	InputHistoryLimit   int    `yaml:"input_history_limit"`
 	DBPath              string `yaml:"db_path"`
+}
+
+type mainSettingsConfigAlias MainSettingsConfig
+
+func (c *MainSettingsConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw mainSettingsConfigAlias
+	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	if err := value.Decode(&raw); err != nil {
+		return fmt.Errorf("config: decode main settings yaml: %w", err)
+	}
+	*c = MainSettingsConfig(raw)
+	return nil
+}
+
+func (c *MainSettingsConfig) UnmarshalJSON(data []byte) error {
+	var raw mainSettingsConfigAlias
+	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("config: decode main settings json: %w", err)
+	}
+	*c = MainSettingsConfig(raw)
+	return nil
 }
 
 type ImageHostingConfig struct {
@@ -179,8 +204,8 @@ type TrackersConfig struct {
 type TrackerConfig struct {
 	LinkDirName         string                 `yaml:"link_dir_name" json:"LinkDirName"`
 	APIKey              string                 `yaml:"api_key" json:"APIKey"`
-	ApiUser             string                 `yaml:"ApiUser" json:"ApiUser"`
-	ApiKey              string                 `yaml:"ApiKey" json:"ApiKey"`
+	PTPAPIUser          string                 `yaml:"ApiUser" json:"ApiUser"`
+	PTPAPIKey           string                 `yaml:"ApiKey" json:"ApiKey"`
 	Username            string                 `yaml:"username" json:"Username"`
 	Password            string                 `yaml:"password" json:"Password"`
 	Passkey             string                 `yaml:"passkey" json:"Passkey"`
@@ -361,13 +386,15 @@ func mergeUnknownKeys(target map[string]interface{}, unknown map[string]interfac
 func trackerConfigToJSONMap(cfg TrackerConfig) (map[string]interface{}, error) {
 	alias := trackerConfigAlias(cfg)
 	alias.Unknown = nil
+	// Export paths encrypt known secrets first unless explicitly called for plaintext export.
+	//nolint:gosec // TrackerConfig intentionally serializes API key fields for config export.
 	payload, err := json.Marshal(alias)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config: marshal tracker config to json map: %w", err)
 	}
 	result := map[string]interface{}{}
 	if err := json.Unmarshal(payload, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config: unmarshal tracker config json map: %w", err)
 	}
 	return result, nil
 }
@@ -375,13 +402,15 @@ func trackerConfigToJSONMap(cfg TrackerConfig) (map[string]interface{}, error) {
 func trackerConfigToYAMLMap(cfg TrackerConfig) (map[string]interface{}, error) {
 	alias := trackerConfigAlias(cfg)
 	alias.Unknown = nil
+	// Export paths encrypt known secrets first unless explicitly called for plaintext export.
+	//nolint:gosec // TrackerConfig intentionally serializes API key fields for config export.
 	payload, err := yaml.Marshal(alias)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config: marshal tracker config to yaml map: %w", err)
 	}
 	result := map[string]interface{}{}
 	if err := yaml.Unmarshal(payload, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("config: unmarshal tracker config yaml map: %w", err)
 	}
 	return result, nil
 }
@@ -451,11 +480,11 @@ func extractTrackerUnknown(raw map[string]interface{}) map[string]interface{} {
 func decodeTrackerConfigFromJSON(raw map[string]interface{}) (TrackerConfig, error) {
 	payload, err := json.Marshal(raw)
 	if err != nil {
-		return TrackerConfig{}, err
+		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from json: %w", err)
 	}
 	var cfg TrackerConfig
 	if err := json.Unmarshal(payload, &cfg); err != nil {
-		return TrackerConfig{}, err
+		return TrackerConfig{}, fmt.Errorf("config: unmarshal tracker config from json: %w", err)
 	}
 	cfg.Unknown = extractTrackerUnknown(raw)
 	return cfg, nil
@@ -464,11 +493,11 @@ func decodeTrackerConfigFromJSON(raw map[string]interface{}) (TrackerConfig, err
 func decodeTrackerConfigFromYAML(raw map[string]interface{}) (TrackerConfig, error) {
 	payload, err := yaml.Marshal(raw)
 	if err != nil {
-		return TrackerConfig{}, err
+		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from yaml: %w", err)
 	}
 	var cfg TrackerConfig
 	if err := yaml.Unmarshal(payload, &cfg); err != nil {
-		return TrackerConfig{}, err
+		return TrackerConfig{}, fmt.Errorf("config: unmarshal tracker config from yaml: %w", err)
 	}
 	cfg.Unknown = extractTrackerUnknown(raw)
 	return cfg, nil
@@ -498,7 +527,11 @@ func (t TrackersConfig) MarshalJSON() ([]byte, error) {
 	}
 	preferredTracker := strings.TrimSpace(t.PreferredTracker)
 
-	return json.Marshal(trackersJSON{DefaultTrackers: defaultTrackers, PreferredTracker: preferredTracker, Trackers: trackers})
+	payload, err := json.Marshal(trackersJSON{DefaultTrackers: defaultTrackers, PreferredTracker: preferredTracker, Trackers: trackers})
+	if err != nil {
+		return nil, fmt.Errorf("config: marshal trackers config: %w", err)
+	}
+	return payload, nil
 }
 
 func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
@@ -508,7 +541,7 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
-		return err
+		return fmt.Errorf("config: unmarshal trackers config root: %w", err)
 	}
 
 	t.DefaultTrackers = CSVList{}
@@ -543,7 +576,7 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 	var rawTrackers map[string]json.RawMessage
 	if raw, ok := root["Trackers"]; ok {
 		if err := json.Unmarshal(raw, &rawTrackers); err != nil {
-			return err
+			return fmt.Errorf("config: unmarshal trackers map: %w", err)
 		}
 	} else {
 		rawTrackers = make(map[string]json.RawMessage)
@@ -599,7 +632,7 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 
 	var root map[string]interface{}
 	if err := value.Decode(&root); err != nil {
-		return err
+		return fmt.Errorf("config: decode trackers yaml: %w", err)
 	}
 
 	t.DefaultTrackers = parseDefaultTrackersValue(root["default_trackers"])
@@ -661,6 +694,9 @@ type TorrentClientConfig struct {
 func (c Config) Validate() error {
 	if c.MainSettings.TMDBAPI == "" {
 		return errors.New("config: main_settings.tmdb_api is required")
+	}
+	if c.MainSettings.InputHistoryLimit < 0 {
+		return errors.New("config: main_settings.input_history_limit must be zero or greater")
 	}
 	if c.ScreenshotHandling.Screens <= 0 {
 		return errors.New("config: screenshot_handling.screens must be greater than zero")

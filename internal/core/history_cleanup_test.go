@@ -22,6 +22,7 @@ type cleanupRepo struct {
 	screenshots  []api.Screenshot
 	uploaded     []api.UploadedImageLink
 	finals       []api.ScreenshotFinalSelection
+	slots        []api.ScreenshotSlot
 	stored       api.FileMetadata
 	getByPathErr error
 	purgedPaths  []string
@@ -48,6 +49,10 @@ func (r *cleanupRepo) ListUploadedImagesByPath(context.Context, string) ([]api.U
 
 func (r *cleanupRepo) ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error) {
 	return r.finals, nil
+}
+
+func (r *cleanupRepo) ListScreenshotSlotsByPath(context.Context, string) ([]api.ScreenshotSlot, error) {
+	return r.slots, nil
 }
 
 func (r *cleanupRepo) ListStoredReleasePaths(context.Context) ([]string, error) {
@@ -82,7 +87,9 @@ func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
 	tmpFile := filepath.Join(tmpRoot, filepath.Base(sourcePath), "shot-01.png")
 	cacheFile := filepath.Join(cacheRoot, "uploaded-01.png")
 	nfoFile := filepath.Join(nfoRoot, "release.nfo")
-	for _, target := range []string{tmpFile, cacheFile, nfoFile} {
+	slotFile := filepath.Join(tmpRoot, filepath.Base(sourcePath), "slot-01.png")
+	slotVariantFile := filepath.Join(tmpRoot, filepath.Base(sourcePath), "slot-variant-01.png")
+	for _, target := range []string{tmpFile, cacheFile, nfoFile, slotFile, slotVariantFile} {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", target, err)
 		}
@@ -95,6 +102,11 @@ func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
 		screenshots: []api.Screenshot{{SourcePath: sourcePath, ImagePath: tmpFile}},
 		uploaded:    []api.UploadedImageLink{{SourcePath: sourcePath, ImagePath: cacheFile, Host: "imgbox"}},
 		finals:      []api.ScreenshotFinalSelection{{ImagePath: nfoFile}},
+		slots: []api.ScreenshotSlot{{
+			SourcePath: sourcePath,
+			ImagePath:  slotFile,
+			Variants:   []api.ScreenshotSlotVariant{{ImagePath: slotVariantFile}},
+		}},
 	}
 	coreSvc := &Core{
 		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
@@ -108,7 +120,7 @@ func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
 	if repo.purgeCalls != 1 || len(repo.purgedPaths) != 1 || repo.purgedPaths[0] != sourcePath {
 		t.Fatalf("unexpected purge calls: %#v", repo.purgedPaths)
 	}
-	for _, target := range []string{tmpFile, cacheFile, nfoFile} {
+	for _, target := range []string{tmpFile, cacheFile, nfoFile, slotFile, slotVariantFile} {
 		if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("expected %s removed, got err=%v", target, err)
 		}
@@ -147,5 +159,33 @@ func TestCoreDeleteAllHistoryReleasesPurgesEveryStoredPath(t *testing.T) {
 	}
 	if repo.purgedPaths[0] != repo.storedPaths[0] || repo.purgedPaths[1] != repo.storedPaths[1] {
 		t.Fatalf("unexpected purged paths: %#v", repo.purgedPaths)
+	}
+}
+
+func TestRemoveIfWithinRootKeepsAliasedRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sentinel := filepath.Join(root, "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	alias := filepath.Join(root, "self")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlink unavailable on this host: %v", err)
+	}
+
+	removed, err := removeIfWithinRoot(root, alias, true)
+	if err != nil {
+		t.Fatalf("remove aliased root: %v", err)
+	}
+	if removed {
+		t.Fatalf("expected aliased root to be kept")
+	}
+	if _, err := os.Lstat(alias); err != nil {
+		t.Fatalf("expected alias to remain: %v", err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("expected root contents to remain: %v", err)
 	}
 }

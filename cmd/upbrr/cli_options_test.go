@@ -75,6 +75,19 @@ func TestParseCLIOptionsCompatibilityFlags(t *testing.T) {
 	}
 }
 
+func TestParseServeOptionsDevNoAuth(t *testing.T) {
+	opts, visited, err := parseServeOptions([]string{"--dev-no-auth"})
+	if err != nil {
+		t.Fatalf("parse serve options: %v", err)
+	}
+	if !opts.DevNoAuth {
+		t.Fatalf("expected dev-no-auth to parse, got %#v", opts)
+	}
+	if !visited["dev-no-auth"] {
+		t.Fatalf("expected dev-no-auth visited flag, got %#v", visited)
+	}
+}
+
 func TestParseCLIOptionsExportConfigPlaintext(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{"--export-config", "out.yaml", "--export-config-plaintext"})
 	if err != nil {

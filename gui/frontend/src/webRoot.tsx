@@ -4,6 +4,7 @@
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import App from "./app";
+import { Checkbox } from "./components/ui/checkbox";
 import {
   browserAuth,
   initializeBrowserBridge,
@@ -120,14 +121,14 @@ export default function WebRoot() {
                   placeholder="D:\\Media, E:\\Downloads"
                 />
               </label>
-              <label className="web-auth-card__checkbox">
-                <input
-                  type="checkbox"
+              <div className="web-auth-card__checkbox">
+                <Checkbox
+                  id="allow-unrestricted-browse"
                   checked={allowUnrestrictedBrowse}
-                  onChange={(event) => setAllowUnrestrictedBrowse(event.target.checked)}
+                  onCheckedChange={setAllowUnrestrictedBrowse}
                 />
-                <span>Allow unrestricted host browsing</span>
-              </label>
+                <label htmlFor="allow-unrestricted-browse">Allow unrestricted host browsing</label>
+              </div>
               {error ? <p className="web-auth-card__error">{error}</p> : null}
               <button
                 type="submit"
@@ -143,10 +144,11 @@ export default function WebRoot() {
 
     return (
       <div className="web-shell">
-        <div className="web-shell__bar">
-          <span>Signed in as {status.username}</span>
+        <div className="auth-bar">
+          <span className="auth-username">{status.username}</span>
           <button
             type="button"
+            className="auth-logout"
             onClick={async () => {
               await browserAuth.logout();
               updateBrowserCSRFToken("");
@@ -213,14 +215,10 @@ export default function WebRoot() {
               autoComplete={status.needsSetup ? "new-password" : "current-password"}
             />
           </label>
-          <label className="web-auth-card__checkbox">
-            <input
-              type="checkbox"
-              checked={retainLogin}
-              onChange={(event) => setRetainLogin(event.target.checked)}
-            />
-            <span>Keep me signed in on this device</span>
-          </label>
+          <div className="web-auth-card__checkbox">
+            <Checkbox id="retain-login" checked={retainLogin} onCheckedChange={setRetainLogin} />
+            <label htmlFor="retain-login">Keep me signed in on this device</label>
+          </div>
           {error ? <p className="web-auth-card__error">{error}</p> : null}
           <button type="submit" disabled={submitting || !username.trim() || !password.trim()}>
             {submitting ? "Working..." : status.needsSetup ? "Create Account" : "Sign In"}

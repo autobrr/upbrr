@@ -29,12 +29,12 @@ func TestEditionFromMetaMultiPlaylistAggregatesIMDbMatches(t *testing.T) {
 		},
 	}
 
-	edition, repack, hybrid := editionFromMeta(meta)
+	edition, repack := editionFromMeta(meta)
 	if edition != "2in1 Theatrical / Extended" {
 		t.Fatalf("expected aggregated edition, got %q", edition)
 	}
-	if repack != "" || hybrid {
-		t.Fatalf("expected no repack/hybrid, got %q %t", repack, hybrid)
+	if repack != "" {
+		t.Fatalf("expected no repack, got %q", repack)
 	}
 }
 
@@ -54,7 +54,7 @@ func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
 		},
 	}
 
-	edition, _, _ := editionFromMeta(meta)
+	edition, _ := editionFromMeta(meta)
 	if edition != "Director's Cut" {
 		t.Fatalf("expected deduped edition, got %q", edition)
 	}
@@ -79,7 +79,7 @@ func TestEditionFromMetaMultiPlaylistFallsBackWhenNoIMDbMatch(t *testing.T) {
 		},
 	}
 
-	edition, _, _ := editionFromMeta(meta)
+	edition, _ := editionFromMeta(meta)
 	if edition != "Collector's Edition" {
 		t.Fatalf("expected fallback edition, got %q", edition)
 	}

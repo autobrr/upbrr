@@ -202,12 +202,12 @@ func (h rtfHandler) cacheRTFAPIKey(cfg config.TrackerConfig, token string) {
 			continue
 		}
 		current.APIKey = token
-		current.ApiKey = token
+		current.PTPAPIKey = token
 		h.cfg.Trackers.Trackers[key] = current
 		return
 	}
 	cfg.APIKey = token
-	cfg.ApiKey = token
+	cfg.PTPAPIKey = token
 	h.cfg.Trackers.Trackers["RTF"] = cfg
 }
 
@@ -215,7 +215,7 @@ func rtfAPIKey(cfg config.TrackerConfig) string {
 	if key := strings.TrimSpace(cfg.APIKey); key != "" {
 		return key
 	}
-	return strings.TrimSpace(cfg.ApiKey)
+	return strings.TrimSpace(cfg.PTPAPIKey)
 }
 
 func rtfHasCredentials(cfg config.TrackerConfig) bool {

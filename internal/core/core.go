@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
+	"path" //nolint:depguard // Builds URL paths, not local filesystem paths.
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -29,6 +29,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata"
+	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/description"
@@ -58,9 +59,19 @@ type dupeCacheEntry struct {
 }
 
 func New(deps api.CoreDependencies) (*Core, error) {
-	ctx := deps.Context
+	return newCore(context.Background(), deps)
+}
+
+func NewWithContext(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("core: context is required")
+	}
+	return newCore(ctx, deps)
+}
+
+func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
+	if ctx == nil {
+		return nil, errors.New("core: context is required")
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -84,20 +95,20 @@ func New(deps api.CoreDependencies) (*Core, error) {
 	}
 
 	if err := cfg.Validate(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: %w", err)
 	}
 
 	repo := deps.Repository
 	ownsRepo := false
 	if repo == nil {
 		logger.Debugf("core: opening repository")
-		sqliteRepo, err := db.OpenWithLogger(cfg.MainSettings.DBPath, logger)
+		sqliteRepo, err := db.OpenWithLoggerContext(ctx, cfg.MainSettings.DBPath, logger)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("core: %w", err)
 		}
 		if err := sqliteRepo.MigrateContext(ctx); err != nil {
 			_ = sqliteRepo.Close()
-			return nil, err
+			return nil, fmt.Errorf("core: %w", err)
 		}
 
 		repo = sqliteRepo
@@ -188,7 +199,7 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.Result{}, err
+		return api.Result{}, fmt.Errorf("core: %w", err)
 	}
 
 	uniquePaths := make([]string, 0, len(normalizedPaths))
@@ -211,7 +222,7 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 	for _, path := range uniquePaths {
 		select {
 		case <-ctx.Done():
-			return api.Result{}, ctx.Err()
+			return api.Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -227,6 +238,12 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 		}
 		if !ok {
 			return api.Result{}, fmt.Errorf("core: upload-only requires prepared metadata for %s", path)
+		}
+
+		if len(singleReq.ScreenshotOverrides.MenuPaths) > 0 {
+			if err := c.ImportMenuImages(ctx, singleReq, singleReq.ScreenshotOverrides.MenuPaths); err != nil {
+				return api.Result{}, fmt.Errorf("core: import menu images failed: %w", err)
+			}
 		}
 
 		uploaded, err := c.executePreparedUpload(ctx, singleReq, meta)
@@ -252,9 +269,10 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 	meta.DescriptionGroups = descriptionGroups
 
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "torrent", "running", "Preparing torrent")
 	torrent, err := c.services.Torrents.Create(ctx, meta)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("core: %w", err)
 	}
 	c.logger.Debugf("core: torrent ready for %s", meta.SourcePath)
 	meta.TorrentPath = torrent.Path
@@ -262,7 +280,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	if c.repo != nil && torrent.InfoHash != "" {
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return 0, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if err := c.repo.Save(ctx, db.FileMetadata{Path: meta.SourcePath, InfoHash: torrent.InfoHash, UpdatedAt: time.Now().UTC()}); err != nil {
@@ -272,14 +290,18 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 
 	if req.Options.DryRun || req.Options.Debug {
 		c.logger.Debugf("core: dry-run or debug enabled, skipping injection/upload")
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "upload", "completed", "Dry run complete")
 		return 0, nil
 	}
 
 	c.logger.Debugf("core: uploading to trackers for %s", meta.SourcePath)
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "running", "Uploading to tracker")
 	summary, err := c.services.Trackers.Upload(ctx, meta)
 	if err != nil {
-		return 0, err
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "failed", "Tracker upload failed")
+		return 0, fmt.Errorf("core: %w", err)
 	}
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "completed", "Tracker upload complete")
 
 	if !meta.Options.NoSeed {
 		if len(summary.UploadedTorrents) == 0 {
@@ -292,13 +314,16 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 					continue
 				}
 				c.logger.Debugf("core: injecting tracker torrent for %s from %s", meta.SourcePath, uploaded.Tracker)
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "running", "Injecting torrent into client")
 				if err := c.services.Clients.Inject(ctx, meta, api.TorrentResult{
 					Path:    torrentPath,
 					URL:     torrentURL,
 					Tracker: uploaded.Tracker,
 				}); err != nil {
-					return 0, err
+					emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "failed", "Client injection failed")
+					return 0, fmt.Errorf("core: %w", err)
 				}
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "completed", "Client injection complete")
 			}
 		}
 	}
@@ -308,6 +333,27 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 
 	return summary.Uploaded, nil
+}
+
+func emitPreparedUploadProgress(ctx context.Context, req api.Request, sourcePath string, task string, status string, message string) {
+	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
+		SourcePath: sourcePath,
+		Tracker:    firstRequestedTracker(req.Trackers),
+		Task:       task,
+		Status:     status,
+		Message:    message,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func firstRequestedTracker(trackers []string) string {
+	for _, tracker := range trackers {
+		name := strings.TrimSpace(tracker)
+		if name != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSummary, error) {
@@ -321,7 +367,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.DupeCheckSummary{}, err
+		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
 
 	uniquePaths := make([]string, 0, len(normalizedPaths))
@@ -346,7 +392,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, removeTrackers, c.logger)
 			summary, err := c.services.Dupes.Check(ctx, cached, resolvedTrackers)
 			if err != nil {
-				return api.DupeCheckSummary{}, err
+				return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 			}
 			summary = appendPathedDupeResults(summary, matchedTrackers)
 			applyDupeSummaryToPreparedMeta(&cached, summary)
@@ -372,7 +418,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 
 	meta, err := c.services.Metadata.Prepare(ctx, singleReq)
 	if err != nil {
-		return api.DupeCheckSummary{}, err
+		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
 
 	storedApplied, err := c.applyStoredTrackerData(ctx, &meta)
@@ -387,26 +433,24 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 
 		searchResult, searchErr := c.services.Clients.SearchPathedTorrents(ctx, meta)
 		if searchErr != nil {
-			return searchErr
+			return fmt.Errorf("core: %w", searchErr)
 		}
 
+		if applyTrackerData {
+			resetPreparedClientData(&meta, singleReq)
+		}
 		meta.FoundTrackerMatch = meta.FoundTrackerMatch || searchResult.FoundTrackerMatch
 		meta.MatchedTrackers = mergeTrackerRemovals(meta.MatchedTrackers, searchResult.MatchedTrackers)
 		meta.TrackersRemove = mergeTrackerRemovals(meta.TrackersRemove, searchResult.MatchedTrackers)
+		markTrackerDataMatches(&meta, searchResult.MatchedTrackers)
 
 		if !applyTrackerData {
 			return nil
 		}
 
-		if searchResult.InfoHash == "" && len(searchResult.TorrentComments) == 0 {
+		if !applyPathedTorrentData(&meta, searchResult) {
 			return nil
 		}
-		meta.InfoHash = searchResult.InfoHash
-		meta.ClientTorrentPath = searchResult.TorrentPath
-		meta.TrackerIDs = searchResult.TrackerIDs
-		meta.TorrentComments = searchResult.TorrentComments
-		meta.PieceSizeConstraint = searchResult.PieceSizeConstraint
-		meta.FoundPreferredPiece = searchResult.FoundPreferredPiece
 		return nil
 	}
 
@@ -417,18 +461,18 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 			return api.DupeCheckSummary{}, err
 		}
 	case storedApplied:
-		c.logger.Debugf("core: running pathed search for tracker presence with stored tracker data present for %s", meta.SourcePath)
-		if err := runPathedSearch(false); err != nil {
+		c.logger.Debugf("core: running pathed search with stored tracker data present for %s", meta.SourcePath)
+		if err := runPathedSearch(true); err != nil {
 			return api.DupeCheckSummary{}, err
 		}
 	case meta.StoredDataFresh:
 		if meta.InfoHash == "" && meta.StoredInfoHash != "" {
 			meta.InfoHash = meta.StoredInfoHash
-			c.logger.Debugf("core: using stored infohash before pathed tracker-presence search for %s", meta.SourcePath)
+			c.logger.Debugf("core: using stored infohash before pathed search for %s", meta.SourcePath)
 		} else {
-			c.logger.Debugf("core: running pathed search for tracker presence with fresh stored metadata snapshot for %s", meta.SourcePath)
+			c.logger.Debugf("core: running pathed search with fresh stored metadata snapshot for %s", meta.SourcePath)
 		}
-		if err := runPathedSearch(false); err != nil {
+		if err := runPathedSearch(true); err != nil {
 			return api.DupeCheckSummary{}, err
 		}
 	default:
@@ -446,23 +490,23 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 
 	meta, err = c.services.Metadata.EnrichTrackerData(ctx, meta)
 	if err != nil {
-		return api.DupeCheckSummary{}, err
+		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
 	meta, err = c.services.Metadata.ApplyMediaInfoIDs(ctx, meta)
 	if err != nil {
-		return api.DupeCheckSummary{}, err
+		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
 	meta, err = c.services.Metadata.ApplyArrData(ctx, meta)
 	if err != nil {
-		return api.DupeCheckSummary{}, err
+		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
 	meta, err = c.services.Metadata.ResolveExternalIDs(ctx, meta)
 	if err != nil {
-		return api.DupeCheckSummary{}, err
+		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
 	meta, err = c.services.Metadata.ApplyMediaDetails(ctx, meta)
 	if err != nil {
-		return api.DupeCheckSummary{}, err
+		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
 
 	c.storeRefreshedDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
@@ -472,7 +516,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 	resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
 	summary, err := c.services.Dupes.Check(ctx, meta, resolvedTrackers)
 	if err != nil {
-		return api.DupeCheckSummary{}, err
+		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
 	summary = appendPathedDupeResults(summary, matchedTrackers)
 	applyDupeSummaryToPreparedMeta(&meta, summary)
@@ -490,7 +534,7 @@ func (c *Core) FetchScreenshotPlan(ctx context.Context, req api.Request) (api.Sc
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.ScreenshotPlan{}, err
+		return api.ScreenshotPlan{}, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -509,7 +553,7 @@ func (c *Core) FetchScreenshotPlan(ctx context.Context, req api.Request) (api.Sc
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.ScreenshotPlan{}, err
 		} else if ok {
-			return c.services.Screenshots.Plan(ctx, cached, cached.Options.Screens)
+			return wrapCoreResult(c.services.Screenshots.Plan(ctx, cached, cached.Options.Screens))
 		}
 		return api.ScreenshotPlan{}, errors.New("core: screenshot plan requires metadata preview")
 	}
@@ -525,10 +569,10 @@ func (c *Core) FetchScreenshotPlan(ctx context.Context, req api.Request) (api.Sc
 
 	meta, err := c.services.Metadata.Prepare(ctx, singleReq)
 	if err != nil {
-		return api.ScreenshotPlan{}, err
+		return api.ScreenshotPlan{}, fmt.Errorf("core: %w", err)
 	}
 
-	return c.services.Screenshots.Plan(ctx, meta, options.Screens)
+	return wrapCoreResult(c.services.Screenshots.Plan(ctx, meta, options.Screens))
 }
 
 func (c *Core) GenerateScreenshots(ctx context.Context, req api.Request, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
@@ -544,7 +588,7 @@ func (c *Core) GenerateScreenshots(ctx context.Context, req api.Request, selecti
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.ScreenshotResult{}, err
+		return api.ScreenshotResult{}, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -563,7 +607,7 @@ func (c *Core) GenerateScreenshots(ctx context.Context, req api.Request, selecti
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.ScreenshotResult{}, err
 		} else if ok {
-			return c.services.Screenshots.Capture(ctx, cached, selections, purpose)
+			return wrapCoreResult(c.services.Screenshots.Capture(ctx, cached, selections, purpose))
 		}
 		return api.ScreenshotResult{}, errors.New("core: screenshot capture requires metadata preview")
 	}
@@ -578,10 +622,10 @@ func (c *Core) GenerateScreenshots(ctx context.Context, req api.Request, selecti
 
 	meta, err := c.services.Metadata.Prepare(ctx, singleReq)
 	if err != nil {
-		return api.ScreenshotResult{}, err
+		return api.ScreenshotResult{}, fmt.Errorf("core: %w", err)
 	}
 
-	return c.services.Screenshots.Capture(ctx, meta, selections, purpose)
+	return wrapCoreResult(c.services.Screenshots.Capture(ctx, meta, selections, purpose))
 }
 
 func (c *Core) PreviewScreenshotFrame(ctx context.Context, req api.Request, timestampSeconds float64) (api.ScreenshotPreview, error) {
@@ -594,7 +638,7 @@ func (c *Core) PreviewScreenshotFrame(ctx context.Context, req api.Request, time
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.ScreenshotPreview{}, err
+		return api.ScreenshotPreview{}, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -613,7 +657,7 @@ func (c *Core) PreviewScreenshotFrame(ctx context.Context, req api.Request, time
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.ScreenshotPreview{}, err
 		} else if ok {
-			return c.services.Screenshots.PreviewFrame(ctx, cached, timestampSeconds)
+			return wrapCoreResult(c.services.Screenshots.PreviewFrame(ctx, cached, timestampSeconds))
 		}
 		return api.ScreenshotPreview{}, errors.New("core: screenshot preview requires metadata preview")
 	}
@@ -628,10 +672,10 @@ func (c *Core) PreviewScreenshotFrame(ctx context.Context, req api.Request, time
 
 	meta, err := c.services.Metadata.Prepare(ctx, singleReq)
 	if err != nil {
-		return api.ScreenshotPreview{}, err
+		return api.ScreenshotPreview{}, fmt.Errorf("core: %w", err)
 	}
 
-	return c.services.Screenshots.PreviewFrame(ctx, meta, timestampSeconds)
+	return wrapCoreResult(c.services.Screenshots.PreviewFrame(ctx, meta, timestampSeconds))
 }
 
 func (c *Core) DeleteScreenshot(ctx context.Context, req api.Request, imagePath string) error {
@@ -647,7 +691,7 @@ func (c *Core) DeleteScreenshot(ctx context.Context, req api.Request, imagePath 
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return err
+		return fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -666,7 +710,7 @@ func (c *Core) DeleteScreenshot(ctx context.Context, req api.Request, imagePath 
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return err
 		} else if ok {
-			return c.services.Screenshots.Delete(ctx, cached, imagePath)
+			return wrapCoreError(c.services.Screenshots.Delete(ctx, cached, imagePath))
 		}
 		return errors.New("core: screenshot delete requires metadata preview")
 	}
@@ -681,10 +725,10 @@ func (c *Core) DeleteScreenshot(ctx context.Context, req api.Request, imagePath 
 
 	meta, err := c.services.Metadata.Prepare(ctx, singleReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("core: %w", err)
 	}
 
-	return c.services.Screenshots.Delete(ctx, meta, imagePath)
+	return wrapCoreError(c.services.Screenshots.Delete(ctx, meta, imagePath))
 }
 
 func (c *Core) DeleteTrackerImageURL(ctx context.Context, req api.Request, url string) error {
@@ -701,7 +745,7 @@ func (c *Core) DeleteTrackerImageURL(ctx context.Context, req api.Request, url s
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return err
+		return fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -759,7 +803,7 @@ func (c *Core) SaveFinalScreenshotSelections(ctx context.Context, req api.Reques
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return err
+		return fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -778,7 +822,7 @@ func (c *Core) SaveFinalScreenshotSelections(ctx context.Context, req api.Reques
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return err
 		} else if ok {
-			return c.services.Screenshots.SaveFinalSelections(ctx, cached, images)
+			return wrapCoreError(c.services.Screenshots.SaveFinalSelections(ctx, cached, images))
 		}
 		return errors.New("core: screenshot selection save requires metadata preview")
 	}
@@ -793,10 +837,109 @@ func (c *Core) SaveFinalScreenshotSelections(ctx context.Context, req api.Reques
 
 	meta, err := c.services.Metadata.Prepare(ctx, singleReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("core: %w", err)
 	}
 
-	return c.services.Screenshots.SaveFinalSelections(ctx, meta, images)
+	return wrapCoreError(c.services.Screenshots.SaveFinalSelections(ctx, meta, images))
+}
+
+func (c *Core) ImportMenuImages(ctx context.Context, req api.Request, importPaths []string) error {
+	if len(req.Paths) == 0 {
+		return internalerrors.ErrInvalidInput
+	}
+	if len(importPaths) == 0 {
+		return nil
+	}
+	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
+	if err != nil {
+		return fmt.Errorf("core: validate menu paths: %w", err)
+	}
+	uniquePaths := make([]string, 0, len(normalizedPaths))
+	seenPaths := make(map[string]struct{}, len(normalizedPaths))
+	for _, path := range normalizedPaths {
+		if _, exists := seenPaths[path]; exists {
+			continue
+		}
+		seenPaths[path] = struct{}{}
+		uniquePaths = append(uniquePaths, path)
+	}
+	if len(uniquePaths) != 1 {
+		return internalerrors.ErrInvalidInput
+	}
+	sourcePath := uniquePaths[0]
+
+	existing, err := c.repo.ListFinalSelections(ctx, sourcePath)
+	if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
+		return fmt.Errorf("core: list menu selections: %w", err)
+	}
+	maxOrder := -1
+	for _, sel := range existing {
+		if sel.Order > maxOrder {
+			maxOrder = sel.Order
+		}
+	}
+
+	var expandedPaths []string
+	for _, p := range importPaths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			return fmt.Errorf("stat menu path %s: %w", p, err)
+		}
+		if info.IsDir() {
+			entries, err := os.ReadDir(p)
+			if err != nil {
+				return fmt.Errorf("read menu dir %s: %w", p, err)
+			}
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					ext := strings.ToLower(filepath.Ext(entry.Name()))
+					if ext == ".png" || ext == ".jpg" || ext == ".jpeg" {
+						expandedPaths = append(expandedPaths, filepath.Join(p, entry.Name()))
+					}
+				}
+			}
+		} else {
+			ext := strings.ToLower(filepath.Ext(p))
+			if ext == ".png" || ext == ".jpg" || ext == ".jpeg" {
+				expandedPaths = append(expandedPaths, p)
+			}
+		}
+	}
+
+	tmpRoot, err := db.Subdir(c.cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		return fmt.Errorf("core: resolve tmp root: %w", err)
+	}
+
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
+	if err != nil {
+		return fmt.Errorf("core: create release tmp dir: %w", err)
+	}
+
+	for idx, p := range expandedPaths {
+		destPath := filepath.Join(tmpDir, filepath.Base(p))
+
+		// Copy file to release tmp dir
+		if err := filesystem.CopyFile(p, destPath); err != nil {
+			return fmt.Errorf("core: copy menu image %s: %w", p, err)
+		}
+
+		existing = append(existing, api.ScreenshotFinalSelection{
+			SourcePath: sourcePath,
+			ImagePath:  destPath,
+			Order:      maxOrder + 1 + idx,
+			Source:     string(api.ScreenshotPurposeMenu),
+			SelectedAt: time.Now().UTC(),
+		})
+	}
+	if err := c.repo.SaveFinalSelections(ctx, sourcePath, existing); err != nil {
+		return fmt.Errorf("core: save menu selections: %w", err)
+	}
+	return nil
 }
 
 func (c *Core) ListUploadCandidates(ctx context.Context, req api.Request) ([]api.ScreenshotImage, error) {
@@ -809,7 +952,7 @@ func (c *Core) ListUploadCandidates(ctx context.Context, req api.Request) ([]api
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -844,12 +987,12 @@ func (c *Core) ListUploadCandidates(ctx context.Context, req api.Request) ([]api
 
 		preparedMeta, err := c.services.Metadata.Prepare(ctx, singleReq)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("core: %w", err)
 		}
 		meta = preparedMeta
 	}
 
-	return c.services.Images.ListCandidates(ctx, meta)
+	return wrapCoreResult(c.services.Images.ListCandidates(ctx, meta))
 }
 
 func (c *Core) ListUploadedImages(ctx context.Context, req api.Request) ([]api.UploadedImageLink, error) {
@@ -862,7 +1005,7 @@ func (c *Core) ListUploadedImages(ctx context.Context, req api.Request) ([]api.U
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -877,7 +1020,7 @@ func (c *Core) ListUploadedImages(ctx context.Context, req api.Request) ([]api.U
 		return nil, internalerrors.ErrInvalidInput
 	}
 
-	return c.repo.ListUploadedImagesByPath(ctx, uniquePaths[0])
+	return wrapCoreResult(c.repo.ListUploadedImagesByPath(ctx, uniquePaths[0]))
 }
 
 func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
@@ -893,7 +1036,7 @@ func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, i
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.UploadImagesResult{}, err
+		return api.UploadImagesResult{}, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -928,19 +1071,19 @@ func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, i
 
 		preparedMeta, err := c.services.Metadata.Prepare(ctx, singleReq)
 		if err != nil {
-			return api.UploadImagesResult{}, err
+			return api.UploadImagesResult{}, fmt.Errorf("core: %w", err)
 		}
 		meta = preparedMeta
 	}
 
-	targets, err := c.resolveImageUploadTargets(req, host)
+	targets, err := c.resolveImageUploadTargets(req, meta, host)
 	if err != nil {
 		return api.UploadImagesResult{}, err
 	}
-	return c.uploadImagesToTargets(ctx, meta, targets, images)
+	return c.uploadImagesToTargetsWithFallback(ctx, meta, host, targets, images)
 }
 
-func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]trackers.ImageUploadTarget, error) {
+func (c *Core) resolveImageUploadTargets(req api.Request, meta api.PreparedMetadata, host string) ([]trackers.ImageUploadTarget, error) {
 	normalizedHost := strings.ToLower(strings.TrimSpace(host))
 	if normalizedHost == "" {
 		return nil, internalerrors.ErrInvalidInput
@@ -949,42 +1092,279 @@ func (c *Core) resolveImageUploadTargets(req api.Request, host string) ([]tracke
 	trackerCfg := c.cfg
 	trackerCfg.Trackers.DefaultTrackers = nil
 	resolvedTrackers := trackers.ResolveTrackers(trackerCfg, req.Trackers, req.TrackersRemove, c.logger)
-	trackerTargets, err := trackers.ConfiguredImageUploadTargets(c.cfg, resolvedTrackers)
+	resolvedTrackers = c.filterImageUploadTrackers(resolvedTrackers, meta)
+	targets, err := trackers.NeededImageUploadTargets(c.cfg, resolvedTrackers, normalizedHost)
 	if err != nil {
-		return nil, err
-	}
-
-	targets := make([]trackers.ImageUploadTarget, 0, len(trackerTargets)+1)
-	seen := make(map[string]int, len(trackerTargets)+1)
-	addTarget := func(target trackers.ImageUploadTarget) {
-		target = normalizeImageUploadTarget(target)
-		if target.Host == "" {
-			return
-		}
-		key := target.Host + "\x00" + target.UsageScope
-		if idx, ok := seen[key]; ok {
-			for _, tracker := range target.Trackers {
-				targets[idx].Trackers = appendUniqueNormalizedTracker(targets[idx].Trackers, tracker)
-			}
-			return
-		}
-		seen[key] = len(targets)
-		targets = append(targets, target)
-	}
-
-	if trackers.TrackerForOwnedImageHost(normalizedHost) == "" {
-		addTarget(trackers.ImageUploadTarget{Host: normalizedHost, UsageScope: "global"})
-	}
-	for _, target := range trackerTargets {
-		addTarget(target)
+		return nil, fmt.Errorf("core: %w", err)
 	}
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("core: image host %q is tracker-scoped but no active tracker can use it", normalizedHost)
 	}
-	return targets, nil
+	normalized := make([]trackers.ImageUploadTarget, 0, len(targets))
+	for _, target := range targets {
+		target = normalizeImageUploadTarget(target)
+		if target.Host == "" {
+			continue
+		}
+		normalized = append(normalized, target)
+	}
+	if len(normalized) == 0 {
+		return nil, fmt.Errorf("core: image host %q resolved image upload targets were filtered out after tracker eligibility and normalization", normalizedHost)
+	}
+	return normalized, nil
 }
 
-func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetadata, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
+func (c *Core) filterImageUploadTrackers(trackerNames []string, meta api.PreparedMetadata) []string {
+	filtered := make([]string, 0, len(trackerNames))
+	for _, tracker := range trackerNames {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		blockedReasons := blockedReasonsForTracker(meta.BlockedTrackers, name)
+		ruleFailures := ruleFailuresForTracker(meta.TrackerRuleFailures, name)
+		existingMatch := matchedTrackerForUpload(meta.MatchedTrackers, name)
+		if len(blockedReasons) > 0 || (!meta.IgnoreTrackerRuleFailures && len(ruleFailures) > 0) || existingMatch {
+			if c.logger != nil {
+				c.logger.Debugf("core: excluding blocked image upload tracker tracker=%s blocked_reasons=%v rule_failures=%d existing_match=%t", name, blockedReasons, len(ruleFailures), existingMatch)
+			}
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered
+}
+
+func matchedTrackerForUpload(matchedTrackers []string, tracker string) bool {
+	if len(matchedTrackers) == 0 {
+		return false
+	}
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if name == "" {
+		return false
+	}
+	for _, matched := range matchedTrackers {
+		for _, entry := range splitTrackerLabel(matched) {
+			if strings.EqualFold(strings.TrimSpace(entry), name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func blockedReasonsForTracker(blocked map[string][]api.TrackerBlockReason, tracker string) []api.TrackerBlockReason {
+	if len(blocked) == 0 {
+		return nil
+	}
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if reasons, ok := blocked[name]; ok {
+		return reasons
+	}
+	for key, reasons := range blocked {
+		if strings.EqualFold(strings.TrimSpace(key), name) {
+			return reasons
+		}
+	}
+	return nil
+}
+
+func ruleFailuresForTracker(failures map[string][]api.RuleFailure, tracker string) []api.RuleFailure {
+	if len(failures) == 0 {
+		return nil
+	}
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if trackerFailures, ok := failures[name]; ok {
+		return trackerFailures
+	}
+	for key, trackerFailures := range failures {
+		if strings.EqualFold(strings.TrimSpace(key), name) {
+			return trackerFailures
+		}
+	}
+	return nil
+}
+
+func (c *Core) resolveFallbackImageUploadTargets(host string, trackerNames []string, excludedHosts []string) ([]trackers.ImageUploadTarget, error) {
+	normalizedHost := strings.ToLower(strings.TrimSpace(host))
+	if normalizedHost == "" || len(trackerNames) == 0 {
+		return nil, nil
+	}
+	targets, err := trackers.NeededImageUploadTargetsExcluding(c.cfg, trackerNames, normalizedHost, excludedHosts)
+	if err != nil {
+		return nil, fmt.Errorf("core: %w", err)
+	}
+	normalized := make([]trackers.ImageUploadTarget, 0, len(targets))
+	for _, target := range targets {
+		target = normalizeImageUploadTarget(target)
+		if target.Host == "" {
+			continue
+		}
+		normalized = append(normalized, target)
+	}
+	return normalized, nil
+}
+
+func (c *Core) uploadImagesToTargetsWithFallback(ctx context.Context, meta api.PreparedMetadata, host string, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
+	allLinks := make([]api.UploadedImageLink, 0, len(images)*len(targets))
+	failedHosts := make(map[string]struct{}, len(targets))
+	currentTargets := targets
+	var failures []api.UploadImageHostFailure
+
+	for len(currentTargets) > 0 {
+		result := c.uploadImagesToTargets(ctx, meta, currentTargets, images)
+		allLinks = append(allLinks, result.Links...)
+		if len(result.Failures) == 0 {
+			return api.UploadImagesResult{Links: allLinks}, nil
+		}
+
+		failures = result.Failures
+		for _, failure := range result.Failures {
+			host := strings.ToLower(strings.TrimSpace(failure.Host))
+			if host != "" {
+				failedHosts[host] = struct{}{}
+			}
+		}
+
+		blockedTrackers := uploadFailureTrackers(failures)
+		fallbackTargets, err := c.resolveFallbackImageUploadTargets(host, blockedTrackers, sortedMapKeys(failedHosts))
+		if err != nil {
+			return api.UploadImagesResult{}, err
+		}
+
+		var recoveredTrackers []string
+		nextTargets := make([]trackers.ImageUploadTarget, 0, len(fallbackTargets))
+		for _, target := range fallbackTargets {
+			if uploadedLinksCoverTarget(allLinks, target, len(images)) {
+				recoveredTrackers = append(recoveredTrackers, target.Trackers...)
+				continue
+			}
+			nextTargets = append(nextTargets, target)
+		}
+		failures = filterUploadFailuresForRecoveredTrackers(failures, recoveredTrackers)
+		if len(nextTargets) == 0 {
+			if len(failures) == 0 {
+				return api.UploadImagesResult{Links: allLinks}, nil
+			}
+			return api.UploadImagesResult{Links: allLinks, Failures: failures}, nil
+		}
+
+		c.logger.Warnf("core: retrying image uploads after host failures failed_hosts=%s fallback_hosts=%s trackers=%v", strings.Join(sortedMapKeys(failedHosts), ","), strings.Join(uploadTargetHosts(nextTargets), ","), uploadTargetTrackers(nextTargets))
+		currentTargets = nextTargets
+	}
+
+	return api.UploadImagesResult{Links: allLinks, Failures: failures}, nil
+}
+
+func uploadFailureTrackers(failures []api.UploadImageHostFailure) []string {
+	trackersList := make([]string, 0)
+	for _, failure := range failures {
+		for _, tracker := range failure.Trackers {
+			trackersList = appendUniqueNormalizedTracker(trackersList, tracker)
+		}
+	}
+	return trackersList
+}
+
+func filterUploadFailuresForRecoveredTrackers(failures []api.UploadImageHostFailure, recoveredTrackers []string) []api.UploadImageHostFailure {
+	if len(failures) == 0 || len(recoveredTrackers) == 0 {
+		return failures
+	}
+	recovered := make(map[string]struct{}, len(recoveredTrackers))
+	for _, tracker := range recoveredTrackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name != "" {
+			recovered[name] = struct{}{}
+		}
+	}
+
+	filtered := make([]api.UploadImageHostFailure, 0, len(failures))
+	for _, failure := range failures {
+		remainingTrackers := make([]string, 0, len(failure.Trackers))
+		for _, tracker := range failure.Trackers {
+			name := strings.ToUpper(strings.TrimSpace(tracker))
+			if name == "" {
+				continue
+			}
+			if _, ok := recovered[name]; ok {
+				continue
+			}
+			remainingTrackers = appendUniqueNormalizedTracker(remainingTrackers, name)
+		}
+		if len(failure.Trackers) > 0 && len(remainingTrackers) == 0 {
+			continue
+		}
+		failure.Trackers = remainingTrackers
+		filtered = append(filtered, failure)
+	}
+	return filtered
+}
+
+func uploadedLinksCoverTarget(links []api.UploadedImageLink, target trackers.ImageUploadTarget, expectedImages int) bool {
+	if expectedImages == 0 {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(target.Host))
+	scope := normalizeImageUploadUsageScope(target.UsageScope)
+	seenPaths := make(map[string]struct{}, expectedImages)
+	for _, link := range links {
+		if !strings.EqualFold(strings.TrimSpace(link.Host), host) {
+			continue
+		}
+		if normalizeImageUploadUsageScope(link.UsageScope) != scope {
+			continue
+		}
+		path := normalizedUploadImagePath(link.ImagePath)
+		if path == "" {
+			continue
+		}
+		seenPaths[path] = struct{}{}
+	}
+	return len(seenPaths) >= expectedImages
+}
+
+func uploadTargetHosts(targets []trackers.ImageUploadTarget) []string {
+	hosts := make([]string, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		host := strings.ToLower(strings.TrimSpace(target.Host))
+		if host == "" {
+			continue
+		}
+		if _, ok := seen[host]; ok {
+			continue
+		}
+		seen[host] = struct{}{}
+		hosts = append(hosts, host)
+	}
+	slices.Sort(hosts)
+	return hosts
+}
+
+func uploadTargetTrackers(targets []trackers.ImageUploadTarget) []string {
+	trackersList := make([]string, 0)
+	for _, target := range targets {
+		for _, tracker := range target.Trackers {
+			trackersList = appendUniqueNormalizedTracker(trackersList, tracker)
+		}
+	}
+	slices.Sort(trackersList)
+	return trackersList
+}
+
+func sortedMapKeys(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetadata, targets []trackers.ImageUploadTarget, images []api.ScreenshotImage) api.UploadImagesResult {
 	type uploadResult struct {
 		index  int
 		target trackers.ImageUploadTarget
@@ -1025,22 +1405,22 @@ func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetad
 				Host:       result.target.Host,
 				UsageScope: result.target.UsageScope,
 				Trackers:   slices.Clone(result.target.Trackers),
-				Message:    result.err.Error(),
+				Message:    uploadFailureMessage(result.err),
 			}
 			failures = append(failures, failure)
 			failureMessages = append(failureMessages, fmt.Sprintf("%s: %v", result.target.Host, result.err))
 		}
 	}
 	if len(failures) == 0 {
-		return api.UploadImagesResult{Links: results}, nil
+		return api.UploadImagesResult{Links: results}
 	}
 	result := api.UploadImagesResult{Links: results, Failures: failures}
 	if len(results) > 0 {
 		c.logger.Warnf("core: image uploads completed with %d host failures and %d successful links: %s", len(failures), len(results), strings.Join(failureMessages, "; "))
-		return result, nil
+		return result
 	}
 	c.logger.Warnf("core: image uploads failed for all hosts: %s", strings.Join(failureMessages, "; "))
-	return result, nil
+	return result
 }
 
 func normalizeImageUploadTarget(target trackers.ImageUploadTarget) trackers.ImageUploadTarget {
@@ -1071,13 +1451,13 @@ func (c *Core) uploadImagesToTarget(ctx context.Context, meta api.PreparedMetada
 	target.Host = strings.ToLower(strings.TrimSpace(target.Host))
 	target.UsageScope = normalizeImageUploadUsageScope(target.UsageScope)
 	if c.repo == nil {
-		c.logger.Debugf("core: uploading images host=%s scope=%s count=%d", target.Host, target.UsageScope, len(images))
-		return c.services.Images.Upload(ctx, meta, target.Host, target.UsageScope, images)
+		c.logger.Debugf("core: uploading images host=%s scope=%s trackers=%v count=%d", target.Host, target.UsageScope, target.Trackers, len(images))
+		return wrapCoreResult(c.services.Images.Upload(ctx, meta, target.Host, target.UsageScope, images))
 	}
 
 	existing, err := c.repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: %w", err)
 	}
 	existingByPath := uploadedImagesByPathForTarget(existing, target)
 	results := make([]api.UploadedImageLink, 0, len(images))
@@ -1095,14 +1475,27 @@ func (c *Core) uploadImagesToTarget(ctx context.Context, meta api.PreparedMetada
 		missing = append(missing, image)
 	}
 	if len(missing) == 0 {
-		c.logger.Debugf("core: reusing uploaded images host=%s scope=%s count=%d", target.Host, target.UsageScope, len(results))
+		c.logger.Debugf("core: reusing uploaded images host=%s scope=%s trackers=%v count=%d", target.Host, target.UsageScope, target.Trackers, len(results))
 		return results, nil
 	}
 
-	c.logger.Debugf("core: uploading missing images host=%s scope=%s missing=%d reused=%d", target.Host, target.UsageScope, len(missing), len(results))
+	c.logger.Debugf("core: uploading missing images host=%s scope=%s trackers=%v missing=%d reused=%d", target.Host, target.UsageScope, target.Trackers, len(missing), len(results))
 	uploaded, err := c.services.Images.Upload(ctx, meta, target.Host, target.UsageScope, missing)
 	results = append(results, uploaded...)
-	return results, err
+	if err != nil {
+		return results, fmt.Errorf("core: %w", err)
+	}
+	return results, nil
+}
+
+func uploadFailureMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		return unwrapped.Error()
+	}
+	return err.Error()
 }
 
 func uploadedImagesByPathForTarget(images []api.UploadedImageLink, target trackers.ImageUploadTarget) map[string]api.UploadedImageLink {
@@ -1166,7 +1559,7 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return err
+		return fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -1182,7 +1575,7 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 	}
 
 	c.logger.Debugf("core: deleting uploaded image %s (%s)", imagePath, host)
-	return c.repo.DeleteUploadedImage(ctx, uniquePaths[0], imagePath, host)
+	return wrapCoreError(c.repo.DeleteUploadedImage(ctx, uniquePaths[0], imagePath, host))
 }
 
 func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.MetadataPreview, error) {
@@ -1194,7 +1587,7 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.MetadataPreview{}, err
+		return api.MetadataPreview{}, fmt.Errorf("core: %w", err)
 	}
 
 	uniquePaths := make([]string, 0, len(normalizedPaths))
@@ -1252,7 +1645,7 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 		if prepareErr == nil {
 			progressPath = meta.SourcePath
 		}
-		return prepareErr
+		return wrapCoreError(prepareErr)
 	}); err != nil {
 		return api.MetadataPreview{}, err
 	}
@@ -1271,22 +1664,20 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 		c.logger.Debugf("core: running pathed search for %s", meta.SourcePath)
 		searchResult, searchErr := c.services.Clients.SearchPathedTorrents(ctx, meta)
 		if searchErr != nil {
-			return searchErr
+			return fmt.Errorf("core: %w", searchErr)
+		}
+		if applyTrackerData {
+			resetPreparedClientData(&meta, singleReq)
 		}
 		meta.FoundTrackerMatch = meta.FoundTrackerMatch || searchResult.FoundTrackerMatch
 		meta.MatchedTrackers = mergeTrackerRemovals(meta.MatchedTrackers, searchResult.MatchedTrackers)
 		meta.TrackersRemove = mergeTrackerRemovals(meta.TrackersRemove, searchResult.MatchedTrackers)
+		markTrackerDataMatches(&meta, searchResult.MatchedTrackers)
 		if !applyTrackerData {
 			c.logger.Debugf("core: pathed search merged tracker presence only for %s", meta.SourcePath)
 			return nil
 		}
-		if searchResult.InfoHash != "" || len(searchResult.TorrentComments) > 0 {
-			meta.InfoHash = searchResult.InfoHash
-			meta.ClientTorrentPath = searchResult.TorrentPath
-			meta.TrackerIDs = searchResult.TrackerIDs
-			meta.TorrentComments = searchResult.TorrentComments
-			meta.PieceSizeConstraint = searchResult.PieceSizeConstraint
-			meta.FoundPreferredPiece = searchResult.FoundPreferredPiece
+		if applyPathedTorrentData(&meta, searchResult) {
 			c.logger.Debugf("core: pathed torrents resolved for %s", meta.SourcePath)
 		} else {
 			c.logger.Debugf("core: pathed search returned no matches for %s", meta.SourcePath)
@@ -1301,18 +1692,18 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 			return api.MetadataPreview{}, err
 		}
 	case storedApplied:
-		c.logger.Debugf("core: running pathed search for tracker presence with stored tracker data present for %s", meta.SourcePath)
-		if err := runPathedSearch(false); err != nil {
+		c.logger.Debugf("core: running pathed search with stored tracker data present for %s", meta.SourcePath)
+		if err := runPathedSearch(true); err != nil {
 			return api.MetadataPreview{}, err
 		}
 	case meta.StoredDataFresh:
 		if meta.InfoHash == "" && meta.StoredInfoHash != "" {
 			meta.InfoHash = meta.StoredInfoHash
-			c.logger.Debugf("core: using stored infohash before pathed tracker-presence search for %s", meta.SourcePath)
+			c.logger.Debugf("core: using stored infohash before pathed search for %s", meta.SourcePath)
 		} else {
-			c.logger.Debugf("core: running pathed search for tracker presence with fresh stored metadata snapshot for %s", meta.SourcePath)
+			c.logger.Debugf("core: running pathed search with fresh stored metadata snapshot for %s", meta.SourcePath)
 		}
-		if err := runPathedSearch(false); err != nil {
+		if err := runPathedSearch(true); err != nil {
 			return api.MetadataPreview{}, err
 		}
 	case meta.InfoHash != "":
@@ -1334,7 +1725,7 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 	if err := emitPhase("tracker-data", "Enriching tracker data", func() error {
 		var enrichErr error
 		meta, enrichErr = c.services.Metadata.EnrichTrackerData(ctx, meta)
-		return enrichErr
+		return wrapCoreError(enrichErr)
 	}); err != nil {
 		return api.MetadataPreview{}, err
 	}
@@ -1354,7 +1745,7 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 		if err := emitPhase("tracker-data-fallback", "Retrying tracker data lookup", func() error {
 			var enrichErr error
 			meta, enrichErr = c.services.Metadata.EnrichTrackerData(ctx, meta)
-			return enrichErr
+			return wrapCoreError(enrichErr)
 		}); err != nil {
 			return api.MetadataPreview{}, err
 		}
@@ -1362,28 +1753,28 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 	if err := emitPhase("mediainfo-ids", "Applying MediaInfo IDs", func() error {
 		var applyErr error
 		meta, applyErr = c.services.Metadata.ApplyMediaInfoIDs(ctx, meta)
-		return applyErr
+		return wrapCoreError(applyErr)
 	}); err != nil {
 		return api.MetadataPreview{}, err
 	}
 	if err := emitPhase("arr", "Applying Sonarr/Radarr data", func() error {
 		var applyErr error
 		meta, applyErr = c.services.Metadata.ApplyArrData(ctx, meta)
-		return applyErr
+		return wrapCoreError(applyErr)
 	}); err != nil {
 		return api.MetadataPreview{}, err
 	}
 	if err := emitPhase("external-ids", "Resolving external IDs", func() error {
 		var resolveErr error
 		meta, resolveErr = c.services.Metadata.ResolveExternalIDs(ctx, meta)
-		return resolveErr
+		return wrapCoreError(resolveErr)
 	}); err != nil {
 		return api.MetadataPreview{}, err
 	}
 	if err := emitPhase("media-details", "Applying media details", func() error {
 		var applyErr error
 		meta, applyErr = c.services.Metadata.ApplyMediaDetails(ctx, meta)
-		return applyErr
+		return wrapCoreError(applyErr)
 	}); err != nil {
 		return api.MetadataPreview{}, err
 	}
@@ -1415,7 +1806,7 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.PreparationPreview{}, err
+		return api.PreparationPreview{}, fmt.Errorf("core: %w", err)
 	}
 
 	uniquePaths := make([]string, 0, len(normalizedPaths))
@@ -1435,9 +1826,9 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.PreparationPreview{}, err
 		} else if ok {
-			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, cached.TrackersRemove, c.logger)
 			c.logger.Debugf("core: preparation resolved trackers %v", resolvedTrackers)
-			return c.services.Trackers.BuildPreparation(ctx, cached, resolvedTrackers)
+			return wrapCoreResult(c.services.Trackers.BuildPreparation(ctx, cached, resolvedTrackers))
 		}
 		// No cache available; fall through to Prepare (e.g., after playlist selection)
 	}
@@ -1454,16 +1845,16 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 
 	meta, err := c.services.Metadata.Prepare(ctx, singleReq)
 	if err != nil {
-		return api.PreparationPreview{}, err
+		return api.PreparationPreview{}, fmt.Errorf("core: %w", err)
 	}
 	meta = applyRequestToPreparedMeta(meta, singleReq, c.cfg, c.logger)
 	if req.Mode == api.ModeGUI {
 		c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	c.logger.Debugf("core: preparation resolved trackers %v", resolvedTrackers)
-	return c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
+	return wrapCoreResult(c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers))
 }
 
 func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (api.TrackerDryRunPreview, error) {
@@ -1494,7 +1885,7 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.TrackerDryRunPreview{}, err
+		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
 	}
 
 	uniquePaths := make([]string, 0, len(normalizedPaths))
@@ -1549,14 +1940,14 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 
 	torrent, err := c.services.Torrents.Create(ctx, meta)
 	if err != nil {
-		return api.TrackerDryRunPreview{}, err
+		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
 	}
 	meta.TorrentPath = torrent.Path
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	entries, err := c.services.Trackers.BuildUploadDryRun(ctx, meta, resolvedTrackers)
 	if err != nil {
-		return api.TrackerDryRunPreview{}, err
+		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
 	}
 
 	c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
@@ -1590,7 +1981,7 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.DescriptionBuilderPreview{}, err
+		return api.DescriptionBuilderPreview{}, fmt.Errorf("core: %w", err)
 	}
 
 	uniquePaths := make([]string, 0, len(normalizedPaths))
@@ -1662,19 +2053,23 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 		singleReq.ExternalIDOverrides = mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, uniquePaths[0]))
 		meta, err = c.services.Metadata.Prepare(ctx, singleReq)
 		if err != nil {
-			return api.DescriptionBuilderPreview{}, err
+			return api.DescriptionBuilderPreview{}, fmt.Errorf("core: %w", err)
 		}
 		meta = applyRequestToPreparedMeta(meta, singleReq, c.cfg, c.logger)
 		if req.Mode == api.ModeGUI {
 			c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 		}
 	}
+	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta)
+	if err != nil {
+		return api.DescriptionBuilderPreview{}, err
+	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
 	if err != nil {
 		c.logger.Errorf("core: description builder preparation failed source=%s: %v", meta.SourcePath, err)
-		return api.DescriptionBuilderPreview{}, err
+		return api.DescriptionBuilderPreview{}, fmt.Errorf("core: %w", err)
 	}
 
 	preview := api.DescriptionBuilderPreview{SourcePath: meta.SourcePath}
@@ -1716,6 +2111,44 @@ func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGr
 		HasOverride:        hasOverride,
 		ImageHost:          entry.ImageHost,
 	}
+}
+
+func (c *Core) ensureDescriptionBuilderMetadata(ctx context.Context, req api.Request, path string, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	if c.services.Metadata == nil || !descriptionBuilderNeedsExternalMetadata(c.cfg, meta) {
+		return meta, nil
+	}
+	resolved, err := c.services.Metadata.ResolveExternalIDs(ctx, meta)
+	if err != nil {
+		return api.PreparedMetadata{}, fmt.Errorf("core: %w", err)
+	}
+	if req.Mode == api.ModeGUI && cacheableGUIPreparedMetaRequest(req) {
+		overrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
+		signature := overrideSignature(overrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
+		c.storeRefreshedDupeCache(path, signature, resolved)
+	}
+	return resolved, nil
+}
+
+func descriptionBuilderNeedsExternalMetadata(cfg config.Config, meta api.PreparedMetadata) bool {
+	if strings.TrimSpace(meta.SourcePath) == "" {
+		return false
+	}
+	if cfg.Description.AddLogo {
+		if meta.ExternalMetadata.TMDB == nil || strings.TrimSpace(meta.ExternalMetadata.TMDB.Logo) == "" {
+			return true
+		}
+	}
+	return cfg.Description.EpisodeOverview && strings.TrimSpace(meta.EpisodeOverview) == "" && descriptionBuilderEpisodeLike(meta)
+}
+
+func descriptionBuilderEpisodeLike(meta api.PreparedMetadata) bool {
+	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 {
+		return true
+	}
+	if strings.TrimSpace(meta.SeasonStr) != "" || strings.TrimSpace(meta.EpisodeStr) != "" || strings.TrimSpace(meta.DailyEpisodeDate) != "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV")
 }
 
 func augmentDescriptionBuilderPreviewHTML(rendered string, entry api.PreparationDescription, meta api.PreparedMetadata, logger api.Logger) string {
@@ -1810,7 +2243,7 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.DescriptionBuilderGroup{}, err
+		return api.DescriptionBuilderGroup{}, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -1865,21 +2298,25 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 		singleReq.ExternalIDOverrides = mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, uniquePaths[0]))
 		meta, err = c.services.Metadata.Prepare(ctx, singleReq)
 		if err != nil {
-			return api.DescriptionBuilderGroup{}, err
+			return api.DescriptionBuilderGroup{}, fmt.Errorf("core: %w", err)
 		}
 		meta = applyRequestToPreparedMeta(meta, singleReq, c.cfg, c.logger)
 		if req.Mode == api.ModeGUI {
 			c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 		}
 	}
+	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta)
+	if err != nil {
+		return api.DescriptionBuilderGroup{}, err
+	}
 
 	resolvedTrackers := req.Trackers
 	if len(resolvedTrackers) == 0 {
-		resolvedTrackers = trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+		resolvedTrackers = trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	}
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
 	if err != nil {
-		return api.DescriptionBuilderGroup{}, err
+		return api.DescriptionBuilderGroup{}, fmt.Errorf("core: %w", err)
 	}
 	for _, entry := range prep.Descriptions {
 		normalizedGroupKey := normalizeDescriptionBuilderGroupKey(entry.GroupKey, entry.Trackers)
@@ -1892,6 +2329,90 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 		}
 	}
 	return api.DescriptionBuilderGroup{}, internalerrors.ErrNotFound
+}
+
+func (c *Core) SelectBlurayCandidate(ctx context.Context, sourcePath string, releaseID string) (api.MetadataPreview, error) {
+	if err := ctx.Err(); err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: select blu-ray candidate canceled: %w", err)
+	}
+	if c.repo == nil {
+		return api.MetadataPreview{}, errors.New("core: repository not configured")
+	}
+	trimmedPath := strings.TrimSpace(sourcePath)
+	trimmedReleaseID := strings.TrimSpace(releaseID)
+	if trimmedPath == "" || trimmedReleaseID == "" {
+		return api.MetadataPreview{}, internalerrors.ErrInvalidInput
+	}
+	external, err := c.repo.GetExternalMetadata(ctx, trimmedPath)
+	if err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: load blu-ray metadata: %w", err)
+	}
+	if external.Bluray == nil || !external.Bluray.SelectCandidate(trimmedReleaseID, false, "manual") {
+		return api.MetadataPreview{}, internalerrors.ErrNotFound
+	}
+	external.UpdatedAt = time.Now().UTC()
+	external.Bluray.UpdatedAt = external.UpdatedAt
+
+	c.dupeMu.Lock()
+	cachePath := trimmedPath
+	entry, ok := c.dupeCache[cachePath]
+	if !ok {
+		cleanedPath := filepath.Clean(trimmedPath)
+		for key, candidate := range c.dupeCache {
+			if filepath.Clean(key) == cleanedPath {
+				cachePath = key
+				entry = candidate
+				ok = true
+				break
+			}
+		}
+	}
+	if ok {
+		entry.meta.ExternalMetadata.Bluray = external.Bluray
+		entry.meta.ExternalMetadata.UpdatedAt = external.UpdatedAt
+		applyBlurayCandidateToPreparedMeta(&entry.meta)
+	}
+	c.dupeMu.Unlock()
+	if !ok {
+		return api.MetadataPreview{}, internalerrors.ErrNotFound
+	}
+
+	if c.services.Metadata != nil {
+		if refreshed, refreshErr := c.services.Metadata.RefreshPreparedMetadata(ctx, entry.meta); refreshErr == nil {
+			entry.meta = refreshed
+		} else if c.logger != nil {
+			c.logger.Warnf("core: refresh metadata after blu-ray selection failed: %v", refreshErr)
+		}
+	}
+
+	if err := c.repo.SaveExternalMetadata(ctx, external); err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("core: save blu-ray selection: %w", err)
+	}
+
+	c.dupeMu.Lock()
+	entry.updatedAt = time.Now().UTC()
+	entry.requestRefreshed = true
+	c.dupeCache[cachePath] = entry
+	c.dupeMu.Unlock()
+
+	return buildMetadataPreview(entry.meta, c.cfg), nil
+}
+
+func applyBlurayCandidateToPreparedMeta(meta *api.PreparedMetadata) {
+	if meta == nil || meta.ExternalMetadata.Bluray == nil {
+		return
+	}
+	candidate := meta.ExternalMetadata.Bluray.SelectedCandidate()
+	if candidate == nil {
+		return
+	}
+	if region := strings.TrimSpace(candidate.Region); region != "" {
+		meta.Region = region
+		meta.Release.Region = region
+	}
+	if publisher := strings.TrimSpace(candidate.Publisher); publisher != "" {
+		meta.Distributor = strings.ToUpper(publisher)
+	}
 }
 
 func (c *Core) storeDupeCache(path string, signature string, meta api.PreparedMetadata) {
@@ -1941,13 +2462,17 @@ func (c *Core) applyStoredTrackerData(ctx context.Context, meta *api.PreparedMet
 	if c.repo == nil || meta == nil {
 		return false, nil
 	}
+	if meta.Options.SkipAutoTorrent {
+		c.logger.Debugf("core: skip_auto_torrent enabled, ignoring stored tracker metadata for %s", meta.SourcePath)
+		return false, nil
+	}
 	path := strings.TrimSpace(meta.SourcePath)
 	if path == "" {
 		return false, nil
 	}
 	select {
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return false, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	records, err := c.repo.ListTrackerMetadataByPath(ctx, path)
@@ -2031,6 +2556,79 @@ func (c *Core) applyStoredTrackerData(ctx context.Context, meta *api.PreparedMet
 	}
 
 	return true, nil
+}
+
+func resetPreparedClientData(meta *api.PreparedMetadata, req api.Request) {
+	if meta == nil {
+		return
+	}
+	meta.FoundTrackerMatch = false
+	meta.MatchedTrackers = nil
+	meta.TrackersRemove = mergeTrackerRemovals(nil, req.TrackersRemove)
+	meta.TorrentComments = nil
+	meta.ClientTorrentPath = ""
+	meta.PieceSizeConstraint = ""
+	meta.FoundPreferredPiece = ""
+	meta.InfoHash = cachedInfoHash(*meta)
+	meta.TrackerIDs = cloneStringMap(req.TrackerIDOverrides)
+	applyTorrentOverridesToPreparedMeta(meta)
+	for idx := range meta.TrackerData {
+		meta.TrackerData[idx].Matched = false
+	}
+}
+
+func cachedInfoHash(meta api.PreparedMetadata) string {
+	if value := strings.TrimSpace(meta.StoredInfoHash); value != "" {
+		return value
+	}
+	for _, record := range meta.TrackerData {
+		if value := strings.TrimSpace(record.InfoHash); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func markTrackerDataMatches(meta *api.PreparedMetadata, matchedTrackers []string) {
+	if meta == nil || len(matchedTrackers) == 0 || len(meta.TrackerData) == 0 {
+		return
+	}
+	for idx := range meta.TrackerData {
+		if matchedTrackerForUpload(matchedTrackers, meta.TrackerData[idx].Tracker) {
+			meta.TrackerData[idx].Matched = true
+		}
+	}
+}
+
+func applyPathedTorrentData(meta *api.PreparedMetadata, searchResult api.ClientSearchResult) bool {
+	if meta == nil || !hasPathedTorrentData(searchResult) {
+		return false
+	}
+	if infoHash := strings.TrimSpace(searchResult.InfoHash); infoHash != "" {
+		meta.InfoHash = infoHash
+	}
+	if torrentPath := strings.TrimSpace(searchResult.TorrentPath); torrentPath != "" {
+		meta.ClientTorrentPath = torrentPath
+	}
+	if len(searchResult.TrackerIDs) > 0 {
+		meta.TrackerIDs = mergeTrackerIDOverrides(searchResult.TrackerIDs, meta.TrackerIDs)
+	}
+	if len(searchResult.TorrentComments) > 0 {
+		meta.TorrentComments = append([]api.TorrentMatch{}, searchResult.TorrentComments...)
+	}
+	meta.PieceSizeConstraint = searchResult.PieceSizeConstraint
+	meta.FoundPreferredPiece = searchResult.FoundPreferredPiece
+	meta.StoredDataFresh = false
+	return true
+}
+
+func hasPathedTorrentData(searchResult api.ClientSearchResult) bool {
+	return strings.TrimSpace(searchResult.InfoHash) != "" ||
+		strings.TrimSpace(searchResult.TorrentPath) != "" ||
+		len(searchResult.TrackerIDs) > 0 ||
+		len(searchResult.TorrentComments) > 0 ||
+		strings.TrimSpace(searchResult.PieceSizeConstraint) != "" ||
+		strings.TrimSpace(searchResult.FoundPreferredPiece) != ""
 }
 
 func (c *Core) getDupeCache(path string, signature string) (api.PreparedMetadata, bool) {
@@ -2223,7 +2821,7 @@ func cacheableGUIPreparedMetaRequest(req api.Request) bool {
 // so callers can hand off metadata to isolated per-run cores.
 func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request) (api.PreparedMetadata, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return api.PreparedMetadata{}, false, err
+		return api.PreparedMetadata{}, false, fmt.Errorf("core: export cached prepared metadata canceled: %w", err)
 	}
 	path, err := c.resolveSinglePreparedMetaPath(ctx, req.Paths)
 	if err != nil {
@@ -2240,7 +2838,7 @@ func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request)
 // and upload-only flows can reuse metadata prepared on the long-lived GUI core.
 func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request, meta api.PreparedMetadata) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("core: import prepared metadata canceled: %w", err)
 	}
 	path, err := c.resolveSinglePreparedMetaPath(ctx, req.Paths)
 	if err != nil {
@@ -2262,7 +2860,7 @@ func (c *Core) resolveSinglePreparedMetaPath(ctx context.Context, paths []string
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, paths)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("core: %w", err)
 	}
 	if len(normalizedPaths) == 0 {
 		return "", internalerrors.ErrInvalidInput
@@ -2479,8 +3077,26 @@ func deepCopyExternalMetadata(metadata api.ExternalMetadata) api.ExternalMetadat
 		IMDB:       deepCopyIMDBMetadata(metadata.IMDB),
 		TVDB:       deepCopyTVDBMetadata(metadata.TVDB),
 		TVmaze:     deepCopyTVmazeMetadata(metadata.TVmaze),
+		Bluray:     deepCopyBlurayMetadata(metadata.Bluray),
 		UpdatedAt:  metadata.UpdatedAt,
 	}
+}
+
+func deepCopyBlurayMetadata(metadata *api.BlurayMetadata) *api.BlurayMetadata {
+	if metadata == nil {
+		return nil
+	}
+	cloned := *metadata
+	cloned.Candidates = make([]api.BlurayReleaseCandidate, len(metadata.Candidates))
+	for idx, candidate := range metadata.Candidates {
+		cloned.Candidates[idx] = candidate
+		cloned.Candidates[idx].Warnings = append([]string(nil), candidate.Warnings...)
+		cloned.Candidates[idx].MatchNotes = append([]string(nil), candidate.MatchNotes...)
+		cloned.Candidates[idx].Specs.Audio = append([]string(nil), candidate.Specs.Audio...)
+		cloned.Candidates[idx].Specs.Subtitles = append([]string(nil), candidate.Specs.Subtitles...)
+		cloned.Candidates[idx].CoverImages = append([]api.BlurayImage(nil), candidate.CoverImages...)
+	}
+	return &cloned
 }
 
 func deepCopyTMDBMetadata(metadata *api.TMDBMetadata) *api.TMDBMetadata {
@@ -2651,7 +3267,7 @@ func clonePtr[T any](value *T) *T {
 
 func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.PlaylistInfo, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: discover playlists canceled: %w", err)
 	}
 	if strings.TrimSpace(sourcePath) == "" {
 		return nil, internalerrors.ErrInvalidInput
@@ -2662,7 +3278,7 @@ func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.
 	playlists, err := filesystem.DiscoverPlaylists(ctx, sourcePath)
 	if err != nil {
 		c.logger.Warnf("core: discover playlists failed: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("core: %w", err)
 	}
 
 	// Convert filesystem types to API types.
@@ -2690,7 +3306,7 @@ func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.
 
 func (c *Core) SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("core: save playlist selection canceled: %w", err)
 	}
 	if strings.TrimSpace(sourcePath) == "" {
 		return internalerrors.ErrInvalidInput
@@ -2705,7 +3321,7 @@ func (c *Core) SavePlaylistSelection(ctx context.Context, sourcePath string, pla
 
 	if err := c.repo.SavePlaylistSelection(ctx, normalizedPath, playlists, useAll); err != nil {
 		c.logger.Warnf("core: save playlist selection failed: %v", err)
-		return err
+		return fmt.Errorf("core: %w", err)
 	}
 
 	c.logger.Infof("core: playlist selection saved for %q", normalizedPath)
@@ -2714,7 +3330,7 @@ func (c *Core) SavePlaylistSelection(ctx context.Context, sourcePath string, pla
 
 func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (api.PlaylistSelection, error) {
 	if err := ctx.Err(); err != nil {
-		return api.PlaylistSelection{}, err
+		return api.PlaylistSelection{}, fmt.Errorf("core: load playlist selection canceled: %w", err)
 	}
 	if strings.TrimSpace(sourcePath) == "" {
 		return api.PlaylistSelection{}, internalerrors.ErrInvalidInput
@@ -2732,7 +3348,7 @@ func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (ap
 			return api.PlaylistSelection{}, internalerrors.ErrNotFound
 		}
 		c.logger.Warnf("core: load playlist selection failed: %v", err)
-		return api.PlaylistSelection{}, err
+		return api.PlaylistSelection{}, fmt.Errorf("core: %w", err)
 	}
 
 	c.logger.Debugf("core: loaded playlist selection for %q: %d playlists, useAll=%v", sourcePath, len(selection.SelectedPlaylists), selection.UseAll)
@@ -2741,7 +3357,7 @@ func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (ap
 
 func (c *Core) ListHistory(ctx context.Context) ([]api.HistoryEntry, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: list history canceled: %w", err)
 	}
 	if c.repo == nil {
 		return nil, errors.New("core: repository not initialized")
@@ -2749,7 +3365,7 @@ func (c *Core) ListHistory(ctx context.Context) ([]api.HistoryEntry, error) {
 
 	entries, err := c.repo.ListHistoryEntries(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: %w", err)
 	}
 
 	result := make([]api.HistoryEntry, 0, len(entries))
@@ -2764,7 +3380,7 @@ func (c *Core) ListHistory(ctx context.Context) ([]api.HistoryEntry, error) {
 
 func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.HistoryOverview, error) {
 	if err := ctx.Err(); err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: get history overview canceled: %w", err)
 	}
 	trimmed := strings.TrimSpace(sourcePath)
 	if trimmed == "" {
@@ -2776,7 +3392,7 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 
 	metadata, err := c.repo.GetByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 
 	overview := api.HistoryOverview{
@@ -2792,21 +3408,21 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 	if err == nil {
 		overview.ExternalIDs = externalIDs
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 
 	externalMetadata, err := c.repo.GetExternalMetadata(ctx, trimmed)
 	if err == nil {
 		overview.ExternalMetadata = externalMetadata
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 
 	releaseOverrides, err := c.repo.GetReleaseNameOverrides(ctx, trimmed)
 	if err == nil {
 		overview.ReleaseNameOverrides = releaseOverrides
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 
 	descriptionOverrides, err := c.repo.ListDescriptionOverridesByPath(ctx, trimmed)
@@ -2814,49 +3430,49 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 		overview.DescriptionOverrides = append([]api.DescriptionOverride(nil), descriptionOverrides...)
 		overview.DescriptionOverride = preferredHistoryDescriptionOverride(descriptionOverrides)
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 
 	playlistSelection, err := c.repo.GetPlaylistSelection(ctx, trimmed)
 	if err == nil {
 		overview.PlaylistSelection = playlistSelection
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 
 	trackerMetadata, err := c.repo.ListTrackerMetadataByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 	overview.TrackerMetadata = trackerMetadata
 
 	ruleFailures, err := c.repo.ListTrackerRuleFailuresByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 	overview.TrackerRuleFailures = ruleFailures
 
 	screenshots, err := c.repo.ListScreenshotsByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 	overview.Screenshots = screenshots
 
 	finalSelections, err := c.repo.ListFinalSelections(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 	overview.FinalSelections = finalSelections
 
 	uploadedImages, err := c.repo.ListUploadedImagesByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 	overview.UploadedImages = uploadedImages
 
 	uploadHistory, err := c.repo.ListUploadHistoryByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 	overview.UploadHistory = uploadHistory
 	if len(uploadHistory) > 0 {
@@ -2887,7 +3503,7 @@ func preferredHistoryDescriptionOverride(overrides []api.DescriptionOverride) ap
 
 func (c *Core) DeleteHistoryRelease(ctx context.Context, sourcePath string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("core: delete history release canceled: %w", err)
 	}
 	trimmed := strings.TrimSpace(sourcePath)
 	if trimmed == "" {
@@ -2908,12 +3524,12 @@ func (c *Core) Close() error {
 	if !ok {
 		return nil
 	}
-	return closer.Close()
+	return wrapCoreError(closer.Close())
 }
 
 func (c *Core) RenderDescription(ctx context.Context, raw string) (string, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return "", fmt.Errorf("core: render description canceled: %w", err)
 	}
 	return description.Render(raw), nil
 }
@@ -2931,7 +3547,7 @@ func (c *Core) SaveDescriptionOverride(ctx context.Context, req api.Request, raw
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.DescriptionBuilderGroup{}, err
+		return api.DescriptionBuilderGroup{}, fmt.Errorf("core: %w", err)
 	}
 
 	uniquePaths := make([]string, 0, len(normalizedPaths))
@@ -2951,7 +3567,7 @@ func (c *Core) SaveDescriptionOverride(ctx context.Context, req api.Request, raw
 	groupKey := strings.TrimSpace(req.DescriptionOverrideGroup)
 	if trimmed == "" {
 		if err := c.repo.DeleteDescriptionOverride(ctx, uniquePaths[0], groupKey); err != nil {
-			return api.DescriptionBuilderGroup{}, err
+			return api.DescriptionBuilderGroup{}, fmt.Errorf("core: %w", err)
 		}
 		req.Paths = []string{uniquePaths[0]}
 		group, err := c.FetchDescriptionBuilderGroupPreview(ctx, req)
@@ -2974,7 +3590,7 @@ func (c *Core) SaveDescriptionOverride(ctx context.Context, req api.Request, raw
 		Description: trimmed,
 		UpdatedAt:   time.Now().UTC(),
 	}); err != nil {
-		return api.DescriptionBuilderGroup{}, err
+		return api.DescriptionBuilderGroup{}, fmt.Errorf("core: %w", err)
 	}
 
 	return api.DescriptionBuilderGroup{
@@ -3079,6 +3695,7 @@ func buildMetadataPreview(meta api.PreparedMetadata, cfg config.Config) api.Meta
 		ExternalIDCandidates: meta.ExternalIDCandidates,
 		ExternalIDInfo:       buildExternalIDInfo(meta.ExternalIDs),
 		ExternalPreview:      buildExternalPreviews(meta.ExternalIDs, meta.ExternalMetadata),
+		Bluray:               deepCopyBlurayMetadata(meta.ExternalMetadata.Bluray),
 		TrackerData:          buildTrackerPreview(meta.TrackerData, cfg),
 	}
 }
@@ -3629,10 +4246,10 @@ func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.P
 		return nil, errors.New("core: tracker service not configured")
 	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, req.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("core: %w", err)
 	}
 	if len(prep.Descriptions) == 0 {
 		return nil, nil

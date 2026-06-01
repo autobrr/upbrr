@@ -12,12 +12,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
+	"path" //nolint:depguard // Extracts tracker response URL path basename.
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -55,15 +57,15 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, []commonhttp.FileField{{
 		FieldName: "torrent",
-		FileName:  path.Base(state.torrentPath),
+		FileName:  filepath.Base(state.torrentPath),
 		Path:      state.torrentPath,
 	}})
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL+"?api_token="+url.QueryEscape(strings.TrimSpace(req.TrackerConfig.APIKey)), bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: TVC build upload request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "Mozilla/5.0")
@@ -76,7 +78,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	responseBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "TVC", "upload_failure", responseBody, ".txt")
-		return api.UploadSummary{}, fmt.Errorf("trackers: TVC upload failed status=%d", resp.StatusCode)
+		return api.UploadSummary{}, commonhttp.UploadHTTPError("TVC", resp.StatusCode, responseBody)
 	}
 
 	payload := string(responseBody)
@@ -94,10 +96,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
 		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "TVC")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announce, dataURL, sourceFlag); err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
@@ -136,17 +138,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, req.TrackerConfig, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, req.TrackerConfig, assets)
 	releaseName := resolveName(req.Meta)
 	if override := strings.TrimSpace(questionnaireAnswers(req.Meta)["name_override"]); override != "" {
 		releaseName = override
@@ -190,7 +189,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 6)
 	if logo := strings.TrimSpace(meta.ExternalMetadata.TMDB.Logo); logo != "" {
 		parts = append(parts, fmt.Sprintf("[center][img=%d]%s[/img][/center]", maxInt(cfg.ImageCount, 300), logo))
@@ -198,7 +197,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 	if title := strings.TrimSpace(meta.EpisodeTitle); title != "" {
 		parts = append(parts, "[center][b]Episode Title:[/b] "+title+"[/center]")
 	}
-	if overview := strings.TrimSpace(firstNonEmpty(meta.EpisodeOverview, meta.ExternalMetadata.TMDB.Overview)); overview != "" {
+	if overview := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.EpisodeOverview, meta.ExternalMetadata.TMDB.Overview)); overview != "" {
 		parts = append(parts, "[center]"+overview+"[/center]")
 	}
 	if links := externalLinks(meta); links != "" {
@@ -210,7 +209,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 	if base := strings.TrimSpace(assets.Description); base != "" {
 		parts = append(parts, "[center][b]Notes / Extra Info[/b]\n"+base+"[/center]")
 	}
-	return bbcode.FinalizeTrackerDescription("TVC", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("TVC", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
@@ -231,7 +230,7 @@ func validateUpload(meta api.PreparedMetadata, cfg config.TrackerConfig, assets 
 		return fmt.Sprintf("TVC requires at least %d screenshots", required)
 	}
 	for _, image := range assets.Screenshots {
-		host := strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(firstNonEmpty(image.WebURL, image.ImgURL, image.RawURL))))
+		host := strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(metautil.FirstNonEmptyTrimmed(image.WebURL, image.ImgURL, image.RawURL))))
 		switch host {
 		case "imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage":
 		default:
@@ -283,14 +282,14 @@ func resolveResolution(meta api.PreparedMetadata) string {
 
 func resolveName(meta api.PreparedMetadata) string {
 	typeName := strings.ReplaceAll(meta.Type, "WEBDL", "WEB-DL")
-	name := ""
+	var name string
 	switch {
 	case !isTV(meta):
-		name = fmt.Sprintf("%s (%d) [%s %s %s]", firstNonEmpty(meta.Release.Title, meta.ReleaseName), maxInt(meta.Release.Year, meta.ExternalMetadata.TMDB.Year), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
+		name = fmt.Sprintf("%s (%d) [%s %s %s]", metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName), maxInt(meta.Release.Year, meta.ExternalMetadata.TMDB.Year), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
 	case meta.TVPack:
-		name = fmt.Sprintf("%s - Series %d (%d) [%s %s %s]", firstNonEmpty(meta.Release.Title, meta.ReleaseName), maxInt(meta.SeasonInt, 1), maxInt(meta.Release.Year, meta.ExternalMetadata.TMDB.Year), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
+		name = fmt.Sprintf("%s - Series %d (%d) [%s %s %s]", metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName), maxInt(meta.SeasonInt, 1), maxInt(meta.Release.Year, meta.ExternalMetadata.TMDB.Year), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
 	default:
-		name = fmt.Sprintf("%s S%02dE%02d [%s %s %s]", firstNonEmpty(meta.Release.Title, meta.ReleaseName), maxInt(meta.SeasonInt, 1), maxInt(meta.EpisodeInt, 1), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
+		name = fmt.Sprintf("%s S%02dE%02d [%s %s %s]", metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName), maxInt(meta.SeasonInt, 1), maxInt(meta.EpisodeInt, 1), meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
 	}
 	if strings.EqualFold(strings.TrimSpace(meta.VideoCodec), "HEVC") {
 		name = strings.Replace(name, "]", " HEVC]", 1)
@@ -328,8 +327,8 @@ func screenshotBlock(images []api.ScreenshotImage, count int) string {
 	}
 	parts := []string{"[b]Screenshots[/b]"}
 	for _, image := range images[:count] {
-		web := firstNonEmpty(image.WebURL, image.ImgURL, image.RawURL)
-		img := firstNonEmpty(image.ImgURL, image.RawURL)
+		web := metautil.FirstNonEmptyTrimmed(image.WebURL, image.ImgURL, image.RawURL)
+		img := metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL)
 		if web == "" || img == "" {
 			continue
 		}
@@ -343,15 +342,6 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 		return nil
 	}
 	return meta.TrackerQuestionnaireAnswers["TVC"]
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func maxInt(a, b int) int {
@@ -400,7 +390,7 @@ func categoryName(meta api.PreparedMetadata) string {
 }
 
 func genresText(meta api.PreparedMetadata) string {
-	return firstNonEmpty(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
 }
 
 func keywordsText(meta api.PreparedMetadata) string {

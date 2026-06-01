@@ -30,14 +30,14 @@ func TestMigrateCreatesTrackerCookiesSchema(t *testing.T) {
 	}
 
 	var userVersion int
-	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("query user_version: %v", err)
 	}
 	if userVersion != expectedSchemaVersion {
 		t.Fatalf("expected schema version %d, got %d", expectedSchemaVersion, userVersion)
 	}
 
-	rows, err := rawDB.Query(`SELECT id FROM schema_migrations ORDER BY id`)
+	rows, err := rawDB.QueryContext(context.Background(), `SELECT id FROM schema_migrations ORDER BY id`)
 	if err != nil {
 		t.Fatalf("query schema_migrations: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestMigrateBridgesLegacyV8TrackerCookiesSchema(t *testing.T) {
 	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
 		t.Fatalf("apply legacy v8: %v", err)
 	}
-	if _, err := rawDB.Exec(`PRAGMA user_version = 8`); err != nil {
+	if _, err := rawDB.ExecContext(context.Background(), `PRAGMA user_version = 8`); err != nil {
 		t.Fatalf("set legacy user_version: %v", err)
 	}
 
@@ -121,7 +121,7 @@ func TestMigrateBridgesLegacyV8TrackerCookiesSchema(t *testing.T) {
 	}
 
 	var userVersion int
-	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("query user_version after bridge: %v", err)
 	}
 	if userVersion != expectedSchemaVersion {
@@ -138,7 +138,7 @@ func assertSQLiteObjectExists(t *testing.T, db *sql.DB, objectType, name string)
 	t.Helper()
 
 	var count int
-	if err := db.QueryRow(
+	if err := db.QueryRowContext(context.Background(),
 		`SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?`,
 		objectType,
 		name,

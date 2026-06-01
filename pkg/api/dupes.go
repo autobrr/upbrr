@@ -63,7 +63,7 @@ type DupeCheckResult struct {
 	SkipRules   []string
 	Status      string
 	Error       string
-	CheckedAt   time.Time
+	CheckedAt   time.Time `ts_type:"string"`
 }
 
 type DupeCheckSummary struct {

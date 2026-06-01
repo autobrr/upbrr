@@ -4,6 +4,8 @@
 package impl
 
 import (
+	"fmt"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ant"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ar"
@@ -37,86 +39,86 @@ import (
 func NewRegistry() (*trackers.Registry, error) {
 	registry := trackers.NewRegistry()
 	if err := unit3d.Register(registry, unit3d.DefaultTrackers()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(hdb.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(mtv.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(ant.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(ar.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(asc.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(bhd.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(bhdtv.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(bjs.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(btn.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(bt.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(dc.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(ff.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(fl.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(gpw.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(hds.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(hdt.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(is.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(nbl.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(ptp.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(pts.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(rtf.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(spd.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(thr.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(tl.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(tvc.New()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	for _, name := range []string{"AZ", "CZ", "PHD"} {
 		if err := registry.Register(azfamily.New(name)); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("trackers: %w", err)
 		}
 	}
 	return registry, nil

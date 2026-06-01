@@ -132,7 +132,7 @@ func compileList(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	return out, true
 }
 
-func compileListItem(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
+func compileListItem(_ *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	out := bbcode.NewHTMLTag("")
 	out.Name = "li"
 	return out, true

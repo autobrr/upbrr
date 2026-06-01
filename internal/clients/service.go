@@ -35,7 +35,7 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent api.TorrentResult) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -111,7 +111,7 @@ func (s *Service) waitInjectDelay(ctx context.Context, tracker string) error {
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	case <-timer.C:
 		return nil
 	}
@@ -141,7 +141,7 @@ func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPa
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -168,7 +168,7 @@ func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPa
 	}
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -192,7 +192,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -219,7 +219,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	}
 
 	if torrentPath := strings.TrimSpace(torrent.Path); torrentPath != "" {
-		if err := qbit.AddTorrentFromFileCtx(ctx, torrentPath, options.Prepare()); err != nil {
+		if _, err := qbit.AddTorrentFromFileCtx(ctx, torrentPath, options.Prepare()); err != nil {
 			return fmt.Errorf("clients: %s qbit add torrent file: %w", name, err)
 		}
 
@@ -228,7 +228,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	}
 
 	if torrentURL := strings.TrimSpace(torrent.URL); torrentURL != "" {
-		if err := qbit.AddTorrentFromUrlCtx(ctx, torrentURL, options.Prepare()); err != nil {
+		if _, err := qbit.AddTorrentFromUrlCtx(ctx, torrentURL, options.Prepare()); err != nil {
 			return fmt.Errorf("clients: %s qbit add torrent URL: %w", name, err)
 		}
 		s.logger.Infof("clients: added tracker torrent URL to qbit client %s for %s", name, meta.SourcePath)

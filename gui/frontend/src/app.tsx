@@ -3,14 +3,18 @@
 
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
+import BlurayCandidatesPage from "./pages/bluray_candidates";
 import DupeCheckPage from "./pages/dupe_check";
 import InputPage from "./pages/input";
 import HistoryPage from "./pages/history/index";
 import LoggingPage from "./pages/logging";
 import PlaylistSelectionPage from "./pages/playlist_selection";
 import ScreenshotsPage from "./pages/screenshots";
+import MenuImagesPage from "./pages/menu_images";
 import SettingsPage from "./pages/settings";
 import TrackerDataPage from "./pages/tracker_data";
 import TrackerUploadPage from "./pages/tracker_upload";
@@ -18,6 +22,7 @@ import UploadImagesPage from "./pages/upload_images";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useUploadImages } from "./hooks/useUploadImages";
+import { cn } from "./utils/cn";
 import type {
   ConfigMap,
   BrowseDirectoryResponse,
@@ -51,8 +56,53 @@ import type {
   WebAuthStatus,
   UploadedImageLink,
   UploadImagesResult,
+  UploadProgressUpdate,
 } from "./types";
-import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
+import {
+  formatLabel,
+  isSkipAutoTorrentEnabled,
+  normalizeDefaultTrackerList,
+} from "./utils/settings";
+import {
+  addSourcePathHistoryEntry,
+  defaultInputHistoryLimit,
+  filterBrowseEntries,
+  inferSourcePathMode,
+  normalizeSourcePathHistory,
+  resolveInputHistoryLimit,
+  type SourcePathHistoryEntry,
+  type SourcePathMode,
+  sourcePathHistoryStorageKey,
+} from "./utils/inputHistory";
+
+const appLayoutClass =
+  "relative z-[1] block min-h-screen ml-[172px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
+
+const sidebarClass =
+  "fixed left-0 top-0 z-[1000] flex h-screen w-[172px] flex-col gap-2.5 border-r border-white/10 bg-[var(--panel)]/95 p-2.5 backdrop-blur max-[960px]:bottom-0 max-[960px]:top-auto max-[960px]:h-auto max-[960px]:w-full max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-2 max-[960px]:border-r-0 max-[960px]:border-t max-[960px]:p-2";
+
+const sidebarGroupClass =
+  "grid gap-1 rounded-lg border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.08)] p-1.5 max-[960px]:flex max-[960px]:flex-wrap max-[960px]:gap-1 max-[960px]:p-1";
+
+const sidebarFooterClass = `${sidebarGroupClass} mt-auto max-[960px]:mt-0`;
+
+const navButtonClass = (active: boolean, nested = false) =>
+  cn(
+    "w-full rounded-md border border-transparent bg-transparent px-2 py-1.5 text-left text-[0.84rem] font-semibold leading-tight text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--text)] max-[960px]:w-auto max-[960px]:py-1.5",
+    nested && "pl-4 text-[0.8rem] font-medium max-[960px]:pl-2",
+    active &&
+      "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] shadow-[0_8px_22px_rgba(245,185,66,0.18)] hover:bg-[var(--sidebar-active-bg)] hover:text-[var(--sidebar-active-text)]",
+  );
+
+const sidebarButtonClass = (active = false) =>
+  cn(
+    "flex min-h-[30px] w-full items-center justify-start gap-1.5 rounded-md border border-transparent bg-transparent px-2 py-1.5 text-[0.84rem] font-semibold leading-tight text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--text)] max-[960px]:w-auto max-[960px]:min-h-7 max-[960px]:py-1",
+    active &&
+      "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] shadow-[0_8px_22px_rgba(245,185,66,0.18)] hover:bg-[var(--sidebar-active-bg)] hover:text-[var(--sidebar-active-text)]",
+  );
+
+const liveButtonClass =
+  "border-[rgba(53,194,193,0.24)] bg-[rgba(53,194,193,0.1)] text-[var(--text)] hover:bg-[rgba(53,194,193,0.16)]";
 
 const emptyDupeSummary: DupeCheckSummary = {
   SourcePath: "",
@@ -85,6 +135,7 @@ const emptyPreview: MetadataPreview = {
   },
   ExternalIDInfo: [],
   ExternalPreview: [],
+  Bluray: undefined,
   TrackerData: [],
 };
 
@@ -153,7 +204,14 @@ const bdinfoProgressEvent = "bdinfo:progress";
 const metadataProgressEvent = "metadata:progress";
 const dupeCheckEventPrefix = "dupe:job:";
 const trackerUploadEventPrefix = "upload:job:";
+const trackerUploadProgressEvent = "upload:progress";
 const runLogLevels = ["error", "warn", "info", "debug", "trace"] as const;
+
+type SourcePathSelection = {
+  path: string;
+  mode: SourcePathMode;
+  waitsForPlaylistSelection: boolean;
+};
 
 const progressUpdatePrefixes = new Set([
   "scanning",
@@ -206,6 +264,8 @@ declare global {
           App?: {
             BrowsePath: () => Promise<string>;
             BrowseFile: () => Promise<string>;
+            BrowseFiles: () => Promise<string[]>;
+            BrowseImageFiles: () => Promise<string[]>;
             BrowseFolder: () => Promise<string>;
             BrowseDirectory: (
               path: string,
@@ -229,6 +289,7 @@ declare global {
               nameOverrides: ReleaseNameOverrides,
               trackers: string[],
             ) => Promise<MetadataPreview>;
+            SelectBlurayCandidate: (path: string, releaseID: string) => Promise<MetadataPreview>;
             FetchDescriptionBuilder: (
               path: string,
               overrides: ExternalIDOverrides,
@@ -248,7 +309,6 @@ declare global {
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
               trackers: string[],
-              ignoreRuleFailures: boolean,
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
@@ -298,6 +358,12 @@ declare global {
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
               images: ScreenshotImage[],
+            ) => Promise<void>;
+            ImportMenuImages: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              paths: string[],
             ) => Promise<void>;
             ReadScreenshotImage: (path: string) => Promise<string>;
             ListUploadCandidates: (
@@ -358,7 +424,6 @@ declare global {
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
               trackers: string[],
-              ignoreRuleFailures: boolean,
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
@@ -499,6 +564,18 @@ export default function App() {
   const browserMode = isBrowserMode();
   const browserNativeBrowseAvailable = !browserMode || isBrowserNativeBrowseAvailable();
   const [path, setPath] = useState("");
+  const [sourcePathHistory, setSourcePathHistory] = useState<SourcePathHistoryEntry[]>(() => {
+    try {
+      return normalizeSourcePathHistory(
+        JSON.parse(localStorage.getItem(sourcePathHistoryStorageKey) || "[]"),
+        defaultInputHistoryLimit,
+      );
+    } catch {
+      return [];
+    }
+  });
+  const [sourcePathMode, setSourcePathMode] = useState<SourcePathMode | undefined>();
+  const [currentDiscType, setCurrentDiscType] = useState("");
   const [sourceLookupURL, setSourceLookupURL] = useState("");
   const [loading, setLoading] = useState(false);
   const [metadataResetting, setMetadataResetting] = useState(false);
@@ -519,6 +596,8 @@ export default function App() {
   const [uiStateID, setUIStateID] = useState(() => localStorage.getItem("ui-state-id") || "");
   const [liveUIStates, setLiveUIStates] = useState<UIStateRecord[]>([]);
   const [renderedDescriptions, setRenderedDescriptions] = useState<Record<string, boolean>>({});
+  const [bluraySelecting, setBluraySelecting] = useState(false);
+  const [bluraySelectionError, setBluraySelectionError] = useState("");
   const [lightboxImage, setLightboxImage] = useState<string>("");
   const [lightboxAlt, setLightboxAlt] = useState<string>("");
   const [lightboxFit, setLightboxFit] = useState<boolean>(true);
@@ -556,7 +635,6 @@ export default function App() {
   const [builderRefreshing, setBuilderRefreshing] = useState(false);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
-  const [overrideRuleBlocks, setOverrideRuleBlocks] = useState(false);
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
   const [trackerUploadError, setTrackerUploadError] = useState("");
   const [trackerUploadJobID, setTrackerUploadJobID] = useState("");
@@ -567,6 +645,9 @@ export default function App() {
   const [trackerDryRunError, setTrackerDryRunError] = useState("");
   const [trackerDryRunPreview, setTrackerDryRunPreview] =
     useState<TrackerDryRunPreview>(emptyTrackerDryRun);
+  const [trackerDryRunProgress, setTrackerDryRunProgress] = useState<UploadProgressUpdate | null>(
+    null,
+  );
   const [trackerQuestionnaireAnswers, setTrackerQuestionnaireAnswers] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -600,13 +681,14 @@ export default function App() {
   const freshUIStateCanPromoteRef = useRef(false);
   const uiStateSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uiStateResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sourcePathDropHandlerRef = useRef<(paths: string[]) => void>(() => undefined);
   const [hostBrowserMode, setHostBrowserMode] = useState<"file" | "folder" | null>(null);
   const [hostBrowser, setHostBrowser] = useState<BrowseDirectoryResponse | null>(null);
   const [hostBrowserLoading, setHostBrowserLoading] = useState(false);
   const [hostBrowserError, setHostBrowserError] = useState("");
-  const hostBrowserDialogRef = useRef<HTMLDivElement | null>(null);
+  const [hostBrowserSearch, setHostBrowserSearch] = useState("");
+  const [debouncedHostBrowserSearch, setDebouncedHostBrowserSearch] = useState("");
   const hostBrowserEntryRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const hostBrowserPreviousFocusRef = useRef<HTMLElement | null>(null);
 
   const builderDirty = useMemo(
     () => Object.values(builderDirtyByGroup).some(Boolean),
@@ -649,6 +731,53 @@ export default function App() {
     resolveImageHostLabel,
     trackerSelectionNames,
   } = useSettingsState({ activeTab });
+
+  const inputHistoryLimit = useMemo(() => {
+    const mainSettings = ((configData as ConfigMap | null)?.MainSettings ??
+      null) as ConfigMap | null;
+    return resolveInputHistoryLimit(mainSettings?.InputHistoryLimit);
+  }, [configData]);
+
+  const persistSourcePathHistory = useCallback((entries: SourcePathHistoryEntry[]) => {
+    try {
+      if (entries.length === 0) {
+        localStorage.removeItem(sourcePathHistoryStorageKey);
+        return;
+      }
+      localStorage.setItem(sourcePathHistoryStorageKey, JSON.stringify(entries));
+    } catch {
+      // Storage may be unavailable in locked-down browser sessions.
+    }
+  }, []);
+
+  const rememberSourcePath = useCallback(
+    (value: string, mode?: SourcePathMode) => {
+      setSourcePathHistory((prev) => {
+        const next = addSourcePathHistoryEntry(
+          prev,
+          value,
+          mode ?? inferSourcePathMode(value),
+          inputHistoryLimit,
+        );
+        persistSourcePathHistory(next);
+        return next;
+      });
+    },
+    [inputHistoryLimit, persistSourcePathHistory],
+  );
+
+  const handleSourcePathChange = useCallback((value: string) => {
+    setPath(value);
+    setSourcePathMode(undefined);
+  }, []);
+
+  useEffect(() => {
+    setSourcePathHistory((prev) => {
+      const next = normalizeSourcePathHistory(prev, inputHistoryLimit);
+      persistSourcePathHistory(next);
+      return next;
+    });
+  }, [inputHistoryLimit, persistSourcePathHistory]);
 
   const configuredRunLogLevel = useMemo(() => {
     const loggingSection = ((configData as ConfigMap | null)?.Logging ?? null) as ConfigMap | null;
@@ -700,14 +829,6 @@ export default function App() {
   useEffect(() => {
     if (!lightboxImage) return;
     setLightboxFit(true);
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setLightboxImage("");
-        setLightboxAlt("");
-      }
-    };
-    globalThis.addEventListener("keydown", handleKeyDown);
-    return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, [lightboxImage]);
 
   useEffect(() => {
@@ -927,8 +1048,17 @@ export default function App() {
     return "Dark";
   };
 
-  const hasTrackerData = preview.TrackerData && preview.TrackerData.length > 0;
+  const skipAutoTorrentEnabled = isSkipAutoTorrentEnabled(configData);
+  const hasTrackerData =
+    !skipAutoTorrentEnabled && preview.TrackerData && preview.TrackerData.length > 0;
+  const hasBlurayData = Boolean(preview.Bluray);
   const hasPreview = Boolean(preview.SourcePath);
+
+  useEffect(() => {
+    if (skipAutoTorrentEnabled && activeTab === "tracker") {
+      setActiveTab("input");
+    }
+  }, [activeTab, skipAutoTorrentEnabled]);
 
   useEffect(() => {
     setDupeIgnore((prev) => {
@@ -1217,10 +1347,8 @@ export default function App() {
     livePreviewImage,
     setLivePreviewImage,
     livePreviewRequestId,
-    screenshotsEnabled,
     setScreenshotPlan,
     setScreenshotSelections,
-    setScreenshotsEnabled,
     screenshotsSettingsSaving,
     setScreenshotsSettingsSaving,
     setShowFrameSelections,
@@ -1235,10 +1363,25 @@ export default function App() {
 
   const selectedUploadImageTrackers = useMemo(() => {
     const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
-    return Object.entries(releasePageTrackerSelection)
-      .filter(([name, selected]) => selected && validTrackers.has(name))
+    return Object.entries(uploadToggles)
+      .filter(([name, enabled]) => {
+        if (!enabled) return false;
+        if (!validTrackers.has(name)) return false;
+        const normalized = name.toLowerCase().trim();
+        if (!normalized) return false;
+        if (dupedTrackerSet.has(normalized)) return false;
+        if (ruleSkippedTrackerSet.has(normalized)) return false;
+        if (failedDupeTrackerSet.has(normalized)) return false;
+        return true;
+      })
       .map(([name]) => name);
-  }, [releasePageTrackerSelection, trackerUploadItems]);
+  }, [
+    uploadToggles,
+    trackerUploadItems,
+    dupedTrackerSet,
+    ruleSkippedTrackerSet,
+    failedDupeTrackerSet,
+  ]);
 
   // Upload images workflow hook
   const uploadImages = useUploadImages({
@@ -1261,7 +1404,10 @@ export default function App() {
 
   const applyUIState = useCallback(
     (state: UIState) => {
-      if (typeof state.path === "string") setPath(state.path);
+      if (typeof state.path === "string") {
+        setPath(state.path);
+        setSourcePathMode(undefined);
+      }
       if (typeof state.sourceLookupURL === "string") setSourceLookupURL(state.sourceLookupURL);
       if (typeof state.activeTab === "string") setActiveTab(state.activeTab);
       if (state.preview) setPreview({ ...emptyPreview, ...state.preview });
@@ -1281,8 +1427,6 @@ export default function App() {
         setReleasePageTrackerSelection(state.releasePageTrackerSelection);
       }
       if (state.uploadToggles) setUploadToggles(state.uploadToggles);
-      if (typeof state.overrideRuleBlocks === "boolean")
-        setOverrideRuleBlocks(state.overrideRuleBlocks);
       if (typeof state.runDebug === "boolean") setRunDebug(state.runDebug);
       if (typeof state.runLogLevel === "string") setRunLogLevel(state.runLogLevel);
       if (typeof state.runLogLevelTouched === "boolean") {
@@ -1297,9 +1441,6 @@ export default function App() {
       if (state.prepPreview) setPrepPreview({ ...emptyPreparation, ...state.prepPreview });
       if (state.screenshotPlan !== undefined) setScreenshotPlan(state.screenshotPlan);
       if (state.screenshotSelections) setScreenshotSelections(state.screenshotSelections);
-      if (typeof state.screenshotsEnabled === "boolean") {
-        setScreenshotsEnabled(state.screenshotsEnabled);
-      }
       if (typeof state.showFrameSelections === "boolean") {
         setShowFrameSelections(state.showFrameSelections);
       }
@@ -1329,7 +1470,6 @@ export default function App() {
       setFinalResult,
       setScreenshotPlan,
       setScreenshotSelections,
-      setScreenshotsEnabled,
       setShowFrameSelections,
       setUploadHost,
       setUploadSelections,
@@ -1542,7 +1682,6 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
-      overrideRuleBlocks,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1555,7 +1694,6 @@ export default function App() {
       prepPreview,
       screenshotPlan: screenshots.screenshotPlan,
       screenshotSelections: screenshots.screenshotSelections,
-      screenshotsEnabled: screenshots.screenshotsEnabled,
       showFrameSelections: screenshots.showFrameSelections,
       finalResult: screenshots.finalResult,
       deletedTrackerImages: screenshots.deletedTrackerImages,
@@ -1629,7 +1767,6 @@ export default function App() {
     selectedProvider,
     releasePageTrackerSelection,
     uploadToggles,
-    overrideRuleBlocks,
     runDebug,
     runLogLevel,
     runLogLevelTouched,
@@ -1642,7 +1779,6 @@ export default function App() {
     prepPreview,
     screenshots.screenshotPlan,
     screenshots.screenshotSelections,
-    screenshots.screenshotsEnabled,
     screenshots.showFrameSelections,
     screenshots.finalResult,
     screenshots.deletedTrackerImages,
@@ -1732,7 +1868,6 @@ export default function App() {
     resetScreenshots();
     resetUploadState();
     setUploadToggles({});
-    setOverrideRuleBlocks(false);
     setFinalDragIndex(null);
     setLiveCaptureLoading(false);
   }, [resetScreenshots, resetUploadState]);
@@ -1750,7 +1885,6 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
-      overrideRuleBlocks,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1763,7 +1897,6 @@ export default function App() {
       prepPreview,
       screenshotPlan: screenshots.screenshotPlan,
       screenshotSelections: screenshots.screenshotSelections,
-      screenshotsEnabled: screenshots.screenshotsEnabled,
       showFrameSelections: screenshots.showFrameSelections,
       finalResult: screenshots.finalResult,
       deletedTrackerImages: screenshots.deletedTrackerImages,
@@ -1788,7 +1921,6 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
-      overrideRuleBlocks,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1801,7 +1933,6 @@ export default function App() {
       prepPreview,
       screenshots.screenshotPlan,
       screenshots.screenshotSelections,
-      screenshots.screenshotsEnabled,
       screenshots.showFrameSelections,
       screenshots.finalResult,
       screenshots.deletedTrackerImages,
@@ -1816,75 +1947,103 @@ export default function App() {
     ],
   );
 
-  const resetFreshWorkflowState = useCallback(() => {
-    freshUIStateCanPromoteRef.current = false;
-    if (uiStateSaveTimerRef.current) {
-      clearTimeout(uiStateSaveTimerRef.current);
-    }
-    setPath("");
-    setSourceLookupURL("");
-    setLoading(false);
-    setMetadataResetting(false);
-    setError("");
-    setPreview(emptyPreview);
-    setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
-    setReleaseEdits(buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
-    setReleaseTouched(buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
-    setShowExternalIDInputUI(true);
-    setSelectedProvider("");
-    setActiveTab("input");
-    setRenderedDescriptions({});
-    setLightboxImage("");
-    setLightboxAlt("");
-    setShowPlaylistSelection(false);
-    setPlaylistSelectionPath("");
-    setPlaylistAutoPreparing(false);
-    setPlaylistPreparationError("");
-    setBdinfoProgressLines([]);
-    setMetadataProgressTarget("");
-    setMetadataProgressActive(false);
-    setMetadataProgressUpdates([]);
-    setDupeSummary(emptyDupeSummary);
-    setDupeLoading(false);
-    setDupeError("");
-    setDupeChecked(false);
-    setDupeCheckJobID("");
-    setDupeCheckSnapshot(null);
-    setDupeIgnore({});
-    setDupeTrackerFlags({});
-    setPrepPreview(emptyPreparation);
-    setPrepError("");
-    setBuilderPreview(emptyDescriptionBuilder);
-    setBuilderRawByGroup({});
-    setBuilderRenderedByGroup({});
-    setBuilderExpandedGroups({});
-    setBuilderLoading(false);
-    setBuilderError("");
-    setBuilderDirtyByGroup({});
-    setBuilderRenderLoading(false);
-    setBuilderSaved("");
-    setBuilderSaving(false);
-    setBuilderRefreshing(false);
-    setBuilderAutoRequestKey("");
-    resetScreenshotState();
-    setTrackerUploadRunning(false);
-    setTrackerUploadError("");
-    setTrackerUploadJobID("");
-    setTrackerUploadSnapshot(null);
-    setTrackerDryRunLoading(false);
-    setTrackerDryRunError("");
-    setTrackerDryRunPreview(emptyTrackerDryRun);
-    setTrackerQuestionnaireAnswers({});
-    setReleasePageTrackerSelection({});
-    setRunDebug(false);
-    setRunLogLevel(configuredRunLogLevel);
-    setRunLogLevelTouched(false);
-    setLiveCaptureLoading(false);
-    setHostBrowserMode(null);
-    setHostBrowser(null);
-    setHostBrowserLoading(false);
-    setHostBrowserError("");
-  }, [configuredRunLogLevel, resetScreenshotState]);
+  const resetFreshWorkflowState = useCallback(
+    (nextActiveTab = "input") => {
+      freshUIStateCanPromoteRef.current = false;
+      if (uiStateSaveTimerRef.current) {
+        clearTimeout(uiStateSaveTimerRef.current);
+      }
+      setPath("");
+      setSourcePathMode(undefined);
+      setSourceLookupURL("");
+      setLoading(false);
+      setMetadataResetting(false);
+      setError("");
+      setPreview(emptyPreview);
+      setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
+      setReleaseEdits(buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
+      setReleaseTouched(buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
+      setShowExternalIDInputUI(true);
+      setSelectedProvider("");
+      setActiveTab(nextActiveTab);
+      setRenderedDescriptions({});
+      setLightboxImage("");
+      setLightboxAlt("");
+      setShowPlaylistSelection(false);
+      setPlaylistSelectionPath("");
+      setPlaylistAutoPreparing(false);
+      setPlaylistPreparationError("");
+      setBdinfoProgressLines([]);
+      setMetadataProgressTarget("");
+      setMetadataProgressActive(false);
+      setMetadataProgressUpdates([]);
+      setDupeSummary(emptyDupeSummary);
+      setDupeLoading(false);
+      setDupeError("");
+      setDupeChecked(false);
+      setDupeCheckJobID("");
+      setDupeCheckSnapshot(null);
+      setDupeIgnore({});
+      setDupeTrackerFlags({});
+      setPrepPreview(emptyPreparation);
+      setPrepError("");
+      setBuilderPreview(emptyDescriptionBuilder);
+      setBuilderRawByGroup({});
+      setBuilderRenderedByGroup({});
+      setBuilderExpandedGroups({});
+      setBuilderLoading(false);
+      setBuilderError("");
+      setBuilderDirtyByGroup({});
+      setBuilderRenderLoading(false);
+      setBuilderSaved("");
+      setBuilderSaving(false);
+      setBuilderRefreshing(false);
+      setBuilderAutoRequestKey("");
+      resetScreenshotState();
+      setTrackerUploadRunning(false);
+      setTrackerUploadError("");
+      setTrackerUploadJobID("");
+      setTrackerUploadSnapshot(null);
+      setTrackerDryRunLoading(false);
+      setTrackerDryRunError("");
+      setTrackerDryRunPreview(emptyTrackerDryRun);
+      setTrackerDryRunProgress(null);
+      setTrackerQuestionnaireAnswers({});
+      setReleasePageTrackerSelection({});
+      setRunDebug(false);
+      setRunLogLevel(configuredRunLogLevel);
+      setRunLogLevelTouched(false);
+      setLiveCaptureLoading(false);
+      setHostBrowserMode(null);
+      setHostBrowser(null);
+      setHostBrowserLoading(false);
+      setHostBrowserError("");
+    },
+    [configuredRunLogLevel, resetScreenshotState],
+  );
+
+  const handleHistoryReleaseDeleted = useCallback(
+    (deletedPath: string) => {
+      const deletedKey = uiStateSourceKey({ path: deletedPath });
+      if (!deletedKey) {
+        return;
+      }
+      if (uiStateSourceKey(buildCurrentUIState()) !== deletedKey) {
+        return;
+      }
+      localStorage.setItem("ui-state-mode", "fresh");
+      localStorage.removeItem("ui-state-id");
+      suspendUIStateSaves();
+      resetFreshWorkflowState("history");
+      setUIStateID("");
+      setUIStateMode("fresh");
+      resumeUIStateSavesSoon();
+      void refreshLiveUIStates().catch((err) => {
+        console.error("Failed to refresh UI states after history delete:", err);
+      });
+    },
+    [buildCurrentUIState, refreshLiveUIStates, resetFreshWorkflowState, uiStateSourceKey],
+  );
 
   const toggleUIStateMode = async () => {
     let states = liveUIStates;
@@ -2232,9 +2391,15 @@ export default function App() {
     return payload;
   };
 
-  const applyPreviewResult = (result: MetadataPreview) => {
+  const applyPreviewResult = (
+    result: MetadataPreview,
+    options: { switchToInput?: boolean } = {},
+  ) => {
+    const { switchToInput = true } = options;
     setPreview(result);
-    setActiveTab("input");
+    if (switchToInput) {
+      setActiveTab("input");
+    }
     setIdEdits(buildIDEditState(result.ExternalIDs));
     setReleaseEdits(buildReleaseEditState(result.ReleaseNameOverrides || {}));
     setReleaseTouched(buildReleaseTouchedState(result.ReleaseNameOverrides || {}));
@@ -2260,6 +2425,11 @@ export default function App() {
     resetScreenshotState();
   };
 
+  const clearHostBrowserSearch = () => {
+    setHostBrowserSearch("");
+    setDebouncedHostBrowserSearch("");
+  };
+
   const openHostBrowser = async (mode: "file" | "folder", startPath = "") => {
     const browser = globalThis.go?.guiapp?.App?.BrowseDirectory;
     if (!browser) {
@@ -2269,6 +2439,7 @@ export default function App() {
     setHostBrowserMode(mode);
     setHostBrowserLoading(true);
     setHostBrowserError("");
+    clearHostBrowserSearch();
     try {
       const selectedStart = startPath || path.trim();
       const result = await browser(selectedStart, mode);
@@ -2315,25 +2486,32 @@ export default function App() {
     setHostBrowserMode(null);
     setHostBrowser(null);
     setHostBrowserError("");
+    clearHostBrowserSearch();
   };
 
   useEffect(() => {
-    if (!hostBrowserMode) {
-      hostBrowserPreviousFocusRef.current?.focus();
-      hostBrowserPreviousFocusRef.current = null;
-      return;
-    }
-    if (!hostBrowserPreviousFocusRef.current) {
-      hostBrowserPreviousFocusRef.current = document.activeElement as HTMLElement | null;
-    }
-    if (hostBrowserLoading) {
+    const timer = setTimeout(() => {
+      setDebouncedHostBrowserSearch(hostBrowserSearch);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [hostBrowserSearch]);
+
+  const hostBrowserEntries = useMemo(
+    () => filterBrowseEntries(hostBrowser?.entries || [], debouncedHostBrowserSearch),
+    [hostBrowser?.entries, debouncedHostBrowserSearch],
+  );
+
+  useEffect(() => {
+    hostBrowserEntryRefs.current = [];
+  }, [hostBrowserEntries]);
+
+  useEffect(() => {
+    if (!hostBrowserMode || hostBrowserLoading) {
       return;
     }
 
-    const focusTarget =
-      hostBrowserEntryRefs.current.find((entry) => entry !== null) || hostBrowserDialogRef.current;
-    focusTarget?.focus();
-  }, [hostBrowser?.currentPath, hostBrowser?.entries.length, hostBrowserLoading, hostBrowserMode]);
+    hostBrowserEntryRefs.current.find((entry) => entry !== null)?.focus();
+  }, [hostBrowser?.currentPath, hostBrowserLoading, hostBrowserMode]);
 
   const browseHostDirectory = async (nextPath: string) => {
     if (!hostBrowserMode) {
@@ -2401,45 +2579,6 @@ export default function App() {
     }
   };
 
-  const handleHostBrowserDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeHostBrowser();
-      return;
-    }
-    if (event.key !== "Tab") {
-      return;
-    }
-
-    const dialog = hostBrowserDialogRef.current;
-    if (!dialog) {
-      return;
-    }
-    const focusable = Array.from(
-      dialog.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null);
-    if (focusable.length === 0) {
-      event.preventDefault();
-      dialog.focus();
-      return;
-    }
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-      return;
-    }
-    if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-
   const detectDiscType = async (selectedPath: string): Promise<string> => {
     const detector = globalThis.go?.guiapp?.App?.DetectDiscType;
     if (detector) {
@@ -2462,41 +2601,56 @@ export default function App() {
   };
 
   // Auto-detect BDMV and show playlist selection
-  const handlePathSelected = async (selectedPath: string, mode: "file" | "folder" = "folder") => {
+  const handlePathSelected = async (
+    selectedPath: string,
+    mode?: SourcePathMode,
+  ): Promise<SourcePathSelection | null> => {
     freshUIStateCanPromoteRef.current = false;
-    setPath(selectedPath);
+    const trimmedPath = selectedPath.trim();
+    if (!trimmedPath) {
+      return null;
+    }
+    const selectedMode = mode ?? inferSourcePathMode(trimmedPath);
+    setPath(trimmedPath);
+    setSourcePathMode(selectedMode);
+    rememberSourcePath(trimmedPath, selectedMode);
+    const discType = await detectDiscType(trimmedPath);
+    setCurrentDiscType(discType);
     setShowExternalIDInputUI(true);
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
     setPlaylistAutoPreparing(false);
 
-    if (mode === "file") {
+    if (selectedMode === "file") {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
       setActiveTab("input");
-      return;
+      return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: false };
     }
 
-    const discType = await detectDiscType(selectedPath);
     if (discType !== "BDMV") {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
       setActiveTab("input");
-      return;
+      return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: false };
     }
 
-    // Smart path detection: check if path already contains BDMV or PLAYLIST
-    const upperPath = selectedPath.toUpperCase();
-    let bdmvPath = selectedPath;
+    const upperPath = trimmedPath.toUpperCase();
+    let bdmvPath = trimmedPath;
 
     if (!upperPath.includes("\\BDMV") && !upperPath.includes("/BDMV")) {
-      // Try BDMV subfolder first
-      bdmvPath = `${selectedPath}/BDMV`;
+      bdmvPath = `${trimmedPath}/BDMV`;
     }
 
     // Set the path for playlist discovery (component will discover the playlists)
     setPlaylistSelectionPath(bdmvPath);
     setShowPlaylistSelection(true);
+    return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: true };
+  };
+
+  const handleSourcePathHistorySelect = async (entry: SourcePathHistoryEntry) => {
+    setError("");
+    await handlePathSelected(entry.path, entry.mode);
   };
 
   const runPlaylistBDInfo = async () => {
@@ -2536,6 +2690,7 @@ export default function App() {
     overrides: ExternalIDOverrides,
     nameOverrides: ReleaseNameOverrides,
     hideExternalIDInputUIOnSuccess = false,
+    options: { targetPath?: string; targetMode?: SourcePathMode } = {},
   ) => {
     setError("");
     setDupeChecked(false);
@@ -2547,16 +2702,17 @@ export default function App() {
     setBuilderRenderedByGroup({});
     setBuilderExpandedGroups({});
     setBuilderDirtyByGroup({});
+    setBluraySelectionError("");
     const fetcher = globalThis.go?.guiapp?.App?.FetchMetadata;
     if (!fetcher) {
       setError("Fetch metadata is unavailable in this build.");
       return;
     }
-    if (!path.trim()) {
+    const targetPath = (options.targetPath ?? path).trim();
+    if (!targetPath) {
       setError("Please select a file or folder.");
       return;
     }
-    const targetPath = path.trim();
     setMetadataProgressTarget(targetPath);
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
@@ -2570,6 +2726,10 @@ export default function App() {
         getSelectedTrackers(),
       );
       applyPreviewResult(result);
+      rememberSourcePath(
+        targetPath,
+        options.targetMode ?? sourcePathMode ?? inferSourcePathMode(targetPath),
+      );
       freshUIStateCanPromoteRef.current = uiStateMode === "fresh";
       setShowExternalIDInputUI(!hideExternalIDInputUIOnSuccess);
     } catch (err) {
@@ -2583,6 +2743,50 @@ export default function App() {
   const handleFetch = async () => {
     await runFetch({}, {}, false);
   };
+
+  const handleSourcePathDrop = async (paths: string[]) => {
+    if (loading) {
+      setError("Metadata fetch is already running.");
+      return;
+    }
+    const droppedPath = paths.find((candidate) => candidate.trim())?.trim() || "";
+    if (!droppedPath) {
+      setError("Dropped file path was empty.");
+      return;
+    }
+    setError("");
+    const selection = await handlePathSelected(droppedPath);
+    if (!selection || selection.waitsForPlaylistSelection) {
+      return;
+    }
+    await runFetch({}, {}, false, {
+      targetPath: selection.path,
+      targetMode: selection.mode,
+    });
+  };
+
+  sourcePathDropHandlerRef.current = (paths: string[]) => {
+    void handleSourcePathDrop(paths);
+  };
+
+  useEffect(() => {
+    const runtime = (
+      globalThis as typeof globalThis & {
+        runtime?: { OnFileDrop?: unknown; OnFileDropOff?: unknown };
+      }
+    ).runtime;
+    if (browserMode || typeof runtime?.OnFileDrop !== "function") {
+      return;
+    }
+    OnFileDrop((_x, _y, paths) => {
+      sourcePathDropHandlerRef.current(paths);
+    }, true);
+    return () => {
+      if (typeof runtime.OnFileDropOff === "function") {
+        OnFileDropOff();
+      }
+    };
+  }, [browserMode]);
 
   const clearEditAttributesState = () => {
     setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
@@ -2642,6 +2846,29 @@ export default function App() {
       setMetadataProgressActive(false);
       setMetadataResetting(false);
       setLoading(false);
+    }
+  };
+
+  const handleSelectBlurayCandidate = async (releaseID: string) => {
+    setBluraySelectionError("");
+    const selector = globalThis.go?.guiapp?.App?.SelectBlurayCandidate;
+    if (!selector) {
+      setBluraySelectionError("Blu-ray candidate selection is unavailable in this build.");
+      return;
+    }
+    const targetPath = (preview.SourcePath || path).trim();
+    if (!targetPath || !releaseID.trim()) {
+      setBluraySelectionError("Path and release candidate are required.");
+      return;
+    }
+    setBluraySelecting(true);
+    try {
+      const result = await selector(targetPath, releaseID.trim());
+      applyPreviewResult(result, { switchToInput: false });
+    } catch (err) {
+      setBluraySelectionError(String(err));
+    } finally {
+      setBluraySelecting(false);
     }
   };
 
@@ -2907,10 +3134,6 @@ export default function App() {
 
   const runLivePreviewAt = async (timestampSeconds: number) => {
     setLivePreviewError("");
-    if (!screenshotsEnabled) {
-      setLivePreviewError("Enable screenshot capture to generate previews.");
-      return;
-    }
     if (!path.trim()) {
       setLivePreviewError("Please select a file or folder.");
       return;
@@ -2966,10 +3189,6 @@ export default function App() {
 
   const handlePreviewSelection = async (selection: ScreenshotSelection) => {
     screenshots.setScreenshotsError("");
-    if (!screenshotsEnabled) {
-      screenshots.setScreenshotsError("Enable screenshot capture to generate previews.");
-      return;
-    }
     if (!path.trim()) {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
@@ -3002,10 +3221,6 @@ export default function App() {
 
   const handleCapturePreviewFrame = async () => {
     screenshots.setScreenshotsError("");
-    if (!screenshotsEnabled) {
-      screenshots.setScreenshotsError("Enable screenshot capture to save previews.");
-      return;
-    }
     if (!path.trim()) {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
@@ -3136,10 +3351,6 @@ export default function App() {
 
   const handleGenerateScreenshots = async () => {
     screenshots.setScreenshotsError("");
-    if (!screenshotsEnabled) {
-      screenshots.setScreenshotsError("Enable screenshot capture to generate screenshots.");
-      return;
-    }
     if (!path.trim()) {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
@@ -3281,7 +3492,6 @@ export default function App() {
     setBuilderSaved("");
     setBuilderRefreshing(false);
     setBuilderAutoRequestKey("");
-    setOverrideRuleBlocks(false);
     setTrackerUploadRunning(false);
     setTrackerUploadError("");
     setTrackerUploadJobID("");
@@ -3289,6 +3499,7 @@ export default function App() {
     setTrackerDryRunLoading(false);
     setTrackerDryRunError("");
     setTrackerDryRunPreview(emptyTrackerDryRun);
+    setTrackerDryRunProgress(null);
     setMetadataProgressTarget("");
     setMetadataProgressActive(false);
     setMetadataProgressUpdates([]);
@@ -3408,10 +3619,7 @@ export default function App() {
           next[item.name] = false;
           return;
         }
-        if (
-          (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) &&
-          !overrideRuleBlocks
-        ) {
+        if (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) {
           next[item.name] = false;
           return;
         }
@@ -3433,7 +3641,6 @@ export default function App() {
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,
     releasePageTrackerSelection,
-    overrideRuleBlocks,
   ]);
 
   useEffect(() => {
@@ -3494,6 +3701,7 @@ export default function App() {
     setTrackerQuestionnaireAnswers({});
     setTrackerDryRunPreview(emptyTrackerDryRun);
     setTrackerDryRunError("");
+    setTrackerDryRunProgress(null);
   }, [path]);
 
   // NOTE: releasePageTrackerSelection is memory-only state tracking which trackers
@@ -3508,28 +3716,10 @@ export default function App() {
       .map(([name]) => name);
   };
 
-  const getSelectedUploadTrackers = useCallback(() => {
-    const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
-    return Object.entries(uploadToggles)
-      .filter(([name, enabled]) => {
-        if (!enabled) return false;
-        if (!validTrackers.has(name)) return false;
-        const normalized = name.toLowerCase().trim();
-        if (!normalized) return false;
-        if (dupedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
-        if (ruleSkippedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
-        if (failedDupeTrackerSet.has(normalized)) return false;
-        return true;
-      })
-      .map(([name]) => name);
-  }, [
-    uploadToggles,
-    trackerUploadItems,
-    dupedTrackerSet,
-    ruleSkippedTrackerSet,
-    failedDupeTrackerSet,
-    overrideRuleBlocks,
-  ]);
+  const getSelectedUploadTrackers = useCallback(
+    () => selectedUploadImageTrackers,
+    [selectedUploadImageTrackers],
+  );
 
   const updateTrackerQuestionnaireAnswer = useCallback(
     (tracker: string, key: string, value: string) => {
@@ -3604,7 +3794,6 @@ export default function App() {
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
-        overrideRuleBlocks,
         ignoredDupeTrackers,
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
         builderPreview.Groups || [],
@@ -3625,7 +3814,6 @@ export default function App() {
     idOverrideState,
     releaseOverrideState,
     getSelectedUploadTrackers,
-    overrideRuleBlocks,
     ignoredDupeTrackers,
     trackerDryRunPreview,
     trackerQuestionnaireAnswers,
@@ -3675,13 +3863,24 @@ export default function App() {
       }
 
       setTrackerDryRunLoading(true);
+      setTrackerDryRunProgress({
+        sourcePath: path.trim(),
+        tracker: "",
+        task: "dry_run",
+        status: "running",
+        message: "Starting dry run",
+        completedPieces: 0,
+        totalPieces: 0,
+        percent: 0,
+        hashRateMiB: 0,
+        timestamp: new Date().toISOString(),
+      });
       try {
         const result = await fetcher(
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
           selectedTrackers,
-          overrideRuleBlocks,
           ignoredDupeTrackers,
           cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
           descriptionGroups,
@@ -3721,7 +3920,6 @@ export default function App() {
       idOverrideState,
       releaseOverrideState,
       getSelectedUploadTrackers,
-      overrideRuleBlocks,
       ignoredDupeTrackers,
       trackerQuestionnaireAnswers,
       runDebug,
@@ -3732,6 +3930,23 @@ export default function App() {
   const handleRunTrackerDryRun = useCallback(async () => {
     await runTrackerDryRun(builderPreview.Groups || []);
   }, [builderPreview, runTrackerDryRun]);
+
+  useEffect(() => {
+    const off = EventsOn(trackerUploadProgressEvent, (payload: any) => {
+      const update = payload as UploadProgressUpdate;
+      const updatePath = String(update?.sourcePath || "").trim();
+      if (updatePath && updatePath !== path.trim()) {
+        return;
+      }
+      setTrackerDryRunProgress(update);
+    });
+
+    return () => {
+      if (typeof off === "function") {
+        off();
+      }
+    };
+  }, [path]);
 
   const handleCancelTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
@@ -4001,11 +4216,11 @@ export default function App() {
     <div className="app-shell">
       <div className="gradient-orb orb-a" />
       <div className="gradient-orb orb-b" />
-      <div className="app-layout">
-        <aside className="side-panel">
-          <div className="side-panel__tabs">
+      <div className={appLayoutClass}>
+        <aside className={sidebarClass}>
+          <div className={sidebarGroupClass}>
             <button
-              className={`tab-button ${activeTab === "input" ? "active" : ""}`}
+              className={navButtonClass(activeTab === "input")}
               type="button"
               onClick={() => setActiveTab("input")}
             >
@@ -4013,16 +4228,25 @@ export default function App() {
             </button>
             {hasTrackerData ? (
               <button
-                className={`subtab-button ${activeTab === "tracker" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "tracker", true)}
                 type="button"
                 onClick={() => setActiveTab("tracker")}
               >
                 Tracker Data
               </button>
             ) : null}
+            {hasBlurayData ? (
+              <button
+                className={navButtonClass(activeTab === "bluray", true)}
+                type="button"
+                onClick={() => setActiveTab("bluray")}
+              >
+                Blu-ray.com
+              </button>
+            ) : null}
             {hasPreview ? (
               <button
-                className={`subtab-button ${activeTab === "dupes" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "dupes", true)}
                 type="button"
                 onClick={() => setActiveTab("dupes")}
               >
@@ -4031,16 +4255,25 @@ export default function App() {
             ) : null}
             {dupeChecked ? (
               <button
-                className={`subtab-button ${activeTab === "screenshots" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "screenshots", true)}
                 type="button"
                 onClick={() => setActiveTab("screenshots")}
               >
                 Screenshots
               </button>
             ) : null}
+            {dupeChecked && ["BDMV", "DVD", "HDDVD"].includes(currentDiscType) ? (
+              <button
+                className={`subtab-button ${activeTab === "menu_images" ? "active" : ""}`}
+                type="button"
+                onClick={() => setActiveTab("menu_images")}
+              >
+                Menu Images
+              </button>
+            ) : null}
             {dupeChecked ? (
               <button
-                className={`subtab-button ${activeTab === "upload_images" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "upload_images", true)}
                 type="button"
                 onClick={() => setActiveTab("upload_images")}
               >
@@ -4049,7 +4282,7 @@ export default function App() {
             ) : null}
             {dupeChecked ? (
               <button
-                className={`subtab-button ${activeTab === "description_builder" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "description_builder", true)}
                 type="button"
                 onClick={() => setActiveTab("description_builder")}
               >
@@ -4058,7 +4291,7 @@ export default function App() {
             ) : null}
             {builderReady ? (
               <button
-                className={`subtab-button ${activeTab === "upload" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "upload", true)}
                 type="button"
                 onClick={() => setActiveTab("upload")}
               >
@@ -4066,44 +4299,44 @@ export default function App() {
               </button>
             ) : null}
           </div>
-          <div className="side-panel__footer">
+          <div className={sidebarFooterClass}>
             <button
-              className={`settings-button ${activeTab === "settings" ? "active" : ""}`}
+              className={sidebarButtonClass(activeTab === "settings")}
               type="button"
               onClick={() => setActiveTab("settings")}
             >
               <span>Settings</span>
             </button>
             <button
-              className={`settings-button ${activeTab === "logging" ? "active" : ""}`}
+              className={sidebarButtonClass(activeTab === "logging")}
               type="button"
               onClick={() => setActiveTab("logging")}
             >
               <span>Logging</span>
             </button>
             <button
-              className={`settings-button ${activeTab === "history" ? "active" : ""}`}
+              className={sidebarButtonClass(activeTab === "history")}
               type="button"
               onClick={() => setActiveTab("history")}
             >
               <span>History</span>
             </button>
             <button
-              className={`settings-button settings-button--state ${
-                uiStateMode === "live" ? "active" : ""
-              }`}
+              className={cn(sidebarButtonClass(false), "mt-1", liveButtonClass)}
               type="button"
               onClick={toggleUIStateMode}
               title={uiStateToggleTitle}
             >
-              <span>{uiStateToggleLabel}</span>
+              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                {uiStateToggleLabel}
+              </span>
             </button>
             <button
-              className="settings-button settings-button--theme"
+              className={cn(sidebarButtonClass(), "mt-0")}
               type="button"
               onClick={handleThemeToggle}
             >
-              <span className="theme-toggle">{getThemeIcon()}</span>
+              <span className="mr-0.5 text-base">{getThemeIcon()}</span>
               <span>{getThemeLabel()}</span>
             </button>
           </div>
@@ -4175,7 +4408,7 @@ export default function App() {
               sectionFieldMeta={sectionFieldMeta}
             />
           ) : activeTab === "history" ? (
-            <HistoryPage />
+            <HistoryPage onReleaseDeleted={handleHistoryReleaseDeleted} />
           ) : activeTab === "dupes" ? (
             <DupeCheckPage
               path={path}
@@ -4198,8 +4431,6 @@ export default function App() {
               screenshotPlan={screenshots.screenshotPlan}
               screenshotsLoading={screenshots.screenshotsLoading}
               screenshotsError={screenshots.screenshotsError}
-              screenshotsEnabled={screenshotsEnabled}
-              setScreenshotsEnabled={setScreenshotsEnabled}
               loadScreenshotPlan={screenshots.loadScreenshotPlan}
               handleGenerateScreenshots={handleGenerateScreenshots}
               screenshotConfig={screenshotConfig}
@@ -4250,6 +4481,16 @@ export default function App() {
               finalResult={screenshots.finalResult}
               handleDeleteAllFinalImages={screenshots.handleDeleteAllFinalImages}
             />
+          ) : activeTab === "menu_images" ? (
+            <MenuImagesPage
+              path={path}
+              overrides={idOverrideState?.overrides || {}}
+              nameOverrides={releaseOverrideState?.overrides || {}}
+              browseAvailable={browserNativeBrowseAvailable}
+              onImportComplete={() => {
+                setActiveTab("upload_images");
+              }}
+            />
           ) : activeTab === "upload_images" ? (
             <UploadImagesPage
               path={path}
@@ -4273,6 +4514,15 @@ export default function App() {
               uploadedImageRecords={uploadImages.uploadedImageRecords}
               trackerImageLinks={screenshots.trackerImageLinks}
               handleDeleteUploadedImage={uploadImages.handleDeleteUploadedImage}
+            />
+          ) : activeTab === "bluray" ? (
+            <BlurayCandidatesPage
+              preview={preview}
+              selecting={bluraySelecting}
+              error={bluraySelectionError}
+              onSelect={(releaseID) => void handleSelectBlurayCandidate(releaseID)}
+              setLightboxImage={setLightboxImage}
+              setLightboxAlt={setLightboxAlt}
             />
           ) : activeTab === "description_builder" ? (
             <DescriptionBuilderPage
@@ -4308,8 +4558,7 @@ export default function App() {
               dupedTrackerSet={dupedTrackerSet}
               ruleSkipReasons={ruleSkipReasons}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
-              overrideRuleBlocks={overrideRuleBlocks}
-              setOverrideRuleBlocks={setOverrideRuleBlocks}
+              failedDupeTrackerSet={failedDupeTrackerSet}
               uploadToggles={uploadToggles}
               setUploadToggles={setUploadToggles}
               namingOverrides={namingOverrides}
@@ -4320,6 +4569,7 @@ export default function App() {
               uploadSnapshot={trackerUploadSnapshot}
               dryRunLoading={trackerDryRunLoading}
               dryRunError={trackerDryRunError}
+              dryRunProgress={trackerDryRunProgress}
               dryRunPreview={trackerDryRunPreview}
               trackerQuestionnaireAnswers={trackerQuestionnaireAnswers}
               onQuestionnaireAnswerChange={updateTrackerQuestionnaireAnswer}
@@ -4328,10 +4578,20 @@ export default function App() {
               onCancelUpload={handleCancelTrackerUpload}
               onRetryFailed={handleRetryFailedTrackerUpload}
             />
-          ) : activeTab === "input" ? (
+          ) : activeTab === "tracker" && hasTrackerData ? (
+            <TrackerDataPage
+              preview={preview}
+              renderedDescriptions={renderedDescriptions}
+              setRenderedDescriptions={setRenderedDescriptions}
+              setLightboxImage={setLightboxImage}
+              setLightboxAlt={setLightboxAlt}
+            />
+          ) : (
             <InputPage
               path={path}
-              setPath={setPath}
+              handleSourcePathChange={handleSourcePathChange}
+              sourcePathHistory={sourcePathHistory}
+              handleSourcePathHistorySelect={handleSourcePathHistorySelect}
               sourceLookupURL={sourceLookupURL}
               setSourceLookupURL={setSourceLookupURL}
               browseAvailable={browserMode || browserNativeBrowseAvailable}
@@ -4369,30 +4629,21 @@ export default function App() {
               runLogLevelTouched={runLogLevelTouched}
               setRunLogLevelTouched={setRunLogLevelTouched}
             />
-          ) : (
-            <TrackerDataPage
-              preview={preview}
-              renderedDescriptions={renderedDescriptions}
-              setRenderedDescriptions={setRenderedDescriptions}
-              setLightboxImage={setLightboxImage}
-              setLightboxAlt={setLightboxAlt}
-            />
           )}
         </main>
-        {lightboxImage ? (
-          <div
-            className="lightbox-overlay"
-            role="dialog"
-            aria-modal="true"
-            onClick={() => {
+        <Dialog.Root
+          open={Boolean(lightboxImage)}
+          onOpenChange={(open) => {
+            if (!open) {
               setLightboxImage("");
               setLightboxAlt("");
-            }}
-          >
-            <div
-              className={`lightbox-content ${lightboxFit ? "fit" : "native"}`}
-              onClick={(event) => event.stopPropagation()}
-            >
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="lightbox-overlay" />
+            <Dialog.Content className={`lightbox-content ${lightboxFit ? "fit" : "native"}`}>
+              <Dialog.Title className="sr-only">{lightboxAlt || "Preview"}</Dialog.Title>
               <div className="lightbox-toolbar">
                 <button
                   className="lightbox-toggle"
@@ -4402,29 +4653,35 @@ export default function App() {
                   {lightboxFit ? "Actual size" : "Fit to screen"}
                 </button>
               </div>
-              <img src={lightboxImage} alt={lightboxAlt || "Preview"} />
-            </div>
-          </div>
-        ) : null}
-        {hostBrowserMode ? (
-          <div
-            className="host-browser-overlay"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Host file browser"
-            ref={hostBrowserDialogRef}
-            tabIndex={-1}
-            onKeyDown={handleHostBrowserDialogKeyDown}
-          >
-            <div className="host-browser-dialog">
+              <img className="lightbox-image" src={lightboxImage} alt={lightboxAlt || "Preview"} />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+        <Dialog.Root
+          open={Boolean(hostBrowserMode)}
+          onOpenChange={(open) => {
+            if (!open) closeHostBrowser();
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="host-browser-overlay" />
+            <Dialog.Content className="host-browser-dialog">
               <div className="host-browser-header">
                 <div>
-                  <p className="label">Host browser</p>
-                  <p className="mono host-browser-path">{hostBrowser?.currentPath || "Computer"}</p>
+                  <Dialog.Title asChild>
+                    <h2 className="label">Host browser</h2>
+                  </Dialog.Title>
+                  <Dialog.Description asChild>
+                    <p className="mono host-browser-path">
+                      {hostBrowser?.currentPath || "Computer"}
+                    </p>
+                  </Dialog.Description>
                 </div>
-                <button className="ghost" type="button" onClick={closeHostBrowser}>
-                  Close
-                </button>
+                <Dialog.Close asChild>
+                  <button className="ghost" type="button">
+                    Close
+                  </button>
+                </Dialog.Close>
               </div>
               <div className="host-browser-toolbar">
                 <button
@@ -4453,71 +4710,86 @@ export default function App() {
                     Select folder
                   </button>
                 ) : null}
+                <label className="host-browser-search" htmlFor="host-browser-search">
+                  <span>Search</span>
+                  <input
+                    id="host-browser-search"
+                    className="host-browser-search__input"
+                    value={hostBrowserSearch}
+                    onChange={(event) => setHostBrowserSearch(event.target.value)}
+                    placeholder="Filter current path"
+                    disabled={hostBrowserLoading || !hostBrowser}
+                  />
+                </label>
               </div>
               {hostBrowserError ? <p className="error">{hostBrowserError}</p> : null}
               {hostBrowserLoading ? <p className="muted">Loading host paths...</p> : null}
               {!hostBrowserLoading && hostBrowser ? (
                 <div className="host-browser-list">
-                  {hostBrowser.entries.map((entry, index) => (
-                    <div
-                      key={entry.path}
-                      className="host-browser-entry"
-                      ref={(element) => {
-                        hostBrowserEntryRefs.current[index] = element;
-                      }}
-                      tabIndex={0}
-                      onKeyDown={(event) => handleHostBrowserEntryKeyDown(event, entry, index)}
-                      onDoubleClick={() => {
-                        if (entry.isDir) {
-                          void browseHostDirectory(entry.path);
-                          return;
-                        }
-                        void selectHostPath(entry.path, entry.isDir);
-                      }}
-                    >
-                      <span className="host-browser-entry__name">
-                        {entry.isDir ? "[DIR] " : ""}
-                        {entry.name}
-                      </span>
-                      <span className="host-browser-entry__meta">
-                        {entry.isDir
-                          ? "Folder"
-                          : `${Math.round(entry.size / 1024).toLocaleString()} KiB`}
-                      </span>
-                      <span className="host-browser-entry__actions">
-                        {entry.isDir ? (
-                          <button
-                            className="ghost"
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void browseHostDirectory(entry.path);
-                            }}
-                          >
-                            Open
-                          </button>
-                        ) : null}
-                        {(hostBrowserMode === "folder" && entry.isDir) ||
-                        (hostBrowserMode === "file" && !entry.isDir) ? (
-                          <button
-                            className="primary"
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void selectHostPath(entry.path, entry.isDir);
-                            }}
-                          >
-                            Select
-                          </button>
-                        ) : null}
-                      </span>
-                    </div>
-                  ))}
+                  {hostBrowserEntries.length === 0 ? (
+                    <p className="muted host-browser-empty">No matching paths.</p>
+                  ) : (
+                    hostBrowserEntries.map((entry, index) => (
+                      <div
+                        key={entry.path}
+                        className="host-browser-entry"
+                        ref={(element) => {
+                          hostBrowserEntryRefs.current[index] = element;
+                        }}
+                        tabIndex={0}
+                        onKeyDown={(event) => handleHostBrowserEntryKeyDown(event, entry, index)}
+                        onDoubleClick={() => {
+                          if (entry.isDir) {
+                            void browseHostDirectory(entry.path);
+                            return;
+                          }
+                          void selectHostPath(entry.path, entry.isDir);
+                        }}
+                      >
+                        <span className="host-browser-entry__name">
+                          {entry.isDir ? "[DIR] " : ""}
+                          {entry.name}
+                        </span>
+                        <span className="host-browser-entry__meta">
+                          {entry.isDir
+                            ? "Folder"
+                            : `${Math.round(entry.size / 1024).toLocaleString()} KiB`}
+                        </span>
+                        <span className="host-browser-entry__actions">
+                          {entry.isDir ? (
+                            <button
+                              className="ghost"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void browseHostDirectory(entry.path);
+                              }}
+                            >
+                              Open
+                            </button>
+                          ) : null}
+                          {(hostBrowserMode === "folder" && entry.isDir) ||
+                          (hostBrowserMode === "file" && !entry.isDir) ? (
+                            <button
+                              className="primary"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void selectHostPath(entry.path, entry.isDir);
+                              }}
+                            >
+                              Select
+                            </button>
+                          ) : null}
+                        </span>
+                      </div>
+                    ))
+                  )}
                 </div>
               ) : null}
-            </div>
-          </div>
-        ) : null}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
       </div>
     </div>
   );

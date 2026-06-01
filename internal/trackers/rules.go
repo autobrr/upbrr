@@ -91,12 +91,12 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 	}
 
 	if rules.MinResolution != "" {
-		min := strings.ToLower(strings.TrimSpace(rules.MinResolution))
+		minResolution := strings.ToLower(strings.TrimSpace(rules.MinResolution))
 		value := resolveResolution(meta)
 		if value == "" {
 			addFailure("min_resolution", "resolution required for "+name)
-		} else if ruleResolutionOrder[value] < ruleResolutionOrder[min] {
-			addFailure("min_resolution", fmt.Sprintf("resolution %s below %s", value, min))
+		} else if ruleResolutionOrder[value] < ruleResolutionOrder[minResolution] {
+			addFailure("min_resolution", fmt.Sprintf("resolution %s below %s", value, minResolution))
 		}
 	}
 
@@ -149,7 +149,7 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 	}
 
 	if rules.Language != nil {
-		if ok, reason := evaluateLanguageRule(meta, rules.Language, logger); !ok {
+		if ok, reason := evaluateLanguageRule(meta, rules.Language); !ok {
 			addFailure("language_rule", reason)
 		}
 	}
@@ -514,7 +514,7 @@ func containsAny(values []string, targets []string) bool {
 	return false
 }
 
-func evaluateLanguageRule(meta api.PreparedMetadata, rule *additional.LanguageRule, logger api.Logger) (bool, string) {
+func evaluateLanguageRule(meta api.PreparedMetadata, rule *additional.LanguageRule) (bool, string) {
 	if rule == nil {
 		return true, ""
 	}

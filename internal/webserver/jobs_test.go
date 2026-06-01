@@ -19,6 +19,7 @@ type preparedMetaTestCore struct {
 	exportErr    error
 	importedMeta api.PreparedMetadata
 	importedReq  api.Request
+	fetchReq     api.Request
 }
 
 func (c *preparedMetaTestCore) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -29,7 +30,8 @@ func (c *preparedMetaTestCore) RunUploadPrepared(context.Context, api.Request) (
 	return api.Result{}, nil
 }
 
-func (c *preparedMetaTestCore) FetchMetadataPreview(context.Context, api.Request) (api.MetadataPreview, error) {
+func (c *preparedMetaTestCore) FetchMetadataPreview(_ context.Context, req api.Request) (api.MetadataPreview, error) {
+	c.fetchReq = req
 	return api.MetadataPreview{}, nil
 }
 
@@ -74,6 +76,10 @@ func (c *preparedMetaTestCore) DeleteTrackerImageURL(context.Context, api.Reques
 }
 
 func (c *preparedMetaTestCore) SaveFinalScreenshotSelections(context.Context, api.Request, []api.ScreenshotImage) error {
+	return nil
+}
+
+func (c *preparedMetaTestCore) ImportMenuImages(context.Context, api.Request, []string) error {
 	return nil
 }
 
@@ -212,6 +218,103 @@ func TestPruneCompletedUploadJobsLockedKeepsNewestCompleted(t *testing.T) {
 	}
 	if _, ok := backend.uploads[active.id]; !ok {
 		t.Fatal("expected active upload job to remain")
+	}
+}
+
+func TestApplyTrackerUploadProgressThrottlesSmallHashRateBurst(t *testing.T) {
+	hub := newEventHub()
+	ch, unsubscribe := hub.Subscribe("session")
+	defer unsubscribe()
+	backend := &Backend{hub: hub}
+	job := newTrackerUploadProgressTestJob()
+	job.lastSnapshotEmit = time.Now()
+	job.snapshotThrottle = time.Hour
+	job.currentTaskStatus = "running"
+	job.currentPercent = 40
+	job.currentHashRateMiB = 10
+
+	backend.applyTrackerUploadProgress(job, api.UploadProgressUpdate{
+		Tracker:     "BLU",
+		Status:      "running",
+		Percent:     40,
+		HashRateMiB: 10.25,
+	})
+
+	select {
+	case event := <-ch:
+		t.Fatalf("expected throttled hash-rate-only update, got event %q", event.Name)
+	default:
+	}
+}
+
+func TestApplyTrackerUploadProgressEmitsMeaningfulChangeWithinThrottle(t *testing.T) {
+	tests := []struct {
+		name   string
+		update api.UploadProgressUpdate
+	}{
+		{
+			name: "percent changed",
+			update: api.UploadProgressUpdate{
+				Tracker: "BLU",
+				Status:  "running",
+				Percent: 41,
+			},
+		},
+		{
+			name: "status changed",
+			update: api.UploadProgressUpdate{
+				Tracker: "BLU",
+				Status:  "completed",
+				Percent: 40,
+			},
+		},
+		{
+			name: "hash rate changed beyond threshold",
+			update: api.UploadProgressUpdate{
+				Tracker:     "BLU",
+				Status:      "running",
+				Percent:     40,
+				HashRateMiB: 12,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hub := newEventHub()
+			ch, unsubscribe := hub.Subscribe("session")
+			defer unsubscribe()
+			backend := &Backend{hub: hub}
+			job := newTrackerUploadProgressTestJob()
+			job.lastSnapshotEmit = time.Now()
+			job.snapshotThrottle = time.Hour
+			job.currentTaskStatus = "running"
+			job.currentPercent = 40
+			job.currentHashRateMiB = 10
+
+			backend.applyTrackerUploadProgress(job, tt.update)
+
+			select {
+			case event := <-ch:
+				if event.Name != "upload:job:job" {
+					t.Fatalf("unexpected event name: %q", event.Name)
+				}
+			default:
+				t.Fatal("expected meaningful progress change to emit immediately")
+			}
+		})
+	}
+}
+
+func newTrackerUploadProgressTestJob() *trackerUploadJob {
+	return &trackerUploadJob{
+		sessionID: "session",
+		id:        "job",
+		trackers:  []string{"BLU"},
+		states: map[string]TrackerUploadTrackerState{
+			"BLU": {Tracker: "BLU", Status: "running", Message: "uploading"},
+		},
+		startedAt: time.Now().UTC(),
 	}
 }
 

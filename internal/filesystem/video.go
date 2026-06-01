@@ -69,7 +69,7 @@ func CollectVideoFiles(ctx context.Context, source string, preferLargest bool) (
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return "", nil, ctx.Err()
+			return "", nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() {

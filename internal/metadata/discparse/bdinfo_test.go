@@ -206,3 +206,77 @@ func TestSplitBDInfoPlaylistReportsErrorsOnDuplicateNormalizedPlaylist(t *testin
 		t.Fatalf("expected duplicate playlist error, got %v", err)
 	}
 }
+
+func TestNormalizeSummarySpaces(t *testing.T) {
+	input := strings.Join([]string{
+		"Disc Title: D3bug - The Movie 2015",
+		"Disc Label: BDMV",
+		"Disc Size: 42,443,163,271 bytes",
+		"Protection: AACS",
+		"Playlist: 00800.MPLS",
+		"Size: 41,537,783,808 bytes",
+		"Length: 2:12:51.797",
+		"Total Bitrate: 41.68 Mbps",
+		"Video: VC-1 Video / 30960 kbps / 1080p / 23.976 fps / 16:9 / Advanced Profile 3",
+		"Audio: English / DTS-HD Master Audio / 5.1 / 48 kHz /  4150 kbps / 24-bit (DTS Core: 5.1 / 48 kHz /  1509 kbps / 24-bit)",
+		"Audio: Czech / DTS Audio / 5.1 / 48 kHz /   768 kbps / 24-bit",
+		"Audio: Hungarian / DTS Audio / 5.1 / 48 kHz /   768 kbps / 24-bit",
+		"* Audio: Polish /  DTS Audio / 5.1 / 48 kHz /   768 kbps / 24-bit",
+		"Audio: Portuguese / DTS Audio / 2.0 / 48 kHz /   448 kbps / 24-bit",
+		"Audio: Spanish / DTS Audio / 2.0 / 48 kHz /   448 kbps / 24-bit",
+		"Audio: Thai  / DTS Audio / 2.0 / 48 kHz /   448 kbps / 24-bit",
+		"Subtitle: English  / 46.465 kbps",
+		"Subtitle: Chinese / 30.220 kbps",
+		"Subtitle: Czech / 36.691 kbps",
+		"Subtitle: Czech /  0.261 kbps",
+		"Subtitle: Greek / 43.141 kbps",
+		"Subtitle: Hungarian / 39.548 kbps",
+		"Subtitle: Hungarian / 0.129 kbps",
+		"Subtitle: Korean / 28.622 kbps",
+		"Subtitle: Polish /  38.937 kbps",
+		"Subtitle: Portuguese / 39.357 kbps",
+		"Subtitle: Portuguese / 0.164 kbps",
+		"* Subtitle: Spanish  / 36.269 kbps",
+		"Subtitle: Spanish / 0.175 kbps",
+		"Subtitle: Thai /  31.848 kbps",
+		"* Subtitle: Thai / 0.181 kbps",
+	}, "\n")
+
+	want := strings.Join([]string{
+		"Disc Title: D3bug - The Movie 2015",
+		"Disc Label: BDMV",
+		"Disc Size: 42,443,163,271 bytes",
+		"Protection: AACS",
+		"Playlist: 00800.MPLS",
+		"Size: 41,537,783,808 bytes",
+		"Length: 2:12:51.797",
+		"Total Bitrate: 41.68 Mbps",
+		"Video: VC-1 Video / 30960 kbps / 1080p / 23.976 fps / 16:9 / Advanced Profile 3",
+		"Audio: English / DTS-HD Master Audio / 5.1 / 48 kHz / 4150 kbps / 24-bit (DTS Core: 5.1 / 48 kHz / 1509 kbps / 24-bit)",
+		"Audio: Czech / DTS Audio / 5.1 / 48 kHz / 768 kbps / 24-bit",
+		"Audio: Hungarian / DTS Audio / 5.1 / 48 kHz / 768 kbps / 24-bit",
+		"* Audio: Polish / DTS Audio / 5.1 / 48 kHz / 768 kbps / 24-bit",
+		"Audio: Portuguese / DTS Audio / 2.0 / 48 kHz / 448 kbps / 24-bit",
+		"Audio: Spanish / DTS Audio / 2.0 / 48 kHz / 448 kbps / 24-bit",
+		"Audio: Thai / DTS Audio / 2.0 / 48 kHz / 448 kbps / 24-bit",
+		"Subtitle: English / 46.465 kbps",
+		"Subtitle: Chinese / 30.220 kbps",
+		"Subtitle: Czech / 36.691 kbps",
+		"Subtitle: Czech / 0.261 kbps",
+		"Subtitle: Greek / 43.141 kbps",
+		"Subtitle: Hungarian / 39.548 kbps",
+		"Subtitle: Hungarian / 0.129 kbps",
+		"Subtitle: Korean / 28.622 kbps",
+		"Subtitle: Polish / 38.937 kbps",
+		"Subtitle: Portuguese / 39.357 kbps",
+		"Subtitle: Portuguese / 0.164 kbps",
+		"* Subtitle: Spanish / 36.269 kbps",
+		"Subtitle: Spanish / 0.175 kbps",
+		"Subtitle: Thai / 31.848 kbps",
+		"* Subtitle: Thai / 0.181 kbps",
+	}, "\n")
+
+	if got := normalizeSummarySpaces(input); got != want {
+		t.Fatalf("expected:\n%q\ngot:\n%q", want, got)
+	}
+}

@@ -109,6 +109,7 @@ type cliOptions struct {
 	ManualFrames          string
 	Comparison            string
 	ComparisonIndex       int
+	MenuImages            string
 	InfoHash              string
 	MaxPieceSize          int
 	NoHash                bool
@@ -117,6 +118,7 @@ type cliOptions struct {
 
 type serveOptions struct {
 	ConfigPath string
+	DevNoAuth  bool
 }
 
 func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, error) {
@@ -230,6 +232,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.Comparison, "comps", "", "Comparison folder path or comma-separated paths")
 	fs.IntVar(&opts.ComparisonIndex, "comparison_index", 0, "Primary comparison index")
 	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
+	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
 	fs.StringVar(&opts.InfoHash, "torrenthash", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "th", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "infohash", "", "Override v1 info hash")
@@ -267,7 +270,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.Channel, "channel", "", "Override SPD channel")
 
 	if err := fs.Parse(args); err != nil {
-		return cliOptions{}, nil, nil, err
+		return cliOptions{}, nil, nil, fmt.Errorf("parse CLI options: %w", err)
 	}
 
 	visited := make(map[string]bool)
@@ -386,7 +389,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	}
 	if visited["log-level"] {
 		if _, err := api.ParseLogLevel(opts.LogLevel); err != nil {
-			return cliOptions{}, nil, nil, err
+			return cliOptions{}, nil, nil, fmt.Errorf("upbrr: %w", err)
 		}
 	}
 	if visited["tmdb"] {
@@ -425,9 +428,10 @@ func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	fs.SetOutput(io.Discard)
 
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
+	fs.BoolVar(&opts.DevNoAuth, "dev-no-auth", false, "Development only: serve web UI without web authentication on loopback hosts")
 
 	if err := fs.Parse(args); err != nil {
-		return serveOptions{}, nil, err
+		return serveOptions{}, nil, fmt.Errorf("parse serve options: %w", err)
 	}
 
 	visited := make(map[string]bool)
@@ -453,7 +457,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 	if visited["log-level"] {
 		normalized, err := api.ParseLogLevel(opts.LogLevel)
 		if err != nil {
-			return api.Request{}, err
+			return api.Request{}, fmt.Errorf("upbrr: %w", err)
 		}
 		runLogLevel = normalized
 	}
@@ -649,6 +653,12 @@ func buildScreenshotOverrides(opts cliOptions, visited map[string]bool) api.Scre
 		paths, err := parseComparisonPaths(opts.Comparison)
 		if err == nil {
 			overrides.ComparisonPaths = paths
+		}
+	}
+	if visited["menu-images"] {
+		paths, err := parseComparisonPaths(opts.MenuImages)
+		if err == nil {
+			overrides.MenuPaths = paths
 		}
 	}
 	if visited["comparison_index"] {
