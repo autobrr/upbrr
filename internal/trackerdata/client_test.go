@@ -86,7 +86,7 @@ func TestLookupBHD(t *testing.T) {
 					"name":        "Example.Release",
 					"imdb_id":     "tt1234567",
 					"tmdb_id":     "movie/765",
-					"description": "hello\n[url=https://ptpimg.me/full/example][img]https://ptpimg.me/example.png[/img][/url]",
+					"description": "hello\n[url=https://pixhost.to/full/example][img]https://pixhost.to/example.png[/img][/url]",
 				},
 			},
 		})
@@ -114,7 +114,7 @@ func TestLookupBHD(t *testing.T) {
 	if len(result.Images) != 1 {
 		t.Fatalf("expected image extraction, got %d", len(result.Images))
 	}
-	if result.Images[0].ImgURL != "https://ptpimg.me/example.png" {
+	if result.Images[0].ImgURL != "https://pixhost.to/example.png" {
 		t.Fatalf("unexpected image data: %+v", result.Images[0])
 	}
 }
@@ -134,7 +134,7 @@ func TestLookupPTPAndHDB(t *testing.T) {
 					},
 				})
 			case r.URL.Query().Get("action") == "get_description":
-				_, _ = w.Write([]byte("Desc\nhttps://ptpimg.me/abc.png"))
+				_, _ = w.Write([]byte("Desc\nhttps://pixhost.to/abc.png"))
 			default:
 				http.NotFound(w, r)
 			}

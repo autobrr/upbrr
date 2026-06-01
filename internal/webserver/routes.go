@@ -108,6 +108,10 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if !s.isLocalWebUIRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "bootstrap is only available from localhost web sessions"})
+		return
+	}
 	if !s.allowAuthRequest(r) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
 		return

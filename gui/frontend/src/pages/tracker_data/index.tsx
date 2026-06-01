@@ -16,16 +16,6 @@ type Props = {
   setLightboxAlt: Dispatch<SetStateAction<string>>;
 };
 
-const decodeHtmlEntities = (value: string) => {
-  if (!value) return value;
-  if (!value.includes("&lt;") && !value.includes("&gt;") && !value.includes("&#")) {
-    return value;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.innerHTML = value;
-  return textarea.value;
-};
-
 export default function TrackerDataPage(props: Props) {
   const {
     preview,
@@ -77,7 +67,7 @@ export default function TrackerDataPage(props: Props) {
             const trackerKey = `${item.Tracker}-${index}`;
             const isRendered =
               Boolean(renderedDescriptions[trackerKey]) && Boolean(item.DescriptionHTML);
-            const renderedHTML = isRendered ? decodeHtmlEntities(item.DescriptionHTML) : "";
+            const renderedHTML = isRendered ? item.DescriptionHTML : "";
             const isPrimary = index === trackerDataOrdered.primaryIndex;
             return (
               <details

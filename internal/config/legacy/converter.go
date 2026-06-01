@@ -31,7 +31,6 @@ var legacyDefaultSectionByKey = map[string]string{
 	"img_host_5":                     "image_hosting",
 	"img_host_6":                     "image_hosting",
 	"imgbb_api":                      "image_hosting",
-	"ptpimg_api":                     "image_hosting",
 	"lensdump_api":                   "image_hosting",
 	"ptscreens_api":                  "image_hosting",
 	"onlyimage_api":                  "image_hosting",

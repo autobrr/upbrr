@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,10 +20,6 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-func ptr[T any](v T) *T {
-	return &v
-}
 
 func containsCoreString(values []string, target string) bool {
 	for _, value := range values {
@@ -56,6 +53,62 @@ func TestFirstRequestedTracker(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadPlaylistSelectionUsesNormalizedSourcePath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		sourcePath string
+	}{
+		{name: "native", sourcePath: filepath.Join("media", "Movie", "BDMV")},
+		{name: "posix", sourcePath: "media/Movie/BDMV"},
+		{name: "windows", sourcePath: `media\Movie\BDMV`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			normalizedPath := filepath.ToSlash(filepath.Clean(tt.sourcePath))
+			repo := &playlistSelectionRepo{
+				selectionByPath: map[string]db.PlaylistSelection{
+					normalizedPath: {
+						SourcePath:        normalizedPath,
+						SelectedPlaylists: []string{"00001.mpls"},
+					},
+				},
+			}
+			core := &Core{repo: repo, logger: api.NopLogger{}}
+
+			selection, err := core.LoadPlaylistSelection(context.Background(), tt.sourcePath)
+			if err != nil {
+				t.Fatalf("LoadPlaylistSelection: %v", err)
+			}
+			if repo.loadedPath != normalizedPath {
+				t.Fatalf("expected normalized lookup path %q, got %q", normalizedPath, repo.loadedPath)
+			}
+			if len(selection.SelectedPlaylists) != 1 || selection.SelectedPlaylists[0] != "00001.mpls" {
+				t.Fatalf("unexpected playlist selection: %#v", selection)
+			}
+		})
+	}
+}
+
+type playlistSelectionRepo struct {
+	stubRepo
+	loadedPath      string
+	selectionByPath map[string]db.PlaylistSelection
+}
+
+func (r *playlistSelectionRepo) GetPlaylistSelection(_ context.Context, sourcePath string) (db.PlaylistSelection, error) {
+	r.loadedPath = sourcePath
+	selection, ok := r.selectionByPath[sourcePath]
+	if !ok {
+		return db.PlaylistSelection{}, internalerrors.ErrNotFound
+	}
+	return selection, nil
 }
 
 func TestBuildDescriptionBuilderGroupAddsBHDMediaInfoPreviewOnly(t *testing.T) {
@@ -1392,13 +1445,7 @@ func TestFetchMetadataPreviewRunsPathedSearchWithSourceURLOverride(t *testing.T)
 	if got := cached.TrackerIDs["aither"]; got != "111" {
 		t.Fatalf("expected source lookup tracker id preserved, got %q", got)
 	}
-	foundBLU := false
-	for _, tracker := range cached.MatchedTrackers {
-		if tracker == "BLU" {
-			foundBLU = true
-			break
-		}
-	}
+	foundBLU := slices.Contains(cached.MatchedTrackers, "BLU")
 	if !foundBLU {
 		t.Fatalf("expected BLU to be tracked as existing in client, got %v", cached.MatchedTrackers)
 	}
@@ -1459,12 +1506,12 @@ func TestExportGUICachedPreparedMetaExactSignature(t *testing.T) {
 
 	prepared := api.PreparedMetadata{
 		SourcePath:           "/tmp/a",
-		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: ptr("Exact Match")},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: new("Exact Match")},
 	}
 	req := api.Request{
 		Paths:                []string{"/tmp/a"},
 		Mode:                 api.ModeGUI,
-		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: ptr("Exact Match")},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: new("Exact Match")},
 	}
 	if err := core.ImportPreparedMetadataForGUI(context.Background(), req, prepared); err != nil {
 		t.Fatalf("import prepared metadata for gui: %v", err)
@@ -1511,7 +1558,7 @@ func TestExportGUICachedPreparedMetaFallsBackForNonExternalSignedOverrides(t *te
 	exported, ok, err := core.ExportGUICachedPreparedMeta(context.Background(), api.Request{
 		Paths:                []string{"/tmp/a"},
 		Mode:                 api.ModeGUI,
-		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: ptr("Later UI edit")},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: new("Later UI edit")},
 	})
 	if err != nil {
 		t.Fatalf("export gui cached prepared meta: %v", err)
@@ -1648,8 +1695,8 @@ func TestExportGUICachedPreparedMetaReturnsIsolatedCopy(t *testing.T) {
 		Release: api.ReleaseInfo{
 			Codec: []string{"x264"},
 		},
-		BDInfo: map[string]interface{}{
-			"playlists": []interface{}{"00001", "00002"},
+		BDInfo: map[string]any{
+			"playlists": []any{"00001", "00002"},
 		},
 	}
 	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
@@ -1675,7 +1722,7 @@ func TestExportGUICachedPreparedMetaReturnsIsolatedCopy(t *testing.T) {
 	exported.TrackerQuestionnaireAnswers["AITHER"]["season"] = "2"
 	exported.TrackerRuleFailures["AITHER"][0].Rule = "rule_b"
 	exported.Release.Codec[0] = "x265"
-	exportedPlaylists, ok := exported.BDInfo["playlists"].([]interface{})
+	exportedPlaylists, ok := exported.BDInfo["playlists"].([]any)
 	if !ok {
 		t.Fatalf("expected exported BDInfo playlists to be []interface{}, got %T", exported.BDInfo["playlists"])
 	}
@@ -1700,7 +1747,7 @@ func TestExportGUICachedPreparedMetaReturnsIsolatedCopy(t *testing.T) {
 	if cached.Release.Codec[0] != "x264" {
 		t.Fatalf("expected cached release info to remain isolated, got %#v", cached.Release)
 	}
-	cachedPlaylists, ok := cached.BDInfo["playlists"].([]interface{})
+	cachedPlaylists, ok := cached.BDInfo["playlists"].([]any)
 	if !ok {
 		t.Fatalf("expected cached BDInfo playlists to be []interface{}, got %T", cached.BDInfo["playlists"])
 	}
@@ -1742,7 +1789,7 @@ func TestExportGUICachedPreparedMetaConcurrentCopiesStayIsolated(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for idx := 0; idx < 16; idx++ {
+	for idx := range 16 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

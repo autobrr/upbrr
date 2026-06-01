@@ -14,7 +14,6 @@ image_hosting:
   img_host_5: ""
   img_host_6: ""
   imgbb_api: ""
-  ptpimg_api: ""
   lensdump_api: ""
   ptscreens_api: ""
   onlyimage_api: ""
@@ -254,11 +253,6 @@ trackers:
     passkey: ""
     uploader_name: ""
     url: "https://filelist.io"
-    anon: false
-  FNP:
-    link_dir_name: ""
-    api_key: ""
-    url: "https://fearnopeer.com"
     anon: false
   FRIKI:
     link_dir_name: ""

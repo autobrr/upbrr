@@ -150,12 +150,10 @@ func TestStopSessionLogStreamsStopsMatchingStreams(t *testing.T) {
 			stop:      make(chan struct{}),
 			done:      make(chan struct{}),
 		}
-		backend.streamWG.Add(1)
-		go func() {
-			defer backend.streamWG.Done()
+		backend.streamWG.Go(func() {
 			<-stream.stop
 			close(stream.done)
-		}()
+		})
 		return stream
 	}
 

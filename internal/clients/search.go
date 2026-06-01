@@ -72,7 +72,6 @@ var trackerURLPatterns = map[string][]string{
 	"dp":     {"https://darkpeers.org"},
 	"ff":     {"tracker.funfile.org"},
 	"fl":     {"reactor.filelist", "reactor.thefl.org"},
-	"fnp":    {"https://fearnopeer.com"},
 	"gpw":    {"https://tracker.greatposterwall.com"},
 	"hdb":    {"https://tracker.hdbits.org"},
 	"hds":    {"hd-space.pw"},

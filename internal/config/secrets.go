@@ -345,7 +345,6 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 
 	imageSecrets := []*string{
 		&cfg.ImageHosting.ImgBBAPI,
-		&cfg.ImageHosting.PTPImgAPI,
 		&cfg.ImageHosting.LensdumpAPI,
 		&cfg.ImageHosting.PTScreensAPI,
 		&cfg.ImageHosting.OnlyImageAPI,

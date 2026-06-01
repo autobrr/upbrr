@@ -88,6 +88,26 @@ func TestBootstrapRetainedSessionSetsPersistentCookie(t *testing.T) {
 	}
 }
 
+func TestBootstrapRejectsRemoteFirstRunRequest(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	body := `{"username":"admin","password":"very-secure-password","retainLogin":true}`
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "192.168.1.20:7480"
+	req.RemoteAddr = "192.168.1.25:5000"
+
+	recorder := httptest.NewRecorder()
+	server.handleBootstrap(recorder, req, session{})
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected remote bootstrap to return 403, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "bootstrap is only available from localhost") {
+		t.Fatalf("unexpected bootstrap rejection: %s", recorder.Body.String())
+	}
+}
+
 func TestLoginUpgradesLegacyPasswordHash(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
 	server := newAuthTestServer(t, dbPath)

@@ -166,7 +166,7 @@ func filterUnit3DImages(images []Image) []Image {
 		"https://blutopia.xyz/favicon.ico":       {},
 		"https://i.ibb.co/2NVWb0c/uploadrr.webp": {},
 		"https://blutopia/favicon.ico":           {},
-		"https://ptpimg.me/606tk4.png":           {},
+		"https://pixhost.to/606tk4.png":          {},
 	}
 
 	filtered := make([]Image, 0, len(images))

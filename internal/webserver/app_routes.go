@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/trackericon"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -480,7 +482,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
-	mux.HandleFunc("/api/app/ImportMenuImages", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/ImportMenuImages", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		var req struct {
 			Path          string
 			Overrides     api.ExternalIDOverrides
@@ -491,7 +493,21 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.backend.ImportMenuImages(req.Path, req.Overrides, req.NameOverrides, req.Paths); err != nil {
+		policy, err := s.webBrowsePolicy(current)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if !policy.AllowUnrestricted && len(policy.Roots) == 0 {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "web browse root is not configured"})
+			return
+		}
+		importPaths, err := menuImportPathsWithinBrowsePolicy(req.Paths, policy)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.backend.ImportMenuImages(req.Path, req.Overrides, req.NameOverrides, importPaths); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -933,6 +949,77 @@ func (s *Server) webBrowsePolicy(current session) (webBrowsePolicy, error) {
 		return webBrowsePolicy{}, err
 	}
 	return webBrowsePolicy{Roots: roots}, nil
+}
+
+func menuImportPathsWithinBrowsePolicy(paths []string, policy webBrowsePolicy) ([]string, error) {
+	if policy.AllowUnrestricted {
+		return paths, nil
+	}
+	filtered := make([]string, 0, len(paths))
+	for _, rawPath := range paths {
+		resolvedPath, info, err := resolveMenuImportPath(rawPath)
+		if err != nil {
+			return nil, err
+		}
+		if !pathWithinBrowseRoots(resolvedPath, policy.Roots) {
+			return nil, fmt.Errorf("menu image path %q is outside configured web browse roots", rawPath)
+		}
+		if !info.IsDir() {
+			filtered = append(filtered, resolvedPath)
+			continue
+		}
+		entries, err := os.ReadDir(resolvedPath)
+		if err != nil {
+			return nil, fmt.Errorf("read menu dir %s: %w", resolvedPath, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			entryPath := filepath.Join(resolvedPath, entry.Name())
+			entryResolved, entryInfo, err := resolveMenuImportPath(entryPath)
+			if err != nil {
+				return nil, err
+			}
+			if entryInfo.IsDir() {
+				continue
+			}
+			if !pathWithinBrowseRoots(entryResolved, policy.Roots) {
+				return nil, fmt.Errorf("menu image path %q is outside configured web browse roots", entryPath)
+			}
+			filtered = append(filtered, entryResolved)
+		}
+	}
+	return filtered, nil
+}
+
+func resolveMenuImportPath(rawPath string) (string, os.FileInfo, error) {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return "", nil, errors.New("menu image path is required")
+	}
+	candidate, err := filepath.Abs(filepath.Clean(trimmed))
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve menu path %s: %w", trimmed, err)
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve menu path symlinks %s: %w", trimmed, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", nil, fmt.Errorf("stat menu path %s: %w", resolved, err)
+	}
+	return resolved, info, nil
+}
+
+func pathWithinBrowseRoots(candidate string, roots []string) bool {
+	for _, root := range roots {
+		if pathutil.IsWithinRoot(root, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeAppError(w http.ResponseWriter, err error) {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -1439,10 +1440,8 @@ func appendUniqueNormalizedTracker(trackersList []string, tracker string) []stri
 	if name == "" {
 		return trackersList
 	}
-	for _, existing := range trackersList {
-		if existing == name {
-			return trackersList
-		}
+	if slices.Contains(trackersList, name) {
+		return trackersList
 	}
 	return append(trackersList, name)
 }
@@ -3041,9 +3040,7 @@ func deepCopyQuestionnaireAnswers(input map[string]map[string]string) map[string
 	cloned := make(map[string]map[string]string, len(input))
 	for tracker, values := range input {
 		inner := make(map[string]string, len(values))
-		for key, value := range values {
-			inner[key] = value
-		}
+		maps.Copy(inner, values)
 		cloned[tracker] = inner
 	}
 	return cloned
@@ -3221,23 +3218,23 @@ func deepCopyIMDBAKAs(items []api.IMDBAKA) []api.IMDBAKA {
 	return cloned
 }
 
-func deepCopyStringInterfaceMap(input map[string]interface{}) map[string]interface{} {
+func deepCopyStringInterfaceMap(input map[string]any) map[string]any {
 	if len(input) == 0 {
 		return nil
 	}
-	cloned := make(map[string]interface{}, len(input))
+	cloned := make(map[string]any, len(input))
 	for key, value := range input {
 		cloned[key] = deepCopyInterfaceValue(value)
 	}
 	return cloned
 }
 
-func deepCopyInterfaceValue(value interface{}) interface{} {
+func deepCopyInterfaceValue(value any) any {
 	switch typed := value.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		return deepCopyStringInterfaceMap(typed)
-	case []interface{}:
-		cloned := make([]interface{}, len(typed))
+	case []any:
+		cloned := make([]any, len(typed))
 		for idx, item := range typed {
 			cloned[idx] = deepCopyInterfaceValue(item)
 		}
@@ -3339,9 +3336,10 @@ func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (ap
 		return api.PlaylistSelection{}, errors.New("core: repository not initialized")
 	}
 
-	c.logger.Debugf("core: loading playlist selection for %q", sourcePath)
+	normalizedPath := filepath.ToSlash(filepath.Clean(sourcePath))
+	c.logger.Debugf("core: loading playlist selection for %q (normalized: %q)", sourcePath, normalizedPath)
 
-	selection, err := c.repo.GetPlaylistSelection(ctx, sourcePath)
+	selection, err := c.repo.GetPlaylistSelection(ctx, normalizedPath)
 	if err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
 			c.logger.Debugf("core: no playlist selection found for %q", sourcePath)

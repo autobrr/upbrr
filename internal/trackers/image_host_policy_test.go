@@ -27,11 +27,11 @@ func TestResolveImageHostPolicy(t *testing.T) {
 		{
 			name:    "tracker host prefers over cli host",
 			tracker: "OE",
-			cfg:     config.TrackerConfig{ImageHost: "ptpimg"},
+			cfg:     config.TrackerConfig{ImageHost: "imgbox"},
 			overrides: api.ImageHostOverrides{
 				PreferredHost: &preferredImgBB,
 			},
-			wantPreferred:    "ptpimg",
+			wantPreferred:    "imgbox",
 			wantAllowedCount: -1,
 		},
 		{
@@ -159,7 +159,7 @@ func TestNeededImageUploadTargetsUsesConfiguredHostPriority(t *testing.T) {
 			Host2: "imgbox",
 			Host3: "imgbb",
 		},
-	}, []string{"OE"}, "ptpimg")
+	}, []string{"OE"}, "pixhost")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

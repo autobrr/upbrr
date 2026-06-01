@@ -21,7 +21,7 @@ WAILS_CLI := go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 GO_TEST_FLAGS := -race -v -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
 GO_CHANGED_FILES := $(shell git diff --name-only --diff-filter=ACMR HEAD -- '*.go')
-GO_CHANGED_PKGS := $(sort $(patsubst %/,%,$(dir $(GO_CHANGED_FILES))))
+GO_CHANGED_PKGS := $(addprefix ./,$(sort $(patsubst %/,%,$(dir $(GO_CHANGED_FILES)))))
 
 help:
 	@echo Build
