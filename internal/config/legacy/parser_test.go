@@ -229,7 +229,7 @@ config = {
     'DEFAULT': {
         'tmdb_api': 'my-api-key',
         'screens': 6,
-        'img_host_1': 'ptpimg',
+        'img_host_1': 'pixhost',
         'tone_map': True,
     },
     'TRACKERS': {

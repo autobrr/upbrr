@@ -79,7 +79,6 @@ const settingsSections: SettingsSection[] = [
 const imageHostOptions = [
   { value: "", label: "None" },
   { value: "imgbb", label: "ImgBB" },
-  { value: "ptpimg", label: "PTPImg" },
   { value: "imgbox", label: "ImgBox" },
   { value: "pixhost", label: "Pixhost" },
   { value: "lensdump", label: "Lensdump" },
@@ -106,7 +105,6 @@ const imageHostOptionFor = (host: string) => {
 
 const imageHostKeyMap: Record<string, string[]> = {
   imgbb: ["ImgBBAPI"],
-  ptpimg: ["PTPImgAPI"],
   lensdump: ["LensdumpAPI"],
   ptscreens: ["PTScreensAPI"],
   onlyimage: ["OnlyImageAPI"],
@@ -322,7 +320,6 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.UploaderName,
     trackerFieldMeta.Anon,
   ],
-  FNP: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
   FRIKI: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
   GPW: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL],
   HDB: [

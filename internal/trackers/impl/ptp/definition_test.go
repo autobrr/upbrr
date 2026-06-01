@@ -246,8 +246,8 @@ func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 
 	images := &stubPTPImageHosting{
 		uploaded: []api.UploadedImageLink{{
-			Host:   "ptpimg",
-			RawURL: "https://ptpimg.me/rehosted.png",
+			Host:   "pixhost",
+			RawURL: "https://pixhost.to/rehosted.png",
 		}},
 	}
 	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
@@ -259,11 +259,11 @@ func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 		Images:    images,
 	}, posterServer.URL+"/poster")
 
-	if got != "https://ptpimg.me/rehosted.png" {
+	if got != "https://pixhost.to/rehosted.png" {
 		t.Fatalf("expected rehosted poster URL, got %q", got)
 	}
-	if images.host != "ptpimg" {
-		t.Fatalf("expected ptpimg upload host, got %q", images.host)
+	if images.host != "pixhost" {
+		t.Fatalf("expected pixhost upload host, got %q", images.host)
 	}
 	if len(images.images) != 1 {
 		t.Fatalf("expected one uploaded poster, got %d", len(images.images))
@@ -294,8 +294,8 @@ func TestRehostPosterToSelectedHostRejectsLoopbackPoster(t *testing.T) {
 
 	images := &stubPTPImageHosting{
 		uploaded: []api.UploadedImageLink{{
-			Host:   "ptpimg",
-			RawURL: "https://ptpimg.me/rehosted.png",
+			Host:   "pixhost",
+			RawURL: "https://pixhost.to/rehosted.png",
 		}},
 	}
 	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
@@ -332,8 +332,8 @@ func TestRehostPosterToSelectedHostSkipsSelectedHost(t *testing.T) {
 	images := &stubPTPImageHosting{}
 	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
 		Images: images,
-	}, "https://ptpimg.me/existing.jpg")
-	if got != "https://ptpimg.me/existing.jpg" {
+	}, "https://pixhost.to/existing.jpg")
+	if got != "https://pixhost.to/existing.jpg" {
 		t.Fatalf("expected original poster URL, got %q", got)
 	}
 	if len(images.images) != 0 {

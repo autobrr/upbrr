@@ -127,7 +127,7 @@ func TestValidate(t *testing.T) {
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				Trackers: TrackersConfig{
 					Trackers: map[string]TrackerConfig{
-						"PTP": {ImageHost: "ptpimg"},
+						"PTP": {ImageHost: "pixhost"},
 					},
 				},
 			},
@@ -241,7 +241,7 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 					APIKey:      "abc",
 					AnnounceURL: "https://should-not-be-here",
 					Username:    "should-not-be-here",
-					ImageHost:   "ptpimg",
+					ImageHost:   "pixhost",
 					Anon:        true,
 					Unknown: map[string]interface{}{
 						"CustomFlag": "keep",
@@ -287,7 +287,7 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 	if _, exists := a4k["ModQ"]; !exists {
 		t.Fatalf("A4K should include ModQ from schema defaults")
 	}
-	if got := a4k["ImageHost"]; got != "ptpimg" {
+	if got := a4k["ImageHost"]; got != "pixhost" {
 		t.Fatalf("A4K should include ImageHost, got %v", got)
 	}
 	if got := a4k["CustomFlag"]; got != "keep" {
@@ -307,7 +307,7 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 				"A4K": {
 					APIKey:      "abc",
 					AnnounceURL: "https://should-not-be-here",
-					ImageHost:   "ptpimg",
+					ImageHost:   "pixhost",
 					Anon:        true,
 					Unknown: map[string]interface{}{
 						"custom_yaml": "keep",
@@ -336,7 +336,7 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	if !regexp.MustCompile(`(?m)^\s*api_key:\s*\S+\s*$`).MatchString(text) {
 		t.Fatalf("A4K should include api_key with non-empty value in yaml export")
 	}
-	if !strings.Contains(text, "image_host: ptpimg") {
+	if !strings.Contains(text, "image_host: pixhost") {
 		t.Fatalf("A4K should include image_host in yaml export")
 	}
 	if !strings.Contains(text, "custom_yaml: keep") {

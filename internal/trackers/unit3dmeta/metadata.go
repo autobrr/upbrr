@@ -16,7 +16,6 @@ var trackerBaseURLs = map[string]string{
 	"CBR":    "https://capybarabr.com",
 	"DP":     "https://darkpeers.org",
 	"EMUW":   "https://emuwarez.com",
-	"FNP":    "https://fearnopeer.com",
 	"FRIKI":  "https://frikibar.com",
 	"HHD":    "https://homiehelpdesk.net",
 	"IHD":    "https://infinityhd.net",

@@ -370,13 +370,13 @@ func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "override desc",
-		overrideGroupKey:    "unit3d|ptpimg|global",
+		overrideGroupKey:    "unit3d|pixhost|global",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
 	}
 	meta := api.PreparedMetadata{
 		SourcePath: "/tmp/source",
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
-			GroupKey:       "unit3d|ptpimg|global",
+			GroupKey:       "unit3d|pixhost|global",
 			Trackers:       []string{"AITHER", "BLU"},
 			RawDescription: "builder desc",
 		}},
@@ -397,13 +397,13 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 func TestResolveDescriptionAssetsLoadsStoredCompositeGroupOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "override desc",
-		overrideGroupKey:    "unit3d|ptpimg|global",
+		overrideGroupKey:    "unit3d|pixhost|global",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
 	}
 	meta := api.PreparedMetadata{
 		SourcePath: "/tmp/source",
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
-			GroupKey:       "unit3d|ptpimg|global",
+			GroupKey:       "unit3d|pixhost|global",
 			Trackers:       []string{"AITHER", "BLU"},
 			RawDescription: "",
 		}},
@@ -505,7 +505,7 @@ func TestResolveDescriptionAssetsPrefersTrackerScopedCompositeGroupDescription(t
 		SourcePath: "/tmp/source",
 		DescriptionGroups: []api.DescriptionBuilderGroup{
 			{
-				GroupKey:       "hdb|ptpimg|global",
+				GroupKey:       "hdb|pixhost|global",
 				Trackers:       []string{"HDB"},
 				RawDescription: "global desc",
 			},
@@ -640,7 +640,7 @@ func TestResolveDescriptionAssetsSelectsMostCommonHost(t *testing.T) {
 		uploads: []api.UploadedImageLink{
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", ImgURL: "https://imgbb.com/a.png"},
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", ImgURL: "https://imgbb.com/b.png"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "ptpimg", ImgURL: "https://ptpimg.me/a.png"},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost.to/a.png"},
 		},
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
@@ -664,7 +664,7 @@ func TestResolveDescriptionAssetsFallbackTrackerImages(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{{
 			Tracker:   "AITHER",
-			ImageURLs: []string{"https://imgbb.com/a.png", "https://imgbb.com/b.png", "https://ptpimg.me/c.png"},
+			ImageURLs: []string{"https://imgbb.com/a.png", "https://imgbb.com/b.png", "https://pixhost.to/c.png"},
 		}},
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
@@ -676,7 +676,7 @@ func TestResolveDescriptionAssetsFallbackTrackerImages(t *testing.T) {
 	if len(assets.Screenshots) != 3 {
 		t.Fatalf("expected 3 screenshots, got %d", len(assets.Screenshots))
 	}
-	if assets.Screenshots[0].ImgURL != "https://imgbb.com/a.png" || assets.Screenshots[1].ImgURL != "https://imgbb.com/b.png" || assets.Screenshots[2].ImgURL != "https://ptpimg.me/c.png" {
+	if assets.Screenshots[0].ImgURL != "https://imgbb.com/a.png" || assets.Screenshots[1].ImgURL != "https://imgbb.com/b.png" || assets.Screenshots[2].ImgURL != "https://pixhost.to/c.png" {
 		t.Fatalf("unexpected screenshot urls: %#v", assets.Screenshots)
 	}
 }
@@ -950,7 +950,7 @@ func TestResolveDescriptionAssetsDegradesGracefullyOnSelectedUploadMismatch(t *t
 		},
 		trackerRecords: []api.TrackerMetadata{{
 			Tracker:   "AITHER",
-			ImageURLs: []string{"https://ptpimg.me/fallback-a.png", "https://ptpimg.me/fallback-b.png"},
+			ImageURLs: []string{"https://pixhost.to/fallback-a.png", "https://pixhost.to/fallback-b.png"},
 		}},
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
@@ -962,7 +962,7 @@ func TestResolveDescriptionAssetsDegradesGracefullyOnSelectedUploadMismatch(t *t
 	if len(assets.Screenshots) != 2 {
 		t.Fatalf("expected tracker url fallback screenshots, got %d", len(assets.Screenshots))
 	}
-	if assets.Screenshots[0].ImgURL != "https://ptpimg.me/fallback-a.png" {
+	if assets.Screenshots[0].ImgURL != "https://pixhost.to/fallback-a.png" {
 		t.Fatalf("expected fallback screenshot urls, got %#v", assets.Screenshots)
 	}
 }
@@ -972,7 +972,7 @@ func TestResolveDescriptionAssetsBackfillsSlotsFromDescriptionOrder(t *testing.T
 		descriptionOverride: strings.TrimSpace(`
 [center][img]https://imgbb.com/first.png[/img][/center]
 Some text
-[comparison=A,B]https://ptpimg.me/second.png https://ptpimg.me/third.png[/comparison]
+[comparison=A,B]https://pixhost.to/second.png https://pixhost.to/third.png[/comparison]
 `),
 		overrideGroupKey: "unit3d",
 	}
@@ -991,7 +991,7 @@ Some text
 	if assets.Screenshots[0].ImgURL != "https://imgbb.com/first.png" {
 		t.Fatalf("expected first description image first, got %#v", assets.Screenshots)
 	}
-	if assets.Screenshots[1].ImgURL != "https://ptpimg.me/second.png" || assets.Screenshots[2].ImgURL != "https://ptpimg.me/third.png" {
+	if assets.Screenshots[1].ImgURL != "https://pixhost.to/second.png" || assets.Screenshots[2].ImgURL != "https://pixhost.to/third.png" {
 		t.Fatalf("expected comparison images in source order, got %#v", assets.Screenshots)
 	}
 }
@@ -1001,16 +1001,16 @@ func TestApplyUploadedVariantsToSlotsUsesOrderedFallbackForURLOnlySlots(t *testi
 		{
 			SourcePath:          "/tmp/source",
 			SlotOrder:           0,
-			OriginalURL:         "https://ptpimg.me/first.png",
-			OriginalHost:        "ptpimg",
+			OriginalURL:         "https://pixhost.to/first.png",
+			OriginalHost:        "pixhost",
 			SectionKind:         screenshotSectionWrapped,
 			RenderInScreenshots: true,
 		},
 		{
 			SourcePath:          "/tmp/source",
 			SlotOrder:           1,
-			OriginalURL:         "https://ptpimg.me/second.png",
-			OriginalHost:        "ptpimg",
+			OriginalURL:         "https://pixhost.to/second.png",
+			OriginalHost:        "pixhost",
 			SectionKind:         screenshotSectionWrapped,
 			RenderInScreenshots: true,
 		},
@@ -1083,16 +1083,16 @@ func TestApplyUploadedVariantsToSlotsSkipsNonRenderableSlotsDuringFallback(t *te
 		{
 			SourcePath:          "/tmp/source",
 			SlotOrder:           1,
-			OriginalURL:         "https://ptpimg.me/first.png",
-			OriginalHost:        "ptpimg",
+			OriginalURL:         "https://pixhost.to/first.png",
+			OriginalHost:        "pixhost",
 			SectionKind:         screenshotSectionWrapped,
 			RenderInScreenshots: true,
 		},
 		{
 			SourcePath:          "/tmp/source",
 			SlotOrder:           2,
-			OriginalURL:         "https://ptpimg.me/second.png",
-			OriginalHost:        "ptpimg",
+			OriginalURL:         "https://pixhost.to/second.png",
+			OriginalHost:        "pixhost",
 			SectionKind:         screenshotSectionWrapped,
 			RenderInScreenshots: true,
 		},
@@ -1135,18 +1135,18 @@ func TestEnsureDescriptionImageHostReusesAllowedHost(t *testing.T) {
 		uploads: []api.UploadedImageLink{
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", ImgURL: "https://imgbb/a.png", RawURL: "https://imgbb/a.png", WebURL: "https://imgbb/a"},
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", ImgURL: "https://imgbb/b.png", RawURL: "https://imgbb/b.png", WebURL: "https://imgbb/b"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "ptpimg", ImgURL: "https://ptpimg/a.png", RawURL: "https://ptpimg/a.png", WebURL: "https://ptpimg/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "ptpimg", ImgURL: "https://ptpimg/b.png", RawURL: "https://ptpimg/b.png", WebURL: "https://ptpimg/b"},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "pixhost", ImgURL: "https://pixhost/b.png", RawURL: "https://pixhost/b.png", WebURL: "https://pixhost/b"},
 		},
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resolution.feedback.SelectedHost != "ptpimg" {
-		t.Fatalf("expected ptpimg host, got %q", resolution.feedback.SelectedHost)
+	if resolution.feedback.SelectedHost != "pixhost" {
+		t.Fatalf("expected pixhost host, got %q", resolution.feedback.SelectedHost)
 	}
 	if resolution.feedback.Reuploaded {
 		t.Fatal("expected screenshots to be reused")
@@ -1230,8 +1230,8 @@ func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resolution.feedback.SelectedHost != "ptpimg" {
-		t.Fatalf("expected ptpimg host, got %q", resolution.feedback.SelectedHost)
+	if resolution.feedback.SelectedHost != "pixhost" {
+		t.Fatalf("expected pixhost host, got %q", resolution.feedback.SelectedHost)
 	}
 	if !resolution.feedback.Reuploaded {
 		t.Fatal("expected screenshots to be reuploaded")
@@ -1240,8 +1240,8 @@ func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
 		t.Fatalf("expected 2 screenshots, got %d", len(resolution.screenshots))
 	}
 	for _, screenshot := range resolution.screenshots {
-		if screenshot.Host != "ptpimg" {
-			t.Fatalf("expected all rehosted screenshots to use ptpimg, got %#v", resolution.screenshots)
+		if screenshot.Host != "pixhost" {
+			t.Fatalf("expected all rehosted screenshots to use pixhost, got %#v", resolution.screenshots)
 		}
 	}
 }
@@ -1255,15 +1255,15 @@ func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testin
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 	images := &stubImageService{
-		errs: map[string]error{"ptpimg": errors.New("ptpimg unavailable")},
+		errs: map[string]error{"onlyimage": errors.New("onlyimage unavailable")},
 	}
 
 	resolution, err := ensureDescriptionImageHost(
 		context.Background(),
-		"PTP",
+		"OE",
 		meta,
 		config.Config{},
-		config.TrackerConfig{ImageHost: "ptpimg"},
+		config.TrackerConfig{ImageHost: "onlyimage"},
 		repo,
 		images,
 		api.NopLogger{},
@@ -1274,14 +1274,14 @@ func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testin
 	if resolution.blocking {
 		t.Fatalf("expected fallback success not to block")
 	}
-	if resolution.feedback.SelectedHost != "pixhost" {
-		t.Fatalf("expected pixhost fallback, got %#v", resolution.feedback)
+	if resolution.feedback.SelectedHost != "imgbox" {
+		t.Fatalf("expected imgbox fallback, got %#v", resolution.feedback)
 	}
-	if len(resolution.feedback.Warnings) != 1 || resolution.feedback.Warnings[0].Host != "ptpimg" {
-		t.Fatalf("expected ptpimg warning, got %#v", resolution.feedback.Warnings)
+	if len(resolution.feedback.Warnings) != 1 || resolution.feedback.Warnings[0].Host != "onlyimage" {
+		t.Fatalf("expected onlyimage warning, got %#v", resolution.feedback.Warnings)
 	}
-	if len(images.calls) != 2 || images.calls[0] != "ptpimg" || images.calls[1] != "pixhost" {
-		t.Fatalf("expected ptpimg then pixhost calls, got %#v", images.calls)
+	if len(images.calls) != 2 || images.calls[0] != "onlyimage" || images.calls[1] != "imgbox" {
+		t.Fatalf("expected onlyimage then imgbox calls, got %#v", images.calls)
 	}
 }
 
@@ -1295,7 +1295,6 @@ func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 	images := &stubImageService{
 		errs: map[string]error{
-			"ptpimg":  errors.New("ptpimg unavailable"),
 			"pixhost": errors.New("pixhost unavailable"),
 		},
 	}
@@ -1319,7 +1318,7 @@ func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
 	if resolution.feedback.Status != "warning" {
 		t.Fatalf("expected warning feedback, got %#v", resolution.feedback)
 	}
-	if len(resolution.feedback.Warnings) != 2 {
+	if len(resolution.feedback.Warnings) != 1 {
 		t.Fatalf("expected one warning per failed host, got %#v", resolution.feedback.Warnings)
 	}
 	if len(resolution.screenshots) != 0 {
@@ -1337,8 +1336,8 @@ func TestEnsureDescriptionImageHostUsesPreferredOverrideWhenAllowed(t *testing.T
 		uploads: []api.UploadedImageLink{
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", ImgURL: "https://imgbb/a.png", RawURL: "https://imgbb/a.png", WebURL: "https://imgbb/a"},
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", ImgURL: "https://imgbb/b.png", RawURL: "https://imgbb/b.png", WebURL: "https://imgbb/b"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "ptpimg", ImgURL: "https://ptpimg/a.png", RawURL: "https://ptpimg/a.png", WebURL: "https://ptpimg/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "ptpimg", ImgURL: "https://ptpimg/b.png", RawURL: "https://ptpimg/b.png", WebURL: "https://ptpimg/b"},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "pixhost", ImgURL: "https://pixhost/b.png", RawURL: "https://pixhost/b.png", WebURL: "https://pixhost/b"},
 		},
 	}
 	meta := api.PreparedMetadata{
@@ -1430,7 +1429,7 @@ func TestEnsureDescriptionImageHostErrorsOnMissingSelectedUpload(t *testing.T) {
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "ptpimg", ImgURL: "https://ptpimg/a.png", RawURL: "https://ptpimg/a.png", WebURL: "https://ptpimg/a"},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
 		},
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
@@ -1454,8 +1453,8 @@ func TestEnsureDescriptionImageHostRollsBackUploadedImagesOnSelectionError(t *te
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 	images := &stubImageService{
 		uploads: map[string][]api.UploadedImageLink{
-			"ptpimg": {
-				{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "ptpimg", ImgURL: "https://ptpimg/a.png", RawURL: "https://ptpimg/a.png", WebURL: "https://ptpimg/a"},
+			"pixhost": {
+				{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
 			},
 		},
 	}
@@ -1467,7 +1466,7 @@ func TestEnsureDescriptionImageHostRollsBackUploadedImagesOnSelectionError(t *te
 	if len(repo.deletedUploads) != 1 {
 		t.Fatalf("expected one uploaded image rollback, got %#v", repo.deletedUploads)
 	}
-	if repo.deletedUploads[0] != "ptpimg:/tmp/a.png" {
+	if repo.deletedUploads[0] != "pixhost:/tmp/a.png" {
 		t.Fatalf("unexpected rollback target: %#v", repo.deletedUploads)
 	}
 }

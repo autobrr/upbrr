@@ -449,7 +449,7 @@ func TestBuildCLIRequestClientOverrides(t *testing.T) {
 
 func TestBuildCLIRequestImageHostOverrides(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{
-		"--imghost", "PTPIMG",
+		"--imghost", "pixhost",
 		"--skip-imagehost-upload",
 		"movie.mkv",
 	})
@@ -460,7 +460,7 @@ func TestBuildCLIRequestImageHostOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	if req.ImageHostOverrides.PreferredHost == nil || *req.ImageHostOverrides.PreferredHost != "ptpimg" {
+	if req.ImageHostOverrides.PreferredHost == nil || *req.ImageHostOverrides.PreferredHost != "pixhost" {
 		t.Fatalf("expected preferred image host override, got %#v", req.ImageHostOverrides.PreferredHost)
 	}
 	if req.ImageHostOverrides.SkipUpload == nil || !*req.ImageHostOverrides.SkipUpload {
@@ -489,7 +489,7 @@ func TestPrintDryRunSummary(t *testing.T) {
 					Reuploaded: true,
 					Message:    "reuploaded to imgbox",
 					Warnings: []api.ImageHostWarning{
-						{Host: "ptpimg", Message: "temporary failure"},
+						{Host: "pixhost", Message: "temporary failure"},
 					},
 				},
 			},
@@ -498,7 +498,7 @@ func TestPrintDryRunSummary(t *testing.T) {
 				"Tracker release name: Movie.2024.1080p",
 				"Payload fields: category, name",
 				"Images: reuploaded to imgbox",
-				"Image host warning: ptpimg failed: temporary failure",
+				"Image host warning: pixhost failed: temporary failure",
 			},
 		},
 		{
