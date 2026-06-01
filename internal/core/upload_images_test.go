@@ -481,8 +481,7 @@ func TestUploadImagesReturnsHostFailuresWithSuccessfulLinks(t *testing.T) {
 	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
 	imageService := &stubImageHosting{
 		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
-			switch host {
-			case "pixhost":
+			if host == "pixhost" {
 				return nil, fmt.Errorf("%s unavailable", host)
 			}
 			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
