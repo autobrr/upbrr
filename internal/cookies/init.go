@@ -6,6 +6,7 @@ package cookies
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 // web auth helper and performs key rotation when auth details have changed.
 func SyncCookieEncryptionWithAuth(ctx context.Context, db *sql.DB, dbPath string) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("cookies: context is required")
 	}
 
 	keyManager := NewKeyManager(db)
@@ -41,7 +42,7 @@ func SyncCookieEncryptionWithAuth(ctx context.Context, db *sql.DB, dbPath string
 // If no old files are found, it returns immediately with no action.
 func EnsureCookieMigration(ctx context.Context, db *sql.DB, dbPath string, cookiesDir string, logger api.Logger) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("cookies: context is required")
 	}
 	if logger == nil {
 		logger = api.NopLogger{}

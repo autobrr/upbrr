@@ -133,7 +133,7 @@ func (h arHandler) resolveCookies(ctx context.Context) ([]*http.Cookie, string, 
 
 	loaded, err := cookiepkg.LoadTrackerHTTPCookies(ctx, h.cfg.MainSettings.DBPath, "AR", "alpharatio.cc")
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("dupechecking: %w", err)
 	}
 	for _, cookie := range loaded {
 		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {

@@ -38,7 +38,7 @@ func (c *Client) lookupANT(ctx context.Context, meta api.PreparedMetadata, searc
 	}
 	req.URL.RawQuery = params.Encode()
 	req.Header.Set("User-Agent", "upbrr")
-	req.Header.Set("X-API-Key", strings.TrimSpace(cfg.APIKey))
+	req.Header.Set("X-Api-Key", strings.TrimSpace(cfg.APIKey))
 
 	resp, err := c.http.Do(req)
 	if err != nil {

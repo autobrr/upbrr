@@ -30,16 +30,7 @@ func TestBundledFFmpegPathPrefersWorkingDirectory(t *testing.T) {
 		t.Fatalf("write bundled ffmpeg: %v", err)
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(cwd)
-	})
+	t.Chdir(root)
 
 	got := bundledFFmpegPath()
 	if got != path {
@@ -50,16 +41,7 @@ func TestBundledFFmpegPathPrefersWorkingDirectory(t *testing.T) {
 func TestBundledFFmpegPathReturnsEmptyWhenMissing(t *testing.T) {
 	root := t.TempDir()
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(cwd)
-	})
+	t.Chdir(root)
 
 	if got := bundledFFmpegPath(); got != "" {
 		t.Fatalf("bundledFFmpegPath() = %q, want empty string", got)

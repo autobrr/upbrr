@@ -39,9 +39,16 @@ jobs:
         run: go run ./cmd/commitmsgcheck --from "$BASE_SHA" --to "$HEAD_SHA"
 
   test-go:
-    name: Go tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: Go tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
 
     steps:
       - name: Checkout
@@ -54,7 +61,7 @@ jobs:
           cache: true
 
       - name: Run Go tests
-        run: go test -v -timeout 20m ./...
+        run: go test -race -v -timeout 20m ./...
 
   test-frontend:
     name: Frontend checks

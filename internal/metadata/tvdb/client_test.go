@@ -402,12 +402,7 @@ func TestGetSeriesMetadataWithLanguageUsesTranslationEndpointForEnglishText(t *t
 
 func TestGetSeriesMetadataWithLanguageNoResponseDump(t *testing.T) {
 	dumpDir := filepath.Join(t.TempDir(), "tvdb_api_responses")
-	if err := os.Setenv("UA_TVDB_RESPONSE_DUMP_DIR", dumpDir); err != nil {
-		t.Fatalf("set env: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Unsetenv("UA_TVDB_RESPONSE_DUMP_DIR")
-	})
+	t.Setenv("UA_TVDB_RESPONSE_DUMP_DIR", dumpDir)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

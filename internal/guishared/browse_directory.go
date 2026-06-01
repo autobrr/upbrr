@@ -5,6 +5,7 @@ package guishared
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -66,18 +68,18 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 	if requested == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return api.BrowseDirectoryResponse{}, err
+			return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: get working directory: %w", err)
 		}
 		requested = cwd
 	}
 
 	current, err := filepath.Abs(filepath.Clean(requested))
 	if err != nil {
-		return api.BrowseDirectoryResponse{}, err
+		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: resolve current path: %w", err)
 	}
 	info, err := os.Stat(current)
 	if err != nil {
-		return api.BrowseDirectoryResponse{}, err
+		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: stat current path: %w", err)
 	}
 	if !info.IsDir() {
 		current = filepath.Dir(current)
@@ -85,7 +87,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 	if len(roots) > 0 {
 		current, err = filepath.EvalSymlinks(current)
 		if err != nil {
-			return api.BrowseDirectoryResponse{}, err
+			return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: resolve current symlinks: %w", err)
 		}
 		root = containingRoot(roots, current)
 		if root == "" {
@@ -95,7 +97,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 
 	entries, err := os.ReadDir(current)
 	if err != nil {
-		return api.BrowseDirectoryResponse{}, err
+		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: read current path: %w", err)
 	}
 
 	items := make([]api.BrowseDirectoryEntry, 0, len(entries))
@@ -110,7 +112,7 @@ func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath str
 		itemPath := filepath.Join(current, entry.Name())
 		if root != "" {
 			itemRealPath, err := filepath.EvalSymlinks(itemPath)
-			if err != nil || !pathWithin(root, itemRealPath) {
+			if err != nil || !pathutil.IsWithinRoot(root, itemRealPath) {
 				continue
 			}
 		}
@@ -159,7 +161,7 @@ func normalizedBrowseRoots(rootPaths []string) ([]string, error) {
 		}
 		duplicate := false
 		for _, existing := range roots {
-			if samePath(existing, root) {
+			if pathutil.SamePath(existing, root) {
 				duplicate = true
 				break
 			}
@@ -181,18 +183,18 @@ func normalizedBrowseRoot(rootPath string) (string, error) {
 	}
 	root, err := filepath.Abs(filepath.Clean(trimmed))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse directory: resolve root path: %w", err)
 	}
 	info, err := os.Stat(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse directory: stat root: %w", err)
 	}
 	if !info.IsDir() {
 		return "", errors.New("configured web browse root is not a directory")
 	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("browse directory: resolve root symlinks: %w", err)
 	}
 	return root, nil
 }
@@ -229,18 +231,18 @@ func browseConfiguredRoots(mode string, roots []string) api.BrowseDirectoryRespo
 }
 
 func parentPathWithinRoot(current string, root string) string {
-	if root != "" && samePath(current, root) {
+	if root != "" && pathutil.SamePath(current, root) {
 		return ""
 	}
 	parent := parentPath(current)
-	if root != "" && !pathWithin(root, parent) {
+	if root != "" && !pathutil.IsWithinRoot(root, parent) {
 		return ""
 	}
 	return parent
 }
 
 func parentPathWithinRoots(current string, root string, roots []string) string {
-	if len(roots) > 1 && root != "" && samePath(current, root) {
+	if len(roots) > 1 && root != "" && pathutil.SamePath(current, root) {
 		return ""
 	}
 	return parentPathWithinRoot(current, root)
@@ -248,7 +250,7 @@ func parentPathWithinRoots(current string, root string, roots []string) string {
 
 func containingRoot(roots []string, target string) string {
 	for _, root := range roots {
-		if pathWithin(root, target) {
+		if pathutil.IsWithinRoot(root, target) {
 			return root
 		}
 	}
@@ -264,29 +266,6 @@ func parentPath(current string) string {
 		return current
 	}
 	return parent
-}
-
-func pathWithin(root string, target string) bool {
-	if strings.TrimSpace(root) == "" {
-		return true
-	}
-	if samePath(root, target) {
-		return true
-	}
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
-}
-
-func samePath(left string, right string) bool {
-	left = filepath.Clean(left)
-	right = filepath.Clean(right)
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
 }
 
 func browseWindowsRoots(mode string) api.BrowseDirectoryResponse {
@@ -334,7 +313,7 @@ func ValidateBrowseSelection(path string, wantDir bool) error {
 	}
 	info, err := os.Stat(trimmed)
 	if err != nil {
-		return err
+		return fmt.Errorf("browse selection: stat path: %w", err)
 	}
 	if wantDir && !info.IsDir() {
 		return errors.New("selected path is not a folder")

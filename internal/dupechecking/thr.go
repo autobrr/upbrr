@@ -41,8 +41,8 @@ func (h thrHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		if page > 0 {
 			params.Set("page", strconv.Itoa(page))
 		}
-		resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/browse.php", params, nil, cookies)
-		if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/browse.php", params, cookies)
+		if err != nil || !resp.ok() {
 			return nil, []string{noteSkip("THR search failed")}, nil
 		}
 		links := findNodes(root, func(node *xhtml.Node) bool {

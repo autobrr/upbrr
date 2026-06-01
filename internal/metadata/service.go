@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -46,14 +47,17 @@ type Service struct {
 	sonarr   ArrLookupClient
 	radarr   ArrLookupClient
 	tracker  TrackerDataLookup
+	bluray   *bluraycom.Client
 }
 
 type cachedBDMVSummary struct {
 	Playlist    string
 	Summary     string
 	ExtSummary  string
+	FullSummary string
 	SummaryPath string
 	ExtPath     string
+	FullPath    string
 }
 
 type bdmvSummaryCache struct {
@@ -65,8 +69,8 @@ var bdmvSummaryPlaylistPattern = regexp.MustCompile(`(?mi)^Playlist:\s*(.+?)\s*$
 var (
 	discoverBDMVPlaylists = filesystem.DiscoverPlaylists
 	parseBDMVPlaylist     = filesystem.ParseMPLS
-	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputPath string) (string, error) {
-		return svc.ExecuteForPlaylist(ctx, bdmvPath, playlistFile, outputPath)
+	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputPath string, summaryOnly bool) (string, error) {
+		return svc.ExecuteForPlaylist(ctx, bdmvPath, playlistFile, outputPath, summaryOnly)
 	}
 	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
 		return svc.ExecuteFullScan(ctx, bdmvPath, outputDir)
@@ -172,6 +176,12 @@ func WithTrackerDataLookup(lookup TrackerDataLookup) Option {
 	}
 }
 
+func WithBlurayClient(client *bluraycom.Client) Option {
+	return func(s *Service) {
+		s.bluray = client
+	}
+}
+
 func WithSRRDBPaths(dbPath string) Option {
 	return func(s *Service) {
 		cacheDir, nfoDir := resolveSRRDBPaths(dbPath)
@@ -206,6 +216,9 @@ func NewService(repo db.MetadataRepository, opts ...Option) *Service {
 	}
 	if service.tracker == nil {
 		service.tracker = trackerdata.NewClient(service.cfg, service.logger, nil)
+	}
+	if service.bluray == nil {
+		service.bluray = bluraycom.NewClient(nil, service.logger)
 	}
 	return service
 }
@@ -264,7 +277,7 @@ func applyTorrentOverridesToPreparedMeta(meta *api.PreparedMetadata) {
 func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -433,7 +446,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 			}
 
 			// Extract m2ts files from selected playlist(s)
-			m2tsFiles, mainFile, err := s.extractM2TSFromPlaylist(ctx, playlistPath, selectedPlaylistNames)
+			m2tsFiles, mainFile, err := s.extractM2TSFromPlaylist(playlistPath, selectedPlaylistNames)
 			if err != nil {
 				s.logger.Debugf("metadata: failed to extract m2ts from playlist: %v", err)
 				// Fall back to regular disc handling
@@ -581,7 +594,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -646,13 +659,13 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if err := s.repo.Save(ctx, db.FileMetadata{
@@ -702,7 +715,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 
 // extractM2TSFromPlaylist parses selected playlist files and extracts m2ts file references.
 // Returns all m2ts files and the largest one to use as VideoPath.
-func (s *Service) extractM2TSFromPlaylist(ctx context.Context, bdmvPath string, playlistFiles []string) ([]string, string, error) {
+func (s *Service) extractM2TSFromPlaylist(bdmvPath string, playlistFiles []string) ([]string, string, error) {
 	playlistDir := filepath.Join(bdmvPath, "PLAYLIST")
 	if _, err := os.Stat(playlistDir); err != nil {
 		return nil, "", fmt.Errorf("playlist directory not found: %w", err)
@@ -808,33 +821,67 @@ func playlistNames(playlists []api.PlaylistInfo) []string {
 func writeSelectedPlaylistSummaries(tmpDir string, fullReport string, selected []string) (string, error) {
 	reports, err := discparse.ExtractPlaylistReports(fullReport, selected)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("metadata: %w", err)
 	}
 	if len(reports) == 0 {
 		return "", errors.New("no selected playlist reports extracted")
 	}
 
 	rawPath := filepath.Join(tmpDir, "BD_FULL.txt")
-	if err := os.WriteFile(rawPath, []byte(fullReport), 0o600); err != nil {
+	if err := safeWriteFile(tmpDir, rawPath, []byte(fullReport)); err != nil {
 		return "", fmt.Errorf("write full report: %w", err)
 	}
 
 	for _, report := range reports {
 		summaryPath := paths.BDMVSummaryPath(tmpDir, report.Playlist)
-		if err := os.WriteFile(summaryPath, []byte(strings.TrimSpace(report.Summary)+"\n"), 0o600); err != nil {
+		if err := safeWriteFile(tmpDir, summaryPath, []byte(strings.TrimSpace(report.Summary)+"\n")); err != nil {
 			return "", fmt.Errorf("write summary %s: %w", report.Playlist, err)
 		}
 
 		extSidecarPath := paths.BDMVExtSummaryPath(tmpDir, report.Playlist)
-		if err := os.WriteFile(extSidecarPath, []byte(strings.TrimSpace(report.ExtSummary)+"\n"), 0o600); err != nil {
+		if err := safeWriteFile(tmpDir, extSidecarPath, []byte(strings.TrimSpace(report.ExtSummary)+"\n")); err != nil {
 			return "", fmt.Errorf("write extended summary %s: %w", report.Playlist, err)
+		}
+
+		fullPath := paths.BDMVFullSummaryPath(tmpDir, report.Playlist)
+		if err := safeWriteFile(tmpDir, fullPath, []byte(strings.TrimSpace(report.Raw)+"\n")); err != nil {
+			return "", fmt.Errorf("write full summary %s: %w", report.Playlist, err)
 		}
 	}
 
 	return paths.BDMVSummaryPath(tmpDir, reports[0].Playlist), nil
 }
 
-func writeCachedSelectedPlaylistSummaries(tmpDir string, cache bdmvSummaryCache, selected []string) (string, error) {
+func writePlaylistSummaries(tmpDir string, fullReport string, playlistName string) (string, error) {
+	normalized := discparse.NormalizePlaylistName(playlistName)
+	if normalized == "" {
+		return "", errors.New("invalid playlist name")
+	}
+
+	summary, _, extSummary := discparse.SplitBDInfoReport(fullReport)
+	if strings.TrimSpace(summary) == "" {
+		return "", fmt.Errorf("playlist %s did not contain a quick summary", normalized)
+	}
+
+	summaryPath := paths.BDMVSummaryPath(tmpDir, normalized)
+	if err := safeWriteFile(tmpDir, summaryPath, []byte(strings.TrimSpace(summary)+"\n")); err != nil {
+		return "", fmt.Errorf("write summary %s: %w", normalized, err)
+	}
+
+	extPath := paths.BDMVExtSummaryPath(tmpDir, normalized)
+	if err := safeWriteFile(tmpDir, extPath, []byte(strings.TrimSpace(extSummary)+"\n")); err != nil {
+		return "", fmt.Errorf("write extended summary %s: %w", normalized, err)
+	}
+
+	fullPath := paths.BDMVFullSummaryPath(tmpDir, normalized)
+	if err := safeWriteFile(tmpDir, fullPath, []byte(strings.TrimSpace(fullReport)+"\n")); err != nil {
+		return "", fmt.Errorf("write full summary %s: %w", normalized, err)
+	}
+
+	return summaryPath, nil
+}
+
+func writeCachedSelectedPlaylistSummaries(cache bdmvSummaryCache, selected []string) (string, error) {
 	if len(selected) == 0 {
 		return "", errors.New("no selected playlists")
 	}
@@ -860,7 +907,7 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 			continue
 		}
 		name := entry.Name()
-		if !strings.HasPrefix(name, "BD_SUMMARY_") || strings.HasPrefix(name, "BD_SUMMARY_EXT_") || !strings.HasSuffix(name, ".txt") {
+		if !strings.HasPrefix(name, "BD_SUMMARY_") || strings.HasPrefix(name, "BD_SUMMARY_EXT_") || strings.HasPrefix(name, "BD_SUMMARY_FULL_") || !strings.HasSuffix(name, ".txt") {
 			continue
 		}
 		playlistFromName := paths.BDMVPlaylistKey(strings.TrimSuffix(strings.TrimPrefix(name, "BD_SUMMARY_"), ".txt"))
@@ -893,12 +940,25 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 				}
 			}
 		}
+		fullPath := paths.BDMVFullSummaryPath(tmpDir, playlist)
+		fullPayload := ""
+		if fullPath != "" {
+			cleanTmpDir := filepath.Clean(tmpDir)
+			cleanFullPath := filepath.Clean(fullPath)
+			if relPath, err := filepath.Rel(cleanTmpDir, cleanFullPath); err == nil && relPath != ".." && !strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+				if rawFull, err := os.ReadFile(cleanFullPath); err == nil {
+					fullPayload = string(rawFull)
+				}
+			}
+		}
 		cache.Entries[playlist] = cachedBDMVSummary{
 			Playlist:    playlist,
 			Summary:     string(summaryPayload),
 			ExtSummary:  extPayload,
+			FullSummary: fullPayload,
 			SummaryPath: summaryPath,
 			ExtPath:     extPath,
+			FullPath:    fullPath,
 		}
 	}
 
@@ -945,15 +1005,13 @@ func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Requ
 	missing := missingCachedPlaylists(cache, selected)
 	switch {
 	case len(selected) > 0 && len(missing) == 0:
-		outputPath, err := writeCachedSelectedPlaylistSummaries(tmpDir, cache, selected)
+		outputPath, err := writeCachedSelectedPlaylistSummaries(cache, selected)
 		if err != nil {
 			return "", false, fmt.Errorf("metadata: refresh cached bdmv summaries: %w", err)
 		}
 		return outputPath, false, nil
 	case len(missing) > 0 && len(missing) < len(selected):
-		if req.Options.InteractionMode == api.InteractionModeUnattended || req.ConfirmBDMVRescan {
-			// proceed to rescan
-		} else {
+		if req.Options.InteractionMode != api.InteractionModeUnattended && !req.ConfirmBDMVRescan {
 			return "", false, &api.BDMVRescanRequiredError{
 				SourcePath:        req.Paths[0],
 				SelectedPlaylists: append([]string(nil), selected...),
@@ -980,9 +1038,18 @@ func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Requ
 
 	playlistName := selected[0]
 	s.logger.Debugf("metadata: executing bdinfo for playlist %s in path %s", playlistName, playlistPath)
-	outputPath, berr := executePlaylistBDInfo(s.bdinfo, ctx, playlistPath, playlistName, paths.BDMVSummaryPath(tmpDir, playlistName))
+	fullPath := paths.BDMVFullSummaryPath(tmpDir, playlistName)
+	_, berr := executePlaylistBDInfo(s.bdinfo, ctx, playlistPath, playlistName, fullPath, false)
 	if berr != nil {
 		return "", false, fmt.Errorf("metadata: bdinfo execution failed: %w", berr)
+	}
+	fullReportBytes, rerr := os.ReadFile(fullPath)
+	if rerr != nil {
+		return "", false, fmt.Errorf("metadata: read full bdinfo report: %w", rerr)
+	}
+	outputPath, werr := writePlaylistSummaries(tmpDir, string(fullReportBytes), playlistName)
+	if werr != nil {
+		return "", false, fmt.Errorf("metadata: write playlist summaries: %w", werr)
 	}
 	return outputPath, true, nil
 }
@@ -1105,4 +1172,18 @@ func applySeasonEpisodeMetadata(meta *api.PreparedMetadata, result seasonep.Resu
 	if logger != nil && (meta.SeasonStr != "" || meta.EpisodeStr != "" || meta.DailyEpisodeDate != "" || meta.TVPack) {
 		logger.Debugf("metadata: parsed season/episode season=%q episode=%q daily_date=%q tv_pack=%t", meta.SeasonStr, meta.EpisodeStr, meta.DailyEpisodeDate, meta.TVPack)
 	}
+}
+
+func safeWriteFile(dir string, path string, data []byte) error {
+	cleanDir := filepath.Clean(dir)
+	cleanPath := filepath.Clean(path)
+	rel, err := filepath.Rel(cleanDir, cleanPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("path traversal detected: %s is not within %s", path, dir)
+	}
+	//nolint:gosec // Path is validated against path traversal using filepath.Rel.
+	if err := os.WriteFile(cleanPath, data, 0o600); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+	return nil
 }

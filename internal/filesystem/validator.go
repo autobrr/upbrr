@@ -40,7 +40,7 @@ func (v *Validator) ValidatePaths(ctx context.Context, paths []string) ([]string
 	for _, path := range paths {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 

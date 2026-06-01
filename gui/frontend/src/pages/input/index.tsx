@@ -1,8 +1,11 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { Button } from "../../components/ui/button";
+import { PillCheckbox } from "../../components/ui/checkbox";
+import { Switch } from "../../components/ui/switch";
 import type {
   DetailBlock,
   DetailItem,
@@ -24,7 +27,10 @@ import type {
   TMDBNetwork,
   TrackerUploadItem,
 } from "../../types";
-import "./styles.css";
+import type { SourcePathHistoryEntry } from "../../utils/inputHistory";
+
+const compactInputClass =
+  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
 
 const formatProvider = (value: string) => value.toUpperCase();
 
@@ -556,7 +562,9 @@ type IDEdits = {
 
 type Props = Readonly<{
   path: string;
-  setPath: Dispatch<SetStateAction<string>>;
+  handleSourcePathChange: (path: string) => void;
+  sourcePathHistory: SourcePathHistoryEntry[];
+  handleSourcePathHistorySelect: (entry: SourcePathHistoryEntry) => void;
   sourceLookupURL: string;
   setSourceLookupURL: Dispatch<SetStateAction<string>>;
   browseAvailable: boolean;
@@ -598,7 +606,9 @@ type Props = Readonly<{
 export default function InputPage(props: Props) {
   const {
     path,
-    setPath,
+    handleSourcePathChange,
+    sourcePathHistory,
+    handleSourcePathHistorySelect,
     sourceLookupURL,
     setSourceLookupURL,
     browseAvailable,
@@ -636,6 +646,42 @@ export default function InputPage(props: Props) {
     runLogLevelTouched,
     setRunLogLevelTouched,
   } = props;
+
+  const [sourcePathHistoryOpen, setSourcePathHistoryOpen] = useState(false);
+  const sourcePathHistoryRef = useRef<HTMLDivElement | null>(null);
+  const sourcePathHistoryAvailable = sourcePathHistory.length > 0;
+
+  useEffect(() => {
+    if (!sourcePathHistoryOpen) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || sourcePathHistoryRef.current?.contains(target)) {
+        return;
+      }
+      setSourcePathHistoryOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [sourcePathHistoryOpen]);
+
+  useEffect(() => {
+    if (!sourcePathHistoryAvailable) {
+      setSourcePathHistoryOpen(false);
+    }
+  }, [sourcePathHistoryAvailable]);
+
+  const openSourcePathHistory = () => {
+    if (sourcePathHistoryAvailable) {
+      setSourcePathHistoryOpen(true);
+    }
+  };
+
+  const selectSourcePathHistory = (entry: SourcePathHistoryEntry) => {
+    setSourcePathHistoryOpen(false);
+    handleSourcePathHistorySelect(entry);
+  };
 
   const hasPreview =
     preview.ReleaseName || (preview.ExternalIDInfo && preview.ExternalIDInfo.length > 0);
@@ -825,74 +871,117 @@ export default function InputPage(props: Props) {
       </header>
 
       <section className="panel">
-        <div className="path-row">
-          <div className="path-input">
-            <label htmlFor="source-lookup-url" className="source-url-label">
-              Site URL override
-            </label>
-            <input
-              id="source-lookup-url"
-              value={sourceLookupURL}
-              onChange={(event) => setSourceLookupURL(event.target.value)}
-              placeholder="Paste tracker or media URL for ID lookup"
-            />
-            <p className="muted path-helper">
-              Used for metadata ID, and tracker description/tracker image fetching when supported.
-            </p>
+        <div className="grid gap-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 max-[1100px]:grid-cols-1">
+            <div className="grid grid-cols-2 gap-3 max-[900px]:grid-cols-1">
+              <label
+                className="grid gap-1.5 text-sm text-[var(--muted)]"
+                htmlFor="source-lookup-url"
+              >
+                <span>Site URL override</span>
+                <input
+                  id="source-lookup-url"
+                  className={compactInputClass}
+                  value={sourceLookupURL}
+                  onChange={(event) => setSourceLookupURL(event.target.value)}
+                  placeholder="Paste tracker or media URL for ID lookup"
+                />
+                <span className="text-xs leading-tight text-[var(--muted)]">
+                  Metadata ID and tracker description/image lookup.
+                </span>
+              </label>
 
-            <label htmlFor="source-path">Source path</label>
-            <input
-              id="source-path"
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder="Select a file or folder"
-            />
-            {discHint ? <p className="path-hint">{discHint}</p> : null}
-            <p className="muted path-helper">
-              Select folder for discs (containing BDMV or VIDEO_TS) or Season Pack folder.
+              <div className="grid gap-1.5 text-sm text-[var(--muted)]" ref={sourcePathHistoryRef}>
+                <label htmlFor="source-path">Source path</label>
+                <div className="source-path-input-shell source-path-input-shell--drop-target">
+                  <input
+                    id="source-path"
+                    className={`${compactInputClass} source-path-input`}
+                    value={path}
+                    onChange={(event) => handleSourcePathChange(event.target.value)}
+                    onFocus={openSourcePathHistory}
+                    onClick={openSourcePathHistory}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setSourcePathHistoryOpen(false);
+                      }
+                    }}
+                    placeholder="Select a file or folder"
+                    aria-autocomplete="list"
+                    aria-expanded={sourcePathHistoryOpen}
+                    aria-haspopup="listbox"
+                    aria-controls="source-path-history"
+                  />
+                  {sourcePathHistoryOpen ? (
+                    <div
+                      id="source-path-history"
+                      className="source-path-history"
+                      role="listbox"
+                      aria-label="Source path history"
+                    >
+                      {sourcePathHistory.map((entry) => (
+                        <button
+                          key={entry.path}
+                          className="source-path-history__item"
+                          type="button"
+                          role="option"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => selectSourcePathHistory(entry)}
+                        >
+                          <span className="mono">{entry.path}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <span className="text-xs leading-tight text-[var(--muted)]">
+                  {discHint || "File, disc folder, or Season Pack folder."}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 max-[1100px]:justify-start">
+              {browseAvailable ? (
+                <>
+                  <Button type="button" onClick={handleBrowseFile}>
+                    Browse file
+                  </Button>
+                  <Button type="button" onClick={handleBrowseFolder}>
+                    Browse folder
+                  </Button>
+                </>
+              ) : null}
+              <Button variant="primary" type="button" onClick={handleFetch} disabled={loading}>
+                {loading ? "Fetching..." : "Fetch metadata"}
+              </Button>
+            </div>
+          </div>
+
+          {!browseAvailable ? (
+            <p className="m-0 text-xs text-[var(--muted)]">
+              Native browse is only available from localhost. Remote sessions must enter the server
+              path manually.
             </p>
-            {!browseAvailable ? (
-              <p className="muted path-helper">
-                Native browse is only available when the WebUI is opened from localhost on this
-                machine. Remote sessions must enter the server path manually.
-              </p>
-            ) : null}
-          </div>
-          {browseAvailable ? (
-            <>
-              <button className="ghost" type="button" onClick={handleBrowseFile}>
-                Browse file
-              </button>
-              <button className="ghost" type="button" onClick={handleBrowseFolder}>
-                Browse folder
-              </button>
-            </>
           ) : null}
-          <button className="primary" type="button" onClick={handleFetch} disabled={loading}>
-            {loading ? "Fetching..." : "Fetch metadata"}
-          </button>
-        </div>
-        <div className="run-options-card">
-          <div className="run-options-card__header">
-            <p className="label">Run options</p>
-            <p className="muted">Applies only to tracker dry run and upload for this session.</p>
-          </div>
-          <div className="run-options-card__controls">
-            <label className="upload-toggle upload-toggle--labelled">
-              <input
-                type="checkbox"
+
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2">
+            <span className="text-sm font-semibold text-[var(--text)]">Run options</span>
+            <div className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
+              <Switch
                 aria-label="Enable debug run"
                 checked={runDebug}
                 onChange={(event) => setRunDebug(event.target.checked)}
               />
-              <span className="upload-toggle__pill" />
-              <span className="upload-toggle__label">Debug run</span>
-            </label>
-            <label className="run-options-card__field" htmlFor="run-log-level">
-              <span className="label">Run log level</span>
+              <span>Debug run</span>
+            </div>
+            <label
+              className="inline-flex items-center gap-2 text-sm text-[var(--muted)]"
+              htmlFor="run-log-level"
+            >
+              <span>Log level</span>
               <select
                 id="run-log-level"
-                className="text-input"
+                className={compactInputClass}
                 value={runLogLevel}
                 onChange={(event) => {
                   setRunLogLevel(event.target.value);
@@ -907,9 +996,9 @@ export default function InputPage(props: Props) {
               </select>
             </label>
             {runLogLevelTouched ? (
-              <button className="ghost" type="button" onClick={() => setRunLogLevelTouched(false)}>
+              <Button type="button" onClick={() => setRunLogLevelTouched(false)}>
                 Reset log level
-              </button>
+              </Button>
             ) : null}
           </div>
         </div>
@@ -1126,19 +1215,18 @@ export default function InputPage(props: Props) {
                   ) : (
                     <div className="tracker-pills">
                       {trackerUploadItems.map((tracker) => (
-                        <label key={tracker.name} className="tracker-pill">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(releasePageTrackerSelection[tracker.name])}
-                            onChange={(event) =>
-                              setReleasePageTrackerSelection((prev) => ({
-                                ...prev,
-                                [tracker.name]: event.target.checked,
-                              }))
-                            }
-                          />
-                          <span className="pill-label">{tracker.name}</span>
-                        </label>
+                        <PillCheckbox
+                          key={tracker.name}
+                          checked={Boolean(releasePageTrackerSelection[tracker.name])}
+                          onCheckedChange={(checked) =>
+                            setReleasePageTrackerSelection((prev) => ({
+                              ...prev,
+                              [tracker.name]: checked,
+                            }))
+                          }
+                        >
+                          {tracker.name}
+                        </PillCheckbox>
                       ))}
                     </div>
                   )}
@@ -1366,10 +1454,10 @@ export default function InputPage(props: Props) {
                       />
                     </div>
                     {isTVEpisodePreview ? (
-                      <label className="settings-toggle">
+                      <div className="settings-toggle">
                         <span>Use season/episode instead</span>
-                        <input
-                          type="checkbox"
+                        <Switch
+                          aria-label="Use season/episode instead"
                           checked={Boolean(releaseEdits?.useSeasonEpisode)}
                           onChange={(event) => {
                             setReleaseEdits((prev) => ({
@@ -1379,110 +1467,101 @@ export default function InputPage(props: Props) {
                             markReleaseTouched("useSeasonEpisode");
                           }}
                         />
-                        <span className="settings-toggle__pill" />
-                      </label>
+                      </div>
                     ) : null}
                   </div>
                 </div>
                 <div className="settings-subgroup">
                   <div className="settings-subgroup__title">Flags</div>
                   <div className="settings-grid">
-                    <label className="settings-toggle">
+                    <div className="settings-toggle">
                       <span>No season</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No season"
                         checked={Boolean(releaseEdits?.noSeason)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noSeason: event.target.checked }));
                           markReleaseTouched("noSeason");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No year</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No year"
                         checked={Boolean(releaseEdits?.noYear)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noYear: event.target.checked }));
                           markReleaseTouched("noYear");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No AKA</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No AKA"
                         checked={Boolean(releaseEdits?.noAKA)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noAKA: event.target.checked }));
                           markReleaseTouched("noAKA");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No tag</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No tag"
                         checked={Boolean(releaseEdits?.noTag)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noTag: event.target.checked }));
                           markReleaseTouched("noTag");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No edition</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No edition"
                         checked={Boolean(releaseEdits?.noEdition)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noEdition: event.target.checked }));
                           markReleaseTouched("noEdition");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No dub</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No dub"
                         checked={Boolean(releaseEdits?.noDub)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noDub: event.target.checked }));
                           markReleaseTouched("noDub");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No dual-audio</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No dual-audio"
                         checked={Boolean(releaseEdits?.noDual)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noDual: event.target.checked }));
                           markReleaseTouched("noDual");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>Force dual-audio</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="Force dual-audio"
                         checked={Boolean(releaseEdits?.dualAudio)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, dualAudio: event.target.checked }));
                           markReleaseTouched("dualAudio");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
+                    </div>
                   </div>
                 </div>
                 {idOverrideState?.invalid ? (

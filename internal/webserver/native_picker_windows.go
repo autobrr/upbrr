@@ -7,6 +7,7 @@ package webserver
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -35,6 +36,30 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 `, filterPattern))
 }
 
+func (powershellNativePicker) BrowseImageFiles() ([]string, error) {
+	output, err := runPickerScript(`
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = 'Select images'
+$dialog.Filter = 'Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp|All files (*.*)|*.*'
+$dialog.Multiselect = $true
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::Out.Write(($dialog.FileNames -join [Environment]::NewLine))
+}
+`)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			paths = append(paths, trimmed)
+		}
+	}
+	return paths, nil
+}
+
 func (powershellNativePicker) BrowseFolder() (string, error) {
 	return runPickerScript(`
 Add-Type -AssemblyName System.Windows.Forms
@@ -52,7 +77,8 @@ func runPickerScript(script string) (string, error) {
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 ` + "\n" + script)
 
-	cmd := exec.Command(
+	cmd := exec.CommandContext(
+		context.Background(),
 		"powershell",
 		"-NoLogo",
 		"-NoProfile",

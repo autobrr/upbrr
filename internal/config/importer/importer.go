@@ -45,7 +45,8 @@ func ImportFromFile(path string) (*config.Config, []string, error) {
 		return nil, nil, fmt.Errorf("import config: read file: %w", err)
 	}
 
-	return finalize(parseNative(filepath.Base(path), data))
+	cfg, err := parseNative(filepath.Base(path), data)
+	return finalize(cfg, nil, err)
 }
 
 // ImportFromContent parses raw file content. The filename is used only to
@@ -59,7 +60,8 @@ func ImportFromContent(filename string, data []byte) (*config.Config, []string, 
 		return finalize(legacy.ImportFromContent(data))
 	}
 
-	return finalize(parseNative(filename, data))
+	cfg, err := parseNative(filename, data)
+	return finalize(cfg, nil, err)
 }
 
 // finalize applies sanitization that should happen on every import regardless
@@ -82,17 +84,17 @@ func finalize(cfg *config.Config, warnings []string, err error) (*config.Config,
 // onto the embedded default config. This mirrors the legacy conversion flow
 // and guarantees that fields absent from the import keep sensible defaults,
 // including any new settings added since the file was written.
-func parseNative(filename string, data []byte) (*config.Config, []string, error) {
+func parseNative(filename string, data []byte) (*config.Config, error) {
 	cfg, err := config.LoadEmbeddedDefaultConfig()
 	if err != nil {
-		return nil, nil, fmt.Errorf("import config: load defaults: %w", err)
+		return nil, fmt.Errorf("import config: load defaults: %w", err)
 	}
 
 	ext := strings.ToLower(filepath.Ext(filename))
 	switch ext {
 	case ".yaml", ".yml":
 		if err := yaml.Unmarshal(data, cfg); err != nil {
-			return nil, nil, fmt.Errorf("import config: unmarshal yaml: %w", err)
+			return nil, fmt.Errorf("import config: unmarshal yaml: %w", err)
 		}
 	case ".json":
 		// The export path (ExportToJSON) uses json.MarshalIndent, which
@@ -102,17 +104,17 @@ func parseNative(filename string, data []byte) (*config.Config, []string, error)
 		// (e.g. "tmdb_api") which do not match the exported keys
 		// (e.g. "TMDBAPI").
 		if err := json.Unmarshal(data, cfg); err != nil {
-			return nil, nil, fmt.Errorf("import config: unmarshal json: %w", err)
+			return nil, fmt.Errorf("import config: unmarshal json: %w", err)
 		}
 	default:
-		return nil, nil, fmt.Errorf("import config: unsupported file extension %q (supported: .py, .yaml, .yml, .json)", ext)
+		return nil, fmt.Errorf("import config: unsupported file extension %q (supported: .py, .yaml, .yml, .json)", ext)
 	}
 
 	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
-		return nil, nil, fmt.Errorf("import config: merge tracker defaults: %w", err)
+		return nil, fmt.Errorf("import config: merge tracker defaults: %w", err)
 	}
 
-	return cfg, nil, nil
+	return cfg, nil
 }
 
 func isPythonFile(filename string) bool {

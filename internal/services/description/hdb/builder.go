@@ -32,7 +32,7 @@ var (
 func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -79,11 +79,11 @@ func buildDiscSection(meta api.PreparedMetadata, dbPath string) (string, error) 
 	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("description: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("description: %w", err)
 	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
 	if strings.TrimSpace(path) == "" {
@@ -94,7 +94,7 @@ func buildDiscSection(meta api.PreparedMetadata, dbPath string) (string, error) 
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		return "", err
+		return "", fmt.Errorf("description: HDB read MediaInfo file: %w", err)
 	}
 	trimmed := strings.TrimSpace(string(content))
 	if trimmed == "" {

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -52,7 +53,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		Path:      state.torrentPath,
 	}})
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
@@ -80,10 +81,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "PTS")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announce, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{
@@ -99,7 +100,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "PTS", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, fmt.Errorf("trackers: PTS upload failed status=%d", resp.StatusCode)
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("PTS", resp.StatusCode, responseBody)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -130,22 +131,19 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, []*http.Cookie, error) {
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 
 	state := uploadState{
 		torrentPath:   torrentPath,
 		description:   description,
-		releaseName:   firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
+		releaseName:   metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
 		fields:        buildPayload(req.Meta, description),
 		questionnaire: buildQuestionnaire(req.Meta),
 		blockedReason: validateUpload(req.Meta),
@@ -159,14 +157,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 func buildPayload(meta api.PreparedMetadata, description string) map[string]string {
 	return map[string]string{
-		"name":  firstNonEmpty(meta.ReleaseName, meta.Release.Title, meta.Filename),
+		"name":  metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.Release.Title, meta.Filename),
 		"url":   imdbURL(meta),
 		"descr": description,
 		"type":  resolveType(meta),
 	}
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 4)
 	if info := commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)); strings.TrimSpace(info) != "" {
 		parts = append(parts, info)
@@ -178,7 +176,7 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 		parts = append(parts, shots)
 	}
 	parts = append(parts, "[right][url=https://github.com/autobrr/upbrr][size=1]upbrr[/size][/url][/right]")
-	return bbcode.FinalizeTrackerDescription("PTS", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+	return bbcode.FinalizeTrackerDescription("PTS", strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
@@ -193,7 +191,7 @@ func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
 			Label:    "Mandarin Requirement",
 			Kind:     "select",
 			Options:  []string{"no", "yes"},
-			Value:    firstNonEmpty(answer, "no"),
+			Value:    metautil.FirstNonEmptyTrimmed(answer, "no"),
 			Help:     "PTS expects Mandarin audio or subtitles. Choose yes to override and upload anyway.",
 			Required: true,
 		}},
@@ -223,7 +221,7 @@ func hasMandarin(meta api.PreparedMetadata) bool {
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "PTS", "ptskit.org")
+	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "PTS", "ptskit.org"))
 }
 
 func resolveType(meta api.PreparedMetadata) string {
@@ -246,8 +244,8 @@ func screenshotBlock(images []api.ScreenshotImage) string {
 	}
 	lines := []string{"[center][b]Screenshots[/b]"}
 	for _, image := range images {
-		imgURL := strings.TrimSpace(firstNonEmpty(image.ImgURL, image.RawURL))
-		webURL := strings.TrimSpace(firstNonEmpty(image.WebURL, imgURL))
+		imgURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL))
+		webURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.WebURL, imgURL))
 		if imgURL == "" || webURL == "" {
 			continue
 		}
@@ -279,15 +277,6 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 		return nil
 	}
 	return meta.TrackerQuestionnaireAnswers["PTS"]
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func cloneFields(input map[string]string) map[string]string {

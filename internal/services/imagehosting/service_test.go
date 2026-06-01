@@ -6,6 +6,7 @@ package imagehosting
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -179,7 +180,7 @@ func (u *blockingUploader) Upload(ctx context.Context, imagePath string) (upload
 	u.mu.Unlock()
 
 	<-ctx.Done()
-	return uploadResult{}, ctx.Err()
+	return uploadResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 }
 
 type fakeBatchUploader struct {
@@ -294,12 +295,11 @@ func TestUploadImagesRejectsTrackerOwnedHostOutsideOwnerScope(t *testing.T) {
 		logger:    api.NopLogger{},
 		uploaders: map[string]uploader{"hdb": &fakeUploader{}},
 	}
-	tmp, err := os.CreateTemp("", "imagehosting-owned-host-*.png")
+	tmp, err := os.CreateTemp(t.TempDir(), "imagehosting-owned-host-*.png")
 	if err != nil {
 		t.Fatalf("create temp file: %v", err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
 	if err := tmp.Close(); err != nil {
 		t.Fatalf("close temp file: %v", err)
 	}
@@ -447,6 +447,7 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	firstCallCh := uploaderStub.firstCallCh
 	done := make(chan error, 1)
 	go func() {
 		_, err := service.Upload(ctx, api.PreparedMetadata{SourcePath: "source"}, "test", "global", []api.ScreenshotImage{
@@ -457,7 +458,7 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 	}()
 
 	select {
-	case <-uploaderStub.firstCallCh:
+	case <-firstCallCh:
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for first upload to start")
 	}

@@ -20,7 +20,7 @@ type exportLoadRepo struct {
 	err error
 }
 
-func (r *exportLoadRepo) LoadFullConfig(ctx context.Context, dest interface{}) error {
+func (r *exportLoadRepo) LoadFullConfig(_ context.Context, dest interface{}) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -497,7 +497,7 @@ type secretRoundTripRepo struct {
 	saved *Config
 }
 
-func (r *secretRoundTripRepo) SaveFullConfig(ctx context.Context, cfg interface{}) error {
+func (r *secretRoundTripRepo) SaveFullConfig(_ context.Context, cfg interface{}) error {
 	typed, ok := cfg.(*Config)
 	if !ok {
 		return errors.New("unexpected config payload type")
@@ -506,7 +506,7 @@ func (r *secretRoundTripRepo) SaveFullConfig(ctx context.Context, cfg interface{
 	return nil
 }
 
-func (r *secretRoundTripRepo) LoadFullConfig(ctx context.Context, dest interface{}) error {
+func (r *secretRoundTripRepo) LoadFullConfig(_ context.Context, dest interface{}) error {
 	if r.saved == nil {
 		return errors.New("no saved config")
 	}
@@ -602,6 +602,12 @@ func TestExportImportJSONEncryptsSecrets(t *testing.T) {
 		ArrIntegration: ArrIntegrationConfig{
 			SonarrAPIKey: "plain-sonarr-token",
 		},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"BTN": {URL: "https://secret.btn.example"},
+				"HDT": {URL: "https://public.hdt.example"},
+			},
+		},
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 	}
 
@@ -615,6 +621,12 @@ func TestExportImportJSONEncryptsSecrets(t *testing.T) {
 	}
 	if strings.Contains(exported, "plain-sonarr-token") {
 		t.Fatalf("exported JSON leaked plaintext Sonarr key")
+	}
+	if strings.Contains(exported, "https://secret.btn.example") {
+		t.Fatalf("exported JSON leaked plaintext BTN URL")
+	}
+	if !strings.Contains(exported, "https://public.hdt.example") {
+		t.Fatalf("exported JSON should keep non-BTN tracker URL plaintext")
 	}
 	if !strings.Contains(exported, encryptedEnvelopePrefix) {
 		t.Fatalf("exported JSON did not contain encrypted secret envelopes")
@@ -630,6 +642,12 @@ func TestExportImportJSONEncryptsSecrets(t *testing.T) {
 	}
 	if imported.ArrIntegration.SonarrAPIKey != "plain-sonarr-token" {
 		t.Fatalf("Sonarr API key mismatch after round-trip: got %q", imported.ArrIntegration.SonarrAPIKey)
+	}
+	if imported.Trackers.Trackers["BTN"].URL != "https://secret.btn.example" {
+		t.Fatalf("BTN URL mismatch after round-trip: got %q", imported.Trackers.Trackers["BTN"].URL)
+	}
+	if imported.Trackers.Trackers["HDT"].URL != "https://public.hdt.example" {
+		t.Fatalf("HDT URL mismatch after round-trip: got %q", imported.Trackers.Trackers["HDT"].URL)
 	}
 }
 

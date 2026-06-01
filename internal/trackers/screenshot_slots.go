@@ -21,6 +21,7 @@ const (
 	screenshotSlotSourceDescription = "description"
 	screenshotSlotSourceSelection   = "final_selection"
 	screenshotSlotSourceTracker     = "tracker_metadata"
+	screenshotPurposeMenu           = string(api.ScreenshotPurposeMenu)
 
 	screenshotSectionWrapped    = "wrapped"
 	screenshotSectionComparison = "comparison"
@@ -52,7 +53,7 @@ func screenshotSlotsFromSource(
 	preloaded *preloadedDescriptionAssetData,
 ) ([]api.ScreenshotSlot, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
 	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return nil, nil
@@ -63,9 +64,23 @@ func screenshotSlotsFromSource(
 
 	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if len(slots) > 0 {
+		if !meta.Options.KeepImages {
+			slots, err = filterStoredSlotsForSelectedImages(ctx, meta, repo, slots, preloaded)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			slots, err = appendStoredSelectionSlots(ctx, meta, repo, slots, preloaded)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if len(slots) == 0 {
+			return nil, nil
+		}
 		return cloneScreenshotSlots(slots), nil
 	}
 
@@ -77,9 +92,73 @@ func screenshotSlotsFromSource(
 		return nil, nil
 	}
 	if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	return cloneScreenshotSlots(slots), nil
+}
+
+func filterStoredSlotsForSelectedImages(
+	ctx context.Context,
+	meta api.PreparedMetadata,
+	repo api.MetadataRepository,
+	slots []api.ScreenshotSlot,
+	preloaded *preloadedDescriptionAssetData,
+) ([]api.ScreenshotSlot, error) {
+	selections, err := finalSelectionsFromSource(ctx, meta, repo, preloaded)
+	if err != nil && !errorsIsNotFound(err) {
+		return nil, err
+	}
+	selectedPaths := make(map[string]struct{}, len(selections))
+	for _, selection := range selections {
+		pathValue := strings.TrimSpace(selection.ImagePath)
+		if pathValue == "" {
+			continue
+		}
+		selectedPaths[pathValue] = struct{}{}
+	}
+	filtered := make([]api.ScreenshotSlot, 0, len(slots))
+	for _, slot := range slots {
+		imagePath := strings.TrimSpace(slot.ImagePath)
+		if strings.EqualFold(strings.TrimSpace(slot.SourceKind), screenshotSlotSourceSelection) || selectedPathExists(selectedPaths, imagePath) {
+			slot.Variants = nil
+			filtered = append(filtered, slot)
+		}
+	}
+	appendSelectionOnlySlots(&filtered, selections)
+	uploads, err := uploadedImagesFromSource(ctx, meta, repo, preloaded)
+	if err != nil && !errorsIsNotFound(err) {
+		return nil, err
+	}
+	applyUploadedVariantsToSlots(filtered, uploads)
+	return normalizeSlotOrders(filtered), nil
+}
+
+func appendStoredSelectionSlots(
+	ctx context.Context,
+	meta api.PreparedMetadata,
+	repo api.MetadataRepository,
+	slots []api.ScreenshotSlot,
+	preloaded *preloadedDescriptionAssetData,
+) ([]api.ScreenshotSlot, error) {
+	selections, err := finalSelectionsFromSource(ctx, meta, repo, preloaded)
+	if err != nil && !errorsIsNotFound(err) {
+		return nil, err
+	}
+	appendSelectionOnlySlots(&slots, selections)
+	uploads, err := uploadedImagesFromSource(ctx, meta, repo, preloaded)
+	if err != nil && !errorsIsNotFound(err) {
+		return nil, err
+	}
+	applyUploadedVariantsToSlots(slots, uploads)
+	return normalizeSlotOrders(slots), nil
+}
+
+func selectedPathExists(selectedPaths map[string]struct{}, imagePath string) bool {
+	if strings.TrimSpace(imagePath) == "" {
+		return false
+	}
+	_, ok := selectedPaths[imagePath]
+	return ok
 }
 
 func synthesizeScreenshotSlots(
@@ -120,6 +199,13 @@ func synthesizeScreenshotSlots(
 		return normalizeSlotOrders(slots), nil
 	}
 
+	if !meta.Options.KeepImages {
+		if logger != nil {
+			logger.Tracef("trackers: screenshot slots tracker urls skipped keep_images=false tracker=%s", strings.TrimSpace(tracker))
+		}
+		return nil, nil
+	}
+
 	urls := collectImageURLs(trackerRecords)
 	if len(urls) == 0 {
 		urls = collectImageURLs(meta.TrackerData)
@@ -150,7 +236,7 @@ func parseDescriptionImageSlots(sourcePath string, description string) []api.Scr
 			rawURL := strings.TrimSpace(body[urlMatch[0]:urlMatch[1]])
 			parsed = append(parsed, parsedDescriptionSlot{
 				start: blockStart + urlMatch[0],
-				slot:  newDescriptionSlot(sourcePath, rawURL, rawURL, rawURL, screenshotSectionComparison, true),
+				slot:  newDescriptionSlot(sourcePath, rawURL, rawURL, screenshotSectionComparison, true),
 			})
 		}
 	}
@@ -213,14 +299,13 @@ func parseImageMatchesInSegment(sourcePath string, value string, offset int, sec
 			continue
 		}
 		covered = append(covered, [2]int{match[0], match[1]})
-		webURL := strings.TrimSpace(value[match[2]:match[3]])
 		imgURL := strings.TrimSpace(value[match[4]:match[5]])
 		if imgURL == "" {
 			continue
 		}
 		results = append(results, parsedDescriptionSlot{
 			start: offset + match[0],
-			slot:  newDescriptionSlot(sourcePath, imgURL, imgURL, webURL, sectionKind, true),
+			slot:  newDescriptionSlot(sourcePath, imgURL, imgURL, sectionKind, true),
 		})
 	}
 
@@ -237,7 +322,7 @@ func parseImageMatchesInSegment(sourcePath string, value string, offset int, sec
 		}
 		results = append(results, parsedDescriptionSlot{
 			start: offset + match[0],
-			slot:  newDescriptionSlot(sourcePath, imgURL, imgURL, imgURL, sectionKind, true),
+			slot:  newDescriptionSlot(sourcePath, imgURL, imgURL, sectionKind, true),
 		})
 	}
 
@@ -245,7 +330,7 @@ func parseImageMatchesInSegment(sourcePath string, value string, offset int, sec
 	return results
 }
 
-func newDescriptionSlot(sourcePath string, originalURL string, rawURL string, webURL string, sectionKind string, fromDescription bool) api.ScreenshotSlot {
+func newDescriptionSlot(sourcePath string, originalURL string, rawURL string, sectionKind string, fromDescription bool) api.ScreenshotSlot {
 	normalizedOriginal := strings.TrimSpace(originalURL)
 	host := strings.TrimSpace(imagehost.ExtractHost(rawURL))
 	return api.ScreenshotSlot{
@@ -714,7 +799,7 @@ func upsertScreenshotVariantsFromUploads(ctx context.Context, repo api.MetadataR
 			UploadedAt: upload.UploadedAt,
 		})
 	}
-	return repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants)
+	return wrapTrackerError(repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants))
 }
 
 func slotSourceImagesForRehost(slots []api.ScreenshotSlot) []api.ScreenshotImage {

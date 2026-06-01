@@ -526,18 +526,18 @@ func (c *Client) postGraphQL(ctx context.Context, query string, target any) erro
 	payload := map[string]string{"query": query}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("imdb: marshal GraphQL payload: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("imdb: build GraphQL request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("imdb: execute GraphQL request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -548,7 +548,7 @@ func (c *Client) postGraphQL(ctx context.Context, query string, target any) erro
 
 	decoder := json.NewDecoder(resp.Body)
 	if err := decoder.Decode(target); err != nil {
-		return err
+		return fmt.Errorf("imdb: decode GraphQL response: %w", err)
 	}
 	return nil
 }

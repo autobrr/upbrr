@@ -140,7 +140,7 @@ func extractDVDMediaInfo(meta api.PreparedMetadata) api.DVDMediaInfo {
 			scanType = strings.TrimSpace(scanText)
 		}
 	}
-	scan := normalizeDVDScan(scanType, frameRate, meta.SourcePath)
+	scan := normalizeDVDScan(scanType, meta.SourcePath)
 
 	closestWidth, closestHeight, resolution := snapAndMapResolution(width, height, scan, meta.Release.Resolution)
 
@@ -218,7 +218,7 @@ func regexInt(pattern *regexp.Regexp, value string) int {
 	return parsed
 }
 
-func normalizeDVDScan(scanType string, frameRate string, sourceHint string) string {
+func normalizeDVDScan(scanType string, sourceHint string) string {
 	scan := strings.TrimSpace(scanType)
 	if strings.EqualFold(scan, "Progressive") {
 		return "p"
@@ -357,7 +357,7 @@ func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string) string {
 	}
 
 	scanType := strings.TrimSpace(trackString(track, "ScanType"))
-	scan := normalizeDVDScan(scanType, "", sourcePath)
+	scan := normalizeDVDScan(scanType, sourcePath)
 
 	_, _, resolution := snapAndMapResolution(width, height, scan, "")
 	if resolution == "OTHER" {

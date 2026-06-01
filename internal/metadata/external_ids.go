@@ -76,7 +76,7 @@ type TVmazeClient interface {
 func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -94,11 +94,22 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			ids.SourcePath = meta.SourcePath
 		}
 	}
+	if meta.Options.SkipAutoTorrent {
+		clearTrackerSourcedExternalIDs(&ids)
+	}
 	metadata := api.ExternalMetadata{SourcePath: meta.SourcePath}
 	if meta.StoredDataFresh && strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) {
 		metadata = meta.ExternalMetadata
 		if strings.TrimSpace(metadata.SourcePath) == "" {
 			metadata.SourcePath = meta.SourcePath
+		}
+	} else {
+		storedMeta, err := s.repo.GetExternalMetadata(ctx, meta.SourcePath)
+		if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
+			return api.PreparedMetadata{}, fmt.Errorf("metadata: load stored external metadata: %w", err)
+		}
+		if err == nil {
+			metadata.Bluray = storedMeta.Bluray
 		}
 	}
 	candidates := api.ExternalIDCandidates{}
@@ -111,12 +122,15 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		s.logger.Debugf("metadata: external ids start path=%q category=%q", meta.SourcePath, ids.Category)
 	}
 
-	overrideTMDB, clearedTMDB := applyOverrideID(&ids.TMDBID, &ids.SourceTMDB, meta.ExternalIDOverrides.TMDBID, "override")
-	overrideIMDB, clearedIMDB := applyOverrideID(&ids.IMDBID, &ids.SourceIMDB, meta.ExternalIDOverrides.IMDBID, "override")
-	overrideTVDB, clearedTVDB := applyOverrideID(&ids.TVDBID, &ids.SourceTVDB, meta.ExternalIDOverrides.TVDBID, "override")
-	overrideTVmaze, _ := applyOverrideID(&ids.TVmazeID, &ids.SourceTVmaze, meta.ExternalIDOverrides.TVmazeID, "override")
+	overrideTMDB, clearedTMDB := applyOverrideID(&ids.TMDBID, &ids.SourceTMDB, meta.ExternalIDOverrides.TMDBID)
+	overrideIMDB, clearedIMDB := applyOverrideID(&ids.IMDBID, &ids.SourceIMDB, meta.ExternalIDOverrides.IMDBID)
+	overrideTVDB, clearedTVDB := applyOverrideID(&ids.TVDBID, &ids.SourceTVDB, meta.ExternalIDOverrides.TVDBID)
+	overrideTVmaze, _ := applyOverrideID(&ids.TVmazeID, &ids.SourceTVmaze, meta.ExternalIDOverrides.TVmazeID)
 
-	trackerTMDB, trackerIMDB, trackerTVDB := resolveTrackerIDs(meta.TrackerData)
+	trackerTMDB, trackerIMDB, trackerTVDB := 0, 0, 0
+	if !meta.Options.SkipAutoTorrent || meta.SourceLookupActive {
+		trackerTMDB, trackerIMDB, trackerTVDB = resolveTrackerIDs(meta.TrackerData)
+	}
 	if !overrideTMDB && !clearedTMDB {
 		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, trackerTMDB, "tracker")
 	}
@@ -361,8 +375,19 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		return false
 	}
 
+	tmdbLogoFetchAttempted := false
+	shouldFetchTMDBMetadata := func() bool {
+		if ids.TMDBID == 0 {
+			return false
+		}
+		if metadata.TMDB == nil {
+			return true
+		}
+		return s.cfg.Description.AddLogo && strings.TrimSpace(metadata.TMDB.Logo) == "" && !tmdbLogoFetchAttempted
+	}
+
 	shouldRunFetchPass := func() bool {
-		if ids.TMDBID != 0 && metadata.TMDB == nil {
+		if shouldFetchTMDBMetadata() {
 			return true
 		}
 		if ids.IMDBID != 0 && metadata.IMDB == nil {
@@ -378,7 +403,10 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 
 	runFetchPass := func(allowTVmazeNameFallback bool) {
-		fetchTMDB := ids.TMDBID != 0 && metadata.TMDB == nil
+		fetchTMDB := shouldFetchTMDBMetadata()
+		if fetchTMDB && s.cfg.Description.AddLogo {
+			tmdbLogoFetchAttempted = true
+		}
 		fetchIMDB := ids.IMDBID != 0 && metadata.IMDB == nil
 		lookupTVDB := !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
 		lookupTVmaze := metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
@@ -411,6 +439,8 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 					IMDbID:         ids.IMDBID,
 					TVDBID:         ids.TVDBID,
 					ManualLanguage: manualLanguage,
+					AddLogo:        s.cfg.Description.AddLogo,
+					LogoLanguages:  descriptionLogoLanguages(s.cfg.Description.LogoLanguage),
 					Filename:       filename,
 					Debug:          meta.Options.Debug,
 				})
@@ -604,7 +634,9 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		}
 	}
 
-	runFetchPass(false)
+	if shouldRunFetchPass() {
+		runFetchPass(false)
+	}
 	if shouldRunFetchPass() {
 		runFetchPass(true)
 	}
@@ -636,11 +668,12 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			ids.SourceTVmaze,
 		)
 		s.logger.Debugf(
-			"metadata: external metadata fetched tmdb=%t imdb=%t tvdb=%t tvmaze=%t",
+			"metadata: external metadata fetched tmdb=%t imdb=%t tvdb=%t tvmaze=%t bluray=%t",
 			metadata.TMDB != nil,
 			metadata.IMDB != nil,
 			metadata.TVDB != nil,
 			metadata.TVmaze != nil,
+			metadata.Bluray != nil,
 		)
 	}
 
@@ -656,7 +689,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	if err := s.repo.SaveExternalIDs(ctx, ids); err != nil {
 		return api.PreparedMetadata{}, fmt.Errorf("metadata: save external ids: %w", err)
 	}
-	if metadata.TMDB != nil || metadata.IMDB != nil || metadata.TVDB != nil || metadata.TVmaze != nil {
+	if metadata.TMDB != nil || metadata.IMDB != nil || metadata.TVDB != nil || metadata.TVmaze != nil || metadata.Bluray != nil {
 		if err := s.repo.SaveExternalMetadata(ctx, metadata); err != nil {
 			return api.PreparedMetadata{}, fmt.Errorf("metadata: save external metadata: %w", err)
 		}
@@ -666,6 +699,28 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	meta.ExternalIDCandidates = candidates
 	meta.ExternalMetadata = metadata
 	return meta, nil
+}
+
+func clearTrackerSourcedExternalIDs(ids *api.ExternalIDs) {
+	if ids == nil {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(ids.SourceTMDB), "tracker") {
+		ids.TMDBID = 0
+		ids.SourceTMDB = ""
+	}
+	if strings.EqualFold(strings.TrimSpace(ids.SourceIMDB), "tracker") {
+		ids.IMDBID = 0
+		ids.SourceIMDB = ""
+	}
+	if strings.EqualFold(strings.TrimSpace(ids.SourceTVDB), "tracker") {
+		ids.TVDBID = 0
+		ids.SourceTVDB = ""
+	}
+	if strings.EqualFold(strings.TrimSpace(ids.SourceTVmaze), "tracker") {
+		ids.TVmazeID = 0
+		ids.SourceTVmaze = ""
+	}
 }
 
 func mapTMDBCandidates(items []tmdb.Candidate, category string) []api.ExternalIDCandidate {
@@ -978,17 +1033,17 @@ func (s *Service) persistResolvedReleaseCategory(ctx context.Context, sourcePath
 	return nil
 }
 
-func applyOverrideID(target *int, source *string, override *int, origin string) (bool, bool) {
+func applyOverrideID(target *int, source *string, override *int) (bool, bool) {
 	if target == nil || source == nil || override == nil {
 		return false, false
 	}
 	if *override == 0 {
 		*target = 0
-		*source = origin + "_clear"
+		*source = "override_clear"
 		return false, true
 	}
 	*target = *override
-	*source = origin
+	*source = "override"
 	return true, false
 }
 
@@ -1015,6 +1070,20 @@ func formatOptionalInt(value int) string {
 		return ""
 	}
 	return strconv.Itoa(value)
+}
+
+func descriptionLogoLanguages(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';'
+	})
+	languages := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			languages = append(languages, trimmed)
+		}
+	}
+	return languages
 }
 
 func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBMetadata {

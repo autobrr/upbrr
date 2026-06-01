@@ -33,7 +33,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			tracker: "BT",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, Release: api.ReleaseInfo{Title: "Movie"}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "BT", "session", "cookie", hostFromBaseURL(t, baseURL))
+				writeTextCookie(t, dbPath, "BT", hostFromBaseURL(t, baseURL))
 			},
 			handler: func(cfg config.Config, client *http.Client) searchHandler {
 				return btHandler{cfg: cfg, http: client, logger: api.NopLogger{}}
@@ -48,7 +48,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			name:    "FL",
 			tracker: "FL",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, Release: api.ReleaseInfo{Resolution: "1080p"}, SourcePath: "x"},
-			setup: func(t *testing.T, baseURL string, dbPath string) {
+			setup: func(t *testing.T, _ string, dbPath string) {
 				writeJSONCookie(t, dbPath, "FL", `{"sid":"cookie"}`)
 			},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return flHandler{cfg: cfg, http: client} },
@@ -63,7 +63,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			tracker: "FF",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "FF", "session", "cookie", hostFromBaseURL(t, baseURL))
+				writeTextCookie(t, dbPath, "FF", hostFromBaseURL(t, baseURL))
 			},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return ffHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
@@ -77,7 +77,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			tracker: "BJS",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "BJS", "session", "cookie", hostFromBaseURL(t, baseURL))
+				writeTextCookie(t, dbPath, "BJS", hostFromBaseURL(t, baseURL))
 			},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return bjsHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
@@ -91,7 +91,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			tracker: "HDS",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, Release: api.ReleaseInfo{Resolution: "1080p"}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "HDS", "session", "cookie", hostFromBaseURL(t, baseURL))
+				writeTextCookie(t, dbPath, "HDS", hostFromBaseURL(t, baseURL))
 			},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return hdsHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
@@ -105,7 +105,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			tracker: "HDT",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, Release: api.ReleaseInfo{Resolution: "1080p"}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "HDT", "session", "cookie", hostFromBaseURL(t, baseURL))
+				writeTextCookie(t, dbPath, "HDT", hostFromBaseURL(t, baseURL))
 			},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return hdtHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
@@ -119,7 +119,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			tracker: "IS",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "MOVIE", IMDBID: 123}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "IS", "session", "cookie", hostFromBaseURL(t, baseURL))
+				writeTextCookie(t, dbPath, "IS", hostFromBaseURL(t, baseURL))
 			},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return isHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
@@ -133,7 +133,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			tracker: "PTS",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, SourcePath: "x"},
 			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "PTS", "session", "cookie", hostFromBaseURL(t, baseURL))
+				writeTextCookie(t, dbPath, "PTS", hostFromBaseURL(t, baseURL))
 			},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return ptsHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
@@ -146,7 +146,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			name:    "THR",
 			tracker: "THR",
 			meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 123}, SourcePath: "x"},
-			setup:   func(t *testing.T, _ string, _ string) {},
+			setup:   func(_ *testing.T, _ string, _ string) {},
 			handler: func(cfg config.Config, client *http.Client) searchHandler { return thrHandler{cfg: cfg, http: client} },
 			validate: func(t *testing.T, entries []api.DupeEntry) {
 				if len(entries) != 1 || entries[0].Name != "THR.Movie.2024.1080p.BluRay-GRP" {
@@ -251,13 +251,13 @@ func TestSiteHandlersSearch(t *testing.T) {
 	}
 }
 
-func writeTextCookie(t *testing.T, dbPath string, tracker string, name string, value string, domain string) {
+func writeTextCookie(t *testing.T, dbPath string, tracker string, domain string) {
 	t.Helper()
 	cookieDir := filepath.Join(filepath.Dir(dbPath), "cookies")
 	if err := os.MkdirAll(cookieDir, 0o755); err != nil {
 		t.Fatalf("mkdir cookie dir: %v", err)
 	}
-	line := domain + "\tTRUE\t/\tFALSE\t0\t" + name + "\t" + value + "\n"
+	line := domain + "\tTRUE\t/\tFALSE\t0\tsession\tcookie\n"
 	if err := os.WriteFile(filepath.Join(cookieDir, tracker+".txt"), []byte(line), 0o600); err != nil {
 		t.Fatalf("write cookie file: %v", err)
 	}

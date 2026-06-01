@@ -30,7 +30,7 @@ var numericPattern = regexp.MustCompile(`\d+`)
 func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -115,6 +115,14 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		s.logger.Debugf("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
 	}
 
+	meta, err = s.applyBlurayMetadata(ctx, meta, bdinfo)
+	if err != nil {
+		return api.PreparedMetadata{}, err
+	}
+	if s.logger != nil && meta.ExternalMetadata.Bluray != nil {
+		s.logger.Debugf("metadata: blu-ray.com candidates=%d selected=%q score=%.1f threshold=%.1f", len(meta.ExternalMetadata.Bluray.Candidates), meta.ExternalMetadata.Bluray.SelectedReleaseID, meta.ExternalMetadata.Bluray.BestScore, meta.ExternalMetadata.Bluray.Threshold)
+	}
+
 	meta.Distributor = normalizeDistributor(meta.Distributor)
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details distributor=%q", meta.Distributor)
@@ -131,7 +139,8 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		s.logger.Debugf("metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q video_width=%d video_height=%d", meta.Region, meta.VideoEncode, meta.VideoCodec, meta.BitDepth, meta.VideoWidth, meta.VideoHeight)
 	}
 
-	meta.Edition, meta.Repack, meta.WebDV = editionFromMeta(meta)
+	meta.Edition, meta.Repack = editionFromMeta(meta)
+	meta.WebDV = false
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
 	}
@@ -1396,7 +1405,7 @@ func videoPixelDimensions(doc mediaInfoDoc) (width, height int) {
 	return trackNumericInt(track, "Width"), trackNumericInt(track, "Height")
 }
 
-func editionFromMeta(meta api.PreparedMetadata) (string, string, bool) {
+func editionFromMeta(meta api.PreparedMetadata) (string, string) {
 	edition := strings.TrimSpace(resolveMultiPlaylistEdition(meta))
 	if edition == "" {
 		edition = strings.TrimSpace(meta.Edition)
@@ -1405,7 +1414,7 @@ func editionFromMeta(meta api.PreparedMetadata) (string, string, bool) {
 		edition = strings.TrimSpace(strings.Join(meta.Release.Edition, " "))
 	}
 	if edition == "" {
-		return "", "", false
+		return "", ""
 	}
 	repack := ""
 	if repackPattern.MatchString(edition) {
@@ -1413,7 +1422,7 @@ func editionFromMeta(meta api.PreparedMetadata) (string, string, bool) {
 		edition = strings.TrimSpace(repackPattern.ReplaceAllString(edition, ""))
 		edition = strings.ReplaceAll(edition, "  ", " ")
 	}
-	return edition, repack, false
+	return edition, repack
 }
 
 func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
@@ -1441,8 +1450,8 @@ func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
 				continue
 			}
 			if best == nil || diff < bestDiff {
-				copy := detail
-				best = &copy
+				detailCopy := detail
+				best = &detailCopy
 				bestDiff = diff
 			}
 		}

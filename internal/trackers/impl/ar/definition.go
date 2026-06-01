@@ -5,6 +5,7 @@ package ar
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -32,7 +33,7 @@ func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadR
 func (d *Definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
-		return trackers.DescriptionResult{}, ctx.Err()
+		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -49,10 +50,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		}
 	}
 
-	description, err := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
-	if err != nil {
-		return trackers.DescriptionResult{}, err
-	}
+	description := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
 	return trackers.DescriptionResult{
 		Group:       "ar",
 		Description: strings.TrimSpace(description),

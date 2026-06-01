@@ -13,13 +13,14 @@ import (
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("core: delete all history releases canceled: %w", err)
 	}
 	if c.repo == nil {
 		return 0, errors.New("core: repository not initialized")
@@ -43,7 +44,7 @@ func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
 
 func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("core: delete stored release canceled: %w", err)
 	}
 	trimmedPath := strings.TrimSpace(sourcePath)
 	if trimmedPath == "" {
@@ -120,6 +121,17 @@ func (c *Core) collectReleaseCleanupTargets(ctx context.Context, sourcePath stri
 		artifactPaths = append(artifactPaths, image.ImagePath)
 	}
 
+	slots, err := c.repo.ListScreenshotSlotsByPath(ctx, sourcePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("core: delete history release list screenshot slots: %w", err)
+	}
+	for _, slot := range slots {
+		artifactPaths = append(artifactPaths, slot.ImagePath)
+		for _, variant := range slot.Variants {
+			artifactPaths = append(artifactPaths, variant.ImagePath)
+		}
+	}
+
 	artifactPaths = compactStrings(artifactPaths)
 	tmpDirs := make(map[string]struct{})
 	fallbackBase := paths.ReleaseTempBase(api.PreparedMetadata{}, sourcePath)
@@ -184,7 +196,7 @@ func resolveContentTmpRoot(tmpRoot string, candidate string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if !pathWithinRoot(absTmpRoot, absCandidate) {
+	if !pathutil.IsWithinRoot(absTmpRoot, absCandidate) {
 		return "", false
 	}
 	rel, err := filepath.Rel(absTmpRoot, absCandidate)
@@ -205,16 +217,16 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 	}
 	absRoot, err := filepath.Abs(strings.TrimSpace(root))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cleanup history artifact: resolve root path: %w", err)
 	}
 	absTarget, err := filepath.Abs(trimmed)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cleanup history artifact: resolve target path: %w", err)
 	}
-	if absTarget == absRoot {
+	if pathutil.SamePath(absRoot, absTarget) {
 		return false, nil
 	}
-	if !pathWithinRoot(absRoot, absTarget) {
+	if !pathutil.IsWithinRoot(absRoot, absTarget) {
 		return false, nil
 	}
 	if recursive {
@@ -222,15 +234,15 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 			if os.IsNotExist(err) {
 				return false, nil
 			}
-			return false, err
+			return false, fmt.Errorf("cleanup history artifact: stat target: %w", err)
 		}
 		if err := os.RemoveAll(absTarget); err != nil {
-			return false, err
+			return false, fmt.Errorf("cleanup history artifact: remove target tree: %w", err)
 		}
 		return true, nil
 	}
 	if err := os.Remove(absTarget); err != nil && !os.IsNotExist(err) {
-		return false, err
+		return false, fmt.Errorf("cleanup history artifact: remove target: %w", err)
 	}
 	if _, err := os.Stat(absTarget); err == nil {
 		return false, nil
@@ -253,15 +265,4 @@ func removeIfWithinRoots(roots []string, target string, recursive bool) (bool, e
 		}
 	}
 	return false, nil
-}
-
-func pathWithinRoot(root string, target string) bool {
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return false
-	}
-	if rel == "." {
-		return true
-	}
-	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel)
 }

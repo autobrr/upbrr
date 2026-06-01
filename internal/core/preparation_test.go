@@ -16,7 +16,7 @@ type stubFilesystem struct {
 	err   error
 }
 
-func (s stubFilesystem) ValidatePaths(ctx context.Context, paths []string) ([]string, error) {
+func (s stubFilesystem) ValidatePaths(_ context.Context, paths []string) ([]string, error) {
 	if s.err != nil {
 		return nil, s.err
 	}

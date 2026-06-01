@@ -29,5 +29,5 @@ type ScreenshotSlotVariant struct {
 	ImgURL     string
 	RawURL     string
 	WebURL     string
-	UploadedAt time.Time
+	UploadedAt time.Time `ts_type:"string"`
 }

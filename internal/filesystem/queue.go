@@ -55,7 +55,7 @@ func GatherQueuePaths(ctx context.Context, root string) ([]string, error) {
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -90,7 +90,7 @@ func LimitQueuePaths(paths []string, limit int) []string {
 func shouldIncludeQueueDirectory(ctx context.Context, dirPath string) (bool, error) {
 	select {
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return false, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -102,7 +102,7 @@ func shouldIncludeQueueDirectory(ctx context.Context, dirPath string) (bool, err
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return false, ctx.Err()
+			return false, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 

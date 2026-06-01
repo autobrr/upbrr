@@ -78,6 +78,14 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "invalid input history limit",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x", InputHistoryLimit: -1},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+			},
+			wantErr: true,
+		},
+		{
 			name: "invalid tracker upload concurrency",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
@@ -164,6 +172,47 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestMainSettingsInputHistoryLimitDefaultsWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(`main_settings:
+  tmdb_api: x
+screenshot_handling:
+  screens: 1
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if loaded.MainSettings.InputHistoryLimit != DefaultInputHistoryLimit {
+		t.Fatalf("yaml default: got %d want %d", loaded.MainSettings.InputHistoryLimit, DefaultInputHistoryLimit)
+	}
+
+	var fromJSON Config
+	if err := json.Unmarshal([]byte(`{"MainSettings":{"TMDBAPI":"x"}}`), &fromJSON); err != nil {
+		t.Fatalf("unmarshal json: %v", err)
+	}
+	if fromJSON.MainSettings.InputHistoryLimit != DefaultInputHistoryLimit {
+		t.Fatalf("json default: got %d want %d", fromJSON.MainSettings.InputHistoryLimit, DefaultInputHistoryLimit)
+	}
+}
+
+func TestMainSettingsInputHistoryLimitAllowsZero(t *testing.T) {
+	t.Parallel()
+
+	var cfg Config
+	if err := json.Unmarshal([]byte(`{"MainSettings":{"InputHistoryLimit":0}}`), &cfg); err != nil {
+		t.Fatalf("unmarshal json: %v", err)
+	}
+	if cfg.MainSettings.InputHistoryLimit != 0 {
+		t.Fatalf("json explicit zero: got %d want 0", cfg.MainSettings.InputHistoryLimit)
 	}
 }
 

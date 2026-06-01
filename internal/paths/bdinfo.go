@@ -32,6 +32,14 @@ func BDMVExtSummaryFilename(playlist string) string {
 	return "BD_SUMMARY_EXT_" + key + ".txt"
 }
 
+func BDMVFullSummaryFilename(playlist string) string {
+	key := BDMVPlaylistKey(playlist)
+	if key == "" {
+		return ""
+	}
+	return "BD_SUMMARY_FULL_" + key + ".txt"
+}
+
 func BDMVSummaryPath(tmpDir string, playlist string) string {
 	filename := BDMVSummaryFilename(playlist)
 	if filename == "" {
@@ -42,6 +50,14 @@ func BDMVSummaryPath(tmpDir string, playlist string) string {
 
 func BDMVExtSummaryPath(tmpDir string, playlist string) string {
 	filename := BDMVExtSummaryFilename(playlist)
+	if filename == "" {
+		return ""
+	}
+	return filepath.Join(strings.TrimSpace(tmpDir), filename)
+}
+
+func BDMVFullSummaryPath(tmpDir string, playlist string) string {
+	filename := BDMVFullSummaryFilename(playlist)
 	if filename == "" {
 		return ""
 	}
@@ -83,6 +99,22 @@ func PrimaryBDMVExtSummaryPath(tmpRoot string, meta api.PreparedMetadata) (strin
 	path := BDMVExtSummaryPath(tmpDir, playlist)
 	if strings.TrimSpace(path) == "" {
 		return "", errors.New("paths: missing primary bdmv ext summary path")
+	}
+	return path, nil
+}
+
+func PrimaryBDMVFullSummaryPath(tmpRoot string, meta api.PreparedMetadata) (string, error) {
+	playlist := PrimaryBDMVPlaylist(meta)
+	if playlist == "" {
+		return "", nil
+	}
+	tmpDir, _, err := ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	if err != nil {
+		return "", err
+	}
+	path := BDMVFullSummaryPath(tmpDir, playlist)
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("paths: missing primary bdmv full summary path")
 	}
 	return path, nil
 }
