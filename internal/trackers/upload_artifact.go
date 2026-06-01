@@ -41,6 +41,7 @@ func ResolveTrackerTorrentArtifactPath(meta api.PreparedMetadata, dbPath string,
 }
 
 func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
+	cleanPath, cleanPathOK := uploadTorrentCleanPath(meta, dbPath)
 	candidates := []string{
 		strings.TrimSpace(meta.TorrentPath),
 		strings.TrimSpace(meta.ClientTorrentPath),
@@ -51,6 +52,15 @@ func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string,
 			continue
 		}
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			if cleanPathOK {
+				err := WriteUploadTorrent(candidate, cleanPath)
+				if err == nil {
+					return cleanPath, nil
+				}
+				if !isUploadTorrentLoadError(err) {
+					return "", err
+				}
+			}
 			return candidate, nil
 		}
 	}
@@ -62,6 +72,9 @@ func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string,
 			if err == nil {
 				guessed := filepath.Join(tmpDir, base+".torrent")
 				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
+					if err := WriteUploadTorrent(guessed, guessed); err != nil && !isUploadTorrentLoadError(err) {
+						return "", err
+					}
 					return guessed, nil
 				}
 			}
@@ -71,11 +84,42 @@ func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string,
 	return "", errors.New("trackers: torrent file not found")
 }
 
+func uploadTorrentCleanPath(meta api.PreparedMetadata, dbPath string) (string, bool) {
+	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
+		return "", false
+	}
+	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	if err != nil {
+		return "", false
+	}
+	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(tmpDir, base+".torrent"), true
+}
+
+func isUploadTorrentLoadError(err error) bool {
+	return errors.Is(err, errInvalidUploadTorrent)
+}
+
+var errInvalidUploadTorrent = errors.New("invalid upload torrent")
+
+func WriteUploadTorrent(sourcePath string, outputPath string) error {
+	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
+	if err != nil {
+		return fmt.Errorf("trackers: load upload torrent: %w: %w", errInvalidUploadTorrent, err)
+	}
+	cleanTorrentMeta(torrentMeta)
+	return writeTorrentMeta(*torrentMeta, outputPath, "upload torrent")
+}
+
 func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, comment string, source string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
 		return fmt.Errorf("trackers: load torrent artifact: %w", err)
 	}
+	cleanTorrentMeta(torrentMeta)
 
 	info, err := torrentMeta.UnmarshalInfo()
 	if err != nil {
@@ -92,19 +136,38 @@ func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL 
 		torrentMeta.Announce = trimmedAnnounce
 		torrentMeta.AnnounceList = metainfo.AnnounceList{{trimmedAnnounce}}
 	}
-	torrentMeta.Comment = strings.TrimSpace(comment)
-
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return fmt.Errorf("trackers: create torrent artifact dir: %w", err)
+	torrentMeta.Comment = "upbrr"
+	if trimmedComment := strings.TrimSpace(comment); trimmedComment != "" {
+		torrentMeta.Comment = trimmedComment
 	}
-	file, err := os.Create(outputPath)
+
+	return writeTorrentMeta(*torrentMeta, outputPath, "torrent artifact")
+}
+
+func cleanTorrentMeta(torrentMeta *metainfo.MetaInfo) {
+	torrentMeta.Announce = ""
+	torrentMeta.AnnounceList = nil
+	torrentMeta.Nodes = nil
+	torrentMeta.PieceLayers = nil
+	torrentMeta.UrlList = nil
+	torrentMeta.Comment = "upbrr"
+	if strings.Contains(strings.ToLower(torrentMeta.CreatedBy), "upload assistant") {
+		torrentMeta.CreatedBy = "upbrr"
+	}
+}
+
+func writeTorrentMeta(torrentMeta metainfo.MetaInfo, outputPath string, context string) error {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
+		return fmt.Errorf("trackers: create %s dir: %w", context, err)
+	}
+	file, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		return fmt.Errorf("trackers: create torrent artifact: %w", err)
+		return fmt.Errorf("trackers: create %s: %w", context, err)
 	}
 	defer file.Close()
 
 	if err := torrentMeta.Write(file); err != nil {
-		return fmt.Errorf("trackers: write torrent artifact: %w", err)
+		return fmt.Errorf("trackers: write %s: %w", context, err)
 	}
 	return nil
 }

@@ -4,8 +4,10 @@
 package ptp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/anacrolix/torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -135,6 +138,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	dbPath := filepath.Join(tmp, "ua.db")
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
+	markTorrentWithPrivateMetadata(t, torrentPath)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.RequestURI() {
@@ -155,6 +159,29 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			case ptpUploadPath:
 				if err := r.ParseMultipartForm(5 << 20); err != nil {
 					t.Fatalf("parse multipart: %v", err)
+				}
+				files := r.MultipartForm.File["file_input"]
+				if len(files) != 1 {
+					t.Fatalf("expected one torrent file, got %d", len(files))
+				}
+				uploaded, err := files[0].Open()
+				if err != nil {
+					t.Fatalf("open uploaded torrent: %v", err)
+				}
+				defer uploaded.Close()
+				payload, err := io.ReadAll(uploaded)
+				if err != nil {
+					t.Fatalf("read uploaded torrent: %v", err)
+				}
+				uploadedMeta, err := metainfo.Load(bytes.NewReader(payload))
+				if err != nil {
+					t.Fatalf("load uploaded torrent: %v", err)
+				}
+				if uploadedMeta.Comment != "upbrr" {
+					t.Fatalf("expected cleaned upload torrent comment, got %q", uploadedMeta.Comment)
+				}
+				if uploadedMeta.Announce != "" {
+					t.Fatalf("expected upload torrent announce stripped, got %q", uploadedMeta.Announce)
 				}
 				if r.FormValue("AntiCsrfToken") != "csrf-token" {
 					t.Fatalf("expected csrf token, got %q", r.FormValue("AntiCsrfToken"))
@@ -372,5 +399,24 @@ func createTestTorrent(t *testing.T, sourcePath string, torrentPath string) {
 	})
 	if err != nil {
 		t.Fatalf("create torrent: %v", err)
+	}
+}
+
+func markTorrentWithPrivateMetadata(t *testing.T, torrentPath string) {
+	t.Helper()
+
+	torrentMeta, err := metainfo.LoadFromFile(torrentPath)
+	if err != nil {
+		t.Fatalf("load torrent: %v", err)
+	}
+	torrentMeta.Announce = "https://private.example/passkey/announce"
+	torrentMeta.Comment = "Created by Upload Assistant https://private.example/download/1"
+	file, err := os.Create(torrentPath)
+	if err != nil {
+		t.Fatalf("rewrite torrent: %v", err)
+	}
+	defer file.Close()
+	if err := torrentMeta.Write(file); err != nil {
+		t.Fatalf("write torrent: %v", err)
 	}
 }
