@@ -145,6 +145,8 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 	var blockedReason string
 	switch {
+	case strings.TrimSpace(req.TrackerConfig.AnnounceURL) == "":
+		blockedReason = "requires announce URL in config"
 	case strings.TrimSpace(imdbID) == "":
 		blockedReason = "requires IMDb ID"
 	case categoryID == 0:
@@ -170,14 +172,12 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	torrentPath := origTorrentPath
 	artifactPath := ""
 	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
-	if announceURL != "" {
-		if ap, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "HDS"); err == nil {
-			// HDS doesn't have a native 'source' field for .torrents,
-			// so we add one to prevent hash collisions with other trackers that also lack a source identifier.
-			if err := writePersonalizedTorrentWithHashLink(origTorrentPath, ap, announceURL, sourceFlag); err == nil {
-				torrentPath = ap
-				artifactPath = ap
-			}
+	if ap, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "HDS"); err == nil {
+		// HDS doesn't have a native 'source' field for .torrents,
+		// so we add one to prevent hash collisions with other trackers that also lack a source identifier.
+		if err := writePersonalizedTorrentWithHashLink(origTorrentPath, ap, announceURL, sourceFlag); err == nil {
+			torrentPath = ap
+			artifactPath = ap
 		}
 	}
 	cookies, err := loadCookies(ctx, req.AppConfig.MainSettings.DBPath)
@@ -246,7 +246,10 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 		if strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "1080p") || strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "1080i") {
 			return 25
 		}
-		return 24
+		if strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "720p") {
+			return 24
+		}
+		return 0
 	}
 
 	if meta.Anime {
@@ -255,6 +258,8 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 			return 48
 		case "1080p", "1080i":
 			return 28
+		case "720p":
+			return 27
 		default:
 			return 0
 		}
@@ -265,6 +270,8 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 			return 45
 		case "1080p", "1080i":
 			return 22
+		case "720p":
+			return 21
 		default:
 			return 0
 		}
@@ -275,6 +282,8 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 			return 46
 		case "1080p", "1080i":
 			return 19
+		case "720p":
+			return 18
 		default:
 			return 0
 		}
