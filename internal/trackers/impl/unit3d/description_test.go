@@ -448,8 +448,8 @@ func TestBuildUnit3DDescriptionSkipsSHRIIslandReleaseNotesForOtherGroups(t *test
 
 func TestBuildUnit3DDescriptionSkipsDuplicateTemplateAndKeptContent(t *testing.T) {
 	block := `[center]
-[url=https://ptpimg.me/8ca234.png][img=350]https://ptpimg.me/8ca234.png[/img][/url]
-[url=https://ptpimg.me/4oh0bz.png][img=350]https://ptpimg.me/4oh0bz.png[/img][/url]
+[url=https://pixhost.to/8ca234.png][img=350]https://pixhost.to/8ca234.png[/img][/url]
+[url=https://pixhost.to/4oh0bz.png][img=350]https://pixhost.to/4oh0bz.png[/img][/url]
 [/center]
 
 [right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/right]`
@@ -469,11 +469,11 @@ func TestBuildUnit3DDescriptionSkipsDuplicateTemplateAndKeptContent(t *testing.T
 
 func TestBuildUnit3DDescriptionReplacesExistingScreenshotBlock(t *testing.T) {
 	base := `[center]
-[url=https://ptpimg.me/8ca234.png][img=350]https://ptpimg.me/8ca234.png[/img][/url]
-[url=https://ptpimg.me/7129bd.png][img=350]https://ptpimg.me/7129bd.png[/img][/url]
+[url=https://pixhost.to/8ca234.png][img=350]https://pixhost.to/8ca234.png[/img][/url]
+[url=https://pixhost.to/7129bd.png][img=350]https://pixhost.to/7129bd.png[/img][/url]
 
-[url=https://ptpimg.me/4oh0bz.png][img=350]https://ptpimg.me/4oh0bz.png[/img][/url]
-[url=https://ptpimg.me/7sv795.png][img=350]https://ptpimg.me/7sv795.png[/img][/url]
+[url=https://pixhost.to/4oh0bz.png][img=350]https://pixhost.to/4oh0bz.png[/img][/url]
+[url=https://pixhost.to/7sv795.png][img=350]https://pixhost.to/7sv795.png[/img][/url]
 [/center]
 
 [center][spoiler=Scene NFO:][code]scene nfo[/code][/spoiler][/center]`
@@ -490,7 +490,7 @@ func TestBuildUnit3DDescriptionReplacesExistingScreenshotBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(result, "https://ptpimg.me/8ca234.png") {
+	if strings.Contains(result, "https://pixhost.to/8ca234.png") {
 		t.Fatalf("expected old screenshot block removed, got %q", result)
 	}
 	if strings.Contains(result, "scene nfo") {

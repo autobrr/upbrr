@@ -181,7 +181,7 @@ func TestUploadImagesUploadsApplicableTrackerHosts(t *testing.T) {
 			ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
-					"PTP": {ImageHost: "ptpimg"},
+					"PTP": {ImageHost: "pixhost"},
 					"STC": {},
 				},
 			},
@@ -212,8 +212,8 @@ func TestUploadImagesUploadsApplicableTrackerHosts(t *testing.T) {
 	if calledHosts["imgbox"] != "global" {
 		t.Fatalf("expected selected host imgbox, got %#v", imageService.calls)
 	}
-	if calledHosts["ptpimg"] != "global" {
-		t.Fatalf("expected configured PTP host ptpimg, got %#v", imageService.calls)
+	if calledHosts["pixhost"] != "global" {
+		t.Fatalf("expected configured PTP host pixhost, got %#v", imageService.calls)
 	}
 	if len(result.Links) != 2 {
 		t.Fatalf("expected result from both hosts, got %d", len(result.Links))
@@ -449,8 +449,8 @@ func TestUploadImagesUploadsHostsConcurrently(t *testing.T) {
 			ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
-					"PTP": {ImageHost: "ptpimg"},
-					"MTV": {ImageHost: "ptpimg"},
+					"PTP": {ImageHost: "pixhost"},
+					"MTV": {ImageHost: "imgbox"},
 					"STC": {},
 				},
 			},
@@ -482,7 +482,7 @@ func TestUploadImagesReturnsHostFailuresWithSuccessfulLinks(t *testing.T) {
 	imageService := &stubImageHosting{
 		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 			switch host {
-			case "ptpimg", "pixhost":
+			case "pixhost":
 				return nil, fmt.Errorf("%s unavailable", host)
 			}
 			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
@@ -497,8 +497,8 @@ func TestUploadImagesReturnsHostFailuresWithSuccessfulLinks(t *testing.T) {
 			},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
-					"PTP": {ImageHost: "ptpimg"},
-					"MTV": {ImageHost: "ptpimg"},
+					"PTP": {ImageHost: "pixhost"},
+					"MTV": {ImageHost: "imgbox"},
 					"STC": {},
 				},
 			},

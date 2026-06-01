@@ -296,7 +296,6 @@ func TestBuildUploadDryRunBlocksWhenImageHostFallbacksFail(t *testing.T) {
 	}
 	images := &stubImageService{
 		errs: map[string]error{
-			"ptpimg":  errors.New("ptpimg unavailable"),
 			"pixhost": errors.New("pixhost unavailable"),
 		},
 	}
@@ -313,7 +312,7 @@ func TestBuildUploadDryRunBlocksWhenImageHostFallbacksFail(t *testing.T) {
 	if entry.Status != "blocked" {
 		t.Fatalf("expected blocked dry run, got %#v", entry)
 	}
-	if entry.ImageHost.Status != "warning" || len(entry.ImageHost.Warnings) != 2 {
+	if entry.ImageHost.Status != "warning" || len(entry.ImageHost.Warnings) != 1 {
 		t.Fatalf("expected image host warnings to be attached, got %#v", entry.ImageHost)
 	}
 }
@@ -776,7 +775,7 @@ func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
 		Trackers: config.TrackersConfig{
 			DefaultTrackers: config.CSVList{"PTP", "STC"},
 			Trackers: map[string]config.TrackerConfig{
-				"PTP": {ImageHost: "ptpimg"},
+				"PTP": {ImageHost: "pixhost"},
 				"STC": {ImageHost: "imgbox"},
 			},
 		},
@@ -792,7 +791,7 @@ func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
 	}
 	firstRunCalls := append([]string{}, images.calls...)
 	sort.Strings(firstRunCalls)
-	if got := strings.Join(firstRunCalls, ","); got != "imgbox,ptpimg" {
+	if got := strings.Join(firstRunCalls, ","); got != "imgbox,pixhost" {
 		t.Fatalf("expected one upload per configured host, got %q", got)
 	}
 
@@ -805,7 +804,7 @@ func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
 	}
 	secondRunCalls := append([]string{}, images.calls...)
 	sort.Strings(secondRunCalls)
-	if got := strings.Join(secondRunCalls, ","); got != "imgbox,ptpimg" {
+	if got := strings.Join(secondRunCalls, ","); got != "imgbox,pixhost" {
 		t.Fatalf("expected existing host variants to be reused on second run, got calls %q", got)
 	}
 }
@@ -1027,7 +1026,7 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 		Options:    api.UploadOptions{KeepImages: true},
 		TrackerData: []api.TrackerMetadata{{
 			Tracker:   "AITHER",
-			ImageURLs: []string{"https://ptpimg.me/4m092k.png", "https://ptpimg.me/7oj122.png"},
+			ImageURLs: []string{"https://pixhost.to/4m092k.png", "https://pixhost.to/7oj122.png"},
 		}},
 	}
 	tmpRoot, err := dbsvc.Subdir(cfg.MainSettings.DBPath, "tmp")
@@ -1053,13 +1052,13 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: strings.TrimSpace(`
 [center]
-[url=https://ptpimg.me/4m092k.png][img]https://ptpimg.me/4m092k.png[/img][/url]
-[url=https://ptpimg.me/7oj122.png][img]https://ptpimg.me/7oj122.png[/img][/url]
+[url=https://pixhost.to/4m092k.png][img]https://pixhost.to/4m092k.png[/img][/url]
+[url=https://pixhost.to/7oj122.png][img]https://pixhost.to/7oj122.png[/img][/url]
 [/center]`),
 		overrideGroupKey: "hdb",
 		trackerRecords: []api.TrackerMetadata{{
 			Tracker:   "AITHER",
-			ImageURLs: []string{"https://ptpimg.me/4m092k.png", "https://ptpimg.me/7oj122.png"},
+			ImageURLs: []string{"https://pixhost.to/4m092k.png", "https://pixhost.to/7oj122.png"},
 		}},
 	}
 	images := &stubImageService{
@@ -1083,7 +1082,7 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 	if strings.TrimSpace(description) == "" {
 		t.Fatal("expected HDB description to be built")
 	}
-	if strings.Contains(description, "ptpimg.me/4m092k.png") || strings.Contains(description, "ptpimg.me/7oj122.png") {
+	if strings.Contains(description, "pixhost.to/4m092k.png") || strings.Contains(description, "pixhost.to/7oj122.png") {
 		t.Fatalf("expected HDB screenshots to replace original tracker urls, got %q", description)
 	}
 	if !strings.Contains(description, "img.hdbits.org/51q8jo2") || !strings.Contains(description, "img.hdbits.org/w0S7ltI") {

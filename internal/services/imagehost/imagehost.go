@@ -11,7 +11,6 @@ import (
 // HostMapping maps URL domain patterns to normalized host names
 var HostMapping = map[string]string{
 	"ibb.co":               "imgbb",
-	"ptpimg.me":            "ptpimg",
 	"pixhost.to":           "pixhost",
 	"imgbox.com":           "imgbox",
 	"beyondhd.co":          "bhd",
@@ -31,7 +30,6 @@ var HostMapping = map[string]string{
 	"imgbox": "imgbox",
 	// Add common variations
 	"i.ibb.co": "imgbb",
-	"ptpimg":   "ptpimg",
 }
 
 // ExtractHost extracts the normalized host name from a URL.

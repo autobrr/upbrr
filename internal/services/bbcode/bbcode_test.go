@@ -160,7 +160,7 @@ func TestCleanPTPDescription(t *testing.T) {
 
 func TestCleanPTPDescriptionRemovesWidthStyledImageBlocks(t *testing.T) {
 	desc := `[align=center]
-[url=https://ptpimg.me/fv71hr.png][img width=350]https://ptpimg.me/fv71hr.png[/img][/url]
+[url=https://pixhost.to/fv71hr.png][img width=350]https://pixhost.to/fv71hr.png[/img][/url]
 [/align]`
 	report := CleanPTPDescription(desc, "")
 

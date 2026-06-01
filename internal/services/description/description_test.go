@@ -86,7 +86,7 @@ func TestRenderDoesNotDoubleEscapeHTML(t *testing.T) {
 }
 
 func TestRenderComparisonBBCode(t *testing.T) {
-	input := "[comparison=Arrow GBR,Capelight Pictures GER]https://ptpimg.me/4p352a.png\nhttps://ptpimg.me/3bvnbe.png[/comparison]"
+	input := "[comparison=Arrow GBR,Capelight Pictures GER]https://pixhost.to/4p352a.png\nhttps://pixhost.to/3bvnbe.png[/comparison]"
 	rendered := Render(input)
 	if !strings.Contains(rendered, "comparison__screenshots") {
 		t.Fatalf("expected comparison markup, got %q", rendered)
@@ -94,21 +94,21 @@ func TestRenderComparisonBBCode(t *testing.T) {
 	if !strings.Contains(rendered, "comparison__image") {
 		t.Fatalf("expected comparison images, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "ptpimg.me/4p352a.png") {
+	if !strings.Contains(rendered, "pixhost.to/4p352a.png") {
 		t.Fatalf("expected comparison image URL, got %q", rendered)
 	}
 }
 
 func TestRenderLinkedWidthImageBBCode(t *testing.T) {
-	input := "[url=https://ptpimg.me/fv71hr.png][img width=350]https://ptpimg.me/fv71hr.png[/img][/url]"
+	input := "[url=https://pixhost.to/fv71hr.png][img width=350]https://pixhost.to/fv71hr.png[/img][/url]"
 	rendered := Render(input)
-	if !strings.Contains(rendered, "<a href=\"https://ptpimg.me/fv71hr.png\">") {
+	if !strings.Contains(rendered, "<a href=\"https://pixhost.to/fv71hr.png\">") {
 		t.Fatalf("expected linked image wrapper, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "<img src=\"https://ptpimg.me/fv71hr.png\" width=\"350\"") {
+	if !strings.Contains(rendered, "<img src=\"https://pixhost.to/fv71hr.png\" width=\"350\"") {
 		t.Fatalf("expected image width preserved, got %q", rendered)
 	}
-	if strings.Contains(rendered, "&lt;img") || strings.Contains(rendered, "https://ptpimg.me/fv71hr.png</a>") {
+	if strings.Contains(rendered, "&lt;img") || strings.Contains(rendered, "https://pixhost.to/fv71hr.png</a>") {
 		t.Fatalf("expected no visible link text duplication, got %q", rendered)
 	}
 }

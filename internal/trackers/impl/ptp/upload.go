@@ -303,7 +303,7 @@ func buildScreenshotSection(meta api.PreparedMetadata, screenshots []api.Screens
 		if host == "" {
 			host = imagehost.ExtractHost(rawURL)
 		}
-		if host != "ptpimg" && host != "pixhost" {
+		if host != "pixhost" {
 			continue
 		}
 		allowed = append(allowed, "[img]"+rawURL+"[/img]")

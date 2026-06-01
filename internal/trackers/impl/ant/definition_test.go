@@ -194,7 +194,7 @@ func TestResolveReleaseGroupBansUpdatedGroups(t *testing.T) {
 func TestBuildDescriptionRemovesScreenshotOnlyBlockAndDefaultSignature(t *testing.T) {
 	description := buildDescription(trackers.UploadRequest{}, trackers.DescriptionAssets{
 		Description: `[align=center]
-[url=https://ptpimg.me/fv71hr.png][img width=350]https://ptpimg.me/fv71hr.png[/img][/url]
+[url=https://pixhost.to/fv71hr.png][img width=350]https://pixhost.to/fv71hr.png[/img][/url]
 [/align]
 
 [align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`,
