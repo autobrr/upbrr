@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	slashpath "path" //nolint:depguard // Joins torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -134,6 +136,155 @@ func TestCreateHonorsMaxPieceSizeOverride(t *testing.T) {
 	}
 	if info.PieceLength > 1<<20 {
 		t.Fatalf("expected piece length <= 1 MiB, got %d", info.PieceLength)
+	}
+}
+
+func TestCreateFolderWithSingleWantedVideoHashesFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sourceDir := filepath.Join(dir, "Movie.2026.1080p.WEB-DL-GRP")
+	video := filepath.Join(sourceDir, "Movie.2026.1080p.WEB-DL-GRP.mkv")
+	writeTestFile(t, video, "video")
+	writeTestFile(t, filepath.Join(sourceDir, "proof.jpg"), "proof")
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
+		SourcePath: sourceDir,
+		VideoPath:  video,
+		FileList:   []string{video},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	name, files := loadTorrentShape(t, result.Path)
+	if name != filepath.Base(video) {
+		t.Fatalf("expected single-file torrent name %q, got %q", filepath.Base(video), name)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected single-file torrent file list to be empty, got %#v", files)
+	}
+}
+
+func TestCreateFolderPackUsesWantedFileList(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "Show.S01.1080p.WEB-DL-GRP")
+	episode1 := filepath.Join(sourceDir, "Show.S01E01.mkv")
+	episode2 := filepath.Join(sourceDir, "Show.S01E02.mkv")
+	writeTestFile(t, episode1, "episode 1")
+	writeTestFile(t, episode2, "episode 2")
+	writeTestFile(t, filepath.Join(sourceDir, "sample.mkv"), "sample")
+	writeTestFile(t, filepath.Join(sourceDir, "proof.jpg"), "proof")
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
+		SourcePath: sourceDir,
+		VideoPath:  episode1,
+		FileList:   []string{episode1, episode2},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	name, files := loadTorrentShape(t, result.Path)
+	if name != filepath.Base(sourceDir) {
+		t.Fatalf("expected torrent root name %q, got %q", filepath.Base(sourceDir), name)
+	}
+	assertStringSliceEqual(t, files, []string{"Show.S01E01.mkv", "Show.S01E02.mkv"})
+}
+
+func TestCreateFolderPackEscapesWantedFilePatterns(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "Show.S01.1080p.WEB-DL-GRP")
+	episode1 := filepath.Join(sourceDir, "Show, [S01E01].mkv")
+	episode2 := filepath.Join(sourceDir, "Show.{S01E02}.mkv")
+	writeTestFile(t, episode1, "episode 1")
+	writeTestFile(t, episode2, "episode 2")
+	writeTestFile(t, filepath.Join(sourceDir, "Showx [S01E01].mkv"), "ambiguous extra")
+	writeTestFile(t, filepath.Join(sourceDir, "Show.S01E03.mkv"), "extra")
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
+		SourcePath: sourceDir,
+		VideoPath:  episode1,
+		FileList:   []string{episode1, episode2},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	_, files := loadTorrentShape(t, result.Path)
+	assertStringSliceEqual(t, files, []string{"Show, [S01E01].mkv", "Show.{S01E02}.mkv"})
+}
+
+func TestCreateDiscFolderIgnoresWantedFileList(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "Movie.2026.COMPLETE.BLURAY-GRP")
+	stream := filepath.Join(sourceDir, "BDMV", "STREAM", "00001.m2ts")
+	writeTestFile(t, stream, "stream")
+	writeTestFile(t, filepath.Join(sourceDir, "BDMV", "PLAYLIST", "00001.mpls"), "playlist")
+	writeTestFile(t, filepath.Join(sourceDir, "CERTIFICATE", "id.bdmv"), "certificate")
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
+		SourcePath: sourceDir,
+		DiscType:   "BDMV",
+		VideoPath:  stream,
+		FileList:   []string{stream},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	name, files := loadTorrentShape(t, result.Path)
+	if name != filepath.Base(sourceDir) {
+		t.Fatalf("expected torrent root name %q, got %q", filepath.Base(sourceDir), name)
+	}
+	assertStringSliceEqual(t, files, []string{
+		"BDMV/PLAYLIST/00001.mpls",
+		"BDMV/STREAM/00001.m2ts",
+		"CERTIFICATE/id.bdmv",
+	})
+}
+
+func TestCreateFolderSkipsMkbrrIgnoredFilesInValidation(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "Movie.2026.1080p.WEB-DL-GRP")
+	writeTestFile(t, filepath.Join(sourceDir, "Movie.2026.1080p.WEB-DL-GRP.mkv"), "video")
+	writeTestFile(t, filepath.Join(sourceDir, "desktop.ini"), "ignored")
+	writeTestFile(t, filepath.Join(sourceDir, ".ds_store"), "ignored")
+	writeTestFile(t, filepath.Join(sourceDir, "thumbs.db"), "ignored")
+	writeTestFile(t, filepath.Join(sourceDir, "sample.torrent"), "ignored")
+	writeTestFile(t, filepath.Join(sourceDir, "movie.mkv.zone.identifier"), "ignored")
+	writeTestFile(t, filepath.Join(sourceDir, "@eaDir", "metadata.bin"), "ignored")
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
+		SourcePath: sourceDir,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	_, files := loadTorrentShape(t, result.Path)
+	assertStringSliceEqual(t, files, []string{"Movie.2026.1080p.WEB-DL-GRP.mkv"})
+}
+
+func TestSafeTorrentRootNameRejectsFilesystemRoot(t *testing.T) {
+	t.Parallel()
+
+	root := string(filepath.Separator)
+	if volume := filepath.VolumeName(t.TempDir()); volume != "" {
+		root = volume + string(filepath.Separator)
+	}
+
+	if _, err := safeTorrentRootName(root); err == nil {
+		t.Fatalf("expected filesystem root to be rejected")
 	}
 }
 
@@ -320,9 +471,8 @@ func TestCreatePrefersClientTorrentOverAssociatedTempTorrent(t *testing.T) {
 	}
 	createTestTorrent(t, source, tmpTorrentPath)
 
-	clientSource := filepath.Join(sourceDir, "client.bin")
 	clientTorrentPath := filepath.Join(sourceDir, "client.torrent")
-	createTestTorrent(t, clientSource, clientTorrentPath)
+	createTestTorrent(t, source, clientTorrentPath)
 
 	meta.ClientTorrentPath = clientTorrentPath
 	result, err := service.Create(context.Background(), meta)
@@ -334,6 +484,140 @@ func TestCreatePrefersClientTorrentOverAssociatedTempTorrent(t *testing.T) {
 	}
 	if result.InfoHash == "" {
 		t.Fatalf("expected info hash to be populated")
+	}
+}
+
+func TestCreateRejectsMismatchedClientTorrent(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := t.TempDir()
+	source := filepath.Join(sourceDir, "video.mkv")
+	writeTestFile(t, source, "source-data")
+
+	tmpRoot := t.TempDir()
+	service := NewService(api.NopLogger{}, tmpRoot)
+	meta := api.PreparedMetadata{SourcePath: source}
+
+	tmpTorrentPath, err := TempTorrentPath(tmpRoot, meta, source)
+	if err != nil {
+		t.Fatalf("temp torrent path: %v", err)
+	}
+	createTestTorrent(t, source, tmpTorrentPath)
+
+	clientSource := filepath.Join(sourceDir, "client.bin")
+	clientTorrentPath := filepath.Join(sourceDir, "client.torrent")
+	createTestTorrent(t, clientSource, clientTorrentPath)
+
+	meta.ClientTorrentPath = clientTorrentPath
+	result, err := service.Create(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Path != tmpTorrentPath {
+		t.Fatalf("expected mismatched client torrent to be skipped for temp torrent %s, got %s", tmpTorrentPath, result.Path)
+	}
+}
+
+func TestCreateRejectsSameNameDifferentSizeClientTorrent(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := t.TempDir()
+	source := filepath.Join(sourceDir, "video.mkv")
+	writeTestFile(t, source, "source-data")
+
+	clientDir := filepath.Join(sourceDir, "client")
+	clientSource := filepath.Join(clientDir, "video.mkv")
+	writeTestFile(t, clientSource, "different-size-source-data")
+	clientTorrentPath := filepath.Join(sourceDir, "client.torrent")
+	createTestTorrentFromExisting(t, clientSource, clientTorrentPath)
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
+		SourcePath:        source,
+		ClientTorrentPath: clientTorrentPath,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Path == clientTorrentPath {
+		t.Fatalf("expected same-name different-size client torrent to be skipped")
+	}
+}
+
+func TestCreateRejectsSameNameSameSizeDifferentContentClientTorrent(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := t.TempDir()
+	source := filepath.Join(sourceDir, "video.mkv")
+	writeTestFile(t, source, "source-data")
+
+	clientDir := filepath.Join(sourceDir, "client")
+	clientSource := filepath.Join(clientDir, "video.mkv")
+	writeTestFile(t, clientSource, "source-evil")
+	clientTorrentPath := filepath.Join(sourceDir, "client.torrent")
+	createTestTorrentFromExisting(t, clientSource, clientTorrentPath)
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
+		SourcePath:        source,
+		ClientTorrentPath: clientTorrentPath,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Path == clientTorrentPath {
+		t.Fatalf("expected same-name same-size different-content client torrent to be skipped")
+	}
+}
+
+func TestCreateRejectsDifferentRootClientTorrent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sourceDir := filepath.Join(dir, "Show.S01.1080p.WEB-DL-GRP")
+	episode1 := filepath.Join(sourceDir, "Show.S01E01.mkv")
+	episode2 := filepath.Join(sourceDir, "Show.S01E02.mkv")
+	writeTestFile(t, episode1, "episode 1")
+	writeTestFile(t, episode2, "episode 2")
+
+	clientDir := filepath.Join(dir, "Other.Show.S01.1080p.WEB-DL-GRP")
+	writeTestFile(t, filepath.Join(clientDir, "Show.S01E01.mkv"), "episode 1")
+	writeTestFile(t, filepath.Join(clientDir, "Show.S01E02.mkv"), "episode 2")
+	clientTorrentPath := filepath.Join(dir, "client.torrent")
+	createTestTorrentFromExisting(t, clientDir, clientTorrentPath)
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
+		SourcePath:        sourceDir,
+		VideoPath:         episode1,
+		FileList:          []string{episode1, episode2},
+		ClientTorrentPath: clientTorrentPath,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Path == clientTorrentPath {
+		t.Fatalf("expected different-root client torrent to be skipped")
+	}
+}
+
+func TestCreateRejectsWantedFileOutsideRoot(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "Movie.2026.1080p.WEB-DL-GRP")
+	video := filepath.Join(sourceDir, "Movie.2026.1080p.WEB-DL-GRP.mkv")
+	writeTestFile(t, video, "video")
+	outside := filepath.Join(t.TempDir(), "outside.mkv")
+	writeTestFile(t, outside, "outside")
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	_, err := service.Create(context.Background(), api.PreparedMetadata{
+		SourcePath: sourceDir,
+		VideoPath:  video,
+		FileList:   []string{outside},
+	})
+	if err == nil {
+		t.Fatalf("expected outside wanted file to be rejected")
 	}
 }
 
@@ -498,6 +782,58 @@ func createTestTorrent(t *testing.T, sourcePath, torrentPath string) {
 	})
 	if err != nil {
 		t.Fatalf("create torrent: %v", err)
+	}
+}
+
+func createTestTorrentFromExisting(t *testing.T, sourcePath, torrentPath string) {
+	t.Helper()
+
+	_, err := mkbrr.Create(mkbrr.CreateOptions{
+		Path:       sourcePath,
+		OutputPath: torrentPath,
+		IsPrivate:  true,
+	})
+	if err != nil {
+		t.Fatalf("create torrent: %v", err)
+	}
+}
+
+func writeTestFile(t *testing.T, path string, content string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("make parent dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+}
+
+func loadTorrentShape(t *testing.T, torrentPath string) (string, []string) {
+	t.Helper()
+
+	torrentMeta, err := metainfo.LoadFromFile(torrentPath)
+	if err != nil {
+		t.Fatalf("load torrent: %v", err)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatalf("unmarshal info: %v", err)
+	}
+	files := make([]string, 0, len(info.Files))
+	for _, file := range info.Files {
+		//pathpolicy:allow torrent metainfo paths are slash-delimited data
+		files = append(files, slashpath.Join(file.BestPath()...))
+	}
+	slices.Sort(files)
+	return info.BestName(), files
+}
+
+func assertStringSliceEqual(t *testing.T, got []string, want []string) {
+	t.Helper()
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("unexpected torrent files:\nwant %#v\ngot  %#v", want, got)
 	}
 }
 
