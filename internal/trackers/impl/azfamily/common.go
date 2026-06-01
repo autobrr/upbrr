@@ -158,36 +158,36 @@ func videoQualityID(site siteDefinition, meta api.PreparedMetadata) string {
 }
 
 func ripTypeName(meta api.PreparedMetadata) string {
+	metaType := strings.ToLower(strings.TrimSpace(meta.Type))
+	metaSource := strings.ToLower(strings.TrimSpace(meta.Source))
 	discType := strings.ToLower(strings.TrimSpace(meta.DiscType))
-	if discType == "dvd" {
-		return "DVD"
-	}
-	if discType == "bdmv" {
-		return "BluRay Raw"
-	}
 
-	releaseOther := meta.Release.Other
-	releaseSource := strings.ToLower(strings.TrimSpace(meta.Release.Source))
-	for _, other := range releaseOther {
-		if strings.ToLower(other) == "remux" {
-			if releaseSource == "bluray" {
-				return "BluRay REMUX"
-			}
-			if releaseSource == "dvd" {
-				return "DVD Remux"
-			}
+	if metaType == "disc" {
+		if discType == "bdmv" {
+			return "BluRay Raw"
+		}
+		if discType == "dvd" || discType == "hddvd" {
+			return "DVD"
 		}
 	}
 
-	switch strings.ToLower(strings.TrimSpace(meta.Release.Source)) {
+	if metaType == "remux" {
+		if strings.Contains(metaSource, "dvd") {
+			return "DVD Remux"
+		}
+		if strings.Contains(metaSource, "bluray") || strings.Contains(metaSource, "blu-ray") {
+			return "BluRay REMUX"
+		}
+		return "0"
+	}
+
+	switch metaType {
 	case "bdrip":
 		return "BDRip"
-	case "bluray":
-		return "BluRay"
 	case "brrip":
 		return "BRRip"
-	case "dvd":
-		return "DVD"
+	case "encode":
+		return "BluRay"
 	case "dvdrip":
 		return "DVDRip"
 	case "hdrip":
@@ -198,13 +198,13 @@ func ripTypeName(meta api.PreparedMetadata) string {
 		return "SDTV"
 	case "vcd":
 		return "VCD"
-	case "vcdr":
+	case "vcdrip":
 		return "VCDRip"
-	case "vhsrc":
+	case "vhsrip":
 		return "VHSRip"
 	case "vodrip":
 		return "VODRip"
-	case "web-dl":
+	case "web-dl", "webdl":
 		return "WEB-DL"
 	case "webrip":
 		return "WEBRip"

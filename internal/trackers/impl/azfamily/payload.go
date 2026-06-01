@@ -57,6 +57,8 @@ func buildFinalPayload(ctx context.Context, site siteDefinition, state sessionSt
 	values.Set("task_id", task.TaskID)
 	if anonEnabled(req) {
 		values.Set("anon_upload", "1")
+	} else {
+		values.Set("anon_upload", "")
 	}
 	for _, value := range langs.Audio {
 		values.Add("languages[]", value)
@@ -78,9 +80,13 @@ func buildFinalPayload(ctx context.Context, site siteDefinition, state sessionSt
 		}
 		if req.Meta.SeasonInt > 0 {
 			values.Set("tv_season", strconv.Itoa(req.Meta.SeasonInt))
+		} else {
+			values.Set("tv_season", "")
 		}
 		if req.Meta.EpisodeInt > 0 {
 			values.Set("tv_episode", strconv.Itoa(req.Meta.EpisodeInt))
+		} else {
+			values.Set("tv_episode", "")
 		}
 	}
 	return values, nil
@@ -293,6 +299,9 @@ func splitKeywords(raw string) []string {
 func validateMetadata(site siteDefinition, meta api.PreparedMetadata) string {
 	if categoryID(meta) == "" {
 		return "failed to determine category"
+	}
+	if len(languageValues(site.Name, meta).Audio) == 0 {
+		return "failed to determine audio language (site requires at least one audio language)"
 	}
 	if editName(site, meta) == "" {
 		return "failed to determine file name (e.g., 'Movie Title 2025 1080p BluRay REMUX-GROUP')"

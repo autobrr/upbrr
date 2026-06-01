@@ -173,14 +173,15 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Up
 func createTask(ctx context.Context, site siteDefinition, state sessionState, req trackers.UploadRequest, mediaCode, fileInfo, torrentPath string) (taskInfo, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	for key, value := range map[string]string{
-		"_token":     state.token,
-		"type_id":    categoryID(req.Meta),
-		"movie_id":   mediaCode,
-		"media_info": fileInfo,
-	} {
-		if err := writer.WriteField(key, value); err != nil {
-			return taskInfo{}, fmt.Errorf("trackers: %s write multipart field %q: %w", site.Name, key, err)
+	fields := []struct{ key, value string }{
+		{"_token", state.token},
+		{"type_id", categoryID(req.Meta)},
+		{"movie_id", mediaCode},
+		{"media_info", fileInfo},
+	}
+	for _, field := range fields {
+		if err := writer.WriteField(field.key, field.value); err != nil {
+			return taskInfo{}, fmt.Errorf("trackers: %s write multipart field %q: %w", site.Name, field.key, err)
 		}
 	}
 	torrentBytes, infoHash, err := prepareTorrent(torrentPath, site.DefaultAnnounceURL, site.SourceFlag)

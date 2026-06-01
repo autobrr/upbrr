@@ -42,8 +42,16 @@ func TestBuildUploadDryRunBlockedWhenMediaMissing(t *testing.T) {
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
 	entry, err := New("AZ").BuildUploadDryRun(context.Background(), trackers.UploadRequest{
-		Tracker:       "AZ",
-		Meta:          api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "MOVIE", IMDBID: 123}},
+		Tracker: "AZ",
+		Meta: api.PreparedMetadata{
+			ExternalIDs:    api.ExternalIDs{Category: "MOVIE", IMDBID: 123},
+			ReleaseName:    "Movie.2024.1080p.WEB-DL.x265-GRP",
+			Release:        api.ReleaseInfo{Title: "Movie", Year: 2024, Resolution: "1080p", Source: "WEB-DL"},
+			Type:           "WEBDL",
+			VideoWidth:     1920,
+			VideoHeight:    1080,
+			AudioLanguages: []string{"English"},
+		},
 		TrackerConfig: config.TrackerConfig{URL: server.URL},
 		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
 		Logger:        api.NopLogger{},
@@ -112,6 +120,7 @@ func TestUploadSuccess(t *testing.T) {
 			ExternalIDs:       api.ExternalIDs{Category: "MOVIE", IMDBID: 123},
 			ReleaseName:       "Movie.2024.1080p.WEB-DL.x265-GRP",
 			Release:           api.ReleaseInfo{Title: "Movie", Year: 2024, Resolution: "1080p", Source: "WEB-DL"},
+			Type:              "WEBDL",
 			Container:         "mkv",
 			AudioLanguages:    []string{"English"},
 			SubtitleLanguages: []string{"English"},
