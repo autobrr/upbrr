@@ -294,7 +294,12 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
     trackerFieldMeta.CheckForRules,
   ],
-  DC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  DC: [
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
   DP: [
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.AnnounceURL,

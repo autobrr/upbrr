@@ -209,17 +209,19 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 
 	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
-	if announceURL != "" {
-		artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "DC")
-		if err != nil {
-			return uploadState{}, fmt.Errorf("resolve DC personalized torrent path: %w", err)
-		}
-
-		if err := trackers.WritePersonalizedTorrent(torrentPath, artifactPath, announceURL, "Created by upbrr", sourceFlag); err != nil {
-			return uploadState{}, fmt.Errorf("write DC personalized torrent: %w", err)
-		}
-		torrentPath = artifactPath
+	if announceURL == "" {
+		return uploadState{}, errors.New("trackers: DC missing announce_url")
 	}
+
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "DC")
+	if err != nil {
+		return uploadState{}, fmt.Errorf("resolve DC personalized torrent path: %w", err)
+	}
+
+	if err := trackers.WritePersonalizedTorrent(torrentPath, artifactPath, announceURL, "Created by upbrr", sourceFlag); err != nil {
+		return uploadState{}, fmt.Errorf("write DC personalized torrent: %w", err)
+	}
+	torrentPath = artifactPath
 
 	mediaInfo, err := resolveMediaInfo(req.Meta)
 	if err != nil && state.blockedReason == "" {
