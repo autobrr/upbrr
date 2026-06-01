@@ -162,7 +162,7 @@ func TestPruneCompletedDupeJobsLockedKeepsNewestCompleted(t *testing.T) {
 	backend.dupes[active.id] = active
 
 	now := time.Now().UTC()
-	for idx := 0; idx < 3; idx++ {
+	for idx := range 3 {
 		id := fmt.Sprintf("dupe-%d", idx)
 		backend.dupes[id] = &dupeCheckJob{
 			id:         id,
@@ -196,7 +196,7 @@ func TestPruneCompletedUploadJobsLockedKeepsNewestCompleted(t *testing.T) {
 	backend.uploads[active.id] = active
 
 	now := time.Now().UTC()
-	for idx := 0; idx < 3; idx++ {
+	for idx := range 3 {
 		id := fmt.Sprintf("upload-%d", idx)
 		backend.uploads[id] = &trackerUploadJob{
 			id:         id,

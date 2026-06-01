@@ -26,16 +26,6 @@ type Props = {
   saveBuilderDescription: (groupKey: string) => void;
 };
 
-const decodeHtmlEntities = (value: string) => {
-  if (!value) return value;
-  if (!value.includes("&lt;") && !value.includes("&gt;") && !value.includes("&#")) {
-    return value;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.innerHTML = value;
-  return textarea.value;
-};
-
 const groupLabel = (groupKey: string, trackers: string[]) => {
   if (trackers.length > 0) return trackers.join(", ");
   if (groupKey === "unit3d") return "Unit3D";
@@ -222,7 +212,7 @@ export default function DescriptionBuilderPage(props: Props) {
                       <div
                         className="tracker-description rendered"
                         onClick={handleExternalLinkClick}
-                        dangerouslySetInnerHTML={{ __html: decodeHtmlEntities(renderedHTML) }}
+                        dangerouslySetInnerHTML={{ __html: renderedHTML }}
                       />
                     ) : (
                       <p className="muted">No rendered preview yet.</p>

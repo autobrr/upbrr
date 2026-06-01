@@ -247,11 +247,16 @@ func run() error {
 	}
 
 	// Handle BDMV playlist selection before upload
-	handleBDMVPlaylistSelection(ctx, paths, coreSvc, cfg, logger)
+	if err := handleBDMVPlaylistSelection(ctx, paths, coreSvc, cfg, logger, opts); err != nil {
+		return exitError(1, err)
+	}
 
 	if opts.UploadOnly {
 		uploadReq, err := buildCLIRequest(opts, visitedFlags, paths, screens)
 		if err != nil {
+			return exitError(1, err)
+		}
+		if err := prepareCLIUploadMetadata(ctx, coreSvc, uploadReq); err != nil {
 			return exitError(1, err)
 		}
 		if opts.Debug {
@@ -630,9 +635,21 @@ func deleteCLIStoredReleases(ctx context.Context, coreSvc api.Core, paths []stri
 	}
 	return nil
 }
-func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc api.Core, cfg config.Config, logger api.Logger) {
+
+func prepareCLIUploadMetadata(ctx context.Context, coreSvc api.Core, req api.Request) error {
+	for _, sourcePath := range req.Paths {
+		singleReq := req
+		singleReq.Paths = []string{sourcePath}
+		if _, err := coreSvc.FetchMetadataPreview(ctx, singleReq); err != nil {
+			return fmt.Errorf("upbrr: %w", err)
+		}
+	}
+	return nil
+}
+
+func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc api.Core, cfg config.Config, logger api.Logger, opts cliOptions) error {
 	if len(paths) == 0 {
-		return
+		return nil
 	}
 
 	for _, path := range paths {
@@ -673,18 +690,28 @@ func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc ap
 
 			playlists, err := coreSvc.DiscoverPlaylists(ctx, absPath)
 			if err != nil {
+				if opts.Unattended && !opts.UnattendedConfirm {
+					return fmt.Errorf("upbrr: unattended BDMV playlist discovery failed for %s: %w", absPath, err)
+				}
 				logger.Warnf("cli: discover playlists: %v", err)
 				continue
 			}
 
-			if len(playlists) > 0 {
-				// Save the best (highest-scoring) playlist
-				selected := []string{playlists[0].File}
-				if err := coreSvc.SavePlaylistSelection(ctx, absPath, selected, false); err != nil {
-					logger.Warnf("cli: save playlist selection: %v", err)
-				} else {
-					logger.Infof("cli: auto-selected playlist %s (score: %.2f)", playlists[0].File, playlists[0].Score)
+			if len(playlists) == 0 {
+				if opts.Unattended && !opts.UnattendedConfirm {
+					return fmt.Errorf("upbrr: unattended BDMV upload found no playlists for %s", absPath)
 				}
+				continue
+			}
+			// Save the best (highest-scoring) playlist
+			selected := []string{playlists[0].File}
+			if err := coreSvc.SavePlaylistSelection(ctx, absPath, selected, false); err != nil {
+				if opts.Unattended && !opts.UnattendedConfirm {
+					return fmt.Errorf("upbrr: unattended BDMV playlist selection save failed for %s: %w", absPath, err)
+				}
+				logger.Warnf("cli: save playlist selection: %v", err)
+			} else {
+				logger.Infof("cli: auto-selected playlist %s (score: %.2f)", playlists[0].File, playlists[0].Score)
 			}
 			continue
 		}
@@ -693,33 +720,42 @@ func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc ap
 		logger.Infof("cli: discovering playlists for %s", absPath)
 		playlists, err := coreSvc.DiscoverPlaylists(ctx, absPath)
 		if err != nil {
+			if opts.Unattended && !opts.UnattendedConfirm {
+				return fmt.Errorf("upbrr: unattended BDMV playlist discovery failed for %s: %w", absPath, err)
+			}
 			logger.Warnf("cli: discover playlists: %v", err)
 			continue
 		}
 
 		if len(playlists) == 0 {
+			if opts.Unattended && !opts.UnattendedConfirm {
+				return fmt.Errorf("upbrr: unattended BDMV upload found no playlists for %s", absPath)
+			}
 			logger.Warnf("cli: no playlists found for %s", absPath)
 			continue
 		}
 
 		logger.Infof("cli: found %d playlists", len(playlists))
+		if opts.Unattended && !opts.UnattendedConfirm && len(playlists) > 1 {
+			return fmt.Errorf("upbrr: unattended BDMV upload requires a saved playlist selection or use_largest_playlist for %s", absPath)
+		}
 
 		// Display top playlists and prompt user
 		if len(playlists) == 1 {
 			fmt.Printf("[*] Only one playlist found: %s (%.0fs, score: %.2f)\n", playlists[0].File, playlists[0].Duration, playlists[0].Score)
 			fmt.Printf("[*] Auto-selecting...\n")
 			if err := coreSvc.SavePlaylistSelection(ctx, absPath, []string{playlists[0].File}, false); err != nil {
+				if opts.Unattended && !opts.UnattendedConfirm {
+					return fmt.Errorf("upbrr: unattended BDMV playlist selection save failed for %s: %w", absPath, err)
+				}
 				logger.Warnf("cli: save playlist selection: %v", err)
 			}
 		} else {
 			// Display top 5 playlists
-			topCount := len(playlists)
-			if topCount > 5 {
-				topCount = 5
-			}
+			topCount := min(len(playlists), 5)
 
 			fmt.Printf("\nAvailable playlists for %s:\n", absPath)
-			for i := 0; i < topCount; i++ {
+			for i := range topCount {
 				p := playlists[i]
 				durationStr := formatDuration(p.Duration)
 				fmt.Printf("[%d] %s (%s, score: %.2f)\n", i, p.File, durationStr, p.Score)
@@ -747,7 +783,7 @@ func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc ap
 				input = strings.TrimSpace(input)
 				if strings.ToLower(input) == "all" {
 					var selected []string
-					for i := 0; i < topCount; i++ {
+					for i := range topCount {
 						selected = append(selected, playlists[i].File)
 					}
 					if err := coreSvc.SavePlaylistSelection(ctx, absPath, selected, true); err != nil {
@@ -787,6 +823,7 @@ func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc ap
 			}
 		}
 	}
+	return nil
 }
 
 func formatDuration(seconds float64) string {

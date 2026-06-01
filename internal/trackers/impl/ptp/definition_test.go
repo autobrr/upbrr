@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,6 +238,11 @@ func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 		_, _ = w.Write([]byte("poster-bytes"))
 	}))
 	defer posterServer.Close()
+	originalClientFactory := newPosterHTTPClient
+	newPosterHTTPClient = posterServer.Client
+	t.Cleanup(func() {
+		newPosterHTTPClient = originalClientFactory
+	})
 
 	images := &stubPTPImageHosting{
 		uploaded: []api.UploadedImageLink{{
@@ -272,6 +278,53 @@ func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 	}
 	if string(body) != "poster-bytes" {
 		t.Fatalf("unexpected poster body %q", string(body))
+	}
+}
+
+func TestRehostPosterToSelectedHostRejectsLoopbackPoster(t *testing.T) {
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Movie.mkv")
+	if err := os.WriteFile(sourcePath, []byte("movie"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	posterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("poster-bytes"))
+	}))
+	defer posterServer.Close()
+
+	images := &stubPTPImageHosting{
+		uploaded: []api.UploadedImageLink{{
+			Host:   "ptpimg",
+			RawURL: "https://ptpimg.me/rehosted.png",
+		}},
+	}
+	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			SourcePath: sourcePath,
+		},
+		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
+		Logger:    api.NopLogger{},
+		Images:    images,
+	}, posterServer.URL+"/poster")
+
+	if got != posterServer.URL+"/poster" {
+		t.Fatalf("expected original poster URL after blocked rehost, got %q", got)
+	}
+	if len(images.images) != 0 {
+		t.Fatalf("expected no upload for blocked loopback poster")
+	}
+}
+
+func TestIsPublicPosterIPRejectsPrivateRanges(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"127.0.0.1", "10.0.0.1", "192.168.1.20", "169.254.1.1", "::1", "fc00::1"} {
+		if isPublicPosterIP(netip.MustParseAddr(value)) {
+			t.Fatalf("expected %s to be rejected", value)
+		}
+	}
+	if !isPublicPosterIP(netip.MustParseAddr("93.184.216.34")) {
+		t.Fatal("expected public address to be accepted")
 	}
 }
 

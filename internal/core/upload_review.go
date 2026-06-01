@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -414,9 +416,7 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -451,9 +451,7 @@ func cloneTrackerQuestionnaireAnswers(input map[string]map[string]string) map[st
 			continue
 		}
 		inner := make(map[string]string, len(values))
-		for key, value := range values {
-			inner[key] = value
-		}
+		maps.Copy(inner, values)
 		cloned[tracker] = inner
 	}
 	return cloned
@@ -524,10 +522,8 @@ func addTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, tracker 
 	if blocked == nil {
 		blocked = make(map[string][]api.TrackerBlockReason)
 	}
-	for _, existing := range blocked[name] {
-		if existing == reason {
-			return blocked
-		}
+	if slices.Contains(blocked[name], reason) {
+		return blocked
 	}
 	blocked[name] = append(blocked[name], reason)
 	return blocked

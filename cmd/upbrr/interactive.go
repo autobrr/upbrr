@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -123,7 +124,7 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 	req.TrackerQuestionnaireAnswers = questionnaireAnswers
 
 	_, err = coreSvc.RunUploadPrepared(ctx, req)
-	return fmt.Errorf("upbrr: %w", err)
+	return wrapUpbrrError(err)
 }
 
 func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, screens int) error {
@@ -132,6 +133,9 @@ func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions,
 		return err
 	}
 
+	if _, err := coreSvc.FetchMetadataPreview(ctx, req); err != nil {
+		return fmt.Errorf("upbrr: %w", err)
+	}
 	review, err := coreSvc.BuildUploadReview(ctx, req)
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
@@ -178,6 +182,9 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 		for _, field := range tracker.Questionnaire.Fields {
 			defaultValue := strings.TrimSpace(field.Value)
 			if opts.Unattended && !opts.UnattendedConfirm {
+				if field.Required && defaultValue == "" {
+					return nil, false, fmt.Errorf("upbrr: unattended upload requires %s questionnaire value for %s", questionnaireFieldLabel(field), tracker.Tracker)
+				}
 				values[field.Key] = defaultValue
 				continue
 			}
@@ -192,7 +199,7 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 				}
 				value = strings.TrimSpace(value)
 				if field.Required && value == "" {
-					fmt.Printf("%s is required.\n", strings.TrimSpace(field.Label))
+					fmt.Printf("%s is required.\n", questionnaireFieldLabel(field))
 					continue
 				}
 				values[field.Key] = value
@@ -208,6 +215,14 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 		return nil, false, nil
 	}
 	return answers, changed, nil
+}
+
+func questionnaireFieldLabel(field api.TrackerQuestionnaireField) string {
+	label := strings.TrimSpace(field.Label)
+	if label != "" {
+		return label
+	}
+	return strings.TrimSpace(field.Key)
 }
 
 func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.Core, req api.Request, trackers []string) ([]string, error) {
@@ -252,10 +267,7 @@ func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.C
 }
 
 func buildQuestionnairePrompt(field api.TrackerQuestionnaireField) string {
-	label := strings.TrimSpace(field.Label)
-	if label == "" {
-		label = strings.TrimSpace(field.Key)
-	}
+	label := questionnaireFieldLabel(field)
 	parts := []string{label}
 	if field.Help != "" {
 		parts = append(parts, field.Help)
@@ -490,8 +502,6 @@ func promptLine(reader *bufio.Reader, prompt string) (string, error) {
 
 func copyVisited(input map[string]bool) map[string]bool {
 	cloned := make(map[string]bool, len(input))
-	for key, value := range input {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, input)
 	return cloned
 }

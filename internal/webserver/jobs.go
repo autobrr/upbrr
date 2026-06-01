@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"sort"
 	"strconv"
@@ -165,9 +166,7 @@ func cloneQuestionnaireAnswers(input map[string]map[string]string) map[string]ma
 	cloned := make(map[string]map[string]string, len(input))
 	for tracker, values := range input {
 		inner := make(map[string]string, len(values))
-		for key, value := range values {
-			inner[key] = value
-		}
+		maps.Copy(inner, values)
 		cloned[tracker] = inner
 	}
 	return cloned

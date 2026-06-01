@@ -994,9 +994,7 @@ func (b *Backend) StartLogStream(sessionID string) (string, error) {
 	b.streams[streamID] = session
 	b.streamMu.Unlock()
 
-	b.streamWG.Add(1)
-	go func() {
-		defer b.streamWG.Done()
+	b.streamWG.Go(func() {
 		defer close(session.done)
 		for {
 			select {
@@ -1010,7 +1008,7 @@ func (b *Backend) StartLogStream(sessionID string) (string, error) {
 				return
 			}
 		}
-	}()
+	})
 
 	return streamID, nil
 }
