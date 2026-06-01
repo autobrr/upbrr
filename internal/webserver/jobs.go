@@ -240,7 +240,10 @@ func (b *Backend) StartDupeCheck(sessionID string, path string, overrides api.Ex
 	b.emitDupeCheckSnapshot(job)
 
 	b.dupeWG.Add(1)
-	go b.runDupeCheckJob(jobCtx, job)
+	go func() {
+		defer cancel()
+		b.runDupeCheckJob(jobCtx, job)
+	}()
 	return jobID, nil
 }
 
@@ -458,7 +461,10 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	b.emitTrackerUploadSnapshot(job)
 
 	b.uploadWG.Add(1)
-	go b.runTrackerUploadJob(jobCtx, job)
+	go func() {
+		defer cancel()
+		b.runTrackerUploadJob(jobCtx, job)
+	}()
 	return jobID, nil
 }
 

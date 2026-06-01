@@ -179,7 +179,10 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	a.uploadMu.Unlock()
 
 	a.emitTrackerUploadSnapshot(baseCtx, job)
-	go a.runTrackerUploadJob(jobCtx, baseCtx, job)
+	go func() {
+		defer cancel()
+		a.runTrackerUploadJob(jobCtx, baseCtx, job)
+	}()
 
 	return jobID, nil
 }

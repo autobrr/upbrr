@@ -206,7 +206,6 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
 			continue
 		}
-		//nolint:gosec // client cookies
 		jarCookies = append(jarCookies, &http.Cookie{Name: name, Value: value, Path: "/", Domain: parsedBase.Hostname()})
 	}
 	jar.SetCookies(parsedBase, jarCookies)

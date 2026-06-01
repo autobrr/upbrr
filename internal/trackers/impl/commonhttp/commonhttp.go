@@ -164,7 +164,6 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 		if name == "" || value == "" {
 			continue
 		}
-		//nolint:gosec // client cookies
 		cookies = append(cookies, &http.Cookie{
 			Domain: "." + domain,
 			Path:   metautil.FirstNonEmptyTrimmed(strings.TrimSpace(fields[2]), "/"),

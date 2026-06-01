@@ -106,7 +106,10 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 	a.dupeMu.Unlock()
 
 	a.emitDupeCheckSnapshot(baseCtx, job)
-	go a.runDupeCheckJob(jobCtx, baseCtx, job)
+	go func() {
+		defer cancel()
+		a.runDupeCheckJob(jobCtx, baseCtx, job)
+	}()
 
 	return jobID, nil
 }

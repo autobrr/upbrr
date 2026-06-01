@@ -405,7 +405,6 @@ func setBTNJarCookiesFromNetscape(client *http.Client, rawURL string, values []*
 		if cookie == nil || strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
 			continue
 		}
-		//nolint:gosec // client cookies
 		copied := *cookie
 		copied.Domain = parsed.Hostname()
 		if strings.TrimSpace(copied.Path) == "" {
@@ -936,7 +935,6 @@ func mirrorBTNCookiesForClaimedThread(client *http.Client) {
 		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
 			continue
 		}
-		//nolint:gosec // client cookies
 		copied := *cookie
 		copied.Domain = "broadcasthe.net"
 		if copied.Path == "" {
@@ -944,7 +942,6 @@ func mirrorBTNCookiesForClaimedThread(client *http.Client) {
 		}
 		mirrored = append(mirrored, &copied)
 
-		//nolint:gosec // client cookies
 		dotted := copied
 		dotted.Domain = ".broadcasthe.net"
 		mirrored = append(mirrored, &dotted)
