@@ -32,7 +32,7 @@ const (
 )
 
 var (
-	reUnsafeChars = regexp.MustCompile(`[<>:"/\\|?*]`)
+	reDCChars = regexp.MustCompile(`[^a-zA-Z0-9 .\-]`)
 )
 
 type uploadState struct {
@@ -272,13 +272,17 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/center]")
 	}
 
-	// File information
-	if media := resolveMedia(req, meta); media != "" {
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-			parts = append(parts, "[code]"+strings.TrimSpace(media)+"[/code]")
-		} else {
-			parts = append(parts, strings.TrimSpace(media))
+	// File information (Only BDInfo is added to the description, MediaInfo is sent as a form field)
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		bdinfo, _ := trackers.ReadBDInfo(req.AppConfig.MainSettings.DBPath, meta)
+		if strings.TrimSpace(bdinfo) != "" {
+			parts = append(parts, "[code]"+strings.TrimSpace(bdinfo)+"[/code]")
 		}
+	}
+
+	// NFO
+	if nfo := strings.TrimSpace(commonhttp.ReadOptionalFile(meta.SceneNFOPath)); nfo != "" {
+		parts = append(parts, "[nfo]"+nfo+"[/nfo]")
 	}
 
 	// User description
@@ -382,25 +386,35 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
-	nameFilename := strings.TrimSpace(meta.Filename)
-	if nameFilename != "" {
-		ext := filepath.Ext(nameFilename)
-		name := strings.TrimSuffix(nameFilename, ext)
-		if name != "" {
-			return name
-		}
-	}
-
-	nameClean := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(
+	name := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(
 		meta.ReleaseNameClean,
 		meta.ReleaseName,
 	))
 
-	return sanitizeFilename(nameClean)
+	nameFilename := strings.TrimSpace(meta.Filename)
+	if nameFilename != "" {
+		ext := filepath.Ext(nameFilename)
+		if n := strings.TrimSuffix(nameFilename, ext); n != "" {
+			name = n
+		}
+	}
+
+	name = sanitizeFilename(name)
+
+	if meta.Scene {
+		name += " [UNRAR]"
+	}
+
+	return name
 }
 
 func sanitizeFilename(name string) string {
-	name = reUnsafeChars.ReplaceAllString(name, ".")
+	name = strings.ReplaceAll(name, "DD+", "DDP")
+	name = strings.ReplaceAll(name, "DTS:", "DTS-")
+	name = strings.ReplaceAll(name, "HDR10+", "HDR10P")
+
+	// Remove anything that is not alphanumeric, space, dot, or hyphen
+	name = reDCChars.ReplaceAllString(name, "")
 	return name
 }
 
@@ -409,14 +423,6 @@ func resolveMediaInfo(meta api.PreparedMetadata) (string, error) {
 		return text, nil
 	}
 	return "", errors.New("trackers: DC missing mediainfo")
-}
-
-func resolveMedia(req trackers.UploadRequest, meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		bdinfo, _ := trackers.ReadBDInfo(req.AppConfig.MainSettings.DBPath, meta)
-		return strings.TrimSpace(bdinfo)
-	}
-	return metautil.FirstNonEmptyTrimmed(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
 }
 
 func resolveAnon(req trackers.UploadRequest) string {
@@ -452,7 +458,7 @@ func screenshotBlock(images []api.ScreenshotImage) string {
 
 func isSD(meta api.PreparedMetadata) bool {
 	resolution := strings.TrimSpace(meta.Release.Resolution)
-	return resolution == "480p" || resolution == "576p" || resolution == ""
+	return resolution == "480p" || resolution == "576p"
 }
 
 func cloneFields(in map[string]string) map[string]string {
