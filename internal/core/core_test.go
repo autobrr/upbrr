@@ -2299,6 +2299,60 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	}
 }
 
+func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
+	t.Parallel()
+
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{
+		Tracker:     "AITHER",
+		ReleaseName: "Watcher.2160p.WEB-DL.DDP5.1-FLUX",
+	}}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{
+		SourcePath:  "/tmp/a",
+		ReleaseName: "Watcher 2160p WEB-DL DD+ 5.1-FLUX",
+		Trackers:    []string{"AITHER", "BLU"},
+	})
+
+	preview, err := core.FetchTrackerDryRunPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("fetch tracker dry-run preview: %v", err)
+	}
+	if len(tracker.lastTrackers) != 1 || tracker.lastTrackers[0] != "AITHER" {
+		t.Fatalf("expected dry run for selected tracker only, got %#v", tracker.lastTrackers)
+	}
+	if len(preview.Trackers) != 1 {
+		t.Fatalf("expected one dry-run entry, got %d", len(preview.Trackers))
+	}
+	entry := preview.Trackers[0]
+	if !entry.ReleaseNameChanged {
+		t.Fatalf("expected release name change annotation, got %#v", entry)
+	}
+	if entry.OriginalReleaseName != "Watcher 2160p WEB-DL DD+ 5.1-FLUX" {
+		t.Fatalf("expected original release name, got %q", entry.OriginalReleaseName)
+	}
+	if entry.UploadReleaseName != "Watcher.2160p.WEB-DL.DDP5.1-FLUX" {
+		t.Fatalf("expected upload release name, got %q", entry.UploadReleaseName)
+	}
+}
+
 func TestFetchTrackerDryRunPreviewPassesRuleFailureOverride(t *testing.T) {
 	t.Parallel()
 
@@ -2963,12 +3017,13 @@ func (s *stubDupes) Check(_ context.Context, meta api.PreparedMetadata, trackers
 }
 
 type stubTrackers struct {
-	calls        int
-	prepCalls    int
-	dryRunCalls  int
-	lastMeta     api.PreparedMetadata
-	lastTrackers []string
-	summary      api.UploadSummary
+	calls         int
+	prepCalls     int
+	dryRunCalls   int
+	lastMeta      api.PreparedMetadata
+	lastTrackers  []string
+	dryRunEntries []api.TrackerDryRunEntry
+	summary       api.UploadSummary
 }
 
 func (s *stubTrackers) Upload(_ context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
@@ -3001,5 +3056,5 @@ func (s *stubTrackers) BuildUploadDryRun(_ context.Context, meta api.PreparedMet
 	s.dryRunCalls++
 	s.lastMeta = meta
 	s.lastTrackers = append([]string{}, trackers...)
-	return []api.TrackerDryRunEntry{}, nil
+	return append([]api.TrackerDryRunEntry{}, s.dryRunEntries...), nil
 }

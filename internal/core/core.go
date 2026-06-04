@@ -1948,10 +1948,33 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	if err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
 	}
+	annotateDryRunReleaseNames(meta, entries)
 
 	c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 
 	return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: entries}, nil
+}
+
+func annotateDryRunReleaseNames(meta api.PreparedMetadata, entries []api.TrackerDryRunEntry) {
+	original := strings.TrimSpace(meta.ReleaseName)
+	if original == "" {
+		original = strings.TrimSpace(meta.ReleaseNameNoTag)
+	}
+	if original == "" {
+		original = strings.TrimSpace(meta.Filename)
+	}
+	for idx := range entries {
+		uploadName := strings.TrimSpace(entries[idx].ReleaseName)
+		if uploadName == "" {
+			uploadName = original
+		}
+		entries[idx].OriginalReleaseName = original
+		entries[idx].UploadReleaseName = uploadName
+		entries[idx].ReleaseNameChanged = original != "" && uploadName != "" && uploadName != original
+		if entries[idx].ReleaseNameChanged && strings.TrimSpace(entries[idx].ReleaseNameChangeReason) == "" {
+			entries[idx].ReleaseNameChangeReason = "tracker naming rules"
+		}
+	}
 }
 
 func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Request) (api.DescriptionBuilderPreview, error) {

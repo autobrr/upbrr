@@ -797,6 +797,10 @@ export type TrackerDryRunEntry = {
   Status: string;
   Message: string;
   ReleaseName: string;
+  OriginalReleaseName: string;
+  UploadReleaseName: string;
+  ReleaseNameChanged: boolean;
+  ReleaseNameChangeReason: string;
   DescriptionGroup: string;
   Description: string;
   Endpoint: string;
