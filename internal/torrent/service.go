@@ -11,11 +11,13 @@ import (
 	"io"
 	"math"
 	"os"
+	slashpath "path" //nolint:depguard // Formats torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/anacrolix/torrent/merkle"
 	"github.com/anacrolix/torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
@@ -345,13 +347,7 @@ func resolveCreateSpec(meta api.PreparedMetadata, source string, tmpRoot string)
 }
 
 func normalizeDiscSource(source string) string {
-	cleaned := filepath.Clean(source)
-	switch strings.ToUpper(filepath.Base(cleaned)) {
-	case "BDMV", "VIDEO_TS", "HVDVD_TS":
-		return filepath.Dir(cleaned)
-	default:
-		return source
-	}
+	return filepath.Clean(source)
 }
 
 func mkbrrIgnoredPath(rel string, isDir bool) bool {
@@ -395,12 +391,12 @@ func wantedFilesWithin(root string, files []string) ([]string, error) {
 		info, err := os.Stat(absFile)
 		if err != nil {
 			if os.IsNotExist(err) {
-				continue
+				return nil, fmt.Errorf("torrent: wanted file %q: %w", absFile, internalerrors.ErrNotFound)
 			}
 			return nil, fmt.Errorf("torrent: stat wanted file %q: %w", absFile, err)
 		}
 		if !info.Mode().IsRegular() {
-			continue
+			return nil, fmt.Errorf("torrent: wanted file %q is not a regular file", absFile)
 		}
 		cleanFile := filepath.Clean(absFile)
 		if _, ok := seen[cleanFile]; ok {
@@ -557,7 +553,7 @@ func validateTorrentContent(path string, meta api.PreparedMetadata) error {
 	if err != nil {
 		return fmt.Errorf("torrent: unmarshal candidate info: %w", err)
 	}
-	if nameOK && !strings.EqualFold(info.BestName(), expectedName) {
+	if nameOK && info.BestName() != expectedName {
 		return errors.New("torrent: candidate name mismatch")
 	}
 	actual := torrentContentPaths(info)
@@ -574,6 +570,14 @@ func validateTorrentContent(path string, meta api.PreparedMetadata) error {
 }
 
 func validateTorrentPieces(info metainfo.Info, meta api.PreparedMetadata) error {
+	if info.HasV2() {
+		if err := validateTorrentV2Pieces(info, meta); err != nil {
+			return err
+		}
+		if !info.HasV1() {
+			return nil
+		}
+	}
 	if info.PieceLength <= 0 || len(info.Pieces) == 0 {
 		return errors.New("torrent: candidate piece hashes unavailable")
 	}
@@ -587,6 +591,56 @@ func validateTorrentPieces(info metainfo.Info, meta api.PreparedMetadata) error 
 		return errors.New("torrent: candidate piece hash mismatch")
 	}
 	return nil
+}
+
+func validateTorrentV2Pieces(info metainfo.Info, meta api.PreparedMetadata) error {
+	if info.PieceLength <= 0 {
+		return errors.New("torrent: candidate v2 piece length unavailable")
+	}
+	for _, file := range info.UpvertedFiles() {
+		if file.Length == 0 && !file.PiecesRoot.Ok {
+			continue
+		}
+		if !file.PiecesRoot.Ok {
+			return errors.New("torrent: candidate v2 pieces root unavailable")
+		}
+		root, err := torrentV2FileRoot(meta, file)
+		if err != nil {
+			return err
+		}
+		if root != file.PiecesRoot.Value {
+			return errors.New("torrent: candidate v2 pieces root mismatch")
+		}
+	}
+	return nil
+}
+
+func torrentV2FileRoot(meta api.PreparedMetadata, file metainfo.FileInfo) ([32]byte, error) {
+	openedFile, err := openTorrentContentFile(meta, file)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	defer openedFile.Close()
+
+	hash := merkle.NewHash()
+	written, err := io.CopyN(hash, openedFile, file.Length)
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("torrent: hash candidate v2 file %q: %w", torrentFilePath(file), err)
+	}
+	if written != file.Length {
+		return [32]byte{}, fmt.Errorf("torrent: hash candidate v2 file %q: expected %d bytes, got %d", torrentFilePath(file), file.Length, written)
+	}
+	var root [32]byte
+	copy(root[:], hash.Sum(nil))
+	return root, nil
+}
+
+func torrentFilePath(file metainfo.FileInfo) string {
+	parts := file.BestPath()
+	if len(parts) == 0 {
+		return ""
+	}
+	return slashpath.Join(parts...)
 }
 
 func openTorrentContentFile(meta api.PreparedMetadata, file metainfo.FileInfo) (io.ReadCloser, error) {
@@ -823,7 +877,7 @@ func sameContentSet(left []contentFile, right []contentFile) bool {
 	sortContentFiles(leftCopy)
 	sortContentFiles(rightCopy)
 	for idx := range leftCopy {
-		if !strings.EqualFold(leftCopy[idx].path, rightCopy[idx].path) || leftCopy[idx].length != rightCopy[idx].length {
+		if leftCopy[idx].path != rightCopy[idx].path || leftCopy[idx].length != rightCopy[idx].length {
 			return false
 		}
 	}
@@ -832,12 +886,10 @@ func sameContentSet(left []contentFile, right []contentFile) bool {
 
 func sortContentFiles(files []contentFile) {
 	sort.Slice(files, func(left int, right int) bool {
-		leftPath := strings.ToLower(files[left].path)
-		rightPath := strings.ToLower(files[right].path)
-		if leftPath == rightPath {
+		if files[left].path == files[right].path {
 			return files[left].length < files[right].length
 		}
-		return leftPath < rightPath
+		return files[left].path < files[right].path
 	})
 }
 

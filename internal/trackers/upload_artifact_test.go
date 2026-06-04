@@ -4,8 +4,10 @@
 package trackers
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/anacrolix/torrent/bencode"
@@ -32,7 +34,7 @@ func TestResolveUploadTorrentPathWritesCleanBaseCopy(t *testing.T) {
 		Encoding:     "UTF-8",
 		UrlList:      metainfo.UrlList{"https://webseed.example/file"},
 		PieceLayers:  map[string]string{"root": "layer"},
-		InfoBytes:    testInfoBytes(t, ""),
+		InfoBytes:    testInfoBytes(t, "BHD"),
 	})
 
 	got, err := ResolveUploadTorrentPath(api.PreparedMetadata{
@@ -59,9 +61,12 @@ func TestResolveUploadTorrentPathWritesCleanBaseCopy(t *testing.T) {
 	if len(cleaned.UrlList) != 0 {
 		t.Fatalf("expected url-list cleared, got %#v", cleaned.UrlList)
 	}
-	if len(cleaned.PieceLayers) != 0 {
-		t.Fatalf("expected piece layers cleared, got %#v", cleaned.PieceLayers)
+	expectedPieceLayers := map[string]string{"root": "layer"}
+	if !reflect.DeepEqual(cleaned.PieceLayers, expectedPieceLayers) {
+		t.Fatalf("expected piece layers preserved, got %#v", cleaned.PieceLayers)
 	}
+	assertInfoSource(t, cleaned, "")
+	assertInfoSourceKeyAbsent(t, cleaned)
 	if cleaned.Comment != "upbrr" {
 		t.Fatalf("expected upbrr comment, got %q", cleaned.Comment)
 	}
@@ -73,6 +78,131 @@ func TestResolveUploadTorrentPathWritesCleanBaseCopy(t *testing.T) {
 	if original.Comment != "Created by Upload Assistant" {
 		t.Fatalf("expected original unchanged, got %q", original.Comment)
 	}
+	if !reflect.DeepEqual(original.PieceLayers, expectedPieceLayers) {
+		t.Fatalf("expected original piece layers unchanged, got %#v", original.PieceLayers)
+	}
+	assertInfoSource(t, original, "BHD")
+}
+
+func TestResolveUploadTorrentPathSamePathRewriteFailurePreservesGuessedTorrent(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Release.mkv")
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	dbPath := filepath.Join(tmp, "state", "upbrr.db")
+	meta := api.PreparedMetadata{SourcePath: sourcePath}
+	guessed, ok := uploadTorrentCleanPath(meta, dbPath)
+	if !ok {
+		t.Fatal("expected clean upload torrent path")
+	}
+	writeTestMetaInfo(t, guessed, metainfo.MetaInfo{
+		Announce:  "https://tracker.example/announce",
+		Comment:   "original",
+		InfoBytes: testInvalidInfoBytes(t),
+	})
+	before, err := os.ReadFile(guessed)
+	if err != nil {
+		t.Fatalf("read guessed torrent: %v", err)
+	}
+
+	got, err := ResolveUploadTorrentPath(meta, dbPath)
+	if err == nil {
+		t.Fatalf("expected rewrite error, got path %q", got)
+	}
+	if got != "" {
+		t.Fatalf("expected no resolved path on rewrite failure, got %q", got)
+	}
+	after, err := os.ReadFile(guessed)
+	if err != nil {
+		t.Fatalf("read guessed torrent after failure: %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("expected guessed torrent bytes preserved after rewrite failure")
+	}
+}
+
+func TestResolveUploadTorrentPathFallsBackToExplicitCandidateWhenCleanCopyInvalid(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Release.mkv")
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	invalidTorrentPath := filepath.Join(tmp, "invalid.torrent")
+	if err := os.WriteFile(invalidTorrentPath, []byte("not a torrent"), 0o600); err != nil {
+		t.Fatalf("write invalid torrent: %v", err)
+	}
+
+	got, err := ResolveUploadTorrentPath(api.PreparedMetadata{
+		SourcePath:  sourcePath,
+		TorrentPath: invalidTorrentPath,
+	}, filepath.Join(tmp, "state", "upbrr.db"))
+	if err != nil {
+		t.Fatalf("resolve upload torrent: %v", err)
+	}
+	if got != invalidTorrentPath {
+		t.Fatalf("expected explicit invalid torrent fallback, got %q", got)
+	}
+}
+
+func TestWriteUploadTorrentPreservesPieceLayers(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "source.torrent")
+	outputPath := filepath.Join(tmp, "out", "clean.torrent")
+	expectedPieceLayers := map[string]string{
+		"root-a": "layer-a",
+		"root-b": "layer-b",
+	}
+	writeTestMetaInfo(t, sourcePath, metainfo.MetaInfo{
+		Announce:     "https://tracker.example/announce",
+		AnnounceList: metainfo.AnnounceList{{"https://tracker.example/announce"}},
+		Nodes:        []metainfo.Node{"127.0.0.1:6881"},
+		Comment:      "Created by Upload Assistant",
+		UrlList:      metainfo.UrlList{"https://webseed.example/file"},
+		PieceLayers:  expectedPieceLayers,
+		InfoBytes:    testInfoBytes(t, "BHD"),
+	})
+
+	if err := WriteUploadTorrent(sourcePath, outputPath); err != nil {
+		t.Fatalf("write upload torrent: %v", err)
+	}
+
+	cleaned := readTestMetaInfo(t, outputPath)
+	if !reflect.DeepEqual(cleaned.PieceLayers, expectedPieceLayers) {
+		t.Fatalf("expected piece layers preserved, got %#v", cleaned.PieceLayers)
+	}
+	if cleaned.Announce != "" {
+		t.Fatalf("expected announce cleared, got %q", cleaned.Announce)
+	}
+	if len(cleaned.AnnounceList) != 0 {
+		t.Fatalf("expected announce-list cleared, got %#v", cleaned.AnnounceList)
+	}
+	if len(cleaned.Nodes) != 0 {
+		t.Fatalf("expected nodes cleared, got %#v", cleaned.Nodes)
+	}
+	if len(cleaned.UrlList) != 0 {
+		t.Fatalf("expected url-list cleared, got %#v", cleaned.UrlList)
+	}
+	if cleaned.Comment != "upbrr" {
+		t.Fatalf("expected upbrr comment, got %q", cleaned.Comment)
+	}
+	assertInfoSource(t, cleaned, "")
+	assertInfoSourceKeyAbsent(t, cleaned)
+
+	original := readTestMetaInfo(t, sourcePath)
+	if original.Comment != "Created by Upload Assistant" {
+		t.Fatalf("expected original comment unchanged, got %q", original.Comment)
+	}
+	if !reflect.DeepEqual(original.PieceLayers, expectedPieceLayers) {
+		t.Fatalf("expected original piece layers unchanged, got %#v", original.PieceLayers)
+	}
+	assertInfoSource(t, original, "BHD")
 }
 
 func TestResolveUploadTorrentPathWithoutCleanTargetLeavesOriginalUnchanged(t *testing.T) {
@@ -114,7 +244,8 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 		AnnounceList: metainfo.AnnounceList{{"https://old.example/announce"}},
 		Comment:      "Created by Upload Assistant",
 		UrlList:      metainfo.UrlList{"https://webseed.example/file"},
-		InfoBytes:    testInfoBytes(t, ""),
+		PieceLayers:  map[string]string{"root": "layer"},
+		InfoBytes:    testInfoBytes(t, "BHD"),
 	})
 
 	if err := WritePersonalizedTorrent(sourcePath, outputPath, "https://new.example/announce", "https://tracker.example/torrents/123", "PTP"); err != nil {
@@ -134,13 +265,11 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 	if len(updated.UrlList) != 0 {
 		t.Fatalf("expected url-list cleared, got %#v", updated.UrlList)
 	}
-	info, err := updated.UnmarshalInfo()
-	if err != nil {
-		t.Fatalf("unmarshal info: %v", err)
+	expectedPieceLayers := map[string]string{"root": "layer"}
+	if !reflect.DeepEqual(updated.PieceLayers, expectedPieceLayers) {
+		t.Fatalf("expected piece layers preserved, got %#v", updated.PieceLayers)
 	}
-	if info.Source != "PTP" {
-		t.Fatalf("expected source flag, got %q", info.Source)
-	}
+	assertInfoSource(t, updated, "PTP")
 }
 
 func writeTestMetaInfo(t *testing.T, path string, meta metainfo.MetaInfo) {
@@ -186,4 +315,34 @@ func testInfoBytes(t *testing.T, source string) []byte {
 		t.Fatalf("marshal info: %v", err)
 	}
 	return infoBytes
+}
+
+func testInvalidInfoBytes(t *testing.T) []byte {
+	t.Helper()
+
+	infoBytes, err := bencode.Marshal("not-info")
+	if err != nil {
+		t.Fatalf("marshal invalid info: %v", err)
+	}
+	return infoBytes
+}
+
+func assertInfoSource(t *testing.T, meta metainfo.MetaInfo, expected string) {
+	t.Helper()
+
+	info, err := meta.UnmarshalInfo()
+	if err != nil {
+		t.Fatalf("unmarshal info: %v", err)
+	}
+	if info.Source != expected {
+		t.Fatalf("expected info source %q, got %q", expected, info.Source)
+	}
+}
+
+func assertInfoSourceKeyAbsent(t *testing.T, meta metainfo.MetaInfo) {
+	t.Helper()
+
+	if bytes.Contains(meta.InfoBytes, []byte("6:source")) {
+		t.Fatalf("expected raw info source key absent, got %q", string(meta.InfoBytes))
+	}
 }
