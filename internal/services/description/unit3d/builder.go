@@ -19,7 +19,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const uaSignatureText = "Created by upbrr"
+const uaSignatureText = "Uploaded by upbrr"
 const uaSignatureLink = "https://github.com/autobrr/upbrr"
 const dvdVOBMediaInfoHeader = "[spoiler=VOB MediaInfo][code]"
 const dvdVOBMediaInfoFooter = "[/code][/spoiler]"
@@ -28,6 +28,8 @@ var collapseNewlines = regexp.MustCompile(`\n{3,}`)
 var bbcodeImageTag = regexp.MustCompile(`(?is)\[img(?:=[^\]]*)?\](.*?)\[/img\]`)
 var comparisonTag = regexp.MustCompile(`(?is)\[comparison=[\s\S]*?\[/comparison\]`)
 var comparisonImageURL = regexp.MustCompile(`(?i)(https?://.*\.(?:png|jpg))`)
+var unit3DBotSignatureTag = regexp.MustCompile(`(?is)(?:\[(?:center|right|align=right)\]\s*(?:\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\]\s*)?\[b\]?Uploaded\s+Using\s+\[url=https://github\.com/HDInnovations/UNIT3D\]UNIT3D\[/url\]\s+Auto\s+Uploader\[/b\]?(?:\s*\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\])?\s*\[/(?:center|right|align)\])|(?:\[center\]\s*\[url=https://github\.com/z-ink/uploadrr\]\[img=\d+\]https://i\.ibb\.co/2NVWb0c/uploadrr\.webp\[/img\]\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=https://github\.com/edge20200/Only-Uploader\]Powered\s+by\s+Only-Uploader\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=/torrents\?perPage=\d+&name=[^\]]*\]\s*\[/url\]\s*\[/center\])|(?:\[center\]\s*(?:\[b\]\s*(?:\[size=\d+\])?brush(?:\[/size\])?\s*\[/b\]\s*)?This is an internal release which was first released exclusively on Aither\.\s*Cheers to all the Aither(?:\s+users)?\s*\[/center\])|(?:\[(?:center|right|align=right)\]\s*(?:\[url=[^\]]+\]\s*)?(?:\[size=[^\]]+\]\s*)?Created by(?:\s+[^[]*?)?\s*Upload Assistant(?:\s*\[/size\])?(?:\s*\[/url\])?\s*\[/(?:center|right|align)\])`)
+var unit3DEmptyCenterTag = regexp.MustCompile(`(?is)\[center\]\s*\[/center\]`)
 var unit3DAlignBlockTag = regexp.MustCompile(`(?is)\[align=(center|left|right)\](.*?)\[/align\]`)
 var unit3DWrapperBlockTag = regexp.MustCompile(`(?is)\[(center|align=(?:center|left|right))\](.*?)\[/(center|align)\]`)
 var unit3DWidthImageTag = regexp.MustCompile(`(?i)\[img\s+width=(\d+)\]`)
@@ -286,6 +288,8 @@ func stripUnit3DSignature(value string) string {
 	if trimmed == "" {
 		return ""
 	}
+	trimmed = unit3DBotSignatureTag.ReplaceAllString(trimmed, "")
+	trimmed = unit3DEmptyCenterTag.ReplaceAllString(trimmed, "")
 	return strings.TrimSpace(unit3DUASignatureTag.ReplaceAllString(trimmed, ""))
 }
 

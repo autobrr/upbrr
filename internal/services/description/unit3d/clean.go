@@ -16,8 +16,10 @@ import (
 var (
 	unit3dURLImgPattern  = regexp.MustCompile(`(?i)\[url=(https?://[^\]]+)\]\[img[^\]]*\](.*?)\[/img\]\[/url\]`)
 	unit3dImgPattern     = regexp.MustCompile(`(?i)\[img[^\]]*\](.*?)\[/img\]`)
+	unit3dURLToken       = regexp.MustCompile(`(?i)https?://[^\s\[\]]+`)
 	unit3dWrapperTag     = regexp.MustCompile(`(?is)\[(?:center|align=[^\]]+)\][\s\S]*?\[/(?:center|align)\]`)
 	unit3dParagraphSplit = regexp.MustCompile(`\n\s*\n+`)
+	unit3dHostAliasCache sync.Map
 	unit3dSiteLinkCache  sync.Map
 )
 
@@ -30,6 +32,7 @@ func CleanDescription(description string, site string) Report {
 	}
 
 	desc = stripSiteLinks(desc, site)
+	desc = replaceSiteHost(desc, site)
 	report.Description = ""
 	report.Images = selectUnit3DFirstImageSet(desc)
 	return report
@@ -65,8 +68,14 @@ func extractUnit3DImages(value string) []Image {
 		webURL := strings.TrimSpace(parts[1])
 		imgURL := strings.TrimSpace(parts[2])
 		if imgURL != "" {
-			host := imagehost.ExtractHost(imgURL)
 			rawURL := normalizeRawImageURL(imgURL)
+			if linkedRawURL, ok := normalizeLinkedRawImageURL(webURL); ok {
+				rawURL = linkedRawURL
+			}
+			host := imagehost.ExtractHost(rawURL)
+			if host == "" {
+				host = imagehost.ExtractHost(imgURL)
+			}
 			images = append(images, Image{ImgURL: imgURL, RawURL: rawURL, WebURL: webURL, Host: host})
 		}
 		return ""
@@ -136,6 +145,120 @@ func stripSiteLinks(description string, site string) string {
 	}
 	pattern := siteLinkPattern(host)
 	return pattern.ReplaceAllString(description, "$1")
+}
+
+func replaceSiteHost(description string, site string) string {
+	parsed, err := url.Parse(site)
+	if err != nil {
+		return description
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host == "" {
+		return description
+	}
+	domain := siteLabelFromHost(host)
+	if domain == "" {
+		return description
+	}
+	return replaceOutsideURLs(description, siteHostAliases(host), domain)
+}
+
+func siteLabelFromHost(host string) string {
+	trimmed := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(host)), "www.")
+	parts := strings.Split(trimmed, ".")
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[0]
+}
+
+func siteHostAliases(host string) []string {
+	base := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(host)), "www.")
+	if base == "" {
+		return nil
+	}
+
+	aliases := []string{"www." + base, base}
+	if host != base {
+		aliases[0], aliases[1] = host, base
+	}
+	return aliases
+}
+
+func replaceOutsideURLs(value string, aliases []string, newValue string) string {
+	matches := unit3dURLToken.FindAllStringIndex(value, -1)
+	if len(matches) == 0 {
+		return replaceAllFold(value, aliases, newValue)
+	}
+
+	var builder strings.Builder
+	builder.Grow(len(value))
+	last := 0
+	for _, match := range matches {
+		builder.WriteString(replaceAllFold(value[last:match[0]], aliases, newValue))
+		builder.WriteString(value[match[0]:match[1]])
+		last = match[1]
+	}
+	builder.WriteString(replaceAllFold(value[last:], aliases, newValue))
+	return builder.String()
+}
+
+func replaceAllFold(value string, aliases []string, newValue string) string {
+	pattern := hostAliasPattern(aliases)
+	if pattern == nil {
+		return value
+	}
+
+	matches := pattern.FindAllStringSubmatchIndex(value, -1)
+	if len(matches) == 0 {
+		return value
+	}
+
+	var builder strings.Builder
+	builder.Grow(len(value))
+	last := 0
+	for _, match := range matches {
+		builder.WriteString(value[last:match[0]])
+		builder.WriteString(value[match[2]:match[3]])
+		builder.WriteString(newValue)
+		builder.WriteString(value[match[4]:match[5]])
+		last = match[1]
+	}
+	builder.WriteString(value[last:])
+	return builder.String()
+}
+
+func hostAliasPattern(aliases []string) *regexp.Regexp {
+	normalized := make([]string, 0, len(aliases))
+	seen := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		trimmed := strings.ToLower(strings.TrimSpace(alias))
+		if trimmed == "" {
+			continue
+		}
+		if _, found := seen[trimmed]; found {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, regexp.QuoteMeta(trimmed))
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	key := strings.Join(normalized, "\x00")
+	if cached, ok := unit3dHostAliasCache.Load(key); ok {
+		if pattern, ok := cached.(*regexp.Regexp); ok {
+			return pattern
+		}
+	}
+
+	pattern := regexp.MustCompile(`(?i)(^|[^[:alnum:].-])(?:` + strings.Join(normalized, `|`) + `)($|[^[:alnum:].-])`)
+	actual, _ := unit3dHostAliasCache.LoadOrStore(key, pattern)
+	if pattern, ok := actual.(*regexp.Regexp); ok {
+		return pattern
+	}
+	return pattern
 }
 
 func siteLinkPattern(host string) *regexp.Regexp {
@@ -241,4 +364,47 @@ func normalizeRawImageURL(value string) string {
 	}
 
 	return trimmed
+}
+
+func normalizeLinkedRawImageURL(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if !isLikelyImageURL(trimmed) {
+		return "", false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", false
+	}
+
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	pathValue := strings.ToLower(strings.TrimSpace(parsed.Path))
+	if strings.HasSuffix(host, "pixhost.to") && strings.HasPrefix(pathValue, "/show/") {
+		return "", false
+	}
+
+	return normalizeRawImageURL(trimmed), true
+}
+
+func isLikelyImageURL(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return false
+	}
+	pathValue := strings.ToLower(strings.TrimSpace(parsed.Path))
+	switch {
+	case strings.HasSuffix(pathValue, ".jpg"):
+		return true
+	case strings.HasSuffix(pathValue, ".jpeg"):
+		return true
+	case strings.HasSuffix(pathValue, ".png"):
+		return true
+	case strings.HasSuffix(pathValue, ".webp"):
+		return true
+	default:
+		return false
+	}
 }

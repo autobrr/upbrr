@@ -174,12 +174,18 @@ func (s *Service) persistUnit3DArtifacts(ctx context.Context, meta api.PreparedM
 }
 
 func collectSuccessfulURLs(successfulByIndex []string) []string {
-	successfulURLs := make([]string, 0, len(successfulByIndex))
-	for _, imgURL := range successfulByIndex {
-		if strings.TrimSpace(imgURL) == "" {
+	successfulURLs := make([]string, len(successfulByIndex))
+	hasSuccessful := false
+	for idx, imgURL := range successfulByIndex {
+		trimmed := strings.TrimSpace(imgURL)
+		if trimmed == "" {
 			continue
 		}
-		successfulURLs = append(successfulURLs, imgURL)
+		successfulURLs[idx] = trimmed
+		hasSuccessful = true
+	}
+	if !hasSuccessful {
+		return nil
 	}
 	return successfulURLs
 }

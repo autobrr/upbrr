@@ -143,6 +143,83 @@ func TestCleanBHDDescriptionRemovesOrphanedEmptyAlign(t *testing.T) {
 	}
 }
 
+func TestCleanBHDDescriptionRemovesKnownBotSignatures(t *testing.T) {
+	desc := strings.Join([]string{
+		"Body",
+		"[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+		"[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
+		"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
+		"[right]Created by Upload Assistant[/right]",
+	}, "\n")
+	report := CleanBHDDescription(desc, BHDOptions{})
+
+	if report.Description != "Body" {
+		t.Fatalf("expected bot signatures removed, got %q", report.Description)
+	}
+	if len(report.Images) != 0 {
+		t.Fatalf("expected bot images removed with signatures, got %d", len(report.Images))
+	}
+}
+
+func TestCleanBHDDescriptionKeepsCenteredScreenshotBeforeAitherFooter(t *testing.T) {
+	desc := strings.Join([]string{
+		"Body",
+		"[center][url=https://web.example/1][img=350]https://raw.example/1.png[/img][/url][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+	}, "\n\n")
+	report := CleanBHDDescription(desc, BHDOptions{})
+
+	if report.Description != "Body" {
+		t.Fatalf("expected body preserved and footer stripped, got %q", report.Description)
+	}
+	if len(report.Images) != 1 {
+		t.Fatalf("expected 1 image retained, got %d", len(report.Images))
+	}
+	if report.Images[0].ImgURL != "https://raw.example/1.png" {
+		t.Fatalf("unexpected image url %q", report.Images[0].ImgURL)
+	}
+}
+
+func TestCleanPTPDescriptionRemovesKnownBotSignatures(t *testing.T) {
+	desc := strings.Join([]string{
+		"Body",
+		"[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+		"[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
+		"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+		"[right]Created by Upload Assistant[/right]",
+	}, "\n")
+	report := CleanPTPDescription(desc, "")
+
+	if report.Description != "Body" {
+		t.Fatalf("expected bot signatures removed, got %q", report.Description)
+	}
+	if len(report.Images) != 0 {
+		t.Fatalf("expected bot images removed with signatures, got %d", len(report.Images))
+	}
+}
+
+func TestCleanPTPDescriptionKeepsCenteredScreenshotBeforeAitherFooter(t *testing.T) {
+	desc := strings.Join([]string{
+		"Body",
+		"[center][img]https://raw.example/1.png[/img][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+	}, "\n\n")
+	report := CleanPTPDescription(desc, "")
+
+	if report.Description != "Body" {
+		t.Fatalf("expected body preserved and footer stripped, got %q", report.Description)
+	}
+	if len(report.Images) != 1 {
+		t.Fatalf("expected 1 image retained, got %d", len(report.Images))
+	}
+	if report.Images[0].ImgURL != "https://raw.example/1.png" {
+		t.Fatalf("unexpected image url %q", report.Images[0].ImgURL)
+	}
+}
+
 func TestCleanPTPDescription(t *testing.T) {
 	desc := "&bull; item\n[quote]x[/quote]\nhttps://example.com/test.jpg"
 	report := CleanPTPDescription(desc, "")

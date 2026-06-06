@@ -354,7 +354,7 @@ func (s *Service) lookupTrackerData(
 		record.Category = normalizeUnit3DCategory(result.Category)
 		record.InfoHash = metautil.FirstNonEmptyTrimmed(record.InfoHash, result.InfoHash)
 		record.Description = result.Description
-		record.ImageURLs = downloadedImages
+		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Options.KeepImages)
 		record.Filename = result.FileName
 		record.Matched = true
 		if s.logger != nil {
@@ -418,14 +418,14 @@ func (s *Service) lookupTrackerData(
 
 	applyTrackerDataResult(&record, result)
 	if strings.TrimSpace(result.Description) != "" || len(result.Images) > 0 {
-		downloaded := s.persistUnit3DArtifacts(
+		downloadedImages := s.persistUnit3DArtifacts(
 			ctx,
 			meta,
 			tracker,
 			trackerdata.Result{Description: result.Description, Validated: result.Images},
 			meta.Options.KeepImages,
 		)
-		record.ImageURLs = downloaded
+		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Options.KeepImages)
 	}
 	if s.logger != nil {
 		s.logger.Debugf(
@@ -448,6 +448,26 @@ func (s *Service) lookupTrackerData(
 		return api.TrackerMetadata{}, false, false, nil
 	}
 	return record, true, hasTrackerMetadataIDs(record), nil
+}
+
+func trackerImageURLsFromResult(_ trackerdata.Result, downloadedImages []string, keepImages bool) []string {
+	if !keepImages || len(downloadedImages) == 0 {
+		return nil
+	}
+	urls := make([]string, len(downloadedImages))
+	hasUsable := false
+	for idx, imageURL := range downloadedImages {
+		trimmed := strings.TrimSpace(imageURL)
+		if trimmed == "" {
+			continue
+		}
+		urls[idx] = trimmed
+		hasUsable = true
+	}
+	if !hasUsable {
+		return nil
+	}
+	return urls
 }
 
 func trackerRecordHasPathedData(record api.TrackerMetadata) bool {

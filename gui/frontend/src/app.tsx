@@ -4513,7 +4513,9 @@ export default function App() {
               uploadedImages={uploadImages.uploadedImages}
               uploadedImageRecords={uploadImages.uploadedImageRecords}
               trackerImageLinks={screenshots.trackerImageLinks}
+              trackerImageURLs={trackerImageURLs}
               handleDeleteUploadedImage={uploadImages.handleDeleteUploadedImage}
+              handleDeleteTrackerImage={screenshots.handleDeleteTrackerImage}
             />
           ) : activeTab === "bluray" ? (
             <BlurayCandidatesPage
