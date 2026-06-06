@@ -535,10 +535,7 @@ func convertUnit3DComparisonsToCollapse(value string, maxWidth int) string {
 		if len(images) == 0 {
 			continue
 		}
-		imgSize := maxWidth / len(sources)
-		if imgSize > 350 {
-			imgSize = 350
-		}
+		imgSize := min(maxWidth/len(sources), 350)
 		line := make([]string, 0, len(sources))
 		output := make([]string, 0, len(images)/len(sources)+1)
 		for _, img := range images {

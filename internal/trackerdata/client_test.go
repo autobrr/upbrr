@@ -299,6 +299,91 @@ func TestLookupUnit3DOnlyIDKeepsImages(t *testing.T) {
 	}
 }
 
+func TestLookupUnit3DDescriptionFlagsGateDescriptionAndImages(t *testing.T) {
+	t.Parallel()
+
+	pngBytes := []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+		0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
+		0x54, 0x08, 0x99, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+		0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92,
+		0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+		0x44, 0xae, 0x42, 0x60, 0x82,
+	}
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/torrents/"):
+			imageURL := server.URL + "/images/shot.png"
+			description := "[center]Fetched tracker body[/center]\n\n[center][url=https://example.com/view][img]" + imageURL + "[/img][/url][/center]"
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"attributes": map[string]any{
+					"tmdb_id":     100,
+					"description": description,
+				},
+			})
+		case r.URL.Path == "/images/shot.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(pngBytes)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	baseURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse server url: %v", err)
+	}
+
+	httpClient := server.Client()
+	transport := httpClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	httpClient.Transport = rewriteHostTransport{base: baseURL, rt: transport}
+
+	client := NewClient(config.Config{}, api.NopLogger{}, httpClient)
+	ctx := context.Background()
+
+	result, err := client.Lookup(ctx, "BLU", "777", api.PreparedMetadata{}, "release.mkv", false, false)
+	if err != nil {
+		t.Fatalf("unit3d lookup failed: %v", err)
+	}
+	if result.Description != "[center]Fetched tracker body[/center]" {
+		t.Fatalf("expected cleaned description when onlyID=false, got %q", result.Description)
+	}
+	if len(result.Images) != 0 {
+		t.Fatalf("expected keepImages=false to skip images, got %d", len(result.Images))
+	}
+
+	result, err = client.Lookup(ctx, "BLU", "777", api.PreparedMetadata{}, "release.mkv", true, false)
+	if err != nil {
+		t.Fatalf("unit3d lookup failed: %v", err)
+	}
+	if result.Description != "" {
+		t.Fatalf("expected onlyID=true to clear description, got %q", result.Description)
+	}
+	if len(result.Images) != 0 {
+		t.Fatalf("expected keepImages=false to skip images with onlyID=true, got %d", len(result.Images))
+	}
+
+	result, err = client.Lookup(ctx, "BLU", "777", api.PreparedMetadata{}, "release.mkv", false, true)
+	if err != nil {
+		t.Fatalf("unit3d lookup failed: %v", err)
+	}
+	if result.Description != "[center]Fetched tracker body[/center]" {
+		t.Fatalf("expected cleaned description with keepImages=true, got %q", result.Description)
+	}
+	if len(result.Images) != 1 {
+		t.Fatalf("expected keepImages=true to retain images, got %d", len(result.Images))
+	}
+}
+
 func TestLookupHDBSkipsUnfilteredSearch(t *testing.T) {
 	t.Parallel()
 

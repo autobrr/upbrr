@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"path" //nolint:depguard // Builds Unit3D API URL paths, not local filesystem paths.
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -211,10 +212,8 @@ func reverseLookupCanonicalID(canonical string, namesByID map[string][]string) s
 		return ""
 	}
 	for id, names := range namesByID {
-		for _, name := range names {
-			if name == canonical {
-				return id
-			}
+		if slices.Contains(names, canonical) {
+			return id
 		}
 	}
 	return ""
@@ -325,15 +324,22 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	if description == "" {
 		return result, nil
 	}
-	report := descriptionunit3d.CleanDescription(description, baseURL)
-	cleaned := report.Description
-	images := convertCleanedUnit3DImages(report.Images)
+	reports := make([]descriptionunit3d.Report, 0, 2)
+	cleaned := ""
+	if !onlyID {
+		report := descriptionunit3d.CleanDescriptionBody(description, baseURL)
+		reports = append(reports, report)
+		cleaned = report.Description
+	}
+	images := []bbcode.Image(nil)
+	if keepImages {
+		report := descriptionunit3d.CleanDescriptionImages(description, baseURL)
+		reports = append(reports, report)
+		images = convertCleanedUnit3DImages(report.Images)
+	}
 	cleanedLen := len(cleaned)
 	imageCount := len(images)
 	validated := []bbcode.Image(nil)
-	if onlyID {
-		cleaned = ""
-	}
 	if keepImages {
 		validated = validateImages(ctx, c.http, images)
 		images = validated
@@ -344,8 +350,10 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	result.Images = images
 	result.Validated = validated
 	c.logger.Debugf("unit3d: %s description raw=%d cleaned=%d images=%d validated=%d onlyID=%t keepImages=%t", tracker, len(description), cleanedLen, imageCount, len(validated), onlyID, keepImages)
-	for _, note := range report.Notes {
-		c.logger.Debugf("unit3d: %s description note kind=%s msg=%s", tracker, note.Kind, note.Message)
+	for _, report := range reports {
+		for _, note := range report.Notes {
+			c.logger.Debugf("unit3d: %s description note kind=%s msg=%s", tracker, note.Kind, note.Message)
+		}
 	}
 
 	return result, nil
@@ -553,16 +561,14 @@ func validateImages(ctx context.Context, client *http.Client, images []bbcode.Im
 	var wg sync.WaitGroup
 
 	for idx, img := range images {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if checkImage(ctx, client, img.RawURL) {
 				results[idx] = img
 				valid[idx] = true
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

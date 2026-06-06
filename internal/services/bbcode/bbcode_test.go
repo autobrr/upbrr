@@ -12,14 +12,28 @@ func TestCleanUnit3DDescription(t *testing.T) {
 	desc := "[url=https://blutopia.xyz/torrents/123]Title[/url]\n[img]https://example.com/a.jpg[/img]\n[img]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img]"
 	report := CleanUnit3DDescription(desc, "https://blutopia.xyz")
 
-	if report.Description != "" {
-		t.Fatalf("expected description to be discarded, got %q", report.Description)
+	if report.Description != "Title" {
+		t.Fatalf("expected description text to be preserved, got %q", report.Description)
 	}
 	if len(report.Images) != 1 {
 		t.Fatalf("expected 1 image, got %d", len(report.Images))
 	}
 	if report.Images[0].ImgURL != "https://example.com/a.jpg" {
 		t.Fatalf("unexpected image url %q", report.Images[0].ImgURL)
+	}
+}
+
+func TestCleanUnit3DDescriptionPreservesFetchedTextWithoutScreenshotBlocks(t *testing.T) {
+	desc := "[center]Existing tracker description[/center]\n\n" +
+		"[center][url=https://img.example/a.jpg][img]https://img.example/a.jpg[/img][/url][/center]\n\n" +
+		"[right][url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url][/right]"
+	report := CleanUnit3DDescription(desc, "https://example.org")
+
+	if report.Description != "[center]Existing tracker description[/center]\n\n[right][url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url][/right]" {
+		t.Fatalf("expected text body without screenshot block, got %q", report.Description)
+	}
+	if len(report.Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(report.Images))
 	}
 }
 
@@ -40,7 +54,7 @@ func TestCleanUnit3DDescriptionRemovesOrphanedTonemapAndEmptyAlign(t *testing.T)
 	report := CleanUnit3DDescription(desc, "https://example.org")
 
 	if report.Description != "" {
-		t.Fatalf("expected description to be discarded, got %q", report.Description)
+		t.Fatalf("expected orphaned tonemap note to be discarded, got %q", report.Description)
 	}
 	if len(report.Images) != 1 {
 		t.Fatalf("expected 1 image, got %d", len(report.Images))
@@ -64,8 +78,8 @@ func TestCleanUnit3DDescriptionKeepsFirstScreenshotSetAfterTMDBPoster(t *testing
 
 	report := CleanUnit3DDescription(desc, "https://example.org")
 
-	if report.Description != "" {
-		t.Fatalf("expected description to be discarded, got %q", report.Description)
+	if report.Description != "[center]Stranger.Things.S05E01[/center]" {
+		t.Fatalf("expected non-screenshot text to be preserved, got %q", report.Description)
 	}
 	if len(report.Images) != 3 {
 		t.Fatalf("expected first screenshot set only (3 images), got %d", len(report.Images))

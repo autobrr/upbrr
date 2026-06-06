@@ -14,28 +14,116 @@ import (
 )
 
 var (
-	unit3dURLImgPattern  = regexp.MustCompile(`(?i)\[url=(https?://[^\]]+)\]\[img[^\]]*\](.*?)\[/img\]\[/url\]`)
-	unit3dImgPattern     = regexp.MustCompile(`(?i)\[img[^\]]*\](.*?)\[/img\]`)
-	unit3dURLToken       = regexp.MustCompile(`(?i)https?://[^\s\[\]]+`)
-	unit3dWrapperTag     = regexp.MustCompile(`(?is)\[(?:center|align=[^\]]+)\][\s\S]*?\[/(?:center|align)\]`)
-	unit3dParagraphSplit = regexp.MustCompile(`\n\s*\n+`)
-	unit3dHostAliasCache sync.Map
-	unit3dSiteLinkCache  sync.Map
+	unit3dURLImgPattern    = regexp.MustCompile(`(?i)\[url=(https?://[^\]]+)\]\[img[^\]]*\](.*?)\[/img\]\[/url\]`)
+	unit3dImgPattern       = regexp.MustCompile(`(?i)\[img[^\]]*\](.*?)\[/img\]`)
+	unit3dURLToken         = regexp.MustCompile(`(?i)https?://[^\s\[\]]+`)
+	unit3dWrapperTag       = regexp.MustCompile(`(?is)\[(?:center|align=[^\]]+)\][\s\S]*?\[/(?:center|align)\]`)
+	unit3dParagraphSplit   = regexp.MustCompile(`\n\s*\n+`)
+	unit3dTonemapOnlyBlock = regexp.MustCompile(`(?is)\[(?:center|align=[^\]]+)\]\s*\[code\]\s*Screenshots have been tonemapped for reference\s*\[/code\]\s*\[/(?:center|align)\]`)
+	unit3dEmptySpoilerTag  = regexp.MustCompile(`(?is)\[spoiler(?:=[^\]]*)?\]\s*\[/spoiler\]`)
+	unit3dWrapperOpenTag   = regexp.MustCompile(`(?is)\[(?:center|align=[^\]]+)\]`)
+	unit3dWrapperCloseTag  = regexp.MustCompile(`(?is)\[/(?:center|align)\]`)
+	unit3dHostAliasCache   sync.Map
+	unit3dSiteLinkCache    sync.Map
 )
 
 func CleanDescription(description string, site string) Report {
+	desc, report, ok := normalizeUnit3DDescriptionInput(description, site)
+	if !ok {
+		return report
+	}
+
+	report.Images = selectUnit3DFirstImageSet(desc)
+	report.Description = cleanUnit3DDescriptionBody(desc)
+	return report
+}
+
+func CleanDescriptionBody(description string, site string) Report {
+	desc, report, ok := normalizeUnit3DDescriptionInput(description, site)
+	if !ok {
+		return report
+	}
+
+	report.Description = cleanUnit3DDescriptionBody(desc)
+	return report
+}
+
+func CleanDescriptionImages(description string, site string) Report {
+	desc, report, ok := normalizeUnit3DDescriptionInput(description, site)
+	if !ok {
+		return report
+	}
+
+	report.Images = selectUnit3DFirstImageSet(desc)
+	return report
+}
+
+func normalizeUnit3DDescriptionInput(description string, site string) (string, Report, bool) {
 	desc := normalizeNewlines(description)
 	report := Report{}
 	if strings.TrimSpace(desc) == "" {
 		report.Notes = append(report.Notes, Note{Kind: "empty", Message: "blank input"})
-		return report
+		return "", report, false
 	}
 
 	desc = stripSiteLinks(desc, site)
 	desc = replaceSiteHost(desc, site)
-	report.Description = ""
-	report.Images = selectUnit3DFirstImageSet(desc)
-	return report
+	return desc, report, true
+}
+
+func cleanUnit3DDescriptionBody(desc string) string {
+	cleaned := unit3dURLImgPattern.ReplaceAllString(desc, "")
+	cleaned = unit3dImgPattern.ReplaceAllString(cleaned, "")
+	cleaned = unit3dTonemapOnlyBlock.ReplaceAllString(cleaned, "")
+	cleaned = removeUnit3DEmptySpoilers(cleaned)
+	cleaned = removeUnit3DImageOnlyWrappers(cleaned)
+	cleaned = removeUnit3DEmptyWrappers(cleaned)
+	cleaned = unit3dParagraphSplit.ReplaceAllString(cleaned, "\n\n")
+	return strings.TrimSpace(cleaned)
+}
+
+func removeUnit3DEmptySpoilers(value string) string {
+	previous := value
+	for {
+		next := unit3dEmptySpoilerTag.ReplaceAllString(previous, "")
+		if next == previous {
+			return next
+		}
+		previous = next
+	}
+}
+
+func removeUnit3DImageOnlyWrappers(value string) string {
+	return unit3dWrapperTag.ReplaceAllStringFunc(value, func(segment string) string {
+		withoutURLImages := unit3dURLImgPattern.ReplaceAllString(segment, "")
+		withoutImages := unit3dImgPattern.ReplaceAllString(withoutURLImages, "")
+		if strings.TrimSpace(stripUnit3DWrapperTags(withoutImages)) == "" {
+			return ""
+		}
+		return segment
+	})
+}
+
+func removeUnit3DEmptyWrappers(value string) string {
+	previous := value
+	for {
+		next := unit3dWrapperTag.ReplaceAllStringFunc(previous, func(segment string) string {
+			if strings.TrimSpace(stripUnit3DWrapperTags(segment)) == "" {
+				return ""
+			}
+			return segment
+		})
+		if next == previous {
+			return next
+		}
+		previous = next
+	}
+}
+
+func stripUnit3DWrapperTags(value string) string {
+	cleaned := unit3dWrapperOpenTag.ReplaceAllString(value, "")
+	cleaned = unit3dWrapperCloseTag.ReplaceAllString(cleaned, "")
+	return cleaned
 }
 
 func selectUnit3DFirstImageSet(desc string) []Image {
