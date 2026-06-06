@@ -210,6 +210,10 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 }
 
 func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.DescriptionAssets) string {
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
+
 	var parts []string
 	title := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.Release.Title), pathutil.Base(meta.SourcePath))
 	parts = append(parts, fmt.Sprintf("[color=green][size=6]%s[/size][/color]", title))

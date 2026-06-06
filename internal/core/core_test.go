@@ -6,7 +6,6 @@ package core
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -111,73 +110,45 @@ func (r *playlistSelectionRepo) GetPlaylistSelection(_ context.Context, sourcePa
 	return selection, nil
 }
 
-func TestBuildDescriptionBuilderGroupAddsBHDMediaInfoPreviewOnly(t *testing.T) {
+func TestBuildDescriptionBuilderGroupUsesFinalBuiltDescriptionAsRaw(t *testing.T) {
 	t.Parallel()
-
-	mediaInfoPath := filepath.Join(t.TempDir(), "MEDIAINFO.txt")
-	if err := os.WriteFile(mediaInfoPath, []byte(coreDescriptionBuilderMediaInfoSample()), 0o600); err != nil {
-		t.Fatalf("write mediainfo: %v", err)
-	}
 
 	group := buildDescriptionBuilderGroup(api.PreparationDescription{
 		GroupKey:        "bhd",
 		Trackers:        []string{"BHD"},
 		RawDescription:  "",
 		Description:     "Generated BHD description",
-		DescriptionHTML: descriptionHTMLForTest("Generated BHD description"),
-	}, nil, api.PreparedMetadata{MediaInfoTextPath: mediaInfoPath}, api.NopLogger{})
+		DescriptionHTML: "Generated BHD description",
+	}, nil, api.PreparedMetadata{}, api.NopLogger{})
 
-	if group.RawDescription != "Generated BHD description" {
-		t.Fatalf("expected raw description unchanged, got %q", group.RawDescription)
-	}
-	if !strings.Contains(group.RawDescriptionHTML, `class="mediainfo"`) {
-		t.Fatalf("expected BHD mediainfo preview html, got %q", group.RawDescriptionHTML)
-	}
 	if !strings.Contains(group.RawDescriptionHTML, "Generated BHD description") {
 		t.Fatalf("expected generated description to remain in preview html, got %q", group.RawDescriptionHTML)
 	}
+	if group.Description != "Generated BHD description" {
+		t.Fatalf("expected generated description field, got %q", group.Description)
+	}
+	if !strings.Contains(group.DescriptionHTML, "Generated BHD description") {
+		t.Fatalf("expected generated description html, got %q", group.DescriptionHTML)
+	}
 }
 
-func TestBuildDescriptionBuilderGroupDoesNotAugmentOverrides(t *testing.T) {
+func TestBuildDescriptionBuilderGroupKeepsFinalBuiltDescriptionAsRaw(t *testing.T) {
 	t.Parallel()
-
-	mediaInfoPath := filepath.Join(t.TempDir(), "MEDIAINFO.txt")
-	if err := os.WriteFile(mediaInfoPath, []byte(coreDescriptionBuilderMediaInfoSample()), 0o600); err != nil {
-		t.Fatalf("write mediainfo: %v", err)
-	}
 
 	group := buildDescriptionBuilderGroup(api.PreparationDescription{
 		GroupKey:    "hdb",
 		Trackers:    []string{"HDB"},
-		Description: "Generated HDB description",
+		Description: "Generated HDB final description",
 	}, map[string]api.DescriptionOverride{
 		"hdb": {Description: "custom override"},
-	}, api.PreparedMetadata{MediaInfoTextPath: mediaInfoPath}, api.NopLogger{})
+	}, api.PreparedMetadata{}, api.NopLogger{})
 
-	if group.RawDescription != "custom override" {
-		t.Fatalf("expected override raw description, got %q", group.RawDescription)
+	if group.RawDescription != "Generated HDB final description" {
+		t.Fatalf("expected final built description, got %q", group.RawDescription)
 	}
-	if strings.Contains(group.RawDescriptionHTML, `class="mediainfo"`) {
-		t.Fatalf("did not expect override preview to be augmented, got %q", group.RawDescriptionHTML)
+	if group.Description != group.RawDescription {
+		t.Fatalf("expected generated description to mirror raw, got %q", group.Description)
 	}
-}
-
-func descriptionHTMLForTest(value string) string {
-	return value
-}
-
-func coreDescriptionBuilderMediaInfoSample() string {
-	return `General
-Complete name : C:\Media\Movie.2024.1080p.mkv
-Format : Matroska
-File size : 10.4 GiB
-Duration : 1 h 42 min
-Overall bit rate : 14.6 Mb/s
-
-Video
-Format : AVC
-Width : 1 920 pixels
-Height : 1 080 pixels`
 }
 
 func TestGetHistoryOverviewIncludesGroupedDescriptionOverrides(t *testing.T) {

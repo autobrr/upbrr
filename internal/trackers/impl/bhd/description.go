@@ -19,6 +19,10 @@ import (
 
 func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets) string {
 	base := strings.TrimSpace(assets.Description)
+	if assets.Final {
+		return base
+	}
+
 	cleaned := bbcode.CleanBHDDescription(base, bbcode.BHDOptions{
 		Framestor: hasGroup(meta.Tag, "framestor"),
 		Flux:      hasGroup(meta.Tag, "flux"),

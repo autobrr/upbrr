@@ -633,6 +633,8 @@ export default function App() {
   const [builderSaved, setBuilderSaved] = useState("");
   const [builderSaving, setBuilderSaving] = useState(false);
   const [builderRefreshing, setBuilderRefreshing] = useState(false);
+  const [builderProgressMessage, setBuilderProgressMessage] = useState("");
+  const builderProgressTimers = useRef<number[]>([]);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
@@ -896,145 +898,6 @@ export default function App() {
       }
     };
   }, [metadataProgressActive, metadataProgressTarget]);
-
-  useEffect(() => {
-    type ComparisonElement = HTMLElement & { __uaComparisonInit?: boolean };
-    const comparisons = Array.from(
-      document.querySelectorAll<HTMLElement>(".tracker-description.rendered .comparison"),
-    );
-    const cleanups: Array<() => void> = [];
-
-    comparisons.forEach((comparison) => {
-      const element = comparison as ComparisonElement;
-      if (element.__uaComparisonInit) {
-        return;
-      }
-      element.__uaComparisonInit = true;
-
-      const details = comparison.querySelector<HTMLDetailsElement>(".comparison__details");
-      const summary = comparison.querySelector<HTMLElement>(".comparison__details > summary");
-      const rows = Array.from(comparison.querySelectorAll<HTMLElement>(".comparison__row"));
-      if (!details || rows.length === 0) {
-        return;
-      }
-
-      const maxColumns = rows.reduce((max, row) => Math.max(max, row.children.length), 0);
-      if (maxColumns <= 1) {
-        return;
-      }
-
-      let current = 0;
-
-      const applyColumn = (next: number) => {
-        const clamped = Math.min(Math.max(next, 1), maxColumns);
-        if (clamped === current) {
-          return;
-        }
-        current = clamped;
-        rows.forEach((row) => {
-          const columns = Array.from(row.children) as HTMLElement[];
-          columns.forEach((cell, index) => {
-            const isActive = index + 1 === current;
-            cell.classList.toggle("comparison__image-container--hidden", !isActive);
-            const image = cell.querySelector<HTMLElement>(".comparison__image");
-            if (image) {
-              image.classList.toggle("comparison__image--hidden", !isActive);
-            }
-          });
-        });
-      };
-
-      const handleKeyDown = (event: KeyboardEvent) => {
-        if (!details.open && !comparison.classList.contains("comparison--open")) {
-          return;
-        }
-        if (event.key === "ArrowLeft") {
-          event.preventDefault();
-          const next = current - 1 < 1 ? maxColumns : current - 1;
-          applyColumn(next);
-          return;
-        }
-        if (event.key === "ArrowRight") {
-          event.preventDefault();
-          const next = current + 1 > maxColumns ? 1 : current + 1;
-          applyColumn(next);
-          return;
-        }
-        if (event.key === "Escape") {
-          event.preventDefault();
-          details.open = false;
-          comparison.classList.remove("comparison--open");
-          return;
-        }
-        const digit = Number.parseInt(event.key, 10);
-        if (!Number.isNaN(digit) && digit >= 1 && digit <= maxColumns) {
-          event.preventDefault();
-          applyColumn(digit);
-        }
-      };
-
-      const handleMouseMove = (event: MouseEvent) => {
-        if (
-          (!details.open && !comparison.classList.contains("comparison--open")) ||
-          maxColumns <= 1
-        ) {
-          return;
-        }
-        const width = globalThis.innerWidth || 1;
-        const ratio = event.clientX / width;
-        const next = Math.min(maxColumns, Math.max(1, Math.ceil(ratio * maxColumns)));
-        applyColumn(next);
-      };
-
-      const handleToggle = () => {
-        if (details.open || comparison.classList.contains("comparison--open")) {
-          applyColumn(current);
-          globalThis.addEventListener("keydown", handleKeyDown);
-          globalThis.addEventListener("mousemove", handleMouseMove);
-        } else {
-          globalThis.removeEventListener("keydown", handleKeyDown);
-          globalThis.removeEventListener("mousemove", handleMouseMove);
-        }
-      };
-
-      const handleSummaryClick = (event: MouseEvent) => {
-        event.preventDefault();
-        details.open = !details.open;
-        comparison.classList.toggle("comparison--open", details.open);
-        handleToggle();
-      };
-
-      details.addEventListener("toggle", handleToggle);
-      if (summary) {
-        summary.addEventListener("click", handleSummaryClick);
-      }
-      applyColumn(1);
-      if (details.open) {
-        handleToggle();
-      }
-
-      cleanups.push(() => {
-        details.removeEventListener("toggle", handleToggle);
-        if (summary) {
-          summary.removeEventListener("click", handleSummaryClick);
-        }
-        globalThis.removeEventListener("keydown", handleKeyDown);
-        globalThis.removeEventListener("mousemove", handleMouseMove);
-        element.__uaComparisonInit = false;
-      });
-    });
-
-    return () => {
-      cleanups.forEach((cleanup) => cleanup());
-    };
-  }, [
-    renderedDescriptions,
-    preview.TrackerData,
-    prepPreview.Descriptions,
-    builderRenderedByGroup,
-    builderPreview.Groups,
-    activeTab,
-  ]);
 
   const getThemeIcon = () => {
     if (theme === "auto") return "🔄";
@@ -2874,8 +2737,14 @@ export default function App() {
 
   const runDescriptionBuilder = useCallback(
     async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
+      const clearBuilderProgressTimers = () => {
+        builderProgressTimers.current.forEach((timer) => window.clearTimeout(timer));
+        builderProgressTimers.current = [];
+      };
+      clearBuilderProgressTimers();
       setBuilderError("");
       setBuilderSaved("");
+      setBuilderProgressMessage("");
       const fetcher = globalThis.go?.guiapp?.App?.FetchDescriptionBuilder;
       if (!fetcher) {
         setBuilderError("Description builder is unavailable in this build.");
@@ -2886,6 +2755,30 @@ export default function App() {
         return;
       }
       setBuilderLoading(true);
+      setBuilderProgressMessage("Preparing metadata and tracker selection...");
+      builderProgressTimers.current = [
+        window.setTimeout(
+          () => setBuilderProgressMessage("Checking image-host requirements..."),
+          900,
+        ),
+        window.setTimeout(
+          () =>
+            setBuilderProgressMessage("Rehosting required comparison and description images..."),
+          2500,
+        ),
+        window.setTimeout(
+          () => setBuilderProgressMessage("Still rehosting images and building descriptions..."),
+          5000,
+        ),
+        window.setTimeout(
+          () => setBuilderProgressMessage("Large image upload still running..."),
+          15000,
+        ),
+        window.setTimeout(
+          () => setBuilderProgressMessage("Waiting for image hosts to finish..."),
+          30000,
+        ),
+      ];
       try {
         const result = await fetcher(
           path.trim(),
@@ -2915,13 +2808,18 @@ export default function App() {
           return next;
         });
         setBuilderDirtyByGroup({});
+        clearBuilderProgressTimers();
+        setBuilderProgressMessage("Refreshing uploaded image records...");
+        await refreshUploadedImages();
       } catch (err) {
         setBuilderError(String(err));
       } finally {
+        clearBuilderProgressTimers();
+        setBuilderProgressMessage("");
         setBuilderLoading(false);
       }
     },
-    [path, releasePageTrackerSelection, ignoredDupeTrackers],
+    [path, releasePageTrackerSelection, ignoredDupeTrackers, refreshUploadedImages],
   );
 
   const refreshDescriptionBuilder = useCallback(async () => {
@@ -2944,6 +2842,13 @@ export default function App() {
       setBuilderRefreshing(false);
     }
   }, [builderDirty, idOverrideState, releaseOverrideState, runDescriptionBuilder]);
+
+  useEffect(() => {
+    return () => {
+      builderProgressTimers.current.forEach((timer) => window.clearTimeout(timer));
+      builderProgressTimers.current = [];
+    };
+  }, []);
 
   const resetBuilderDescription = async (
     groupKey: string,
@@ -4537,6 +4442,7 @@ export default function App() {
               builderSaving={builderSaving}
               builderRenderLoading={builderRenderLoading}
               builderRefreshing={builderRefreshing}
+              builderProgressMessage={builderProgressMessage}
               builderError={builderError}
               builderSaved={builderSaved}
               refreshDescriptionBuilder={refreshDescriptionBuilder}

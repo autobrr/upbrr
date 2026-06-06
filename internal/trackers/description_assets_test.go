@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -391,6 +393,38 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 	}
 	if !assets.Override {
 		t.Fatalf("expected composite group description to be treated as override")
+	}
+	if !assets.Final {
+		t.Fatal("expected prepared composite group description to be final")
+	}
+}
+
+func TestApplyResolvedDescriptionScreenshotsDoesNotAppendFinalBuilderScreenshots(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	assets := DescriptionAssets{
+		Description: "[img]https://old.example/1.png[/img]",
+		Final:       true,
+		Slots: []api.ScreenshotSlot{{
+			SourcePath:          sourcePath,
+			SlotOrder:           0,
+			OriginalURL:         "https://old.example/1.png",
+			RenderInScreenshots: true,
+		}},
+	}
+
+	applyResolvedDescriptionScreenshots(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
+		ImgURL: "https://pixhost.example/1.png",
+		RawURL: "https://pixhost.example/raw-1.png",
+		Host:   "pixhost",
+	}})
+
+	if !strings.Contains(assets.Description, "https://pixhost.example/raw-1.png") {
+		t.Fatalf("expected final description URL rewritten, got %q", assets.Description)
+	}
+	if len(assets.Screenshots) != 0 {
+		t.Fatalf("expected final builder screenshots not to be appendable, got %#v", assets.Screenshots)
 	}
 }
 
@@ -996,6 +1030,155 @@ Some text
 	}
 }
 
+func TestResolveDescriptionAssetsLimitsDescriptionSlotsToSelectedImages(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: strings.TrimSpace(`
+[center][img]https://lostimg.cc/first.png[/img][/center]
+[center][img]https://lostimg.cc/second.png[/img][/center]
+[center][img]https://lostimg.cc/extra.png[/img][/center]
+`),
+		overrideGroupKey: "unit3d",
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Order: 1},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.screenshotSlots) != 3 {
+		t.Fatalf("expected 3 persisted screenshot slots, got %d", len(repo.screenshotSlots))
+	}
+	if repo.screenshotSlots[2].RenderInScreenshots {
+		t.Fatalf("expected unmatched description image to be non-renderable, got %#v", repo.screenshotSlots[2])
+	}
+	if len(assets.Screenshots) != 2 {
+		t.Fatalf("expected selected screenshots only, got %d", len(assets.Screenshots))
+	}
+	if assets.Screenshots[0].Path != "/tmp/first-local.png" || assets.Screenshots[1].Path != "/tmp/second-local.png" {
+		t.Fatalf("expected selected screenshot paths, got %#v", assets.Screenshots)
+	}
+}
+
+func TestRewriteDescriptionSlotURLsReplacesComparisonImages(t *testing.T) {
+	description := strings.TrimSpace(`
+[center]
+[comparison=A,B,C]
+https://lostimg.cc/source.png
+https://lostimg.cc/encode.png
+https://lostimg.cc/extra.png
+[/comparison]
+[/center]
+`)
+	slots := parseDescriptionImageSlots("/tmp/source", description)
+	if len(slots) != 3 {
+		t.Fatalf("expected three comparison slots, got %d", len(slots))
+	}
+	for idx := range slots {
+		slots[idx].ImagePath = fmt.Sprintf("/tmp/comparison-%d.png", idx)
+	}
+	rewritten := rewriteDescriptionSlotURLs(description, slots, []api.ScreenshotImage{
+		{Path: "/tmp/comparison-0.png", Host: "pixhost", RawURL: "https://pixhost.to/show/source.png"},
+		{Path: "/tmp/comparison-1.png", Host: "pixhost", RawURL: "https://pixhost.to/show/encode.png"},
+		{Path: "/tmp/comparison-2.png", Host: "pixhost", RawURL: "https://pixhost.to/show/extra.png"},
+	})
+
+	if strings.Contains(rewritten, "lostimg.cc") {
+		t.Fatalf("expected stale comparison URLs replaced, got %q", rewritten)
+	}
+	expectedOrder := []string{
+		"https://pixhost.to/show/source.png",
+		"https://pixhost.to/show/encode.png",
+		"https://pixhost.to/show/extra.png",
+	}
+	last := -1
+	for _, expected := range expectedOrder {
+		pos := strings.Index(rewritten, expected)
+		if pos <= last {
+			t.Fatalf("expected comparison replacement order %v, got %q", expectedOrder, rewritten)
+		}
+		last = pos
+	}
+}
+
+func TestApplyResolvedDescriptionScreenshotsKeepsComparisonOutOfNormalScreenshots(t *testing.T) {
+	description := strings.TrimSpace(`
+[comparison=Source,Encode]
+https://lostimg.cc/source.png
+https://lostimg.cc/encode.png
+[/comparison]
+`)
+	slots := parseDescriptionImageSlots("/tmp/source", description)
+	appendSourceImageSlots(&slots, "/tmp/source", []api.ScreenshotImage{{Path: "/tmp/encode_01.png"}})
+	assets := DescriptionAssets{Description: description, Slots: slots}
+	applyResolvedDescriptionScreenshots(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"}, nil, nil, &assets, []api.ScreenshotImage{
+		{Path: "/tmp/source-copy.png", RawURL: "https://pixhost/source.png"},
+		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-comparison.png"},
+		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-normal.png"},
+	})
+
+	if !strings.Contains(assets.Description, "https://pixhost/source.png") || !strings.Contains(assets.Description, "https://pixhost/encode-comparison.png") {
+		t.Fatalf("expected comparison URLs rewritten, got %q", assets.Description)
+	}
+	if len(assets.Screenshots) != 1 {
+		t.Fatalf("expected only normal description screenshot, got %#v", assets.Screenshots)
+	}
+	if assets.Screenshots[0].RawURL != "https://pixhost/encode-normal.png" {
+		t.Fatalf("expected normal duplicate image retained separately, got %#v", assets.Screenshots)
+	}
+}
+
+func TestDetachComparisonSourceImagesKeepsAppendedNormalScreenshots(t *testing.T) {
+	slots := []api.ScreenshotSlot{
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           0,
+			OriginalKey:         "https://lostimg/source.png",
+			OriginalURL:         "https://lostimg/source.png",
+			OriginalHost:        "lostimg",
+			ImagePath:           "/tmp/aither/source_01.png",
+			SectionKind:         screenshotSectionComparison,
+			RenderInScreenshots: true,
+			Variants: []api.ScreenshotSlotVariant{{
+				Host:       "pixhost",
+				UsageScope: globalImageUsageScope,
+				ImagePath:  "/tmp/aither/source_01.png",
+				RawURL:     "https://pixhost/stale-comparison.png",
+			}},
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           1,
+			OriginalKey:         "/tmp/aither/source_01.png",
+			ImagePath:           "/tmp/aither/source_01.png",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+			Variants: []api.ScreenshotSlotVariant{{
+				Host:       "pixhost",
+				UsageScope: globalImageUsageScope,
+				ImagePath:  "/tmp/aither/source_01.png",
+				RawURL:     "https://pixhost/normal.png",
+			}},
+		},
+	}
+
+	if !detachComparisonSourceImagesFromSlots(slots, []api.ScreenshotImage{{Path: "/tmp/aither/source_01.png"}}) {
+		t.Fatal("expected comparison slot to detach local tracker image")
+	}
+	if slots[0].ImagePath != "" {
+		t.Fatalf("expected comparison image path cleared, got %#v", slots[0])
+	}
+	if len(slots[0].Variants) != 0 {
+		t.Fatalf("expected stale comparison variants removed, got %#v", slots[0].Variants)
+	}
+	if slots[1].ImagePath != "/tmp/aither/source_01.png" || len(slots[1].Variants) != 1 {
+		t.Fatalf("expected normal tracker image preserved, got %#v", slots[1])
+	}
+}
+
 func TestApplyUploadedVariantsToSlotsUsesOrderedFallbackForURLOnlySlots(t *testing.T) {
 	slots := []api.ScreenshotSlot{
 		{
@@ -1067,6 +1250,41 @@ func TestApplyUploadedVariantsToSlotsPrefersDirectPathMatches(t *testing.T) {
 	}
 	if slots[0].ImagePath != "/tmp/first-local.png" || slots[1].ImagePath != "/tmp/second-local.png" {
 		t.Fatalf("expected existing image paths to be preserved, got %#v", slots)
+	}
+}
+
+func TestApplyUploadedVariantsToSlotsAppliesDuplicatePathToAllSlots(t *testing.T) {
+	slots := []api.ScreenshotSlot{
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           0,
+			ImagePath:           "/tmp/encode.png",
+			OriginalURL:         "https://lostimg.cc/encode.png",
+			SectionKind:         screenshotSectionComparison,
+			RenderInScreenshots: true,
+		},
+		{
+			SourcePath:          "/tmp/source",
+			SlotOrder:           1,
+			ImagePath:           "/tmp/encode.png",
+			OriginalKey:         "/tmp/encode.png",
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		},
+	}
+	uploads := []api.UploadedImageLink{
+		{SourcePath: "/tmp/source", ImagePath: "/tmp/encode.png", Host: "pixhost", UsageScope: "global", RawURL: "https://pixhost/encode.png", ImgURL: "https://pixhost/encode.png", WebURL: "https://pixhost/view"},
+	}
+
+	summary := ApplyUploadedVariantsToSlots(slots, uploads)
+
+	if summary.MatchedUploads != 1 || summary.FallbackMatched != 0 {
+		t.Fatalf("expected one direct upload match, got %#v", summary)
+	}
+	for idx, slot := range slots {
+		if len(slot.Variants) != 1 || slot.Variants[0].RawURL != "https://pixhost/encode.png" {
+			t.Fatalf("expected slot %d to receive duplicate-path variant, got %#v", idx, slot.Variants)
+		}
 	}
 }
 
@@ -1246,6 +1464,196 @@ func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
 	}
 }
 
+func TestEnsureDescriptionImageHostReuploadsWhenAllowedHostCoverageIsPartial(t *testing.T) {
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+		uploads: []api.UploadedImageLink{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	images := &stubImageService{}
+
+	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(images.calls) != 1 || images.calls[0] != "pixhost" {
+		t.Fatalf("expected partial coverage to trigger pixhost reupload, got calls %v", images.calls)
+	}
+	if resolution.feedback.SelectedHost != "pixhost" {
+		t.Fatalf("expected pixhost host, got %q", resolution.feedback.SelectedHost)
+	}
+	if !resolution.feedback.Reuploaded {
+		t.Fatal("expected screenshots to be reuploaded")
+	}
+	if len(resolution.screenshots) != 2 {
+		t.Fatalf("expected 2 screenshots, got %d", len(resolution.screenshots))
+	}
+}
+
+func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	meta := api.PreparedMetadata{
+		SourcePath: sourcePath,
+		TrackerData: []api.TrackerMetadata{{
+			Tracker: "AITHER",
+			Description: strings.TrimSpace(`
+[center][img]https://lostimg.cc/first.png[/img][/center]
+[center][img]https://lostimg.cc/second.png[/img][/center]
+[center][img]https://lostimg.cc/extra.png[/img][/center]
+`),
+			ImageURLs: []string{"https://source.example/screen1.png", "https://source.example/screen2.png"},
+		}},
+		Options: api.UploadOptions{KeepImages: true},
+	}
+	tmpRoot, err := dbsvc.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	releaseDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, sourcePath)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	for index, rawURL := range meta.TrackerData[0].ImageURLs {
+		pathValue := filepath.Join(releaseDir, "aither", buildTrackerArtifactImageName(rawURL, index))
+		if err := os.MkdirAll(filepath.Dir(pathValue), 0o700); err != nil {
+			t.Fatalf("tracker artifact dir: %v", err)
+		}
+		if err := os.WriteFile(pathValue, []byte("image"), 0o600); err != nil {
+			t.Fatalf("write local image: %v", err)
+		}
+	}
+	repo := &stubRepo{}
+	images := &stubImageService{}
+
+	resolution, err := ensureDescriptionImageHost(
+		context.Background(),
+		"PTP",
+		meta,
+		config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		config.TrackerConfig{},
+		repo,
+		images,
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(images.calls) != 1 || images.calls[0] != "pixhost" {
+		t.Fatalf("expected pixhost upload from local tracker images, got calls %v", images.calls)
+	}
+	if len(resolution.screenshots) != 2 {
+		t.Fatalf("expected two selected local tracker screenshots, got %d", len(resolution.screenshots))
+	}
+	if len(repo.screenshotSlots) != 3 {
+		t.Fatalf("expected persisted description slots, got %d", len(repo.screenshotSlots))
+	}
+	if repo.screenshotSlots[2].RenderInScreenshots {
+		t.Fatalf("expected unmatched old description image to be non-renderable, got %#v", repo.screenshotSlots[2])
+	}
+}
+
+func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionImage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("png"))
+	}))
+	t.Cleanup(server.Close)
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	comparisonURLs := []string{
+		server.URL + "/source.png",
+		server.URL + "/encode.png",
+		server.URL + "/other.png",
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: sourcePath,
+		TrackerData: []api.TrackerMetadata{{
+			Tracker: "AITHER",
+			Description: strings.TrimSpace(fmt.Sprintf(`
+[comparison=Source,Encode,Other]
+%s
+%s
+%s
+[/comparison]
+`, comparisonURLs[0], comparisonURLs[1], comparisonURLs[2])),
+			ImageURLs: []string{comparisonURLs[1]},
+		}},
+		Options: api.UploadOptions{KeepImages: true},
+	}
+	tmpRoot, err := dbsvc.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+	releaseDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, sourcePath)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	encodePath := filepath.Join(releaseDir, "aither", buildTrackerArtifactImageName(comparisonURLs[1], 0))
+	if err := os.MkdirAll(filepath.Dir(encodePath), 0o700); err != nil {
+		t.Fatalf("tracker artifact dir: %v", err)
+	}
+	if err := os.WriteFile(encodePath, []byte("image"), 0o600); err != nil {
+		t.Fatalf("write local image: %v", err)
+	}
+
+	repo := &stubRepo{}
+	images := &stubImageService{}
+	resolution, err := ensureDescriptionImageHost(
+		context.Background(),
+		"PTP",
+		meta,
+		config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		config.TrackerConfig{},
+		repo,
+		images,
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolution.screenshots) != 4 {
+		t.Fatalf("expected three comparison screenshots plus one normal screenshot, got %#v", resolution.screenshots)
+	}
+	for idx := 0; idx < 3; idx++ {
+		if strings.Contains(resolution.screenshots[idx].Path, "aither") {
+			t.Fatalf("expected comparison screenshot %d to use materialized comparison image, got %#v", idx, resolution.screenshots[idx])
+		}
+	}
+	if !strings.Contains(resolution.screenshots[3].Path, "aither") {
+		t.Fatalf("expected normal screenshot to use extracted tracker image, got %#v", resolution.screenshots[3])
+	}
+	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("resolve assets: %v", err)
+	}
+	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolution.screenshots)
+	if strings.Contains(assets.Description, server.URL) {
+		t.Fatalf("expected comparison source URLs replaced, got %q", assets.Description)
+	}
+	expectedComparison := []string{"https://pixhost/0.png", "https://pixhost/1.png", "https://pixhost/2.png"}
+	last := -1
+	for _, expected := range expectedComparison {
+		pos := strings.Index(assets.Description, expected)
+		if pos <= last {
+			t.Fatalf("expected rehosted comparison order %v, got %q", expectedComparison, assets.Description)
+		}
+		last = pos
+	}
+	if len(assets.Screenshots) != 1 {
+		t.Fatalf("expected matched extracted image as normal screenshot, got %#v", assets.Screenshots)
+	}
+	if assets.Screenshots[0].RawURL != "https://pixhost/3.png" {
+		t.Fatalf("expected separate normal screenshot upload, got %#v", assets.Screenshots)
+	}
+}
+
 func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
@@ -1422,7 +1830,7 @@ func TestEnsureDescriptionImageHostSkipsAutomaticUploadWhenDisabled(t *testing.T
 	}
 }
 
-func TestEnsureDescriptionImageHostErrorsOnMissingSelectedUpload(t *testing.T) {
+func TestEnsureDescriptionImageHostWarnsOnPartialAllowedHostCoverageWithoutUploader(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
@@ -1434,12 +1842,15 @@ func TestEnsureDescriptionImageHostErrorsOnMissingSelectedUpload(t *testing.T) {
 	}
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
 
-	_, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
-	if err == nil {
-		t.Fatal("expected error for missing selected screenshot upload")
+	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "/tmp/b.png") {
-		t.Fatalf("expected missing image path in error, got %v", err)
+	if resolution.feedback.Status != "warning" {
+		t.Fatalf("expected warning status, got %#v", resolution.feedback)
+	}
+	if len(resolution.screenshots) != 0 {
+		t.Fatalf("expected no screenshots without uploader, got %#v", resolution.screenshots)
 	}
 }
 

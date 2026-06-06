@@ -5,12 +5,16 @@ package trackers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path" //nolint:depguard // Extracts URL path components from image host URLs.
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/paths"
@@ -25,6 +29,11 @@ type descriptionImageHostResolution struct {
 	usageScope  string
 	blocking    bool
 }
+
+const (
+	descriptionSlotImageTimeout  = 30 * time.Second
+	descriptionSlotImageMaxBytes = 25 * 1024 * 1024
+)
 
 func ensureDescriptionImageHost(
 	ctx context.Context,
@@ -70,6 +79,13 @@ func ensureDescriptionImageHostWithData(
 		}
 		slots = nil
 	}
+	localTrackerImages := resolveLocalTrackerScreenshots(meta, appCfg, tracker, logger)
+	if detachComparisonSourceImagesFromSlots(slots, localTrackerImages) {
+		if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
+			return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+		}
+		syncSlotsToPreloaded(preloaded, slots)
+	}
 
 	if len(policy.allowed) == 0 {
 		selectionPolicy := imageHostPolicy{}
@@ -98,14 +114,35 @@ func ensureDescriptionImageHostWithData(
 		feedback.SelectedHost = host
 		feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(policy))
 		return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
-	} else if err != nil && hasAnyEligibleSlotVariant(slots, tracker, policy) {
+	} else if err != nil && allRenderableSlotsHaveEligibleVariant(slots, tracker, policy) {
 		return descriptionImageHostResolution{}, err
 	}
 
-	localTrackerImages := resolveLocalTrackerScreenshots(meta, appCfg, tracker, logger)
 	sourceImages := slotSourceImagesForRehost(slots)
 	if len(sourceImages) == 0 {
 		sourceImages = localTrackerImages
+		if len(sourceImages) > 0 && !slotsContainComparison(slots) && alignRenderableSlotsToSourceImages(slots, sourceImages) {
+			if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
+				return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+			}
+			syncSlotsToPreloaded(preloaded, slots)
+		}
+	}
+	if len(slots) > 0 {
+		changed := attachMatchingSourceImagesToSlots(slots, localTrackerImages)
+		if appendSourceImageSlots(&slots, meta.SourcePath, localTrackerImages) {
+			changed = true
+		}
+		if materialized, materializeChanged := materializeDescriptionSlotImages(ctx, meta, appCfg, tracker, slots, logger); len(materialized) > 0 || materializeChanged {
+			changed = changed || materializeChanged
+		}
+		if changed {
+			if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
+				return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+			}
+			syncSlotsToPreloaded(preloaded, slots)
+		}
+		sourceImages = slotSourceImagesForRehost(slots)
 	}
 	if len(sourceImages) == 0 {
 		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded)
@@ -468,6 +505,146 @@ func resolveLocalTrackerScreenshots(meta api.PreparedMetadata, appCfg config.Con
 		if len(results) > 0 {
 			return results
 		}
+	}
+	return nil
+}
+
+func slotsContainComparison(slots []api.ScreenshotSlot) bool {
+	for _, slot := range slots {
+		if slot.SectionKind == screenshotSectionComparison {
+			return true
+		}
+	}
+	return false
+}
+
+func materializeDescriptionSlotImages(
+	ctx context.Context,
+	meta api.PreparedMetadata,
+	appCfg config.Config,
+	tracker string,
+	slots []api.ScreenshotSlot,
+	logger api.Logger,
+) ([]api.ScreenshotImage, bool) {
+	if len(slots) == 0 || strings.TrimSpace(meta.SourcePath) == "" {
+		return nil, false
+	}
+	tmpRoot, err := dbsvc.Subdir(appCfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		if logger != nil {
+			logger.Debugf("trackers: description slot image tmp dir failed tracker=%s: %v", tracker, err)
+		}
+		return nil, false
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	if err != nil {
+		if logger != nil {
+			logger.Debugf("trackers: description slot image release dir failed tracker=%s: %v", tracker, err)
+		}
+		return nil, false
+	}
+	artifactDir := filepath.Join(tmpDir, "description-images")
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		if logger != nil {
+			logger.Warnf("trackers: description slot image dir failed tracker=%s: %v", tracker, err)
+		}
+		return nil, false
+	}
+
+	client := &http.Client{Timeout: descriptionSlotImageTimeout}
+	results := make([]api.ScreenshotImage, 0)
+	changed := false
+	for idx := range slots {
+		if !slots[idx].RenderInScreenshots {
+			continue
+		}
+		if pathValue := strings.TrimSpace(slots[idx].ImagePath); pathValue != "" {
+			results = append(results, api.ScreenshotImage{Index: preservedScreenshotImageIndex(slots[idx].SlotOrder), Path: pathValue})
+			continue
+		}
+		originalURL := strings.TrimSpace(slots[idx].OriginalURL)
+		if originalURL == "" {
+			continue
+		}
+		outPath := filepath.Join(artifactDir, buildDescriptionSlotImageName(originalURL, slots[idx].SlotOrder))
+		if info, err := os.Stat(outPath); err == nil && !info.IsDir() && info.Size() > 0 {
+			slots[idx].ImagePath = outPath
+			if strings.TrimSpace(slots[idx].OriginalKey) == "" {
+				slots[idx].OriginalKey = outPath
+			}
+			results = append(results, api.ScreenshotImage{Index: preservedScreenshotImageIndex(slots[idx].SlotOrder), Path: outPath})
+			changed = true
+			continue
+		}
+		if err := downloadDescriptionSlotImage(ctx, client, originalURL, outPath); err != nil {
+			if logger != nil {
+				logger.Warnf("trackers: description slot image download failed tracker=%s url=%s: %v", tracker, originalURL, err)
+			}
+			if slots[idx].SectionKind != screenshotSectionComparison {
+				slots[idx].RenderInScreenshots = false
+				changed = true
+			}
+			continue
+		}
+		slots[idx].ImagePath = outPath
+		if strings.TrimSpace(slots[idx].OriginalKey) == "" {
+			slots[idx].OriginalKey = outPath
+		}
+		results = append(results, api.ScreenshotImage{Index: preservedScreenshotImageIndex(slots[idx].SlotOrder), Path: outPath})
+		changed = true
+	}
+	return results, changed
+}
+
+func buildDescriptionSlotImageName(rawURL string, slotOrder int) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	base := ""
+	if err == nil {
+		base = path.Base(parsed.Path)
+	}
+	if base == "" || base == "." || base == "/" {
+		base = "image"
+	}
+	base = sanitizeTrackerArtifactName(base)
+	ext := path.Ext(base)
+	if ext == "" {
+		return fmt.Sprintf("slot_%03d_%s.png", slotOrder+1, base)
+	}
+	return fmt.Sprintf("slot_%03d_%s", slotOrder+1, base)
+}
+
+func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawURL string, outPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(rawURL), nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("execute request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	if contentType != "" && !strings.Contains(contentType, "image") {
+		return fmt.Errorf("invalid content-type %q", contentType)
+	}
+	if resp.ContentLength > descriptionSlotImageMaxBytes {
+		return fmt.Errorf("image exceeds max size (%d bytes)", resp.ContentLength)
+	}
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, descriptionSlotImageMaxBytes+1))
+	if err != nil {
+		return fmt.Errorf("read body: %w", err)
+	}
+	if len(payload) == 0 {
+		return errors.New("empty image")
+	}
+	if len(payload) > descriptionSlotImageMaxBytes {
+		return fmt.Errorf("image exceeds max size (%d bytes)", len(payload))
+	}
+	if err := os.WriteFile(outPath, payload, 0o600); err != nil {
+		return fmt.Errorf("write image: %w", err)
 	}
 	return nil
 }

@@ -526,6 +526,8 @@ export type ImageHostWarning = {
 export type DescriptionBuilderGroup = {
   GroupKey: string;
   Trackers: string[];
+  Description: string;
+  DescriptionHTML: string;
   RawDescription: string;
   RawDescriptionHTML: string;
   HasOverride: boolean;

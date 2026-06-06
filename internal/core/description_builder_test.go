@@ -462,7 +462,54 @@ func TestFetchDescriptionBuilderPreviewSeedsRawDescriptionFromBuiltGroupText(t *
 	}
 }
 
-func TestFetchDescriptionBuilderPreviewAppliesOverrideCaseInsensitively(t *testing.T) {
+func TestFetchDescriptionBuilderPreviewAppliesIgnoredDupesToCachedMeta(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{
+		preview: api.PreparationPreview{
+			SourcePath: "/tmp/source",
+			Descriptions: []api.PreparationDescription{
+				{GroupKey: "hdb", Trackers: []string{"HDB"}, Description: "hdb body"},
+				{GroupKey: "bhd", Trackers: []string{"BHD"}, Description: "bhd body"},
+			},
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeRefreshedDupeCache("/tmp/source", "", api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"HDB": {api.TrackerBlockReasonDupe},
+			"BHD": {api.TrackerBlockReasonDupe},
+		},
+	})
+
+	_, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+		Paths:          []string{"/tmp/source"},
+		Mode:           api.ModeGUI,
+		Trackers:       []string{"HDB", "BHD"},
+		IgnoreDupesFor: []string{"HDB"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if _, ok := trackerSvc.prepareMeta.BlockedTrackers["HDB"]; ok {
+		t.Fatalf("expected ignored HDB dupe block to be cleared, got %#v", trackerSvc.prepareMeta.BlockedTrackers)
+	}
+	if got := trackerSvc.prepareMeta.BlockedTrackers["BHD"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
+		t.Fatalf("expected BHD dupe block to remain, got %#v", trackerSvc.prepareMeta.BlockedTrackers)
+	}
+}
+
+func TestFetchDescriptionBuilderPreviewPreservesFinalBuildWithOverrideCaseInsensitively(t *testing.T) {
 	t.Parallel()
 
 	repo := &stubDescriptionRepo{
@@ -477,9 +524,10 @@ func TestFetchDescriptionBuilderPreviewAppliesOverrideCaseInsensitively(t *testi
 			SourcePath: "/tmp/source",
 			Descriptions: []api.PreparationDescription{
 				{
-					GroupKey:       "hdb|hdb|tracker:hdb",
-					Trackers:       []string{"HDB"},
-					RawDescription: "generated body",
+					GroupKey:    "hdb|hdb|tracker:hdb",
+					Trackers:    []string{"HDB"},
+					Description: "built override body with rehosted images",
+					HasOverride: true,
 				},
 			},
 		},
@@ -510,15 +558,15 @@ func TestFetchDescriptionBuilderPreviewAppliesOverrideCaseInsensitively(t *testi
 	if preview.Groups[0].GroupKey != "hdb|hdb|tracker:hdb" {
 		t.Fatalf("expected normalized group key, got %q", preview.Groups[0].GroupKey)
 	}
-	if preview.Groups[0].RawDescription != "override body" {
-		t.Fatalf("expected override body, got %q", preview.Groups[0].RawDescription)
+	if preview.Groups[0].RawDescription != "built override body with rehosted images" {
+		t.Fatalf("expected final built override body, got %q", preview.Groups[0].RawDescription)
 	}
 	if !preview.Groups[0].HasOverride {
 		t.Fatalf("expected override flag to be true")
 	}
 }
 
-func TestFetchDescriptionBuilderGroupPreviewFindsOverrideCaseInsensitively(t *testing.T) {
+func TestFetchDescriptionBuilderGroupPreviewPreservesFinalBuildWithOverrideCaseInsensitively(t *testing.T) {
 	t.Parallel()
 
 	repo := &stubDescriptionRepo{
@@ -533,9 +581,10 @@ func TestFetchDescriptionBuilderGroupPreviewFindsOverrideCaseInsensitively(t *te
 			SourcePath: "/tmp/source",
 			Descriptions: []api.PreparationDescription{
 				{
-					GroupKey:       "hdb|hdb|tracker:hdb",
-					Trackers:       []string{"HDB"},
-					RawDescription: "generated body",
+					GroupKey:    "hdb|hdb|tracker:hdb",
+					Trackers:    []string{"HDB"},
+					Description: "built override body with rehosted images",
+					HasOverride: true,
 				},
 			},
 		},
@@ -565,8 +614,8 @@ func TestFetchDescriptionBuilderGroupPreviewFindsOverrideCaseInsensitively(t *te
 	if group.GroupKey != "hdb|hdb|tracker:hdb" {
 		t.Fatalf("expected normalized group key, got %q", group.GroupKey)
 	}
-	if group.RawDescription != "override body" {
-		t.Fatalf("expected override body, got %q", group.RawDescription)
+	if group.RawDescription != "built override body with rehosted images" {
+		t.Fatalf("expected final built override body, got %q", group.RawDescription)
 	}
 	if !group.HasOverride {
 		t.Fatalf("expected override flag to be true")

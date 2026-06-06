@@ -407,11 +407,11 @@ func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
 	if strings.Contains(result, "[user]") || strings.Contains(result, "[/user]") {
 		t.Fatalf("expected user tags removed, got %q", result)
 	}
-	if !strings.Contains(result, "[spoiler=Source vs Encode][center]Source | Encode[/center]") {
-		t.Fatalf("expected comparison converted to collapse, got %q", result)
+	if !strings.Contains(result, "[comparison=Source, Encode]") {
+		t.Fatalf("expected comparison tag preserved, got %q", result)
 	}
-	if !strings.Contains(result, "[url=https://img.example/a.png][img=350]https://img.example/a.png[/img][/url]") {
-		t.Fatalf("expected comparison images rebuilt with unit3d formatting, got %q", result)
+	if !strings.Contains(result, "https://img.example/a.png https://img.example/b.png[/comparison]") {
+		t.Fatalf("expected comparison images preserved, got %q", result)
 	}
 }
 

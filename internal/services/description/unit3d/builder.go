@@ -26,8 +26,6 @@ const dvdVOBMediaInfoFooter = "[/code][/spoiler]"
 
 var collapseNewlines = regexp.MustCompile(`\n{3,}`)
 var bbcodeImageTag = regexp.MustCompile(`(?is)\[img(?:=[^\]]*)?\](.*?)\[/img\]`)
-var comparisonTag = regexp.MustCompile(`(?is)\[comparison=[\s\S]*?\[/comparison\]`)
-var comparisonImageURL = regexp.MustCompile(`(?i)(https?://.*\.(?:png|jpg))`)
 var unit3DBotSignatureTag = regexp.MustCompile(`(?is)(?:\[(?:center|right|align=right)\]\s*(?:\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\]\s*)?\[b\]?Uploaded\s+Using\s+\[url=https://github\.com/HDInnovations/UNIT3D\]UNIT3D\[/url\]\s+Auto\s+Uploader\[/b\]?(?:\s*\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\])?\s*\[/(?:center|right|align)\])|(?:\[center\]\s*\[url=https://github\.com/z-ink/uploadrr\]\[img=\d+\]https://i\.ibb\.co/2NVWb0c/uploadrr\.webp\[/img\]\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=https://github\.com/edge20200/Only-Uploader\]Powered\s+by\s+Only-Uploader\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=/torrents\?perPage=\d+&name=[^\]]*\]\s*\[/url\]\s*\[/center\])|(?:\[center\]\s*(?:\[b\]\s*(?:\[size=\d+\])?brush(?:\[/size\])?\s*\[/b\]\s*)?This is an internal release which was first released exclusively on Aither\.\s*Cheers to all the Aither(?:\s+users)?\s*\[/center\])|(?:\[(?:center|right|align=right)\]\s*(?:\[url=[^\]]+\]\s*)?(?:\[size=[^\]]+\]\s*)?Created by(?:\s+[^[]*?)?\s*Upload Assistant(?:\s*\[/size\])?(?:\s*\[/url\])?\s*\[/(?:center|right|align)\])`)
 var unit3DEmptyCenterTag = regexp.MustCompile(`(?is)\[center\]\s*\[/center\]`)
 var unit3DAlignBlockTag = regexp.MustCompile(`(?is)\[align=(center|left|right)\](.*?)\[/align\]`)
@@ -511,51 +509,7 @@ func finalizeUnit3DDescription(value string) string {
 		value = strings.ReplaceAll(value, tag, "")
 	}
 	value = collapseNewlines.ReplaceAllString(value, "\n\n")
-	value = convertUnit3DComparisonsToCollapse(value, 1000)
 	return normalizeDescription(value)
-}
-
-func convertUnit3DComparisonsToCollapse(value string, maxWidth int) string {
-	comparisons := comparisonTag.FindAllString(value, -1)
-	for _, comp := range comparisons {
-		parts := strings.SplitN(comp, "]", 2)
-		if len(parts) < 2 {
-			continue
-		}
-		sourcePart := strings.TrimSpace(strings.TrimPrefix(parts[0], "[comparison="))
-		sourcePart = strings.ReplaceAll(sourcePart, " ", "")
-		sources := strings.Split(sourcePart, ",")
-		if len(sources) == 0 {
-			continue
-		}
-		imagePart := strings.ReplaceAll(parts[1], "[/comparison]", "")
-		imagePart = strings.ReplaceAll(imagePart, ",", "\n")
-		imagePart = strings.ReplaceAll(imagePart, " ", "\n")
-		images := comparisonImageURL.FindAllString(imagePart, -1)
-		if len(images) == 0 {
-			continue
-		}
-		imgSize := min(maxWidth/len(sources), 350)
-		line := make([]string, 0, len(sources))
-		output := make([]string, 0, len(images)/len(sources)+1)
-		for _, img := range images {
-			img = strings.TrimSpace(img)
-			if img == "" {
-				continue
-			}
-			line = append(line, "[url="+img+"][img="+strconv.Itoa(imgSize)+"]"+img+"[/img][/url]")
-			if len(line) == len(sources) {
-				output = append(output, strings.Join(line, ""))
-				line = line[:0]
-			}
-		}
-		if len(line) > 0 {
-			output = append(output, strings.Join(line, ""))
-		}
-		replacement := "[spoiler=" + strings.Join(sources, " vs ") + "][center]" + strings.Join(sources, " | ") + "[/center]\n" + strings.Join(output, "\n") + "[/spoiler]"
-		value = strings.Replace(value, comp, replacement, 1)
-	}
-	return value
 }
 
 func SaveDescriptionDebug(meta api.PreparedMetadata, tracker string, dbPath string, description string, logger api.Logger) {

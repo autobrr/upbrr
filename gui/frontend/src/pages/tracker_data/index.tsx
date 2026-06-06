@@ -3,6 +3,7 @@
 
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import RenderedDescription from "../../components/RenderedDescription";
 import { Button } from "../../components/ui/button";
 import type { MetadataPreview, TrackerPreview } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
@@ -164,11 +165,7 @@ export default function TrackerDataPage(props: Props) {
                       ) : null}
                     </div>
                     {isRendered ? (
-                      <div
-                        className="tracker-description rendered"
-                        onClick={handleExternalLinkClick}
-                        dangerouslySetInnerHTML={{ __html: renderedHTML }}
-                      />
+                      <RenderedDescription html={renderedHTML} />
                     ) : (
                       <p className="tracker-description">
                         {item.Description || "No description provided."}
