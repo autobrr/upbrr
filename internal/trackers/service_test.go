@@ -368,6 +368,58 @@ func TestBuildUploadDryRunBlocksWhenImageHostFallbacksFail(t *testing.T) {
 	}
 }
 
+func TestBuildPreparationBlocksWhenImageHostFallbacksFail(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubPreparationDefinition{name: "PTP", group: "ptp", description: "saveable description"}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	images := &stubImageService{
+		errs: map[string]error{
+			"pixhost": errors.New("pixhost unavailable"),
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(config.Config{}, nil, repo, registry, images)
+
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"}, []string{"PTP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected 1 blocked placeholder, got %d", len(preview.Descriptions))
+	}
+	entry := preview.Descriptions[0]
+	if entry.GroupKey != "ptp|blocked|image-host" {
+		t.Fatalf("expected blocked image-host group key, got %q", entry.GroupKey)
+	}
+	if got := strings.Join(entry.Trackers, ","); got != "PTP" {
+		t.Fatalf("expected PTP tracker to remain visible, got %q", got)
+	}
+	if entry.Description != "" || entry.RawDescription != "" || entry.DescriptionHTML != "" || entry.RawDescriptionHTML != "" {
+		t.Fatalf("expected no saveable prepared description, got %#v", entry)
+	}
+	if entry.ImageHost.Status != "blocked" {
+		t.Fatalf("expected blocked image host status, got %#v", entry.ImageHost)
+	}
+	if !strings.Contains(entry.ImageHost.Message, "could not upload screenshots") {
+		t.Fatalf("expected blocking image host message, got %q", entry.ImageHost.Message)
+	}
+	if len(entry.ImageHost.Warnings) != 1 || entry.ImageHost.Warnings[0].Host != "pixhost" {
+		t.Fatalf("expected pixhost failure warning, got %#v", entry.ImageHost.Warnings)
+	}
+	if got := strings.Join(images.calls, ","); got != "pixhost" {
+		t.Fatalf("expected one preflight upload attempt, got %q", got)
+	}
+}
+
 func TestBuildUploadDryRunIncludesRuleFailedTrackersWhenOverrideEnabled(t *testing.T) {
 	t.Parallel()
 

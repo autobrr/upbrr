@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -450,10 +451,8 @@ func appendUniqueTracker(trackers []string, tracker string) []string {
 	if tracker == "" {
 		return trackers
 	}
-	for _, existing := range trackers {
-		if existing == tracker {
-			return trackers
-		}
+	if slices.Contains(trackers, tracker) {
+		return trackers
 	}
 	return append(trackers, tracker)
 }
@@ -463,10 +462,8 @@ func appendUniqueHost(hosts []string, host string) []string {
 	if host == "" {
 		return hosts
 	}
-	for _, existing := range hosts {
-		if existing == host {
-			return hosts
-		}
+	if slices.Contains(hosts, host) {
+		return hosts
 	}
 	return append(hosts, host)
 }
@@ -476,10 +473,5 @@ func hostInList(host string, hosts []string) bool {
 	if host == "" {
 		return false
 	}
-	for _, existing := range hosts {
-		if existing == host {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(hosts, host)
 }

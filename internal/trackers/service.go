@@ -375,7 +375,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 		}
 	}
 
-	for i := 0; i < workerCount; i++ {
+	for range workerCount {
 		wg.Add(1)
 		go worker()
 	}
@@ -610,7 +610,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 	grouped := make(map[string]*api.PreparationDescription)
 	order := make([]string, 0, len(resolved))
 	placeholderCount := 0
-	placeholder := func(groupKey, tracker string, note string) {
+	placeholder := func(groupKey, tracker string, note string, imageHost api.ImageHostFeedback) {
 		key := strings.TrimSpace(groupKey)
 		if key == "" {
 			key = tracker
@@ -624,9 +624,12 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 				RawDescriptionHTML: "",
 				Description:        "",
 				DescriptionHTML:    "",
+				ImageHost:          imageHost,
 			}
 			grouped[key] = entry
 			order = append(order, key)
+		} else {
+			entry.ImageHost = mergePreparationImageHostFeedback(entry.ImageHost, imageHost)
 		}
 		entry.Trackers = append(entry.Trackers, tracker)
 		placeholderCount++
@@ -646,12 +649,12 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 
 		definition, ok := s.registry.Lookup(tracker)
 		if !ok {
-			placeholder("", tracker, "not registered")
+			placeholder("", tracker, "not registered", api.ImageHostFeedback{})
 			continue
 		}
 		builder, ok := definition.(DescriptionBuilder)
 		if !ok {
-			placeholder("", tracker, "no description builder")
+			placeholder("", tracker, "no description builder", api.ImageHostFeedback{})
 			continue
 		}
 		trackerCfg := trackerConfigFor(s.cfg, tracker)
@@ -674,9 +677,14 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 			)
 			if err != nil {
 				s.logger.Warnf("trackers: preparation image host resolution failed for %s: %v", tracker, err)
-				placeholder("", tracker, fmt.Sprintf("image host error: %v", err))
+				placeholder("", tracker, fmt.Sprintf("image host error: %v", err), api.ImageHostFeedback{})
 				continue
 			}
+		}
+		if resolution.blocking {
+			feedback := blockedPreparationImageHostFeedback(resolution.feedback)
+			placeholder(preparationBlockedImageHostGroupKey(tracker), tracker, "image host blocked", feedback)
+			continue
 		}
 		assets, err := resolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger, preloaded)
 		if err != nil {
@@ -695,7 +703,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		})
 		if err != nil {
 			s.logger.Errorf("trackers: preparation failed for %s: %v", tracker, err)
-			placeholder("", tracker, "build error")
+			placeholder("", tracker, "build error", api.ImageHostFeedback{})
 			continue
 		}
 
@@ -778,6 +786,25 @@ func preparationImageHostPreferences(appCfg config.Config, meta api.PreparedMeta
 		}
 	}
 	return preferred
+}
+
+func blockedPreparationImageHostFeedback(feedback api.ImageHostFeedback) api.ImageHostFeedback {
+	feedback.Status = "blocked"
+	if strings.TrimSpace(feedback.Message) == "" {
+		feedback.Message = "image-host requirements could not be met"
+	}
+	if len(feedback.Warnings) == 0 {
+		feedback.Warnings = []api.ImageHostWarning{{Message: feedback.Message}}
+	}
+	return feedback
+}
+
+func preparationBlockedImageHostGroupKey(tracker string) string {
+	name := strings.ToLower(strings.TrimSpace(tracker))
+	if name == "" {
+		name = "tracker"
+	}
+	return name + "|blocked|image-host"
 }
 
 func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetadata, trackersList []string) ([]api.TrackerDryRunEntry, error) {
@@ -1194,6 +1221,8 @@ func mergePreparationImageHostFeedback(left api.ImageHostFeedback, right api.Ima
 
 func imageHostStatusRank(status string) int {
 	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "blocked":
+		return 4
 	case "warning":
 		return 3
 	case "reuploaded":

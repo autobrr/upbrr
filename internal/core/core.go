@@ -2259,7 +2259,7 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.DescriptionBuilderGroup{}, err
 		} else if ok {
-			meta = cached
+			meta = applyRequestToPreparedMetaWithDerivedFields(cached, req, c.cfg, c.logger, false)
 		}
 	}
 	if strings.TrimSpace(meta.SourcePath) == "" {

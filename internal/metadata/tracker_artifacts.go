@@ -32,6 +32,10 @@ const (
 	unit3dImageWorkers  = 6
 )
 
+var newUnit3DArtifactImageHTTPClient = func() *http.Client {
+	return trackerdata.Unit3DImageHTTPClient(&http.Client{Timeout: unit3dImageTimeout})
+}
+
 func (s *Service) persistUnit3DArtifacts(ctx context.Context, meta api.PreparedMetadata, tracker string, result trackerdata.Result, keepImages bool) []string {
 	if strings.TrimSpace(result.Description) == "" && (len(result.Validated) == 0 || !keepImages) {
 		if s.logger != nil {
@@ -93,7 +97,7 @@ func (s *Service) persistUnit3DArtifacts(ctx context.Context, meta api.PreparedM
 		return nil
 	}
 
-	client := &http.Client{Timeout: unit3dImageTimeout}
+	client := newUnit3DArtifactImageHTTPClient()
 	expectedHeight := parseResolutionHeight(meta.Release.Resolution)
 	isDVD := strings.EqualFold(meta.DiscType, "DVD")
 
@@ -119,16 +123,11 @@ func (s *Service) persistUnit3DArtifacts(ctx context.Context, meta api.PreparedM
 
 	successfulByIndex := make([]string, len(result.Validated))
 	jobs := make(chan imageTask)
-	workerCount := unit3dImageWorkers
-	if len(tasks) < workerCount {
-		workerCount = len(tasks)
-	}
+	workerCount := min(len(tasks), unit3dImageWorkers)
 
 	var wg sync.WaitGroup
-	for workerIdx := 0; workerIdx < workerCount; workerIdx++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range workerCount {
+		wg.Go(func() {
 			for task := range jobs {
 				if ctx.Err() != nil {
 					return
@@ -155,7 +154,7 @@ func (s *Service) persistUnit3DArtifacts(ctx context.Context, meta api.PreparedM
 				}
 				successfulByIndex[task.index] = task.url
 			}
-		}()
+		})
 	}
 
 	for _, task := range tasks {
@@ -211,6 +210,9 @@ func buildImageFilename(rawURL string, index int) string {
 }
 
 func downloadImage(ctx context.Context, client *http.Client, rawURL string, outPath string, expectedHeight int, isDVD bool) error {
+	if err := trackerdata.ValidateUnit3DImageURL(ctx, rawURL); err != nil {
+		return fmt.Errorf("metadata: validate image URL: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return fmt.Errorf("metadata: build image download request: %w", err)

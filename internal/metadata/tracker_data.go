@@ -197,10 +197,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 	jobs := make(chan string, len(eligible))
 	results := make(chan trackerLookupOutcome, len(eligible))
 
-	workerCount := trackerLookupWorkers
-	if workerCount > len(eligible) {
-		workerCount = len(eligible)
-	}
+	workerCount := min(trackerLookupWorkers, len(eligible))
 	if workerCount <= 0 {
 		workerCount = 1
 	}
@@ -208,9 +205,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 	lookupMeta := meta
 	var workers sync.WaitGroup
 	for idx := 0; idx < workerCount; idx++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			for tracker := range jobs {
 				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, lookupMeta, tracker, now, unit3dClient)
 				results <- trackerLookupOutcome{
@@ -221,7 +216,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 					err:         err,
 				}
 			}
-		}()
+		})
 	}
 
 	for _, tracker := range eligible {
@@ -231,7 +226,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 
 	winnerResolved := false
 	assetSourceTracker := ""
-	for idx := 0; idx < len(eligible); idx++ {
+	for range eligible {
 		outcome := <-results
 		if outcome.err != nil {
 			if s.logger != nil {

@@ -509,6 +509,70 @@ func TestFetchDescriptionBuilderPreviewAppliesIgnoredDupesToCachedMeta(t *testin
 	}
 }
 
+func TestFetchDescriptionBuilderGroupPreviewAppliesIgnoredFailuresToRefreshedCache(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{
+		preview: api.PreparationPreview{
+			SourcePath: "/tmp/source",
+			Descriptions: []api.PreparationDescription{
+				{GroupKey: "hdb", Trackers: []string{"HDB"}, Description: "hdb body"},
+				{GroupKey: "bhd", Trackers: []string{"BHD"}, Description: "bhd body"},
+			},
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeRefreshedDupeCache("/tmp/source", "", api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Mode:       api.ModeGUI,
+		Trackers:   []string{"HDB", "BHD"},
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"HDB": {api.TrackerBlockReasonDupe},
+			"BHD": {api.TrackerBlockReasonDupe},
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"HDB": {{Rule: "rule_hdb", Reason: "hdb"}},
+			"BHD": {{Rule: "rule_bhd", Reason: "bhd"}},
+		},
+	})
+
+	group, err := core.FetchDescriptionBuilderGroupPreview(context.Background(), api.Request{
+		Paths:                        []string{"/tmp/source"},
+		Mode:                         api.ModeGUI,
+		Trackers:                     []string{"HDB", "BHD"},
+		DescriptionOverrideGroup:     "HDB",
+		IgnoreDupesFor:               []string{"HDB"},
+		IgnoreTrackerRuleFailuresFor: []string{"HDB"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if group.GroupKey != "hdb" {
+		t.Fatalf("expected selected HDB group, got %q", group.GroupKey)
+	}
+	if _, ok := trackerSvc.prepareMeta.BlockedTrackers["HDB"]; ok {
+		t.Fatalf("expected ignored HDB dupe block to be cleared, got %#v", trackerSvc.prepareMeta.BlockedTrackers)
+	}
+	if got := trackerSvc.prepareMeta.BlockedTrackers["BHD"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
+		t.Fatalf("expected BHD dupe block to remain, got %#v", trackerSvc.prepareMeta.BlockedTrackers)
+	}
+	if _, ok := trackerSvc.prepareMeta.TrackerRuleFailures["HDB"]; ok {
+		t.Fatalf("expected ignored HDB rule failure to be cleared, got %#v", trackerSvc.prepareMeta.TrackerRuleFailures)
+	}
+	if _, ok := trackerSvc.prepareMeta.TrackerRuleFailures["BHD"]; !ok {
+		t.Fatalf("expected BHD rule failure to remain, got %#v", trackerSvc.prepareMeta.TrackerRuleFailures)
+	}
+}
+
 func TestFetchDescriptionBuilderPreviewPreservesFinalBuildWithOverrideCaseInsensitively(t *testing.T) {
 	t.Parallel()
 

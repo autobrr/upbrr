@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -254,23 +255,9 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 
 func TestEnrichTrackerDataPreferredTrackerIsSourceOfTruthWithoutClientTrackerIDs(t *testing.T) {
 	repo := &fakeRepo{}
-	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte{
-			0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-			0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-			0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-			0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-			0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
-			0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
-			0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d,
-			0xb0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
-			0x44, 0xae, 0x42, 0x60, 0x82,
-		})
-	}))
-	defer imageServer.Close()
-	antImageURL := imageServer.URL + "/ant.png"
-	hdbImageURL := imageServer.URL + "/hdb.png"
+	installTestArtifactImageHTTPClient(t, trackerDataPNG1x1())
+	antImageURL := "http://93.184.216.34/ant.png"
+	hdbImageURL := "http://93.184.216.34/hdb.png"
 	lookup := &stubTrackerLookup{
 		results: map[string]trackerdata.Result{
 			"ANT": {
@@ -1207,24 +1194,44 @@ func hasTracker(values []string, target string) bool {
 	return false
 }
 
+func installTestArtifactImageHTTPClient(t *testing.T, payload []byte) {
+	t.Helper()
+
+	previousHTTPClient := newUnit3DArtifactImageHTTPClient
+	newUnit3DArtifactImageHTTPClient = func() *http.Client {
+		return &http.Client{Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        http.Header{"Content-Type": []string{"image/png"}},
+				Body:          io.NopCloser(bytes.NewReader(payload)),
+				ContentLength: int64(len(payload)),
+				Request:       req,
+			}, nil
+		})}
+	}
+	t.Cleanup(func() {
+		newUnit3DArtifactImageHTTPClient = previousHTTPClient
+	})
+}
+
+func trackerDataPNG1x1() []byte {
+	return []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+		0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
+		0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+		0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d,
+		0xb0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+		0x44, 0xae, 0x42, 0x60, 0x82,
+	}
+}
+
 func trackerDuplicateImageFixture(t *testing.T) (string, string, config.Config, string, func()) {
 	t.Helper()
 
-	png1x1 := []byte{
-		137, 80, 78, 71, 13, 10, 26, 10,
-		0, 0, 0, 13, 73, 72, 68, 82,
-		0, 0, 0, 1, 0, 0, 0, 1,
-		8, 6, 0, 0, 0, 31, 21, 196,
-		137, 0, 0, 0, 13, 73, 68, 65,
-		84, 120, 156, 99, 248, 15, 4, 0,
-		9, 251, 3, 253, 160, 158, 134, 129,
-		0, 0, 0, 0, 73, 69, 78, 68,
-		174, 66, 96, 130,
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write(png1x1)
-	}))
+	installTestArtifactImageHTTPClient(t, trackerDataPNG1x1())
 
 	tempDir := t.TempDir()
 	longToken := strings.Repeat("a", minTrackerTokenLen)
@@ -1238,7 +1245,7 @@ func trackerDuplicateImageFixture(t *testing.T) (string, string, config.Config, 
 	}
 	sourcePath := filepath.Join(tempDir, "Movie.2026.1080p.mkv")
 
-	return server.URL + "/duplicate.png", server.URL + "/later.png", cfg, sourcePath, server.Close
+	return "http://93.184.216.34/duplicate.png", "http://93.184.216.34/later.png", cfg, sourcePath, func() {}
 }
 
 func assertTrackerArtifactExists(t *testing.T, cfg config.Config, sourcePath string, tracker string, rawURL string, index int) {

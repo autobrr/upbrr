@@ -7,8 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -422,6 +420,52 @@ func TestApplyResolvedDescriptionScreenshotsDoesNotAppendFinalBuilderScreenshots
 
 	if !strings.Contains(assets.Description, "https://pixhost.example/raw-1.png") {
 		t.Fatalf("expected final description URL rewritten, got %q", assets.Description)
+	}
+	if len(assets.Screenshots) != 0 {
+		t.Fatalf("expected final builder screenshots not to be appendable, got %#v", assets.Screenshots)
+	}
+}
+
+func TestApplyResolvedDescriptionScreenshotsPreservesFinalNonRenderableImages(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	posterURL := "https://image.tmdb.org/poster.jpg"
+	assets := DescriptionAssets{
+		Description: strings.Join([]string{
+			"[center][img]" + posterURL + "[/img][/center]",
+			"[center][img]https://old.example/1.png[/img][/center]",
+		}, "\n"),
+		Final: true,
+		Slots: []api.ScreenshotSlot{
+			{
+				SourcePath:          sourcePath,
+				SlotOrder:           0,
+				OriginalURL:         posterURL,
+				RenderInScreenshots: false,
+				SectionKind:         screenshotSectionInline,
+			},
+			{
+				SourcePath:          sourcePath,
+				SlotOrder:           1,
+				OriginalURL:         "https://old.example/1.png",
+				RenderInScreenshots: true,
+				SectionKind:         screenshotSectionWrapped,
+			},
+		},
+	}
+
+	applyResolvedDescriptionScreenshots(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
+		ImgURL: "https://pixhost.example/1.png",
+		RawURL: "https://pixhost.example/raw-1.png",
+		Host:   "pixhost",
+	}})
+
+	if !strings.Contains(assets.Description, posterURL) {
+		t.Fatalf("expected final non-renderable image URL preserved, got %q", assets.Description)
+	}
+	if !strings.Contains(assets.Description, "https://pixhost.example/raw-1.png") {
+		t.Fatalf("expected renderable final screenshot URL rewritten, got %q", assets.Description)
 	}
 	if len(assets.Screenshots) != 0 {
 		t.Fatalf("expected final builder screenshots not to be appendable, got %#v", assets.Screenshots)
@@ -1084,7 +1128,7 @@ https://lostimg.cc/extra.png
 		{Path: "/tmp/comparison-0.png", Host: "pixhost", RawURL: "https://pixhost.to/show/source.png"},
 		{Path: "/tmp/comparison-1.png", Host: "pixhost", RawURL: "https://pixhost.to/show/encode.png"},
 		{Path: "/tmp/comparison-2.png", Host: "pixhost", RawURL: "https://pixhost.to/show/extra.png"},
-	})
+	}, false)
 
 	if strings.Contains(rewritten, "lostimg.cc") {
 		t.Fatalf("expected stale comparison URLs replaced, got %q", rewritten)
@@ -1559,18 +1603,13 @@ func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t 
 }
 
 func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionImage(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte("png"))
-	}))
-	t.Cleanup(server.Close)
-
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	imageBaseURL := "http://8.8.8.8"
 	comparisonURLs := []string{
-		server.URL + "/source.png",
-		server.URL + "/encode.png",
-		server.URL + "/other.png",
+		imageBaseURL + "/source.png",
+		imageBaseURL + "/encode.png",
+		imageBaseURL + "/other.png",
 	}
 	meta := api.PreparedMetadata{
 		SourcePath: sourcePath,
@@ -1602,6 +1641,16 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 	if err := os.WriteFile(encodePath, []byte("image"), 0o600); err != nil {
 		t.Fatalf("write local image: %v", err)
 	}
+	descriptionImageDir := filepath.Join(releaseDir, "description-images")
+	if err := os.MkdirAll(descriptionImageDir, 0o700); err != nil {
+		t.Fatalf("description image dir: %v", err)
+	}
+	for idx, rawURL := range comparisonURLs {
+		imagePath := filepath.Join(descriptionImageDir, buildDescriptionSlotImageName(rawURL, idx))
+		if err := os.WriteFile(imagePath, []byte("image"), 0o600); err != nil {
+			t.Fatalf("write materialized description image: %v", err)
+		}
+	}
 
 	repo := &stubRepo{}
 	images := &stubImageService{}
@@ -1621,7 +1670,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 	if len(resolution.screenshots) != 4 {
 		t.Fatalf("expected three comparison screenshots plus one normal screenshot, got %#v", resolution.screenshots)
 	}
-	for idx := 0; idx < 3; idx++ {
+	for idx := range 3 {
 		if strings.Contains(resolution.screenshots[idx].Path, "aither") {
 			t.Fatalf("expected comparison screenshot %d to use materialized comparison image, got %#v", idx, resolution.screenshots[idx])
 		}
@@ -1634,7 +1683,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 		t.Fatalf("resolve assets: %v", err)
 	}
 	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolution.screenshots)
-	if strings.Contains(assets.Description, server.URL) {
+	if strings.Contains(assets.Description, imageBaseURL) {
 		t.Fatalf("expected comparison source URLs replaced, got %q", assets.Description)
 	}
 	expectedComparison := []string{"https://pixhost/0.png", "https://pixhost/1.png", "https://pixhost/2.png"}

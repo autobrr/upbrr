@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path" //nolint:depguard // Extracts URL path components from image host URLs.
@@ -34,6 +36,20 @@ const (
 	descriptionSlotImageTimeout  = 30 * time.Second
 	descriptionSlotImageMaxBytes = 25 * 1024 * 1024
 )
+
+var descriptionSlotImageBlockedIPRanges = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("2001:db8::/32"),
+}
+
+var descriptionSlotImageLookupIPAddrs = net.DefaultResolver.LookupIPAddr
 
 func ensureDescriptionImageHost(
 	ctx context.Context,
@@ -68,23 +84,27 @@ func ensureDescriptionImageHostWithData(
 		Status:       "reused",
 		AllowedHosts: append([]string{}, policy.allowed...),
 	}
+	skipUpload := imageHostUploadSkipped(meta)
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
-	slots, err := screenshotSlotsFromSource(ctx, tracker, meta, repo, logger, preloaded)
+	slots, err := screenshotSlotsForImageHostResolution(ctx, tracker, meta, repo, logger, preloaded, skipUpload)
 	if err != nil {
 		if logger != nil {
 			logger.Debugf("trackers: image host resolution screenshot slots failed tracker=%s: %v", tracker, err)
 		}
 		slots = nil
 	}
-	localTrackerImages := resolveLocalTrackerScreenshots(meta, appCfg, tracker, logger)
-	if detachComparisonSourceImagesFromSlots(slots, localTrackerImages) {
-		if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
-			return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+	var localTrackerImages []api.ScreenshotImage
+	if !skipUpload {
+		localTrackerImages = resolveLocalTrackerScreenshots(meta, appCfg, tracker, logger)
+		if detachComparisonSourceImagesFromSlots(slots, localTrackerImages) {
+			if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
+				return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
+			}
+			syncSlotsToPreloaded(preloaded, slots)
 		}
-		syncSlotsToPreloaded(preloaded, slots)
 	}
 
 	if len(policy.allowed) == 0 {
@@ -116,6 +136,12 @@ func ensureDescriptionImageHostWithData(
 		return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
 	} else if err != nil && allRenderableSlotsHaveEligibleVariant(slots, tracker, policy) {
 		return descriptionImageHostResolution{}, err
+	}
+
+	if skipUpload {
+		feedback.Status = "warning"
+		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but automatic image-host uploads are disabled.", tracker, strings.Join(policy.allowed, ", "))
+		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
 	sourceImages := slotSourceImagesForRehost(slots)
@@ -172,11 +198,6 @@ func ensureDescriptionImageHostWithData(
 	if images == nil {
 		feedback.Status = "warning"
 		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but image hosting is unavailable.", tracker, strings.Join(policy.allowed, ", "))
-		return descriptionImageHostResolution{feedback: feedback}, nil
-	}
-	if meta.ImageHostOverrides.SkipUpload != nil && *meta.ImageHostOverrides.SkipUpload {
-		feedback.Status = "warning"
-		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but automatic image-host uploads are disabled.", tracker, strings.Join(policy.allowed, ", "))
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
@@ -258,6 +279,72 @@ func firstPreferredDescriptionImageHost(hosts []string) string {
 		}
 	}
 	return ""
+}
+
+func imageHostUploadSkipped(meta api.PreparedMetadata) bool {
+	return meta.ImageHostOverrides.SkipUpload != nil && *meta.ImageHostOverrides.SkipUpload
+}
+
+func screenshotSlotsForImageHostResolution(
+	ctx context.Context,
+	tracker string,
+	meta api.PreparedMetadata,
+	repo api.MetadataRepository,
+	logger api.Logger,
+	preloaded *preloadedDescriptionAssetData,
+	skipUpload bool,
+) ([]api.ScreenshotSlot, error) {
+	if !skipUpload {
+		return screenshotSlotsFromSource(ctx, tracker, meta, repo, logger, preloaded)
+	}
+	return screenshotSlotsFromSourceWithoutPersist(ctx, tracker, meta, repo, logger, preloaded)
+}
+
+func screenshotSlotsFromSourceWithoutPersist(
+	ctx context.Context,
+	tracker string,
+	meta api.PreparedMetadata,
+	repo api.MetadataRepository,
+	logger api.Logger,
+	preloaded *preloadedDescriptionAssetData,
+) ([]api.ScreenshotSlot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
+	}
+	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
+		return nil, nil
+	}
+	if preloaded != nil && preloaded.screenshotSlotsLoaded {
+		return cloneScreenshotSlots(preloaded.screenshotSlots), nil
+	}
+
+	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.SourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: %w", err)
+	}
+	if len(slots) > 0 {
+		if !meta.Options.KeepImages {
+			slots, err = filterStoredSlotsForSelectedImages(ctx, meta, repo, slots, preloaded)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			slots, err = appendStoredSelectionSlots(ctx, meta, repo, slots, preloaded)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if len(slots) == 0 {
+			return nil, nil
+		}
+		return cloneScreenshotSlots(slots), nil
+	}
+
+	slots, err = synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded)
+	if err != nil {
+		return nil, err
+	}
+	return cloneScreenshotSlots(slots), nil
 }
 
 func reusableUploadedScreenshotsForHost(
@@ -551,7 +638,7 @@ func materializeDescriptionSlotImages(
 		return nil, false
 	}
 
-	client := &http.Client{Timeout: descriptionSlotImageTimeout}
+	client := newDescriptionSlotImageHTTPClient()
 	results := make([]api.ScreenshotImage, 0)
 	changed := false
 	for idx := range slots {
@@ -579,10 +666,6 @@ func materializeDescriptionSlotImages(
 		if err := downloadDescriptionSlotImage(ctx, client, originalURL, outPath); err != nil {
 			if logger != nil {
 				logger.Warnf("trackers: description slot image download failed tracker=%s url=%s: %v", tracker, originalURL, err)
-			}
-			if slots[idx].SectionKind != screenshotSectionComparison {
-				slots[idx].RenderInScreenshots = false
-				changed = true
 			}
 			continue
 		}
@@ -614,6 +697,10 @@ func buildDescriptionSlotImageName(rawURL string, slotOrder int) string {
 }
 
 func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawURL string, outPath string) error {
+	if err := validateDescriptionSlotImageURL(ctx, strings.TrimSpace(rawURL)); err != nil {
+		return err
+	}
+	client = descriptionSlotImageHTTPClient(client)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(rawURL), nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -627,7 +714,7 @@ func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawU
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
-	if contentType != "" && !strings.Contains(contentType, "image") {
+	if contentType != "" && !isDescriptionSlotImageContentType(contentType) {
 		return fmt.Errorf("invalid content-type %q", contentType)
 	}
 	if resp.ContentLength > descriptionSlotImageMaxBytes {
@@ -643,10 +730,142 @@ func downloadDescriptionSlotImage(ctx context.Context, client *http.Client, rawU
 	if len(payload) > descriptionSlotImageMaxBytes {
 		return fmt.Errorf("image exceeds max size (%d bytes)", len(payload))
 	}
+	detectedContentType := strings.ToLower(http.DetectContentType(payload))
+	if !isDescriptionSlotImageContentType(detectedContentType) {
+		return fmt.Errorf("invalid image payload content-type %q", detectedContentType)
+	}
 	if err := os.WriteFile(outPath, payload, 0o600); err != nil {
 		return fmt.Errorf("write image: %w", err)
 	}
 	return nil
+}
+
+var newDescriptionSlotImageHTTPClient = func() *http.Client {
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return descriptionSlotImageHTTPClient(&http.Client{Timeout: descriptionSlotImageTimeout})
+	}
+	transport := defaultTransport.Clone()
+	dialer := &net.Dialer{Timeout: descriptionSlotImageTimeout}
+	transport.DialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("parse address: %w", err)
+		}
+		addrs, err := resolveDescriptionSlotImagePublicAddrs(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		var lastErr error
+		for _, addr := range addrs {
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
+	}
+	return descriptionSlotImageHTTPClient(&http.Client{
+		Timeout:   descriptionSlotImageTimeout,
+		Transport: transport,
+	})
+}
+
+func descriptionSlotImageHTTPClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{Timeout: descriptionSlotImageTimeout}
+	}
+	cloned := *client
+	if cloned.Timeout == 0 {
+		cloned.Timeout = descriptionSlotImageTimeout
+	}
+	checkRedirect := cloned.CheckRedirect
+	cloned.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := validateDescriptionSlotImageURL(req.Context(), req.URL.String()); err != nil {
+			return err
+		}
+		if checkRedirect != nil {
+			return checkRedirect(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &cloned
+}
+
+func validateDescriptionSlotImageURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return errors.New("missing host")
+	}
+	_, err = resolveDescriptionSlotImagePublicAddrs(ctx, host)
+	return err
+}
+
+func resolveDescriptionSlotImagePublicAddrs(ctx context.Context, host string) ([]netip.Addr, error) {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return nil, errors.New("missing host")
+	}
+	lowerHost := strings.ToLower(host)
+	if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") || strings.Contains(lowerHost, "%") {
+		return nil, fmt.Errorf("blocked private image host %q", host)
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap()
+		if !isDescriptionSlotPublicIP(addr) {
+			return nil, fmt.Errorf("blocked private image address %q", addr)
+		}
+		return []netip.Addr{addr}, nil
+	}
+	resolved, err := descriptionSlotImageLookupIPAddrs(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	addrs := make([]netip.Addr, 0, len(resolved))
+	for _, item := range resolved {
+		addr, ok := netip.AddrFromSlice(item.IP)
+		if !ok {
+			continue
+		}
+		addr = addr.Unmap()
+		if !isDescriptionSlotPublicIP(addr) {
+			return nil, fmt.Errorf("blocked private image address %q", addr)
+		}
+		addrs = append(addrs, addr)
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("host %q resolved no public addresses", host)
+	}
+	return addrs, nil
+}
+
+func isDescriptionSlotPublicIP(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+		return false
+	}
+	for _, blocked := range descriptionSlotImageBlockedIPRanges {
+		if blocked.Contains(addr) {
+			return false
+		}
+	}
+	return true
+}
+
+func isDescriptionSlotImageContentType(contentType string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "image/")
 }
 
 func prioritizedTrackerRecords(meta api.PreparedMetadata, tracker string) []api.TrackerMetadata {

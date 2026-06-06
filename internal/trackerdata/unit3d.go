@@ -13,7 +13,9 @@ import (
 	_ "image/jpeg" // register JPEG decoder for tracker images
 	_ "image/png"  // register PNG decoder for tracker images
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path" //nolint:depguard // Builds Unit3D API URL paths, not local filesystem paths.
 	"slices"
@@ -35,6 +37,20 @@ const (
 	maxImageBytes    = 20 * 1024 * 1024
 	imageConcurrency = 5
 )
+
+var unit3DImageBlockedIPRanges = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+}
 
 var unit3DCategoryNamesByID = map[string][]string{
 	"1": {"MOVIE"},
@@ -551,9 +567,7 @@ func validateImages(ctx context.Context, client *http.Client, images []bbcode.Im
 	if len(images) == 0 {
 		return nil
 	}
-	if client == nil {
-		client = &http.Client{Timeout: imageTimeout}
-	}
+	client = Unit3DImageHTTPClient(client)
 
 	results := make([]bbcode.Image, len(images))
 	valid := make([]bool, len(images))
@@ -586,6 +600,9 @@ func checkImage(ctx context.Context, client *http.Client, rawURL string) bool {
 	if trimmed == "" {
 		return false
 	}
+	if err := ValidateUnit3DImageURL(ctx, trimmed); err != nil {
+		return false
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, trimmed, nil)
 	if err != nil {
 		return false
@@ -608,6 +625,150 @@ func checkImage(ctx context.Context, client *http.Client, rawURL string) bool {
 	limited := io.LimitReader(resp.Body, maxImageBytes)
 	if _, _, err := image.DecodeConfig(limited); err != nil {
 		return false
+	}
+	return true
+}
+
+// Unit3DImageHTTPClient returns a clone that rejects non-public image redirects and,
+// for standard transports, dials only public target IPs.
+func Unit3DImageHTTPClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{Timeout: imageTimeout}
+	}
+	cloned := *client
+	if cloned.Timeout == 0 {
+		cloned.Timeout = imageTimeout
+	}
+	if transport, ok := unit3DImagePublicTransport(cloned.Transport); ok {
+		cloned.Transport = transport
+	}
+	checkRedirect := cloned.CheckRedirect
+	cloned.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := ValidateUnit3DImageURL(req.Context(), req.URL.String()); err != nil {
+			return err
+		}
+		if checkRedirect != nil {
+			return checkRedirect(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &cloned
+}
+
+func unit3DImagePublicTransport(rt http.RoundTripper) (http.RoundTripper, bool) {
+	var transport *http.Transport
+	switch typed := rt.(type) {
+	case nil:
+		defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return rt, false
+		}
+		transport = defaultTransport.Clone()
+	case *http.Transport:
+		transport = typed.Clone()
+	default:
+		return rt, false
+	}
+
+	originalDial := transport.DialContext
+	dialer := &net.Dialer{Timeout: imageTimeout}
+	transport.DialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("parse address: %w", err)
+		}
+		addrs, err := resolveUnit3DImagePublicAddrs(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		var lastErr error
+		for _, addr := range addrs {
+			target := net.JoinHostPort(addr.String(), port)
+			var conn net.Conn
+			if originalDial != nil {
+				conn, err = originalDial(ctx, network, target)
+			} else {
+				conn, err = dialer.DialContext(ctx, network, target)
+			}
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
+	}
+	return transport, true
+}
+
+// ValidateUnit3DImageURL rejects non-HTTP(S) or non-public Unit3D image targets.
+func ValidateUnit3DImageURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return errors.New("missing host")
+	}
+	_, err = resolveUnit3DImagePublicAddrs(ctx, host)
+	return err
+}
+
+func resolveUnit3DImagePublicAddrs(ctx context.Context, host string) ([]netip.Addr, error) {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return nil, errors.New("missing host")
+	}
+	lowerHost := strings.ToLower(host)
+	if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") || strings.Contains(lowerHost, "%") {
+		return nil, fmt.Errorf("blocked private image host %q", host)
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap()
+		if !isUnit3DImagePublicIP(addr) {
+			return nil, fmt.Errorf("blocked private image address %q", addr)
+		}
+		return []netip.Addr{addr}, nil
+	}
+
+	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	addrs := make([]netip.Addr, 0, len(resolved))
+	for _, item := range resolved {
+		addr, ok := netip.AddrFromSlice(item.IP)
+		if !ok {
+			continue
+		}
+		addr = addr.Unmap()
+		if !isUnit3DImagePublicIP(addr) {
+			return nil, fmt.Errorf("blocked private image address %q", addr)
+		}
+		addrs = append(addrs, addr)
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("host %q resolved no public addresses", host)
+	}
+	return addrs, nil
+}
+
+func isUnit3DImagePublicIP(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+		return false
+	}
+	for _, blocked := range unit3DImageBlockedIPRanges {
+		if blocked.Contains(addr) {
+			return false
+		}
 	}
 	return true
 }

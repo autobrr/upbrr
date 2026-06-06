@@ -86,7 +86,7 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 		return nil, fmt.Errorf("trackers: unmarshal banned groups: %w", err)
 	}
 
-	for _, value := range strings.Split(payload.BannedGroups, ",") {
+	for value := range strings.SplitSeq(payload.BannedGroups, ",") {
 		cleaned := strings.ToLower(strings.TrimSpace(value))
 		if cleaned == "" {
 			continue

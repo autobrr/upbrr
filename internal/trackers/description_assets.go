@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -67,9 +68,7 @@ func cloneDescriptionOverrides(values map[string]api.DescriptionOverride) map[st
 		return nil
 	}
 	cloned := make(map[string]api.DescriptionOverride, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -78,9 +77,7 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -89,9 +86,7 @@ func cloneStringSet(values map[string]struct{}) map[string]struct{} {
 		return nil
 	}
 	cloned := make(map[string]struct{}, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -188,7 +183,7 @@ func applyResolvedDescriptionScreenshots(ctx context.Context, meta api.PreparedM
 	if assets == nil {
 		return
 	}
-	assets.Description = rewriteDescriptionSlotURLs(assets.Description, assets.Slots, screenshots)
+	assets.Description = rewriteDescriptionSlotURLs(assets.Description, assets.Slots, screenshots, assets.Final)
 	if assets.Final {
 		assets.MenuImages = nil
 		assets.Screenshots = nil
@@ -280,7 +275,7 @@ func screenshotURLKey(shot api.ScreenshotImage) string {
 	return strings.TrimSpace(shot.WebURL)
 }
 
-func rewriteDescriptionSlotURLs(description string, slots []api.ScreenshotSlot, screenshots []api.ScreenshotImage) string {
+func rewriteDescriptionSlotURLs(description string, slots []api.ScreenshotSlot, screenshots []api.ScreenshotImage, preserveNonRenderable bool) string {
 	if strings.TrimSpace(description) == "" || len(slots) == 0 {
 		return description
 	}
@@ -293,7 +288,9 @@ func rewriteDescriptionSlotURLs(description string, slots []api.ScreenshotSlot, 
 			continue
 		}
 		if !slot.RenderInScreenshots {
-			result = strings.ReplaceAll(result, originalURL, "")
+			if !preserveNonRenderable {
+				result = strings.ReplaceAll(result, originalURL, "")
+			}
 			continue
 		}
 		if shotIdx >= len(renderable) || shotIdx >= len(screenshots) {
