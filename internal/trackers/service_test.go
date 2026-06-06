@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -124,6 +125,13 @@ type trackingUploadDefinition struct {
 	started chan<- string
 }
 
+type blockingImageService struct {
+	mu      sync.Mutex
+	started chan<- string
+	release <-chan struct{}
+	calls   []string
+}
+
 type blockingUploadDefinition struct {
 	name      string
 	started   chan<- string
@@ -179,6 +187,49 @@ func (s stubPreparationDefinition) Upload(context.Context, UploadRequest) (api.U
 
 func (s stubPreparationDefinition) BuildDescription(context.Context, DescriptionRequest) (DescriptionResult, error) {
 	return DescriptionResult{Group: s.group, Description: s.description}, nil
+}
+
+func (s *blockingImageService) ListCandidates(context.Context, api.PreparedMetadata) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (s *blockingImageService) Upload(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, host)
+	s.mu.Unlock()
+	if s.started != nil {
+		select {
+		case s.started <- host:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+		}
+	}
+	if s.release != nil {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+		}
+	}
+	results := make([]api.UploadedImageLink, 0, len(images))
+	for idx, image := range images {
+		results = append(results, api.UploadedImageLink{
+			SourcePath: meta.SourcePath,
+			ImagePath:  image.Path,
+			Host:       host,
+			UsageScope: usageScope,
+			ImgURL:     fmt.Sprintf("https://%s/%d.png", host, idx),
+			RawURL:     fmt.Sprintf("https://%s/%d.png", host, idx),
+			WebURL:     fmt.Sprintf("https://%s/%d", host, idx),
+		})
+	}
+	return results, nil
+}
+
+func (s *blockingImageService) Calls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.calls...)
 }
 
 type hostAwareDescriptionDefinition struct {
@@ -317,6 +368,58 @@ func TestBuildUploadDryRunBlocksWhenImageHostFallbacksFail(t *testing.T) {
 	}
 }
 
+func TestBuildPreparationBlocksWhenImageHostFallbacksFail(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubPreparationDefinition{name: "PTP", group: "ptp", description: "saveable description"}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	images := &stubImageService{
+		errs: map[string]error{
+			"pixhost": errors.New("pixhost unavailable"),
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(config.Config{}, nil, repo, registry, images)
+
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"}, []string{"PTP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected 1 blocked placeholder, got %d", len(preview.Descriptions))
+	}
+	entry := preview.Descriptions[0]
+	if entry.GroupKey != "ptp|blocked|image-host" {
+		t.Fatalf("expected blocked image-host group key, got %q", entry.GroupKey)
+	}
+	if got := strings.Join(entry.Trackers, ","); got != "PTP" {
+		t.Fatalf("expected PTP tracker to remain visible, got %q", got)
+	}
+	if entry.Description != "" || entry.RawDescription != "" || entry.DescriptionHTML != "" || entry.RawDescriptionHTML != "" {
+		t.Fatalf("expected no saveable prepared description, got %#v", entry)
+	}
+	if entry.ImageHost.Status != "blocked" {
+		t.Fatalf("expected blocked image host status, got %#v", entry.ImageHost)
+	}
+	if !strings.Contains(entry.ImageHost.Message, "could not upload screenshots") {
+		t.Fatalf("expected blocking image host message, got %q", entry.ImageHost.Message)
+	}
+	if len(entry.ImageHost.Warnings) != 1 || entry.ImageHost.Warnings[0].Host != "pixhost" {
+		t.Fatalf("expected pixhost failure warning, got %#v", entry.ImageHost.Warnings)
+	}
+	if got := strings.Join(images.calls, ","); got != "pixhost" {
+		t.Fatalf("expected one preflight upload attempt, got %q", got)
+	}
+}
+
 func TestBuildUploadDryRunIncludesRuleFailedTrackersWhenOverrideEnabled(t *testing.T) {
 	t.Parallel()
 
@@ -450,7 +553,7 @@ func TestBuildPreparationSplitsSameGroupWhenDescriptionDiffers(t *testing.T) {
 	}
 }
 
-func TestBuildPreparationSplitsSameGroupWhenRawDescriptionDiffers(t *testing.T) {
+func TestBuildPreparationGroupsSameFinalDescriptionWhenExtractedDescriptionDiffers(t *testing.T) {
 	t.Parallel()
 
 	registry := NewRegistry()
@@ -476,14 +579,14 @@ func TestBuildPreparationSplitsSameGroupWhenRawDescriptionDiffers(t *testing.T) 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(preview.Descriptions) != 2 {
-		t.Fatalf("expected raw description mismatch to split, got %d groups", len(preview.Descriptions))
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected matching final description to group, got %d groups", len(preview.Descriptions))
 	}
-	if preview.Descriptions[0].RawDescription != "aither raw description" {
-		t.Fatalf("expected AITHER raw description, got %q", preview.Descriptions[0].RawDescription)
+	if preview.Descriptions[0].RawDescription != "same final description" {
+		t.Fatalf("expected canonical raw description to be final build, got %q", preview.Descriptions[0].RawDescription)
 	}
-	if preview.Descriptions[1].RawDescription != "blu raw description" {
-		t.Fatalf("expected BLU raw description, got %q", preview.Descriptions[1].RawDescription)
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "AITHER,BLU" {
+		t.Fatalf("expected both trackers in grouped final description, got %q", got)
 	}
 }
 
@@ -806,6 +909,73 @@ func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
 	sort.Strings(secondRunCalls)
 	if got := strings.Join(secondRunCalls, ","); got != "imgbox,pixhost" {
 		t.Fatalf("expected existing host variants to be reused on second run, got calls %q", got)
+	}
+}
+
+func TestBuildPreparationPreflightsMultipleConfiguredImageHostsConcurrently(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		hostAwareDescriptionDefinition{name: "PTP", group: "ptp"},
+		hostAwareDescriptionDefinition{name: "STC", group: "stc"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	images := &blockingImageService{started: started, release: release}
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {ImageHost: "pixhost"},
+				"STC": {ImageHost: "imgbox"},
+			},
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.BuildPreparation(ctx, api.PreparedMetadata{SourcePath: "/tmp/source"}, []string{"PTP", "STC"})
+		done <- err
+	}()
+
+	seen := make(map[string]struct{}, 2)
+	for len(seen) < 2 {
+		select {
+		case host := <-started:
+			seen[host] = struct{}{}
+		case <-ctx.Done():
+			t.Fatalf("expected both host uploads to start concurrently, saw %v: %v", seen, ctx.Err())
+		}
+	}
+	close(release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected preparation error: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("preparation did not finish after concurrent uploads released: %v", ctx.Err())
+	}
+
+	calls := images.Calls()
+	sort.Strings(calls)
+	if got := strings.Join(calls, ","); got != "imgbox,pixhost" {
+		t.Fatalf("expected one preflight upload per configured host, got %q", got)
 	}
 }
 

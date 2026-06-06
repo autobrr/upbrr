@@ -33,6 +33,8 @@ type DescriptionBuilderPreview struct {
 type DescriptionBuilderGroup struct {
 	GroupKey           string
 	Trackers           []string
+	Description        string
+	DescriptionHTML    string
 	RawDescription     string
 	RawDescriptionHTML string
 	HasOverride        bool

@@ -232,6 +232,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 
 func buildDescription(meta api.PreparedMetadata, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) string {
 	baseDescription := strings.TrimSpace(assets.Description)
+	if assets.Final {
+		return baseDescription
+	}
 	if baseDescription != "" {
 		report := bbcode.CleanPTPDescription(baseDescription, meta.DiscType)
 		baseDescription = strings.TrimSpace(report.Description)
@@ -304,9 +307,9 @@ func buildScreenshotSection(meta api.PreparedMetadata, screenshots []api.Screens
 			continue
 		}
 		allowed = append(allowed, "[img]"+rawURL+"[/img]")
-		if len(allowed) >= minimum {
-			break
-		}
+	}
+	if len(allowed) < minimum {
+		return ""
 	}
 	return strings.Join(allowed, "\n")
 }

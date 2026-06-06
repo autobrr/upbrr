@@ -65,9 +65,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	descriptionText, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
+	descriptionText := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		descriptionText, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		if err != nil {
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
+		}
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -171,9 +174,12 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	descriptionText, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
-	if err != nil {
-		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
+	descriptionText := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		descriptionText, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		if err != nil {
+			return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
+		}
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)

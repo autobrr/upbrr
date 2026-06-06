@@ -275,8 +275,8 @@ func parseMediaInfoSummary(label string, raw string) (mediaInfoSummary, bool) {
 func parseMediaInfoSections(value string) []mediaInfoSection {
 	var sections []mediaInfoSection
 	var current *mediaInfoSection
-	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
+	for line := range lines {
 		trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		if trimmed == "" {
 			continue

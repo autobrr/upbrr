@@ -303,12 +303,12 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
-	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]any, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
-		return map[string]interface{}{"summary": string(payload)}, nil
+		return map[string]any{"summary": string(payload)}, nil
 	}
 
 	meta, err := service.Prepare(context.Background(), api.Request{
@@ -496,12 +496,12 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		playlistScans++
 		return "", errors.New("unexpected playlist scan")
 	}
-	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]any, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
-		return map[string]interface{}{"summary": string(payload)}, nil
+		return map[string]any{"summary": string(payload)}, nil
 	}
 
 	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
@@ -624,12 +624,12 @@ func TestPrepareBDMVSinglePlaylistFullScan(t *testing.T) {
 		}
 		return outputPath, nil
 	}
-	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]any, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
-		return map[string]interface{}{"summary": string(payload)}, nil
+		return map[string]any{"summary": string(payload)}, nil
 	}
 
 	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
@@ -815,12 +815,12 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 			ReportText: fullReport,
 		}, nil
 	}
-	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+	parseBDInfoOutput = func(_ *bdinfo.Service, filePath string) (map[string]any, error) {
 		payload, err := os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read BDInfo output fixture: %w", err)
 		}
-		return map[string]interface{}{"summary": string(payload)}, nil
+		return map[string]any{"summary": string(payload)}, nil
 	}
 
 	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")

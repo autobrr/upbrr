@@ -222,6 +222,8 @@ type hdbUploader struct {
 
 var hdbUploadResultPattern = regexp.MustCompile(`\[url=([^\]]+)\]\[img\]([^\[]+)\[/img\]\[/url\]`)
 
+const hdbMaxBatchUploadImages = 9
+
 func (u *hdbUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
 	results, err := u.uploadBatchWithGalleryName(ctx, []string{imagePath}, filepath.Base(imagePath))
 	if err != nil {
@@ -246,7 +248,22 @@ func (u *hdbUploader) UploadBatchWithName(ctx context.Context, imagePaths []stri
 	if galleryName == "" {
 		galleryName = buildHDBGalleryName(imagePaths)
 	}
-	return u.uploadBatchWithGalleryName(ctx, imagePaths, galleryName)
+	if len(imagePaths) <= hdbMaxBatchUploadImages {
+		return u.uploadBatchWithGalleryName(ctx, imagePaths, galleryName)
+	}
+	results := make([]uploadResult, 0, len(imagePaths))
+	for start := 0; start < len(imagePaths); start += hdbMaxBatchUploadImages {
+		end := start + hdbMaxBatchUploadImages
+		if end > len(imagePaths) {
+			end = len(imagePaths)
+		}
+		chunk, err := u.uploadBatchWithGalleryName(ctx, imagePaths[start:end], galleryName)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, chunk...)
+	}
+	return results, nil
 }
 
 func (u *hdbUploader) uploadBatchWithGalleryName(ctx context.Context, imagePaths []string, galleryName string) ([]uploadResult, error) {

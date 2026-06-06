@@ -4,6 +4,7 @@
 package description
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -48,6 +49,100 @@ func TestRenderAllowsStyleAlignAndColor(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "color: red") {
 		t.Fatalf("expected color style to be preserved, got %q", rendered)
+	}
+}
+
+func TestRenderCodeAllowsNestedColorTags(t *testing.T) {
+	input := `[code][color=#bd93f9][b]x64@lost:~$[/b][/color] [color=#f8f8f2]cat ~/release_notes.yml[/color]
+
+[color=#e6c07b]"Release Notes":[/color]
+  [color=#61afef]Sources:[/color]
+    - [color=#61afef]"Source(1)":[/color] [color=#abb2bf]"Double.Impact.1991.2160p.UHD.Blu-ray.Remux.DV.HDR.HEVC.FLAC2.0-CiNEPHiLES (Video, Audio, Subs) Thanks!"[/color][/code]`
+	rendered := Render(input)
+
+	for _, expected := range []string{
+		`<pre><code>`,
+		`<span style="color: #bd93f9"><b>x64@lost:~$</b></span>`,
+		`<span style="color: #f8f8f2">cat ~/release_notes.yml</span>`,
+		`<span style="color: #e6c07b">&#34;Release Notes&#34;:</span>`,
+		`<span style="color: #61afef">Sources:</span>`,
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("expected rendered code color markup %q, got %q", expected, rendered)
+		}
+	}
+	if strings.Contains(rendered, "[color=") || strings.Contains(rendered, "[/color]") {
+		t.Fatalf("expected color bbcode tags to be rendered, got %q", rendered)
+	}
+}
+
+func TestExtractCodeBlocksUsesUniqueNonAliasingPlaceholders(t *testing.T) {
+	var builder strings.Builder
+	builder.WriteString("outside literal UPBRR_CODE_BLOCK_1\n")
+	for i := range 12 {
+		content := fmt.Sprintf("block-%d", i)
+		if i == 4 {
+			content = "inside literal UPBRR_CODE_BLOCK_10"
+		}
+		builder.WriteString("[code]")
+		builder.WriteString(content)
+		builder.WriteString("[/code]\n")
+	}
+
+	normalized, blocks := extractCodeBlocks(builder.String())
+	if len(blocks) != 12 {
+		t.Fatalf("expected 12 code blocks, got %d", len(blocks))
+	}
+	if !strings.Contains(normalized, "outside literal UPBRR_CODE_BLOCK_1") {
+		t.Fatalf("expected outside placeholder-like text preserved, got %q", normalized)
+	}
+
+	for i, block := range blocks {
+		if block.token == "" {
+			t.Fatalf("expected token for block %d", i)
+		}
+		if strings.Contains(builder.String(), block.token) {
+			t.Fatalf("expected generated token %q to be absent from original input", block.token)
+		}
+		for j, other := range blocks {
+			if i == j {
+				continue
+			}
+			if strings.Contains(other.token, block.token) {
+				t.Fatalf("expected token %q not to alias %q", block.token, other.token)
+			}
+		}
+	}
+}
+
+func TestRenderCodeBlocksPreservesLiteralPlaceholderLikeText(t *testing.T) {
+	var builder strings.Builder
+	builder.WriteString("outside literal UPBRR_CODE_BLOCK_1\n")
+	for i := range 12 {
+		content := fmt.Sprintf("block-%d", i)
+		if i == 4 {
+			content = "inside literal UPBRR_CODE_BLOCK_10"
+		}
+		builder.WriteString("[code]")
+		builder.WriteString(content)
+		builder.WriteString("[/code]\n")
+	}
+
+	rendered := Render(builder.String())
+
+	if strings.Count(rendered, "<pre><code>") != 12 {
+		t.Fatalf("expected 12 rendered code blocks, got %q", rendered)
+	}
+	for _, expected := range []string{
+		"outside literal UPBRR_CODE_BLOCK_1",
+		"inside literal UPBRR_CODE_BLOCK_10",
+		"block-1",
+		"block-10",
+		"block-11",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("expected rendered output to contain %q, got %q", expected, rendered)
+		}
 	}
 }
 

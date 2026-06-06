@@ -2034,7 +2034,7 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 			return api.DescriptionBuilderPreview{}, err
 		} else if ok {
 			c.logger.Debugf("core: description builder cache hit source=%s", uniquePaths[0])
-			meta = cached
+			meta = applyRequestToPreparedMetaWithDerivedFields(cached, req, c.cfg, c.logger, false)
 		}
 	}
 	if strings.TrimSpace(meta.SourcePath) == "" {
@@ -2105,29 +2105,44 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 	return preview, nil
 }
 
-func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGroup map[string]api.DescriptionOverride, meta api.PreparedMetadata, logger api.Logger) api.DescriptionBuilderGroup {
+func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGroup map[string]api.DescriptionOverride, _ api.PreparedMetadata, _ api.Logger) api.DescriptionBuilderGroup {
 	groupKey := normalizeDescriptionBuilderGroupKey(entry.GroupKey, entry.Trackers)
-	rawDescription := entry.RawDescription
-	rawDescriptionHTML := entry.RawDescriptionHTML
+	descriptionText := strings.TrimSpace(entry.Description)
+	if descriptionText == "" {
+		descriptionText = strings.TrimSpace(entry.RawDescription)
+	}
+	descriptionHTML := entry.DescriptionHTML
+	if strings.TrimSpace(descriptionHTML) == "" {
+		descriptionHTML = description.Render(descriptionText)
+	}
+	rawDescription := descriptionText
+	rawDescriptionHTML := descriptionHTML
 	if strings.TrimSpace(rawDescription) == "" {
-		rawDescription = entry.Description
-		rawDescriptionHTML = entry.DescriptionHTML
+		rawDescription = strings.TrimSpace(entry.RawDescription)
+		if strings.TrimSpace(rawDescription) != "" {
+			rawDescriptionHTML = entry.RawDescriptionHTML
+		} else {
+			rawDescriptionHTML = ""
+		}
 	}
 	hasOverride := entry.HasOverride
-	if override, ok := overrideByGroup[groupKey]; ok && strings.TrimSpace(override.Description) != "" {
-		rawDescription = override.Description
-		rawDescriptionHTML = description.Render(override.Description)
+	if strings.TrimSpace(rawDescription) == "" {
+		if override, ok := overrideByGroup[groupKey]; ok && strings.TrimSpace(override.Description) != "" {
+			rawDescription = strings.TrimSpace(override.Description)
+			rawDescriptionHTML = description.Render(rawDescription)
+		}
+	}
+	if _, ok := overrideByGroup[groupKey]; ok && strings.TrimSpace(rawDescription) != "" {
 		hasOverride = true
 	}
 	if strings.TrimSpace(rawDescriptionHTML) == "" {
 		rawDescriptionHTML = description.Render(rawDescription)
 	}
-	if !hasOverride {
-		rawDescriptionHTML = augmentDescriptionBuilderPreviewHTML(rawDescriptionHTML, entry, meta, logger)
-	}
 	return api.DescriptionBuilderGroup{
 		GroupKey:           groupKey,
 		Trackers:           append([]string{}, entry.Trackers...),
+		Description:        rawDescription,
+		DescriptionHTML:    rawDescriptionHTML,
 		RawDescription:     rawDescription,
 		RawDescriptionHTML: rawDescriptionHTML,
 		HasOverride:        hasOverride,
@@ -2171,56 +2186,6 @@ func descriptionBuilderEpisodeLike(meta api.PreparedMetadata) bool {
 		return true
 	}
 	return strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV")
-}
-
-func augmentDescriptionBuilderPreviewHTML(rendered string, entry api.PreparationDescription, meta api.PreparedMetadata, logger api.Logger) string {
-	if !descriptionBuilderGroupNeedsMediaInfoPreview(entry) {
-		return rendered
-	}
-	if strings.Contains(strings.ToLower(rendered), "mediainfo") {
-		return rendered
-	}
-	mediaInfo := descriptionBuilderMediaInfoText(meta, logger)
-	if strings.TrimSpace(mediaInfo) == "" {
-		return rendered
-	}
-	mediaHTML := description.Render("[mediainfo]" + mediaInfo + "[/mediainfo]")
-	if strings.TrimSpace(mediaHTML) == "" {
-		return rendered
-	}
-	if strings.TrimSpace(rendered) == "" {
-		return mediaHTML
-	}
-	return strings.TrimSpace(rendered) + "\n\n" + mediaHTML
-}
-
-func descriptionBuilderGroupNeedsMediaInfoPreview(entry api.PreparationDescription) bool {
-	candidates := append([]string{entry.GroupKey}, entry.Trackers...)
-	for _, candidate := range candidates {
-		switch strings.ToUpper(strings.TrimSpace(candidate)) {
-		case "BHD", "HDB":
-			return true
-		}
-	}
-	return false
-}
-
-func descriptionBuilderMediaInfoText(meta api.PreparedMetadata, logger api.Logger) string {
-	if strings.TrimSpace(meta.DVDVOBMediaInfoText) != "" {
-		return strings.TrimSpace(meta.DVDVOBMediaInfoText)
-	}
-	path := strings.TrimSpace(meta.MediaInfoTextPath)
-	if path == "" {
-		return ""
-	}
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		if logger != nil {
-			logger.Debugf("core: description builder failed to read mediainfo text path=%s: %v", path, err)
-		}
-		return ""
-	}
-	return strings.TrimSpace(string(payload))
 }
 
 func normalizeDescriptionBuilderGroupKey(groupKey string, trackersList []string) string {
@@ -2294,7 +2259,7 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.DescriptionBuilderGroup{}, err
 		} else if ok {
-			meta = cached
+			meta = applyRequestToPreparedMetaWithDerivedFields(cached, req, c.cfg, c.logger, false)
 		}
 	}
 	if strings.TrimSpace(meta.SourcePath) == "" {

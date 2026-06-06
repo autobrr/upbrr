@@ -547,8 +547,8 @@ func applyAudioLanguagePrefix(audio string, meta api.PreparedMetadata) string {
 			base = ""
 			break
 		}
-		if strings.HasPrefix(base, prefix+" ") {
-			base = strings.TrimSpace(strings.TrimPrefix(base, prefix+" "))
+		if after, ok := strings.CutPrefix(base, prefix+" "); ok {
+			base = strings.TrimSpace(after)
 			break
 		}
 	}
@@ -966,7 +966,7 @@ func determineChannelCount(channelsValue, channelLayout, additional, formatValue
 }
 
 func firstNumericToken(value string) int {
-	for _, field := range strings.Fields(value) {
+	for field := range strings.FieldsSeq(value) {
 		if num := parseLeadingInt(field); num > 0 {
 			return num
 		}
@@ -1035,8 +1035,8 @@ func applyDTSAudioAdditional(codec, additional string) string {
 
 func parseAtmosLayout(layout string) (bed int, lfe int, height int) {
 	upper := strings.ToUpper(layout)
-	parts := strings.Fields(upper)
-	for _, part := range parts {
+	parts := strings.FieldsSeq(upper)
+	for part := range parts {
 		if strings.Contains(part, "LFE") {
 			lfe++
 			continue
@@ -1306,8 +1306,8 @@ func regionFromBDInfo(info *discparse.BDInfo, existing string) string {
 }
 
 func detectRegionCode(label string) string {
-	fields := strings.Fields(label)
-	for _, field := range fields {
+	fields := strings.FieldsSeq(label)
+	for field := range fields {
 		code := strings.TrimSpace(field)
 		if len(code) == 3 {
 			return code

@@ -36,7 +36,9 @@ type Props = Readonly<{
   uploadedImages: UploadedImageLink[];
   uploadedImageRecords: UploadedImageLink[];
   trackerImageLinks: ScreenshotLinkedImage[];
+  trackerImageURLs: string[];
   handleDeleteUploadedImage: (imagePath: string, host: string) => void;
+  handleDeleteTrackerImage: (url: string) => void;
 }>;
 
 export default function UploadImagesPage(props: Props) {
@@ -61,7 +63,9 @@ export default function UploadImagesPage(props: Props) {
     uploadedImages,
     uploadedImageRecords,
     trackerImageLinks,
+    trackerImageURLs,
     handleDeleteUploadedImage,
+    handleDeleteTrackerImage,
   } = props;
 
   const uploadCandidateCount = uploadCandidates.length;
@@ -97,8 +101,13 @@ export default function UploadImagesPage(props: Props) {
       grouped.set(hostKey, bucket);
     });
 
-    // Add tracker images as if they were previously uploaded.
+    const trackerURLs = new Set<string>();
+
+    // Add downloaded tracker images as if they were previously uploaded.
     trackerImageLinks.forEach((link) => {
+      if (link.URL) {
+        trackerURLs.add(link.URL);
+      }
       const hostKey = (link.Host || "unknown").trim() || "unknown";
       const bucket = grouped.get(hostKey) || [];
       const uploadedFormat: UploadedImageLink = {
@@ -113,6 +122,32 @@ export default function UploadImagesPage(props: Props) {
         UploadedAt: "",
       };
       bucket.push(uploadedFormat);
+      grouped.set(hostKey, bucket);
+    });
+
+    // Add remote tracker images even when local artifact download was rejected.
+    trackerImageURLs.forEach((url) => {
+      if (!url || trackerURLs.has(url)) {
+        return;
+      }
+      let hostKey = "tracker";
+      try {
+        hostKey = new URL(url).hostname || hostKey;
+      } catch {
+        // Keep generic tracker bucket for malformed URLs.
+      }
+      const bucket = grouped.get(hostKey) || [];
+      bucket.push({
+        SourcePath: "",
+        ImagePath: url,
+        Host: hostKey,
+        UsageScope: "global",
+        ImgURL: url,
+        RawURL: url,
+        WebURL: url,
+        SizeBytes: 0,
+        UploadedAt: "",
+      });
       grouped.set(hostKey, bucket);
     });
 
@@ -132,7 +167,7 @@ export default function UploadImagesPage(props: Props) {
         if (leftRank !== rightRank) return leftRank - rightRank;
         return left.host.localeCompare(right.host);
       });
-  }, [configuredImageHosts, previouslyUploadedImages, trackerImageLinks]);
+  }, [configuredImageHosts, previouslyUploadedImages, trackerImageLinks, trackerImageURLs]);
 
   return (
     <section className="grid gap-3">
@@ -354,13 +389,23 @@ export default function UploadImagesPage(props: Props) {
                           Web URL
                         </a>
                       ) : null}
-                      <button
-                        className="danger justify-self-start"
-                        type="button"
-                        onClick={() => handleDeleteUploadedImage(img.ImagePath, img.Host)}
-                      >
-                        Delete
-                      </button>
+                      {img.SourcePath ? (
+                        <button
+                          className="danger justify-self-start"
+                          type="button"
+                          onClick={() => handleDeleteUploadedImage(img.ImagePath, img.Host)}
+                        >
+                          Delete
+                        </button>
+                      ) : (
+                        <button
+                          className="danger justify-self-start"
+                          type="button"
+                          onClick={() => handleDeleteTrackerImage(img.RawURL || img.ImgURL)}
+                        >
+                          Remove
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>

@@ -39,6 +39,73 @@ func TestDefinitionBuildDescriptionUsesPTPGroup(t *testing.T) {
 	}
 }
 
+func TestDefinitionBuildDescriptionUsesResolvedAssetsAndMediaInfo(t *testing.T) {
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "PTP",
+		Meta: api.PreparedMetadata{
+			MediaInfoTextPath: mediaInfoPath,
+			Options:           api.UploadOptions{Screens: 1},
+		},
+		Assets: &trackers.DescriptionAssets{
+			Description: "kept https://pixhost.to/show/encoded.png",
+			Screenshots: []api.ScreenshotImage{{
+				Host:   "pixhost",
+				RawURL: "https://pixhost.to/show/encoded.png",
+			}},
+		},
+		Logger: api.NopLogger{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Description, "[mediainfo]General\nUnique ID : 123[/mediainfo]") {
+		t.Fatalf("expected mediainfo section, got %q", result.Description)
+	}
+	if !strings.Contains(result.Description, "kept") || !strings.Contains(result.Description, "[img]https://pixhost.to/show/encoded.png[/img]") {
+		t.Fatalf("expected resolved asset description, got %q", result.Description)
+	}
+	if strings.Contains(result.Description, "lostimg.cc") {
+		t.Fatalf("expected no stale image hosts, got %q", result.Description)
+	}
+}
+
+func TestDefinitionBuildDescriptionUsesAllResolvedPixhostScreenshots(t *testing.T) {
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	screenshots := []api.ScreenshotImage{
+		{Host: "pixhost", RawURL: "https://pixhost.to/1.png"},
+		{Host: "pixhost", RawURL: "https://pixhost.to/2.png"},
+		{Host: "pixhost", RawURL: "https://pixhost.to/3.png"},
+	}
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "PTP",
+		Meta: api.PreparedMetadata{
+			MediaInfoTextPath: mediaInfoPath,
+			Options:           api.UploadOptions{Screens: 2},
+		},
+		Assets: &trackers.DescriptionAssets{Screenshots: screenshots},
+		Logger: api.NopLogger{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, screenshot := range screenshots {
+		if !strings.Contains(result.Description, "[img]"+screenshot.RawURL+"[/img]") {
+			t.Fatalf("expected screenshot %q in description, got %q", screenshot.RawURL, result.Description)
+		}
+	}
+}
+
 func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")

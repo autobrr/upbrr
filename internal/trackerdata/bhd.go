@@ -152,11 +152,11 @@ func parseBHDTMDB(value any) (string, int) {
 	if raw == "" || raw == "0" {
 		return "", 0
 	}
-	if strings.HasPrefix(raw, "tv/") {
-		return "TV", intValue(strings.TrimPrefix(raw, "tv/"))
+	if after, ok := strings.CutPrefix(raw, "tv/"); ok {
+		return "TV", intValue(after)
 	}
-	if strings.HasPrefix(raw, "movie/") {
-		return "MOVIE", intValue(strings.TrimPrefix(raw, "movie/"))
+	if after, ok := strings.CutPrefix(raw, "movie/"); ok {
+		return "MOVIE", intValue(after)
 	}
 	return "", intValue(raw)
 }

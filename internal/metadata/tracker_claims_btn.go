@@ -621,8 +621,8 @@ func btnHTMLNodeID(node *htmlnode.Node) string {
 }
 
 func btnHTMLNodeHasClass(node *htmlnode.Node, className string) bool {
-	classes := strings.Fields(strings.TrimSpace(btnHTMLAttr(node, "class")))
-	for _, candidate := range classes {
+	classes := strings.FieldsSeq(strings.TrimSpace(btnHTMLAttr(node, "class")))
+	for candidate := range classes {
 		if strings.EqualFold(candidate, className) {
 			return true
 		}
@@ -817,10 +817,7 @@ func btnClaimFailureReason(meta api.PreparedMetadata, graceHours int) string {
 	if hoursSinceAir <= 0 {
 		return fmt.Sprintf("BTN has an active claim for this release; up to %d hours remain in the claim window", thresholdHours)
 	}
-	hoursRemaining := int(float64(thresholdHours) - hoursSinceAir + 0.999999999)
-	if hoursRemaining < 1 {
-		hoursRemaining = 1
-	}
+	hoursRemaining := max(int(float64(thresholdHours)-hoursSinceAir+0.999999999), 1)
 	return fmt.Sprintf("BTN has an active claim for this release; approximately %d hours remain in the %d-hour claim window", hoursRemaining, thresholdHours)
 }
 

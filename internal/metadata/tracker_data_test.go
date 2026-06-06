@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,7 +22,9 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
+	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackerdata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -252,23 +255,9 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 
 func TestEnrichTrackerDataPreferredTrackerIsSourceOfTruthWithoutClientTrackerIDs(t *testing.T) {
 	repo := &fakeRepo{}
-	imageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte{
-			0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-			0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-			0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-			0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-			0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
-			0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
-			0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d,
-			0xb0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
-			0x44, 0xae, 0x42, 0x60, 0x82,
-		})
-	}))
-	defer imageServer.Close()
-	antImageURL := imageServer.URL + "/ant.png"
-	hdbImageURL := imageServer.URL + "/hdb.png"
+	installTestArtifactImageHTTPClient(t, trackerDataPNG1x1())
+	antImageURL := "http://93.184.216.34/ant.png"
+	hdbImageURL := "http://93.184.216.34/hdb.png"
 	lookup := &stubTrackerLookup{
 		results: map[string]trackerdata.Result{
 			"ANT": {
@@ -919,6 +908,215 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 	}
 }
 
+func TestEnrichTrackerDataDropsImageURLsWhenArtifactDownloadRejected(t *testing.T) {
+	png1x1 := []byte{
+		137, 80, 78, 71, 13, 10, 26, 10,
+		0, 0, 0, 13, 73, 72, 68, 82,
+		0, 0, 0, 1, 0, 0, 0, 1,
+		8, 6, 0, 0, 0, 31, 21, 196,
+		137, 0, 0, 0, 13, 73, 68, 65,
+		84, 120, 156, 99, 248, 15, 4, 0,
+		9, 251, 3, 253, 160, 158, 134, 129,
+		0, 0, 0, 0, 73, 69, 78, 68,
+		174, 66, 96, 130,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(png1x1)
+	}))
+	defer server.Close()
+
+	imageURL := server.URL + "/screen.png"
+	repo := &fakeRepo{}
+	lookup := &stubTrackerLookup{
+		results: map[string]trackerdata.Result{
+			"BHD": {
+				TrackerID:   "513053",
+				Description: "tracker description",
+				Images:      []bbcode.Image{{RawURL: imageURL}},
+			},
+		},
+	}
+	longToken := strings.Repeat("a", minTrackerTokenLen)
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"BHD": {APIKey: longToken, BhdRSSKey: longToken},
+			},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+
+	meta := api.PreparedMetadata{
+		SourcePath: filepath.Join(t.TempDir(), "Movie.2026.2160p.mkv"),
+		Release:    api.ReleaseInfo{Resolution: "2160p"},
+		TrackerIDs: map[string]string{"bhd": "513053"},
+		Options:    api.UploadOptions{KeepImages: true},
+	}
+
+	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+
+	record, found := trackerRecordFor(result.TrackerData, "BHD")
+	if !found {
+		t.Fatalf("expected BHD tracker record, got %v", result.TrackerData)
+	}
+	if len(record.ImageURLs) != 0 {
+		t.Fatalf("expected rejected image URL to be dropped, got %#v", record.ImageURLs)
+	}
+}
+
+func TestEnrichTrackerDataRejectedImageURLsDoNotChooseAssetSource(t *testing.T) {
+	png1x1 := []byte{
+		137, 80, 78, 71, 13, 10, 26, 10,
+		0, 0, 0, 13, 73, 72, 68, 82,
+		0, 0, 0, 1, 0, 0, 0, 1,
+		8, 6, 0, 0, 0, 31, 21, 196,
+		137, 0, 0, 0, 13, 73, 68, 65,
+		84, 120, 156, 99, 248, 15, 4, 0,
+		9, 251, 3, 253, 160, 158, 134, 129,
+		0, 0, 0, 0, 73, 69, 78, 68,
+		174, 66, 96, 130,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(png1x1)
+	}))
+	defer server.Close()
+
+	imageURL := server.URL + "/too-small.png"
+	repo := &fakeRepo{}
+	lookup := &stubTrackerLookup{
+		results: map[string]trackerdata.Result{
+			"BHD": {
+				Images: []bbcode.Image{{RawURL: imageURL}},
+			},
+			"HDB": {
+				Description: "usable hdb description",
+			},
+		},
+		delays: map[string]time.Duration{"HDB": 10 * time.Millisecond},
+	}
+	longToken := strings.Repeat("a", minTrackerTokenLen)
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"BHD": {APIKey: longToken, BhdRSSKey: longToken},
+				"HDB": {Username: "user", Passkey: "pass"},
+			},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+
+	result, err := svc.EnrichTrackerData(context.Background(), api.PreparedMetadata{
+		SourcePath: filepath.Join(t.TempDir(), "Movie.2026.2160p.mkv"),
+		Release:    api.ReleaseInfo{Resolution: "2160p"},
+		Trackers:   []string{"BHD", "HDB"},
+		Options:    api.UploadOptions{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+
+	bhd, found := trackerRecordFor(result.TrackerData, "BHD")
+	if !found {
+		t.Fatalf("expected BHD tracker record, got %v", result.TrackerData)
+	}
+	if len(bhd.ImageURLs) != 0 {
+		t.Fatalf("expected rejected BHD image URL to be dropped, got %#v", bhd.ImageURLs)
+	}
+	hdb, found := trackerRecordFor(result.TrackerData, "HDB")
+	if !found {
+		t.Fatalf("expected HDB tracker record, got %v", result.TrackerData)
+	}
+	if hdb.Description != "usable hdb description" {
+		t.Fatalf("expected HDB description to remain selected, got %q", hdb.Description)
+	}
+}
+
+func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForArtifactLinks(t *testing.T) {
+	firstURL, laterURL, cfg, sourcePath, closeServer := trackerDuplicateImageFixture(t)
+	defer closeServer()
+
+	repo := &fakeRepo{}
+	lookup := &stubTrackerLookup{
+		results: map[string]trackerdata.Result{
+			"BHD": {
+				TrackerID:   "513053",
+				Description: "tracker description",
+				Images: []bbcode.Image{
+					{RawURL: firstURL},
+					{RawURL: firstURL},
+					{RawURL: laterURL},
+				},
+			},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+
+	result, err := svc.EnrichTrackerData(context.Background(), api.PreparedMetadata{
+		SourcePath: sourcePath,
+		TrackerIDs: map[string]string{"bhd": "513053"},
+		Options:    api.UploadOptions{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+
+	record, found := trackerRecordFor(result.TrackerData, "BHD")
+	if !found {
+		t.Fatalf("expected BHD tracker record, got %v", result.TrackerData)
+	}
+	expectedURLs := []string{firstURL, firstURL, laterURL}
+	if !reflect.DeepEqual(record.ImageURLs, expectedURLs) {
+		t.Fatalf("expected positional image URLs, got %#v", record.ImageURLs)
+	}
+	assertTrackerArtifactExists(t, cfg, sourcePath, "BHD", laterURL, 2)
+}
+
+func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForLocalScreenshots(t *testing.T) {
+	firstURL, laterURL, cfg, sourcePath, closeServer := trackerDuplicateImageFixture(t)
+	defer closeServer()
+
+	repo := &fakeRepo{}
+	lookup := &stubTrackerLookup{
+		results: map[string]trackerdata.Result{
+			"BHD": {
+				TrackerID:   "513053",
+				Description: "tracker description",
+				Images: []bbcode.Image{
+					{RawURL: firstURL},
+					{RawURL: firstURL},
+					{RawURL: laterURL},
+				},
+			},
+		},
+	}
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+
+	result, err := svc.EnrichTrackerData(context.Background(), api.PreparedMetadata{
+		SourcePath: sourcePath,
+		TrackerIDs: map[string]string{"bhd": "513053"},
+		Options:    api.UploadOptions{KeepImages: true},
+	})
+	if err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+
+	record, found := trackerRecordFor(result.TrackerData, "BHD")
+	if !found {
+		t.Fatalf("expected BHD tracker record, got %v", result.TrackerData)
+	}
+	if len(record.ImageURLs) != 3 || record.ImageURLs[2] != laterURL {
+		t.Fatalf("expected later URL to keep original index 2, got %#v", record.ImageURLs)
+	}
+	assertTrackerArtifactExists(t, cfg, sourcePath, "BHD", laterURL, 2)
+}
+
 func TestMetadataTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.T) {
 	result := trackers.TrackerPriority()
 	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
@@ -994,6 +1192,81 @@ func hasTracker(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func installTestArtifactImageHTTPClient(t *testing.T, payload []byte) {
+	t.Helper()
+
+	previousHTTPClient := newUnit3DArtifactImageHTTPClient
+	newUnit3DArtifactImageHTTPClient = func() *http.Client {
+		return &http.Client{Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        http.Header{"Content-Type": []string{"image/png"}},
+				Body:          io.NopCloser(bytes.NewReader(payload)),
+				ContentLength: int64(len(payload)),
+				Request:       req,
+			}, nil
+		})}
+	}
+	t.Cleanup(func() {
+		newUnit3DArtifactImageHTTPClient = previousHTTPClient
+	})
+}
+
+func trackerDataPNG1x1() []byte {
+	return []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+		0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
+		0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+		0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d,
+		0xb0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+		0x44, 0xae, 0x42, 0x60, 0x82,
+	}
+}
+
+func trackerDuplicateImageFixture(t *testing.T) (string, string, config.Config, string, func()) {
+	t.Helper()
+
+	installTestArtifactImageHTTPClient(t, trackerDataPNG1x1())
+
+	tempDir := t.TempDir()
+	longToken := strings.Repeat("a", minTrackerTokenLen)
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"BHD": {APIKey: longToken, BhdRSSKey: longToken},
+			},
+		},
+	}
+	sourcePath := filepath.Join(tempDir, "Movie.2026.1080p.mkv")
+
+	return "http://93.184.216.34/duplicate.png", "http://93.184.216.34/later.png", cfg, sourcePath, func() {}
+}
+
+func assertTrackerArtifactExists(t *testing.T, cfg config.Config, sourcePath string, tracker string, rawURL string, index int) {
+	t.Helper()
+
+	tmpRoot, err := dbsvc.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp dir: %v", err)
+	}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{SourcePath: sourcePath}, sourcePath)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	artifactPath := filepath.Join(tmpDir, sanitizeFilename(strings.ToLower(tracker)), buildImageFilename(rawURL, index))
+	info, err := os.Stat(artifactPath)
+	if err != nil {
+		t.Fatalf("expected tracker artifact at %s: %v", artifactPath, err)
+	}
+	if info.IsDir() {
+		t.Fatalf("expected tracker artifact file at %s", artifactPath)
+	}
 }
 
 func TestExtractBTNClaimedShowsParsesCurrentSection(t *testing.T) {
