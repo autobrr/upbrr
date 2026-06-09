@@ -29,7 +29,7 @@ var trackerAllowedHosts = map[string][]string{
 	"HDB": {"hdb"},
 	"MTV": {"imgbox", "imgbb"},
 	"OE":  {"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
-	"PTP": {"pixhost"},
+	"PTP": {"pixhost", "imgbb", "onlyimage", "ptscreens"},
 	"STC": {"imgbox", "imgbb"},
 	"THR": {"thr"},
 	"TVC": {"imgbb", "imgbox", "pixhost", "bam", "onlyimage"},

@@ -303,7 +303,7 @@ func buildScreenshotSection(meta api.PreparedMetadata, screenshots []api.Screens
 		if host == "" {
 			host = imagehost.ExtractHost(rawURL)
 		}
-		if host != "pixhost" {
+		if !isPTPImageHost(host) {
 			continue
 		}
 		allowed = append(allowed, "[img]"+rawURL+"[/img]")
@@ -312,6 +312,15 @@ func buildScreenshotSection(meta api.PreparedMetadata, screenshots []api.Screens
 		return ""
 	}
 	return strings.Join(allowed, "\n")
+}
+
+func isPTPImageHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "pixhost", "imgbb", "onlyimage", "ptscreens":
+		return true
+	default:
+		return false
+	}
 }
 
 func requiresMinimumTwoScreens(meta api.PreparedMetadata) bool {

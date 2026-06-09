@@ -14,8 +14,13 @@ func TestPolicyMetadataExposesOnlySupportedTrackerUploadHosts(t *testing.T) {
 	if !HostAllowed("pixhost", ptpHosts) {
 		t.Fatalf("PTP upload hosts should include supported host pixhost: %v", ptpHosts)
 	}
-	if len(ptpHosts) != 1 {
-		t.Fatalf("PTP upload hosts should only allow pixhost: %v", ptpHosts)
+	for _, host := range []string{"imgbb", "onlyimage", "ptscreens"} {
+		if !HostAllowed(host, ptpHosts) {
+			t.Fatalf("PTP upload hosts should include supported host %s: %v", host, ptpHosts)
+		}
+	}
+	if len(ptpHosts) != 4 {
+		t.Fatalf("PTP upload hosts should only allow supported PTP hosts: %v", ptpHosts)
 	}
 	if HostAllowed("imgur", ptpHosts) {
 		t.Fatalf("PTP upload hosts should exclude unsupported host: %v", ptpHosts)

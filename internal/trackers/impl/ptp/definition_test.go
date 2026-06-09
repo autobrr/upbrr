@@ -106,6 +106,40 @@ func TestDefinitionBuildDescriptionUsesAllResolvedPixhostScreenshots(t *testing.
 	}
 }
 
+func TestDefinitionBuildDescriptionUsesAllowedNonPixhostRawScreenshots(t *testing.T) {
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	screenshots := []api.ScreenshotImage{
+		{Host: "imgbb", RawURL: "https://i.ibb.co/raw-1/source.png", ImgURL: "https://i.ibb.co/thumb-1/source.png"},
+		{Host: "onlyimage", RawURL: "https://onlyimage.org/images/raw-2.png", ImgURL: "https://onlyimage.org/images/medium-2.png"},
+		{Host: "ptscreens", RawURL: "https://ptscreens.com/images/raw-3.png", ImgURL: "https://ptscreens.com/images/medium-3.png"},
+	}
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "PTP",
+		Meta: api.PreparedMetadata{
+			MediaInfoTextPath: mediaInfoPath,
+			Options:           api.UploadOptions{Screens: 2},
+		},
+		Assets: &trackers.DescriptionAssets{Screenshots: screenshots},
+		Logger: api.NopLogger{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, screenshot := range screenshots {
+		if !strings.Contains(result.Description, "[img]"+screenshot.RawURL+"[/img]") {
+			t.Fatalf("expected raw screenshot %q in description, got %q", screenshot.RawURL, result.Description)
+		}
+		if strings.Contains(result.Description, screenshot.ImgURL) {
+			t.Fatalf("expected PTP description to avoid non-raw URL %q, got %q", screenshot.ImgURL, result.Description)
+		}
+	}
+}
+
 func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")
