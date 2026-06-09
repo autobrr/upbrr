@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useRef } from "react";
+import { type MouseEvent as ReactMouseEvent, useEffect, useRef } from "react";
 import { handleExternalLinkClick } from "../utils/externalLinks";
 
 type Props = {
@@ -13,6 +13,19 @@ const configureRenderedLinks = (root: HTMLElement) => {
     anchor.target = "_blank";
     anchor.rel = "noreferrer";
   });
+};
+
+const handleRenderedDescriptionLinkClick = (event: ReactMouseEvent<HTMLElement>) => {
+  const target = event.target;
+  if (!(target instanceof Element) || !target.closest("a[href]")) {
+    return;
+  }
+
+  handleExternalLinkClick(event);
+  if (!event.defaultPrevented) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
 };
 
 export default function RenderedDescription({ html }: Props) {
@@ -148,8 +161,8 @@ export default function RenderedDescription({ html }: Props) {
     <div
       ref={rootRef}
       className="tracker-description rendered"
-      onAuxClick={handleExternalLinkClick}
-      onClick={handleExternalLinkClick}
+      onAuxClick={handleRenderedDescriptionLinkClick}
+      onClick={handleRenderedDescriptionLinkClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

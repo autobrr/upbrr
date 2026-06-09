@@ -21,7 +21,7 @@ const normalizeExternalHTTPURL = (value: string): string | null => {
 
   let parsed: URL;
   try {
-    parsed = new URL(href, window.location.href);
+    parsed = new URL(href);
   } catch {
     return null;
   }

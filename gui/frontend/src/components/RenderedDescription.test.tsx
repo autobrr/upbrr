@@ -66,4 +66,21 @@ describe("RenderedDescription external links", () => {
       expect(openExternalURL).toHaveBeenCalledWith("https://example.com/raw");
     });
   });
+
+  it("blocks relative links instead of opening them against the app origin", () => {
+    const openExternalURL = vi.fn().mockResolvedValue(undefined);
+    (globalThis as any).go = {
+      guiapp: { App: { OpenExternalURL: openExternalURL } },
+    };
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    render(<RenderedDescription html='<a href="/relative/release">Relative release</a>' />);
+
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    const dispatched = screen.getByRole("link", { name: "Relative release" }).dispatchEvent(event);
+
+    expect(dispatched).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+    expect(openExternalURL).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
 });
