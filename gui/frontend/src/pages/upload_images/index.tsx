@@ -319,6 +319,7 @@ export default function UploadImagesPage(props: Props) {
                         href={imgLink}
                         target="_blank"
                         rel="noreferrer"
+                        onAuxClick={handleExternalLinkClick}
                         title="View image"
                         onClick={handleExternalLinkClick}
                       >
@@ -362,6 +363,7 @@ export default function UploadImagesPage(props: Props) {
                           href={img.ImgURL}
                           target="_blank"
                           rel="noreferrer"
+                          onAuxClick={handleExternalLinkClick}
                           onClick={handleExternalLinkClick}
                         >
                           View image
@@ -373,6 +375,7 @@ export default function UploadImagesPage(props: Props) {
                           href={img.RawURL}
                           target="_blank"
                           rel="noreferrer"
+                          onAuxClick={handleExternalLinkClick}
                           onClick={handleExternalLinkClick}
                         >
                           Raw URL
@@ -384,6 +387,7 @@ export default function UploadImagesPage(props: Props) {
                           href={img.WebURL}
                           target="_blank"
                           rel="noreferrer"
+                          onAuxClick={handleExternalLinkClick}
                           onClick={handleExternalLinkClick}
                         >
                           Web URL
@@ -437,6 +441,7 @@ export default function UploadImagesPage(props: Props) {
                     href={image.ImgURL}
                     target="_blank"
                     rel="noreferrer"
+                    onAuxClick={handleExternalLinkClick}
                     onClick={handleExternalLinkClick}
                   >
                     View image
@@ -448,6 +453,7 @@ export default function UploadImagesPage(props: Props) {
                     href={image.RawURL}
                     target="_blank"
                     rel="noreferrer"
+                    onAuxClick={handleExternalLinkClick}
                     onClick={handleExternalLinkClick}
                   >
                     Raw URL
@@ -459,6 +465,7 @@ export default function UploadImagesPage(props: Props) {
                     href={image.WebURL}
                     target="_blank"
                     rel="noreferrer"
+                    onAuxClick={handleExternalLinkClick}
                     onClick={handleExternalLinkClick}
                   >
                     Web URL

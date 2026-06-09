@@ -25,6 +25,7 @@ import { useUploadImages } from "./hooks/useUploadImages";
 import { cn } from "./utils/cn";
 import type {
   ConfigMap,
+  ApplicationInfo,
   BrowseDirectoryResponse,
   DescriptionBuilderPreview,
   DupeCheckSnapshot,
@@ -74,12 +75,13 @@ import {
   type SourcePathMode,
   sourcePathHistoryStorageKey,
 } from "./utils/inputHistory";
+import { handleExternalLinkClick } from "./utils/externalLinks";
 
 const appLayoutClass =
-  "relative z-[1] block min-h-screen ml-[172px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
+  "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
 
 const sidebarClass =
-  "fixed left-0 top-0 z-[1000] flex h-screen w-[172px] flex-col gap-2.5 border-r border-white/10 bg-[var(--panel)]/95 p-2.5 backdrop-blur max-[960px]:bottom-0 max-[960px]:top-auto max-[960px]:h-auto max-[960px]:w-full max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-2 max-[960px]:border-r-0 max-[960px]:border-t max-[960px]:p-2";
+  "fixed left-0 top-0 z-[1000] flex h-screen w-[204px] flex-col gap-2.5 border-r border-white/10 bg-[var(--panel)]/95 p-2.5 backdrop-blur max-[960px]:bottom-0 max-[960px]:top-auto max-[960px]:h-auto max-[960px]:w-full max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-2 max-[960px]:border-r-0 max-[960px]:border-t max-[960px]:p-2";
 
 const sidebarGroupClass =
   "grid gap-1 rounded-lg border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.08)] p-1.5 max-[960px]:flex max-[960px]:flex-wrap max-[960px]:gap-1 max-[960px]:p-1";
@@ -103,6 +105,13 @@ const sidebarButtonClass = (active = false) =>
 
 const liveButtonClass =
   "border-[rgba(53,194,193,0.24)] bg-[rgba(53,194,193,0.1)] text-[var(--text)] hover:bg-[rgba(53,194,193,0.16)]";
+
+const sidebarAppDetailsClass =
+  "mt-1 grid grid-cols-[1fr_auto] items-center gap-1.5 px-2 py-1.5 text-[0.72rem] leading-tight text-[var(--muted)] max-[960px]:hidden";
+
+type AppBridgeWithApplicationInfo = {
+  GetApplicationInfo?: () => Promise<ApplicationInfo>;
+};
 
 const emptyDupeSummary: DupeCheckSummary = {
   SourcePath: "",
@@ -271,6 +280,7 @@ declare global {
               path: string,
               mode: "file" | "folder",
             ) => Promise<BrowseDirectoryResponse>;
+            OpenExternalURL?: (url: string) => Promise<void>;
             ListUIStates: () => Promise<UIStateList>;
             GetUIState: (id: string) => Promise<UIStateRecord>;
             SaveUIState: (id: string, label: string, state: UIState) => Promise<void>;
@@ -677,6 +687,7 @@ export default function App() {
   const [webAuthPassword, setWebAuthPassword] = useState("");
   const [webAuthConfirm, setWebAuthConfirm] = useState("");
   const [webAuthError, setWebAuthError] = useState("");
+  const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
   const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uiStateHydratedRef = useRef(false);
   const uiStateInitialLiveStateCheckedRef = useRef(false);
@@ -827,6 +838,29 @@ export default function App() {
     localStorage.setItem("theme", nextTheme);
     applyTheme(nextTheme);
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const getter = (globalThis.go?.guiapp?.App as AppBridgeWithApplicationInfo | undefined)
+      ?.GetApplicationInfo;
+    if (!getter) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void getter()
+      .then((info) => {
+        if (!cancelled) {
+          setApplicationInfo(info);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!lightboxImage) return;
@@ -4244,6 +4278,32 @@ export default function App() {
               <span className="mr-0.5 text-base">{getThemeIcon()}</span>
               <span>{getThemeLabel()}</span>
             </button>
+            <div className={sidebarAppDetailsClass}>
+              <div className="grid min-w-0 gap-0.5">
+                {applicationInfo?.version ? (
+                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--text)]">
+                    v{applicationInfo.version}
+                  </span>
+                ) : null}
+                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                  Copyright (c) 2026 autobrr
+                </span>
+              </div>
+              <a
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/10 text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                href="https://github.com/autobrr/upbrr"
+                target="_blank"
+                rel="noreferrer"
+                onAuxClick={handleExternalLinkClick}
+                onClick={handleExternalLinkClick}
+                aria-label="Open autobrr/upbrr on GitHub"
+                title="autobrr/upbrr"
+              >
+                <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor">
+                  <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4l-.01-1.4c-2.22.5-2.69-1.1-2.69-1.1-.36-.95-.89-1.2-.89-1.2-.73-.51.05-.5.05-.5.81.06 1.24.85 1.24.85.72 1.27 1.89.9 2.35.69.07-.53.28-.9.51-1.1-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .68-.22 2.2.84A7.37 7.37 0 0 1 8 3.99c.68 0 1.36.09 2 .28 1.52-1.06 2.19-.84 2.19-.84.44 1.12.16 1.95.08 2.16.52.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.25.54.76.54 1.54l-.01 2.22c0 .22.14.48.55.4A8.13 8.13 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
+                </svg>
+              </a>
+            </div>
           </div>
         </aside>
 

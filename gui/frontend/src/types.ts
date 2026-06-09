@@ -272,6 +272,16 @@ export type WebAuthStatus = {
   message: string;
 };
 
+export type ApplicationInfo = {
+  version: string;
+  buildIdentifier: string;
+  goVersion: string;
+  goos: string;
+  goarch: string;
+  uptime: string;
+  uptimeSeconds: number;
+};
+
 export type ExternalPreview = {
   Provider: string;
   ID: number;

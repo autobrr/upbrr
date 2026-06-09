@@ -181,6 +181,41 @@ body {
   color: var(--text);
 }
 
+.settings-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 9px;
+}
+
+.settings-detail-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(8, 12, 20, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-detail-card__label,
+.settings-detail-card__value {
+  margin: 0;
+}
+
+.settings-detail-card__label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-detail-card__value {
+  color: var(--text);
+  font-size: 0.96rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .settings-subgroup--auth {
   margin-bottom: 12px;
 }

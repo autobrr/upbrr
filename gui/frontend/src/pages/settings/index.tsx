@@ -1,13 +1,20 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
 import { cn } from "../../utils/cn";
-import type { ConfigMap, ConfigValue, FieldMeta, WebAuthStatus } from "../../types";
+import { handleExternalLinkClick } from "../../utils/externalLinks";
+import type {
+  ApplicationInfo,
+  ConfigMap,
+  ConfigValue,
+  FieldMeta,
+  WebAuthStatus,
+} from "../../types";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
 
@@ -20,6 +27,10 @@ type ConfigOpStatus = {
   message: string;
   warnings?: string[];
 } | null;
+
+type AppBridgeWithApplicationInfo = {
+  GetApplicationInfo?: () => Promise<ApplicationInfo>;
+};
 
 type Props = {
   configData: ConfigMap | null;
@@ -116,6 +127,66 @@ export default function SettingsPage(props: Props) {
   } = props;
 
   const [warningsExpanded, setWarningsExpanded] = useState(false);
+  const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
+  const [applicationInfoError, setApplicationInfoError] = useState("");
+  const [applicationInfoLoading, setApplicationInfoLoading] = useState(false);
+  const [applicationInfoFetchedAt, setApplicationInfoFetchedAt] = useState<number | null>(null);
+  const [uptimeTick, setUptimeTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    let cancelled = false;
+    const getter = (globalThis.go?.guiapp?.App as AppBridgeWithApplicationInfo | undefined)
+      ?.GetApplicationInfo;
+    if (!getter) {
+      setApplicationInfoError("Application details are unavailable in this build.");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setApplicationInfoLoading(true);
+    setApplicationInfoError("");
+    void getter()
+      .then((info) => {
+        if (cancelled) {
+          return;
+        }
+        setApplicationInfo(info);
+        setApplicationInfoFetchedAt(Date.now());
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setApplicationInfoError(String(error));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setApplicationInfoLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!applicationInfo) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      setUptimeTick(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [applicationInfo]);
+
+  const uptimeSeconds =
+    applicationInfo && applicationInfoFetchedAt !== null
+      ? applicationInfo.uptimeSeconds +
+        Math.max(0, Math.floor((uptimeTick - applicationInfoFetchedAt) / 1000))
+      : 0;
+  const uptimeValue = applicationInfo ? formatApplicationUptime(uptimeSeconds) : "";
 
   return (
     <div className="content-stack">
@@ -270,6 +341,76 @@ export default function SettingsPage(props: Props) {
           </div>
 
           <div className="settings-body">
+            <details
+              className="settings-subgroup settings-subgroup--collapsible settings-subgroup--application"
+              open
+            >
+              <summary>Application Details</summary>
+              <div>
+                <p className="helper">
+                  Read-only build and runtime details for this install. Auth, bind, and storage
+                  paths are intentionally excluded.
+                </p>
+                <div className="settings-details-grid">
+                  <div className="settings-detail-card">
+                    <p className="settings-detail-card__label">Project</p>
+                    <p className="settings-detail-card__value">
+                      <a
+                        href="https://github.com/autobrr/upbrr"
+                        target="_blank"
+                        rel="noreferrer"
+                        onAuxClick={handleExternalLinkClick}
+                        onClick={handleExternalLinkClick}
+                      >
+                        autobrr/upbrr
+                      </a>
+                    </p>
+                  </div>
+                  <div className="settings-detail-card">
+                    <p className="settings-detail-card__label">Copyright</p>
+                    <p className="settings-detail-card__value">Copyright (c) 2026 autobrr</p>
+                  </div>
+                  {applicationInfo ? (
+                    <>
+                      <div className="settings-detail-card">
+                        <p className="settings-detail-card__label">Version</p>
+                        <p className="settings-detail-card__value mono">
+                          {applicationInfo.version || "Unavailable"}
+                        </p>
+                      </div>
+                      <div className="settings-detail-card">
+                        <p className="settings-detail-card__label">Build</p>
+                        <p className="settings-detail-card__value mono">
+                          {applicationInfo.buildIdentifier || "Unavailable"}
+                        </p>
+                      </div>
+                      <div className="settings-detail-card">
+                        <p className="settings-detail-card__label">Go Runtime</p>
+                        <p className="settings-detail-card__value mono">
+                          {applicationInfo.goVersion}
+                        </p>
+                      </div>
+                      <div className="settings-detail-card">
+                        <p className="settings-detail-card__label">Platform</p>
+                        <p className="settings-detail-card__value mono">
+                          {applicationInfo.goos}/{applicationInfo.goarch}
+                        </p>
+                      </div>
+                      <div className="settings-detail-card">
+                        <p className="settings-detail-card__label">Uptime</p>
+                        <p className="settings-detail-card__value mono">
+                          {uptimeValue || applicationInfo.uptime}
+                        </p>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+                {applicationInfoLoading ? (
+                  <p className="muted">Loading application details...</p>
+                ) : null}
+                {applicationInfoError ? <p className="error">{applicationInfoError}</p> : null}
+              </div>
+            </details>
             {webAuthAvailable ? (
               <details className="settings-subgroup settings-subgroup--collapsible settings-subgroup--auth">
                 <summary>Secret Encryption</summary>
@@ -496,4 +637,25 @@ export default function SettingsPage(props: Props) {
       </AlertDialog.Root>
     </div>
   );
+}
+
+function formatApplicationUptime(totalSeconds: number) {
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const parts: string[] = [];
+  if (days > 0) {
+    parts.push(`${days}d`);
+  }
+  if (hours > 0 || parts.length > 0) {
+    parts.push(`${hours}h`);
+  }
+  if (minutes > 0 || parts.length > 0) {
+    parts.push(`${minutes}m`);
+  }
+  parts.push(`${seconds}s`);
+
+  return parts.join(" ");
 }

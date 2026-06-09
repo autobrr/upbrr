@@ -93,6 +93,7 @@ export default function TrackerDataPage(props: Props) {
                           href={item.TorrentURL}
                           target="_blank"
                           rel="noreferrer"
+                          onAuxClick={handleExternalLinkClick}
                           onClick={handleExternalLinkClick}
                         >
                           {item.Tracker || "Unknown"}

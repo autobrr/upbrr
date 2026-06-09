@@ -250,6 +250,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                                 target="_blank"
                                 rel="noreferrer"
                                 className="tracker-link"
+                                onAuxClick={handleExternalLinkClick}
                                 onClick={handleExternalLinkClick}
                               >
                                 {entry.Name}

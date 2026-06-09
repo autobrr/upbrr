@@ -8,6 +8,13 @@ type Props = {
   html: string;
 };
 
+const configureRenderedLinks = (root: HTMLElement) => {
+  root.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((anchor) => {
+    anchor.target = "_blank";
+    anchor.rel = "noreferrer";
+  });
+};
+
 export default function RenderedDescription({ html }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -16,6 +23,8 @@ export default function RenderedDescription({ html }: Props) {
     if (!root) {
       return;
     }
+
+    configureRenderedLinks(root);
 
     const comparisons = Array.from(root.querySelectorAll<HTMLElement>(".comparison"));
     const cleanups: Array<() => void> = [];
@@ -139,6 +148,7 @@ export default function RenderedDescription({ html }: Props) {
     <div
       ref={rootRef}
       className="tracker-description rendered"
+      onAuxClick={handleExternalLinkClick}
       onClick={handleExternalLinkClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />
