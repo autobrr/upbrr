@@ -96,7 +96,7 @@ func TestPromptTrackerDupeReviewBuildsConfirmedTrackerList(t *testing.T) {
 	t.Parallel()
 
 	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
-		bufio.NewReader(strings.NewReader("y\nn\ny\n")),
+		bufio.NewReader(strings.NewReader("y\nn\n")),
 		api.DupeCheckSummary{Results: []api.DupeCheckResult{
 			{Tracker: "ANT", Status: "completed", HasDupes: true},
 			{Tracker: "BLU", Status: "completed"},
@@ -108,14 +108,72 @@ func TestPromptTrackerDupeReviewBuildsConfirmedTrackerList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("promptTrackerDupeReview: %v", err)
 	}
-	if strings.Join(approved, ",") != "ANT,NBL" {
-		t.Fatalf("expected ANT,NBL approved, got %#v", approved)
+	if strings.Join(approved, ",") != "ANT" {
+		t.Fatalf("expected ANT approved, got %#v", approved)
 	}
-	if strings.Join(ignoreDupes, ",") != "ANT,NBL" {
+	if strings.Join(ignoreDupes, ",") != "ANT" {
 		t.Fatalf("expected dupe ignores for approved blocked trackers, got %#v", ignoreDupes)
 	}
-	if strings.Join(ruleOverrides, ",") != "NBL" {
-		t.Fatalf("expected rule override for skipped rule result, got %#v", ruleOverrides)
+	if len(ruleOverrides) != 0 {
+		t.Fatalf("expected no rule overrides for skipped rule result, got %#v", ruleOverrides)
+	}
+}
+
+func TestPromptTrackerDupeReviewSkipsPathedTorrentMatches(t *testing.T) {
+	t.Parallel()
+
+	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+		bufio.NewReader(strings.NewReader("y\n")),
+		api.DupeCheckSummary{Results: []api.DupeCheckResult{
+			{
+				Tracker:  "BHD, DP",
+				Status:   "completed",
+				HasDupes: true,
+				Notes:    []string{"pathed torrent match found; skipping dupe search"},
+			},
+			{Tracker: "ANT", Status: "completed"},
+		}},
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
+		[]string{"BHD", "DP", "ANT"},
+	)
+	if err != nil {
+		t.Fatalf("promptTrackerDupeReview: %v", err)
+	}
+	if strings.Join(approved, ",") != "ANT" {
+		t.Fatalf("expected only ANT approved, got %#v", approved)
+	}
+	if len(ignoreDupes) != 0 {
+		t.Fatalf("expected no dupe ignores for skipped pathed matches, got %#v", ignoreDupes)
+	}
+	if len(ruleOverrides) != 0 {
+		t.Fatalf("expected no rule overrides for skipped pathed matches, got %#v", ruleOverrides)
+	}
+}
+
+func TestPromptTrackerDupeReviewSkipsRuleCheckViolations(t *testing.T) {
+	t.Parallel()
+
+	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+		bufio.NewReader(strings.NewReader("y\n")),
+		api.DupeCheckSummary{Results: []api.DupeCheckResult{
+			{Tracker: "NBL", Status: "skipped", Skipped: true, SkipReason: "rule check failed: category movie is not tv"},
+			{Tracker: "OTW", Status: "skipped", Skipped: true, Error: "rule failed: Genre does not match Animation or Family for OTW."},
+			{Tracker: "ANT", Status: "completed"},
+		}},
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
+		[]string{"NBL", "OTW", "ANT"},
+	)
+	if err != nil {
+		t.Fatalf("promptTrackerDupeReview: %v", err)
+	}
+	if strings.Join(approved, ",") != "ANT" {
+		t.Fatalf("expected only ANT approved, got %#v", approved)
+	}
+	if len(ignoreDupes) != 0 {
+		t.Fatalf("expected no dupe ignores for skipped rule violations, got %#v", ignoreDupes)
+	}
+	if len(ruleOverrides) != 0 {
+		t.Fatalf("expected no rule overrides for skipped rule violations, got %#v", ruleOverrides)
 	}
 }
 

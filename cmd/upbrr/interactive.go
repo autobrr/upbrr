@@ -281,8 +281,12 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 			continue
 		}
 
-		fmt.Printf("\n[%s]\n", name)
 		result, hasResult := resultByTracker[name]
+		if hasResult && dupeResultSkipsPrompt(result) {
+			continue
+		}
+
+		fmt.Printf("\n[%s]\n", name)
 		if hasResult {
 			printDupeResult(result)
 		} else {
@@ -352,6 +356,34 @@ func dupeResultNeedsConfirmation(result api.DupeCheckResult, hasResult bool) boo
 		return true
 	}
 	return strings.TrimSpace(result.Error) != ""
+}
+
+func dupeResultSkipsPrompt(result api.DupeCheckResult) bool {
+	if isPathedTorrentDupeResult(result) {
+		return true
+	}
+	return isRuleCheckDupeResult(result)
+}
+
+func isPathedTorrentDupeResult(result api.DupeCheckResult) bool {
+	for _, note := range result.Notes {
+		if strings.EqualFold(strings.TrimSpace(note), "pathed torrent match found; skipping dupe search") {
+			return true
+		}
+	}
+	return false
+}
+
+func isRuleCheckDupeResult(result api.DupeCheckResult) bool {
+	values := append([]string{}, result.SkipReason, result.Error)
+	values = append(values, result.Notes...)
+	for _, value := range values {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if strings.Contains(normalized, "rule check failed") || strings.Contains(normalized, "rule failed") {
+			return true
+		}
+	}
+	return false
 }
 
 func runCLIScreenshotHandling(ctx context.Context, coreSvc api.Core, req api.Request) error {
