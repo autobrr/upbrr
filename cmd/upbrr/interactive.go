@@ -21,6 +21,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const dryRunPayloadPreviewLimit = 240
+
 func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config) error {
 	reader := bufio.NewReader(os.Stdin)
 	currentOpts := opts
@@ -816,12 +818,68 @@ func printDryRunDetails(entry api.TrackerDryRunEntry) {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			fmt.Printf("- %s: %s\n", key, entry.Payload[key])
+			fmt.Printf("- %s: %s\n", key, formatDryRunPayloadValue(key, entry.Payload[key]))
 		}
 	}
-	if message := strings.TrimSpace(entry.Description); message != "" {
-		fmt.Printf("Description:\n%s\n", message)
+	if message := strings.TrimSpace(entry.Description); message != "" && !payloadIncludesDescription(entry.Payload) {
+		fmt.Printf("Description: %s\n", summarizeDryRunBody(message))
 	}
+}
+
+func formatDryRunPayloadValue(key string, value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if isDryRunBodyPayloadField(key) {
+		return summarizeDryRunBody(trimmed)
+	}
+	compact := strings.Join(strings.Fields(trimmed), " ")
+	compactRunes := []rune(compact)
+	if len(compactRunes) <= dryRunPayloadPreviewLimit {
+		return compact
+	}
+	return fmt.Sprintf("%s... [%d bytes total]", string(compactRunes[:dryRunPayloadPreviewLimit]), len(trimmed))
+}
+
+func summarizeDryRunBody(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	lines := strings.Count(trimmed, "\n") + 1
+	return fmt.Sprintf("[%d bytes, %d lines omitted]", len(trimmed), lines)
+}
+
+func payloadIncludesDescription(payload map[string]string) bool {
+	for key := range payload {
+		if isDryRunDescriptionPayloadField(key) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDryRunBodyPayloadField(key string) bool {
+	switch normalizedDryRunPayloadKey(key) {
+	case "description", "desc", "descr", "release_desc", "album_desc", "mediainfo", "mediainfo[]", "media_info", "bdinfo", "bd_info", "techinfo", "technical_info", "technicaldetails":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDryRunDescriptionPayloadField(key string) bool {
+	switch normalizedDryRunPayloadKey(key) {
+	case "description", "desc", "descr", "release_desc", "album_desc":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizedDryRunPayloadKey(key string) string {
+	return strings.ToLower(strings.TrimSpace(key))
 }
 
 func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) (bool, error) {

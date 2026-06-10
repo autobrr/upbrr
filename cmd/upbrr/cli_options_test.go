@@ -572,12 +572,13 @@ func TestPrintDryRunSummary(t *testing.T) {
 
 func TestPrintDryRunDetails(t *testing.T) {
 	tests := []struct {
-		name     string
-		entry    api.TrackerDryRunEntry
-		contains []string
+		name        string
+		entry       api.TrackerDryRunEntry
+		contains    []string
+		notContains []string
 	}{
 		{
-			name: "prints endpoint files payload and description",
+			name: "prints endpoint files payload and condenses body fields",
 			entry: api.TrackerDryRunEntry{
 				Endpoint: "https://tracker.test/upload",
 				Files: []api.TrackerDryRunFile{
@@ -585,10 +586,12 @@ func TestPrintDryRunDetails(t *testing.T) {
 					{Field: "nfo", Path: "", Present: false},
 				},
 				Payload: map[string]string{
-					"category": "MOVIE",
-					"name":     "Movie.2024",
+					"category":    "MOVIE",
+					"description": "line 1\nline 2",
+					"mediainfo":   "General\nComplete name: Movie.2024.mkv",
+					"name":        "Movie.2024",
 				},
-				Description: "hello world",
+				Description: "line 1\nline 2",
 			},
 			contains: []string{
 				"Endpoint: https://tracker.test/upload",
@@ -597,8 +600,13 @@ func TestPrintDryRunDetails(t *testing.T) {
 				"- nfo [missing]: (none)",
 				"Payload:",
 				"- category: MOVIE",
+				"- description: [13 bytes, 2 lines omitted]",
+				"- mediainfo: [37 bytes, 2 lines omitted]",
 				"- name: Movie.2024",
-				"Description:\nhello world\n",
+			},
+			notContains: []string{
+				"line 1\nline 2",
+				"General\nComplete name",
 			},
 		},
 		{
@@ -617,10 +625,31 @@ func TestPrintDryRunDetails(t *testing.T) {
 					t.Fatalf("expected output to contain %q, got %q", expected, output)
 				}
 			}
+			for _, unexpected := range tt.notContains {
+				if strings.Contains(output, unexpected) {
+					t.Fatalf("expected output not to contain %q, got %q", unexpected, output)
+				}
+			}
 			if len(tt.contains) == 0 && output != "" {
 				t.Fatalf("expected no output, got %q", output)
 			}
 		})
+	}
+}
+
+func TestPrintDryRunDetailsSummarizesDescriptionWithoutPayloadDescription(t *testing.T) {
+	output := captureStdout(t, func() {
+		printDryRunDetails(api.TrackerDryRunEntry{
+			Payload:     map[string]string{"name": "Movie.2024"},
+			Description: "first line\nsecond line",
+		})
+	})
+
+	if !strings.Contains(output, "Description: [22 bytes, 2 lines omitted]") {
+		t.Fatalf("expected summarized description, got %q", output)
+	}
+	if strings.Contains(output, "first line") {
+		t.Fatalf("expected raw description to be omitted, got %q", output)
 	}
 }
 
