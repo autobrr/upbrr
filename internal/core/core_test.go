@@ -1183,6 +1183,81 @@ func TestCheckDupesUsesPathedTrackerDataWithFreshStoredSnapshot(t *testing.T) {
 	}
 }
 
+func TestCheckDupesReusesCLIMetadataPreviewCache(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		InfoHash:          "abc123",
+		MatchedTrackers:   []string{"AITHER"},
+		FoundTrackerMatch: true,
+		TrackerIDs: map[string]string{
+			"aither": "111",
+		},
+	}}
+	metaSvc := &stubMeta{}
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    client,
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	req := api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER", "BHD"},
+		Options: api.UploadOptions{
+			InteractionMode: api.InteractionModeInteractive,
+			Screens:         1,
+		},
+	}
+	if _, err := core.FetchMetadataPreview(context.Background(), req); err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if metaSvc.calls != 1 {
+		t.Fatalf("expected preview to prepare metadata once, got %d calls", metaSvc.calls)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected preview to run pathed search once, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected preview to enrich tracker data once, got %d calls", metaSvc.enrichCalls)
+	}
+
+	if _, err := core.CheckDupes(context.Background(), req); err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+	if metaSvc.calls != 1 {
+		t.Fatalf("expected cached dupe check to skip metadata prepare, got %d calls", metaSvc.calls)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected cached dupe check to skip pathed search, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected cached dupe check to skip tracker enrichment, got %d calls", metaSvc.enrichCalls)
+	}
+	if got := dupes.lastMeta.InfoHash; got != "abc123" {
+		t.Fatalf("expected cached infohash, got %q", got)
+	}
+	if got := dupes.lastMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected cached tracker id, got %q", got)
+	}
+	if containsCoreString(dupes.lastTrackers, "AITHER") {
+		t.Fatalf("expected matched tracker excluded from dupe check, got %v", dupes.lastTrackers)
+	}
+	if !containsCoreString(dupes.lastTrackers, "BHD") {
+		t.Fatalf("expected unmatched tracker checked, got %v", dupes.lastTrackers)
+	}
+}
+
 func TestFetchPreparationPreviewUsesCachedClientDataForCachedMeta(t *testing.T) {
 	t.Parallel()
 
