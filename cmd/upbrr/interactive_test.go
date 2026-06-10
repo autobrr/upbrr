@@ -23,12 +23,40 @@ func TestRunInteractiveCLIPathReturnsNilAfterSuccessfulUpload(t *testing.T) {
 	coreSvc := &cliCoreForTest{
 		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
 	}
-	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true}, map[string]bool{}, "movie.mkv", 1)
+	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
 	if err != nil {
 		t.Fatalf("runInteractiveCLIPath: %v", err)
 	}
 	if coreSvc.runUploadPreparedCalls != 1 {
 		t.Fatalf("expected one prepared upload, got %d", coreSvc.runUploadPreparedCalls)
+	}
+}
+
+func TestRunInteractiveCLIPathHandlesScreenshotsBeforeReview(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		screenshotPlan: api.ScreenshotPlan{
+			SuggestedSelections: []api.ScreenshotSelection{{Index: 1, TimestampSeconds: 60}},
+		},
+		screenshotResult: api.ScreenshotResult{
+			Images: []api.ScreenshotImage{{Index: 1, TimestampSeconds: 60, Path: "screen1.png"}},
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,generate-screenshots,save-screenshots,review" {
+		t.Fatalf("expected screenshots before review, got %s", got)
+	}
+	if len(coreSvc.savedFinalImages) != 1 || coreSvc.savedFinalImages[0].Path != "screen1.png" {
+		t.Fatalf("expected generated final screenshot saved, got %#v", coreSvc.savedFinalImages)
 	}
 }
 
@@ -41,6 +69,53 @@ func TestRunSiteCheckCLIPathSeedsMetadataBeforeReview(t *testing.T) {
 	}
 	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,review" {
 		t.Fatalf("expected preview before review, got %s", got)
+	}
+}
+
+func TestResolveCLIUploadTrackersExplicitTrackersSuppressDefaults(t *testing.T) {
+	t.Parallel()
+
+	selected, removalBase := resolveCLIUploadTrackers(
+		map[string]bool{"trackers": true},
+		api.Request{
+			Trackers: []string{"BLU"},
+			Options:  api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
+		},
+		api.MetadataPreview{},
+		config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}}},
+	)
+	if len(selected) != 1 || selected[0] != "BLU" {
+		t.Fatalf("expected explicit BLU selection, got %#v", selected)
+	}
+	if got := unselectedTrackers(removalBase, selected); len(got) != 1 || got[0] != "AITHER" {
+		t.Fatalf("expected AITHER removal from defaults, got %#v", got)
+	}
+}
+
+func TestPromptTrackerDupeReviewBuildsConfirmedTrackerList(t *testing.T) {
+	t.Parallel()
+
+	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+		bufio.NewReader(strings.NewReader("y\nn\ny\n")),
+		api.DupeCheckSummary{Results: []api.DupeCheckResult{
+			{Tracker: "ANT", Status: "completed", HasDupes: true},
+			{Tracker: "BLU", Status: "completed"},
+			{Tracker: "NBL", Status: "skipped", Skipped: true, SkipReason: "rule check failed: category movie is not tv"},
+		}},
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
+		[]string{"ANT", "BLU", "NBL"},
+	)
+	if err != nil {
+		t.Fatalf("promptTrackerDupeReview: %v", err)
+	}
+	if strings.Join(approved, ",") != "ANT,NBL" {
+		t.Fatalf("expected ANT,NBL approved, got %#v", approved)
+	}
+	if strings.Join(ignoreDupes, ",") != "ANT,NBL" {
+		t.Fatalf("expected dupe ignores for approved blocked trackers, got %#v", ignoreDupes)
+	}
+	if strings.Join(ruleOverrides, ",") != "NBL" {
+		t.Fatalf("expected rule override for skipped rule result, got %#v", ruleOverrides)
 	}
 }
 
@@ -183,6 +258,10 @@ type cliCoreForTest struct {
 	callOrder              []string
 	previewPaths           []string
 	runUploadPreparedCalls int
+	dupeSummary            api.DupeCheckSummary
+	screenshotPlan         api.ScreenshotPlan
+	screenshotResult       api.ScreenshotResult
+	savedFinalImages       []api.ScreenshotImage
 	playlistSelectionErr   error
 	playlists              []api.PlaylistInfo
 	savedPlaylists         []string
@@ -223,7 +302,8 @@ func (c *cliCoreForTest) FetchTrackerDryRunPreview(context.Context, api.Request)
 }
 
 func (c *cliCoreForTest) CheckDupes(context.Context, api.Request) (api.DupeCheckSummary, error) {
-	return api.DupeCheckSummary{}, nil
+	c.callOrder = append(c.callOrder, "dupes")
+	return c.dupeSummary, nil
 }
 
 func (c *cliCoreForTest) BuildUploadReview(context.Context, api.Request) (api.UploadReview, error) {
@@ -232,11 +312,13 @@ func (c *cliCoreForTest) BuildUploadReview(context.Context, api.Request) (api.Up
 }
 
 func (c *cliCoreForTest) FetchScreenshotPlan(context.Context, api.Request) (api.ScreenshotPlan, error) {
-	return api.ScreenshotPlan{}, nil
+	c.callOrder = append(c.callOrder, "screenshot-plan")
+	return c.screenshotPlan, nil
 }
 
 func (c *cliCoreForTest) GenerateScreenshots(context.Context, api.Request, []api.ScreenshotSelection, api.ScreenshotPurpose) (api.ScreenshotResult, error) {
-	return api.ScreenshotResult{}, nil
+	c.callOrder = append(c.callOrder, "generate-screenshots")
+	return c.screenshotResult, nil
 }
 
 func (c *cliCoreForTest) PreviewScreenshotFrame(context.Context, api.Request, float64) (api.ScreenshotPreview, error) {
@@ -251,7 +333,9 @@ func (c *cliCoreForTest) DeleteTrackerImageURL(context.Context, api.Request, str
 	return nil
 }
 
-func (c *cliCoreForTest) SaveFinalScreenshotSelections(context.Context, api.Request, []api.ScreenshotImage) error {
+func (c *cliCoreForTest) SaveFinalScreenshotSelections(_ context.Context, _ api.Request, images []api.ScreenshotImage) error {
+	c.callOrder = append(c.callOrder, "save-screenshots")
+	c.savedFinalImages = append([]api.ScreenshotImage(nil), images...)
 	return nil
 }
 

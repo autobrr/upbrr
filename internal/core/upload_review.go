@@ -116,6 +116,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		}
 		summary = appendPathedDupeResults(summary, meta.MatchedTrackers)
 		applyDupeSummaryToPreparedMeta(&meta, summary)
+		meta.BlockedTrackers = removeTrackerBlockReasonForTrackers(meta.BlockedTrackers, api.TrackerBlockReasonDupe, singleReq.IgnoreDupesFor)
 		dupeResults = mapDupeResults(summary.Results)
 	}
 

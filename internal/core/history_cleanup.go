@@ -78,13 +78,23 @@ func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error
 
 	fileRoots := []string{tmpRoot, cacheRoot, nfoRoot}
 	for _, filePath := range artifactPaths {
-		if _, err := removeIfWithinRoots(fileRoots, filePath, false); err != nil && c.logger != nil {
+		removed, err := removeIfWithinRoots(fileRoots, filePath, false)
+		if err != nil && c.logger != nil {
 			c.logger.Warnf("core: delete history release remove file failed %q: %v", filePath, err)
+			continue
+		}
+		if removed && c.logger != nil {
+			c.logger.Debugf("core: delete history release removed file %s", filePath)
 		}
 	}
 	for dir := range tmpDirs {
-		if _, err := removeIfWithinRoot(tmpRoot, dir, true); err != nil && c.logger != nil {
+		removed, err := removeIfWithinRoot(tmpRoot, dir, true)
+		if err != nil && c.logger != nil {
 			c.logger.Warnf("core: delete history release remove tmp dir failed %q: %v", dir, err)
+			continue
+		}
+		if removed && c.logger != nil {
+			c.logger.Debugf("core: delete history release removed tmp dir %s", dir)
 		}
 	}
 	if c.logger != nil {

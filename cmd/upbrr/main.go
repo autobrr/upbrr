@@ -272,7 +272,7 @@ func run() error {
 			}
 			continue
 		}
-		if err := runInteractiveCLIPath(ctx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens); err != nil {
+		if err := runInteractiveCLIPath(ctx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens, cfg); err != nil {
 			return exitError(1, err)
 		}
 	}
