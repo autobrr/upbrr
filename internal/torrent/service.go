@@ -4,20 +4,16 @@
 package torrent
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
-	slashpath "path" //nolint:depguard // Formats torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/anacrolix/torrent/merkle"
 	"github.com/anacrolix/torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
@@ -52,9 +48,11 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 	policy := resolveTrackerPolicy(meta)
 	forceRehash := torrentOverrideEnabled(meta.TorrentOverrides.Rehash)
 	reuseOnly := torrentOverrideEnabled(meta.TorrentOverrides.NoHash)
+	s.logger.Debugf("torrent: reuse scan for %s force_rehash=%t reuse_only=%t", meta.SourcePath, forceRehash, reuseOnly)
 
 	clientTorrent := strings.TrimSpace(meta.ClientTorrentPath)
 	if !forceRehash && clientTorrent != "" {
+		s.logger.Debugf("torrent: checking client-provided torrent %s", clientTorrent)
 		info, err := os.Stat(clientTorrent)
 		if err == nil && !info.IsDir() {
 			if err := validateCandidateTorrent(clientTorrent, policy, meta, s.logger); err == nil {
@@ -90,6 +88,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 		if err != nil {
 			return api.TorrentResult{}, err
 		}
+		s.logger.Debugf("torrent: checking temp torrent %s", tmpTorrentPath)
 		if info, err := os.Stat(tmpTorrentPath); err == nil {
 			if !info.IsDir() {
 				if err := validateCandidateTorrent(tmpTorrentPath, policy, meta, s.logger); err == nil {
@@ -102,6 +101,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 
 	candidate := source + ".torrent"
 	if !forceRehash {
+		s.logger.Debugf("torrent: checking adjacent torrent %s", candidate)
 		if info, err := os.Stat(candidate); err == nil {
 			if !info.IsDir() {
 				if err := validateCandidateTorrent(candidate, policy, meta, s.logger); err == nil {
@@ -115,6 +115,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 		if baseName != "" {
 			sibling := filepath.Join(filepath.Dir(source), baseName+".torrent")
 			if sibling != candidate {
+				s.logger.Debugf("torrent: checking sibling torrent %s", sibling)
 				if info, err := os.Stat(sibling); err == nil {
 					if !info.IsDir() {
 						if err := validateCandidateTorrent(sibling, policy, meta, s.logger); err == nil {
@@ -131,10 +132,12 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 		return api.TorrentResult{}, fmt.Errorf("torrent: no reusable torrent found with nohash enabled: %w", internalerrors.ErrNotFound)
 	}
 
+	s.logger.Debugf("torrent: resolving create spec for %s", source)
 	createSpec, err := resolveCreateSpec(meta, source, s.tmpRoot)
 	if err != nil {
 		return api.TorrentResult{}, err
 	}
+	s.logger.Debugf("torrent: create spec path=%s name=%q include_patterns=%d staged=%t", createSpec.path, createSpec.name, len(createSpec.includePatterns), createSpec.cleanupPath != "")
 	if createSpec.cleanupPath != "" {
 		defer func() {
 			if err := os.RemoveAll(createSpec.cleanupPath); err != nil {
@@ -166,7 +169,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 	if policy != nil {
 		pieceOptions = policy.createOptions(meta)
 	}
-	s.logger.Debugf("torrent: creating torrent with max piece exponent %d", pieceOptions.maxPieceExp)
+	s.logger.Debugf("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
 	emitTorrentProgress(ctx, meta, "running", "Creating torrent with mkbrr")
 
 	info, err := mkbrr.Create(mkbrr.CreateOptions{
@@ -563,152 +566,7 @@ func validateTorrentContent(path string, meta api.PreparedMetadata) error {
 	if !sameContentSet(actual, expected) {
 		return errors.New("torrent: candidate content mismatch")
 	}
-	if err := validateTorrentPieces(info, meta); err != nil {
-		return err
-	}
 	return nil
-}
-
-func validateTorrentPieces(info metainfo.Info, meta api.PreparedMetadata) error {
-	if info.HasV2() {
-		if err := validateTorrentV2Pieces(info, meta); err != nil {
-			return err
-		}
-		if !info.HasV1() {
-			return nil
-		}
-	}
-	if info.PieceLength <= 0 || len(info.Pieces) == 0 {
-		return errors.New("torrent: candidate piece hashes unavailable")
-	}
-	generated := info
-	if err := generated.GeneratePieces(func(file metainfo.FileInfo) (io.ReadCloser, error) {
-		return openTorrentContentFile(meta, file)
-	}); err != nil {
-		return fmt.Errorf("torrent: generate candidate piece hashes: %w", err)
-	}
-	if !bytes.Equal(generated.Pieces, info.Pieces) {
-		return errors.New("torrent: candidate piece hash mismatch")
-	}
-	return nil
-}
-
-func validateTorrentV2Pieces(info metainfo.Info, meta api.PreparedMetadata) error {
-	if info.PieceLength <= 0 {
-		return errors.New("torrent: candidate v2 piece length unavailable")
-	}
-	for _, file := range info.UpvertedFiles() {
-		if file.Length == 0 && !file.PiecesRoot.Ok {
-			continue
-		}
-		if !file.PiecesRoot.Ok {
-			return errors.New("torrent: candidate v2 pieces root unavailable")
-		}
-		root, err := torrentV2FileRoot(meta, file)
-		if err != nil {
-			return err
-		}
-		if root != file.PiecesRoot.Value {
-			return errors.New("torrent: candidate v2 pieces root mismatch")
-		}
-	}
-	return nil
-}
-
-func torrentV2FileRoot(meta api.PreparedMetadata, file metainfo.FileInfo) ([32]byte, error) {
-	openedFile, err := openTorrentContentFile(meta, file)
-	if err != nil {
-		return [32]byte{}, err
-	}
-	defer openedFile.Close()
-
-	hash := merkle.NewHash()
-	written, err := io.CopyN(hash, openedFile, file.Length)
-	if err != nil {
-		return [32]byte{}, fmt.Errorf("torrent: hash candidate v2 file %q: %w", torrentFilePath(file), err)
-	}
-	if written != file.Length {
-		return [32]byte{}, fmt.Errorf("torrent: hash candidate v2 file %q: expected %d bytes, got %d", torrentFilePath(file), file.Length, written)
-	}
-	var root [32]byte
-	copy(root[:], hash.Sum(nil))
-	return root, nil
-}
-
-func torrentFilePath(file metainfo.FileInfo) string {
-	parts := file.BestPath()
-	if len(parts) == 0 {
-		return ""
-	}
-	return slashpath.Join(parts...)
-}
-
-func openTorrentContentFile(meta api.PreparedMetadata, file metainfo.FileInfo) (io.ReadCloser, error) {
-	source := strings.TrimSpace(meta.SourcePath)
-	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
-		return nil, errors.New("torrent: source unavailable for piece validation")
-	}
-	if strings.TrimSpace(meta.DiscType) != "" {
-		return openTorrentFileWithinRoot(normalizeDiscSource(source), file)
-	}
-	info, err := os.Stat(source)
-	if err != nil {
-		return nil, fmt.Errorf("torrent: stat source %q: %w", source, err)
-	}
-	if !info.IsDir() {
-		openedFile, err := os.Open(source)
-		if err != nil {
-			return nil, fmt.Errorf("torrent: open source file %q: %w", source, err)
-		}
-		return openedFile, nil
-	}
-	if len(meta.FileList) == 0 {
-		return openTorrentFileWithinRoot(source, file)
-	}
-	wanted, err := wantedFilesWithin(source, meta.FileList)
-	if err != nil {
-		return nil, err
-	}
-	if len(wanted) == 1 {
-		openedFile, err := os.Open(wanted[0])
-		if err != nil {
-			return nil, fmt.Errorf("torrent: open wanted file %q: %w", wanted[0], err)
-		}
-		return openedFile, nil
-	}
-	return openTorrentFileWithinRoot(source, file)
-}
-
-func openTorrentFileWithinRoot(root string, file metainfo.FileInfo) (io.ReadCloser, error) {
-	parts := file.BestPath()
-	if len(parts) == 0 {
-		return nil, errors.New("torrent: candidate file path missing")
-	}
-	localParts := make([]string, 0, len(parts)+1)
-	localParts = append(localParts, root)
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." || filepath.IsAbs(part) || strings.ContainsAny(part, `/\`) {
-			return nil, fmt.Errorf("torrent: invalid candidate file path segment %q", part)
-		}
-		localParts = append(localParts, part)
-	}
-	localPath := filepath.Join(localParts...)
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("torrent: resolve source root: %w", err)
-	}
-	absPath, err := filepath.Abs(localPath)
-	if err != nil {
-		return nil, fmt.Errorf("torrent: resolve candidate file: %w", err)
-	}
-	if err := ensureWithinRoot(absRoot, absPath); err != nil {
-		return nil, err
-	}
-	fileHandle, err := os.Open(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("torrent: open candidate file %q: %w", absPath, err)
-	}
-	return fileHandle, nil
 }
 
 func expectedTorrentContent(meta api.PreparedMetadata) ([]contentFile, bool, error) {

@@ -185,6 +185,7 @@ func run() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+	ctx = withCLIUploadProgressLogger(ctx, logger)
 	coreSvc, err := core.NewWithContext(ctx, api.CoreDependencies{
 		Config: cfg,
 		Logger: logger,

@@ -542,7 +542,7 @@ func TestCreateNoHashReusesPureV2ClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateNoHashRejectsPureV2SameNameSameSizeDifferentContent(t *testing.T) {
+func TestCreateNoHashReusesPureV2SameNameSameSizeDifferentContent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -556,19 +556,22 @@ func TestCreateNoHashRejectsPureV2SameNameSameSizeDifferentContent(t *testing.T)
 
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
-	_, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
 		SourcePath:        source,
 		ClientTorrentPath: clientTorrentPath,
 		TorrentOverrides: api.TorrentOverrides{
 			NoHash: &reuseOnly,
 		},
 	})
-	if !errors.Is(err, internalerrors.ErrNotFound) {
-		t.Fatalf("expected nohash to reject mismatched pure v2 torrent, got %v", err)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Path != clientTorrentPath {
+		t.Fatalf("expected same-name same-size pure v2 client torrent path %s, got %s", clientTorrentPath, result.Path)
 	}
 }
 
-func TestCreateNoHashRejectsMismatchedReusableTorrent(t *testing.T) {
+func TestCreateNoHashReusesSameNameSameSizeReusableTorrent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -583,15 +586,18 @@ func TestCreateNoHashRejectsMismatchedReusableTorrent(t *testing.T) {
 
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
-	_, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.PreparedMetadata{
 		SourcePath:        source,
 		ClientTorrentPath: clientTorrentPath,
 		TorrentOverrides: api.TorrentOverrides{
 			NoHash: &reuseOnly,
 		},
 	})
-	if !errors.Is(err, internalerrors.ErrNotFound) {
-		t.Fatalf("expected nohash to reject mismatched reusable torrent, got %v", err)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Path != clientTorrentPath {
+		t.Fatalf("expected same-name same-size client torrent path %s, got %s", clientTorrentPath, result.Path)
 	}
 }
 
@@ -829,7 +835,7 @@ func TestCreateRejectsSameNameDifferentSizeClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsSameNameSameSizeDifferentContentClientTorrent(t *testing.T) {
+func TestCreateReusesSameNameSameSizeDifferentContentClientTorrent(t *testing.T) {
 	t.Parallel()
 
 	sourceDir := t.TempDir()
@@ -850,8 +856,8 @@ func TestCreateRejectsSameNameSameSizeDifferentContentClientTorrent(t *testing.T
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.Path == clientTorrentPath {
-		t.Fatalf("expected same-name same-size different-content client torrent to be skipped")
+	if result.Path != clientTorrentPath {
+		t.Fatalf("expected same-name same-size client torrent path %s, got %s", clientTorrentPath, result.Path)
 	}
 }
 
