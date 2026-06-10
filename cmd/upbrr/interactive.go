@@ -137,6 +137,11 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 		}
 	}
 
+	req, review, err = maybeEditCLIDescriptions(ctx, coreSvc, reader, req, review, currentOpts)
+	if err != nil {
+		return err
+	}
+
 	if req.Options.Debug {
 		printDebugUploadReview(review)
 		return nil

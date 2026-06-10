@@ -368,6 +368,82 @@ func TestHandleBDMVPlaylistSelectionReturnsSaveErrorInUnattendedSinglePlaylist(t
 	}
 }
 
+func TestMaybeEditCLIDescriptionsSavesEditedGroupOnRequest(t *testing.T) {
+	coreSvc := &cliCoreForTest{
+		review: api.UploadReview{Trackers: []api.TrackerReview{{
+			Tracker: "AITHER",
+			DryRun:  api.TrackerDryRunEntry{DescriptionGroup: "unit3d"},
+		}}},
+		descriptionPreview: api.DescriptionBuilderPreview{Groups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER", "ULCX"},
+			RawDescription: "generated description",
+		}}},
+		savedDescriptionGroup: api.DescriptionBuilderGroup{
+			GroupKey:           "unit3d",
+			Trackers:           []string{"AITHER", "ULCX"},
+			RawDescription:     "edited description",
+			RawDescriptionHTML: "<p>edited description</p>",
+			HasOverride:        true,
+		},
+	}
+	oldEditor := editCLIDescriptionFile
+	editCLIDescriptionFile = func(_ context.Context, initial string) (string, bool, error) {
+		if initial != "generated description" {
+			t.Fatalf("unexpected initial description: %q", initial)
+		}
+		return "edited description", true, nil
+	}
+	defer func() { editCLIDescriptionFile = oldEditor }()
+
+	req := api.Request{Paths: []string{"movie.mkv"}, Trackers: []string{"AITHER"}}
+	review := coreSvc.review
+	updatedReq, _, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("y\n")), req, review, cliOptions{})
+	if err != nil {
+		t.Fatalf("maybeEditCLIDescriptions: %v", err)
+	}
+	if len(coreSvc.savedDescriptionRaw) != 1 || coreSvc.savedDescriptionRaw[0] != "edited description" {
+		t.Fatalf("expected edited description save, got %#v", coreSvc.savedDescriptionRaw)
+	}
+	if len(coreSvc.savedDescriptionReqs) != 1 || coreSvc.savedDescriptionReqs[0].DescriptionOverrideGroup != "unit3d" {
+		t.Fatalf("expected unit3d save request, got %#v", coreSvc.savedDescriptionReqs)
+	}
+	if len(updatedReq.DescriptionGroups) != 1 || updatedReq.DescriptionGroups[0].RawDescription != "edited description" {
+		t.Fatalf("expected edited request description group, got %#v", updatedReq.DescriptionGroups)
+	}
+	last := coreSvc.requests[len(coreSvc.requests)-1]
+	if last.name != "review" || len(last.req.DescriptionGroups) != 1 || last.req.DescriptionGroups[0].RawDescription != "edited description" {
+		t.Fatalf("expected rebuilt review with edited description group, got %#v", last)
+	}
+}
+
+func TestMaybeEditCLIDescriptionsSkipsOnlyID(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		descriptionPreview: api.DescriptionBuilderPreview{Groups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: "generated description",
+		}}},
+	}
+	req := api.Request{
+		Paths:    []string{"movie.mkv"},
+		Trackers: []string{"AITHER"},
+		Options:  api.UploadOptions{OnlyID: true},
+	}
+	updatedReq, _, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("y\n")), req, api.UploadReview{}, cliOptions{})
+	if err != nil {
+		t.Fatalf("maybeEditCLIDescriptions: %v", err)
+	}
+	if len(updatedReq.DescriptionGroups) != 0 {
+		t.Fatalf("expected no description groups for onlyID request, got %#v", updatedReq.DescriptionGroups)
+	}
+	if len(coreSvc.requests) != 0 {
+		t.Fatalf("expected onlyID request to skip description builder, got %#v", coreSvc.requests)
+	}
+}
+
 type cliCoreForTest struct {
 	review                 api.UploadReview
 	callOrder              []string
@@ -383,6 +459,10 @@ type cliCoreForTest struct {
 	playlists              []api.PlaylistInfo
 	savedPlaylists         []string
 	savePlaylistErr        error
+	descriptionPreview     api.DescriptionBuilderPreview
+	savedDescriptionRaw    []string
+	savedDescriptionReqs   []api.Request
+	savedDescriptionGroup  api.DescriptionBuilderGroup
 }
 
 type cliCoreRequestForTest struct {
@@ -393,6 +473,9 @@ type cliCoreRequestForTest struct {
 func (c *cliCoreForTest) recordRequest(name string, req api.Request) {
 	copyReq := req
 	copyReq.Paths = append([]string(nil), req.Paths...)
+	copyReq.Trackers = append([]string(nil), req.Trackers...)
+	copyReq.TrackersRemove = append([]string(nil), req.TrackersRemove...)
+	copyReq.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
 	c.requests = append(c.requests, cliCoreRequestForTest{name: name, req: copyReq})
 }
 
@@ -415,8 +498,9 @@ func (c *cliCoreForTest) FetchMetadataPreview(_ context.Context, req api.Request
 	return api.MetadataPreview{SourcePath: c.previewSourcePath}, nil
 }
 
-func (c *cliCoreForTest) FetchDescriptionBuilderPreview(context.Context, api.Request) (api.DescriptionBuilderPreview, error) {
-	return api.DescriptionBuilderPreview{}, nil
+func (c *cliCoreForTest) FetchDescriptionBuilderPreview(_ context.Context, req api.Request) (api.DescriptionBuilderPreview, error) {
+	c.recordRequest("description-builder", req)
+	return c.descriptionPreview, nil
 }
 
 func (c *cliCoreForTest) FetchDescriptionBuilderGroupPreview(context.Context, api.Request) (api.DescriptionBuilderGroup, error) {
@@ -527,8 +611,20 @@ func (c *cliCoreForTest) RenderDescription(context.Context, string) (string, err
 	return "", nil
 }
 
-func (c *cliCoreForTest) SaveDescriptionOverride(context.Context, api.Request, string) (api.DescriptionBuilderGroup, error) {
-	return api.DescriptionBuilderGroup{}, nil
+func (c *cliCoreForTest) SaveDescriptionOverride(_ context.Context, req api.Request, raw string) (api.DescriptionBuilderGroup, error) {
+	c.recordRequest("save-description", req)
+	c.savedDescriptionRaw = append(c.savedDescriptionRaw, raw)
+	c.savedDescriptionReqs = append(c.savedDescriptionReqs, req)
+	if strings.TrimSpace(c.savedDescriptionGroup.GroupKey) != "" || strings.TrimSpace(c.savedDescriptionGroup.RawDescription) != "" {
+		return c.savedDescriptionGroup, nil
+	}
+	return api.DescriptionBuilderGroup{
+		GroupKey:           req.DescriptionOverrideGroup,
+		Trackers:           append([]string{}, req.Trackers...),
+		RawDescription:     raw,
+		RawDescriptionHTML: raw,
+		HasOverride:        strings.TrimSpace(raw) != "",
+	}, nil
 }
 
 func (c *cliCoreForTest) Close() error {
