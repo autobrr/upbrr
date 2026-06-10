@@ -67,13 +67,30 @@ func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error
 		return fmt.Errorf("core: delete history release: resolve nfo dir: %w", err)
 	}
 
-	artifactPaths, tmpDirs, err := c.collectReleaseCleanupTargets(ctx, trimmedPath, tmpRoot)
+	cleanupPaths, err := c.releaseCleanupPaths(ctx, trimmedPath)
 	if err != nil {
 		return err
 	}
 
-	if err := c.repo.PurgeContentData(ctx, trimmedPath); err != nil {
-		return fmt.Errorf("core: delete history release: %w", err)
+	artifactPaths := make([]string, 0)
+	tmpDirs := make(map[string]struct{})
+	for _, cleanupPath := range cleanupPaths {
+		pathArtifacts, pathTmpDirs, err := c.collectReleaseCleanupTargets(ctx, cleanupPath, tmpRoot)
+		if err != nil {
+			return err
+		}
+		artifactPaths = append(artifactPaths, pathArtifacts...)
+		for dir := range pathTmpDirs {
+			tmpDirs[dir] = struct{}{}
+		}
+	}
+
+	addDirectoryChildTempDirs(trimmedPath, tmpRoot, tmpDirs)
+
+	for _, cleanupPath := range cleanupPaths {
+		if err := c.repo.PurgeContentData(ctx, cleanupPath); err != nil {
+			return fmt.Errorf("core: delete history release: %w", err)
+		}
 	}
 
 	fileRoots := []string{tmpRoot, cacheRoot, nfoRoot}
@@ -102,6 +119,48 @@ func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error
 	}
 
 	return nil
+}
+
+func (c *Core) releaseCleanupPaths(ctx context.Context, sourcePath string) ([]string, error) {
+	cleanupPaths := []string{sourcePath}
+	if c.repo == nil {
+		return cleanupPaths, nil
+	}
+	storedPaths, err := c.repo.ListStoredReleasePaths(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("core: delete history release list stored paths: %w", err)
+	}
+	for _, storedPath := range storedPaths {
+		if !releasePathRelated(sourcePath, storedPath) {
+			continue
+		}
+		cleanupPaths = append(cleanupPaths, storedPath)
+	}
+	return compactStrings(cleanupPaths), nil
+}
+
+func releasePathRelated(sourcePath string, storedPath string) bool {
+	sourcePath = strings.TrimSpace(sourcePath)
+	storedPath = strings.TrimSpace(storedPath)
+	if sourcePath == "" || storedPath == "" {
+		return false
+	}
+	if pathutil.SamePath(sourcePath, storedPath) {
+		return true
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	absSource, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return false
+	}
+	absStored, err := filepath.Abs(storedPath)
+	if err != nil {
+		return false
+	}
+	return pathutil.IsWithinRoot(absSource, absStored)
 }
 
 func (c *Core) collectReleaseCleanupTargets(ctx context.Context, sourcePath string, tmpRoot string) ([]string, map[string]struct{}, error) {
@@ -171,6 +230,25 @@ func (c *Core) collectReleaseCleanupTargets(ctx context.Context, sourcePath stri
 	}
 
 	return artifactPaths, tmpDirs, nil
+}
+
+func addDirectoryChildTempDirs(sourcePath string, tmpRoot string, tmpDirs map[string]struct{}) {
+	info, err := os.Stat(sourcePath)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	entries, err := os.ReadDir(sourcePath)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		childPath := filepath.Join(sourcePath, entry.Name())
+		base := paths.ReleaseTempBase(api.PreparedMetadata{}, childPath)
+		if strings.TrimSpace(base) == "" {
+			continue
+		}
+		tmpDirs[filepath.Join(tmpRoot, base)] = struct{}{}
+	}
 }
 
 func compactStrings(values []string) []string {

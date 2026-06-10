@@ -130,6 +130,59 @@ func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
 	}
 }
 
+func TestCoreDeleteHistoryReleaseRemovesDirectoryChildArtifacts(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	dbPath := filepath.Join(baseDir, "ua.db")
+	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+
+	sourceDir := filepath.Join(baseDir, "Example.Movie.2024")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	childPath := filepath.Join(sourceDir, "Example.Movie.2024.mkv")
+	if err := os.WriteFile(childPath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write child source: %v", err)
+	}
+
+	sourceTmpDir := filepath.Join(tmpRoot, filepath.Base(sourceDir))
+	childTmpDir := filepath.Join(tmpRoot, filepath.Base(childPath))
+	for _, dir := range []string{sourceTmpDir, childTmpDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir tmp dir %s: %v", dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "mediainfo.txt"), []byte("test"), 0o600); err != nil {
+			t.Fatalf("write tmp artifact: %v", err)
+		}
+	}
+
+	repo := &cleanupRepo{
+		storedPaths:  []string{childPath},
+		getByPathErr: internalerrors.ErrNotFound,
+	}
+	coreSvc := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		logger: api.NopLogger{},
+		repo:   repo,
+	}
+
+	if err := coreSvc.DeleteHistoryRelease(context.Background(), sourceDir); err != nil {
+		t.Fatalf("delete history release: %v", err)
+	}
+	if len(repo.purgedPaths) != 2 || repo.purgedPaths[0] != sourceDir || repo.purgedPaths[1] != childPath {
+		t.Fatalf("expected source and child DB purge, got %#v", repo.purgedPaths)
+	}
+	for _, dir := range []string{sourceTmpDir, childTmpDir} {
+		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected tmp dir %s removed, got err=%v", dir, err)
+		}
+	}
+}
+
 func TestCoreDeleteAllHistoryReleasesPurgesEveryStoredPath(t *testing.T) {
 	t.Parallel()
 

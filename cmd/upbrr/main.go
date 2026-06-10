@@ -211,16 +211,6 @@ func run() error {
 		return nil
 	}
 
-	if opts.DeleteTmp {
-		paths, err = normalizeCLIPaths(ctx, paths)
-		if err != nil {
-			return exitError(1, err)
-		}
-		if err := deleteCLIStoredReleases(ctx, coreSvc, paths); err != nil {
-			return exitError(1, err)
-		}
-	}
-
 	if strings.TrimSpace(opts.QueueName) != "" {
 		if len(paths) != 1 {
 			return exitError(2, errors.New("--queue requires exactly one queue root path"))
@@ -232,6 +222,16 @@ func run() error {
 		paths = filesystem.LimitQueuePaths(queuePaths, opts.LimitQueue)
 		if len(paths) == 0 {
 			return exitError(1, fmt.Errorf("queue %q resolved to no upload candidates", opts.QueueName))
+		}
+	}
+
+	if opts.DeleteTmp {
+		paths, err = normalizeCLIPaths(ctx, paths)
+		if err != nil {
+			return exitError(1, err)
+		}
+		if err := deleteCLIStoredReleases(ctx, coreSvc, paths); err != nil {
+			return exitError(1, err)
 		}
 	}
 
