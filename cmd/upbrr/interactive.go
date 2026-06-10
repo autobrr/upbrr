@@ -103,8 +103,12 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 	if err != nil {
 		return err
 	}
+	var namePreview map[string]api.TrackerDryRunEntry
+	if !isUnattendedNoConfirm(req) {
+		namePreview = runCLIDryRunNamePreview(ctx, coreSvc, req)
+	}
 
-	approved, ignoreDupesFor, ruleOverrides, err := promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers)
+	approved, ignoreDupesFor, ruleOverrides, err := promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, namePreview)
 	if err != nil {
 		return err
 	}
@@ -285,7 +289,27 @@ func runCLIDupeCheck(ctx context.Context, coreSvc api.Core, req api.Request) (ap
 	return summary, nil
 }
 
-func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary, req api.Request, trackers []string) ([]string, []string, []string, error) {
+func runCLIDryRunNamePreview(ctx context.Context, coreSvc api.Core, req api.Request) map[string]api.TrackerDryRunEntry {
+	preview, err := coreSvc.FetchTrackerDryRunPreview(ctx, req)
+	if err != nil {
+		return nil
+	}
+	return mapDryRunEntriesByTracker(preview.Trackers)
+}
+
+func mapDryRunEntriesByTracker(entries []api.TrackerDryRunEntry) map[string]api.TrackerDryRunEntry {
+	mapped := make(map[string]api.TrackerDryRunEntry, len(entries))
+	for _, entry := range entries {
+		name := strings.ToUpper(strings.TrimSpace(entry.Tracker))
+		if name == "" {
+			continue
+		}
+		mapped[name] = entry
+	}
+	return mapped
+}
+
+func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary, req api.Request, trackers []string, namePreview map[string]api.TrackerDryRunEntry) ([]string, []string, []string, error) {
 	resultByTracker := mapDupeResultsByTracker(summary)
 	approved := make([]string, 0, len(trackers))
 	ignoreDupesFor := make([]string, 0)
@@ -318,9 +342,9 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 			continue
 		}
 
-		prompt := fmt.Sprintf("Upload to %s? [y/N]: ", name)
+		prompt := buildTrackerUploadPrompt(name, false, namePreview[name])
 		if blocked {
-			prompt = fmt.Sprintf("Upload to %s anyway? [y/N]: ", name)
+			prompt = buildTrackerUploadPrompt(name, true, namePreview[name])
 		}
 		allow, err := promptYesNo(reader, prompt, false)
 		if err != nil {
@@ -338,6 +362,23 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 		}
 	}
 	return approved, ignoreDupesFor, ruleOverrides, nil
+}
+
+func buildTrackerUploadPrompt(tracker string, blocked bool, dryRun api.TrackerDryRunEntry) string {
+	action := "Upload to " + tracker
+	if blocked {
+		action += " anyway"
+	}
+	if dryRun.ReleaseNameChanged {
+		uploadName := strings.TrimSpace(dryRun.UploadReleaseName)
+		if uploadName == "" {
+			uploadName = strings.TrimSpace(dryRun.ReleaseName)
+		}
+		if uploadName != "" {
+			return fmt.Sprintf("%s changes name to %s\n%s? [y/N]: ", tracker, uploadName, action)
+		}
+	}
+	return action + "? [y/N]: "
 }
 
 func mapDupeResultsByTracker(summary api.DupeCheckSummary) map[string]api.DupeCheckResult {

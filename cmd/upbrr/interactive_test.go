@@ -143,6 +143,7 @@ func TestPromptTrackerDupeReviewBuildsConfirmedTrackerList(t *testing.T) {
 		}},
 		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
 		[]string{"ANT", "BLU", "NBL"},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("promptTrackerDupeReview: %v", err)
@@ -174,6 +175,7 @@ func TestPromptTrackerDupeReviewSkipsPathedTorrentMatches(t *testing.T) {
 		}},
 		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
 		[]string{"BHD", "DP", "ANT"},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("promptTrackerDupeReview: %v", err)
@@ -201,6 +203,7 @@ func TestPromptTrackerDupeReviewSkipsRuleCheckViolations(t *testing.T) {
 		}},
 		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
 		[]string{"NBL", "OTW", "ANT"},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("promptTrackerDupeReview: %v", err)
@@ -213,6 +216,35 @@ func TestPromptTrackerDupeReviewSkipsRuleCheckViolations(t *testing.T) {
 	}
 	if len(ruleOverrides) != 0 {
 		t.Fatalf("expected no rule overrides for skipped rule violations, got %#v", ruleOverrides)
+	}
+}
+
+func TestPromptTrackerDupeReviewShowsTrackerNamingChange(t *testing.T) {
+	output := captureStdout(t, func() {
+		approved, _, _, err := promptTrackerDupeReview(
+			bufio.NewReader(strings.NewReader("y\n")),
+			api.DupeCheckSummary{Results: []api.DupeCheckResult{{Tracker: "AITHER", Status: "completed"}}},
+			api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
+			[]string{"AITHER"},
+			map[string]api.TrackerDryRunEntry{
+				"AITHER": {
+					ReleaseNameChanged:  true,
+					OriginalReleaseName: "Movie.2026.1080p.WEB-DL.H264-GRP",
+					UploadReleaseName:   "Movie.2026.1080p.WEB-DL.x264-GRP",
+				},
+			},
+		)
+		if err != nil {
+			t.Fatalf("promptTrackerDupeReview: %v", err)
+		}
+		if strings.Join(approved, ",") != "AITHER" {
+			t.Fatalf("expected AITHER approved, got %#v", approved)
+		}
+	})
+
+	expected := "AITHER changes name to Movie.2026.1080p.WEB-DL.x264-GRP\nUpload to AITHER? [y/N]: "
+	if !strings.Contains(output, expected) {
+		t.Fatalf("expected naming change in prompt %q, got %q", expected, output)
 	}
 }
 
@@ -446,6 +478,7 @@ func TestMaybeEditCLIDescriptionsSkipsOnlyID(t *testing.T) {
 
 type cliCoreForTest struct {
 	review                 api.UploadReview
+	dryRunPreview          api.TrackerDryRunPreview
 	callOrder              []string
 	requests               []cliCoreRequestForTest
 	previewPaths           []string
@@ -511,8 +544,10 @@ func (c *cliCoreForTest) FetchPreparationPreview(context.Context, api.Request) (
 	return api.PreparationPreview{}, nil
 }
 
-func (c *cliCoreForTest) FetchTrackerDryRunPreview(context.Context, api.Request) (api.TrackerDryRunPreview, error) {
-	return api.TrackerDryRunPreview{}, nil
+func (c *cliCoreForTest) FetchTrackerDryRunPreview(_ context.Context, req api.Request) (api.TrackerDryRunPreview, error) {
+	c.callOrder = append(c.callOrder, "dry-run")
+	c.recordRequest("dry-run", req)
+	return c.dryRunPreview, nil
 }
 
 func (c *cliCoreForTest) CheckDupes(_ context.Context, req api.Request) (api.DupeCheckSummary, error) {
