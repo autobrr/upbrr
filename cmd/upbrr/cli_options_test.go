@@ -182,6 +182,29 @@ func TestBuildCLIRequestDebugImpliesDryRunAndOnlyID(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsFlagsAfterPath(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"movie.mkv", "--debug", "-dtmp"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "movie.mkv" {
+		t.Fatalf("unexpected paths: %#v", paths)
+	}
+	if !opts.Debug || !opts.DeleteTmp {
+		t.Fatalf("expected trailing flags to parse, got %#v", opts)
+	}
+	if !visited["debug"] || !visited["delete-tmp"] {
+		t.Fatalf("expected trailing flags visited, got %#v", visited)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if !req.Options.Debug || !req.Options.DryRun {
+		t.Fatalf("expected trailing debug to force dry run, got %#v", req.Options)
+	}
+}
+
 func TestParseCLIOptionsLogLevel(t *testing.T) {
 	opts, visited, _, err := parseCLIOptions([]string{"--log-level", "trace", "movie.mkv"})
 	if err != nil {

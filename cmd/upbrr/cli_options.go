@@ -283,7 +283,8 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.Channel, "ch", "", "Override SPD channel")
 	fs.StringVar(&opts.Channel, "channel", "", "Override SPD channel")
 
-	if err := fs.Parse(args); err != nil {
+	flagArgs, positionalArgs := splitInterspersedCLIFlags(fs, args)
+	if err := fs.Parse(flagArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return cliOptions{}, nil, nil, &cliHelpError{usage: formatFlagUsage(fs, "upbrr [options] <input path>...")}
 		}
@@ -387,7 +388,59 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 		return cliOptions{}, nil, nil, err
 	}
 
-	return opts, visited, fs.Args(), nil
+	return opts, visited, positionalArgs, nil
+}
+
+func splitInterspersedCLIFlags(fs *flag.FlagSet, args []string) ([]string, []string) {
+	flagArgs := make([]string, 0, len(args))
+	positionalArgs := make([]string, 0, len(args))
+	seenPositional := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionalArgs = append(positionalArgs, args[i+1:]...)
+			break
+		}
+		name, ok := cliFlagName(arg)
+		if !ok {
+			positionalArgs = append(positionalArgs, arg)
+			seenPositional = true
+			continue
+		}
+		flagDef := fs.Lookup(name)
+		if flagDef == nil {
+			if seenPositional {
+				positionalArgs = append(positionalArgs, arg)
+				continue
+			}
+			flagArgs = append(flagArgs, arg)
+			continue
+		}
+
+		flagArgs = append(flagArgs, arg)
+		if strings.Contains(arg, "=") || isBoolFlag(flagDef) {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flagArgs = append(flagArgs, args[i])
+		}
+	}
+	return flagArgs, positionalArgs
+}
+
+func cliFlagName(arg string) (string, bool) {
+	if !strings.HasPrefix(arg, "-") || arg == "-" {
+		return "", false
+	}
+	trimmed := strings.TrimLeft(arg, "-")
+	if trimmed == "" {
+		return "", false
+	}
+	if before, _, ok := strings.Cut(trimmed, "="); ok {
+		trimmed = before
+	}
+	return trimmed, trimmed != ""
 }
 
 func cliFlagAliases() map[string]string {

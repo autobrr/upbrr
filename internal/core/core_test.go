@@ -438,6 +438,50 @@ func TestRunUploadPreparedDryRunSkipsUpload(t *testing.T) {
 	}
 }
 
+func TestRunUploadPreparedDebugSkipsUpload(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubRepo{}
+	tracker := &stubTrackers{}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: repo,
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+		Options: api.UploadOptions{
+			Debug: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if result.UploadedCount != 0 {
+		t.Fatalf("expected 0 uploads, got %d", result.UploadedCount)
+	}
+	if tracker.calls != 0 {
+		t.Fatalf("expected tracker not called, got %d", tracker.calls)
+	}
+	if client.calls != 0 {
+		t.Fatalf("expected client not called, got %d", client.calls)
+	}
+}
+
 func TestRunUploadPreparedSiteCheckForcesDryRun(t *testing.T) {
 	t.Parallel()
 
