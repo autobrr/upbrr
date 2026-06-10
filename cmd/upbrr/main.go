@@ -23,7 +23,6 @@ import (
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
-	"github.com/autobrr/upbrr/internal/guiapp"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/webserver"
@@ -79,6 +78,11 @@ func run() error {
 
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		if err := runServe(os.Args[2:]); err != nil {
+			var helpErr *cliHelpError
+			if errors.As(err, &helpErr) {
+				fmt.Fprint(os.Stdout, helpErr.Usage())
+				return nil
+			}
 			return exitError(1, err)
 		}
 		return nil
@@ -86,6 +90,11 @@ func run() error {
 
 	opts, visitedFlags, paths, err := parseCLIOptions(os.Args[1:])
 	if err != nil {
+		var helpErr *cliHelpError
+		if errors.As(err, &helpErr) {
+			fmt.Fprint(os.Stdout, helpErr.Usage())
+			return nil
+		}
 		return exitError(2, err)
 	}
 
@@ -96,15 +105,6 @@ func run() error {
 		return nil
 	}
 
-	if opts.GUI && strings.TrimSpace(opts.ExportConfigPath) != "" {
-		return exitError(2, errors.New("--gui and --export-config cannot be used together"))
-	}
-	if opts.GUI && strings.TrimSpace(opts.ImportConfigPath) != "" {
-		return exitError(2, errors.New("--gui and --import-config cannot be used together"))
-	}
-	if opts.GUI && opts.CreateAuth {
-		return exitError(2, errors.New("--gui and --create-auth cannot be used together"))
-	}
 	if strings.TrimSpace(opts.ExportConfigPath) != "" && strings.TrimSpace(opts.ImportConfigPath) != "" {
 		return exitError(2, errors.New("--export-config and --import-config cannot be used together"))
 	}
@@ -113,20 +113,6 @@ func run() error {
 	}
 	if opts.CreateAuth && strings.TrimSpace(opts.ImportConfigPath) != "" {
 		return exitError(2, errors.New("--create-auth and --import-config cannot be used together"))
-	}
-
-	if opts.GUI {
-		resolvedConfigPath := ""
-		if configFlagProvided {
-			resolvedConfigPath, err = configstore.ResolveYAMLPath(opts.ConfigPath, configFlagProvided)
-			if err != nil {
-				return exitError(1, err)
-			}
-		}
-		if err := guiapp.Run(guiapp.RunOptions{ConfigPath: resolvedConfigPath, ConfigProvided: configFlagProvided}); err != nil {
-			return exitError(1, err)
-		}
-		return nil
 	}
 
 	if opts.CreateAuth {

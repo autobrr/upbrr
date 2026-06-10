@@ -163,6 +163,115 @@ func TestRunRejectsCreateAuthConflicts(t *testing.T) {
 	}
 }
 
+func TestRunHelpFlagsPrintUsageAndSucceed(t *testing.T) {
+	oldArgs := os.Args
+	defer func() {
+		os.Args = oldArgs
+	}()
+
+	for _, helpFlag := range []string{"-help", "--help", "-h", "--h"} {
+		t.Run(helpFlag, func(t *testing.T) {
+			os.Args = []string{"upbrr", helpFlag}
+			output := captureRunStdout(t, func() {
+				if err := run(); err != nil {
+					t.Fatalf("run: %v", err)
+				}
+			})
+			if !strings.Contains(output, "Usage: upbrr [options] <input path>...") {
+				t.Fatalf("expected top-level usage in output, got %q", output)
+			}
+			for _, expected := range []string{
+				"Commands:",
+				"  serve",
+				"Start the embedded web UI server",
+				"Config:",
+				"Execution:",
+				"Tracker Selection:",
+				"Release Overrides:",
+				"Screenshots and Images:",
+				"-config, --config string",
+				"-limit-queue, --limit-queue, -lq int",
+				"-version, --version",
+			} {
+				if !strings.Contains(output, expected) {
+					t.Fatalf("expected output to contain %q, got %q", expected, output)
+				}
+			}
+			if strings.Contains(output, "-gui") {
+				t.Fatalf("expected GUI flag to be absent from help, got %q", output)
+			}
+		})
+	}
+}
+
+func TestRunServeHelpPrintsUsageAndSucceeds(t *testing.T) {
+	oldArgs := os.Args
+	defer func() {
+		os.Args = oldArgs
+	}()
+
+	os.Args = []string{"upbrr", "serve", "--help"}
+	output := captureRunStdout(t, func() {
+		if err := run(); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	})
+	if !strings.Contains(output, "Usage: upbrr serve [options]") {
+		t.Fatalf("expected serve usage in output, got %q", output)
+	}
+	for _, expected := range []string{"Config:", "Development:", "-config, --config string", "-dev-no-auth, --dev-no-auth"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected output to contain %q, got %q", expected, output)
+		}
+	}
+}
+
+func captureRunStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	original := os.Stdout
+	stdoutPath := filepath.Join(t.TempDir(), "stdout.txt")
+	stdoutFile, err := os.Create(stdoutPath)
+	if err != nil {
+		t.Fatalf("create stdout fixture: %v", err)
+	}
+	os.Stdout = stdoutFile
+	defer func() {
+		os.Stdout = original
+	}()
+
+	fn()
+
+	if err := stdoutFile.Close(); err != nil {
+		t.Fatalf("close stdout fixture: %v", err)
+	}
+	raw, err := os.ReadFile(stdoutPath)
+	if err != nil {
+		t.Fatalf("read stdout fixture: %v", err)
+	}
+	return string(raw)
+}
+
+func TestRunWithoutArgsStillRequiresInputPath(t *testing.T) {
+	oldArgs := os.Args
+	defer func() {
+		os.Args = oldArgs
+	}()
+
+	os.Args = []string{"upbrr"}
+	err := run()
+	var cliErr *cliExitError
+	if !errors.As(err, &cliErr) {
+		t.Fatalf("expected cliExitError, got %v", err)
+	}
+	if cliErr.code != 2 {
+		t.Fatalf("expected exit code 2, got %d", cliErr.code)
+	}
+	if !strings.Contains(cliErr.Error(), "at least one input path is required") {
+		t.Fatalf("unexpected error: %v", cliErr)
+	}
+}
+
 func TestRunExportConfigPlaintextExportsPlainSecrets(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state", "upbrr.db")

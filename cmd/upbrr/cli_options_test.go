@@ -88,6 +88,12 @@ func TestParseServeOptionsDevNoAuth(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsRejectsGUIFlag(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"-gui"}); err == nil {
+		t.Fatal("expected gui flag to be rejected")
+	}
+}
+
 func TestParseCLIOptionsExportConfigPlaintext(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{"--export-config", "out.yaml", "--export-config-plaintext"})
 	if err != nil {
