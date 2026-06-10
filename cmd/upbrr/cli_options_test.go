@@ -255,6 +255,23 @@ func TestBuildCLIRequestSkipAutoTorrent(t *testing.T) {
 	}
 }
 
+func TestBuildCLIRequestKeepFolder(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"-kf", "movie-folder"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !visited["keep-folder"] {
+		t.Fatalf("expected keep-folder visited, got %#v", visited)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if !req.Options.KeepFolder {
+		t.Fatalf("expected keep-folder to propagate, got %#v", req.Options)
+	}
+}
+
 func TestBuildCLIRequestExecutionOptions(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{
 		"--queue", "daily",

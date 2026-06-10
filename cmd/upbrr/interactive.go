@@ -83,7 +83,8 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 		currentVisited = nextVisited
 	}
 
-	req, err := buildCLIRequest(currentOpts, currentVisited, []string{sourcePath}, screens)
+	uploadSourcePath := resolvedCLIMetadataSourcePath(sourcePath, metadataPreview)
+	req, err := buildCLIRequest(currentOpts, currentVisited, []string{uploadSourcePath}, screens)
 	if err != nil {
 		return err
 	}
@@ -162,6 +163,13 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 
 	_, err = coreSvc.RunUploadPrepared(ctx, req)
 	return wrapUpbrrError(err)
+}
+
+func resolvedCLIMetadataSourcePath(input string, preview api.MetadataPreview) string {
+	if trimmed := strings.TrimSpace(preview.SourcePath); trimmed != "" {
+		return trimmed
+	}
+	return input
 }
 
 func resolveCLIUploadTrackers(visited map[string]bool, req api.Request, preview api.MetadataPreview, cfg config.Config) ([]string, []string) {
@@ -502,9 +510,11 @@ func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions,
 		return err
 	}
 
-	if _, err := coreSvc.FetchMetadataPreview(ctx, req); err != nil {
+	preview, err := coreSvc.FetchMetadataPreview(ctx, req)
+	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
 	}
+	req.Paths = []string{resolvedCLIMetadataSourcePath(sourcePath, preview)}
 	review, err := coreSvc.BuildUploadReview(ctx, req)
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)

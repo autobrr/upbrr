@@ -245,7 +245,8 @@ func run() error {
 		if err != nil {
 			return exitError(1, err)
 		}
-		if err := prepareCLIUploadMetadata(ctx, coreSvc, uploadReq); err != nil {
+		uploadReq, err = prepareCLIUploadMetadata(ctx, coreSvc, uploadReq)
+		if err != nil {
 			return exitError(1, err)
 		}
 		if opts.Debug {
@@ -625,15 +626,20 @@ func deleteCLIStoredReleases(ctx context.Context, coreSvc api.Core, paths []stri
 	return nil
 }
 
-func prepareCLIUploadMetadata(ctx context.Context, coreSvc api.Core, req api.Request) error {
+func prepareCLIUploadMetadata(ctx context.Context, coreSvc api.Core, req api.Request) (api.Request, error) {
+	resolvedReq := req
+	resolvedPaths := make([]string, 0, len(req.Paths))
 	for _, sourcePath := range req.Paths {
 		singleReq := req
 		singleReq.Paths = []string{sourcePath}
-		if _, err := coreSvc.FetchMetadataPreview(ctx, singleReq); err != nil {
-			return fmt.Errorf("upbrr: %w", err)
+		preview, err := coreSvc.FetchMetadataPreview(ctx, singleReq)
+		if err != nil {
+			return api.Request{}, fmt.Errorf("upbrr: %w", err)
 		}
+		resolvedPaths = append(resolvedPaths, resolvedCLIMetadataSourcePath(sourcePath, preview))
 	}
-	return nil
+	resolvedReq.Paths = resolvedPaths
+	return resolvedReq, nil
 }
 
 func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc api.Core, cfg config.Config, logger api.Logger, opts cliOptions) error {

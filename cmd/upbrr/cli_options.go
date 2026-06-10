@@ -34,6 +34,7 @@ type cliOptions struct {
 	Screens               int
 	NoSeed                bool
 	SkipAutoTorrent       bool
+	KeepFolder            bool
 	OnlyID                bool
 	UploadOnly            bool
 	Category              string
@@ -163,6 +164,8 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.BoolVar(&opts.NoSeed, "ns", false, "Do not inject torrent into clients")
 	fs.BoolVar(&opts.SkipAutoTorrent, "skip_auto_torrent", false, "Skip automated torrent client searching")
 	fs.BoolVar(&opts.SkipAutoTorrent, "sat", false, "Skip automated torrent client searching")
+	fs.BoolVar(&opts.KeepFolder, "keep-folder", false, "Keep a supplied folder instead of processing its selected video file directly")
+	fs.BoolVar(&opts.KeepFolder, "kf", false, "Keep a supplied folder instead of processing its selected video file directly")
 	fs.BoolVar(&opts.OnlyID, "onlyID", false, "Only grab tracker metadata IDs")
 	fs.BoolVar(&opts.UploadOnly, "upload-only", false, "Upload using prepared metadata cache only")
 	fs.StringVar(&opts.Category, "category", "", "Override category")
@@ -454,6 +457,7 @@ func cliFlagAliases() map[string]string {
 		"s":                    "screens",
 		"ns":                   "no-seed",
 		"sat":                  "skip_auto_torrent",
+		"kf":                   "keep-folder",
 		"c":                    "category",
 		"t":                    "type",
 		"res":                  "resolution",
@@ -604,7 +608,7 @@ func cliHelpSections(name string) []helpSection {
 			"descfile", "desclink",
 		}},
 		{title: "Client and Torrent", names: []string{
-			"client", "qbit-tag", "qbit-cat", "force-recheck", "no-seed", "skip_auto_torrent", "onlyID", "infohash",
+			"client", "qbit-tag", "qbit-cat", "force-recheck", "no-seed", "skip_auto_torrent", "keep-folder", "onlyID", "infohash",
 			"max-piece-size", "nohash", "rehash",
 		}},
 	}
@@ -683,6 +687,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 			Screens:         screens,
 			NoSeed:          opts.NoSeed,
 			SkipAutoTorrent: opts.SkipAutoTorrent,
+			KeepFolder:      opts.KeepFolder,
 			OnlyID:          opts.OnlyID,
 			InteractionMode: opts.interactionMode(),
 		},

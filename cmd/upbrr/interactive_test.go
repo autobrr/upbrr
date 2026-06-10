@@ -60,15 +60,54 @@ func TestRunInteractiveCLIPathHandlesScreenshotsBeforeReview(t *testing.T) {
 	}
 }
 
+func TestRunInteractiveCLIPathUsesResolvedPreviewSourceForPreparedUpload(t *testing.T) {
+	t.Parallel()
+
+	rehash := true
+	coreSvc := &cliCoreForTest{
+		previewSourcePath: filepath.Join("folder", "movie.mkv"),
+		review:            api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	err := runInteractiveCLIPath(
+		context.Background(),
+		coreSvc,
+		nil,
+		cliOptions{Unattended: true, Rehash: true},
+		map[string]bool{"rehash": true},
+		"folder",
+		1,
+		config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}}},
+	)
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+
+	expectedPath := filepath.Join("folder", "movie.mkv")
+	for _, call := range coreSvc.requests {
+		if call.name == "preview" {
+			continue
+		}
+		if len(call.req.Paths) != 1 || call.req.Paths[0] != expectedPath {
+			t.Fatalf("expected %s to use resolved preview source %q, got %#v", call.name, expectedPath, call.req.Paths)
+		}
+		if call.req.TorrentOverrides.Rehash == nil || *call.req.TorrentOverrides.Rehash != rehash {
+			t.Fatalf("expected %s to preserve rehash override, got %#v", call.name, call.req.TorrentOverrides.Rehash)
+		}
+	}
+}
+
 func TestRunSiteCheckCLIPathSeedsMetadataBeforeReview(t *testing.T) {
 	t.Parallel()
 
-	coreSvc := &cliCoreForTest{}
+	coreSvc := &cliCoreForTest{previewSourcePath: filepath.Join("folder", "movie.mkv")}
 	if err := runSiteCheckCLIPath(context.Background(), coreSvc, cliOptions{SiteCheck: true}, map[string]bool{}, "movie.mkv", 1); err != nil {
 		t.Fatalf("runSiteCheckCLIPath: %v", err)
 	}
 	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,review" {
 		t.Fatalf("expected preview before review, got %s", got)
+	}
+	if len(coreSvc.requests) != 2 || len(coreSvc.requests[1].req.Paths) != 1 || coreSvc.requests[1].req.Paths[0] != filepath.Join("folder", "movie.mkv") {
+		t.Fatalf("expected site-check review to use resolved preview source, got %#v", coreSvc.requests)
 	}
 }
 
@@ -182,11 +221,29 @@ func TestPrepareCLIUploadMetadataSeedsEachPath(t *testing.T) {
 
 	coreSvc := &cliCoreForTest{}
 	req := api.Request{Paths: []string{"one.mkv", "two.mkv"}}
-	if err := prepareCLIUploadMetadata(context.Background(), coreSvc, req); err != nil {
+	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
+	if err != nil {
 		t.Fatalf("prepareCLIUploadMetadata: %v", err)
 	}
 	if len(coreSvc.previewPaths) != 2 || coreSvc.previewPaths[0] != "one.mkv" || coreSvc.previewPaths[1] != "two.mkv" {
 		t.Fatalf("unexpected preview paths: %#v", coreSvc.previewPaths)
+	}
+	if strings.Join(resolvedReq.Paths, ",") != "one.mkv,two.mkv" {
+		t.Fatalf("unexpected resolved paths: %#v", resolvedReq.Paths)
+	}
+}
+
+func TestPrepareCLIUploadMetadataReturnsResolvedPreviewPaths(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{previewSourcePath: filepath.Join("folder", "movie.mkv")}
+	req := api.Request{Paths: []string{"folder"}}
+	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
+	if err != nil {
+		t.Fatalf("prepareCLIUploadMetadata: %v", err)
+	}
+	if len(resolvedReq.Paths) != 1 || resolvedReq.Paths[0] != filepath.Join("folder", "movie.mkv") {
+		t.Fatalf("expected resolved preview path, got %#v", resolvedReq.Paths)
 	}
 }
 
@@ -314,7 +371,9 @@ func TestHandleBDMVPlaylistSelectionReturnsSaveErrorInUnattendedSinglePlaylist(t
 type cliCoreForTest struct {
 	review                 api.UploadReview
 	callOrder              []string
+	requests               []cliCoreRequestForTest
 	previewPaths           []string
+	previewSourcePath      string
 	runUploadPreparedCalls int
 	dupeSummary            api.DupeCheckSummary
 	screenshotPlan         api.ScreenshotPlan
@@ -326,21 +385,34 @@ type cliCoreForTest struct {
 	savePlaylistErr        error
 }
 
+type cliCoreRequestForTest struct {
+	name string
+	req  api.Request
+}
+
+func (c *cliCoreForTest) recordRequest(name string, req api.Request) {
+	copyReq := req
+	copyReq.Paths = append([]string(nil), req.Paths...)
+	c.requests = append(c.requests, cliCoreRequestForTest{name: name, req: copyReq})
+}
+
 func (c *cliCoreForTest) RunUpload(context.Context, api.Request) (api.Result, error) {
 	return api.Result{}, nil
 }
 
-func (c *cliCoreForTest) RunUploadPrepared(context.Context, api.Request) (api.Result, error) {
+func (c *cliCoreForTest) RunUploadPrepared(_ context.Context, req api.Request) (api.Result, error) {
+	c.recordRequest("upload", req)
 	c.runUploadPreparedCalls++
 	return api.Result{UploadedCount: 1}, nil
 }
 
 func (c *cliCoreForTest) FetchMetadataPreview(_ context.Context, req api.Request) (api.MetadataPreview, error) {
 	c.callOrder = append(c.callOrder, "preview")
+	c.recordRequest("preview", req)
 	if len(req.Paths) > 0 {
 		c.previewPaths = append(c.previewPaths, req.Paths[0])
 	}
-	return api.MetadataPreview{}, nil
+	return api.MetadataPreview{SourcePath: c.previewSourcePath}, nil
 }
 
 func (c *cliCoreForTest) FetchDescriptionBuilderPreview(context.Context, api.Request) (api.DescriptionBuilderPreview, error) {
@@ -359,23 +431,27 @@ func (c *cliCoreForTest) FetchTrackerDryRunPreview(context.Context, api.Request)
 	return api.TrackerDryRunPreview{}, nil
 }
 
-func (c *cliCoreForTest) CheckDupes(context.Context, api.Request) (api.DupeCheckSummary, error) {
+func (c *cliCoreForTest) CheckDupes(_ context.Context, req api.Request) (api.DupeCheckSummary, error) {
 	c.callOrder = append(c.callOrder, "dupes")
+	c.recordRequest("dupes", req)
 	return c.dupeSummary, nil
 }
 
-func (c *cliCoreForTest) BuildUploadReview(context.Context, api.Request) (api.UploadReview, error) {
+func (c *cliCoreForTest) BuildUploadReview(_ context.Context, req api.Request) (api.UploadReview, error) {
 	c.callOrder = append(c.callOrder, "review")
+	c.recordRequest("review", req)
 	return c.review, nil
 }
 
-func (c *cliCoreForTest) FetchScreenshotPlan(context.Context, api.Request) (api.ScreenshotPlan, error) {
+func (c *cliCoreForTest) FetchScreenshotPlan(_ context.Context, req api.Request) (api.ScreenshotPlan, error) {
 	c.callOrder = append(c.callOrder, "screenshot-plan")
+	c.recordRequest("screenshot-plan", req)
 	return c.screenshotPlan, nil
 }
 
-func (c *cliCoreForTest) GenerateScreenshots(context.Context, api.Request, []api.ScreenshotSelection, api.ScreenshotPurpose) (api.ScreenshotResult, error) {
+func (c *cliCoreForTest) GenerateScreenshots(_ context.Context, req api.Request, _ []api.ScreenshotSelection, _ api.ScreenshotPurpose) (api.ScreenshotResult, error) {
 	c.callOrder = append(c.callOrder, "generate-screenshots")
+	c.recordRequest("generate-screenshots", req)
 	return c.screenshotResult, nil
 }
 
@@ -391,8 +467,9 @@ func (c *cliCoreForTest) DeleteTrackerImageURL(context.Context, api.Request, str
 	return nil
 }
 
-func (c *cliCoreForTest) SaveFinalScreenshotSelections(_ context.Context, _ api.Request, images []api.ScreenshotImage) error {
+func (c *cliCoreForTest) SaveFinalScreenshotSelections(_ context.Context, req api.Request, images []api.ScreenshotImage) error {
 	c.callOrder = append(c.callOrder, "save-screenshots")
+	c.recordRequest("save-screenshots", req)
 	c.savedFinalImages = append([]api.ScreenshotImage(nil), images...)
 	return nil
 }

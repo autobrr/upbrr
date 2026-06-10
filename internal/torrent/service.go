@@ -169,7 +169,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 	if policy != nil {
 		pieceOptions = policy.createOptions(meta)
 	}
-	s.logger.Debugf("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
+	s.logger.Infof("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
 	emitTorrentProgress(ctx, meta, "running", "Creating torrent with mkbrr")
 
 	info, err := mkbrr.Create(mkbrr.CreateOptions{
@@ -190,8 +190,8 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 		emitTorrentProgress(ctx, meta, "failed", "Torrent validation failed")
 		return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent %q: %w", info.Path, err)
 	}
-	s.logger.Debugf("torrent: created torrent %s", info.Path)
 	emitTorrentProgress(ctx, meta, "completed", "Torrent ready")
+	s.logger.Infof("torrent: created torrent %s", info.Path)
 
 	return api.TorrentResult{Path: info.Path, InfoHash: info.InfoHash}, nil
 }
