@@ -4,11 +4,9 @@
 package torrent
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	slashpath "path" //nolint:depguard // Joins torrent-internal slash-delimited metainfo paths.
@@ -17,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anacrolix/torrent/merkle"
 	"github.com/anacrolix/torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
@@ -307,7 +304,6 @@ type contentFile struct {
 
 type sourceContentFile struct {
 	contentFile
-	absPath string
 }
 
 func resolveCreateSpec(meta api.PreparedMetadata, source string, tmpRoot string) (createSpec, error) {
@@ -581,9 +577,6 @@ func validateTorrentContent(path string, meta api.PreparedMetadata) error {
 	if !sameContentSet(actual, expected) {
 		return errors.New("torrent: candidate content mismatch")
 	}
-	if err := validateTorrentPayload(info, expectedFiles); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -601,7 +594,6 @@ func expectedTorrentFiles(meta api.PreparedMetadata) ([]sourceContentFile, bool,
 	if err == nil && !info.IsDir() {
 		return []sourceContentFile{{
 			contentFile: contentFile{path: filepath.Base(source), length: info.Size()},
-			absPath:     source,
 		}}, true, nil
 	}
 	if err != nil {
@@ -625,7 +617,6 @@ func expectedTorrentFiles(meta api.PreparedMetadata) ([]sourceContentFile, bool,
 		}
 		return []sourceContentFile{{
 			contentFile: contentFile{path: filepath.Base(wanted[0]), length: info.Size()},
-			absPath:     wanted[0],
 		}}, true, nil
 	}
 	expected := make([]sourceContentFile, 0, len(wanted))
@@ -644,7 +635,6 @@ func expectedTorrentFiles(meta api.PreparedMetadata) ([]sourceContentFile, bool,
 		}
 		expected = append(expected, sourceContentFile{
 			contentFile: contentFile{path: filepath.ToSlash(rel), length: info.Size()},
-			absPath:     file,
 		})
 	}
 	return expected, true, nil
@@ -701,7 +691,6 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 	if !info.IsDir() {
 		return []sourceContentFile{{
 			contentFile: contentFile{path: filepath.Base(root), length: info.Size()},
-			absPath:     root,
 		}}, nil
 	}
 	paths := make([]sourceContentFile, 0)
@@ -743,7 +732,6 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 		}
 		paths = append(paths, sourceContentFile{
 			contentFile: contentFile{path: filepath.ToSlash(rel), length: info.Size()},
-			absPath:     path,
 		})
 		return nil
 	})
@@ -760,98 +748,6 @@ func sourceContentPaths(files []sourceContentFile) []contentFile {
 		paths = append(paths, file.contentFile)
 	}
 	return paths
-}
-
-func validateTorrentPayload(info metainfo.Info, expectedFiles []sourceContentFile) error {
-	if len(expectedFiles) == 0 {
-		return nil
-	}
-	byPath := make(map[string]sourceContentFile, len(expectedFiles))
-	for _, file := range expectedFiles {
-		byPath[file.path] = file
-	}
-	if info.HasV1() {
-		if err := validateTorrentV1Payload(info, byPath); err != nil {
-			return err
-		}
-	}
-	if info.HasV2() {
-		if err := validateTorrentV2Payload(info, byPath); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateTorrentV1Payload(info metainfo.Info, byPath map[string]sourceContentFile) error {
-	expectedPieces := append([]byte(nil), info.Pieces...)
-	infoCopy := info
-	infoCopy.Pieces = nil
-	if err := infoCopy.GeneratePieces(func(fi metainfo.FileInfo) (io.ReadCloser, error) {
-		path, err := sourceContentPathForTorrentFile(info, fi, byPath)
-		if err != nil {
-			return nil, err
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return nil, fmt.Errorf("torrent: open expected content %q: %w", path, err)
-		}
-		return file, nil
-	}); err != nil {
-		return fmt.Errorf("torrent: candidate piece validation: %w", err)
-	}
-	if !bytes.Equal(expectedPieces, infoCopy.Pieces) {
-		return errors.New("torrent: candidate payload mismatch")
-	}
-	return nil
-}
-
-func validateTorrentV2Payload(info metainfo.Info, byPath map[string]sourceContentFile) error {
-	for _, file := range info.UpvertedFiles() {
-		path, err := sourceContentPathForTorrentFile(info, file, byPath)
-		if err != nil {
-			return err
-		}
-		expected := byPath[torrentContentPath(info, file)]
-		if !file.PiecesRoot.Ok {
-			if expected.length == 0 {
-				continue
-			}
-			return errors.New("torrent: candidate missing v2 pieces root")
-		}
-		root, err := merkleRootForFile(path)
-		if err != nil {
-			return err
-		}
-		piecesRoot := file.PiecesRoot.Unwrap()
-		if !bytes.Equal(piecesRoot[:], root) {
-			return errors.New("torrent: candidate payload mismatch")
-		}
-	}
-	return nil
-}
-
-func sourceContentPathForTorrentFile(info metainfo.Info, file metainfo.FileInfo, byPath map[string]sourceContentFile) (string, error) {
-	path := torrentContentPath(info, file)
-	expected, ok := byPath[path]
-	if !ok {
-		return "", fmt.Errorf("torrent: expected content path %q not found", path)
-	}
-	return expected.absPath, nil
-}
-
-func merkleRootForFile(path string) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("torrent: open expected content %q: %w", path, err)
-	}
-	defer file.Close()
-
-	hash := merkle.NewHash()
-	if _, err := io.Copy(hash, file); err != nil {
-		return nil, fmt.Errorf("torrent: hash expected content %q: %w", path, err)
-	}
-	return hash.Sum(nil), nil
 }
 
 func torrentContentPath(info metainfo.Info, file metainfo.FileInfo) string {

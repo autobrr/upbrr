@@ -588,7 +588,7 @@ func TestCreateNoHashReusesPureV2ZeroLengthClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateNoHashRejectsPureV2SameNameSameSizeDifferentContent(t *testing.T) {
+func TestCreateNoHashReusesPureV2SameNameSameSizeDifferentContent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -609,12 +609,15 @@ func TestCreateNoHashRejectsPureV2SameNameSameSizeDifferentContent(t *testing.T)
 			NoHash: &reuseOnly,
 		},
 	})
-	if !errors.Is(err, internalerrors.ErrNotFound) {
-		t.Fatalf("expected nohash to reject mismatched pure v2 torrent, got result=%#v err=%v", result, err)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Path != clientTorrentPath {
+		t.Fatalf("expected same-name same-size pure v2 client torrent path %s, got %s", clientTorrentPath, result.Path)
 	}
 }
 
-func TestValidateTorrentContentRejectsPureV2NonEmptyFileWithoutPiecesRoot(t *testing.T) {
+func TestValidateTorrentContentAllowsPureV2NonEmptyFileWithoutPiecesRoot(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -627,12 +630,12 @@ func TestValidateTorrentContentRejectsPureV2NonEmptyFileWithoutPiecesRoot(t *tes
 	createPureV2TestTorrentWithPiecesRoot(t, source, content, clientTorrentPath, false)
 
 	err := validateTorrentContent(clientTorrentPath, api.PreparedMetadata{SourcePath: source})
-	if err == nil || !strings.Contains(err.Error(), "missing v2 pieces root") {
-		t.Fatalf("expected missing pieces root error, got %v", err)
+	if err != nil {
+		t.Fatalf("expected metadata-only validation to pass, got %v", err)
 	}
 }
 
-func TestCreateNoHashRejectsSameNameSameSizeDifferentContentTorrent(t *testing.T) {
+func TestCreateNoHashReusesSameNameSameSizeDifferentContentTorrent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -654,8 +657,11 @@ func TestCreateNoHashRejectsSameNameSameSizeDifferentContentTorrent(t *testing.T
 			NoHash: &reuseOnly,
 		},
 	})
-	if !errors.Is(err, internalerrors.ErrNotFound) {
-		t.Fatalf("expected nohash to reject mismatched torrent, got result=%#v err=%v", result, err)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Path != clientTorrentPath {
+		t.Fatalf("expected same-name same-size client torrent path %s, got %s", clientTorrentPath, result.Path)
 	}
 }
 
@@ -971,7 +977,7 @@ func TestCreateRejectsSameNameDifferentSizeClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsSameNameSameSizeDifferentContentClientTorrent(t *testing.T) {
+func TestCreateReusesSameNameSameSizeDifferentContentClientTorrent(t *testing.T) {
 	t.Parallel()
 
 	sourceDir := t.TempDir()
@@ -992,8 +998,8 @@ func TestCreateRejectsSameNameSameSizeDifferentContentClientTorrent(t *testing.T
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.Path == clientTorrentPath {
-		t.Fatalf("expected same-name same-size different-content client torrent to be skipped")
+	if result.Path != clientTorrentPath {
+		t.Fatalf("expected same-name same-size client torrent path %s, got %s", clientTorrentPath, result.Path)
 	}
 }
 
