@@ -122,6 +122,14 @@ func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 	}
 
 	services := deps.Services
+	if err := maybeApplyE2EServices(ctx, &services, cfg, repo, logger); err != nil {
+		if ownsRepo {
+			if closer, ok := repo.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
+		}
+		return nil, err
+	}
 	if services.Metadata == nil {
 		bdinfoService := bdinfo.New(logger)
 

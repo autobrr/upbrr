@@ -3324,6 +3324,29 @@ export default function App() {
     }
   };
 
+  const applyDupeCheckSnapshot = useCallback((snapshot: DupeCheckSnapshot) => {
+    setDupeCheckSnapshot(snapshot);
+    setDupeSummary(snapshot.summary || emptyDupeSummary);
+
+    const normalized = String(snapshot.status || "")
+      .toLowerCase()
+      .trim();
+    const running = normalized === "queued" || normalized === "running";
+    setDupeLoading(running);
+
+    if (normalized === "completed") {
+      setDupeChecked(true);
+      setDupeError("");
+    } else if (normalized === "completed_with_errors") {
+      setDupeChecked(true);
+      setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
+    } else if (normalized === "failed" || normalized === "canceled") {
+      setDupeChecked(false);
+      setPrepPreview(emptyPreparation);
+      setDupeError(snapshot.error || "Dupe check failed.");
+    }
+  }, []);
+
   const handleDupeCheck = async () => {
     setDupeError("");
     const starter = globalThis.go?.guiapp?.App?.StartDupeCheck;
@@ -3358,8 +3381,7 @@ export default function App() {
       setDupeCheckJobID(jobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(jobID);
-        setDupeCheckSnapshot(snapshot);
-        setDupeSummary(snapshot.summary || emptyDupeSummary);
+        applyDupeCheckSnapshot(snapshot);
       }
     } catch (err) {
       const message = String(err);
@@ -3383,27 +3405,7 @@ export default function App() {
       if (payload?.jobID !== dupeCheckJobID) {
         return;
       }
-      const snapshot = payload as DupeCheckSnapshot;
-      setDupeCheckSnapshot(snapshot);
-      setDupeSummary(snapshot.summary || emptyDupeSummary);
-
-      const normalized = String(snapshot.status || "")
-        .toLowerCase()
-        .trim();
-      const running = normalized === "queued" || normalized === "running";
-      setDupeLoading(running);
-
-      if (normalized === "completed") {
-        setDupeChecked(true);
-        setDupeError("");
-      } else if (normalized === "completed_with_errors") {
-        setDupeChecked(true);
-        setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
-      } else if (normalized === "failed" || normalized === "canceled") {
-        setDupeChecked(false);
-        setPrepPreview(emptyPreparation);
-        setDupeError(snapshot.error || "Dupe check failed.");
-      }
+      applyDupeCheckSnapshot(payload as DupeCheckSnapshot);
     });
 
     return () => {
@@ -3411,7 +3413,7 @@ export default function App() {
         off();
       }
     };
-  }, [dupeCheckJobID]);
+  }, [applyDupeCheckSnapshot, dupeCheckJobID]);
 
   useEffect(() => {
     setDupeChecked(false);
