@@ -750,6 +750,72 @@ func TestMaybeEditCLIDescriptionsSavesEditedGroupOnRequest(t *testing.T) {
 	}
 }
 
+func TestMaybeEditCLIDescriptionsPromptsEachDescriptionGroup(t *testing.T) {
+	coreSvc := &cliCoreForTest{
+		review: api.UploadReview{Trackers: []api.TrackerReview{
+			{
+				Tracker: "HDB",
+				DryRun:  api.TrackerDryRunEntry{DescriptionGroup: "hdb"},
+			},
+			{
+				Tracker: "HHD",
+				DryRun:  api.TrackerDryRunEntry{DescriptionGroup: "unit3d"},
+			},
+		}},
+		descriptionPreview: api.DescriptionBuilderPreview{Groups: []api.DescriptionBuilderGroup{
+			{
+				GroupKey:       "hdb|hdb|tracker:hdb",
+				Trackers:       []string{"HDB"},
+				RawDescription: "hdb generated description",
+			},
+			{
+				GroupKey:       "unit3d",
+				Trackers:       []string{"HHD"},
+				RawDescription: "unit3d generated description",
+			},
+		}},
+	}
+	oldEditor := editCLIDescriptionFile
+	var editedInputs []string
+	editCLIDescriptionFile = func(_ context.Context, initial string) (string, bool, error) {
+		editedInputs = append(editedInputs, initial)
+		return initial + " edited", true, nil
+	}
+	defer func() { editCLIDescriptionFile = oldEditor }()
+
+	req := api.Request{Paths: []string{"movie.mkv"}, Trackers: []string{"HDB", "HHD"}}
+	updatedReq, _, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("n\ny\n")), req, coreSvc.review, cliOptions{})
+	if err != nil {
+		t.Fatalf("maybeEditCLIDescriptions: %v", err)
+	}
+	if len(editedInputs) != 1 || editedInputs[0] != "unit3d generated description" {
+		t.Fatalf("expected only unit3d editor invocation, got %#v", editedInputs)
+	}
+	if len(coreSvc.savedDescriptionRaw) != 1 || coreSvc.savedDescriptionRaw[0] != "unit3d generated description edited" {
+		t.Fatalf("expected only unit3d description save, got %#v", coreSvc.savedDescriptionRaw)
+	}
+	if len(coreSvc.savedDescriptionReqs) != 1 {
+		t.Fatalf("expected one description save request, got %#v", coreSvc.savedDescriptionReqs)
+	}
+	saveReq := coreSvc.savedDescriptionReqs[0]
+	if saveReq.DescriptionOverrideGroup != "unit3d" || len(saveReq.Trackers) != 1 || saveReq.Trackers[0] != "HHD" {
+		t.Fatalf("expected unit3d/HHD save request, got %#v", saveReq)
+	}
+	if len(updatedReq.DescriptionGroups) != 2 {
+		t.Fatalf("expected two request description groups, got %#v", updatedReq.DescriptionGroups)
+	}
+	if updatedReq.DescriptionGroups[0].RawDescription != "hdb generated description" {
+		t.Fatalf("expected HDB group to remain unchanged, got %#v", updatedReq.DescriptionGroups[0])
+	}
+	if updatedReq.DescriptionGroups[1].RawDescription != "unit3d generated description edited" {
+		t.Fatalf("expected Unit3D group to be edited, got %#v", updatedReq.DescriptionGroups[1])
+	}
+	last := coreSvc.requests[len(coreSvc.requests)-1]
+	if last.name != "review" || len(last.req.DescriptionGroups) != 2 || last.req.DescriptionGroups[1].RawDescription != "unit3d generated description edited" {
+		t.Fatalf("expected rebuilt review with edited unit3d group, got %#v", last)
+	}
+}
+
 func TestMaybeEditCLIDescriptionsSkipsOnlyID(t *testing.T) {
 	t.Parallel()
 

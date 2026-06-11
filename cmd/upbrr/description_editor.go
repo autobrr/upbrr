@@ -37,18 +37,23 @@ func maybeEditCLIDescriptions(ctx context.Context, coreSvc api.Core, reader *buf
 		return req, review, nil
 	}
 	printCLIDescriptionPreview(groups)
-	edit, err := promptYesNo(reader, "Edit generated description? [y/N]: ", false)
-	if err != nil {
-		return req, review, err
-	}
-	if !edit {
-		return req, review, nil
-	}
 
 	changed := false
 	for idx := range groups {
 		group := groups[idx]
 		label := descriptionGroupLabel(group)
+		prompt := "Edit generated description? [y/N]: "
+		if len(groups) > 1 {
+			prompt = fmt.Sprintf("Edit generated description for %s? [y/N]: ", label)
+		}
+		edit, err := promptYesNo(reader, prompt, false)
+		if err != nil {
+			return req, review, err
+		}
+		if !edit {
+			continue
+		}
+
 		fmt.Printf("Editing description %s\n", label)
 		edited, didChange, err := editCLIDescriptionFile(ctx, group.RawDescription)
 		if err != nil {
