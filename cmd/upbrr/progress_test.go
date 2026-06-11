@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -80,6 +81,42 @@ func TestCLIUploadProgressFinalStatusEndsLine(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "\rtorrent: Torrent ready") {
 		t.Fatalf("expected final progress render, got %q", rendered)
+	}
+}
+
+func TestCLIUploadProgressFinalStatusResetsStateForNextRun(t *testing.T) {
+	var output bytes.Buffer
+	originalOutput := cliProgressOutput
+	cliProgressOutput = &output
+	t.Cleanup(func() {
+		cliProgressOutput = originalOutput
+	})
+
+	states := make(map[string]cliProgressLogState)
+	var mu sync.Mutex
+
+	renderCLIProgress(api.UploadProgressUpdate{
+		SourcePath:      "movie.mkv",
+		Task:            "torrent",
+		Status:          "completed",
+		Message:         "Torrent ready",
+		CompletedPieces: 100,
+		TotalPieces:     100,
+		Percent:         100,
+	}, states, &mu)
+	renderCLIProgress(api.UploadProgressUpdate{
+		SourcePath:      "movie.mkv",
+		Task:            "torrent",
+		Status:          "running",
+		Message:         "Hashing pieces... 1% (1/100 pieces)",
+		CompletedPieces: 1,
+		TotalPieces:     100,
+		Percent:         1,
+	}, states, &mu)
+
+	rendered := output.String()
+	if !strings.Contains(rendered, "\rtorrent: Torrent ready\n\rtorrent: Hashing pieces... 1% (1/100 pieces)") {
+		t.Fatalf("expected immediate rerun progress after final status, got %q", rendered)
 	}
 }
 

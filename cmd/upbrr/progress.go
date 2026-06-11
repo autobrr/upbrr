@@ -62,11 +62,11 @@ func renderCLIProgress(update api.UploadProgressUpdate, states map[string]cliPro
 	}
 	if progressStatusFinal(update.Status) {
 		fmt.Fprintf(cliProgressOutput, "\r%s%s\n", line, padding)
-		state.lastLineLen = 0
-	} else {
-		fmt.Fprintf(cliProgressOutput, "\r%s%s", line, padding)
-		state.lastLineLen = len(line)
+		delete(states, key)
+		return
 	}
+	fmt.Fprintf(cliProgressOutput, "\r%s%s", line, padding)
+	state.lastLineLen = len(line)
 	state.lastPercent = update.Percent
 	state.lastLog = now
 	states[key] = state

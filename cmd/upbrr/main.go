@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -631,17 +632,53 @@ func prepareCLIUploadMetadata(ctx context.Context, coreSvc api.Core, req api.Req
 	for _, sourcePath := range req.Paths {
 		singleReq := req
 		singleReq.Paths = []string{sourcePath}
+		singleReq.ExternalIDSelections = resolvedSelections
 		preview, err := coreSvc.FetchMetadataPreview(ctx, singleReq)
 		if err != nil {
 			return api.Request{}, fmt.Errorf("upbrr: %w", err)
 		}
 		resolvedPath := resolvedCLIMetadataSourcePath(sourcePath, preview)
-		resolvedPaths = append(resolvedPaths, resolvedPath)
 		resolvedSelections = cloneCLIExternalIDSelectionsForResolvedPath(resolvedSelections, sourcePath, resolvedPath)
+		if shouldRefreshCLIResolvedMetadataPreview(singleReq, sourcePath, resolvedPath) {
+			resolvedReq := singleReq
+			resolvedReq.Paths = []string{resolvedPath}
+			resolvedReq.ExternalIDSelections = resolvedSelections
+			preview, err = coreSvc.FetchMetadataPreview(ctx, resolvedReq)
+			if err != nil {
+				return api.Request{}, fmt.Errorf("upbrr: %w", err)
+			}
+			resolvedPath = resolvedCLIMetadataSourcePath(resolvedPath, preview)
+			resolvedSelections = cloneCLIExternalIDSelectionsForResolvedPath(resolvedSelections, sourcePath, resolvedPath)
+		}
+		resolvedPaths = append(resolvedPaths, resolvedPath)
 	}
 	resolvedReq.Paths = resolvedPaths
 	resolvedReq.ExternalIDSelections = resolvedSelections
 	return resolvedReq, nil
+}
+
+func shouldRefreshCLIResolvedMetadataPreview(req api.Request, sourcePath string, resolvedPath string) bool {
+	trimmedSourcePath := strings.TrimSpace(sourcePath)
+	trimmedResolvedPath := strings.TrimSpace(resolvedPath)
+	if trimmedSourcePath == "" || trimmedResolvedPath == "" {
+		return false
+	}
+	if filepath.Clean(trimmedSourcePath) == filepath.Clean(trimmedResolvedPath) {
+		return false
+	}
+	if cliHasExternalIDOverrides(req.ExternalIDOverrides) {
+		return true
+	}
+	_, ok := resolveCLIExternalIDSelection(req.ExternalIDSelections, sourcePath)
+	return ok
+}
+
+func cliHasExternalIDOverrides(overrides api.ExternalIDOverrides) bool {
+	return overrides.TMDBID != nil ||
+		overrides.IMDBID != nil ||
+		overrides.TVDBID != nil ||
+		overrides.TVmazeID != nil ||
+		overrides.MALID != nil
 }
 
 func buildCLIUploadDebugReviews(ctx context.Context, coreSvc api.Core, sourcePaths []string, uploadReq api.Request) ([]api.UploadReview, error) {
@@ -670,8 +707,12 @@ func cloneCLIExternalIDSelectionsForResolvedPath(selections map[string]api.Exter
 	if len(selections) == 0 {
 		return selections
 	}
+	trimmedSourcePath := strings.TrimSpace(sourcePath)
 	trimmedResolvedPath := strings.TrimSpace(resolvedPath)
-	if trimmedResolvedPath == "" {
+	if trimmedResolvedPath == "" || trimmedSourcePath == "" {
+		return selections
+	}
+	if filepath.Clean(trimmedSourcePath) == filepath.Clean(trimmedResolvedPath) {
 		return selections
 	}
 	selected, ok := resolveCLIExternalIDSelection(selections, sourcePath)
@@ -682,9 +723,7 @@ func cloneCLIExternalIDSelectionsForResolvedPath(selections map[string]api.Exter
 		return selections
 	}
 	cloned := make(map[string]api.ExternalIDSelection, len(selections)+1)
-	for key, value := range selections {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, selections)
 	cloned[trimmedResolvedPath] = selected
 	return cloned
 }

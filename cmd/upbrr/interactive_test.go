@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,6 +155,69 @@ func TestRunInteractiveCLIPathUsesResolvedPreviewSourceForPreparedUpload(t *test
 	}
 }
 
+func TestRunInteractiveCLIPathCorrectionPromptsAccumulateQuotedOverrides(t *testing.T) {
+	t.Parallel()
+
+	descDir := filepath.Join(t.TempDir(), "desc files")
+	if err := os.MkdirAll(descDir, 0o700); err != nil {
+		t.Fatalf("mkdir desc dir: %v", err)
+	}
+	descPath := filepath.Join(descDir, "custom description.txt")
+	if err := os.WriteFile(descPath, []byte("custom description body"), 0o600); err != nil {
+		t.Fatalf("write desc file: %v", err)
+	}
+
+	coreSvc := &cliCoreForTest{
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	input := strings.Join([]string{
+		"n",
+		`--tag OLD --descfile "` + descPath + `"`,
+		"n",
+		`--tag NEW --edition "Director's Cut"`,
+		"y",
+		"y",
+	}, "\n") + "\n"
+
+	err := runInteractiveCLIPathWithInput(
+		context.Background(),
+		coreSvc,
+		nil,
+		cliOptions{},
+		map[string]bool{},
+		"movie.mkv",
+		1,
+		config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}}},
+		strings.NewReader(input),
+	)
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+
+	var uploadReq api.Request
+	foundUpload := false
+	for _, call := range coreSvc.requests {
+		if call.name != "upload" {
+			continue
+		}
+		uploadReq = call.req
+		foundUpload = true
+		break
+	}
+	if !foundUpload {
+		t.Fatal("expected prepared upload request")
+	}
+	if uploadReq.ReleaseNameOverrides.Tag == nil || *uploadReq.ReleaseNameOverrides.Tag != "NEW" {
+		t.Fatalf("expected latest tag override, got %#v", uploadReq.ReleaseNameOverrides.Tag)
+	}
+	if uploadReq.ReleaseNameOverrides.Edition == nil || *uploadReq.ReleaseNameOverrides.Edition != "Director's Cut" {
+		t.Fatalf("expected quoted edition override, got %#v", uploadReq.ReleaseNameOverrides.Edition)
+	}
+	if uploadReq.DescriptionOverrideRaw != "custom description body" {
+		t.Fatalf("expected quoted descfile override to persist, got %q", uploadReq.DescriptionOverrideRaw)
+	}
+}
+
 func TestRunSiteCheckCLIPathSeedsMetadataBeforeReview(t *testing.T) {
 	t.Parallel()
 
@@ -166,6 +230,75 @@ func TestRunSiteCheckCLIPathSeedsMetadataBeforeReview(t *testing.T) {
 	}
 	if len(coreSvc.requests) != 2 || len(coreSvc.requests[1].req.Paths) != 1 || coreSvc.requests[1].req.Paths[0] != filepath.Join("folder", "movie.mkv") {
 		t.Fatalf("expected site-check review to use resolved preview source, got %#v", coreSvc.requests)
+	}
+}
+
+func TestSplitInteractiveCLIArgsKeepsBareApostrophesLiteral(t *testing.T) {
+	t.Parallel()
+
+	args, err := splitInteractiveCLIArgs(`--descfile C:\Users\O'Brien\custom.txt --tag NEW`)
+	if err != nil {
+		t.Fatalf("splitInteractiveCLIArgs: %v", err)
+	}
+	if len(args) != 4 {
+		t.Fatalf("expected 4 args, got %#v", args)
+	}
+	if args[1] != `C:\Users\O'Brien\custom.txt` {
+		t.Fatalf("expected apostrophe path to stay literal, got %#v", args)
+	}
+}
+
+func TestSplitInteractiveCLIArgsRejectsUnterminatedRealQuote(t *testing.T) {
+	t.Parallel()
+
+	_, err := splitInteractiveCLIArgs(`--edition "Director's Cut`)
+	if err == nil || !strings.Contains(err.Error(), `unterminated " quote`) {
+		t.Fatalf("expected unterminated double-quote error, got %v", err)
+	}
+}
+
+func TestSplitInteractiveCLIArgsPreservesQuotedDirectorCut(t *testing.T) {
+	t.Parallel()
+
+	args, err := splitInteractiveCLIArgs(`--edition "Director's Cut"`)
+	if err != nil {
+		t.Fatalf("splitInteractiveCLIArgs: %v", err)
+	}
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args, got %#v", args)
+	}
+	if args[1] != "Director's Cut" {
+		t.Fatalf("expected quoted edition to stay grouped, got %#v", args)
+	}
+}
+
+func TestSplitInteractiveCLIArgsPreservesQuotedEqualsDirectorCut(t *testing.T) {
+	t.Parallel()
+
+	args, err := splitInteractiveCLIArgs(`--edition="Director's Cut"`)
+	if err != nil {
+		t.Fatalf("splitInteractiveCLIArgs: %v", err)
+	}
+	if len(args) != 1 {
+		t.Fatalf("expected 1 arg, got %#v", args)
+	}
+	if args[0] != `--edition=Director's Cut` {
+		t.Fatalf("expected equals-form quoted edition to stay grouped, got %#v", args)
+	}
+}
+
+func TestSplitInteractiveCLIArgsPreservesQuotedEqualsDescfile(t *testing.T) {
+	t.Parallel()
+
+	args, err := splitInteractiveCLIArgs(`--descfile="C:\Users\Me\desc files\custom description.txt"`)
+	if err != nil {
+		t.Fatalf("splitInteractiveCLIArgs: %v", err)
+	}
+	if len(args) != 1 {
+		t.Fatalf("expected 1 arg, got %#v", args)
+	}
+	if args[0] != `--descfile=C:\Users\Me\desc files\custom description.txt` {
+		t.Fatalf("expected equals-form quoted descfile to stay grouped, got %#v", args)
 	}
 }
 
@@ -606,6 +739,7 @@ type cliCoreForTest struct {
 	requests               []cliCoreRequestForTest
 	previewPaths           []string
 	previewSourcePath      string
+	previewResponses       []api.MetadataPreview
 	runUploadPreparedCalls int
 	dupeSummary            api.DupeCheckSummary
 	screenshotPlan         api.ScreenshotPlan
@@ -632,6 +766,7 @@ func (c *cliCoreForTest) recordRequest(name string, req api.Request) {
 	copyReq.Trackers = append([]string(nil), req.Trackers...)
 	copyReq.TrackersRemove = append([]string(nil), req.TrackersRemove...)
 	copyReq.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
+	copyReq.ExternalIDSelections = cloneCLIExternalIDSelectionsForTest(req.ExternalIDSelections)
 	c.requests = append(c.requests, cliCoreRequestForTest{name: name, req: copyReq})
 }
 
@@ -650,6 +785,11 @@ func (c *cliCoreForTest) FetchMetadataPreview(_ context.Context, req api.Request
 	c.recordRequest("preview", req)
 	if len(req.Paths) > 0 {
 		c.previewPaths = append(c.previewPaths, req.Paths[0])
+	}
+	if len(c.previewResponses) > 0 {
+		preview := c.previewResponses[0]
+		c.previewResponses = c.previewResponses[1:]
+		return preview, nil
 	}
 	return api.MetadataPreview{SourcePath: c.previewSourcePath}, nil
 }
@@ -726,6 +866,15 @@ func (c *cliCoreForTest) ListUploadedImages(context.Context, api.Request) ([]api
 
 func (c *cliCoreForTest) UploadImages(context.Context, api.Request, string, []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	return api.UploadImagesResult{}, nil
+}
+
+func cloneCLIExternalIDSelectionsForTest(input map[string]api.ExternalIDSelection) map[string]api.ExternalIDSelection {
+	if len(input) == 0 {
+		return nil
+	}
+	cloned := make(map[string]api.ExternalIDSelection, len(input))
+	maps.Copy(cloned, input)
+	return cloned
 }
 
 func (c *cliCoreForTest) DeleteUploadedImage(context.Context, api.Request, string, string) error {

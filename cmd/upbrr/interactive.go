@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -24,7 +25,12 @@ import (
 const dryRunPayloadPreviewLimit = 240
 
 func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config) error {
-	reader := bufio.NewReader(os.Stdin)
+	return runInteractiveCLIPathWithInput(ctx, coreSvc, baseArgs, opts, visited, sourcePath, screens, cfg, os.Stdin)
+}
+
+func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, stdin io.Reader) error {
+	reader := bufio.NewReader(stdin)
+	currentArgs := append([]string(nil), baseArgs...)
 	currentOpts := opts
 	currentVisited := copyVisited(visited)
 	var metadataPreview api.MetadataPreview
@@ -76,11 +82,19 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 			continue
 		}
 
-		nextOpts, nextVisited, _, err := parseCLIOptions(append(baseArgs, strings.Fields(editArgs)...))
+		editTokens, err := splitInteractiveCLIArgs(editArgs)
 		if err != nil {
 			fmt.Printf("Invalid override args: %v\n", err)
 			continue
 		}
+		nextArgs := append(append([]string(nil), currentArgs...), editTokens...)
+		nextOpts, nextVisited, _, err := parseCLIOptions(nextArgs)
+		if err != nil {
+			fmt.Printf("Invalid override args: %v\n", err)
+			continue
+		}
+		nextOpts.ConfirmBDMVRescan = currentOpts.ConfirmBDMVRescan
+		currentArgs = nextArgs
 		currentOpts = nextOpts
 		currentVisited = nextVisited
 	}
@@ -940,6 +954,50 @@ func promptLine(reader *bufio.Reader, prompt string) (string, error) {
 		return "", fmt.Errorf("read prompt line: %w", err)
 	}
 	return strings.TrimSpace(line), nil
+}
+
+func splitInteractiveCLIArgs(input string) ([]string, error) {
+	args := make([]string, 0, len(strings.Fields(input)))
+	var current strings.Builder
+	quote := rune(0)
+	tokenStarted := false
+	quoteBoundary := true
+
+	for _, r := range input {
+		if quote == 0 {
+			switch {
+			case unicode.IsSpace(r):
+				if tokenStarted {
+					args = append(args, current.String())
+					current.Reset()
+					tokenStarted = false
+				}
+				quoteBoundary = true
+				continue
+			case quoteBoundary && (r == '"' || r == '\''):
+				quote = r
+				tokenStarted = true
+				quoteBoundary = false
+				continue
+			}
+		} else if r == quote {
+			quote = 0
+			quoteBoundary = false
+			continue
+		}
+
+		current.WriteRune(r)
+		tokenStarted = true
+		quoteBoundary = r == '='
+	}
+
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated %c quote", quote)
+	}
+	if tokenStarted {
+		args = append(args, current.String())
+	}
+	return args, nil
 }
 
 func copyVisited(input map[string]bool) map[string]bool {

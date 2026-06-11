@@ -14,6 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/webserver"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestParseCLIOptionsCreateAuth(t *testing.T) {
@@ -325,5 +326,88 @@ func TestRunExportConfigPlaintextExportsPlainSecrets(t *testing.T) {
 	}
 	if strings.Contains(exported, "upbrr-enc:v1:") {
 		t.Fatalf("expected plaintext export without encrypted envelopes, got %s", exported)
+	}
+}
+
+func TestPrepareCLIUploadMetadataRefreshesResolvedPathForExternalSelections(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := "folder"
+	resolvedPath := filepath.Join("folder", "movie.mkv")
+	tmdbID := 12345
+
+	coreSvc := &cliCoreForTest{
+		previewResponses: []api.MetadataPreview{
+			{SourcePath: resolvedPath},
+			{SourcePath: resolvedPath},
+		},
+	}
+	req := api.Request{
+		Paths: []string{sourcePath},
+		ExternalIDSelections: map[string]api.ExternalIDSelection{
+			sourcePath: {TMDBID: &tmdbID},
+		},
+	}
+
+	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
+	if err != nil {
+		t.Fatalf("prepareCLIUploadMetadata: %v", err)
+	}
+	if len(coreSvc.requests) != 2 {
+		t.Fatalf("expected 2 preview requests, got %#v", coreSvc.requests)
+	}
+	if len(coreSvc.requests[0].req.Paths) != 1 || coreSvc.requests[0].req.Paths[0] != sourcePath {
+		t.Fatalf("expected first preview for source path, got %#v", coreSvc.requests[0].req.Paths)
+	}
+	if len(coreSvc.requests[1].req.Paths) != 1 || coreSvc.requests[1].req.Paths[0] != resolvedPath {
+		t.Fatalf("expected second preview for resolved path, got %#v", coreSvc.requests[1].req.Paths)
+	}
+	if len(resolvedReq.Paths) != 1 || resolvedReq.Paths[0] != resolvedPath {
+		t.Fatalf("expected resolved upload path, got %#v", resolvedReq.Paths)
+	}
+	selected, ok := resolveCLIExternalIDSelection(resolvedReq.ExternalIDSelections, resolvedPath)
+	if !ok || selected.TMDBID == nil || *selected.TMDBID != tmdbID {
+		t.Fatalf("expected resolved-path external selection, got %#v", resolvedReq.ExternalIDSelections)
+	}
+	secondSelected, ok := coreSvc.requests[1].req.ExternalIDSelections[resolvedPath]
+	if !ok || secondSelected.TMDBID == nil || *secondSelected.TMDBID != tmdbID {
+		t.Fatalf("expected resolved-path selection on second preview, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
+	}
+}
+
+func TestPrepareCLIUploadMetadataPreservesResolvedPathExternalSelections(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := "folder"
+	resolvedPath := filepath.Join("folder", "movie.mkv")
+	currentTMDBID := 12345
+	staleTMDBID := 99999
+
+	coreSvc := &cliCoreForTest{
+		previewResponses: []api.MetadataPreview{
+			{SourcePath: resolvedPath},
+			{SourcePath: resolvedPath},
+		},
+	}
+	req := api.Request{
+		Paths: []string{sourcePath},
+		ExternalIDSelections: map[string]api.ExternalIDSelection{
+			sourcePath:   {TMDBID: &currentTMDBID},
+			resolvedPath: {TMDBID: &staleTMDBID},
+		},
+	}
+
+	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
+	if err != nil {
+		t.Fatalf("prepareCLIUploadMetadata: %v", err)
+	}
+
+	selected, ok := resolvedReq.ExternalIDSelections[resolvedPath]
+	if !ok || selected.TMDBID == nil || *selected.TMDBID != staleTMDBID {
+		t.Fatalf("expected resolved upload selection to preserve resolved TMDB ID, got %#v", resolvedReq.ExternalIDSelections)
+	}
+	secondSelected, ok := coreSvc.requests[1].req.ExternalIDSelections[resolvedPath]
+	if !ok || secondSelected.TMDBID == nil || *secondSelected.TMDBID != staleTMDBID {
+		t.Fatalf("expected second preview to preserve resolved TMDB ID, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
 	}
 }
