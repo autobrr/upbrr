@@ -1328,8 +1328,8 @@ func TestResolveExternalIDsOverride(t *testing.T) {
 		SourcePath:  "/media/file.mkv",
 		TrackerData: []api.TrackerMetadata{{TMDBID: 1, IMDBID: 2, TVDBID: 3}},
 		ExternalIDOverrides: api.ExternalIDOverrides{
-			TMDBID: intPtr(999),
-			IMDBID: intPtr(111),
+			TMDBID: new(999),
+			IMDBID: new(111),
 		},
 	}
 
@@ -1364,8 +1364,8 @@ func TestResolveExternalIDsClearIMDBReresolvesFromOverriddenTMDB(t *testing.T) {
 		SourcePath:  "/media/file.mkv",
 		TrackerData: []api.TrackerMetadata{{IMDBID: 2}},
 		ExternalIDOverrides: api.ExternalIDOverrides{
-			TMDBID: intPtr(999),
-			IMDBID: intPtr(0),
+			TMDBID: new(999),
+			IMDBID: new(0),
 		},
 	}
 
@@ -1403,7 +1403,7 @@ func TestResolveExternalIDsClearTMDBReresolvesFromRetainedIMDB(t *testing.T) {
 		SourcePath:  "/media/file.mkv",
 		TrackerData: []api.TrackerMetadata{{IMDBID: 159881, TMDBID: 1}},
 		ExternalIDOverrides: api.ExternalIDOverrides{
-			TMDBID: intPtr(0),
+			TMDBID: new(0),
 		},
 	}
 
@@ -1823,7 +1823,7 @@ func TestResolveExternalIDsTVDBNoEnglishRefetch(t *testing.T) {
 		SeasonInt:         1,
 		EpisodeInt:        1,
 		ExternalIDOverrides: api.ExternalIDOverrides{
-			TVDBID: intPtr(200),
+			TVDBID: new(200),
 		},
 	}
 
@@ -1873,7 +1873,7 @@ func TestResolveExternalIDsTVDBSlugYearNotUsedForNamingYear(t *testing.T) {
 		SourcePath:        "/media/Cats.Eye.S01E01.mkv",
 		MediaInfoCategory: "TV",
 		ExternalIDOverrides: api.ExternalIDOverrides{
-			TVDBID: intPtr(200),
+			TVDBID: new(200),
 		},
 	}
 
@@ -1921,7 +1921,7 @@ func TestResolveExternalIDsTVDBExplicitSeriesYearUsedForNamingYear(t *testing.T)
 		SourcePath:        "/media/Cats.Eye.S01E01.mkv",
 		MediaInfoCategory: "TV",
 		ExternalIDOverrides: api.ExternalIDOverrides{
-			TVDBID: intPtr(200),
+			TVDBID: new(200),
 		},
 	}
 
@@ -1964,8 +1964,8 @@ func TestResolveExternalIDsAppliesMALOverride(t *testing.T) {
 		SourcePath:        "/media/Example.Anime.S01E01.mkv",
 		MediaInfoCategory: "TV",
 		ExternalIDOverrides: api.ExternalIDOverrides{
-			TMDBID: intPtr(101),
-			MALID:  intPtr(999),
+			TMDBID: new(101),
+			MALID:  new(999),
 		},
 	}
 
@@ -2002,11 +2002,11 @@ func TestResolveExternalIDsAppliesOriginalLanguageOverride(t *testing.T) {
 		SourcePath:        "/media/Example.Show.S01E01.mkv",
 		MediaInfoCategory: "TV",
 		MetadataOverrides: api.MetadataOverrides{
-			OriginalLanguage: stringPtr("ja"),
+			OriginalLanguage: new("ja"),
 		},
 		ExternalIDOverrides: api.ExternalIDOverrides{
-			TMDBID: intPtr(101),
-			IMDBID: intPtr(202),
+			TMDBID: new(101),
+			IMDBID: new(202),
 		},
 	}
 

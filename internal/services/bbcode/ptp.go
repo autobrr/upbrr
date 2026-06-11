@@ -33,6 +33,7 @@ var (
 	ptpNumericMediaLinePattern     = regexp.MustCompile(`(?im)^\s*\d+\s*(channels|KHz|bits)\s*$`)
 	ptpWhitespaceLinePattern       = regexp.MustCompile(`(?m)^\s+$`)
 	ptpMultiNewlinePattern         = regexp.MustCompile(`\n{2,}`)
+	ptpEmptyCenterPattern          = regexp.MustCompile(`(?i)\[center\]\s*\[/center\]`)
 	ptpSizePattern                 = regexp.MustCompile(`(?i)\[size=.*?\]`)
 	ptpVideoPattern                = regexp.MustCompile(`(?i)\[video\][\s\S]*?\[/video\]`)
 	ptpStaffPattern                = regexp.MustCompile(`(?i)\[staff[\s\S]*?\[/staff\]`)
@@ -52,11 +53,13 @@ var (
 	ptpSubtitlesSectionPattern     = regexp.MustCompile(`(?i)SUBTITLES:[\s\S]*?(\n\n|$)`)
 	ptpCodecBitratePattern         = regexp.MustCompile(`(?i)Codec\s+Bitrate\s+Description[\s\S]*?(\n\n|$)`)
 	ptpCodecLanguageBitratePattern = regexp.MustCompile(`(?i)Codec\s+Language\s+Bitrate\s+Description[\s\S]*?(\n\n|$)`)
+	ptpBotSignature                = regexp.MustCompile(`(?is)(?:\[(?:center|right|align=right)\]\s*(?:\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\]\s*)?\[b\]?Uploaded\s+Using\s+\[url=https://github\.com/HDInnovations/UNIT3D\]UNIT3D\[/url\]\s+Auto\s+Uploader\[/b\]?(?:\s*\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\])?\s*\[/(?:center|right|align)\])|(?:\[center\]\s*\[url=https://github\.com/z-ink/uploadrr\]\[img=\d+\]https://i\.ibb\.co/2NVWb0c/uploadrr\.webp\[/img\]\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=https://github\.com/edge20200/Only-Uploader\]Powered\s+by\s+Only-Uploader\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=/torrents\?perPage=\d+&name=[^\]]*\]\s*\[/url\]\s*\[/center\])|(?:\[center\]\s*(?:\[b\]\s*(?:\[size=\d+\])?brush(?:\[/size\])?\s*\[/b\]\s*)?This is an internal release which was first released exclusively on Aither\.\s*Cheers to all the Aither(?:\s+users)?\s*\[/center\])|(?:\[(?:center|right|align=right)\]\s*(?:\[url=[^\]]+\]\s*)?(?:\[size=[^\]]+\]\s*)?Created by(?:\s+[^[]*?)?\s*Upload Assistant(?:\s*\[/size\])?(?:\s*\[/url\])?\s*\[/(?:center|right|align)\])`)
 )
 
 func CleanPTPDescription(description string, discType string) Report {
 	desc := strings.ReplaceAll(description, "&bull;", "-")
 	desc = normalizeNewlines(desc)
+	desc = ptpBotSignature.ReplaceAllString(desc, "")
 
 	urlTags := ptpPTPURLPattern.FindAllString(desc, -1)
 	hdbTags := ptpHDBURLPattern.FindAllString(desc, -1)
@@ -177,6 +180,7 @@ func CleanPTPDescription(description string, discType string) Report {
 	}
 
 	desc = convertCollapseToComparison(desc, "hide", hides)
+	desc = ptpEmptyCenterPattern.ReplaceAllString(desc, "")
 
 	desc = strings.Trim(desc, "\n")
 	desc = regexp.MustCompile(`\n\n+`).ReplaceAllString(desc, "\n\n")

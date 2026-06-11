@@ -131,6 +131,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 	if err != nil {
 		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
+	annotateDryRunReleaseNames(dryRunMeta, dryRunEntries)
 	dryRunByTracker := make(map[string]api.TrackerDryRunEntry, len(dryRunEntries))
 	for _, entry := range dryRunEntries {
 		name := strings.ToUpper(strings.TrimSpace(entry.Tracker))

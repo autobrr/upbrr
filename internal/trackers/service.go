@@ -375,7 +375,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 		}
 	}
 
-	for i := 0; i < workerCount; i++ {
+	for range workerCount {
 		wg.Add(1)
 		go worker()
 	}
@@ -415,14 +415,19 @@ func (s *Service) maxConcurrentTrackerUploads(total int) int {
 }
 
 func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.PreparedMetadata, trackers []string) imageHostPreflight {
+	return s.preflightDescriptionImageHostsWithPreferences(ctx, meta, trackers, nil, nil, true)
+}
+
+func (s *Service) preflightDescriptionImageHostsWithPreferences(
+	ctx context.Context,
+	meta api.PreparedMetadata,
+	trackers []string,
+	preferredImageHosts map[string]string,
+	preloaded *preloadedDescriptionAssetData,
+	resolveAll bool,
+) imageHostPreflight {
 	if len(trackers) == 0 || s.registry == nil {
 		return nil
-	}
-
-	preloaded, err := preloadDescriptionAssetData(ctx, meta, s.repo)
-	if err != nil {
-		s.logger.Warnf("trackers: image host preflight preload failed for %s: %v", meta.SourcePath, err)
-		preloaded = nil
 	}
 
 	type preflightEntry struct {
@@ -453,6 +458,8 @@ func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.P
 		}
 		if host := preferredHost(policy); host != "" {
 			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(host))
+		} else if host := preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))]; strings.TrimSpace(host) != "" {
+			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(host))
 		}
 		entry := preflightEntry{
 			tracker:    tracker,
@@ -467,10 +474,20 @@ func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.P
 		}
 	}
 
+	if preloaded == nil && (len(representatives) > 0 || resolveAll) {
+		var err error
+		preloaded, err = preloadDescriptionAssetData(ctx, meta, s.repo)
+		if err != nil {
+			s.logger.Warnf("trackers: image host preflight preload failed for %s: %v", meta.SourcePath, err)
+			preloaded = nil
+		}
+	}
+
 	resolutions := make(imageHostPreflight, len(entries))
 	var (
-		mu sync.Mutex
-		wg sync.WaitGroup
+		mu         sync.Mutex
+		wg         sync.WaitGroup
+		reuploaded bool
 	)
 	for _, entry := range representatives {
 		preloadedCopy := clonePreloadedDescriptionAssetData(preloaded)
@@ -480,19 +497,37 @@ func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.P
 			if ctx.Err() != nil {
 				return
 			}
-			resolution, err := ensureDescriptionImageHostWithData(ctx, entry.tracker, meta, s.cfg, entry.trackerCfg, s.repo, s.images, s.logger, preloadedCopy)
+			resolution, err := ensureDescriptionImageHostWithData(
+				ctx,
+				entry.tracker,
+				meta,
+				s.cfg,
+				entry.trackerCfg,
+				s.repo,
+				s.images,
+				s.logger,
+				preloadedCopy,
+				preferredImageHosts[strings.ToUpper(strings.TrimSpace(entry.tracker))],
+			)
 			if err != nil {
 				s.logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
 				return
 			}
 			mu.Lock()
 			resolutions[strings.ToUpper(strings.TrimSpace(entry.tracker))] = resolution
+			if resolution.feedback.Reuploaded {
+				reuploaded = true
+			}
 			mu.Unlock()
 		}(entry, preloadedCopy)
 	}
 	wg.Wait()
 
-	if len(representatives) > 0 {
+	if !resolveAll {
+		return resolutions
+	}
+
+	if len(representatives) > 0 && reuploaded {
 		refreshed, err := preloadDescriptionAssetData(ctx, meta, s.repo)
 		if err != nil {
 			s.logger.Warnf("trackers: image host preflight reload failed for %s: %v", meta.SourcePath, err)
@@ -506,7 +541,18 @@ func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.P
 		if _, ok := resolutions[key]; ok {
 			continue
 		}
-		resolution, err := ensureDescriptionImageHostWithData(ctx, entry.tracker, meta, s.cfg, entry.trackerCfg, s.repo, s.images, s.logger, preloaded)
+		resolution, err := ensureDescriptionImageHostWithData(
+			ctx,
+			entry.tracker,
+			meta,
+			s.cfg,
+			entry.trackerCfg,
+			s.repo,
+			s.images,
+			s.logger,
+			preloaded,
+			preferredImageHosts[strings.ToUpper(strings.TrimSpace(entry.tracker))],
+		)
 		if err != nil {
 			s.logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
 			continue
@@ -544,11 +590,27 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		preloaded = nil
 	}
 	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, s.logger)
+	preflight := s.preflightDescriptionImageHostsWithPreferences(ctx, meta, resolved, preferredImageHosts, preloaded, false)
+	preflightUploaded := false
+	for _, resolution := range preflight {
+		if resolution.feedback.Reuploaded {
+			preflightUploaded = true
+			break
+		}
+	}
+	if preflightUploaded {
+		refreshed, reloadErr := preloadDescriptionAssetData(ctx, meta, s.repo)
+		if reloadErr != nil {
+			s.logger.Warnf("trackers: preparation preload reload failed for %s: %v", meta.SourcePath, reloadErr)
+		} else {
+			preloaded = refreshed
+		}
+	}
 
 	grouped := make(map[string]*api.PreparationDescription)
 	order := make([]string, 0, len(resolved))
 	placeholderCount := 0
-	placeholder := func(groupKey, tracker string, note string) {
+	placeholder := func(groupKey, tracker string, note string, imageHost api.ImageHostFeedback) {
 		key := strings.TrimSpace(groupKey)
 		if key == "" {
 			key = tracker
@@ -562,9 +624,12 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 				RawDescriptionHTML: "",
 				Description:        "",
 				DescriptionHTML:    "",
+				ImageHost:          imageHost,
 			}
 			grouped[key] = entry
 			order = append(order, key)
+		} else {
+			entry.ImageHost = mergePreparationImageHostFeedback(entry.ImageHost, imageHost)
 		}
 		entry.Trackers = append(entry.Trackers, tracker)
 		placeholderCount++
@@ -584,31 +649,41 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 
 		definition, ok := s.registry.Lookup(tracker)
 		if !ok {
-			placeholder("", tracker, "not registered")
+			placeholder("", tracker, "not registered", api.ImageHostFeedback{})
 			continue
 		}
 		builder, ok := definition.(DescriptionBuilder)
 		if !ok {
-			placeholder("", tracker, "no description builder")
+			placeholder("", tracker, "no description builder", api.ImageHostFeedback{})
 			continue
 		}
 		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
-		resolution, err := ensureDescriptionImageHostWithData(
-			ctx,
-			tracker,
-			meta,
-			s.cfg,
-			trackerCfg,
-			s.repo,
-			s.images,
-			s.logger,
-			preloaded,
-			preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))],
-		)
-		if err != nil {
-			s.logger.Warnf("trackers: preparation image host resolution failed for %s: %v", tracker, err)
-			placeholder("", tracker, fmt.Sprintf("image host error: %v", err))
+		key := strings.ToUpper(strings.TrimSpace(tracker))
+		resolution, ok := preflight[key]
+		if !ok {
+			var err error
+			resolution, err = ensureDescriptionImageHostWithData(
+				ctx,
+				tracker,
+				meta,
+				s.cfg,
+				trackerCfg,
+				s.repo,
+				s.images,
+				s.logger,
+				preloaded,
+				preferredImageHosts[key],
+			)
+			if err != nil {
+				s.logger.Warnf("trackers: preparation image host resolution failed for %s: %v", tracker, err)
+				placeholder("", tracker, fmt.Sprintf("image host error: %v", err), api.ImageHostFeedback{})
+				continue
+			}
+		}
+		if resolution.blocking {
+			feedback := blockedPreparationImageHostFeedback(resolution.feedback)
+			placeholder(preparationBlockedImageHostGroupKey(tracker), tracker, "image host blocked", feedback)
 			continue
 		}
 		assets, err := resolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger, preloaded)
@@ -628,7 +703,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		})
 		if err != nil {
 			s.logger.Errorf("trackers: preparation failed for %s: %v", tracker, err)
-			placeholder("", tracker, "build error")
+			placeholder("", tracker, "build error", api.ImageHostFeedback{})
 			continue
 		}
 
@@ -642,11 +717,12 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		}
 		groupKey = preparationGroupKey(groupKey, resolution.feedback.SelectedHost, resolution.usageScope)
 
+		descriptionHTML := description.Render(descriptionText)
 		candidate := api.PreparationDescription{
-			RawDescription:     strings.TrimSpace(assets.Description),
-			RawDescriptionHTML: description.Render(strings.TrimSpace(assets.Description)),
+			RawDescription:     descriptionText,
+			RawDescriptionHTML: descriptionHTML,
 			Description:        descriptionText,
-			DescriptionHTML:    description.Render(descriptionText),
+			DescriptionHTML:    descriptionHTML,
 			HasOverride:        assets.Override,
 			ImageHost:          resolution.feedback,
 		}
@@ -710,6 +786,25 @@ func preparationImageHostPreferences(appCfg config.Config, meta api.PreparedMeta
 		}
 	}
 	return preferred
+}
+
+func blockedPreparationImageHostFeedback(feedback api.ImageHostFeedback) api.ImageHostFeedback {
+	feedback.Status = "blocked"
+	if strings.TrimSpace(feedback.Message) == "" {
+		feedback.Message = "image-host requirements could not be met"
+	}
+	if len(feedback.Warnings) == 0 {
+		feedback.Warnings = []api.ImageHostWarning{{Message: feedback.Message}}
+	}
+	return feedback
+}
+
+func preparationBlockedImageHostGroupKey(tracker string) string {
+	name := strings.ToLower(strings.TrimSpace(tracker))
+	if name == "" {
+		name = "tracker"
+	}
+	return name + "|blocked|image-host"
 }
 
 func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetadata, trackersList []string) ([]api.TrackerDryRunEntry, error) {
@@ -1126,6 +1221,8 @@ func mergePreparationImageHostFeedback(left api.ImageHostFeedback, right api.Ima
 
 func imageHostStatusRank(status string) int {
 	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "blocked":
+		return 4
 	case "warning":
 		return 3
 	case "reuploaded":

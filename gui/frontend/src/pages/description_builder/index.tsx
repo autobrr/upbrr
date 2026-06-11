@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { Dispatch, SetStateAction } from "react";
+import RenderedDescription from "../../components/RenderedDescription";
 import type { DescriptionBuilderPreview } from "../../types";
-import { handleExternalLinkClick } from "../../utils/externalLinks";
 
 type Props = {
   path: string;
@@ -15,6 +15,7 @@ type Props = {
   builderSaving: boolean;
   builderRenderLoading: boolean;
   builderRefreshing: boolean;
+  builderProgressMessage: string;
   builderError: string;
   builderSaved: string;
   refreshDescriptionBuilder: () => void;
@@ -43,6 +44,7 @@ export default function DescriptionBuilderPage(props: Props) {
     builderSaving,
     builderRenderLoading,
     builderRefreshing,
+    builderProgressMessage,
     builderError,
     builderSaved,
     refreshDescriptionBuilder,
@@ -80,6 +82,11 @@ export default function DescriptionBuilderPage(props: Props) {
         >
           {builderRefreshing ? "Refreshing..." : "Refresh descriptions"}
         </button>
+        {builderProgressMessage ? (
+          <p className="m-0 basis-full text-right text-[0.82rem] text-[var(--muted)]">
+            {builderProgressMessage}
+          </p>
+        ) : null}
       </section>
 
       {builderError ? <p className="error">{builderError}</p> : null}
@@ -91,7 +98,8 @@ export default function DescriptionBuilderPage(props: Props) {
             <h2>Building Descriptions</h2>
           </div>
           <p className="muted">
-            Preparing tracker-group descriptions and image-host adjustments...
+            {builderProgressMessage ||
+              "Preparing tracker-group descriptions and image-host adjustments..."}
           </p>
         </section>
       ) : groups.length === 0 ? (
@@ -190,7 +198,7 @@ export default function DescriptionBuilderPage(props: Props) {
                     <div className="mb-2 flex flex-col gap-1">
                       <h2>Raw Description</h2>
                       <p className="muted">
-                        This saved raw description is the upload source of truth for {label}.
+                        This final raw description is the upload source of truth for {label}.
                       </p>
                     </div>
                     <textarea
@@ -209,11 +217,7 @@ export default function DescriptionBuilderPage(props: Props) {
                       <h2>Rendered Raw Preview</h2>
                     </div>
                     {renderedHTML ? (
-                      <div
-                        className="tracker-description rendered"
-                        onClick={handleExternalLinkClick}
-                        dangerouslySetInnerHTML={{ __html: renderedHTML }}
-                      />
+                      <RenderedDescription html={renderedHTML} />
                     ) : (
                       <p className="muted">No rendered preview yet.</p>
                     )}

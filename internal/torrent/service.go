@@ -4,20 +4,27 @@
 package torrent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
+	slashpath "path" //nolint:depguard // Formats torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/anacrolix/torrent/merkle"
 	"github.com/anacrolix/torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -124,11 +131,22 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 		return api.TorrentResult{}, fmt.Errorf("torrent: no reusable torrent found with nohash enabled: %w", internalerrors.ErrNotFound)
 	}
 
-	if _, err := os.Stat(source); err != nil {
+	createSpec, err := resolveCreateSpec(meta, source, s.tmpRoot)
+	if err != nil {
+		return api.TorrentResult{}, err
+	}
+	if createSpec.cleanupPath != "" {
+		defer func() {
+			if err := os.RemoveAll(createSpec.cleanupPath); err != nil {
+				s.logger.Warnf("torrent: failed to remove staging path %s: %v", createSpec.cleanupPath, err)
+			}
+		}()
+	}
+	if _, err := os.Stat(createSpec.path); err != nil {
 		if os.IsNotExist(err) {
-			return api.TorrentResult{}, fmt.Errorf("torrent: path %q: %w", source, internalerrors.ErrNotFound)
+			return api.TorrentResult{}, fmt.Errorf("torrent: path %q: %w", createSpec.path, internalerrors.ErrNotFound)
 		}
-		return api.TorrentResult{}, fmt.Errorf("torrent: path %q: %w", source, err)
+		return api.TorrentResult{}, fmt.Errorf("torrent: path %q: %w", createSpec.path, err)
 	}
 
 	select {
@@ -152,16 +170,22 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 	emitTorrentProgress(ctx, meta, "running", "Creating torrent with mkbrr")
 
 	info, err := mkbrr.Create(mkbrr.CreateOptions{
-		Path:             source,
+		Path:             createSpec.path,
+		Name:             createSpec.name,
 		OutputPath:       outputPath,
 		IsPrivate:        true,
 		MaxPieceLength:   &pieceOptions.maxPieceExp,
 		PieceLengthExp:   pieceOptions.pieceExp,
+		IncludePatterns:  createSpec.includePatterns,
 		ProgressCallback: torrentProgressCallback(ctx, meta),
 	})
 	if err != nil {
 		emitTorrentProgress(ctx, meta, "failed", "Torrent creation failed")
-		return api.TorrentResult{}, fmt.Errorf("torrent: create %q: %w", source, err)
+		return api.TorrentResult{}, fmt.Errorf("torrent: create %q: %w", createSpec.path, err)
+	}
+	if err := validateTorrentContent(info.Path, meta); err != nil {
+		emitTorrentProgress(ctx, meta, "failed", "Torrent validation failed")
+		return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent %q: %w", info.Path, err)
 	}
 	s.logger.Debugf("torrent: created torrent %s", info.Path)
 	emitTorrentProgress(ctx, meta, "completed", "Torrent ready")
@@ -240,7 +264,7 @@ func torrentOverrideEnabled(value *bool) bool {
 
 func validateCandidateTorrent(path string, policy *trackerTorrentPolicy, meta api.PreparedMetadata, logger api.Logger) error {
 	if policy == nil {
-		return nil
+		return validateTorrentContent(path, meta)
 	}
 	if err := policy.validateTorrent(path, meta); err != nil {
 		if logger != nil {
@@ -248,7 +272,625 @@ func validateCandidateTorrent(path string, policy *trackerTorrentPolicy, meta ap
 		}
 		return err
 	}
+	if err := validateTorrentContent(path, meta); err != nil {
+		if logger != nil {
+			logger.Warnf("torrent: skipping mismatched torrent %s: %v", path, err)
+		}
+		return err
+	}
 	return nil
+}
+
+type createSpec struct {
+	path            string
+	name            string
+	includePatterns []string
+	cleanupPath     string
+}
+
+type contentFile struct {
+	path   string
+	length int64
+}
+
+func resolveCreateSpec(meta api.PreparedMetadata, source string, tmpRoot string) (createSpec, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return createSpec{}, internalerrors.ErrInvalidInput
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return createSpec{}, fmt.Errorf("torrent: path %q: %w", source, internalerrors.ErrNotFound)
+		}
+		return createSpec{}, fmt.Errorf("torrent: path %q: %w", source, err)
+	}
+	if !info.IsDir() {
+		return createSpec{path: source}, nil
+	}
+
+	if strings.TrimSpace(meta.DiscType) != "" {
+		return createSpec{path: normalizeDiscSource(source)}, nil
+	}
+
+	wanted, err := wantedFilesWithin(source, meta.FileList)
+	if err != nil {
+		return createSpec{}, err
+	}
+	if len(wanted) == 1 {
+		return createSpec{path: wanted[0]}, nil
+	}
+	if len(wanted) > 1 {
+		if needsWantedFileStaging(source, wanted) {
+			stagedRoot, cleanupPath, err := stageWantedFiles(tmpRoot, source, wanted)
+			if err != nil {
+				return createSpec{}, err
+			}
+			return createSpec{
+				path:        stagedRoot,
+				name:        filepath.Base(filepath.Clean(source)),
+				cleanupPath: cleanupPath,
+			}, nil
+		}
+		include, err := includePatternsForFiles(source, wanted)
+		if err != nil {
+			return createSpec{}, err
+		}
+		return createSpec{
+			path:            source,
+			name:            filepath.Base(filepath.Clean(source)),
+			includePatterns: include,
+		}, nil
+	}
+
+	return createSpec{path: source}, nil
+}
+
+func normalizeDiscSource(source string) string {
+	return filepath.Clean(source)
+}
+
+func mkbrrIgnoredPath(rel string, isDir bool) bool {
+	lowerRel := strings.ToLower(filepath.ToSlash(rel))
+	if lowerRel == "@eadir" || strings.HasPrefix(lowerRel, "@eadir/") ||
+		strings.HasSuffix(lowerRel, "/@eadir") || strings.Contains(lowerRel, "/@eadir/") {
+		return true
+	}
+	if isDir {
+		return false
+	}
+	return strings.HasSuffix(lowerRel, ".torrent") ||
+		strings.HasSuffix(lowerRel, ".ds_store") ||
+		strings.HasSuffix(lowerRel, "thumbs.db") ||
+		strings.HasSuffix(lowerRel, "desktop.ini") ||
+		strings.HasSuffix(lowerRel, "zone.identifier")
+}
+
+func wantedFilesWithin(root string, files []string) ([]string, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("torrent: resolve source root: %w", err)
+	}
+	wanted := make([]string, 0, len(files))
+	seen := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		trimmed := strings.TrimSpace(file)
+		if trimmed == "" {
+			continue
+		}
+		absFile, err := filepath.Abs(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("torrent: resolve wanted file: %w", err)
+		}
+		if err := ensureWithinRoot(cleanRoot, absFile); err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(absFile)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("torrent: wanted file %q: %w", absFile, internalerrors.ErrNotFound)
+			}
+			return nil, fmt.Errorf("torrent: stat wanted file %q: %w", absFile, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("torrent: wanted file %q is not a regular file", absFile)
+		}
+		cleanFile := filepath.Clean(absFile)
+		if _, ok := seen[cleanFile]; ok {
+			continue
+		}
+		seen[cleanFile] = struct{}{}
+		wanted = append(wanted, cleanFile)
+	}
+	sort.Strings(wanted)
+	return wanted, nil
+}
+
+func includePatternsForFiles(root string, files []string) ([]string, error) {
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("torrent: resolve source root: %w", err)
+	}
+	include := make([]string, 0, len(files))
+	for _, file := range files {
+		absFile, err := filepath.Abs(file)
+		if err != nil {
+			return nil, fmt.Errorf("torrent: resolve wanted file: %w", err)
+		}
+		if err := ensureWithinRoot(cleanRoot, absFile); err != nil {
+			return nil, err
+		}
+		rel, err := filepath.Rel(cleanRoot, absFile)
+		if err != nil {
+			return nil, fmt.Errorf("torrent: wanted file relative path: %w", err)
+		}
+		slashRel := filepath.ToSlash(rel)
+		if strings.Contains(slashRel, ",") {
+			return nil, fmt.Errorf("torrent: wanted file %q requires staging", slashRel)
+		}
+		include = append(include, globLiteral(slashRel))
+	}
+	return include, nil
+}
+
+func needsWantedFileStaging(root string, files []string) bool {
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	for _, file := range files {
+		absFile, err := filepath.Abs(file)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(cleanRoot, absFile)
+		if err == nil && strings.Contains(filepath.ToSlash(rel), ",") {
+			return true
+		}
+	}
+	return false
+}
+
+func stageWantedFiles(tmpRoot string, root string, files []string) (string, string, error) {
+	if strings.TrimSpace(tmpRoot) == "" {
+		return "", "", errors.New("torrent: tmp root is required for staged wanted files")
+	}
+	rootName, err := safeTorrentRootName(root)
+	if err != nil {
+		return "", "", err
+	}
+	stageParent, err := os.MkdirTemp(tmpRoot, "wanted-files-*")
+	if err != nil {
+		return "", "", fmt.Errorf("torrent: create wanted file staging dir: %w", err)
+	}
+	stagedRoot := filepath.Join(stageParent, rootName)
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		_ = os.RemoveAll(stageParent)
+		return "", "", fmt.Errorf("torrent: resolve source root: %w", err)
+	}
+	for _, file := range files {
+		absFile, err := filepath.Abs(file)
+		if err != nil {
+			_ = os.RemoveAll(stageParent)
+			return "", "", fmt.Errorf("torrent: resolve wanted file: %w", err)
+		}
+		rel, err := filepath.Rel(cleanRoot, absFile)
+		if err != nil {
+			_ = os.RemoveAll(stageParent)
+			return "", "", fmt.Errorf("torrent: wanted file relative path: %w", err)
+		}
+		dst := filepath.Join(stagedRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			_ = os.RemoveAll(stageParent)
+			return "", "", fmt.Errorf("torrent: create wanted file staging parent: %w", err)
+		}
+		if err := os.Link(absFile, dst); err != nil {
+			if copyErr := filesystem.CopyFile(absFile, dst); copyErr != nil {
+				_ = os.RemoveAll(stageParent)
+				return "", "", fmt.Errorf("torrent: stage wanted file %q: link: %w; copy: %w", absFile, err, copyErr)
+			}
+		}
+	}
+	return stagedRoot, stageParent, nil
+}
+
+func safeTorrentRootName(root string) (string, error) {
+	cleanRoot := filepath.Clean(root)
+	rootName := filepath.Base(cleanRoot)
+	if rootName == "" || rootName == "." || rootName == string(filepath.Separator) || filepath.IsAbs(rootName) {
+		return "", fmt.Errorf("torrent: invalid source root name %q", root)
+	}
+	return rootName, nil
+}
+
+func ensureWithinRoot(root string, child string) error {
+	root = filepath.Clean(root)
+	child = filepath.Clean(child)
+	if pathutil.SamePath(root, child) || !pathutil.IsWithinRoot(root, child) {
+		return fmt.Errorf("torrent: wanted file %q is outside source root %q", child, root)
+	}
+	return nil
+}
+
+func globLiteral(value string) string {
+	var builder strings.Builder
+	for _, r := range value {
+		switch r {
+		case '[':
+			builder.WriteString("[[]")
+		case '*', '?', '{', '}':
+			builder.WriteRune('[')
+			builder.WriteRune(r)
+			builder.WriteRune(']')
+		default:
+			builder.WriteRune(r)
+		}
+	}
+	return "{" + builder.String() + "}"
+}
+
+func validateTorrentContent(path string, meta api.PreparedMetadata) error {
+	expected, ok, err := expectedTorrentContent(meta)
+	if err != nil {
+		return err
+	}
+	expectedName, nameOK, err := expectedTorrentName(meta)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	torrentMeta, err := metainfo.LoadFromFile(path)
+	if err != nil {
+		return fmt.Errorf("torrent: read candidate metadata: %w", err)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		return fmt.Errorf("torrent: unmarshal candidate info: %w", err)
+	}
+	if nameOK && info.BestName() != expectedName {
+		return errors.New("torrent: candidate name mismatch")
+	}
+	actual := torrentContentPaths(info)
+	if len(actual) == 0 {
+		return errors.New("torrent: candidate has no files")
+	}
+	if !sameContentSet(actual, expected) {
+		return errors.New("torrent: candidate content mismatch")
+	}
+	if err := validateTorrentPieces(info, meta); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateTorrentPieces(info metainfo.Info, meta api.PreparedMetadata) error {
+	if info.HasV2() {
+		if err := validateTorrentV2Pieces(info, meta); err != nil {
+			return err
+		}
+		if !info.HasV1() {
+			return nil
+		}
+	}
+	if info.PieceLength <= 0 || len(info.Pieces) == 0 {
+		return errors.New("torrent: candidate piece hashes unavailable")
+	}
+	generated := info
+	if err := generated.GeneratePieces(func(file metainfo.FileInfo) (io.ReadCloser, error) {
+		return openTorrentContentFile(meta, file)
+	}); err != nil {
+		return fmt.Errorf("torrent: generate candidate piece hashes: %w", err)
+	}
+	if !bytes.Equal(generated.Pieces, info.Pieces) {
+		return errors.New("torrent: candidate piece hash mismatch")
+	}
+	return nil
+}
+
+func validateTorrentV2Pieces(info metainfo.Info, meta api.PreparedMetadata) error {
+	if info.PieceLength <= 0 {
+		return errors.New("torrent: candidate v2 piece length unavailable")
+	}
+	for _, file := range info.UpvertedFiles() {
+		if file.Length == 0 && !file.PiecesRoot.Ok {
+			continue
+		}
+		if !file.PiecesRoot.Ok {
+			return errors.New("torrent: candidate v2 pieces root unavailable")
+		}
+		root, err := torrentV2FileRoot(meta, file)
+		if err != nil {
+			return err
+		}
+		if root != file.PiecesRoot.Value {
+			return errors.New("torrent: candidate v2 pieces root mismatch")
+		}
+	}
+	return nil
+}
+
+func torrentV2FileRoot(meta api.PreparedMetadata, file metainfo.FileInfo) ([32]byte, error) {
+	openedFile, err := openTorrentContentFile(meta, file)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	defer openedFile.Close()
+
+	hash := merkle.NewHash()
+	written, err := io.CopyN(hash, openedFile, file.Length)
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("torrent: hash candidate v2 file %q: %w", torrentFilePath(file), err)
+	}
+	if written != file.Length {
+		return [32]byte{}, fmt.Errorf("torrent: hash candidate v2 file %q: expected %d bytes, got %d", torrentFilePath(file), file.Length, written)
+	}
+	var root [32]byte
+	copy(root[:], hash.Sum(nil))
+	return root, nil
+}
+
+func torrentFilePath(file metainfo.FileInfo) string {
+	parts := file.BestPath()
+	if len(parts) == 0 {
+		return ""
+	}
+	return slashpath.Join(parts...)
+}
+
+func openTorrentContentFile(meta api.PreparedMetadata, file metainfo.FileInfo) (io.ReadCloser, error) {
+	source := strings.TrimSpace(meta.SourcePath)
+	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
+		return nil, errors.New("torrent: source unavailable for piece validation")
+	}
+	if strings.TrimSpace(meta.DiscType) != "" {
+		return openTorrentFileWithinRoot(normalizeDiscSource(source), file)
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		return nil, fmt.Errorf("torrent: stat source %q: %w", source, err)
+	}
+	if !info.IsDir() {
+		openedFile, err := os.Open(source)
+		if err != nil {
+			return nil, fmt.Errorf("torrent: open source file %q: %w", source, err)
+		}
+		return openedFile, nil
+	}
+	if len(meta.FileList) == 0 {
+		return openTorrentFileWithinRoot(source, file)
+	}
+	wanted, err := wantedFilesWithin(source, meta.FileList)
+	if err != nil {
+		return nil, err
+	}
+	if len(wanted) == 1 {
+		openedFile, err := os.Open(wanted[0])
+		if err != nil {
+			return nil, fmt.Errorf("torrent: open wanted file %q: %w", wanted[0], err)
+		}
+		return openedFile, nil
+	}
+	return openTorrentFileWithinRoot(source, file)
+}
+
+func openTorrentFileWithinRoot(root string, file metainfo.FileInfo) (io.ReadCloser, error) {
+	parts := file.BestPath()
+	if len(parts) == 0 {
+		return nil, errors.New("torrent: candidate file path missing")
+	}
+	localParts := make([]string, 0, len(parts)+1)
+	localParts = append(localParts, root)
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || filepath.IsAbs(part) || strings.ContainsAny(part, `/\`) {
+			return nil, fmt.Errorf("torrent: invalid candidate file path segment %q", part)
+		}
+		localParts = append(localParts, part)
+	}
+	localPath := filepath.Join(localParts...)
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("torrent: resolve source root: %w", err)
+	}
+	absPath, err := filepath.Abs(localPath)
+	if err != nil {
+		return nil, fmt.Errorf("torrent: resolve candidate file: %w", err)
+	}
+	if err := ensureWithinRoot(absRoot, absPath); err != nil {
+		return nil, err
+	}
+	fileHandle, err := os.Open(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("torrent: open candidate file %q: %w", absPath, err)
+	}
+	return fileHandle, nil
+}
+
+func expectedTorrentContent(meta api.PreparedMetadata) ([]contentFile, bool, error) {
+	source := strings.TrimSpace(meta.SourcePath)
+	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
+		return nil, false, nil
+	}
+	if strings.TrimSpace(meta.DiscType) != "" {
+		root := normalizeDiscSource(source)
+		expected, err := diskContentPaths(root)
+		return expected, true, err
+	}
+	info, err := os.Stat(source)
+	if err == nil && !info.IsDir() {
+		return []contentFile{{path: filepath.Base(source), length: info.Size()}}, true, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("torrent: stat source %q: %w", source, err)
+	}
+	if len(meta.FileList) == 0 {
+		expected, err := diskContentPaths(source)
+		return expected, true, err
+	}
+	wanted, err := wantedFilesWithin(source, meta.FileList)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(wanted) == 0 {
+		return nil, false, errors.New("torrent: no valid wanted files")
+	}
+	if len(wanted) == 1 {
+		info, err := os.Stat(wanted[0])
+		if err != nil {
+			return nil, false, fmt.Errorf("torrent: stat wanted file %q: %w", wanted[0], err)
+		}
+		return []contentFile{{path: filepath.Base(wanted[0]), length: info.Size()}}, true, nil
+	}
+	expected := make([]contentFile, 0, len(wanted))
+	root, err := filepath.Abs(source)
+	if err != nil {
+		return nil, false, fmt.Errorf("torrent: resolve source root: %w", err)
+	}
+	for _, file := range wanted {
+		rel, err := filepath.Rel(root, file)
+		if err != nil {
+			return nil, false, fmt.Errorf("torrent: wanted file relative path: %w", err)
+		}
+		info, err := os.Stat(file)
+		if err != nil {
+			return nil, false, fmt.Errorf("torrent: stat wanted file %q: %w", file, err)
+		}
+		expected = append(expected, contentFile{path: filepath.ToSlash(rel), length: info.Size()})
+	}
+	return expected, true, nil
+}
+
+func expectedTorrentName(meta api.PreparedMetadata) (string, bool, error) {
+	source := strings.TrimSpace(meta.SourcePath)
+	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
+		return "", false, nil
+	}
+	if strings.TrimSpace(meta.DiscType) != "" {
+		return filepath.Base(filepath.Clean(normalizeDiscSource(source))), true, nil
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		return "", false, fmt.Errorf("torrent: stat source %q: %w", source, err)
+	}
+	if !info.IsDir() {
+		return filepath.Base(source), true, nil
+	}
+	if len(meta.FileList) == 0 {
+		return filepath.Base(filepath.Clean(source)), true, nil
+	}
+	wanted, err := wantedFilesWithin(source, meta.FileList)
+	if err != nil {
+		return "", false, err
+	}
+	if len(wanted) == 0 {
+		return "", false, errors.New("torrent: no valid wanted files")
+	}
+	if len(wanted) == 1 {
+		return filepath.Base(wanted[0]), true, nil
+	}
+	return filepath.Base(filepath.Clean(source)), true, nil
+}
+
+func torrentContentPaths(info metainfo.Info) []contentFile {
+	files := info.UpvertedFiles()
+	if len(files) == 0 {
+		return nil
+	}
+	result := make([]contentFile, 0, len(files))
+	for _, file := range files {
+		parts := file.BestPath()
+		if len(parts) == 0 {
+			result = append(result, contentFile{path: info.BestName(), length: file.Length})
+			continue
+		}
+		result = append(result, contentFile{path: strings.Join(parts, "/"), length: file.Length})
+	}
+	return result
+}
+
+func diskContentPaths(root string) ([]contentFile, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, fmt.Errorf("torrent: stat disc root %q: %w", root, err)
+	}
+	if !info.IsDir() {
+		return []contentFile{{path: filepath.Base(root), length: info.Size()}}, nil
+	}
+	paths := make([]contentFile, 0)
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != root {
+				rel, err := filepath.Rel(root, path)
+				if err != nil {
+					return fmt.Errorf("disc relative path: %w", err)
+				}
+				if mkbrrIgnoredPath(rel, true) {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return fmt.Errorf("disc relative path: %w", err)
+		}
+		if mkbrrIgnoredPath(rel, false) {
+			return nil
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("disc file info: %w", err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		paths = append(paths, contentFile{path: filepath.ToSlash(rel), length: info.Size()})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("torrent: walk disc root %q: %w", root, err)
+	}
+	sortContentFiles(paths)
+	return paths, nil
+}
+
+func sameContentSet(left []contentFile, right []contentFile) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftCopy := append([]contentFile{}, left...)
+	rightCopy := append([]contentFile{}, right...)
+	sortContentFiles(leftCopy)
+	sortContentFiles(rightCopy)
+	for idx := range leftCopy {
+		if leftCopy[idx].path != rightCopy[idx].path || leftCopy[idx].length != rightCopy[idx].length {
+			return false
+		}
+	}
+	return true
+}
+
+func sortContentFiles(files []contentFile) {
+	sort.Slice(files, func(left int, right int) bool {
+		if files[left].path == files[right].path {
+			return files[left].length < files[right].length
+		}
+		return files[left].path < files[right].path
+	})
 }
 
 func TempTorrentPath(tmpRoot string, meta api.PreparedMetadata, source string) (string, error) {

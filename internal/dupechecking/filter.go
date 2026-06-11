@@ -507,29 +507,37 @@ func isSeasonEpisodeMatch(filename string, targetSeason string, targetEpisode st
 		}
 	}
 
-	seasonPatternValue := ""
+	var seasonRegex *regexp.Regexp
 	if targetSeasonValue > 0 {
-		seasonPatternValue = "S" + strconv.FormatInt(int64(targetSeasonValue), 10)
+		seasonRegex = seasonTokenRegex("S", targetSeasonValue)
 	}
-	isSeasonPack := !regexp.MustCompile(`(?i)e\d{2}`).MatchString(filename)
+	isSeasonPack := !regexp.MustCompile(`(?i)e\d{1,3}`).MatchString(filename)
 
 	if len(targetEpisodes) == 0 {
-		seasonMatches := seasonPatternValue != "" && regexp.MustCompile(`(?i)`+seasonPatternValue).MatchString(filename)
+		seasonMatches := seasonRegex != nil && seasonRegex.MatchString(filename)
 		return seasonMatches && isSeasonPack, seasonMatches
 	}
 
-	if seasonPatternValue != "" {
+	if seasonRegex != nil {
 		if isSeasonPack {
-			return regexp.MustCompile(`(?i)` + seasonPatternValue).MatchString(filename), true
+			return seasonRegex.MatchString(filename), true
 		}
 		for _, ep := range targetEpisodes {
-			pattern := regexp.MustCompile(`(?i)E` + leftPad(ep, 2))
-			if regexp.MustCompile(`(?i)`+seasonPatternValue).MatchString(filename) && pattern.MatchString(filename) {
+			pattern := episodeTokenRegex(ep)
+			if seasonRegex.MatchString(filename) && pattern.MatchString(filename) {
 				return true, false
 			}
 		}
 	}
 	return false, false
+}
+
+func seasonTokenRegex(prefix string, value int) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)(?:^|[^a-z0-9])` + regexp.QuoteMeta(prefix) + `0*` + strconv.Itoa(value) + `(?:[^0-9]|$)`)
+}
+
+func episodeTokenRegex(value int) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)E0*` + strconv.Itoa(value) + `(?:[^0-9]|$)`)
 }
 
 func isOTWSameSeasonEpisodeResolutionMismatch(meta api.PreparedMetadata, tracker string, name string, targetSeason string, targetEpisode string, targetResolution string) bool {

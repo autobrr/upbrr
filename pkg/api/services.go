@@ -207,7 +207,7 @@ type PreparedMetadata struct {
 	BlockedTrackers             map[string][]TrackerBlockReason
 	IgnoreTrackerRuleFailures   bool
 	TrackerRuleFailures         map[string][]RuleFailure
-	BDInfo                      map[string]interface{}
+	BDInfo                      map[string]any
 }
 
 type MetadataOverrides struct {

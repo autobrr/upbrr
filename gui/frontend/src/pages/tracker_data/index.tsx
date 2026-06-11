@@ -3,6 +3,7 @@
 
 import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import RenderedDescription from "../../components/RenderedDescription";
 import { Button } from "../../components/ui/button";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type { MetadataPreview, TrackerPreview } from "../../types";
@@ -94,6 +95,7 @@ export default function TrackerDataPage(props: Props) {
                           href={item.TorrentURL}
                           target="_blank"
                           rel="noreferrer"
+                          onAuxClick={handleExternalLinkClick}
                           onClick={handleExternalLinkClick}
                         >
                           <TrackerIconImage tracker={item.Tracker} customUrl={item.TorrentURL} />
@@ -170,11 +172,7 @@ export default function TrackerDataPage(props: Props) {
                       ) : null}
                     </div>
                     {isRendered ? (
-                      <div
-                        className="tracker-description rendered"
-                        onClick={handleExternalLinkClick}
-                        dangerouslySetInnerHTML={{ __html: renderedHTML }}
-                      />
+                      <RenderedDescription html={renderedHTML} />
                     ) : (
                       <p className="tracker-description">
                         {item.Description || "No description provided."}

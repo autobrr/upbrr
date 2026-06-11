@@ -762,6 +762,10 @@ func (b *Backend) GetConfig() (string, error) {
 	return wrapWebResult(config.ExportToJSON(cfg))
 }
 
+func (b *Backend) GetApplicationInfo() (api.ApplicationInfo, error) {
+	return api.CurrentApplicationInfo(), nil
+}
+
 func (b *Backend) ExportConfig() (string, error) {
 	cfg, err := b.exportableConfig()
 	if err != nil {

@@ -620,6 +620,15 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
+	mux.HandleFunc("/api/app/GetApplicationInfo", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
+		value, err := s.backend.GetApplicationInfo()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
 	mux.HandleFunc("/api/app/GetDefaultConfig", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.GetDefaultConfig()
 		if err != nil {

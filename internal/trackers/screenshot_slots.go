@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path" //nolint:depguard // Manipulates URL/torrent-style slash paths, not local filesystem paths.
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -169,7 +171,7 @@ func synthesizeScreenshotSlots(
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
 ) ([]api.ScreenshotSlot, error) {
-	description, _ := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded)
+	description, _, _ := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded)
 	selections, err := finalSelectionsFromSource(ctx, meta, repo, preloaded)
 	if err != nil && !errorsIsNotFound(err) {
 		return nil, err
@@ -188,6 +190,7 @@ func synthesizeScreenshotSlots(
 	slots := parseDescriptionImageSlots(meta.SourcePath, description)
 	if len(slots) > 0 {
 		attachSelectionPathsToSlots(slots, selections)
+		limitRenderableSlotsToSelections(slots, selections)
 		appendSelectionOnlySlots(&slots, selections)
 		applyUploadedVariantsToSlots(slots, uploads)
 		return normalizeSlotOrders(slots), nil
@@ -278,6 +281,10 @@ func parseDescriptionImageSlots(sourcePath string, description string) []api.Scr
 			key = strings.TrimSpace(item.slot.OriginalKey)
 		}
 		if key == "" {
+			continue
+		}
+		if item.slot.SectionKind == screenshotSectionComparison {
+			slots = append(slots, item.slot)
 			continue
 		}
 		identity := fmt.Sprintf("%s|%s|%s", item.slot.SectionKind, key, item.slot.OriginalHost)
@@ -385,6 +392,246 @@ func attachSelectionPathsToSlots(slots []api.ScreenshotSlot, selections []api.Sc
 	}
 }
 
+func limitRenderableSlotsToSelections(slots []api.ScreenshotSlot, selections []api.ScreenshotFinalSelection) {
+	if len(selections) == 0 {
+		return
+	}
+	for idx := range slots {
+		if strings.TrimSpace(slots[idx].ImagePath) != "" {
+			continue
+		}
+		slots[idx].RenderInScreenshots = false
+	}
+}
+
+func alignRenderableSlotsToSourceImages(slots []api.ScreenshotSlot, sourceImages []api.ScreenshotImage) bool {
+	if len(slots) == 0 || len(sourceImages) == 0 {
+		return false
+	}
+	sourceByKey := make(map[string]api.ScreenshotImage, len(sourceImages))
+	for _, source := range sourceImages {
+		if key := screenshotSourceMatchKey(source.Path); key != "" {
+			sourceByKey[key] = source
+		}
+	}
+	if len(sourceByKey) > 0 {
+		hasMatch := false
+		for idx := range slots {
+			if !slots[idx].RenderInScreenshots {
+				continue
+			}
+			if _, ok := sourceByKey[screenshotURLMatchKey(slots[idx].OriginalURL)]; ok {
+				hasMatch = true
+				break
+			}
+		}
+		if !hasMatch {
+			return alignRenderableSlotsToSourceImagesByOrder(slots, sourceImages)
+		}
+		matched := false
+		changed := false
+		for idx := range slots {
+			if !slots[idx].RenderInScreenshots {
+				continue
+			}
+			key := screenshotURLMatchKey(slots[idx].OriginalURL)
+			source, ok := sourceByKey[key]
+			if !ok {
+				slots[idx].RenderInScreenshots = false
+				changed = true
+				continue
+			}
+			matched = true
+			pathValue := strings.TrimSpace(source.Path)
+			if pathValue != "" && strings.TrimSpace(slots[idx].ImagePath) == "" {
+				slots[idx].ImagePath = pathValue
+				if strings.TrimSpace(slots[idx].OriginalKey) == "" {
+					slots[idx].OriginalKey = pathValue
+				}
+				changed = true
+			}
+		}
+		if matched {
+			return changed
+		}
+	}
+
+	return alignRenderableSlotsToSourceImagesByOrder(slots, sourceImages)
+}
+
+func attachMatchingSourceImagesToSlots(slots []api.ScreenshotSlot, sourceImages []api.ScreenshotImage) bool {
+	if len(slots) == 0 || len(sourceImages) == 0 {
+		return false
+	}
+	sourceByKey := make(map[string]api.ScreenshotImage, len(sourceImages))
+	for _, source := range sourceImages {
+		if key := screenshotSourceMatchKey(source.Path); key != "" {
+			sourceByKey[key] = source
+		}
+	}
+	if len(sourceByKey) == 0 {
+		return false
+	}
+	changed := false
+	for idx := range slots {
+		if slots[idx].SectionKind == screenshotSectionComparison {
+			continue
+		}
+		if !slots[idx].RenderInScreenshots || strings.TrimSpace(slots[idx].ImagePath) != "" {
+			continue
+		}
+		source, ok := sourceByKey[screenshotURLMatchKey(slots[idx].OriginalURL)]
+		if !ok {
+			continue
+		}
+		pathValue := strings.TrimSpace(source.Path)
+		if pathValue == "" {
+			continue
+		}
+		slots[idx].ImagePath = pathValue
+		if strings.TrimSpace(slots[idx].OriginalKey) == "" {
+			slots[idx].OriginalKey = pathValue
+		}
+		changed = true
+	}
+	return changed
+}
+
+func detachComparisonSourceImagesFromSlots(slots []api.ScreenshotSlot, sourceImages []api.ScreenshotImage) bool {
+	if len(slots) == 0 || len(sourceImages) == 0 {
+		return false
+	}
+	sourcePaths := make(map[string]struct{}, len(sourceImages))
+	for _, source := range sourceImages {
+		pathValue := strings.TrimSpace(source.Path)
+		if pathValue == "" {
+			continue
+		}
+		sourcePaths[pathValue] = struct{}{}
+	}
+	if len(sourcePaths) == 0 {
+		return false
+	}
+	changed := false
+	for idx := range slots {
+		if slots[idx].SectionKind != screenshotSectionComparison {
+			continue
+		}
+		if _, ok := sourcePaths[strings.TrimSpace(slots[idx].ImagePath)]; ok {
+			slots[idx].ImagePath = ""
+			if strings.TrimSpace(slots[idx].OriginalURL) != "" {
+				slots[idx].OriginalKey = strings.TrimSpace(slots[idx].OriginalURL)
+			}
+			changed = true
+		}
+		if len(slots[idx].Variants) == 0 {
+			continue
+		}
+		filtered := slots[idx].Variants[:0]
+		for _, variant := range slots[idx].Variants {
+			if _, ok := sourcePaths[strings.TrimSpace(variant.ImagePath)]; ok {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, variant)
+		}
+		slots[idx].Variants = filtered
+	}
+	return changed
+}
+
+func appendSourceImageSlots(slots *[]api.ScreenshotSlot, sourcePath string, sourceImages []api.ScreenshotImage) bool {
+	if len(sourceImages) == 0 {
+		return false
+	}
+	existingNormalPaths := make(map[string]struct{}, len(*slots))
+	for _, slot := range *slots {
+		if slot.SectionKind == screenshotSectionComparison {
+			continue
+		}
+		pathValue := strings.TrimSpace(slot.ImagePath)
+		if pathValue == "" {
+			continue
+		}
+		existingNormalPaths[pathValue] = struct{}{}
+	}
+	changed := false
+	for _, image := range sourceImages {
+		pathValue := strings.TrimSpace(image.Path)
+		if pathValue == "" {
+			continue
+		}
+		if _, exists := existingNormalPaths[pathValue]; exists {
+			continue
+		}
+		*slots = append(*slots, api.ScreenshotSlot{
+			SourcePath:          sourcePath,
+			SourceKind:          screenshotSlotSourceTracker,
+			OriginalKey:         pathValue,
+			ImagePath:           pathValue,
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+		})
+		existingNormalPaths[pathValue] = struct{}{}
+		changed = true
+	}
+	if changed {
+		*slots = normalizeSlotOrders(*slots)
+	}
+	return changed
+}
+
+func alignRenderableSlotsToSourceImagesByOrder(slots []api.ScreenshotSlot, sourceImages []api.ScreenshotImage) bool {
+	changed := false
+	sourceIdx := 0
+	for idx := range slots {
+		if !slots[idx].RenderInScreenshots {
+			continue
+		}
+		if sourceIdx >= len(sourceImages) {
+			slots[idx].RenderInScreenshots = false
+			changed = true
+			continue
+		}
+		pathValue := strings.TrimSpace(sourceImages[sourceIdx].Path)
+		sourceIdx++
+		if pathValue == "" || strings.TrimSpace(slots[idx].ImagePath) != "" {
+			continue
+		}
+		slots[idx].ImagePath = pathValue
+		if strings.TrimSpace(slots[idx].OriginalKey) == "" {
+			slots[idx].OriginalKey = pathValue
+		}
+		changed = true
+	}
+	return changed
+}
+
+func screenshotURLMatchKey(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	return screenshotBaseMatchKey(path.Base(parsed.Path))
+}
+
+func screenshotSourceMatchKey(pathValue string) string {
+	return screenshotBaseMatchKey(filepath.Base(strings.TrimSpace(pathValue)))
+}
+
+func screenshotBaseMatchKey(base string) string {
+	base = strings.ToLower(strings.TrimSpace(base))
+	if base == "" || base == "." || base == "/" {
+		return ""
+	}
+	ext := path.Ext(base)
+	if ext != "" {
+		base = strings.TrimSuffix(base, ext)
+	}
+	base = regexp.MustCompile(`_\d+$`).ReplaceAllString(base, "")
+	return base
+}
+
 func appendSelectionOnlySlots(slots *[]api.ScreenshotSlot, selections []api.ScreenshotFinalSelection) {
 	existingPaths := make(map[string]struct{}, len(*slots))
 	for _, slot := range *slots {
@@ -481,13 +728,13 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 	if len(slots) == 0 || len(uploads) == 0 {
 		return SlotUploadAttachmentResult{}
 	}
-	slotByPath := make(map[string]*api.ScreenshotSlot, len(slots))
+	slotsByPath := make(map[string][]*api.ScreenshotSlot, len(slots))
 	slotByURL := make(map[string]*api.ScreenshotSlot, len(slots))
 	slotIndexByPointer := make(map[*api.ScreenshotSlot]int, len(slots))
 	for idx := range slots {
 		slotIndexByPointer[&slots[idx]] = idx
 		if pathValue := strings.TrimSpace(slots[idx].ImagePath); pathValue != "" {
-			slotByPath[pathValue] = &slots[idx]
+			slotsByPath[pathValue] = append(slotsByPath[pathValue], &slots[idx])
 		}
 		if originalURL := strings.TrimSpace(slots[idx].OriginalURL); originalURL != "" {
 			slotByURL[originalURL] = &slots[idx]
@@ -496,38 +743,46 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 	directlyMatchedSlots := make(map[int]struct{}, len(slots))
 	unmatchedUploads := make([]api.UploadedImageLink, 0)
 	result := SlotUploadAttachmentResult{}
+	seenUploads := make(map[string]struct{}, len(uploads))
 	for _, upload := range uploads {
-		var slot *api.ScreenshotSlot
-		if pathValue := strings.TrimSpace(upload.ImagePath); pathValue != "" {
-			slot = slotByPath[pathValue]
+		uploadKey := strings.ToLower(strings.TrimSpace(upload.Host)) + "\x00" + normalizeUsageScope(upload.UsageScope) + "\x00" + strings.TrimSpace(upload.ImagePath)
+		if _, exists := seenUploads[uploadKey]; exists {
+			continue
 		}
-		if slot == nil {
+		seenUploads[uploadKey] = struct{}{}
+		matchedSlots := make([]*api.ScreenshotSlot, 0)
+		if pathValue := strings.TrimSpace(upload.ImagePath); pathValue != "" {
+			matchedSlots = append(matchedSlots, slotsByPath[pathValue]...)
+		}
+		if len(matchedSlots) == 0 {
 			for _, candidate := range []string{strings.TrimSpace(upload.RawURL), strings.TrimSpace(upload.ImgURL), strings.TrimSpace(upload.WebURL)} {
 				if candidate == "" {
 					continue
 				}
-				slot = slotByURL[candidate]
-				if slot != nil {
+				if slot := slotByURL[candidate]; slot != nil {
+					matchedSlots = append(matchedSlots, slot)
 					break
 				}
 			}
 		}
-		if slot == nil {
+		if len(matchedSlots) == 0 {
 			unmatchedUploads = append(unmatchedUploads, upload)
 			continue
 		}
-		directlyMatchedSlots[slotIndexByPointer[slot]] = struct{}{}
-		slot.Variants = upsertVariant(slot.Variants, api.ScreenshotSlotVariant{
-			SourcePath: slot.SourcePath,
-			SlotOrder:  slot.SlotOrder,
-			Host:       strings.TrimSpace(upload.Host),
-			UsageScope: normalizeUsageScope(upload.UsageScope),
-			ImagePath:  strings.TrimSpace(upload.ImagePath),
-			ImgURL:     strings.TrimSpace(upload.ImgURL),
-			RawURL:     strings.TrimSpace(upload.RawURL),
-			WebURL:     strings.TrimSpace(upload.WebURL),
-			UploadedAt: upload.UploadedAt,
-		})
+		for _, slot := range matchedSlots {
+			directlyMatchedSlots[slotIndexByPointer[slot]] = struct{}{}
+			slot.Variants = upsertVariant(slot.Variants, api.ScreenshotSlotVariant{
+				SourcePath: slot.SourcePath,
+				SlotOrder:  slot.SlotOrder,
+				Host:       strings.TrimSpace(upload.Host),
+				UsageScope: normalizeUsageScope(upload.UsageScope),
+				ImagePath:  strings.TrimSpace(upload.ImagePath),
+				ImgURL:     strings.TrimSpace(upload.ImgURL),
+				RawURL:     strings.TrimSpace(upload.RawURL),
+				WebURL:     strings.TrimSpace(upload.WebURL),
+				UploadedAt: upload.UploadedAt,
+			})
+		}
 		result.MatchedUploads++
 	}
 
@@ -721,8 +976,13 @@ func selectVariantForSlot(slot api.ScreenshotSlot, tracker string, policy imageH
 	return api.ScreenshotImage{}, "", "", false
 }
 
-func hasAnyEligibleSlotVariant(slots []api.ScreenshotSlot, tracker string, policy imageHostPolicy) bool {
-	for _, slot := range renderableSlots(slots) {
+func allRenderableSlotsHaveEligibleVariant(slots []api.ScreenshotSlot, tracker string, policy imageHostPolicy) bool {
+	renderable := renderableSlots(slots)
+	if len(renderable) == 0 {
+		return false
+	}
+	for _, slot := range renderable {
+		found := false
 		for _, variant := range slot.Variants {
 			if !uploadEligibleForTracker(variant.UsageScope, tracker) {
 				continue
@@ -730,10 +990,14 @@ func hasAnyEligibleSlotVariant(slots []api.ScreenshotSlot, tracker string, polic
 			if len(policy.allowed) > 0 && !hostAllowed(variant.Host, policy.allowed) {
 				continue
 			}
-			return true
+			found = true
+			break
+		}
+		if !found {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func preferredHostOrder(host string, preferred []string) int {
@@ -775,29 +1039,31 @@ func upsertScreenshotVariantsFromUploads(ctx context.Context, repo api.MetadataR
 	if repo == nil || len(slots) == 0 || len(uploads) == 0 {
 		return nil
 	}
-	slotByPath := make(map[string]int, len(slots))
+	slotsByPath := make(map[string][]int, len(slots))
 	for idx := range slots {
 		if pathValue := strings.TrimSpace(slots[idx].ImagePath); pathValue != "" {
-			slotByPath[pathValue] = slots[idx].SlotOrder
+			slotsByPath[pathValue] = append(slotsByPath[pathValue], slots[idx].SlotOrder)
 		}
 	}
 	variants := make([]api.ScreenshotSlotVariant, 0, len(uploads))
 	for _, upload := range uploads {
-		slotOrder, ok := slotByPath[strings.TrimSpace(upload.ImagePath)]
-		if !ok {
+		slotOrders := slotsByPath[strings.TrimSpace(upload.ImagePath)]
+		if len(slotOrders) == 0 {
 			continue
 		}
-		variants = append(variants, api.ScreenshotSlotVariant{
-			SourcePath: sourcePath,
-			SlotOrder:  slotOrder,
-			Host:       strings.TrimSpace(upload.Host),
-			UsageScope: normalizeUsageScope(upload.UsageScope),
-			ImagePath:  strings.TrimSpace(upload.ImagePath),
-			ImgURL:     strings.TrimSpace(upload.ImgURL),
-			RawURL:     strings.TrimSpace(upload.RawURL),
-			WebURL:     strings.TrimSpace(upload.WebURL),
-			UploadedAt: upload.UploadedAt,
-		})
+		for _, slotOrder := range slotOrders {
+			variants = append(variants, api.ScreenshotSlotVariant{
+				SourcePath: sourcePath,
+				SlotOrder:  slotOrder,
+				Host:       strings.TrimSpace(upload.Host),
+				UsageScope: normalizeUsageScope(upload.UsageScope),
+				ImagePath:  strings.TrimSpace(upload.ImagePath),
+				ImgURL:     strings.TrimSpace(upload.ImgURL),
+				RawURL:     strings.TrimSpace(upload.RawURL),
+				WebURL:     strings.TrimSpace(upload.WebURL),
+				UploadedAt: upload.UploadedAt,
+			})
+		}
 	}
 	return wrapTrackerError(repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants))
 }
@@ -827,4 +1093,12 @@ func syncSlotVariantsToPreloaded(preloaded *preloadedDescriptionAssetData, uploa
 		return
 	}
 	applyUploadedVariantsToSlots(preloaded.screenshotSlots, uploads)
+}
+
+func syncSlotsToPreloaded(preloaded *preloadedDescriptionAssetData, slots []api.ScreenshotSlot) {
+	if preloaded == nil {
+		return
+	}
+	preloaded.screenshotSlots = cloneScreenshotSlots(slots)
+	preloaded.screenshotSlotsLoaded = true
 }

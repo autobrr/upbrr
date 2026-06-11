@@ -6,7 +6,6 @@ package core
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -111,73 +110,45 @@ func (r *playlistSelectionRepo) GetPlaylistSelection(_ context.Context, sourcePa
 	return selection, nil
 }
 
-func TestBuildDescriptionBuilderGroupAddsBHDMediaInfoPreviewOnly(t *testing.T) {
+func TestBuildDescriptionBuilderGroupUsesFinalBuiltDescriptionAsRaw(t *testing.T) {
 	t.Parallel()
-
-	mediaInfoPath := filepath.Join(t.TempDir(), "MEDIAINFO.txt")
-	if err := os.WriteFile(mediaInfoPath, []byte(coreDescriptionBuilderMediaInfoSample()), 0o600); err != nil {
-		t.Fatalf("write mediainfo: %v", err)
-	}
 
 	group := buildDescriptionBuilderGroup(api.PreparationDescription{
 		GroupKey:        "bhd",
 		Trackers:        []string{"BHD"},
 		RawDescription:  "",
 		Description:     "Generated BHD description",
-		DescriptionHTML: descriptionHTMLForTest("Generated BHD description"),
-	}, nil, api.PreparedMetadata{MediaInfoTextPath: mediaInfoPath}, api.NopLogger{})
+		DescriptionHTML: "Generated BHD description",
+	}, nil, api.PreparedMetadata{}, api.NopLogger{})
 
-	if group.RawDescription != "Generated BHD description" {
-		t.Fatalf("expected raw description unchanged, got %q", group.RawDescription)
-	}
-	if !strings.Contains(group.RawDescriptionHTML, `class="mediainfo"`) {
-		t.Fatalf("expected BHD mediainfo preview html, got %q", group.RawDescriptionHTML)
-	}
 	if !strings.Contains(group.RawDescriptionHTML, "Generated BHD description") {
 		t.Fatalf("expected generated description to remain in preview html, got %q", group.RawDescriptionHTML)
 	}
+	if group.Description != "Generated BHD description" {
+		t.Fatalf("expected generated description field, got %q", group.Description)
+	}
+	if !strings.Contains(group.DescriptionHTML, "Generated BHD description") {
+		t.Fatalf("expected generated description html, got %q", group.DescriptionHTML)
+	}
 }
 
-func TestBuildDescriptionBuilderGroupDoesNotAugmentOverrides(t *testing.T) {
+func TestBuildDescriptionBuilderGroupKeepsFinalBuiltDescriptionAsRaw(t *testing.T) {
 	t.Parallel()
-
-	mediaInfoPath := filepath.Join(t.TempDir(), "MEDIAINFO.txt")
-	if err := os.WriteFile(mediaInfoPath, []byte(coreDescriptionBuilderMediaInfoSample()), 0o600); err != nil {
-		t.Fatalf("write mediainfo: %v", err)
-	}
 
 	group := buildDescriptionBuilderGroup(api.PreparationDescription{
 		GroupKey:    "hdb",
 		Trackers:    []string{"HDB"},
-		Description: "Generated HDB description",
+		Description: "Generated HDB final description",
 	}, map[string]api.DescriptionOverride{
 		"hdb": {Description: "custom override"},
-	}, api.PreparedMetadata{MediaInfoTextPath: mediaInfoPath}, api.NopLogger{})
+	}, api.PreparedMetadata{}, api.NopLogger{})
 
-	if group.RawDescription != "custom override" {
-		t.Fatalf("expected override raw description, got %q", group.RawDescription)
+	if group.RawDescription != "Generated HDB final description" {
+		t.Fatalf("expected final built description, got %q", group.RawDescription)
 	}
-	if strings.Contains(group.RawDescriptionHTML, `class="mediainfo"`) {
-		t.Fatalf("did not expect override preview to be augmented, got %q", group.RawDescriptionHTML)
+	if group.Description != group.RawDescription {
+		t.Fatalf("expected generated description to mirror raw, got %q", group.Description)
 	}
-}
-
-func descriptionHTMLForTest(value string) string {
-	return value
-}
-
-func coreDescriptionBuilderMediaInfoSample() string {
-	return `General
-Complete name : C:\Media\Movie.2024.1080p.mkv
-Format : Matroska
-File size : 10.4 GiB
-Duration : 1 h 42 min
-Overall bit rate : 14.6 Mb/s
-
-Video
-Format : AVC
-Width : 1 920 pixels
-Height : 1 080 pixels`
 }
 
 func TestGetHistoryOverviewIncludesGroupedDescriptionOverrides(t *testing.T) {
@@ -2299,6 +2270,60 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	}
 }
 
+func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
+	t.Parallel()
+
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{
+		Tracker:     "AITHER",
+		ReleaseName: "Watcher.2160p.WEB-DL.DDP5.1-FLUX",
+	}}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{
+		SourcePath:  "/tmp/a",
+		ReleaseName: "Watcher 2160p WEB-DL DD+ 5.1-FLUX",
+		Trackers:    []string{"AITHER", "BLU"},
+	})
+
+	preview, err := core.FetchTrackerDryRunPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("fetch tracker dry-run preview: %v", err)
+	}
+	if len(tracker.lastTrackers) != 1 || tracker.lastTrackers[0] != "AITHER" {
+		t.Fatalf("expected dry run for selected tracker only, got %#v", tracker.lastTrackers)
+	}
+	if len(preview.Trackers) != 1 {
+		t.Fatalf("expected one dry-run entry, got %d", len(preview.Trackers))
+	}
+	entry := preview.Trackers[0]
+	if !entry.ReleaseNameChanged {
+		t.Fatalf("expected release name change annotation, got %#v", entry)
+	}
+	if entry.OriginalReleaseName != "Watcher 2160p WEB-DL DD+ 5.1-FLUX" {
+		t.Fatalf("expected original release name, got %q", entry.OriginalReleaseName)
+	}
+	if entry.UploadReleaseName != "Watcher.2160p.WEB-DL.DDP5.1-FLUX" {
+		t.Fatalf("expected upload release name, got %q", entry.UploadReleaseName)
+	}
+}
+
 func TestFetchTrackerDryRunPreviewPassesRuleFailureOverride(t *testing.T) {
 	t.Parallel()
 
@@ -2963,12 +2988,13 @@ func (s *stubDupes) Check(_ context.Context, meta api.PreparedMetadata, trackers
 }
 
 type stubTrackers struct {
-	calls        int
-	prepCalls    int
-	dryRunCalls  int
-	lastMeta     api.PreparedMetadata
-	lastTrackers []string
-	summary      api.UploadSummary
+	calls         int
+	prepCalls     int
+	dryRunCalls   int
+	lastMeta      api.PreparedMetadata
+	lastTrackers  []string
+	dryRunEntries []api.TrackerDryRunEntry
+	summary       api.UploadSummary
 }
 
 func (s *stubTrackers) Upload(_ context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
@@ -3001,5 +3027,5 @@ func (s *stubTrackers) BuildUploadDryRun(_ context.Context, meta api.PreparedMet
 	s.dryRunCalls++
 	s.lastMeta = meta
 	s.lastTrackers = append([]string{}, trackers...)
-	return []api.TrackerDryRunEntry{}, nil
+	return append([]api.TrackerDryRunEntry{}, s.dryRunEntries...), nil
 }

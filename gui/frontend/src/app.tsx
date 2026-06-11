@@ -25,6 +25,7 @@ import { useUploadImages } from "./hooks/useUploadImages";
 import { cn } from "./utils/cn";
 import type {
   ConfigMap,
+  ApplicationInfo,
   BrowseDirectoryResponse,
   DescriptionBuilderPreview,
   DupeCheckSnapshot,
@@ -74,12 +75,13 @@ import {
   type SourcePathMode,
   sourcePathHistoryStorageKey,
 } from "./utils/inputHistory";
+import { handleExternalLinkClick } from "./utils/externalLinks";
 
 const appLayoutClass =
-  "relative z-[1] block min-h-screen ml-[172px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
+  "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
 
 const sidebarClass =
-  "fixed left-0 top-0 z-[1000] flex h-screen w-[172px] flex-col gap-2.5 border-r border-white/10 bg-[var(--panel)]/95 p-2.5 backdrop-blur max-[960px]:bottom-0 max-[960px]:top-auto max-[960px]:h-auto max-[960px]:w-full max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-2 max-[960px]:border-r-0 max-[960px]:border-t max-[960px]:p-2";
+  "fixed left-0 top-0 z-[1000] flex h-screen w-[204px] flex-col gap-2.5 border-r border-white/10 bg-[var(--panel)]/95 p-2.5 backdrop-blur max-[960px]:bottom-0 max-[960px]:top-auto max-[960px]:h-auto max-[960px]:w-full max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-2 max-[960px]:border-r-0 max-[960px]:border-t max-[960px]:p-2";
 
 const sidebarGroupClass =
   "grid gap-1 rounded-lg border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.08)] p-1.5 max-[960px]:flex max-[960px]:flex-wrap max-[960px]:gap-1 max-[960px]:p-1";
@@ -103,6 +105,13 @@ const sidebarButtonClass = (active = false) =>
 
 const liveButtonClass =
   "border-[rgba(53,194,193,0.24)] bg-[rgba(53,194,193,0.1)] text-[var(--text)] hover:bg-[rgba(53,194,193,0.16)]";
+
+const sidebarAppDetailsClass =
+  "mt-1 grid grid-cols-[1fr_auto] items-center gap-1.5 px-2 py-1.5 text-[0.72rem] leading-tight text-[var(--muted)] max-[960px]:hidden";
+
+type AppBridgeWithApplicationInfo = {
+  GetApplicationInfo?: () => Promise<ApplicationInfo>;
+};
 
 const emptyDupeSummary: DupeCheckSummary = {
   SourcePath: "",
@@ -271,6 +280,7 @@ declare global {
               path: string,
               mode: "file" | "folder",
             ) => Promise<BrowseDirectoryResponse>;
+            OpenExternalURL?: (url: string) => Promise<void>;
             ListUIStates: () => Promise<UIStateList>;
             GetUIState: (id: string) => Promise<UIStateRecord>;
             SaveUIState: (id: string, label: string, state: UIState) => Promise<void>;
@@ -634,6 +644,8 @@ export default function App() {
   const [builderSaved, setBuilderSaved] = useState("");
   const [builderSaving, setBuilderSaving] = useState(false);
   const [builderRefreshing, setBuilderRefreshing] = useState(false);
+  const [builderProgressMessage, setBuilderProgressMessage] = useState("");
+  const builderProgressTimers = useRef<number[]>([]);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
@@ -676,6 +688,7 @@ export default function App() {
   const [webAuthPassword, setWebAuthPassword] = useState("");
   const [webAuthConfirm, setWebAuthConfirm] = useState("");
   const [webAuthError, setWebAuthError] = useState("");
+  const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
   const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uiStateHydratedRef = useRef(false);
   const uiStateInitialLiveStateCheckedRef = useRef(false);
@@ -828,6 +841,29 @@ export default function App() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    const getter = (globalThis.go?.guiapp?.App as AppBridgeWithApplicationInfo | undefined)
+      ?.GetApplicationInfo;
+    if (!getter) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void getter()
+      .then((info) => {
+        if (!cancelled) {
+          setApplicationInfo(info);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!lightboxImage) return;
     setLightboxFit(true);
   }, [lightboxImage]);
@@ -897,145 +933,6 @@ export default function App() {
       }
     };
   }, [metadataProgressActive, metadataProgressTarget]);
-
-  useEffect(() => {
-    type ComparisonElement = HTMLElement & { __uaComparisonInit?: boolean };
-    const comparisons = Array.from(
-      document.querySelectorAll<HTMLElement>(".tracker-description.rendered .comparison"),
-    );
-    const cleanups: Array<() => void> = [];
-
-    comparisons.forEach((comparison) => {
-      const element = comparison as ComparisonElement;
-      if (element.__uaComparisonInit) {
-        return;
-      }
-      element.__uaComparisonInit = true;
-
-      const details = comparison.querySelector<HTMLDetailsElement>(".comparison__details");
-      const summary = comparison.querySelector<HTMLElement>(".comparison__details > summary");
-      const rows = Array.from(comparison.querySelectorAll<HTMLElement>(".comparison__row"));
-      if (!details || rows.length === 0) {
-        return;
-      }
-
-      const maxColumns = rows.reduce((max, row) => Math.max(max, row.children.length), 0);
-      if (maxColumns <= 1) {
-        return;
-      }
-
-      let current = 0;
-
-      const applyColumn = (next: number) => {
-        const clamped = Math.min(Math.max(next, 1), maxColumns);
-        if (clamped === current) {
-          return;
-        }
-        current = clamped;
-        rows.forEach((row) => {
-          const columns = Array.from(row.children) as HTMLElement[];
-          columns.forEach((cell, index) => {
-            const isActive = index + 1 === current;
-            cell.classList.toggle("comparison__image-container--hidden", !isActive);
-            const image = cell.querySelector<HTMLElement>(".comparison__image");
-            if (image) {
-              image.classList.toggle("comparison__image--hidden", !isActive);
-            }
-          });
-        });
-      };
-
-      const handleKeyDown = (event: KeyboardEvent) => {
-        if (!details.open && !comparison.classList.contains("comparison--open")) {
-          return;
-        }
-        if (event.key === "ArrowLeft") {
-          event.preventDefault();
-          const next = current - 1 < 1 ? maxColumns : current - 1;
-          applyColumn(next);
-          return;
-        }
-        if (event.key === "ArrowRight") {
-          event.preventDefault();
-          const next = current + 1 > maxColumns ? 1 : current + 1;
-          applyColumn(next);
-          return;
-        }
-        if (event.key === "Escape") {
-          event.preventDefault();
-          details.open = false;
-          comparison.classList.remove("comparison--open");
-          return;
-        }
-        const digit = Number.parseInt(event.key, 10);
-        if (!Number.isNaN(digit) && digit >= 1 && digit <= maxColumns) {
-          event.preventDefault();
-          applyColumn(digit);
-        }
-      };
-
-      const handleMouseMove = (event: MouseEvent) => {
-        if (
-          (!details.open && !comparison.classList.contains("comparison--open")) ||
-          maxColumns <= 1
-        ) {
-          return;
-        }
-        const width = globalThis.innerWidth || 1;
-        const ratio = event.clientX / width;
-        const next = Math.min(maxColumns, Math.max(1, Math.ceil(ratio * maxColumns)));
-        applyColumn(next);
-      };
-
-      const handleToggle = () => {
-        if (details.open || comparison.classList.contains("comparison--open")) {
-          applyColumn(current);
-          globalThis.addEventListener("keydown", handleKeyDown);
-          globalThis.addEventListener("mousemove", handleMouseMove);
-        } else {
-          globalThis.removeEventListener("keydown", handleKeyDown);
-          globalThis.removeEventListener("mousemove", handleMouseMove);
-        }
-      };
-
-      const handleSummaryClick = (event: MouseEvent) => {
-        event.preventDefault();
-        details.open = !details.open;
-        comparison.classList.toggle("comparison--open", details.open);
-        handleToggle();
-      };
-
-      details.addEventListener("toggle", handleToggle);
-      if (summary) {
-        summary.addEventListener("click", handleSummaryClick);
-      }
-      applyColumn(1);
-      if (details.open) {
-        handleToggle();
-      }
-
-      cleanups.push(() => {
-        details.removeEventListener("toggle", handleToggle);
-        if (summary) {
-          summary.removeEventListener("click", handleSummaryClick);
-        }
-        globalThis.removeEventListener("keydown", handleKeyDown);
-        globalThis.removeEventListener("mousemove", handleMouseMove);
-        element.__uaComparisonInit = false;
-      });
-    });
-
-    return () => {
-      cleanups.forEach((cleanup) => cleanup());
-    };
-  }, [
-    renderedDescriptions,
-    preview.TrackerData,
-    prepPreview.Descriptions,
-    builderRenderedByGroup,
-    builderPreview.Groups,
-    activeTab,
-  ]);
 
   const getThemeIcon = () => {
     if (theme === "auto") return "🔄";
@@ -2875,8 +2772,14 @@ export default function App() {
 
   const runDescriptionBuilder = useCallback(
     async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
+      const clearBuilderProgressTimers = () => {
+        builderProgressTimers.current.forEach((timer) => window.clearTimeout(timer));
+        builderProgressTimers.current = [];
+      };
+      clearBuilderProgressTimers();
       setBuilderError("");
       setBuilderSaved("");
+      setBuilderProgressMessage("");
       const fetcher = globalThis.go?.guiapp?.App?.FetchDescriptionBuilder;
       if (!fetcher) {
         setBuilderError("Description builder is unavailable in this build.");
@@ -2887,6 +2790,30 @@ export default function App() {
         return;
       }
       setBuilderLoading(true);
+      setBuilderProgressMessage("Preparing metadata and tracker selection...");
+      builderProgressTimers.current = [
+        window.setTimeout(
+          () => setBuilderProgressMessage("Checking image-host requirements..."),
+          900,
+        ),
+        window.setTimeout(
+          () =>
+            setBuilderProgressMessage("Rehosting required comparison and description images..."),
+          2500,
+        ),
+        window.setTimeout(
+          () => setBuilderProgressMessage("Still rehosting images and building descriptions..."),
+          5000,
+        ),
+        window.setTimeout(
+          () => setBuilderProgressMessage("Large image upload still running..."),
+          15000,
+        ),
+        window.setTimeout(
+          () => setBuilderProgressMessage("Waiting for image hosts to finish..."),
+          30000,
+        ),
+      ];
       try {
         const result = await fetcher(
           path.trim(),
@@ -2916,13 +2843,18 @@ export default function App() {
           return next;
         });
         setBuilderDirtyByGroup({});
+        clearBuilderProgressTimers();
+        setBuilderProgressMessage("Refreshing uploaded image records...");
+        await refreshUploadedImages();
       } catch (err) {
         setBuilderError(String(err));
       } finally {
+        clearBuilderProgressTimers();
+        setBuilderProgressMessage("");
         setBuilderLoading(false);
       }
     },
-    [path, releasePageTrackerSelection, ignoredDupeTrackers],
+    [path, releasePageTrackerSelection, ignoredDupeTrackers, refreshUploadedImages],
   );
 
   const refreshDescriptionBuilder = useCallback(async () => {
@@ -2945,6 +2877,13 @@ export default function App() {
       setBuilderRefreshing(false);
     }
   }, [builderDirty, idOverrideState, releaseOverrideState, runDescriptionBuilder]);
+
+  useEffect(() => {
+    return () => {
+      builderProgressTimers.current.forEach((timer) => window.clearTimeout(timer));
+      builderProgressTimers.current = [];
+    };
+  }, []);
 
   const resetBuilderDescription = async (
     groupKey: string,
@@ -4340,6 +4279,32 @@ export default function App() {
               <span className="mr-0.5 text-base">{getThemeIcon()}</span>
               <span>{getThemeLabel()}</span>
             </button>
+            <div className={sidebarAppDetailsClass}>
+              <div className="grid min-w-0 gap-0.5">
+                {applicationInfo?.version ? (
+                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--text)]">
+                    v{applicationInfo.version}
+                  </span>
+                ) : null}
+                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                  Copyright (c) 2026 autobrr
+                </span>
+              </div>
+              <a
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/10 text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                href="https://github.com/autobrr/upbrr"
+                target="_blank"
+                rel="noreferrer"
+                onAuxClick={handleExternalLinkClick}
+                onClick={handleExternalLinkClick}
+                aria-label="Open autobrr/upbrr on GitHub"
+                title="autobrr/upbrr"
+              >
+                <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor">
+                  <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4l-.01-1.4c-2.22.5-2.69-1.1-2.69-1.1-.36-.95-.89-1.2-.89-1.2-.73-.51.05-.5.05-.5.81.06 1.24.85 1.24.85.72 1.27 1.89.9 2.35.69.07-.53.28-.9.51-1.1-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .68-.22 2.2.84A7.37 7.37 0 0 1 8 3.99c.68 0 1.36.09 2 .28 1.52-1.06 2.19-.84 2.19-.84.44 1.12.16 1.95.08 2.16.52.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.25.54.76.54 1.54l-.01 2.22c0 .22.14.48.55.4A8.13 8.13 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
+                </svg>
+              </a>
+            </div>
           </div>
         </aside>
 
@@ -4514,7 +4479,9 @@ export default function App() {
               uploadedImages={uploadImages.uploadedImages}
               uploadedImageRecords={uploadImages.uploadedImageRecords}
               trackerImageLinks={screenshots.trackerImageLinks}
+              trackerImageURLs={trackerImageURLs}
               handleDeleteUploadedImage={uploadImages.handleDeleteUploadedImage}
+              handleDeleteTrackerImage={screenshots.handleDeleteTrackerImage}
             />
           ) : activeTab === "bluray" ? (
             <BlurayCandidatesPage
@@ -4536,6 +4503,7 @@ export default function App() {
               builderSaving={builderSaving}
               builderRenderLoading={builderRenderLoading}
               builderRefreshing={builderRefreshing}
+              builderProgressMessage={builderProgressMessage}
               builderError={builderError}
               builderSaved={builderSaved}
               refreshDescriptionBuilder={refreshDescriptionBuilder}

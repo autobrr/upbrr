@@ -369,6 +369,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           call("SavePlaylistSelection", { Path: path, Playlists: playlists, UseAll: useAll }),
         LoadPlaylistSelection: (path: string) => call("LoadPlaylistSelection", { Path: path }),
         GetConfig: () => call("GetConfig"),
+        GetApplicationInfo: () => call("GetApplicationInfo"),
         GetDefaultConfig: () => call("GetDefaultConfig"),
         SaveConfig: (payload: string) => call("SaveConfig", { Payload: payload }),
         ExportConfig: async () => {

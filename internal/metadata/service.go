@@ -75,7 +75,7 @@ var (
 	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
 		return svc.ExecuteFullScan(ctx, bdmvPath, outputDir)
 	}
-	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]interface{}, error) {
+	parseBDInfoOutput = func(svc *bdinfo.Service, filePath string) (map[string]any, error) {
 		return svc.ParseOutput(filePath)
 	}
 )

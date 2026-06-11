@@ -27,7 +27,7 @@ func TestBuildUnit3DDescriptionTemplate(t *testing.T) {
 	if !strings.Contains(result, "Example Template") {
 		t.Fatalf("expected template to be used, got %q", result)
 	}
-	if !strings.Contains(result, "Created by upbrr") {
+	if !strings.Contains(result, "Uploaded by upbrr") {
 		t.Fatalf("expected signature in description, got %q", result)
 	}
 }
@@ -47,7 +47,7 @@ func TestBuildUnit3DDescriptionKeptAppendsScreenshots(t *testing.T) {
 	if !strings.Contains(result, "[img=350]https://img.example/s1.png[/img]") {
 		t.Fatalf("expected screenshot to be appended, got %q", result)
 	}
-	if !strings.Contains(result, "Created by upbrr") {
+	if !strings.Contains(result, "Uploaded by upbrr") {
 		t.Fatalf("expected signature in description, got %q", result)
 	}
 }
@@ -77,7 +77,7 @@ func TestBuildUnit3DDescriptionAppliesDescriptionConfig(t *testing.T) {
 	if !strings.Contains(result, "[size=2]custom sig[/size]") {
 		t.Fatalf("expected custom signature, got %q", result)
 	}
-	if strings.Contains(result, "Created by upbrr") {
+	if strings.Contains(result, "Uploaded by upbrr") {
 		t.Fatalf("expected custom signature to replace UA signature, got %q", result)
 	}
 	expectedLine := "[center]\n[url=https://web.example/1][img=300]https://raw.example/1.png[/img][/url] [url=https://web.example/2][img=300]https://raw.example/2.png[/img][/url]\n[url=https://web.example/3][img=300]https://raw.example/3.png[/img][/url]\n[/center]"
@@ -297,7 +297,7 @@ func TestBuildUnit3DDescriptionIncludesDVDVOBMediaInfo(t *testing.T) {
 	if !strings.Contains(result, "[spoiler=VOB MediaInfo][code]VOB_MI_CONTENT[/code][/spoiler]") {
 		t.Fatalf("expected dvd vob mediainfo block, got %q", result)
 	}
-	if !strings.Contains(result, "Created by upbrr") {
+	if !strings.Contains(result, "Uploaded by upbrr") {
 		t.Fatalf("expected signature in description, got %q", result)
 	}
 }
@@ -407,11 +407,11 @@ func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
 	if strings.Contains(result, "[user]") || strings.Contains(result, "[/user]") {
 		t.Fatalf("expected user tags removed, got %q", result)
 	}
-	if !strings.Contains(result, "[spoiler=Source vs Encode][center]Source | Encode[/center]") {
-		t.Fatalf("expected comparison converted to collapse, got %q", result)
+	if !strings.Contains(result, "[comparison=Source, Encode]") {
+		t.Fatalf("expected comparison tag preserved, got %q", result)
 	}
-	if !strings.Contains(result, "[url=https://img.example/a.png][img=350]https://img.example/a.png[/img][/url]") {
-		t.Fatalf("expected comparison images rebuilt with unit3d formatting, got %q", result)
+	if !strings.Contains(result, "https://img.example/a.png https://img.example/b.png[/comparison]") {
+		t.Fatalf("expected comparison images preserved, got %q", result)
 	}
 }
 
@@ -462,8 +462,56 @@ func TestBuildUnit3DDescriptionSkipsDuplicateTemplateAndKeptContent(t *testing.T
 	if count := strings.Count(result, "[center]"); count != 1 {
 		t.Fatalf("expected one screenshot block, got %d in %q", count, result)
 	}
-	if count := strings.Count(result, "Created by upbrr"); count != 1 {
+	if count := strings.Count(result, "Uploaded by upbrr"); count != 1 {
 		t.Fatalf("expected one signature, got %d in %q", count, result)
+	}
+}
+
+func TestBuildUnit3DDescriptionStripsKnownBotSignatures(t *testing.T) {
+	kept := strings.Join([]string{
+		"Body",
+		"[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+		"[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
+		"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+		"[center]   [/center]",
+		"[right]Created by Upload Assistant[/right]",
+	}, "\n")
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.PreparedMetadata{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, unexpected := range []string{"Uploaded Using", "uploadrr", "Only-Uploader", "/torrents?perPage", "Aither users", "[center]   [/center]", "Upload Assistant"} {
+		if strings.Contains(result, unexpected) {
+			t.Fatalf("expected %q to be stripped, got %q", unexpected, result)
+		}
+	}
+	if !strings.Contains(result, "Body") {
+		t.Fatalf("expected body to remain, got %q", result)
+	}
+}
+
+func TestBuildUnit3DDescriptionKeepsCenteredScreenshotsBeforeAitherFooter(t *testing.T) {
+	kept := strings.Join([]string{
+		"Body",
+		"[center][url=https://web.example/1][img=350]https://raw.example/1.png[/img][/url][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+	}, "\n\n")
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.PreparedMetadata{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result, "Aither users") {
+		t.Fatalf("expected aither footer stripped, got %q", result)
+	}
+	if !strings.Contains(result, "https://raw.example/1.png") {
+		t.Fatalf("expected centered screenshot preserved, got %q", result)
+	}
+	if count := strings.Count(result, "[center]"); count != 1 {
+		t.Fatalf("expected one centered screenshot block, got %d in %q", count, result)
 	}
 }
 

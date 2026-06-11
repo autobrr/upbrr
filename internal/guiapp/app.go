@@ -1222,6 +1222,13 @@ func (a *App) GetConfig() (string, error) {
 	return wrapGUIResult(config.ExportToJSON(cfg))
 }
 
+func (a *App) GetApplicationInfo() (api.ApplicationInfo, error) {
+	if a == nil {
+		return api.ApplicationInfo{}, errors.New("app not initialized")
+	}
+	return api.CurrentApplicationInfo(), nil
+}
+
 func (a *App) GetDefaultConfig() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")

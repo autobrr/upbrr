@@ -75,6 +75,8 @@ func exitError(code int, err error) error {
 }
 
 func run() error {
+	api.SetApplicationBuild(version, "")
+
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		if err := runServe(os.Args[2:]); err != nil {
 			return exitError(1, err)

@@ -62,6 +62,7 @@ export default function BlurayCandidatesPage(props: Props) {
                 href={bluray.SearchURL}
                 target="_blank"
                 rel="noreferrer"
+                onAuxClick={handleExternalLinkClick}
                 onClick={handleExternalLinkClick}
               >
                 Open search
@@ -136,6 +137,7 @@ export default function BlurayCandidatesPage(props: Props) {
                         href={candidate.URL}
                         target="_blank"
                         rel="noreferrer"
+                        onAuxClick={handleExternalLinkClick}
                         onClick={handleExternalLinkClick}
                       >
                         Open release

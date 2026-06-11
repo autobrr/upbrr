@@ -29,9 +29,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anacrolix/torrent/bencode"
-	"github.com/anacrolix/torrent/metainfo"
-
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -120,8 +117,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if err != nil {
 			return api.UploadSummary{}, err
 		}
-		if err := writeTrackerTorrent(state.torrentPath, trackerTorrentPath, state.announceURL, torrentURL, "PTP"); err != nil {
-			return api.UploadSummary{}, err
+		if err := trackers.WritePersonalizedTorrent(state.torrentPath, trackerTorrentPath, state.announceURL, torrentURL, "PTP"); err != nil {
+			return api.UploadSummary{}, fmt.Errorf("trackers: PTP write torrent artifact: %w", err)
 		}
 		return api.UploadSummary{
 			Uploaded: 1,
@@ -188,9 +185,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		baseURL = ptpBaseURL
 	}
 	announceURL := normalizedAnnounceURL(req.TrackerConfig.AnnounceURL)
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: PTP resolve upload torrent: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
@@ -235,6 +232,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 
 func buildDescription(meta api.PreparedMetadata, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) string {
 	baseDescription := strings.TrimSpace(assets.Description)
+	if assets.Final {
+		return baseDescription
+	}
 	if baseDescription != "" {
 		report := bbcode.CleanPTPDescription(baseDescription, meta.DiscType)
 		baseDescription = strings.TrimSpace(report.Description)
@@ -303,15 +303,24 @@ func buildScreenshotSection(meta api.PreparedMetadata, screenshots []api.Screens
 		if host == "" {
 			host = imagehost.ExtractHost(rawURL)
 		}
-		if host != "pixhost" {
+		if !isPTPImageHost(host) {
 			continue
 		}
 		allowed = append(allowed, "[img]"+rawURL+"[/img]")
-		if len(allowed) >= minimum {
-			break
-		}
+	}
+	if len(allowed) < minimum {
+		return ""
 	}
 	return strings.Join(allowed, "\n")
+}
+
+func isPTPImageHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "pixhost", "imgbb", "onlyimage", "ptscreens":
+		return true
+	default:
+		return false
+	}
 }
 
 func requiresMinimumTwoScreens(meta api.PreparedMetadata) bool {
@@ -858,30 +867,6 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
-	for _, candidate := range []string{strings.TrimSpace(meta.TorrentPath), strings.TrimSpace(meta.ClientTorrentPath)} {
-		if candidate == "" || !strings.EqualFold(filepath.Ext(candidate), ".torrent") {
-			continue
-		}
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-	if strings.TrimSpace(dbPath) != "" && strings.TrimSpace(meta.SourcePath) != "" {
-		tmpRoot, err := db.Subdir(dbPath, "tmp")
-		if err == nil {
-			tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
-			if err == nil {
-				guessed := filepath.Join(tmpDir, base+".torrent")
-				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
-					return guessed, nil
-				}
-			}
-		}
-	}
-	return "", errors.New("trackers: PTP torrent file not found")
-}
-
 func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return "", errors.New("trackers: PTP tracker torrent path requires db path and source path")
@@ -910,40 +895,6 @@ func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error
 		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, "[PTP]upload_failure.html"), nil
-}
-
-func writeTrackerTorrent(sourcePath string, outputPath string, announceURL string, comment string, source string) error {
-	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
-	if err != nil {
-		return fmt.Errorf("trackers: PTP load torrent: %w", err)
-	}
-	info, err := torrentMeta.UnmarshalInfo()
-	if err != nil {
-		return fmt.Errorf("trackers: PTP unmarshal torrent info: %w", err)
-	}
-	info.Source = source
-	infoBytes, err := bencode.Marshal(info)
-	if err != nil {
-		return fmt.Errorf("trackers: PTP marshal torrent info: %w", err)
-	}
-	torrentMeta.InfoBytes = infoBytes
-	if strings.TrimSpace(announceURL) != "" {
-		torrentMeta.Announce = announceURL
-		torrentMeta.AnnounceList = metainfo.AnnounceList{{announceURL}}
-	}
-	torrentMeta.Comment = strings.TrimSpace(comment)
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return fmt.Errorf("trackers: PTP create torrent output dir: %w", err)
-	}
-	file, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("trackers: PTP create torrent output: %w", err)
-	}
-	defer file.Close()
-	if err := torrentMeta.Write(file); err != nil {
-		return fmt.Errorf("trackers: PTP write torrent: %w", err)
-	}
-	return nil
 }
 
 func loadCookies(ctx context.Context, dbPath string) (map[string]string, error) {
