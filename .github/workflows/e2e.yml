@@ -1,0 +1,66 @@
+name: e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright E2E
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: gui/frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: gui/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser
+        working-directory: gui/frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run E2E
+        run: make e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: gui/frontend/playwright-report
+          if-no-files-found: ignore
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-test-results
+          path: gui/frontend/test-results
+          if-no-files-found: ignore

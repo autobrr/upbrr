@@ -1,4 +1,4 @@
-.PHONY: help build backend frontend frontend-bundle gui dev dev-frontend test test-go test-frontend lint lint-json logpolicy pathpolicy precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
+.PHONY: help build backend frontend frontend-bundle gui dev dev-frontend test test-go test-frontend e2e e2e-build e2e-web e2e-cli e2e-wails lint lint-json logpolicy pathpolicy precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
 
 ifeq ($(OS),Windows_NT)
 EXE := .exe
@@ -17,6 +17,7 @@ BLANK := echo
 endif
 
 CLI_OUT := dist/upbrr$(EXE)
+E2E_CLI_OUT := dist/upbrr-e2e$(EXE)
 WAILS_CLI := go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 GO_TEST_FLAGS := -race -v -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
@@ -39,6 +40,10 @@ help:
 	@echo   make test               Run Go and frontend checks
 	@echo   make test-go            Run full Go test suite with race detector
 	@echo   make test-frontend      Run frontend lint/type/format/dead-code/unit checks
+	@echo   make e2e                Run all Playwright E2E projects
+	@echo   make e2e-web            Run embedded web E2E projects
+	@echo   make e2e-cli            Run CLI full-upload E2E project
+	@echo   make e2e-wails          Run Wails/backend parity E2E project
 	@$(BLANK)
 	@echo Linting
 	@echo   make lint               Run path policy and full Go lint
@@ -96,6 +101,30 @@ test-frontend:
 	pnpm --dir gui/frontend run typecheck
 	pnpm --dir gui/frontend run test:unit
 	pnpm --dir gui/frontend run format:check
+
+e2e: e2e-build
+	pnpm --dir gui/frontend run test:e2e:full
+
+e2e-build:
+	pnpm --dir gui/frontend install --frozen-lockfile
+	pnpm --dir gui/frontend run build
+ifeq ($(OS),Windows_NT)
+	pwsh -NoProfile -File ./scripts/sync-frontend-assets.ps1
+else
+	sh ./scripts/sync-frontend-assets.sh
+endif
+	$(MKDIR_DIST)
+	go build -tags e2e -o $(E2E_CLI_OUT) ./cmd/upbrr
+
+e2e-web: e2e-build
+	pnpm --dir gui/frontend run test:e2e:web
+
+e2e-cli: e2e-build
+	pnpm --dir gui/frontend exec playwright test --project=cli-full-upload
+
+e2e-wails:
+	pnpm --dir gui/frontend install --frozen-lockfile
+	pnpm --dir gui/frontend exec playwright test --project=wails-basic
 
 lint: pathpolicy
 	golangci-lint run $(GOLANGCI_FLAGS) ./...
