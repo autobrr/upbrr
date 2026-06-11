@@ -61,6 +61,51 @@ func TestRunInteractiveCLIPathHandlesScreenshotsBeforeReview(t *testing.T) {
 	}
 }
 
+func TestRunInteractiveCLIPathDoesNotDryRunBeforeTrackerApproval(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	input := strings.Join([]string{
+		"y",
+		"y",
+	}, "\n") + "\n"
+
+	err := runInteractiveCLIPathWithInput(context.Background(), coreSvc, nil, cliOptions{}, map[string]bool{}, "movie.mkv", 1, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	}, strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,review" {
+		t.Fatalf("expected no dry-run before tracker approval, got %s", got)
+	}
+}
+
+func TestRunInteractiveCLIPathDoubleDupeBeforeScreenshotAndReview(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		screenshotPlan: api.ScreenshotPlan{
+			SuggestedSelections: []api.ScreenshotSelection{{Index: 1, TimestampSeconds: 60}},
+		},
+		screenshotResult: api.ScreenshotResult{
+			Images: []api.ScreenshotImage{{Index: 1, TimestampSeconds: 60, Path: "screen1.png"}},
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true, DoubleDupeCheck: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,dupes,screenshot-plan,generate-screenshots,save-screenshots,review" {
+		t.Fatalf("expected double dupe before screenshot/review side effects, got %s", got)
+	}
+}
+
 func TestRunInteractiveCLIPathDryRunSkipsScreenshotSideEffects(t *testing.T) {
 	t.Parallel()
 

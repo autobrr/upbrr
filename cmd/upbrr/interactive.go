@@ -117,12 +117,7 @@ func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, baseA
 	if err != nil {
 		return err
 	}
-	var namePreview map[string]api.TrackerDryRunEntry
-	if !isUnattendedNoConfirm(req) {
-		namePreview = runCLIDryRunNamePreview(ctx, coreSvc, req)
-	}
-
-	approved, ignoreDupesFor, ruleOverrides, err := promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, namePreview)
+	approved, ignoreDupesFor, ruleOverrides, err := promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, nil)
 	if err != nil {
 		return err
 	}
@@ -135,6 +130,20 @@ func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, baseA
 	req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(candidateTrackers, approved)...)
 	req.IgnoreDupesFor = ignoreDupesFor
 	req.IgnoreTrackerRuleFailuresFor = ruleOverrides
+
+	if req.DoubleDupeCheck && len(approved) > 0 {
+		approved, err = runDoubleDupeCheck(ctx, reader, coreSvc, req, approved)
+		if err != nil {
+			return err
+		}
+		req.IgnoreDupesFor = appendTrackerRemovals(req.IgnoreDupesFor, approved...)
+		req.Trackers = approved
+		req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(candidateTrackers, approved)...)
+	}
+	if len(approved) == 0 {
+		fmt.Printf("No trackers selected for %s\n", sourcePath)
+		return nil
+	}
 
 	if !req.Options.Debug && !req.Options.DryRun {
 		if err := runCLIScreenshotHandling(ctx, coreSvc, req); err != nil {
@@ -170,18 +179,6 @@ func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, baseA
 	}
 	if req.Options.DryRun {
 		printDryRunUploadReview(review, req)
-		return nil
-	}
-
-	if req.DoubleDupeCheck && len(approved) > 0 {
-		approved, err = runDoubleDupeCheck(ctx, reader, coreSvc, req, approved)
-		if err != nil {
-			return err
-		}
-		req.IgnoreDupesFor = appendTrackerRemovals(req.IgnoreDupesFor, approved...)
-	}
-	if len(approved) == 0 {
-		fmt.Printf("No trackers selected for %s\n", sourcePath)
 		return nil
 	}
 
@@ -304,26 +301,6 @@ func runCLIDupeCheck(ctx context.Context, coreSvc api.Core, req api.Request) (ap
 		return api.DupeCheckSummary{}, fmt.Errorf("upbrr: %w", err)
 	}
 	return summary, nil
-}
-
-func runCLIDryRunNamePreview(ctx context.Context, coreSvc api.Core, req api.Request) map[string]api.TrackerDryRunEntry {
-	preview, err := coreSvc.FetchTrackerDryRunPreview(ctx, req)
-	if err != nil {
-		return nil
-	}
-	return mapDryRunEntriesByTracker(preview.Trackers)
-}
-
-func mapDryRunEntriesByTracker(entries []api.TrackerDryRunEntry) map[string]api.TrackerDryRunEntry {
-	mapped := make(map[string]api.TrackerDryRunEntry, len(entries))
-	for _, entry := range entries {
-		name := strings.ToUpper(strings.TrimSpace(entry.Tracker))
-		if name == "" {
-			continue
-		}
-		mapped[name] = entry
-	}
-	return mapped
 }
 
 func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary, req api.Request, trackers []string, namePreview map[string]api.TrackerDryRunEntry) ([]string, []string, []string, error) {
