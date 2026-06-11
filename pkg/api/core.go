@@ -71,6 +71,7 @@ type UploadOptions struct {
 	NoSeed          bool
 	SkipAutoTorrent bool
 	OnlyID          bool
+	KeepFolder      bool
 	KeepImages      bool
 	InteractionMode InteractionMode
 }

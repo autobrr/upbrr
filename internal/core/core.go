@@ -384,13 +384,23 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 		return api.DupeCheckSummary{}, internalerrors.ErrInvalidInput
 	}
 
-	if req.Mode == api.ModeGUI {
-		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+	options, err := c.applyDefaultOptions(req.Options)
+	if err != nil {
+		return api.DupeCheckSummary{}, err
+	}
+	cacheReq := req
+	cacheReq.Options = options
+
+	if req.Mode == api.ModeGUI || req.Mode == api.ModeCLI {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, cacheReq, uniquePaths[0]); err != nil {
 			return api.DupeCheckSummary{}, err
 		} else if ok {
 			matchedTrackers := mergeTrackerRemovals(nil, cached.MatchedTrackers)
 			removeTrackers := mergeTrackerRemovals(req.TrackersRemove, matchedTrackers)
-			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, removeTrackers, c.logger)
+			resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
+			if req.Mode == api.ModeGUI {
+				resolvedTrackers = trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, removeTrackers, c.logger)
+			}
 			summary, err := c.services.Dupes.Check(ctx, cached, resolvedTrackers)
 			if err != nil {
 				return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
@@ -400,12 +410,9 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 			c.storeRefreshedDupeCache(cached.SourcePath, overrideSignature(cached.ExternalIDOverrides, cached.ReleaseNameOverrides, cached.MetadataOverrides, cached.TrackerConfigOverrides, cached.TrackerSiteOverrides, cached.ClientOverrides, cached.TorrentOverrides, cached.ImageHostOverrides, cached.ScreenshotOverrides), cached)
 			return summary, nil
 		}
-		return api.DupeCheckSummary{}, errors.New("core: dupe check requires metadata preview")
-	}
-
-	options, err := c.applyDefaultOptions(req.Options)
-	if err != nil {
-		return api.DupeCheckSummary{}, err
+		if req.Mode == api.ModeGUI {
+			return api.DupeCheckSummary{}, errors.New("core: dupe check requires metadata preview")
+		}
 	}
 
 	singleReq := req

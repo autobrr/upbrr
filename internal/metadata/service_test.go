@@ -34,11 +34,11 @@ func TestPrepare(t *testing.T) {
 		t.Fatalf("mkdir failed: %v", err)
 	}
 	videoPath := filepath.Join(path, "example.mkv")
-	if err := os.WriteFile(videoPath, []byte("video"), 0o644); err != nil {
+	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
 		t.Fatalf("write video failed: %v", err)
 	}
 
-	repo := &stubRepo{existing: db.FileMetadata{Path: path, InfoHash: "hash"}}
+	repo := &stubRepo{existing: db.FileMetadata{Path: videoPath, InfoHash: "hash"}}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
@@ -52,7 +52,7 @@ func TestPrepare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if meta.SourcePath != path {
+	if meta.SourcePath != videoPath {
 		t.Fatalf("unexpected source path: %s", meta.SourcePath)
 	}
 	if len(meta.Paths) != 1 {
@@ -70,7 +70,7 @@ func TestPrepare(t *testing.T) {
 	if len(meta.TrackersRemove) != 1 {
 		t.Fatalf("unexpected trackers-remove length: %d", len(meta.TrackersRemove))
 	}
-	if len(meta.Paths) != 1 || meta.Paths[0] != path {
+	if len(meta.Paths) != 1 || meta.Paths[0] != videoPath {
 		t.Fatalf("unexpected paths: %v", meta.Paths)
 	}
 	if meta.StoredInfoHash != "hash" {
@@ -82,13 +82,133 @@ func TestPrepare(t *testing.T) {
 	if repo.saved.InfoHash != "hash" {
 		t.Fatalf("expected persisted info hash, got %s", repo.saved.InfoHash)
 	}
-	if repo.saved.Path != path {
+	if repo.saved.Path != videoPath {
 		t.Fatalf("expected repo save path, got %q", repo.saved.Path)
 	}
 
 	_, err = service.Prepare(context.Background(), api.Request{})
 	if !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("expected invalid input error, got: %v", err)
+	}
+}
+
+func TestPrepareCLIKeepFolderPreservesSingleFileDirectory(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	path := filepath.Join(base, "Example.Movie.2026.1080p.WEB-DL-GRP")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	videoPath := filepath.Join(path, "Example.Movie.2026.1080p.WEB-DL-GRP.mkv")
+	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write video failed: %v", err)
+	}
+
+	repo := &stubRepo{}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths:   []string{path},
+		Mode:    api.ModeCLI,
+		Options: api.UploadOptions{KeepFolder: true},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if meta.SourcePath != path {
+		t.Fatalf("expected folder source path, got %q", meta.SourcePath)
+	}
+	if meta.VideoPath != videoPath {
+		t.Fatalf("expected selected video path %q, got %q", videoPath, meta.VideoPath)
+	}
+	if repo.saved.Path != path {
+		t.Fatalf("expected repo save path to remain folder, got %q", repo.saved.Path)
+	}
+}
+
+func TestPrepareCLITVPackPreservesDirectory(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	path := filepath.Join(base, "Example.Show.S01.1080p.WEB-DL-GRP")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	episode1 := filepath.Join(path, "Example.Show.S01E01.mkv")
+	episode2 := filepath.Join(path, "Example.Show.S01E02.mkv")
+	if err := os.WriteFile(episode1, []byte("episode 1"), 0o600); err != nil {
+		t.Fatalf("write first episode failed: %v", err)
+	}
+	if err := os.WriteFile(episode2, []byte("episode 2 larger"), 0o600); err != nil {
+		t.Fatalf("write second episode failed: %v", err)
+	}
+
+	repo := &stubRepo{}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths: []string{path},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if meta.SourcePath != path {
+		t.Fatalf("expected folder source path, got %q", meta.SourcePath)
+	}
+	if !meta.TVPack {
+		t.Fatalf("expected TV pack metadata")
+	}
+	if len(meta.FileList) != 2 {
+		t.Fatalf("expected both episode files, got %#v", meta.FileList)
+	}
+	if repo.saved.Path != path {
+		t.Fatalf("expected repo save path to remain folder, got %q", repo.saved.Path)
+	}
+}
+
+func TestPrepareCLISingleEpisodeFolderPrefersEpisodeVideoOverLargerExtra(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	path := filepath.Join(base, "Example.Show.S01E01.1080p.WEB-DL-GRP")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	small := filepath.Join(path, "Example.Show.S01E01.1080p.WEB-DL-GRP.mkv")
+	large := filepath.Join(path, "Featurette.mp4")
+	if err := os.WriteFile(small, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write small video failed: %v", err)
+	}
+	if err := os.WriteFile(large, []byte("larger video"), 0o600); err != nil {
+		t.Fatalf("write large video failed: %v", err)
+	}
+
+	repo := &stubRepo{}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths: []string{path},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if meta.SourcePath != small {
+		t.Fatalf("expected episode video source path %q, got %q", small, meta.SourcePath)
+	}
+	if meta.TVPack {
+		t.Fatalf("did not expect TV pack metadata")
+	}
+	if len(meta.FileList) != 1 || meta.FileList[0] != small {
+		t.Fatalf("expected only selected episode video in file list, got %#v", meta.FileList)
+	}
+	if repo.saved.Path != small {
+		t.Fatalf("expected repo save path to be episode video, got %q", repo.saved.Path)
 	}
 }
 

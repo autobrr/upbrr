@@ -438,6 +438,50 @@ func TestRunUploadPreparedDryRunSkipsUpload(t *testing.T) {
 	}
 }
 
+func TestRunUploadPreparedDebugSkipsUpload(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubRepo{}
+	tracker := &stubTrackers{}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: repo,
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+		Options: api.UploadOptions{
+			Debug: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if result.UploadedCount != 0 {
+		t.Fatalf("expected 0 uploads, got %d", result.UploadedCount)
+	}
+	if tracker.calls != 0 {
+		t.Fatalf("expected tracker not called, got %d", tracker.calls)
+	}
+	if client.calls != 0 {
+		t.Fatalf("expected client not called, got %d", client.calls)
+	}
+}
+
 func TestRunUploadPreparedSiteCheckForcesDryRun(t *testing.T) {
 	t.Parallel()
 
@@ -1136,6 +1180,81 @@ func TestCheckDupesUsesPathedTrackerDataWithFreshStoredSnapshot(t *testing.T) {
 	}
 	if got := dupes.lastMeta.InfoHash; got != "abc123" {
 		t.Fatalf("expected pathed infohash, got %q", got)
+	}
+}
+
+func TestCheckDupesReusesCLIMetadataPreviewCache(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		InfoHash:          "abc123",
+		MatchedTrackers:   []string{"AITHER"},
+		FoundTrackerMatch: true,
+		TrackerIDs: map[string]string{
+			"aither": "111",
+		},
+	}}
+	metaSvc := &stubMeta{}
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    client,
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	req := api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER", "BHD"},
+		Options: api.UploadOptions{
+			InteractionMode: api.InteractionModeInteractive,
+			Screens:         1,
+		},
+	}
+	if _, err := core.FetchMetadataPreview(context.Background(), req); err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if metaSvc.calls != 1 {
+		t.Fatalf("expected preview to prepare metadata once, got %d calls", metaSvc.calls)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected preview to run pathed search once, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected preview to enrich tracker data once, got %d calls", metaSvc.enrichCalls)
+	}
+
+	if _, err := core.CheckDupes(context.Background(), req); err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+	if metaSvc.calls != 1 {
+		t.Fatalf("expected cached dupe check to skip metadata prepare, got %d calls", metaSvc.calls)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected cached dupe check to skip pathed search, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected cached dupe check to skip tracker enrichment, got %d calls", metaSvc.enrichCalls)
+	}
+	if got := dupes.lastMeta.InfoHash; got != "abc123" {
+		t.Fatalf("expected cached infohash, got %q", got)
+	}
+	if got := dupes.lastMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected cached tracker id, got %q", got)
+	}
+	if containsCoreString(dupes.lastTrackers, "AITHER") {
+		t.Fatalf("expected matched tracker excluded from dupe check, got %v", dupes.lastTrackers)
+	}
+	if !containsCoreString(dupes.lastTrackers, "BHD") {
+		t.Fatalf("expected unmatched tracker checked, got %v", dupes.lastTrackers)
 	}
 }
 
