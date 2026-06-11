@@ -250,13 +250,11 @@ func run() error {
 			return exitError(1, err)
 		}
 		if opts.Debug {
-			for _, sourcePath := range paths {
-				debugReq := uploadReq
-				debugReq.Paths = []string{sourcePath}
-				review, err := coreSvc.BuildUploadReview(ctx, debugReq)
-				if err != nil {
-					return exitError(1, err)
-				}
+			reviews, err := buildCLIUploadDebugReviews(ctx, coreSvc, paths, uploadReq)
+			if err != nil {
+				return exitError(1, err)
+			}
+			for _, review := range reviews {
 				printDebugUploadReview(review)
 			}
 		}
@@ -629,6 +627,7 @@ func deleteCLIStoredReleases(ctx context.Context, coreSvc api.Core, paths []stri
 func prepareCLIUploadMetadata(ctx context.Context, coreSvc api.Core, req api.Request) (api.Request, error) {
 	resolvedReq := req
 	resolvedPaths := make([]string, 0, len(req.Paths))
+	resolvedSelections := req.ExternalIDSelections
 	for _, sourcePath := range req.Paths {
 		singleReq := req
 		singleReq.Paths = []string{sourcePath}
@@ -636,10 +635,77 @@ func prepareCLIUploadMetadata(ctx context.Context, coreSvc api.Core, req api.Req
 		if err != nil {
 			return api.Request{}, fmt.Errorf("upbrr: %w", err)
 		}
-		resolvedPaths = append(resolvedPaths, resolvedCLIMetadataSourcePath(sourcePath, preview))
+		resolvedPath := resolvedCLIMetadataSourcePath(sourcePath, preview)
+		resolvedPaths = append(resolvedPaths, resolvedPath)
+		resolvedSelections = cloneCLIExternalIDSelectionsForResolvedPath(resolvedSelections, sourcePath, resolvedPath)
 	}
 	resolvedReq.Paths = resolvedPaths
+	resolvedReq.ExternalIDSelections = resolvedSelections
 	return resolvedReq, nil
+}
+
+func buildCLIUploadDebugReviews(ctx context.Context, coreSvc api.Core, sourcePaths []string, uploadReq api.Request) ([]api.UploadReview, error) {
+	reviews := make([]api.UploadReview, 0, len(sourcePaths))
+	for idx, sourcePath := range sourcePaths {
+		resolvedPath := sourcePath
+		if idx < len(uploadReq.Paths) && strings.TrimSpace(uploadReq.Paths[idx]) != "" {
+			resolvedPath = uploadReq.Paths[idx]
+		}
+		debugReq := uploadReq
+		debugReq.Paths = []string{resolvedPath}
+		debugReq.ExternalIDSelections = cloneCLIExternalIDSelectionsForResolvedPath(uploadReq.ExternalIDSelections, sourcePath, resolvedPath)
+		review, err := coreSvc.BuildUploadReview(ctx, debugReq)
+		if err != nil {
+			return nil, fmt.Errorf("build upload review for %q: %w", resolvedPath, err)
+		}
+		if strings.TrimSpace(sourcePath) != "" {
+			review.SourcePath = sourcePath
+		}
+		reviews = append(reviews, review)
+	}
+	return reviews, nil
+}
+
+func cloneCLIExternalIDSelectionsForResolvedPath(selections map[string]api.ExternalIDSelection, sourcePath string, resolvedPath string) map[string]api.ExternalIDSelection {
+	if len(selections) == 0 {
+		return selections
+	}
+	trimmedResolvedPath := strings.TrimSpace(resolvedPath)
+	if trimmedResolvedPath == "" {
+		return selections
+	}
+	selected, ok := resolveCLIExternalIDSelection(selections, sourcePath)
+	if !ok {
+		return selections
+	}
+	if _, ok := resolveCLIExternalIDSelection(selections, trimmedResolvedPath); ok {
+		return selections
+	}
+	cloned := make(map[string]api.ExternalIDSelection, len(selections)+1)
+	for key, value := range selections {
+		cloned[key] = value
+	}
+	cloned[trimmedResolvedPath] = selected
+	return cloned
+}
+
+func resolveCLIExternalIDSelection(selections map[string]api.ExternalIDSelection, sourcePath string) (api.ExternalIDSelection, bool) {
+	if len(selections) == 0 {
+		return api.ExternalIDSelection{}, false
+	}
+	if selected, ok := selections[sourcePath]; ok {
+		return selected, true
+	}
+	cleanedSourcePath := filepath.Clean(sourcePath)
+	if selected, ok := selections[cleanedSourcePath]; ok {
+		return selected, true
+	}
+	for key, selected := range selections {
+		if filepath.Clean(key) == cleanedSourcePath {
+			return selected, true
+		}
+	}
+	return api.ExternalIDSelection{}, false
 }
 
 func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc api.Core, cfg config.Config, logger api.Logger, opts cliOptions) error {

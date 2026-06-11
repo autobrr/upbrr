@@ -122,8 +122,10 @@ func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []str
 	req.IgnoreDupesFor = ignoreDupesFor
 	req.IgnoreTrackerRuleFailuresFor = ruleOverrides
 
-	if err := runCLIScreenshotHandling(ctx, coreSvc, req); err != nil {
-		return err
+	if !req.Options.Debug && !req.Options.DryRun {
+		if err := runCLIScreenshotHandling(ctx, coreSvc, req); err != nil {
+			return err
+		}
 	}
 
 	review, err := coreSvc.BuildUploadReview(ctx, req)
@@ -276,6 +278,7 @@ func runCLIDupeCheck(ctx context.Context, coreSvc api.Core, req api.Request) (ap
 			}
 			results = append(results, api.DupeCheckResult{
 				Tracker:    name,
+				Skipped:    true,
 				Status:     "skipped",
 				SkipReason: "dupe check skipped",
 			})
@@ -405,6 +408,9 @@ func dupeResultNeedsConfirmation(result api.DupeCheckResult, hasResult bool) boo
 	if !hasResult {
 		return false
 	}
+	if isUserRequestedDupeSkipResult(result) {
+		return false
+	}
 	if result.HasDupes || result.Skipped {
 		return true
 	}
@@ -415,10 +421,7 @@ func dupeResultNeedsConfirmation(result api.DupeCheckResult, hasResult bool) boo
 }
 
 func dupeResultSkipsPrompt(result api.DupeCheckResult) bool {
-	if isPathedTorrentDupeResult(result) {
-		return true
-	}
-	return isRuleCheckDupeResult(result)
+	return isPathedTorrentDupeResult(result)
 }
 
 func isPathedTorrentDupeResult(result api.DupeCheckResult) bool {
@@ -430,16 +433,8 @@ func isPathedTorrentDupeResult(result api.DupeCheckResult) bool {
 	return false
 }
 
-func isRuleCheckDupeResult(result api.DupeCheckResult) bool {
-	values := append([]string{}, result.SkipReason, result.Error)
-	values = append(values, result.Notes...)
-	for _, value := range values {
-		normalized := strings.ToLower(strings.TrimSpace(value))
-		if strings.Contains(normalized, "rule check failed") || strings.Contains(normalized, "rule failed") {
-			return true
-		}
-	}
-	return false
+func isUserRequestedDupeSkipResult(result api.DupeCheckResult) bool {
+	return result.Skipped && strings.EqualFold(strings.TrimSpace(result.SkipReason), "dupe check skipped")
 }
 
 func runCLIScreenshotHandling(ctx context.Context, coreSvc api.Core, req api.Request) error {

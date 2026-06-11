@@ -205,6 +205,12 @@ func TestParseCLIOptionsFlagsAfterPath(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsRejectsUnknownFlagAfterPath(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"movie.mkv", "--typo-flag"}); err == nil {
+		t.Fatal("expected unknown trailing flag to fail")
+	}
+}
+
 func TestParseCLIOptionsLogLevel(t *testing.T) {
 	opts, visited, _, err := parseCLIOptions([]string{"--log-level", "trace", "movie.mkv"})
 	if err != nil {

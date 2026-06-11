@@ -60,6 +60,64 @@ func TestRunInteractiveCLIPathHandlesScreenshotsBeforeReview(t *testing.T) {
 	}
 }
 
+func TestRunInteractiveCLIPathDryRunSkipsScreenshotSideEffects(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		screenshotPlan: api.ScreenshotPlan{
+			SuggestedSelections: []api.ScreenshotSelection{{Index: 1, TimestampSeconds: 60}},
+		},
+		screenshotResult: api.ScreenshotResult{
+			Images: []api.ScreenshotImage{{Index: 1, TimestampSeconds: 60, Path: "screen1.png"}},
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true, DryRun: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,review" {
+		t.Fatalf("expected dry-run to skip screenshot side effects, got %s", got)
+	}
+	if len(coreSvc.savedFinalImages) != 0 {
+		t.Fatalf("expected dry-run to skip saved screenshots, got %#v", coreSvc.savedFinalImages)
+	}
+	if coreSvc.runUploadPreparedCalls != 0 {
+		t.Fatalf("expected dry-run to skip upload, got %d", coreSvc.runUploadPreparedCalls)
+	}
+}
+
+func TestRunInteractiveCLIPathDebugSkipsScreenshotSideEffects(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		screenshotPlan: api.ScreenshotPlan{
+			SuggestedSelections: []api.ScreenshotSelection{{Index: 1, TimestampSeconds: 60}},
+		},
+		screenshotResult: api.ScreenshotResult{
+			Images: []api.ScreenshotImage{{Index: 1, TimestampSeconds: 60, Path: "screen1.png"}},
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true, Debug: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,review" {
+		t.Fatalf("expected debug to skip screenshot side effects, got %s", got)
+	}
+	if len(coreSvc.savedFinalImages) != 0 {
+		t.Fatalf("expected debug to skip saved screenshots, got %#v", coreSvc.savedFinalImages)
+	}
+	if coreSvc.runUploadPreparedCalls != 0 {
+		t.Fatalf("expected debug to skip upload, got %d", coreSvc.runUploadPreparedCalls)
+	}
+}
+
 func TestRunInteractiveCLIPathUsesResolvedPreviewSourceForPreparedUpload(t *testing.T) {
 	t.Parallel()
 
@@ -135,7 +193,7 @@ func TestPromptTrackerDupeReviewBuildsConfirmedTrackerList(t *testing.T) {
 	t.Parallel()
 
 	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
-		bufio.NewReader(strings.NewReader("y\nn\n")),
+		bufio.NewReader(strings.NewReader("y\nn\nn\n")),
 		api.DupeCheckSummary{Results: []api.DupeCheckResult{
 			{Tracker: "ANT", Status: "completed", HasDupes: true},
 			{Tracker: "BLU", Status: "completed"},
@@ -191,11 +249,11 @@ func TestPromptTrackerDupeReviewSkipsPathedTorrentMatches(t *testing.T) {
 	}
 }
 
-func TestPromptTrackerDupeReviewSkipsRuleCheckViolations(t *testing.T) {
+func TestPromptTrackerDupeReviewAllowsRuleCheckOverrides(t *testing.T) {
 	t.Parallel()
 
 	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
-		bufio.NewReader(strings.NewReader("y\n")),
+		bufio.NewReader(strings.NewReader("y\ny\ny\n")),
 		api.DupeCheckSummary{Results: []api.DupeCheckResult{
 			{Tracker: "NBL", Status: "skipped", Skipped: true, SkipReason: "rule check failed: category movie is not tv"},
 			{Tracker: "OTW", Status: "skipped", Skipped: true, Error: "rule failed: Genre does not match Animation or Family for OTW."},
@@ -208,14 +266,48 @@ func TestPromptTrackerDupeReviewSkipsRuleCheckViolations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("promptTrackerDupeReview: %v", err)
 	}
-	if strings.Join(approved, ",") != "ANT" {
-		t.Fatalf("expected only ANT approved, got %#v", approved)
+	if strings.Join(approved, ",") != "NBL,OTW,ANT" {
+		t.Fatalf("expected overridden rule-failed trackers approved, got %#v", approved)
+	}
+	if strings.Join(ignoreDupes, ",") != "NBL,OTW" {
+		t.Fatalf("expected dupe ignores for approved blocked rule violations, got %#v", ignoreDupes)
+	}
+	if strings.Join(ruleOverrides, ",") != "NBL,OTW" {
+		t.Fatalf("expected rule overrides for approved rule violations, got %#v", ruleOverrides)
+	}
+}
+
+func TestPromptTrackerDupeReviewApprovesUserSkippedDupeChecksInUnattendedMode(t *testing.T) {
+	t.Parallel()
+
+	req := api.Request{
+		SkipDupeCheck: true,
+		Trackers:      []string{"ANT", "BLU"},
+		Options:       api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
+	}
+	summary, err := runCLIDupeCheck(context.Background(), nil, req)
+	if err != nil {
+		t.Fatalf("runCLIDupeCheck: %v", err)
+	}
+
+	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+		bufio.NewReader(strings.NewReader("")),
+		summary,
+		req,
+		req.Trackers,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("promptTrackerDupeReview: %v", err)
+	}
+	if strings.Join(approved, ",") != "ANT,BLU" {
+		t.Fatalf("expected unattended skip-dupe approvals, got %#v", approved)
 	}
 	if len(ignoreDupes) != 0 {
-		t.Fatalf("expected no dupe ignores for skipped rule violations, got %#v", ignoreDupes)
+		t.Fatalf("expected no dupe ignores for user-requested skip, got %#v", ignoreDupes)
 	}
 	if len(ruleOverrides) != 0 {
-		t.Fatalf("expected no rule overrides for skipped rule violations, got %#v", ruleOverrides)
+		t.Fatalf("expected no rule overrides for user-requested skip, got %#v", ruleOverrides)
 	}
 }
 
@@ -276,6 +368,37 @@ func TestPrepareCLIUploadMetadataReturnsResolvedPreviewPaths(t *testing.T) {
 	}
 	if len(resolvedReq.Paths) != 1 || resolvedReq.Paths[0] != filepath.Join("folder", "movie.mkv") {
 		t.Fatalf("expected resolved preview path, got %#v", resolvedReq.Paths)
+	}
+}
+
+func TestBuildCLIUploadDebugReviewsUsesPreparedResolvedPath(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		previewSourcePath: filepath.Join("folder", "movie.mkv"),
+		review:            api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	req := api.Request{Paths: []string{"folder"}}
+	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
+	if err != nil {
+		t.Fatalf("prepareCLIUploadMetadata: %v", err)
+	}
+
+	reviews, err := buildCLIUploadDebugReviews(context.Background(), coreSvc, req.Paths, resolvedReq)
+	if err != nil {
+		t.Fatalf("buildCLIUploadDebugReviews: %v", err)
+	}
+	if len(reviews) != 1 {
+		t.Fatalf("expected one debug review, got %d", len(reviews))
+	}
+	if reviews[0].SourcePath != "folder" {
+		t.Fatalf("expected debug review to retain original source label, got %q", reviews[0].SourcePath)
+	}
+	if len(coreSvc.requests) != 2 {
+		t.Fatalf("expected preview and review requests, got %#v", coreSvc.requests)
+	}
+	if got := coreSvc.requests[1]; got.name != "review" || len(got.req.Paths) != 1 || got.req.Paths[0] != filepath.Join("folder", "movie.mkv") {
+		t.Fatalf("expected debug review to use prepared resolved path, got %#v", got)
 	}
 }
 

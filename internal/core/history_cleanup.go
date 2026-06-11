@@ -87,18 +87,26 @@ func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error
 
 	addDirectoryChildTempDirs(trimmedPath, tmpRoot, tmpDirs)
 
+	fileRoots := []string{tmpRoot, cacheRoot, nfoRoot}
+	for _, filePath := range artifactPaths {
+		if _, err := ensureRemovableWithinRoots(fileRoots, filePath, false); err != nil {
+			return fmt.Errorf("core: delete history release validate file %q: %w", filePath, err)
+		}
+	}
+	for dir := range tmpDirs {
+		if _, err := ensureRemovableWithinRoot(tmpRoot, dir, true); err != nil {
+			return fmt.Errorf("core: delete history release validate tmp dir %q: %w", dir, err)
+		}
+	}
 	for _, cleanupPath := range cleanupPaths {
 		if err := c.repo.PurgeContentData(ctx, cleanupPath); err != nil {
 			return fmt.Errorf("core: delete history release: %w", err)
 		}
 	}
-
-	fileRoots := []string{tmpRoot, cacheRoot, nfoRoot}
 	for _, filePath := range artifactPaths {
 		removed, err := removeIfWithinRoots(fileRoots, filePath, false)
-		if err != nil && c.logger != nil {
-			c.logger.Warnf("core: delete history release remove file failed %q: %v", filePath, err)
-			continue
+		if err != nil {
+			return fmt.Errorf("core: delete history release remove file %q: %w", filePath, err)
 		}
 		if removed && c.logger != nil {
 			c.logger.Debugf("core: delete history release removed file %s", filePath)
@@ -106,9 +114,8 @@ func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error
 	}
 	for dir := range tmpDirs {
 		removed, err := removeIfWithinRoot(tmpRoot, dir, true)
-		if err != nil && c.logger != nil {
-			c.logger.Warnf("core: delete history release remove tmp dir failed %q: %v", dir, err)
-			continue
+		if err != nil {
+			return fmt.Errorf("core: delete history release remove tmp dir %q: %w", dir, err)
 		}
 		if removed && c.logger != nil {
 			c.logger.Debugf("core: delete history release removed tmp dir %s", dir)
@@ -299,31 +306,14 @@ func resolveContentTmpRoot(tmpRoot string, candidate string) (string, bool) {
 }
 
 func removeIfWithinRoot(root string, target string, recursive bool) (bool, error) {
-	trimmed := strings.TrimSpace(target)
-	if trimmed == "" {
-		return false, nil
-	}
-	absRoot, err := filepath.Abs(strings.TrimSpace(root))
+	absTarget, shouldRemove, err := inspectCleanupTarget(root, target, recursive)
 	if err != nil {
-		return false, fmt.Errorf("cleanup history artifact: resolve root path: %w", err)
+		return false, err
 	}
-	absTarget, err := filepath.Abs(trimmed)
-	if err != nil {
-		return false, fmt.Errorf("cleanup history artifact: resolve target path: %w", err)
-	}
-	if pathutil.SamePath(absRoot, absTarget) {
-		return false, nil
-	}
-	if !pathutil.IsWithinRoot(absRoot, absTarget) {
+	if !shouldRemove {
 		return false, nil
 	}
 	if recursive {
-		if _, err := os.Stat(absTarget); err != nil {
-			if os.IsNotExist(err) {
-				return false, nil
-			}
-			return false, fmt.Errorf("cleanup history artifact: stat target: %w", err)
-		}
 		if err := os.RemoveAll(absTarget); err != nil {
 			return false, fmt.Errorf("cleanup history artifact: remove target tree: %w", err)
 		}
@@ -338,6 +328,43 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 	return true, nil
 }
 
+func ensureRemovableWithinRoot(root string, target string, recursive bool) (bool, error) {
+	_, shouldRemove, err := inspectCleanupTarget(root, target, recursive)
+	return shouldRemove, err
+}
+
+func inspectCleanupTarget(root string, target string, recursive bool) (string, bool, error) {
+	trimmed := strings.TrimSpace(target)
+	if trimmed == "" {
+		return "", false, nil
+	}
+	absRoot, err := filepath.Abs(strings.TrimSpace(root))
+	if err != nil {
+		return "", false, fmt.Errorf("cleanup history artifact: resolve root path: %w", err)
+	}
+	absTarget, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", false, fmt.Errorf("cleanup history artifact: resolve target path: %w", err)
+	}
+	if pathutil.SamePath(absRoot, absTarget) {
+		return "", false, nil
+	}
+	if !pathutil.IsWithinRoot(absRoot, absTarget) {
+		return "", false, nil
+	}
+	info, err := os.Stat(absTarget)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return absTarget, false, nil
+		}
+		return "", false, fmt.Errorf("cleanup history artifact: stat target: %w", err)
+	}
+	if !recursive && info.IsDir() {
+		return "", false, fmt.Errorf("cleanup history artifact: target is directory: %s", absTarget)
+	}
+	return absTarget, true, nil
+}
+
 func removeIfWithinRoots(roots []string, target string, recursive bool) (bool, error) {
 	for _, root := range roots {
 		trimmed := strings.TrimSpace(root)
@@ -349,6 +376,23 @@ func removeIfWithinRoots(roots []string, target string, recursive bool) (bool, e
 			return false, err
 		}
 		if removed {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func ensureRemovableWithinRoots(roots []string, target string, recursive bool) (bool, error) {
+	for _, root := range roots {
+		trimmed := strings.TrimSpace(root)
+		if trimmed == "" {
+			continue
+		}
+		removable, err := ensureRemovableWithinRoot(trimmed, target, recursive)
+		if err != nil {
+			return false, err
+		}
+		if removable {
 			return true, nil
 		}
 	}

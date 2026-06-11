@@ -27,6 +27,7 @@ type cleanupRepo struct {
 	getByPathErr error
 	purgedPaths  []string
 	purgeCalls   int
+	purgeErr     error
 }
 
 func (r *cleanupRepo) GetByPath(context.Context, string) (api.FileMetadata, error) {
@@ -62,7 +63,7 @@ func (r *cleanupRepo) ListStoredReleasePaths(context.Context) ([]string, error) 
 func (r *cleanupRepo) PurgeContentData(_ context.Context, path string) error {
 	r.purgeCalls++
 	r.purgedPaths = append(r.purgedPaths, path)
-	return nil
+	return r.purgeErr
 }
 
 func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
@@ -180,6 +181,45 @@ func TestCoreDeleteHistoryReleaseRemovesDirectoryChildArtifacts(t *testing.T) {
 		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("expected tmp dir %s removed, got err=%v", dir, err)
 		}
+	}
+}
+
+func TestCoreDeleteHistoryReleaseKeepsDBRowsWhenArtifactRemovalFails(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	dbPath := filepath.Join(baseDir, "ua.db")
+	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+
+	sourcePath := filepath.Join(baseDir, "Example.Movie.2024.mkv")
+	blockedPath := filepath.Join(tmpRoot, filepath.Base(sourcePath), "blocked.png")
+	if err := os.MkdirAll(blockedPath, 0o755); err != nil {
+		t.Fatalf("mkdir blocked artifact dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(blockedPath, "nested.txt"), []byte("test"), 0o600); err != nil {
+		t.Fatalf("write nested artifact: %v", err)
+	}
+
+	repo := &cleanupRepo{
+		screenshots: []api.Screenshot{{SourcePath: sourcePath, ImagePath: blockedPath}},
+	}
+	coreSvc := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		logger: api.NopLogger{},
+		repo:   repo,
+	}
+
+	if err := coreSvc.DeleteHistoryRelease(context.Background(), sourcePath); err == nil {
+		t.Fatal("expected artifact removal failure")
+	}
+	if repo.purgeCalls != 0 {
+		t.Fatalf("expected DB rows kept on artifact removal failure, got purge calls %#v", repo.purgedPaths)
+	}
+	if _, err := os.Stat(blockedPath); err != nil {
+		t.Fatalf("expected blocked artifact path to remain, got %v", err)
 	}
 }
 

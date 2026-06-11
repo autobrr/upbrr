@@ -397,7 +397,6 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 func splitInterspersedCLIFlags(fs *flag.FlagSet, args []string) ([]string, []string) {
 	flagArgs := make([]string, 0, len(args))
 	positionalArgs := make([]string, 0, len(args))
-	seenPositional := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -407,15 +406,10 @@ func splitInterspersedCLIFlags(fs *flag.FlagSet, args []string) ([]string, []str
 		name, ok := cliFlagName(arg)
 		if !ok {
 			positionalArgs = append(positionalArgs, arg)
-			seenPositional = true
 			continue
 		}
 		flagDef := fs.Lookup(name)
 		if flagDef == nil {
-			if seenPositional {
-				positionalArgs = append(positionalArgs, arg)
-				continue
-			}
 			flagArgs = append(flagArgs, arg)
 			continue
 		}

@@ -170,7 +170,7 @@ func TestPrepareCLITVPackPreservesDirectory(t *testing.T) {
 	}
 }
 
-func TestPrepareCLISingleEpisodeFolderCollapsesToLargestVideo(t *testing.T) {
+func TestPrepareCLISingleEpisodeFolderPrefersEpisodeVideoOverLargerExtra(t *testing.T) {
 	t.Parallel()
 
 	base := t.TempDir()
@@ -198,17 +198,17 @@ func TestPrepareCLISingleEpisodeFolderCollapsesToLargestVideo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if meta.SourcePath != large {
-		t.Fatalf("expected largest video source path %q, got %q", large, meta.SourcePath)
+	if meta.SourcePath != small {
+		t.Fatalf("expected episode video source path %q, got %q", small, meta.SourcePath)
 	}
 	if meta.TVPack {
 		t.Fatalf("did not expect TV pack metadata")
 	}
-	if len(meta.FileList) != 1 || meta.FileList[0] != large {
-		t.Fatalf("expected only largest video in file list, got %#v", meta.FileList)
+	if len(meta.FileList) != 1 || meta.FileList[0] != small {
+		t.Fatalf("expected only selected episode video in file list, got %#v", meta.FileList)
 	}
-	if repo.saved.Path != large {
-		t.Fatalf("expected repo save path to be largest video, got %q", repo.saved.Path)
+	if repo.saved.Path != small {
+		t.Fatalf("expected repo save path to be episode video, got %q", repo.saved.Path)
 	}
 }
 

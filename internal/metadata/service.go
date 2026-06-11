@@ -456,7 +456,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 
 	applySeasonEpisodeMetadata(&meta, seasonep.Extract(primary, meta), s.logger)
 	if shouldCollapseCLIFolderToVideo(meta, primary) {
-		meta.VideoPath = largestVideoFile(meta.FileList, meta.VideoPath)
+		meta.VideoPath = preferredCLIFolderVideo(meta, primary)
 		primary = strings.TrimSpace(meta.VideoPath)
 		meta.SourcePath = primary
 		meta.Paths = []string{primary}
@@ -1233,6 +1233,96 @@ func largestVideoFile(fileList []string, fallback string) string {
 		}
 	}
 	return largest
+}
+
+func preferredCLIFolderVideo(meta api.PreparedMetadata, sourcePath string) string {
+	if matched := exactFolderNamedVideoFile(meta.FileList, sourcePath); matched != "" {
+		return matched
+	}
+	if matched := seasonEpisodeMatchedVideoFile(meta.FileList, meta); matched != "" {
+		return matched
+	}
+	fallback := strings.TrimSpace(meta.VideoPath)
+	if isRegularPathInList(meta.FileList, fallback) {
+		return fallback
+	}
+	return largestVideoFile(meta.FileList, fallback)
+}
+
+func exactFolderNamedVideoFile(fileList []string, sourcePath string) string {
+	folderBase := strings.TrimSpace(filepath.Base(filepath.Clean(sourcePath)))
+	if folderBase == "" {
+		return ""
+	}
+	normalizedFolder := normalizeVideoStem(folderBase)
+	for _, candidate := range fileList {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+		if normalizeVideoStem(filepath.Base(trimmed)) == normalizedFolder && isRegularPathInList([]string{trimmed}, trimmed) {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func seasonEpisodeMatchedVideoFile(fileList []string, meta api.PreparedMetadata) string {
+	if meta.SeasonInt <= 0 && meta.EpisodeInt <= 0 && strings.TrimSpace(meta.DailyEpisodeDate) == "" {
+		return ""
+	}
+	matches := make([]string, 0, len(fileList))
+	for _, candidate := range fileList {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" || !isRegularPathInList([]string{trimmed}, trimmed) {
+			continue
+		}
+		if releaseMatchesPreparedEpisode(ParseReleaseInfo(trimmed), meta) {
+			matches = append(matches, trimmed)
+		}
+	}
+	if len(matches) == 0 {
+		return ""
+	}
+	fallback := strings.TrimSpace(meta.VideoPath)
+	if isRegularPathInList(matches, fallback) {
+		return fallback
+	}
+	return largestVideoFile(matches, matches[0])
+}
+
+func releaseMatchesPreparedEpisode(release api.ReleaseInfo, meta api.PreparedMetadata) bool {
+	if strings.TrimSpace(meta.DailyEpisodeDate) != "" && release.Year > 0 && release.Month > 0 && release.Day > 0 {
+		expected := fmt.Sprintf("%04d-%02d-%02d", release.Year, release.Month, release.Day)
+		if expected == strings.TrimSpace(meta.DailyEpisodeDate) {
+			return true
+		}
+	}
+	return meta.SeasonInt > 0 && meta.EpisodeInt > 0 && release.Season == meta.SeasonInt && release.Episode == meta.EpisodeInt
+}
+
+func normalizeVideoStem(value string) string {
+	base := strings.TrimSuffix(strings.TrimSpace(value), filepath.Ext(value))
+	return strings.ToLower(base)
+}
+
+func isRegularPathInList(fileList []string, candidate string) bool {
+	trimmedCandidate := strings.TrimSpace(candidate)
+	if trimmedCandidate == "" {
+		return false
+	}
+	found := false
+	for _, value := range fileList {
+		if pathEqualForFingerprint(value, trimmedCandidate) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	info, err := os.Stat(trimmedCandidate)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func safeWriteFile(dir string, path string, data []byte) error {

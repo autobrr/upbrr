@@ -456,7 +456,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 			s.logger.Warnf("trackers: image host preflight failed for %s: %v", tracker, err)
 			continue
 		}
-		if host := preferredHost(policy); host != "" {
+		if host := preferredHost(effectiveImageHostSelectionPolicy(policy, preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))])); host != "" {
 			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(host))
 		} else if host := preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))]; strings.TrimSpace(host) != "" {
 			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(host))
