@@ -83,6 +83,23 @@ func TestBuildReleaseNameHybridEdition(t *testing.T) {
 	}
 }
 
+func TestBuildReleaseNameEncodeFallsBackToVideoCodec(t *testing.T) {
+	result := BuildReleaseName(api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "ENCODE",
+		Title:      "Tears of Steel",
+		Year:       2012,
+		Resolution: "1080p",
+		Audio:      "VORBIS 2.0",
+		VideoCodec: "VP8",
+	}, api.NopLogger{})
+
+	expected := "Tears of Steel 2012 1080p VORBIS 2.0 VP8"
+	if result.NameNoTag != expected {
+		t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
+	}
+}
+
 func TestBuildReleaseNameCleanName(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category: "MOVIE",
