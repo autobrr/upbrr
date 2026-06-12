@@ -41,6 +41,7 @@ var uploadHosts = map[string]struct{}{
 	"imgbb":        {},
 	"imgbox":       {},
 	"lensdump":     {},
+	"lostimg":      {},
 	"onlyimage":    {},
 	"passtheimage": {},
 	"pixhost":      {},
@@ -53,8 +54,13 @@ var uploadHosts = map[string]struct{}{
 }
 
 var ownedHosts = map[string]string{
-	"hdb": "HDB",
-	"thr": "THR",
+	"hdb":     "HDB",
+	"lostimg": "LST",
+	"thr":     "THR",
+}
+
+var trackerOptionalUploadHosts = map[string][]string{
+	"LST": {"lostimg"},
 }
 
 func ForTracker(tracker string, imgRehost bool, imgAPI string) Policy {
@@ -107,6 +113,10 @@ func KnownTrackerUploadPolicies() map[string][]string {
 	out := make(map[string][]string, len(trackerAllowedHosts))
 	for tracker, hosts := range trackerAllowedHosts {
 		out[tracker] = filterUploadHosts(normalizeUnique(hosts...))
+	}
+	for tracker, hosts := range trackerOptionalUploadHosts {
+		existing := out[tracker]
+		out[tracker] = filterUploadHosts(normalizeUnique(append(existing, hosts...)...))
 	}
 	return out
 }

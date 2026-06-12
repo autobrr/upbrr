@@ -76,7 +76,7 @@ func ensureDescriptionImageHostWithData(
 	preloaded *preloadedDescriptionAssetData,
 	preferredHosts ...string,
 ) (descriptionImageHostResolution, error) {
-	policy, err := resolveImageHostPolicy(tracker, trackerCfg, meta.ImageHostOverrides)
+	policy, err := resolveImageHostPolicyForMetadata(tracker, appCfg, trackerCfg, meta, meta.ImageHostOverrides)
 	if err != nil {
 		return descriptionImageHostResolution{}, err
 	}

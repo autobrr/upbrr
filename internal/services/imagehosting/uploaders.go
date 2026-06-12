@@ -51,6 +51,7 @@ func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uplo
 		"hdb":          &hdbUploader{username: cfg.Trackers.Trackers["HDB"].Username, passkey: cfg.Trackers.Trackers["HDB"].Passkey, client: client},
 		"pixhost":      &pixhostUploader{client: client},
 		"lensdump":     &lensdumpUploader{apiKey: cfg.ImageHosting.LensdumpAPI, client: client},
+		"lostimg":      &lostimgUploader{apiKey: cfg.ImageHosting.LostimgAPI, client: client},
 		"ptscreens":    &ptScreensUploader{apiKey: cfg.ImageHosting.PTScreensAPI, client: client},
 		"onlyimage":    &onlyImageUploader{apiKey: cfg.ImageHosting.OnlyImageAPI, client: client},
 		"dalexni":      &dalexniUploader{apiKey: cfg.ImageHosting.DalexniAPI, client: client},
@@ -775,6 +776,83 @@ func (u *thrUploader) Upload(ctx context.Context, imagePath string) (uploadResul
 	return uploadResult{ImgURL: imageURL, RawURL: imageURL, WebURL: imageURL}, nil
 }
 
+type lostimgUploader struct {
+	apiKey string
+	client *http.Client
+}
+
+const lostimgMaxBatchUploadImages = 50
+
+func (u *lostimgUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
+	results, err := u.UploadBatch(ctx, []string{imagePath})
+	if err != nil {
+		return uploadResult{}, err
+	}
+	return results[0], nil
+}
+
+func (u *lostimgUploader) UploadBatch(ctx context.Context, imagePaths []string) ([]uploadResult, error) {
+	if strings.TrimSpace(u.apiKey) == "" {
+		return nil, errors.New("image hosting: lostimg api key missing")
+	}
+	if len(imagePaths) == 0 {
+		return nil, errors.New("image hosting: no Lostimg images to upload")
+	}
+	results := make([]uploadResult, 0, len(imagePaths))
+	for start := 0; start < len(imagePaths); start += lostimgMaxBatchUploadImages {
+		end := start + lostimgMaxBatchUploadImages
+		if end > len(imagePaths) {
+			end = len(imagePaths)
+		}
+		chunkResults, err := u.uploadBatch(ctx, imagePaths[start:end])
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, chunkResults...)
+	}
+	return results, nil
+}
+
+func (u *lostimgUploader) uploadBatch(ctx context.Context, imagePaths []string) ([]uploadResult, error) {
+	headers := map[string]string{"Authorization": "Bearer " + strings.TrimSpace(u.apiKey)}
+	body, status, err := postMultipartRepeatedFileField(ctx, u.client, "https://lostimg.cc/api/v1/images", "file[]", imagePaths, headers)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("lostimg upload failed with status %d", status)
+	}
+
+	var response struct {
+		URL   string   `json:"url"`
+		URLs  []string `json:"urls"`
+		Error string   `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("lostimg invalid response: %w", err)
+	}
+	if strings.TrimSpace(response.Error) != "" {
+		return nil, fmt.Errorf("lostimg upload failed: %s", strings.TrimSpace(response.Error))
+	}
+
+	urls := response.URLs
+	if len(urls) == 0 && strings.TrimSpace(response.URL) != "" {
+		urls = []string{response.URL}
+	}
+	if len(urls) != len(imagePaths) {
+		return nil, fmt.Errorf("lostimg upload returned %d images for %d uploads", len(urls), len(imagePaths))
+	}
+	results := make([]uploadResult, 0, len(urls))
+	for _, raw := range urls {
+		imageURL := strings.TrimSpace(raw)
+		if imageURL == "" {
+			return nil, errors.New("lostimg upload returned empty image URL")
+		}
+		results = append(results, uploadResult{ImgURL: imageURL, RawURL: imageURL, WebURL: imageURL})
+	}
+	return results, nil
+}
+
 type pixhostUploader struct {
 	client *http.Client
 }
@@ -1051,6 +1129,52 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 	sort.Strings(fileFieldKeys)
 	for _, fileField := range fileFieldKeys {
 		filePath := fileFields[fileField]
+		file, err := os.Open(filePath)
+		if err != nil {
+			return nil, 0, fmt.Errorf("image hosting: open multipart file: %w", err)
+		}
+		part, err := writer.CreateFormFile(fileField, filepath.Base(filePath))
+		if err != nil {
+			_ = file.Close()
+			return nil, 0, fmt.Errorf("image hosting: create multipart file %q: %w", fileField, err)
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			_ = file.Close()
+			return nil, 0, fmt.Errorf("image hosting: copy multipart file: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return nil, 0, fmt.Errorf("image hosting: close multipart file: %w", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, 0, fmt.Errorf("image hosting: close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("image hosting: create multipart request for %s: %w", target, err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		closeResponseBody(resp)
+		return nil, 0, fmt.Errorf("image hosting: send multipart request to %s: %w", target, err)
+	}
+	bodyBytes, err := readAndCloseResponseBody(resp)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return bodyBytes, resp.StatusCode, nil
+}
+
+func postMultipartRepeatedFileField(ctx context.Context, client *http.Client, target string, fileField string, filePaths []string, headers map[string]string) ([]byte, int, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	for _, filePath := range filePaths {
 		file, err := os.Open(filePath)
 		if err != nil {
 			return nil, 0, fmt.Errorf("image hosting: open multipart file: %w", err)

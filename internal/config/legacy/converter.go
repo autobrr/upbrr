@@ -42,6 +42,8 @@ var legacyDefaultSectionByKey = map[string]string{
 	"sharex_url":                     "image_hosting",
 	"sharex_api_key":                 "image_hosting",
 	"utppm_api":                      "image_hosting",
+	"lostimg_enabled":                "image_hosting",
+	"lostimg_api":                    "image_hosting",
 	"btn_api":                        "metadata",
 	"skip_auto_torrent":              "metadata",
 	"skip_tracker_filename_lookup":   "metadata",

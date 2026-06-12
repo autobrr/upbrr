@@ -94,7 +94,11 @@ const imageHostOptions = [
   { value: "utppm", label: "UTPPM" },
 ];
 
-const trackerImageHostOptions = [...imageHostOptions, { value: "hdb", label: "HDB" }];
+const trackerImageHostOptions = [
+  ...imageHostOptions,
+  { value: "hdb", label: "HDB" },
+  { value: "lostimg", label: "Lostimg" },
+];
 const torrentClientTypeOptions = [
   { value: "qbit", label: "qBit" },
   { value: "watch", label: "Watch" },
@@ -108,7 +112,7 @@ const torrentClientLinkingOptions = [
 const imageHostOptionLabels = new Map(
   trackerImageHostOptions.map((option) => [option.value, option.label]),
 );
-const defaultOwnedImageHosts: Record<string, string> = { hdb: "HDB" };
+const defaultOwnedImageHosts: Record<string, string> = { hdb: "HDB", lostimg: "LST" };
 const normalizeImageHostValue = (value: string) => value.trim().toLowerCase();
 const imageHostOptionFor = (host: string) => {
   const value = normalizeImageHostValue(host);
@@ -520,6 +524,9 @@ const sensitiveKeyHints = [
 ];
 
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
+  ImageHosting: {
+    LostimgAPI: stringField("LostimgAPI", { label: "API key", sensitive: true }),
+  },
   MainSettings: {
     TrackerPassChecks: { key: "TrackerPassChecks", advanced: true },
     InputHistoryLimit: { key: "InputHistoryLimit", label: "Input history limit", type: "number" },
@@ -963,12 +970,21 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const hosts = (policyHosts ?? fallbackHosts).filter((host) => {
         const normalizedHost = normalizeImageHostValue(host);
         const owner = ownerByHost[normalizedHost];
+        if (normalizedHost === "lostimg") {
+          const imageCfg =
+            configData?.ImageHosting &&
+            typeof configData.ImageHosting === "object" &&
+            !Array.isArray(configData.ImageHosting)
+              ? (configData.ImageHosting as ConfigMap)
+              : null;
+          return trackerKey === "LST" && Boolean(imageCfg?.LostimgEnabled);
+        }
         return !owner || owner.trim().toUpperCase() === trackerKey;
       });
 
       return buildImageHostOptions(hosts);
     },
-    [buildImageHostOptions, imageHostPolicyMetadata],
+    [buildImageHostOptions, configData, imageHostPolicyMetadata],
   );
 
   const updateConfigValue = (path: string[], value: ConfigValue) => {
@@ -2103,7 +2119,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     const imageCfg = configData.ImageHosting as ConfigMap;
     const hostFields = ["Host1", "Host2", "Host3", "Host4", "Host5", "Host6"];
     const requiredKeys = new Set<string>();
-
     hostFields.forEach((field) => {
       const selected = String(imageCfg[field] ?? "").trim();
       if (!selected) return;
@@ -2150,6 +2165,28 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               )}
             </div>
           )}
+        </div>
+
+        <div className="settings-subgroup">
+          <div className="settings-subgroup__title">Tracker Image Hosts</div>
+          <div className="settings-grid">
+            <div className="settings-switch-row">
+              <span>LST Lostimg</span>
+              <Switch
+                aria-label="LST Lostimg"
+                checked={Boolean(imageCfg.LostimgEnabled)}
+                onChange={(event) =>
+                  updateConfigValue(["ImageHosting", "LostimgEnabled"], event.target.checked)
+                }
+              />
+            </div>
+            {renderField(
+              "LostimgAPI",
+              (imageCfg.LostimgAPI as ConfigValue) ?? "",
+              ["ImageHosting", "LostimgAPI"],
+              sectionFieldMeta.ImageHosting.LostimgAPI,
+            )}
+          </div>
         </div>
       </div>
     );

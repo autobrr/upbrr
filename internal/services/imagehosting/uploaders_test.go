@@ -310,6 +310,92 @@ func TestTHRUploaderRequiresImageURL(t *testing.T) {
 	}
 }
 
+func TestLostimgUploaderPostsRepeatedFileFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	firstPath := filepath.Join(tmpDir, "shot-01.png")
+	secondPath := filepath.Join(tmpDir, "shot-02.png")
+	for _, path := range []string{firstPath, secondPath} {
+		if err := os.WriteFile(path, []byte("testdata"), 0o644); err != nil {
+			t.Fatalf("write temp file: %v", err)
+		}
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://lostimg.cc/api/v1/images" {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			if got := req.Header.Get("Authorization"); got != "Bearer secret" {
+				t.Fatalf("expected bearer auth, got %q", got)
+			}
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			fileFields := []string{}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read multipart part: %v", err)
+				}
+				_, _ = io.Copy(io.Discard, part)
+				if part.FileName() != "" {
+					fileFields = append(fileFields, part.FormName())
+				}
+			}
+			if len(fileFields) != 2 || fileFields[0] != "file[]" || fileFields[1] != "file[]" {
+				t.Fatalf("expected repeated file[] fields, got %v", fileFields)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"urls":["https://lostimg.cc/a.png","https://lostimg.cc/b.png"]}`)),
+			}, nil
+		}),
+	}
+
+	results, err := (&lostimgUploader{apiKey: "secret", client: client}).UploadBatch(context.Background(), []string{firstPath, secondPath})
+	if err != nil {
+		t.Fatalf("UploadBatch returned error: %v", err)
+	}
+	if len(results) != 2 || results[0].RawURL != "https://lostimg.cc/a.png" || results[1].RawURL != "https://lostimg.cc/b.png" {
+		t.Fatalf("unexpected lostimg results: %#v", results)
+	}
+}
+
+func TestLostimgUploaderAcceptsSingleURLResponse(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"url":"https://lostimg.cc/shot.png"}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&lostimgUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.RawURL != "https://lostimg.cc/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+}
+
 func TestReadAndCloseResponseBodyClosesBody(t *testing.T) {
 	body := &trackingReadCloser{reader: strings.NewReader("partial response")}
 	resp := &http.Response{

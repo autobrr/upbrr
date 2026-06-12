@@ -37,6 +37,13 @@ func policyForTracker(tracker string, trackerCfg config.TrackerConfig) imageHost
 	return policyFromShared(imagehostpolicy.ForTracker(tracker, trackerCfg.ImgRehost, trackerCfg.ImgAPI))
 }
 
+func policyForTrackerWithConfig(tracker string, appCfg config.Config, trackerCfg config.TrackerConfig) imageHostPolicy {
+	if lostimgEnabledForTracker(appCfg, tracker) {
+		return newImageHostPolicy(true, "lostimg")
+	}
+	return policyForTracker(tracker, trackerCfg)
+}
+
 func applyImageHostOverrides(tracker string, policy imageHostPolicy, overrides api.ImageHostOverrides) (imageHostPolicy, error) {
 	if overrides.PreferredHost == nil {
 		return policy, nil
@@ -83,6 +90,18 @@ func resolveImageHostPolicy(tracker string, trackerCfg config.TrackerConfig, ove
 	policy.preferred = prependHost(host, policy.preferred)
 	policy.fallbackOK = true
 	return policy, nil
+}
+
+func resolveImageHostPolicyForMetadata(tracker string, appCfg config.Config, trackerCfg config.TrackerConfig, _ api.PreparedMetadata, overrides api.ImageHostOverrides) (imageHostPolicy, error) {
+	host := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
+	if host == "lostimg" && !lostimgEnabledForTracker(appCfg, tracker) {
+		trackerCfg.ImageHost = ""
+	}
+	if strings.TrimSpace(trackerCfg.ImageHost) != "" || overrides.PreferredHost != nil {
+		return resolveImageHostPolicy(tracker, trackerCfg, overrides)
+	}
+	policy := policyForTrackerWithConfig(tracker, appCfg, trackerCfg)
+	return applyImageHostOverrides(tracker, policy, overrides)
 }
 
 func PreferredImageUploadHost(tracker string, trackerCfg config.TrackerConfig, overrides api.ImageHostOverrides) (string, error) {
@@ -167,7 +186,11 @@ func ConfiguredImageUploadTargets(appCfg config.Config, trackerNames []string) (
 }
 
 func NeededImageUploadTargets(appCfg config.Config, trackerNames []string, selectedHost string) ([]ImageUploadTarget, error) {
-	return neededImageUploadTargets(appCfg, trackerNames, selectedHost, nil)
+	return neededImageUploadTargets(appCfg, trackerNames, selectedHost, nil, nil)
+}
+
+func NeededImageUploadTargetsForMetadata(appCfg config.Config, trackerNames []string, selectedHost string, meta api.PreparedMetadata) ([]ImageUploadTarget, error) {
+	return neededImageUploadTargets(appCfg, trackerNames, selectedHost, nil, &meta)
 }
 
 func NeededImageUploadTargetsExcluding(appCfg config.Config, trackerNames []string, selectedHost string, excludedHosts []string) ([]ImageUploadTarget, error) {
@@ -178,10 +201,21 @@ func NeededImageUploadTargetsExcluding(appCfg config.Config, trackerNames []stri
 			excluded[normalized] = struct{}{}
 		}
 	}
-	return neededImageUploadTargets(appCfg, trackerNames, selectedHost, excluded)
+	return neededImageUploadTargets(appCfg, trackerNames, selectedHost, excluded, nil)
 }
 
-func neededImageUploadTargets(appCfg config.Config, trackerNames []string, selectedHost string, excludedHosts map[string]struct{}) ([]ImageUploadTarget, error) {
+func NeededImageUploadTargetsForMetadataExcluding(appCfg config.Config, trackerNames []string, selectedHost string, excludedHosts []string, meta api.PreparedMetadata) ([]ImageUploadTarget, error) {
+	excluded := make(map[string]struct{}, len(excludedHosts))
+	for _, host := range excludedHosts {
+		normalized := strings.ToLower(strings.TrimSpace(host))
+		if normalized != "" {
+			excluded[normalized] = struct{}{}
+		}
+	}
+	return neededImageUploadTargets(appCfg, trackerNames, selectedHost, excluded, &meta)
+}
+
+func neededImageUploadTargets(appCfg config.Config, trackerNames []string, selectedHost string, excludedHosts map[string]struct{}, meta *api.PreparedMetadata) ([]ImageUploadTarget, error) {
 	selectedHost = strings.ToLower(strings.TrimSpace(selectedHost))
 	userHosts := configuredImageUploadHosts(appCfg)
 	targets := make([]ImageUploadTarget, 0, len(trackerNames)+1)
@@ -218,7 +252,7 @@ func neededImageUploadTargets(appCfg config.Config, trackerNames []string, selec
 		}
 		trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
 		if strings.TrimSpace(trackerCfg.ImageHost) != "" {
-			policy, err := resolveImageHostPolicy(name, trackerCfg, api.ImageHostOverrides{})
+			policy, err := resolveImageHostPolicyForTarget(name, appCfg, trackerCfg, meta)
 			if err != nil {
 				return nil, err
 			}
@@ -232,8 +266,9 @@ func neededImageUploadTargets(appCfg config.Config, trackerNames []string, selec
 			continue
 		}
 
-		policy := policyForTracker(name, trackerCfg)
-		flexibleTargets = append(flexibleTargets, imageUploadPolicyTarget{tracker: name, policy: policy, candidates: userHosts})
+		policy := policyForTrackerForTarget(name, appCfg, trackerCfg)
+		candidates := imageUploadCandidatesForTracker(appCfg, name, userHosts)
+		flexibleTargets = append(flexibleTargets, imageUploadPolicyTarget{tracker: name, policy: policy, candidates: candidates})
 	}
 
 	if selectedHost != "" && trackerForOwnedHost(selectedHost) == "" && hostInList(selectedHost, userHosts) {
@@ -379,9 +414,36 @@ func candidateImageUploadTargetHosts(tracker string, policy imageHostPolicy, can
 	return hosts
 }
 
+func resolveImageHostPolicyForTarget(tracker string, appCfg config.Config, trackerCfg config.TrackerConfig, meta *api.PreparedMetadata) (imageHostPolicy, error) {
+	if meta == nil {
+		return resolveImageHostPolicy(tracker, trackerCfg, api.ImageHostOverrides{})
+	}
+	return resolveImageHostPolicyForMetadata(tracker, appCfg, trackerCfg, *meta, api.ImageHostOverrides{})
+}
+
+func policyForTrackerForTarget(tracker string, appCfg config.Config, trackerCfg config.TrackerConfig) imageHostPolicy {
+	return policyForTrackerWithConfig(tracker, appCfg, trackerCfg)
+}
+
+func imageUploadCandidatesForTracker(appCfg config.Config, tracker string, userHosts []string) []string {
+	candidates := append([]string(nil), userHosts...)
+	if lostimgEnabledForTracker(appCfg, tracker) {
+		candidates = appendUniqueHost(candidates, "lostimg")
+	}
+	return candidates
+}
+
 func configuredImageUploadHosts(appCfg config.Config) []string {
 	cfg := appCfg.ImageHosting
 	return normalizeConfiguredImageUploadHosts(cfg.Host1, cfg.Host2, cfg.Host3, cfg.Host4, cfg.Host5, cfg.Host6)
+}
+
+func lostimgEnabledForTracker(appCfg config.Config, tracker string) bool {
+	if !strings.EqualFold(strings.TrimSpace(tracker), "LST") {
+		return false
+	}
+	cfg := appCfg.ImageHosting
+	return cfg.LostimgEnabled
 }
 
 func normalizeConfiguredImageUploadHosts(hosts ...string) []string {

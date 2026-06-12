@@ -169,6 +169,17 @@ function TrackerSettingsHarness() {
   );
 }
 
+function ImageHostingHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+
+  return createElement(
+    "div",
+    null,
+    state.renderImageHostingSection(),
+    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+  );
+}
+
 describe("renderTorrentClientsSection", () => {
   it("renders watch client fields and preserves qbit clients on update", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
@@ -421,5 +432,101 @@ describe("Tracker client selectors", () => {
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     };
     expect(payload.Trackers?.Trackers?.AITHER?.TorrentClient).toBe("watcher");
+  });
+
+  it("shows Lostimg as an LST image host only when configured in image hosting", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ImageHosting: {
+                LostimgEnabled: true,
+                LostimgAPI: "secret",
+              },
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  LST: {
+                    LinkDirName: "",
+                    APIKey: "",
+                    ImageHost: "",
+                    Anon: false,
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["LST"],
+          GetImageHostPolicyMetadata: async () => ({
+            TrackerUploadHosts: { LST: ["lostimg"] },
+            OwnedHosts: { lostimg: "LST" },
+          }),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("LST", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("LST", { selector: ".settings-card__summary-name" }));
+
+    const imageHostSelect = screen.getByLabelText("Image host") as HTMLSelectElement;
+    expect(Array.from(imageHostSelect.options).map((option) => option.value)).toContain("lostimg");
+  });
+});
+
+describe("Image hosting settings", () => {
+  it("renders Lostimg as tracker-specific and keeps it out of global host priority", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ImageHosting: {
+                Host1: "",
+                Host2: "",
+                Host3: "",
+                Host4: "",
+                Host5: "",
+                Host6: "",
+                LostimgEnabled: false,
+                LostimgAPI: "",
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => [],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(ImageHostingHarness));
+
+    await waitFor(() => expect(screen.getByLabelText("LST Lostimg")).toBeInTheDocument());
+
+    const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
+    expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("lostimg");
+
+    fireEvent.click(screen.getByLabelText("LST Lostimg"));
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "secret" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("LST Lostimg")).toBeChecked());
+
+    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      ImageHosting?: {
+        LostimgEnabled?: boolean;
+        LostimgAPI?: string;
+      };
+    };
+    expect(payload.ImageHosting?.LostimgEnabled).toBe(true);
+    expect(payload.ImageHosting?.LostimgAPI).toBe("secret");
   });
 });

@@ -251,3 +251,40 @@ func TestNeededImageUploadTargetsDoesNotShareTrackerConfiguredHostUnlessGlobally
 		t.Fatalf("expected imgbb only for STC, got %#v", targets[1])
 	}
 }
+
+func TestNeededImageUploadTargetsUsesConfiguredLostimgForLST(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1:          "imgbb",
+			LostimgEnabled: true,
+			LostimgAPI:     "secret",
+		},
+	}, []string{"LST"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one target, got %#v", targets)
+	}
+	if targets[0].Host != "lostimg" || targets[0].UsageScope != "tracker:LST" {
+		t.Fatalf("expected LST scoped lostimg target, got %#v", targets[0])
+	}
+}
+
+func TestNeededImageUploadTargetsSkipsLostimgWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+	}, []string{"LST"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbb" {
+		t.Fatalf("expected global imgbb fallback, got %#v", targets)
+	}
+}
