@@ -50,7 +50,7 @@ Notes:
 - **Fork and clone:** [Fork the upbrr repository](https://github.com/autobrr/upbrr/fork) and clone it to start working on your changes.
 - **Branching:** Create a descriptively named branch.
   - Example: `git checkout -b fix/bt-dupe-check` or `git checkout -b feat/playlist-selection`
-- **Coding:** Keep changes narrow and match the surrounding style. For Go, follow the rules in [`AGENTS.md`](./AGENTS.md) and let `golangci-lint` drive. For the frontend, let the Lefthook Prettier + ESLint hooks do the work.
+- **Coding:** Keep changes narrow and match the surrounding style. For Go, follow the rules in [`AGENTS.md`](./AGENTS.md) and let `golangci-lint` drive. For frontend work, also see [`gui/frontend/AGENTS.md`](./gui/frontend/AGENTS.md) and let the Lefthook Prettier + ESLint hooks do the work.
 - **Commit messages:** We enforce [Conventional Commits](https://www.conventionalcommits.org/) via a repo-local validator. See [Commit message format](#commit-message-format) below.
   - No need to force-push or rebase — we squash on merge.
 - **Pull requests:** Submit a PR with a clear description. Mark it _Draft_ if still in progress. Reference related issues.
@@ -234,4 +234,12 @@ upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go
 
 ## AI agent instructions
 
-This project uses [AGENTS.md](https://agents.md/) — an open standard for guiding AI coding agents. The root [`AGENTS.md`](./AGENTS.md) file contains build commands, code style rules, testing instructions, and project conventions. Most modern AI coding tools support `AGENTS.md` natively or via simple configuration.
+This project uses [AGENTS.md](https://agents.md/) — an open standard for guiding AI coding agents. The root [`AGENTS.md`](./AGENTS.md) file contains always-loaded repo rules and routes agents to scoped references:
+
+- [`gui/frontend/AGENTS.md`](./gui/frontend/AGENTS.md) for frontend, React, CSS, TypeScript, and browser checks.
+- [`docs/backend.md`](./docs/backend.md) for Go, path/log policy, trackers/config/domain rules, and backend validation.
+- [`docs/architecture.md`](./docs/architecture.md) for cross-entrypoint architecture, API/runtime flow, DB/config ownership, and embedded assets.
+- [`docs/linting.md`](./docs/linting.md) for lint/check policy, hook internals, and generated/scratch path risks.
+- [`docs/e2e.md`](./docs/e2e.md) for Playwright E2E harness rules and commands.
+
+Most modern AI coding tools support `AGENTS.md` natively or via simple configuration. `CLAUDE.md` files import the same guidance for Claude Code.

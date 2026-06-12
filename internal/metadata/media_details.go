@@ -548,8 +548,8 @@ func applyAudioLanguagePrefix(audio string, meta api.PreparedMetadata) string {
 			base = ""
 			break
 		}
-		if strings.HasPrefix(base, prefix+" ") {
-			base = strings.TrimSpace(strings.TrimPrefix(base, prefix+" "))
+		if after, ok := strings.CutPrefix(base, prefix+" "); ok {
+			base = strings.TrimSpace(after)
 			break
 		}
 	}
@@ -932,8 +932,33 @@ func normalizeAudioFormat(track map[string]any) string {
 	case strings.Contains(lower, "mp3"):
 		return "MP3"
 	}
-	if value == "" {
-		value = trackString(track, "CodecID", "CodecID_Compatible")
+	if value == "" || strings.EqualFold(value, "audio") {
+		codecID := trackString(track, "CodecID", "CodecID_Compatible")
+		lower = strings.ToLower(codecID)
+		switch {
+		case strings.Contains(lower, "eac3"), strings.Contains(lower, "e-ac-3"):
+			return "DD+"
+		case strings.Contains(lower, "ac3"), strings.Contains(lower, "ac-3"):
+			return "DD"
+		case strings.Contains(lower, "truehd"):
+			return "TrueHD"
+		case strings.Contains(lower, "dts"):
+			return "DTS"
+		case strings.Contains(lower, "aac"):
+			return "AAC"
+		case strings.Contains(lower, "flac"):
+			return "FLAC"
+		case strings.Contains(lower, "opus"):
+			return "Opus"
+		case strings.Contains(lower, "vorbis"):
+			return "VORBIS"
+		case strings.Contains(lower, "mp3"), strings.Contains(lower, "mpeg/l3"):
+			return "MP3"
+		case strings.Contains(lower, "mp2"), strings.Contains(lower, "mpeg/l2"):
+			return "MP2"
+		case strings.Contains(lower, "lpcm"), strings.Contains(lower, "pcm"):
+			return "LPCM"
+		}
 	}
 	return value
 }
@@ -967,7 +992,7 @@ func determineChannelCount(channelsValue, channelLayout, additional, formatValue
 }
 
 func firstNumericToken(value string) int {
-	for _, field := range strings.Fields(value) {
+	for field := range strings.FieldsSeq(value) {
 		if num := parseLeadingInt(field); num > 0 {
 			return num
 		}
@@ -1036,8 +1061,8 @@ func applyDTSAudioAdditional(codec, additional string) string {
 
 func parseAtmosLayout(layout string) (bed int, lfe int, height int) {
 	upper := strings.ToUpper(layout)
-	parts := strings.Fields(upper)
-	for _, part := range parts {
+	parts := strings.FieldsSeq(upper)
+	for part := range parts {
 		if strings.Contains(part, "LFE") {
 			lfe++
 			continue
@@ -1307,8 +1332,8 @@ func regionFromBDInfo(info *discparse.BDInfo, existing string) string {
 }
 
 func detectRegionCode(label string) string {
-	fields := strings.Fields(label)
-	for _, field := range fields {
+	fields := strings.FieldsSeq(label)
+	for field := range fields {
 		code := strings.TrimSpace(field)
 		if len(code) == 3 {
 			return code

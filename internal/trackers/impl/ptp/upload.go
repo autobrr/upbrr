@@ -15,8 +15,10 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/netip"
 	"net/url"
 	"os"
 	"path" //nolint:depguard // Reads poster URL path extension, not local filesystem extension.
@@ -26,9 +28,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/anacrolix/torrent/bencode"
-	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
@@ -53,8 +52,22 @@ const (
 )
 
 var (
-	ptpAntiCsrfPattern = regexp.MustCompile(`data-AntiCsrfToken="([^"]+)"`)
-	ptpSuccessPattern  = regexp.MustCompile(`torrents\.php\?id=(\d+)&torrentid=(\d+)`)
+	ptpAntiCsrfPattern     = regexp.MustCompile(`data-AntiCsrfToken="([^"]+)"`)
+	ptpSuccessPattern      = regexp.MustCompile(`torrents\.php\?id=(\d+)&torrentid=(\d+)`)
+	newPosterHTTPClient    = newPublicPosterHTTPClient
+	reservedPosterPrefixes = []netip.Prefix{
+		netip.MustParsePrefix("0.0.0.0/8"),
+		netip.MustParsePrefix("100.64.0.0/10"),
+		netip.MustParsePrefix("192.0.0.0/24"),
+		netip.MustParsePrefix("192.0.2.0/24"),
+		netip.MustParsePrefix("198.18.0.0/15"),
+		netip.MustParsePrefix("198.51.100.0/24"),
+		netip.MustParsePrefix("203.0.113.0/24"),
+		netip.MustParsePrefix("240.0.0.0/4"),
+		netip.MustParsePrefix("2001:db8::/32"),
+		netip.MustParsePrefix("fc00::/7"),
+		netip.MustParsePrefix("fe80::/10"),
+	}
 )
 
 type uploadState struct {
@@ -104,8 +117,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if err != nil {
 			return api.UploadSummary{}, err
 		}
-		if err := writeTrackerTorrent(state.torrentPath, trackerTorrentPath, state.announceURL, torrentURL, "PTP"); err != nil {
-			return api.UploadSummary{}, err
+		if err := trackers.WritePersonalizedTorrent(state.torrentPath, trackerTorrentPath, state.announceURL, torrentURL, "PTP"); err != nil {
+			return api.UploadSummary{}, fmt.Errorf("trackers: PTP write torrent artifact: %w", err)
 		}
 		return api.UploadSummary{
 			Uploaded: 1,
@@ -172,9 +185,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		baseURL = ptpBaseURL
 	}
 	announceURL := normalizedAnnounceURL(req.TrackerConfig.AnnounceURL)
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := resolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: PTP resolve upload torrent: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
@@ -217,8 +230,25 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}, nil
 }
 
+func resolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
+	preparedPath, err := trackers.ResolveTrackerTorrentArtifactPath(meta, dbPath, "PTP")
+	if err == nil && strings.TrimSpace(meta.TorrentPath) == preparedPath {
+		if info, statErr := os.Stat(preparedPath); statErr == nil && !info.IsDir() {
+			return preparedPath, nil
+		}
+	}
+	path, err := trackers.ResolveUploadTorrentPath(meta, dbPath)
+	if err != nil {
+		return "", fmt.Errorf("trackers: resolve upload torrent path: %w", err)
+	}
+	return path, nil
+}
+
 func buildDescription(meta api.PreparedMetadata, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) string {
 	baseDescription := strings.TrimSpace(assets.Description)
+	if assets.Final {
+		return baseDescription
+	}
 	if baseDescription != "" {
 		report := bbcode.CleanPTPDescription(baseDescription, meta.DiscType)
 		baseDescription = strings.TrimSpace(report.Description)
@@ -287,15 +317,24 @@ func buildScreenshotSection(meta api.PreparedMetadata, screenshots []api.Screens
 		if host == "" {
 			host = imagehost.ExtractHost(rawURL)
 		}
-		if host != "ptpimg" && host != "pixhost" {
+		if !isPTPImageHost(host) {
 			continue
 		}
 		allowed = append(allowed, "[img]"+rawURL+"[/img]")
-		if len(allowed) >= minimum {
-			break
-		}
+	}
+	if len(allowed) < minimum {
+		return ""
 	}
 	return strings.Join(allowed, "\n")
+}
+
+func isPTPImageHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "pixhost", "imgbb", "onlyimage", "ptscreens":
+		return true
+	default:
+		return false
+	}
 }
 
 func requiresMinimumTwoScreens(meta api.PreparedMetadata) bool {
@@ -419,6 +458,9 @@ func rehostPosterToSelectedHost(ctx context.Context, req trackers.UploadRequest,
 }
 
 func downloadPoster(ctx context.Context, meta api.PreparedMetadata, dbPath string, imageURL string) (string, error) {
+	if err := validatePosterURL(imageURL); err != nil {
+		return "", err
+	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
@@ -434,7 +476,7 @@ func downloadPoster(ctx context.Context, meta api.PreparedMetadata, dbPath strin
 	}
 	httpReq.Header.Set("User-Agent", ptpUserAgent)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := newPosterHTTPClient()
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return "", fmt.Errorf("poster download: %w", err)
@@ -481,6 +523,79 @@ func posterExtension(imageURL string, contentType string) string {
 	default:
 		return ".jpg"
 	}
+}
+
+func validatePosterURL(rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("poster URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("poster URL must use http or https")
+	}
+	if strings.TrimSpace(parsed.Hostname()) == "" {
+		return errors.New("poster URL host is required")
+	}
+	return nil
+}
+
+func newPublicPosterHTTPClient() *http.Client {
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network string, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, fmt.Errorf("poster dial address: %w", err)
+			}
+			target, err := resolvePublicPosterAddress(ctx, host, port)
+			if err != nil {
+				return nil, err
+			}
+			return dialer.DialContext(ctx, network, target)
+		},
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: transport}
+}
+
+func resolvePublicPosterAddress(ctx context.Context, host string, port string) (string, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok || !isPublicPosterIP(addr.Unmap()) {
+			return "", fmt.Errorf("poster host %q resolves to non-public IP", host)
+		}
+		return net.JoinHostPort(addr.String(), port), nil
+	}
+	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return "", fmt.Errorf("poster DNS lookup %q: %w", host, err)
+	}
+	for _, candidate := range resolved {
+		addr, ok := netip.AddrFromSlice(candidate.IP)
+		if !ok {
+			continue
+		}
+		addr = addr.Unmap()
+		if isPublicPosterIP(addr) {
+			return net.JoinHostPort(addr.String(), port), nil
+		}
+	}
+	return "", fmt.Errorf("poster host %q has no public IP addresses", host)
+}
+
+func isPublicPosterIP(ip netip.Addr) bool {
+	if !ip.IsValid() || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	return !ipInPrefixes(ip, reservedPosterPrefixes)
+}
+
+func ipInPrefixes(ip netip.Addr, prefixes []netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func logPosterRehostFailure(logger api.Logger, host string, err error) {
@@ -715,7 +830,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 	slices.Sort(keys)
 	for _, key := range keys {
 		if key == "artist[]" {
-			for _, value := range strings.Split(fields[key], "\n") {
+			for value := range strings.SplitSeq(fields[key], "\n") {
 				if strings.TrimSpace(value) == "" {
 					continue
 				}
@@ -727,7 +842,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 			continue
 		}
 		if key == "subtitles[]" || key == "trumpable[]" {
-			for _, value := range strings.Split(fields[key], ",") {
+			for value := range strings.SplitSeq(fields[key], ",") {
 				trimmed := strings.TrimSpace(value)
 				if trimmed == "" {
 					continue
@@ -766,30 +881,6 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
-	for _, candidate := range []string{strings.TrimSpace(meta.TorrentPath), strings.TrimSpace(meta.ClientTorrentPath)} {
-		if candidate == "" || !strings.EqualFold(filepath.Ext(candidate), ".torrent") {
-			continue
-		}
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-	if strings.TrimSpace(dbPath) != "" && strings.TrimSpace(meta.SourcePath) != "" {
-		tmpRoot, err := db.Subdir(dbPath, "tmp")
-		if err == nil {
-			tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
-			if err == nil {
-				guessed := filepath.Join(tmpDir, base+".torrent")
-				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
-					return guessed, nil
-				}
-			}
-		}
-	}
-	return "", errors.New("trackers: PTP torrent file not found")
-}
-
 func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return "", errors.New("trackers: PTP tracker torrent path requires db path and source path")
@@ -818,40 +909,6 @@ func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error
 		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, "[PTP]upload_failure.html"), nil
-}
-
-func writeTrackerTorrent(sourcePath string, outputPath string, announceURL string, comment string, source string) error {
-	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
-	if err != nil {
-		return fmt.Errorf("trackers: PTP load torrent: %w", err)
-	}
-	info, err := torrentMeta.UnmarshalInfo()
-	if err != nil {
-		return fmt.Errorf("trackers: PTP unmarshal torrent info: %w", err)
-	}
-	info.Source = source
-	infoBytes, err := bencode.Marshal(info)
-	if err != nil {
-		return fmt.Errorf("trackers: PTP marshal torrent info: %w", err)
-	}
-	torrentMeta.InfoBytes = infoBytes
-	if strings.TrimSpace(announceURL) != "" {
-		torrentMeta.Announce = announceURL
-		torrentMeta.AnnounceList = metainfo.AnnounceList{{announceURL}}
-	}
-	torrentMeta.Comment = strings.TrimSpace(comment)
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return fmt.Errorf("trackers: PTP create torrent output dir: %w", err)
-	}
-	file, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("trackers: PTP create torrent output: %w", err)
-	}
-	defer file.Close()
-	if err := torrentMeta.Write(file); err != nil {
-		return fmt.Errorf("trackers: PTP write torrent: %w", err)
-	}
-	return nil
 }
 
 func loadCookies(ctx context.Context, dbPath string) (map[string]string, error) {
@@ -1200,7 +1257,7 @@ func resolveDirectors(meta api.PreparedMetadata) []string {
 func resolveTags(meta api.PreparedMetadata) string {
 	values := make([]string, 0, 8)
 	if meta.ExternalMetadata.TMDB != nil {
-		for _, item := range strings.Split(meta.ExternalMetadata.TMDB.Genres, ",") {
+		for item := range strings.SplitSeq(meta.ExternalMetadata.TMDB.Genres, ",") {
 			trimmed := strings.ToLower(strings.TrimSpace(item))
 			if trimmed != "" {
 				values = append(values, trimmed)
@@ -1208,7 +1265,7 @@ func resolveTags(meta api.PreparedMetadata) string {
 		}
 	}
 	if len(values) == 0 && strings.TrimSpace(meta.Release.Genre) != "" {
-		for _, item := range strings.Split(meta.Release.Genre, ",") {
+		for item := range strings.SplitSeq(meta.Release.Genre, ",") {
 			trimmed := strings.ToLower(strings.TrimSpace(item))
 			if trimmed != "" {
 				values = append(values, trimmed)

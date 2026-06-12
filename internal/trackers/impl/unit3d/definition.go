@@ -82,9 +82,12 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description, err := buildUnit3DDescription(ctx, d.name, req.Meta, req.AppConfig, req.TrackerConfig, req.Logger, assets.Description, assets.MenuImages, assets.Screenshots)
-	if err != nil {
-		return trackers.DescriptionResult{}, err
+	description := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		description, err = buildUnit3DDescription(ctx, d.name, req.Meta, req.AppConfig, req.TrackerConfig, req.Logger, assets.Description, assets.MenuImages, assets.Screenshots)
+		if err != nil {
+			return trackers.DescriptionResult{}, err
+		}
 	}
 	return trackers.DescriptionResult{
 		Group:       "unit3d",

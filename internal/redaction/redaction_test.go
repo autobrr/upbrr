@@ -58,6 +58,20 @@ func TestRedactValueProxyPath(t *testing.T) {
 	}
 }
 
+func TestRedactValueBareProxyPath(t *testing.T) {
+	t.Parallel()
+
+	input := "clients: connecting to qbit http://127.0.0.1:7476/proxy/secret"
+	output := RedactValue(input, nil)
+
+	if contains(output, "/proxy/secret") {
+		t.Fatalf("expected bare proxy secret redacted, got %q", output)
+	}
+	if !contains(output, "/proxy/[REDACTED]") {
+		t.Fatalf("expected proxy path shape preserved, got %q", output)
+	}
+}
+
 func TestRedactPrivateInfoJSON(t *testing.T) {
 	t.Parallel()
 

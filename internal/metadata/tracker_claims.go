@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -475,10 +476,8 @@ func addMetadataTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, 
 	if blocked == nil {
 		blocked = make(map[string][]api.TrackerBlockReason)
 	}
-	for _, existing := range blocked[name] {
-		if existing == reason {
-			return blocked
-		}
+	if slices.Contains(blocked[name], reason) {
+		return blocked
 	}
 	blocked[name] = append(blocked[name], reason)
 	return blocked

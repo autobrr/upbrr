@@ -49,7 +49,6 @@ func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uplo
 		"imgbb":        &imgbbUploader{apiKey: cfg.ImageHosting.ImgBBAPI, client: client},
 		"imgbox":       &imgboxUploader{client: client},
 		"hdb":          &hdbUploader{username: cfg.Trackers.Trackers["HDB"].Username, passkey: cfg.Trackers.Trackers["HDB"].Passkey, client: client},
-		"ptpimg":       &ptpImgUploader{apiKey: cfg.ImageHosting.PTPImgAPI, client: client},
 		"pixhost":      &pixhostUploader{client: client},
 		"lensdump":     &lensdumpUploader{apiKey: cfg.ImageHosting.LensdumpAPI, client: client},
 		"ptscreens":    &ptScreensUploader{apiKey: cfg.ImageHosting.PTScreensAPI, client: client},
@@ -223,6 +222,8 @@ type hdbUploader struct {
 
 var hdbUploadResultPattern = regexp.MustCompile(`\[url=([^\]]+)\]\[img\]([^\[]+)\[/img\]\[/url\]`)
 
+const hdbMaxBatchUploadImages = 9
+
 func (u *hdbUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
 	results, err := u.uploadBatchWithGalleryName(ctx, []string{imagePath}, filepath.Base(imagePath))
 	if err != nil {
@@ -247,7 +248,22 @@ func (u *hdbUploader) UploadBatchWithName(ctx context.Context, imagePaths []stri
 	if galleryName == "" {
 		galleryName = buildHDBGalleryName(imagePaths)
 	}
-	return u.uploadBatchWithGalleryName(ctx, imagePaths, galleryName)
+	if len(imagePaths) <= hdbMaxBatchUploadImages {
+		return u.uploadBatchWithGalleryName(ctx, imagePaths, galleryName)
+	}
+	results := make([]uploadResult, 0, len(imagePaths))
+	for start := 0; start < len(imagePaths); start += hdbMaxBatchUploadImages {
+		end := start + hdbMaxBatchUploadImages
+		if end > len(imagePaths) {
+			end = len(imagePaths)
+		}
+		chunk, err := u.uploadBatchWithGalleryName(ctx, imagePaths[start:end], galleryName)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, chunk...)
+	}
+	return results, nil
 }
 
 func (u *hdbUploader) uploadBatchWithGalleryName(ctx context.Context, imagePaths []string, galleryName string) ([]uploadResult, error) {
@@ -757,47 +773,6 @@ func (u *thrUploader) Upload(ctx context.Context, imagePath string) (uploadResul
 		return uploadResult{}, fmt.Errorf("thr upload failed: %s", message)
 	}
 	return uploadResult{ImgURL: imageURL, RawURL: imageURL, WebURL: imageURL}, nil
-}
-
-type ptpImgUploader struct {
-	apiKey string
-	client *http.Client
-}
-
-func (u *ptpImgUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
-	if strings.TrimSpace(u.apiKey) == "" {
-		return uploadResult{}, errors.New("image hosting: ptpimg api key missing")
-	}
-	fields := map[string]string{
-		"format":  "json",
-		"api_key": strings.TrimSpace(u.apiKey),
-	}
-	body, status, err := postMultipart(ctx, u.client, "https://ptpimg.me/upload.php", fields, "file-upload[0]", imagePath, map[string]string{"referer": "https://ptpimg.me/index.php"})
-	if err != nil {
-		return uploadResult{}, err
-	}
-	if status != http.StatusOK {
-		return uploadResult{}, fmt.Errorf("ptpimg upload failed with status %d", status)
-	}
-
-	var response []struct {
-		Code interface{} `json:"code"`
-		Ext  string      `json:"ext"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return uploadResult{}, fmt.Errorf("ptpimg invalid response: %w", err)
-	}
-	if len(response) == 0 {
-		return uploadResult{}, errors.New("ptpimg upload failed")
-	}
-	code := strings.TrimSpace(fmt.Sprint(response[0].Code))
-	ext := strings.TrimSpace(response[0].Ext)
-	if code == "" || ext == "" {
-		return uploadResult{}, errors.New("ptpimg upload failed")
-	}
-	urlValue := fmt.Sprintf("https://ptpimg.me/%s.%s", code, ext)
-
-	return uploadResult{ImgURL: urlValue, RawURL: urlValue, WebURL: urlValue}, nil
 }
 
 type pixhostUploader struct {

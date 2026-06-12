@@ -38,10 +38,7 @@ func CleanHDBDescription(description string) Report {
 	lines := hdbComparisonLinePattern.FindAllStringIndex(desc, -1)
 	for _, match := range lines {
 		start := match[0]
-		end := start + 500
-		if end > len(desc) {
-			end = len(desc)
-		}
+		end := min(start+500, len(desc))
 		segment := desc[start:end]
 		parts := strings.SplitN(segment, "\n", 4)
 		if len(parts) > 3 {

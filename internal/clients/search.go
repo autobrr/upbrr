@@ -72,7 +72,6 @@ var trackerURLPatterns = map[string][]string{
 	"dp":     {"https://darkpeers.org"},
 	"ff":     {"tracker.funfile.org"},
 	"fl":     {"reactor.filelist", "reactor.thefl.org"},
-	"fnp":    {"https://fearnopeer.com"},
 	"gpw":    {"https://tracker.greatposterwall.com"},
 	"hdb":    {"https://tracker.hdbits.org"},
 	"hds":    {"hd-space.pw"},
@@ -265,9 +264,52 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMet
 	result.MatchedTrackers = dedupeStrings(result.MatchedTrackers)
 	if meta.Options.Debug {
 		s.logger.Debugf("clients: pathed search found %d matches", len(allMatches))
+		logPathedSearchMatches(s.logger, allMatches)
 	}
 
 	return result, nil
+}
+
+func logPathedSearchMatches(logger api.Logger, matches []api.TorrentMatch) {
+	if logger == nil {
+		return
+	}
+	for idx, match := range matches {
+		logger.Debugf(
+			"clients: pathed search match #%d name=%q hash=%s size=%d seeders=%d category=%q working_tracker=%t tracker_ids=%q save_path=%q content_path=%q",
+			idx+1,
+			match.Name,
+			normalizeQbitHash(match.Hash),
+			match.Size,
+			match.Seeders,
+			match.Category,
+			match.HasWorkingTracker,
+			formatTrackerMatches(match.TrackerURLs),
+			match.SavePath,
+			match.ContentPath,
+		)
+	}
+}
+
+func formatTrackerMatches(matches []api.TrackerMatch) string {
+	if len(matches) == 0 {
+		return ""
+	}
+	formatted := make([]string, 0, len(matches))
+	for _, match := range matches {
+		id := strings.ToUpper(strings.TrimSpace(match.ID))
+		if id == "" {
+			continue
+		}
+		trackerID := strings.TrimSpace(match.TrackerID)
+		if trackerID != "" {
+			formatted = append(formatted, id+":"+trackerID)
+			continue
+		}
+		formatted = append(formatted, id)
+	}
+	sort.Strings(formatted)
+	return strings.Join(formatted, ",")
 }
 
 func resolvePieceConstraints(cfg config.Config) pieceConstraints {
@@ -1445,13 +1487,10 @@ func commonPath(paths []string) string {
 	parts := splitPath(paths[0])
 	for _, value := range paths[1:] {
 		candidate := splitPath(value)
-		limit := len(parts)
-		if len(candidate) < limit {
-			limit = len(candidate)
-		}
+		limit := min(len(candidate), len(parts))
 		idx := 0
 		for idx < limit {
-			if !strings.EqualFold(parts[idx], candidate[idx]) {
+			if parts[idx] != candidate[idx] {
 				break
 			}
 			idx++

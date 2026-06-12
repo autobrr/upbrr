@@ -54,7 +54,7 @@ type ScreenshotLinkedImage struct {
 	Tracker string
 	URL     string
 	Path    string
-	Host    string // Normalized host name (e.g., "imgbb", "ptpimg") or domain name
+	Host    string // Normalized host name (e.g., "imgbb", "pixhost") or domain name
 }
 
 type ScreenshotImage struct {

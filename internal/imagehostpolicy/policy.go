@@ -22,17 +22,17 @@ type Metadata struct {
 }
 
 var trackerAllowedHosts = map[string][]string{
-	"A4K": {"ptpimg", "onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg"},
-	"BHD": {"ptpimg", "imgbox", "imgbb", "pixhost", "bhd", "bam"},
+	"A4K": {"onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg"},
+	"BHD": {"imgbox", "imgbb", "pixhost", "bhd", "bam"},
 	"DC":  {"imgbox", "imgbb", "bhd", "imgur", "postimg", "sharex"},
-	"GPW": {"kshare", "pixhost", "ptpimg", "pterclub", "ilikeshots", "imgbox"},
+	"GPW": {"kshare", "pixhost", "pterclub", "ilikeshots", "imgbox"},
 	"HDB": {"hdb"},
-	"MTV": {"ptpimg", "imgbox", "imgbb"},
-	"OE":  {"ptpimg", "imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
-	"PTP": {"ptpimg", "pixhost"},
+	"MTV": {"imgbox", "imgbb"},
+	"OE":  {"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
+	"PTP": {"pixhost", "imgbb", "onlyimage", "ptscreens"},
 	"STC": {"imgbox", "imgbb"},
 	"THR": {"thr"},
-	"TVC": {"imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage"},
+	"TVC": {"imgbb", "imgbox", "pixhost", "bam", "onlyimage"},
 }
 
 var uploadHosts = map[string]struct{}{
@@ -44,7 +44,6 @@ var uploadHosts = map[string]struct{}{
 	"onlyimage":    {},
 	"passtheimage": {},
 	"pixhost":      {},
-	"ptpimg":       {},
 	"ptscreens":    {},
 	"seedpool_cdn": {},
 	"sharex":       {},

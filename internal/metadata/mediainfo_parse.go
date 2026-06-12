@@ -237,7 +237,7 @@ func closestDVDValue(values []int, input int) int {
 		return 0
 	}
 	sorted := append([]int{}, values...)
-	for i := 0; i < len(sorted); i++ {
+	for i := range sorted {
 		for j := i + 1; j < len(sorted); j++ {
 			if sorted[j] < sorted[i] {
 				sorted[i], sorted[j] = sorted[j], sorted[i]
