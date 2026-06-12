@@ -67,6 +67,14 @@ Read all warnings printed during import. Unknown legacy keys, unsupported tracke
 
 You can also import config files from the Settings page in the GUI or web UI.
 
+### Web UI Browse Access
+
+Config import does not set web browse roots. Browse access is stored separately in `web-auth.json`, beside the upbrr database, because it controls which host folders the browser-based web UI can read.
+
+On a fresh web UI setup, after creating the admin account, upbrr asks you to choose one or more browse roots such as `D:\Media, E:\Downloads`, or to explicitly allow unrestricted host browsing. The web UI cannot browse release folders or import menu images until this is set.
+
+If you import an existing Upload Assistant config, the imported tracker, client, and app settings do not change browse access. If `web-auth.json` already exists, its current browse roots or unrestricted-browse setting stay in effect. If no `web-auth.json` exists yet, you will still be asked to set browse access the first time you set up the web UI.
+
 ### Option 2: Convert To YAML First
 
 Use the included converter when you want a human-readable file to review before importing:
