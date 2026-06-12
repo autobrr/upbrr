@@ -99,4 +99,21 @@ describe("DupeCheckPage", () => {
     expect(screen.getAllByText("AIT").length).toBeGreaterThan(0);
     expect(screen.getAllByText("BLU").length).toBeGreaterThan(0);
   });
+
+  it("renders each tracker favicon on combined in-client rows", () => {
+    const { container } = renderPage(
+      dupeSummaryFor(["AITHER, BLUTOPIA"], ["pathed torrent match found; skipping dupe search"]),
+      {
+        faviconOnly: true,
+        trackerIconSrcByName: {
+          aither: "data:image/png;base64,iVBORw0KGgo=",
+          blutopia: "data:image/png;base64,iVBORw0KGgo=",
+        },
+      },
+    );
+
+    expect(screen.getAllByText("In client")).toHaveLength(1);
+    expect(screen.getByLabelText("AITHER, BLUTOPIA")).toBeTruthy();
+    expect(container.querySelectorAll("img")).toHaveLength(2);
+  });
 });

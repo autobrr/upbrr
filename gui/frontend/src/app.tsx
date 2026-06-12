@@ -4535,6 +4535,9 @@ export default function App() {
               builderProgressMessage={builderProgressMessage}
               builderError={builderError}
               builderSaved={builderSaved}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
               refreshDescriptionBuilder={refreshDescriptionBuilder}
               setBuilderRawByGroup={setBuilderRawByGroup}
               setBuilderDirtyByGroup={setBuilderDirtyByGroup}

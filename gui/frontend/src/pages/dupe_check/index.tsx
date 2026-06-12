@@ -33,6 +33,12 @@ type Props = {
 
 const pathedNote = "pathed torrent match found; skipping dupe search";
 
+const splitTrackerLabel = (value: string) =>
+  value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
 export default function DupeCheckPage(props: Readonly<Props>) {
   const {
     path,
@@ -207,7 +213,8 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               const showIgnoreToggle = !hasPathedNote && (hasDupes || dupeCount > 0);
               const displayDupeCount =
                 (dupeTrackerFlags[result.Tracker] ?? hasDupes) ? dupeCount : 0;
-              const iconSrc = trackerIconFor(trackerIconSrcByName, result.Tracker);
+              const displayTrackers = hasPathedNote ? splitTrackerLabel(result.Tracker) : [];
+              const iconTrackers = displayTrackers.length > 0 ? displayTrackers : [result.Tracker];
 
               return (
                 <article
@@ -215,11 +222,19 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                   key={result.Tracker}
                 >
                   <div className="min-w-0 flex items-center gap-2">
-                    <TrackerIconImage
-                      tracker={result.Tracker}
-                      iconSrc={iconSrc}
-                      enabled={useFavicons}
-                    />
+                    <div
+                      className="flex shrink-0 flex-wrap items-center gap-1"
+                      aria-label={hideTrackerNames ? iconTrackers.join(", ") : undefined}
+                    >
+                      {iconTrackers.map((tracker) => (
+                        <TrackerIconImage
+                          tracker={tracker}
+                          iconSrc={trackerIconFor(trackerIconSrcByName, tracker)}
+                          enabled={useFavicons}
+                          key={`${result.Tracker}-${tracker}`}
+                        />
+                      ))}
+                    </div>
                     {hideTrackerNames ? null : (
                       <p className="font-bold text-[var(--text)]">{result.Tracker}</p>
                     )}
