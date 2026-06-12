@@ -38,10 +38,7 @@ func SetApplicationBuild(version string, buildIdentifier string) {
 }
 
 func CurrentApplicationInfo() ApplicationInfo {
-	uptime := time.Since(applicationStartedAt)
-	if uptime < 0 {
-		uptime = 0
-	}
+	uptime := max(time.Since(applicationStartedAt), 0)
 
 	version, buildIdentifier := resolvedApplicationBuild()
 	return ApplicationInfo{

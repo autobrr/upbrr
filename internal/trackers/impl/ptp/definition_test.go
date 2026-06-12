@@ -234,6 +234,47 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 	}
 }
 
+func TestResolveUploadTorrentPathReusesPreparedPTPArtifact(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "ua.db")
+	sourcePath := filepath.Join(tmp, "Movie.mkv")
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
+
+	preparedMeta, err := trackers.PrepareTrackerUploadTorrent(
+		api.PreparedMetadata{SourcePath: sourcePath, TorrentPath: torrentPath},
+		dbPath,
+		"PTP",
+		config.TrackerConfig{AnnounceURL: "https://please.passthepopcorn.me/passkey/announce"},
+	)
+	if err != nil {
+		t.Fatalf("prepare tracker torrent: %v", err)
+	}
+
+	resolvedPath, err := resolveUploadTorrentPath(preparedMeta, dbPath)
+	if err != nil {
+		t.Fatalf("resolve upload torrent path: %v", err)
+	}
+	if resolvedPath != preparedMeta.TorrentPath {
+		t.Fatalf("expected prepared artifact path %q, got %q", preparedMeta.TorrentPath, resolvedPath)
+	}
+
+	torrentMeta, err := metainfo.LoadFromFile(resolvedPath)
+	if err != nil {
+		t.Fatalf("load prepared artifact: %v", err)
+	}
+	if torrentMeta.Announce != "https://please.passthepopcorn.me/passkey/announce" {
+		t.Fatalf("expected prepared announce preserved, got %q", torrentMeta.Announce)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatalf("unmarshal prepared info: %v", err)
+	}
+	if info.Source != "PTP" {
+		t.Fatalf("expected prepared source preserved, got %q", info.Source)
+	}
+}
+
 func TestDefinitionUploadSuccess(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "ua.db")
@@ -280,6 +321,9 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 				}
 				if uploadedMeta.Comment != "upbrr" {
 					t.Fatalf("expected cleaned upload torrent comment, got %q", uploadedMeta.Comment)
+				}
+				if uploadedMeta.CreatedBy != "uploaded with upbrr" {
+					t.Fatalf("expected cleaned upload torrent created-by, got %q", uploadedMeta.CreatedBy)
 				}
 				if uploadedMeta.Announce != "" {
 					t.Fatalf("expected upload torrent announce stripped, got %q", uploadedMeta.Announce)

@@ -931,8 +931,33 @@ func normalizeAudioFormat(track map[string]any) string {
 	case strings.Contains(lower, "mp3"):
 		return "MP3"
 	}
-	if value == "" {
-		value = trackString(track, "CodecID", "CodecID_Compatible")
+	if value == "" || strings.EqualFold(value, "audio") {
+		codecID := trackString(track, "CodecID", "CodecID_Compatible")
+		lower = strings.ToLower(codecID)
+		switch {
+		case strings.Contains(lower, "eac3"), strings.Contains(lower, "e-ac-3"):
+			return "DD+"
+		case strings.Contains(lower, "ac3"), strings.Contains(lower, "ac-3"):
+			return "DD"
+		case strings.Contains(lower, "truehd"):
+			return "TrueHD"
+		case strings.Contains(lower, "dts"):
+			return "DTS"
+		case strings.Contains(lower, "aac"):
+			return "AAC"
+		case strings.Contains(lower, "flac"):
+			return "FLAC"
+		case strings.Contains(lower, "opus"):
+			return "Opus"
+		case strings.Contains(lower, "vorbis"):
+			return "VORBIS"
+		case strings.Contains(lower, "mp3"), strings.Contains(lower, "mpeg/l3"):
+			return "MP3"
+		case strings.Contains(lower, "mp2"), strings.Contains(lower, "mpeg/l2"):
+			return "MP2"
+		case strings.Contains(lower, "lpcm"), strings.Contains(lower, "pcm"):
+			return "LPCM"
+		}
 	}
 	return value
 }

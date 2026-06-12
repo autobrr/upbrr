@@ -197,6 +197,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           questionnaireAnswers: Record<string, Record<string, string>>,
           descriptionGroups: unknown,
           debug: boolean,
+          noSeed: boolean,
           runLogLevel: string,
         ) =>
           call("FetchTrackerDryRun", {
@@ -208,6 +209,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             QuestionnaireAnswers: questionnaireAnswers,
             DescriptionGroups: descriptionGroups,
             Debug: debug,
+            NoSeed: noSeed,
             RunLogLevel: runLogLevel,
           }),
         CheckDupes: (
@@ -435,6 +437,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           questionnaireAnswers: Record<string, Record<string, string>>,
           descriptionGroups: unknown,
           debug: boolean,
+          noSeed: boolean,
           runLogLevel: string,
         ) =>
           call("StartTrackerUpload", {
@@ -446,6 +449,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             QuestionnaireAnswers: questionnaireAnswers,
             DescriptionGroups: descriptionGroups,
             Debug: debug,
+            NoSeed: noSeed,
             RunLogLevel: runLogLevel,
           }),
         CancelTrackerUpload: (jobID: string) => call("CancelTrackerUpload", { JobID: jobID }),

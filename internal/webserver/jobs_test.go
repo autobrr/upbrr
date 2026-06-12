@@ -306,6 +306,42 @@ func TestApplyTrackerUploadProgressEmitsMeaningfulChangeWithinThrottle(t *testin
 	}
 }
 
+func TestApplyTrackerUploadProgressUpdatesOnlyNamedTrackerForMultiTrackerJobs(t *testing.T) {
+	hub := newEventHub()
+	backend := &Backend{hub: hub}
+	job := &trackerUploadJob{
+		sessionID: "session",
+		id:        "job",
+		trackers:  []string{"BLU", "AITHER"},
+		states: map[string]TrackerUploadTrackerState{
+			"BLU":    {Tracker: "BLU", Status: "running", Message: "queued"},
+			"AITHER": {Tracker: "AITHER", Status: "running", Message: "queued"},
+		},
+		startedAt: time.Now().UTC(),
+	}
+
+	backend.applyTrackerUploadProgress(job, api.UploadProgressUpdate{
+		Tracker: "BLU",
+		Task:    "tracker_upload",
+		Status:  "running",
+		Message: "Uploading to tracker",
+		Percent: 40,
+	})
+
+	if got := job.states["BLU"].Task; got != "tracker_upload" {
+		t.Fatalf("expected BLU task to update, got %q", got)
+	}
+	if got := job.states["BLU"].Message; got != "Uploading to tracker" {
+		t.Fatalf("expected BLU message to update, got %q", got)
+	}
+	if got := job.states["AITHER"].Task; got != "" {
+		t.Fatalf("expected AITHER task to remain untouched, got %q", got)
+	}
+	if got := job.states["AITHER"].Message; got != "queued" {
+		t.Fatalf("expected AITHER message to remain queued, got %q", got)
+	}
+}
+
 func newTrackerUploadProgressTestJob() *trackerUploadJob {
 	return &trackerUploadJob{
 		sessionID: "session",

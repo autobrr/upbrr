@@ -13,6 +13,7 @@ import (
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -70,8 +71,8 @@ func TestResolveUploadTorrentPathWritesCleanBaseCopy(t *testing.T) {
 	if cleaned.Comment != "upbrr" {
 		t.Fatalf("expected upbrr comment, got %q", cleaned.Comment)
 	}
-	if cleaned.CreatedBy != "upbrr" {
-		t.Fatalf("expected created-by scrubbed, got %q", cleaned.CreatedBy)
+	if cleaned.CreatedBy != "uploaded with upbrr" {
+		t.Fatalf("expected upbrr created-by, got %q", cleaned.CreatedBy)
 	}
 
 	original := readTestMetaInfo(t, dirtyTorrentPath)
@@ -262,6 +263,9 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 	if updated.Comment != "https://tracker.example/torrents/123" {
 		t.Fatalf("expected tracker comment, got %q", updated.Comment)
 	}
+	if updated.CreatedBy != "uploaded with upbrr" {
+		t.Fatalf("expected upbrr created-by, got %q", updated.CreatedBy)
+	}
 	if len(updated.UrlList) != 0 {
 		t.Fatalf("expected url-list cleared, got %#v", updated.UrlList)
 	}
@@ -270,6 +274,131 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 		t.Fatalf("expected piece layers preserved, got %#v", updated.PieceLayers)
 	}
 	assertInfoSource(t, updated, "PTP")
+}
+
+func TestPrepareTrackerUploadTorrentCreatesSpecificArtifact(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Release.mkv")
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	baseTorrentPath := filepath.Join(tmp, "base.torrent")
+	writeTestMetaInfo(t, baseTorrentPath, metainfo.MetaInfo{
+		Announce:  "https://old.example/announce",
+		Comment:   "private comment",
+		InfoBytes: testInfoBytes(t, "old-source"),
+	})
+
+	dbPath := filepath.Join(tmp, "state", "upbrr.db")
+	meta, err := PrepareTrackerUploadTorrent(api.PreparedMetadata{
+		SourcePath:  sourcePath,
+		TorrentPath: baseTorrentPath,
+	}, dbPath, "HDB", config.TrackerConfig{AnnounceURL: "https://new.example/announce"})
+	if err != nil {
+		t.Fatalf("prepare tracker torrent: %v", err)
+	}
+	if meta.TorrentPath == "" || meta.TorrentPath == baseTorrentPath {
+		t.Fatalf("expected tracker artifact path, got %q", meta.TorrentPath)
+	}
+
+	artifact := readTestMetaInfo(t, meta.TorrentPath)
+	if artifact.Announce != "https://new.example/announce" {
+		t.Fatalf("expected announce set, got %q", artifact.Announce)
+	}
+	assertInfoSource(t, artifact, "HDBits")
+
+	cleanBase, ok := uploadTorrentCleanPath(api.PreparedMetadata{SourcePath: sourcePath, TorrentPath: baseTorrentPath}, dbPath)
+	if !ok {
+		t.Fatal("expected clean base path")
+	}
+	cleaned := readTestMetaInfo(t, cleanBase)
+	if cleaned.Announce != "" {
+		t.Fatalf("expected clean base announce cleared, got %q", cleaned.Announce)
+	}
+	assertInfoSource(t, cleaned, "")
+}
+
+func TestPrepareTrackerUploadTorrentUsesDefaultAnnounce(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Release.mkv")
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	baseTorrentPath := filepath.Join(tmp, "base.torrent")
+	writeTestMetaInfo(t, baseTorrentPath, metainfo.MetaInfo{InfoBytes: testInfoBytes(t, "")})
+
+	meta, err := PrepareTrackerUploadTorrent(api.PreparedMetadata{
+		SourcePath:  sourcePath,
+		TorrentPath: baseTorrentPath,
+	}, filepath.Join(tmp, "state", "upbrr.db"), "AZ", config.TrackerConfig{})
+	if err != nil {
+		t.Fatalf("prepare tracker torrent: %v", err)
+	}
+	artifact := readTestMetaInfo(t, meta.TorrentPath)
+	if artifact.Announce != "https://tracker.avistaz.to/announce" {
+		t.Fatalf("expected default announce, got %q", artifact.Announce)
+	}
+	assertInfoSource(t, artifact, "AvistaZ")
+}
+
+func TestPrepareTrackerUploadTorrentNoSpecLeavesMetaUnchanged(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{TorrentPath: filepath.Join(t.TempDir(), "base.torrent")}
+	got, err := PrepareTrackerUploadTorrent(meta, "", "BTN", config.TrackerConfig{})
+	if err != nil {
+		t.Fatalf("prepare tracker torrent: %v", err)
+	}
+	if got.TorrentPath != meta.TorrentPath {
+		t.Fatalf("expected torrent path unchanged, got %q", got.TorrentPath)
+	}
+}
+
+func TestPrepareDryRunInjectionTorrentCreatesGenericTrackerArtifact(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Release.mkv")
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	baseTorrentPath := filepath.Join(tmp, "base.torrent")
+	writeTestMetaInfo(t, baseTorrentPath, metainfo.MetaInfo{InfoBytes: testInfoBytes(t, "")})
+
+	meta, err := PrepareDryRunInjectionTorrent(api.PreparedMetadata{
+		SourcePath:  sourcePath,
+		TorrentPath: baseTorrentPath,
+	}, filepath.Join(tmp, "state", "upbrr.db"), "LUME", config.TrackerConfig{AnnounceURL: "https://luminarr.me/announce/passkey"})
+	if err != nil {
+		t.Fatalf("prepare dry-run injection torrent: %v", err)
+	}
+	if meta.TorrentPath == "" || meta.TorrentPath == baseTorrentPath {
+		t.Fatalf("expected dry-run tracker artifact path, got %q", meta.TorrentPath)
+	}
+
+	artifact := readTestMetaInfo(t, meta.TorrentPath)
+	if artifact.Announce != "https://luminarr.me/announce/passkey" {
+		t.Fatalf("expected announce set, got %q", artifact.Announce)
+	}
+	assertInfoSource(t, artifact, "LUME")
+}
+
+func TestResolveTrackerTorrentArtifactPathPrefixesTrackerName(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD.mkv")
+	got, err := ResolveTrackerTorrentArtifactPath(api.PreparedMetadata{SourcePath: sourcePath}, filepath.Join(tmp, "state", "upbrr.db"), "MTV")
+	if err != nil {
+		t.Fatalf("resolve tracker torrent artifact: %v", err)
+	}
+	if filepath.Base(got) != "[mtv].A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD.mkv.torrent" {
+		t.Fatalf("expected tracker-prefixed artifact name, got %q", filepath.Base(got))
+	}
 }
 
 func writeTestMetaInfo(t *testing.T, path string, meta metainfo.MetaInfo) {

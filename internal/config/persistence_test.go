@@ -5,7 +5,9 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,7 +22,7 @@ type exportLoadRepo struct {
 	err error
 }
 
-func (r *exportLoadRepo) LoadFullConfig(_ context.Context, dest interface{}) error {
+func (r *exportLoadRepo) LoadFullConfig(_ context.Context, dest any) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -497,7 +499,11 @@ type secretRoundTripRepo struct {
 	saved *Config
 }
 
-func (r *secretRoundTripRepo) SaveFullConfig(_ context.Context, cfg interface{}) error {
+type jsonRoundTripRepo struct {
+	saved *Config
+}
+
+func (r *secretRoundTripRepo) SaveFullConfig(_ context.Context, cfg any) error {
 	typed, ok := cfg.(*Config)
 	if !ok {
 		return errors.New("unexpected config payload type")
@@ -506,7 +512,32 @@ func (r *secretRoundTripRepo) SaveFullConfig(_ context.Context, cfg interface{})
 	return nil
 }
 
-func (r *secretRoundTripRepo) LoadFullConfig(_ context.Context, dest interface{}) error {
+func (r *secretRoundTripRepo) LoadFullConfig(_ context.Context, dest any) error {
+	if r.saved == nil {
+		return errors.New("no saved config")
+	}
+	out, ok := dest.(*Config)
+	if !ok {
+		return errors.New("unexpected destination type")
+	}
+	*out = *r.saved
+	return nil
+}
+
+func (r *jsonRoundTripRepo) SaveFullConfig(_ context.Context, cfg any) error {
+	payload, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal saved config: %w", err)
+	}
+	var saved Config
+	if err := json.Unmarshal(payload, &saved); err != nil {
+		return fmt.Errorf("unmarshal saved config: %w", err)
+	}
+	r.saved = &saved
+	return nil
+}
+
+func (r *jsonRoundTripRepo) LoadFullConfig(_ context.Context, dest any) error {
 	if r.saved == nil {
 		return errors.New("no saved config")
 	}
@@ -564,6 +595,81 @@ func TestExportToJSONFallsBackToPlaintextWithPermissiveWebAuthPermissions(t *tes
 	}
 	if !strings.Contains(exported, "plain-tmdb-token") {
 		t.Fatalf("expected plaintext secret when auth helper is unusable, got %s", exported)
+	}
+}
+
+func TestExportImportJSONPreservesWatchTorrentClientFields(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		MainSettings:       MainSettingsConfig{TMDBAPI: "test-api-key"},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+		TorrentClients: map[string]TorrentClientConfig{
+			"watch": {
+				Type:        "watch",
+				WatchFolder: `D:\Watch`,
+				StorageDir:  `D:\Storage`,
+			},
+		},
+	}
+
+	exported, err := ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("ExportToPlaintextJSON failed: %v", err)
+	}
+
+	imported, err := ImportFromJSON(exported)
+	if err != nil {
+		t.Fatalf("ImportFromJSON failed: %v", err)
+	}
+
+	watch := imported.TorrentClients["watch"]
+	if watch.ClientType() != "watch" {
+		t.Fatalf("expected watch client type after roundtrip, got %q", watch.ClientType())
+	}
+	if watch.WatchFolder != `D:\Watch` {
+		t.Fatalf("expected watch folder to roundtrip, got %q", watch.WatchFolder)
+	}
+	if watch.StorageDir != `D:\Storage` {
+		t.Fatalf("expected storage dir to roundtrip, got %q", watch.StorageDir)
+	}
+}
+
+func TestSaveLoadDatabaseRoundTripPreservesWatchTorrentClient(t *testing.T) {
+	t.Parallel()
+
+	repo := &jsonRoundTripRepo{}
+	input := &Config{
+		MainSettings:       MainSettingsConfig{TMDBAPI: "db-secret-token"},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+		TorrentClients: map[string]TorrentClientConfig{
+			"watch": {
+				Type:        "watch",
+				WatchFolder: `D:\Watch`,
+				StorageDir:  `D:\Storage`,
+			},
+		},
+	}
+	configureConfigSecretEncryption(t, input)
+
+	if err := SaveToDatabase(context.Background(), input, repo); err != nil {
+		t.Fatalf("SaveToDatabase failed: %v", err)
+	}
+
+	loaded, err := LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabase failed: %v", err)
+	}
+
+	watch := loaded.TorrentClients["watch"]
+	if watch.ClientType() != "watch" {
+		t.Fatalf("expected watch client type after database roundtrip, got %q", watch.ClientType())
+	}
+	if watch.WatchFolder != `D:\Watch` {
+		t.Fatalf("expected watch folder to roundtrip, got %q", watch.WatchFolder)
+	}
+	if watch.StorageDir != `D:\Storage` {
+		t.Fatalf("expected storage dir to roundtrip, got %q", watch.StorageDir)
 	}
 }
 

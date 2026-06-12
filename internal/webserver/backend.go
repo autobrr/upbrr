@@ -68,6 +68,7 @@ type backendLogStream struct {
 
 type runOptions struct {
 	Debug       bool
+	NoSeed      bool
 	RunLogLevel string
 }
 
@@ -378,13 +379,16 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 	return wrapWebResult(b.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
-func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
-	runOpts, err := b.buildRunOptions(debug, runLogLevel)
+	runOpts, err := b.buildRunOptions(debug, noSeed, runLogLevel)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
+	}
+	if logger := b.currentLogger(); logger != nil {
+		logger.Debugf("web: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", strings.TrimSpace(path), debug, noSeed, runOpts.RunLogLevel)
 	}
 	runCore, runLogger, err := b.buildRunCore(runOpts)
 	if err != nil {
@@ -1055,15 +1059,15 @@ func (b *Backend) StopSessionLogStreams(sessionID string) {
 	}
 }
 
-func (b *Backend) buildRunOptions(debug bool, runLogLevel string) (runOptions, error) {
+func (b *Backend) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (runOptions, error) {
 	if strings.TrimSpace(runLogLevel) == "" {
-		return runOptions{Debug: debug}, nil
+		return runOptions{Debug: debug, NoSeed: noSeed}, nil
 	}
 	normalized, err := api.ParseLogLevel(runLogLevel)
 	if err != nil {
 		return runOptions{}, fmt.Errorf("web: %w", err)
 	}
-	return runOptions{Debug: debug, RunLogLevel: normalized}, nil
+	return runOptions{Debug: debug, NoSeed: noSeed, RunLogLevel: normalized}, nil
 }
 
 func (b *Backend) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
@@ -1095,6 +1099,7 @@ func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions
 	options := buildBaseMetadataOptions(cfg)
 	options.Debug = opts.Debug
 	options.DryRun = opts.Debug
+	options.NoSeed = opts.NoSeed
 	options.RunLogLevel = opts.RunLogLevel
 	return options
 }

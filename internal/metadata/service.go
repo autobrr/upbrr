@@ -302,19 +302,6 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 	primary = absPath
 	s.logger.Debugf("metadata: primary path resolved to %s", primary)
 
-	storedOverrides := api.ReleaseNameOverrides{}
-	if stored, err := s.repo.GetReleaseNameOverrides(ctx, primary); err == nil {
-		storedOverrides = stored
-	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return api.PreparedMetadata{}, fmt.Errorf("metadata: release overrides lookup: %w", err)
-	}
-	mergedOverrides := mergeReleaseNameOverrides(storedOverrides, req.ReleaseNameOverrides)
-	if hasReleaseNameOverrides(req.ReleaseNameOverrides) {
-		if err := s.repo.SaveReleaseNameOverrides(ctx, primary, mergedOverrides); err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: release overrides persist: %w", err)
-		}
-	}
-
 	normalizedPaths := make([]string, 0, len(req.Paths))
 	seenPaths := make(map[string]struct{}, len(req.Paths))
 	for _, value := range req.Paths {
@@ -352,12 +339,11 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		ScreenshotOverrides:    normalizeScreenshotOverrides(req.ScreenshotOverrides),
 		TorrentOverrides:       req.TorrentOverrides,
 		ExternalIDOverrides:    req.ExternalIDOverrides,
-		ReleaseNameOverrides:   mergedOverrides,
+		ReleaseNameOverrides:   req.ReleaseNameOverrides,
 	}
 	applyTorrentOverridesToPreparedMeta(&meta)
 	applySourceLookupOverride(&meta)
-	release := ParseReleaseInfo(primary)
-	meta.Release = release
+	meta.Release = ParseReleaseInfo(primary)
 
 	discType, err := filesystem.DetectDiscType(ctx, primary)
 	if err != nil {
@@ -469,6 +455,32 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 	}
 
 	applySeasonEpisodeMetadata(&meta, seasonep.Extract(primary, meta), s.logger)
+	if shouldCollapseCLIFolderToVideo(meta, primary) {
+		meta.VideoPath = preferredCLIFolderVideo(meta, primary)
+		primary = strings.TrimSpace(meta.VideoPath)
+		meta.SourcePath = primary
+		meta.Paths = []string{primary}
+		meta.FileList = []string{primary}
+		clearSeasonEpisodeMetadata(&meta)
+		applySeasonEpisodeMetadata(&meta, seasonep.Extract(primary, meta), s.logger)
+		s.logger.Debugf("metadata: collapsed CLI folder input to video file %s", primary)
+	}
+	release := ParseReleaseInfo(primary)
+	meta.Release = release
+
+	storedOverrides := api.ReleaseNameOverrides{}
+	if stored, err := s.repo.GetReleaseNameOverrides(ctx, primary); err == nil {
+		storedOverrides = stored
+	} else if !errors.Is(err, internalerrors.ErrNotFound) {
+		return api.PreparedMetadata{}, fmt.Errorf("metadata: release overrides lookup: %w", err)
+	}
+	mergedOverrides := mergeReleaseNameOverrides(storedOverrides, req.ReleaseNameOverrides)
+	meta.ReleaseNameOverrides = mergedOverrides
+	if hasReleaseNameOverrides(req.ReleaseNameOverrides) {
+		if err := s.repo.SaveReleaseNameOverrides(ctx, primary, mergedOverrides); err != nil {
+			return api.PreparedMetadata{}, fmt.Errorf("metadata: release overrides persist: %w", err)
+		}
+	}
 
 	size, err := filesystem.SourceSize(ctx, primary, meta.DiscType, meta.FileList, meta.VideoPath)
 	if err != nil {
@@ -1172,6 +1184,145 @@ func applySeasonEpisodeMetadata(meta *api.PreparedMetadata, result seasonep.Resu
 	if logger != nil && (meta.SeasonStr != "" || meta.EpisodeStr != "" || meta.DailyEpisodeDate != "" || meta.TVPack) {
 		logger.Debugf("metadata: parsed season/episode season=%q episode=%q daily_date=%q tv_pack=%t", meta.SeasonStr, meta.EpisodeStr, meta.DailyEpisodeDate, meta.TVPack)
 	}
+}
+
+func clearSeasonEpisodeMetadata(meta *api.PreparedMetadata) {
+	if meta == nil {
+		return
+	}
+	meta.SeasonInt = 0
+	meta.EpisodeInt = 0
+	meta.SeasonStr = ""
+	meta.EpisodeStr = ""
+	meta.DailyEpisodeDate = ""
+	meta.TVPack = false
+	meta.Release.Season = 0
+	meta.Release.Episode = 0
+}
+
+func shouldCollapseCLIFolderToVideo(meta api.PreparedMetadata, sourcePath string) bool {
+	if meta.Mode != api.ModeCLI || meta.Options.KeepFolder || meta.TVPack || strings.TrimSpace(meta.DiscType) != "" {
+		return false
+	}
+	videoPath := strings.TrimSpace(meta.VideoPath)
+	if videoPath == "" || strings.EqualFold(videoPath, strings.TrimSpace(sourcePath)) {
+		return false
+	}
+	info, err := os.Stat(strings.TrimSpace(sourcePath))
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	return true
+}
+
+func largestVideoFile(fileList []string, fallback string) string {
+	largest := strings.TrimSpace(fallback)
+	largestSize := int64(-1)
+	for _, candidate := range fileList {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+		info, err := os.Stat(trimmed)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if info.Size() > largestSize {
+			largest = trimmed
+			largestSize = info.Size()
+		}
+	}
+	return largest
+}
+
+func preferredCLIFolderVideo(meta api.PreparedMetadata, sourcePath string) string {
+	if matched := exactFolderNamedVideoFile(meta.FileList, sourcePath); matched != "" {
+		return matched
+	}
+	if matched := seasonEpisodeMatchedVideoFile(meta.FileList, meta); matched != "" {
+		return matched
+	}
+	fallback := strings.TrimSpace(meta.VideoPath)
+	if isRegularPathInList(meta.FileList, fallback) {
+		return fallback
+	}
+	return largestVideoFile(meta.FileList, fallback)
+}
+
+func exactFolderNamedVideoFile(fileList []string, sourcePath string) string {
+	folderBase := strings.TrimSpace(filepath.Base(filepath.Clean(sourcePath)))
+	if folderBase == "" {
+		return ""
+	}
+	normalizedFolder := normalizeVideoStem(folderBase)
+	for _, candidate := range fileList {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+		if normalizeVideoStem(filepath.Base(trimmed)) == normalizedFolder && isRegularPathInList([]string{trimmed}, trimmed) {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func seasonEpisodeMatchedVideoFile(fileList []string, meta api.PreparedMetadata) string {
+	if meta.SeasonInt <= 0 && meta.EpisodeInt <= 0 && strings.TrimSpace(meta.DailyEpisodeDate) == "" {
+		return ""
+	}
+	matches := make([]string, 0, len(fileList))
+	for _, candidate := range fileList {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" || !isRegularPathInList([]string{trimmed}, trimmed) {
+			continue
+		}
+		if releaseMatchesPreparedEpisode(ParseReleaseInfo(trimmed), meta) {
+			matches = append(matches, trimmed)
+		}
+	}
+	if len(matches) == 0 {
+		return ""
+	}
+	fallback := strings.TrimSpace(meta.VideoPath)
+	if isRegularPathInList(matches, fallback) {
+		return fallback
+	}
+	return largestVideoFile(matches, matches[0])
+}
+
+func releaseMatchesPreparedEpisode(release api.ReleaseInfo, meta api.PreparedMetadata) bool {
+	if strings.TrimSpace(meta.DailyEpisodeDate) != "" && release.Year > 0 && release.Month > 0 && release.Day > 0 {
+		expected := fmt.Sprintf("%04d-%02d-%02d", release.Year, release.Month, release.Day)
+		if expected == strings.TrimSpace(meta.DailyEpisodeDate) {
+			return true
+		}
+	}
+	return meta.SeasonInt > 0 && meta.EpisodeInt > 0 && release.Season == meta.SeasonInt && release.Episode == meta.EpisodeInt
+}
+
+func normalizeVideoStem(value string) string {
+	base := strings.TrimSuffix(strings.TrimSpace(value), filepath.Ext(value))
+	return strings.ToLower(base)
+}
+
+func isRegularPathInList(fileList []string, candidate string) bool {
+	trimmedCandidate := strings.TrimSpace(candidate)
+	if trimmedCandidate == "" {
+		return false
+	}
+	found := false
+	for _, value := range fileList {
+		if pathEqualForFingerprint(value, trimmedCandidate) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	info, err := os.Stat(trimmedCandidate)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func safeWriteFile(dir string, path string, data []byte) error {

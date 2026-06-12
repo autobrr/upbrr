@@ -323,6 +323,7 @@ declare global {
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
               debug: boolean,
+              noSeed: boolean,
               runLogLevel: string,
             ) => Promise<TrackerDryRunPreview>;
             CheckDupes: (
@@ -438,6 +439,7 @@ declare global {
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
               debug: boolean,
+              noSeed: boolean,
               runLogLevel: string,
             ) => Promise<string>;
             CancelTrackerUpload: (jobID: string) => Promise<void>;
@@ -648,6 +650,7 @@ export default function App() {
   const builderProgressTimers = useRef<number[]>([]);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
+  const [uploadSkipClientInjection, setUploadSkipClientInjection] = useState(false);
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
   const [trackerUploadError, setTrackerUploadError] = useState("");
   const [trackerUploadJobID, setTrackerUploadJobID] = useState("");
@@ -732,7 +735,7 @@ export default function App() {
     handleSaveSettings,
     renderImageHostingSection,
     renderTrackerSection,
-    renderMapSection,
+    renderTorrentClientsSection,
     renderField,
     sectionFieldMeta,
     updateConfigValue,
@@ -1325,6 +1328,9 @@ export default function App() {
         setReleasePageTrackerSelection(state.releasePageTrackerSelection);
       }
       if (state.uploadToggles) setUploadToggles(state.uploadToggles);
+      if (typeof state.uploadSkipClientInjection === "boolean") {
+        setUploadSkipClientInjection(state.uploadSkipClientInjection);
+      }
       if (typeof state.runDebug === "boolean") setRunDebug(state.runDebug);
       if (typeof state.runLogLevel === "string") setRunLogLevel(state.runLogLevel);
       if (typeof state.runLogLevelTouched === "boolean") {
@@ -1580,6 +1586,7 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
+      uploadSkipClientInjection,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1665,6 +1672,7 @@ export default function App() {
     selectedProvider,
     releasePageTrackerSelection,
     uploadToggles,
+    uploadSkipClientInjection,
     runDebug,
     runLogLevel,
     runLogLevelTouched,
@@ -3325,6 +3333,29 @@ export default function App() {
     }
   };
 
+  const applyDupeCheckSnapshot = useCallback((snapshot: DupeCheckSnapshot) => {
+    setDupeCheckSnapshot(snapshot);
+    setDupeSummary(snapshot.summary || emptyDupeSummary);
+
+    const normalized = String(snapshot.status || "")
+      .toLowerCase()
+      .trim();
+    const running = normalized === "queued" || normalized === "running";
+    setDupeLoading(running);
+
+    if (normalized === "completed") {
+      setDupeChecked(true);
+      setDupeError("");
+    } else if (normalized === "completed_with_errors") {
+      setDupeChecked(true);
+      setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
+    } else if (normalized === "failed" || normalized === "canceled") {
+      setDupeChecked(false);
+      setPrepPreview(emptyPreparation);
+      setDupeError(snapshot.error || "Dupe check failed.");
+    }
+  }, []);
+
   const handleDupeCheck = async () => {
     setDupeError("");
     const starter = globalThis.go?.guiapp?.App?.StartDupeCheck;
@@ -3359,8 +3390,7 @@ export default function App() {
       setDupeCheckJobID(jobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(jobID);
-        setDupeCheckSnapshot(snapshot);
-        setDupeSummary(snapshot.summary || emptyDupeSummary);
+        applyDupeCheckSnapshot(snapshot);
       }
     } catch (err) {
       const message = String(err);
@@ -3384,27 +3414,7 @@ export default function App() {
       if (payload?.jobID !== dupeCheckJobID) {
         return;
       }
-      const snapshot = payload as DupeCheckSnapshot;
-      setDupeCheckSnapshot(snapshot);
-      setDupeSummary(snapshot.summary || emptyDupeSummary);
-
-      const normalized = String(snapshot.status || "")
-        .toLowerCase()
-        .trim();
-      const running = normalized === "queued" || normalized === "running";
-      setDupeLoading(running);
-
-      if (normalized === "completed") {
-        setDupeChecked(true);
-        setDupeError("");
-      } else if (normalized === "completed_with_errors") {
-        setDupeChecked(true);
-        setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
-      } else if (normalized === "failed" || normalized === "canceled") {
-        setDupeChecked(false);
-        setPrepPreview(emptyPreparation);
-        setDupeError(snapshot.error || "Dupe check failed.");
-      }
+      applyDupeCheckSnapshot(payload as DupeCheckSnapshot);
     });
 
     return () => {
@@ -3412,7 +3422,7 @@ export default function App() {
         off();
       }
     };
-  }, [dupeCheckJobID]);
+  }, [applyDupeCheckSnapshot, dupeCheckJobID]);
 
   useEffect(() => {
     setDupeChecked(false);
@@ -3738,6 +3748,7 @@ export default function App() {
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
         builderPreview.Groups || [],
         runDebug,
+        uploadSkipClientInjection,
         runLogLevel,
       );
       setTrackerUploadJobID(jobID);
@@ -3759,6 +3770,7 @@ export default function App() {
     trackerQuestionnaireAnswers,
     builderPreview,
     runDebug,
+    uploadSkipClientInjection,
     runLogLevel,
   ]);
 
@@ -3825,6 +3837,7 @@ export default function App() {
           cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
           descriptionGroups,
           runDebug,
+          uploadSkipClientInjection,
           runLogLevel,
         );
         setTrackerDryRunPreview(result || emptyTrackerDryRun);
@@ -3863,6 +3876,7 @@ export default function App() {
       ignoredDupeTrackers,
       trackerQuestionnaireAnswers,
       runDebug,
+      uploadSkipClientInjection,
       runLogLevel,
     ],
   );
@@ -4287,7 +4301,7 @@ export default function App() {
                   </span>
                 ) : null}
                 <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                  Copyright (c) 2026 autobrr
+                  © 2026 autobrr
                 </span>
               </div>
               <a
@@ -4356,7 +4370,7 @@ export default function App() {
               handleCreateWebAuth={handleCreateWebAuth}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}
-              renderMapSection={renderMapSection}
+              renderTorrentClientsSection={renderTorrentClientsSection}
               renderField={renderField}
               sectionFieldMeta={sectionFieldMeta}
             />
@@ -4530,6 +4544,8 @@ export default function App() {
               failedDupeTrackerSet={failedDupeTrackerSet}
               uploadToggles={uploadToggles}
               setUploadToggles={setUploadToggles}
+              skipClientInjection={uploadSkipClientInjection}
+              setSkipClientInjection={setUploadSkipClientInjection}
               namingOverrides={namingOverrides}
               preview={preview}
               formatLabel={formatLabel}

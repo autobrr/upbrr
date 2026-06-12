@@ -15,6 +15,7 @@ const settingsInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
 
 const settingsSelectClass = `${settingsInputClass} cursor-pointer`;
+type FieldOption = NonNullable<FieldMeta["options"]>[number];
 
 type UseSettingsStateOptions = {
   activeTab: string;
@@ -36,6 +37,7 @@ type UseSettingsStateResult = {
   handleSaveSettings: () => void;
   renderImageHostingSection: () => JSX.Element | null;
   renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
+  renderTorrentClientsSection: (advancedOpen: boolean) => JSX.Element | null;
   renderMapSection: (
     sectionKey: string,
     sectionValue: ConfigMap,
@@ -68,12 +70,12 @@ const settingsSections: SettingsSection[] = [
   { key: "metadata", jsonKey: "Metadata", label: "Metadata" },
   { key: "screenshot_handling", jsonKey: "ScreenshotHandling", label: "Screens" },
   { key: "description_settings", jsonKey: "Description", label: "Description" },
-  { key: "client_setup", jsonKey: "ClientSetup", label: "Clients" },
   { key: "arr_integration", jsonKey: "ArrIntegration", label: "Arr" },
-  { key: "torrent_creation", jsonKey: "TorrentCreation", label: "Torrent" },
   { key: "post_upload", jsonKey: "PostUpload", label: "Post Upload" },
   { key: "trackers", jsonKey: "Trackers", label: "Trackers" },
   { key: "torrent_clients", jsonKey: "TorrentClients", label: "Torrent Clients" },
+  { key: "client_setup", jsonKey: "ClientSetup", label: "Client Handling" },
+  { key: "torrent_creation", jsonKey: "TorrentCreation", label: "Torrent Specific" },
 ];
 
 const imageHostOptions = [
@@ -93,6 +95,16 @@ const imageHostOptions = [
 ];
 
 const trackerImageHostOptions = [...imageHostOptions, { value: "hdb", label: "HDB" }];
+const torrentClientTypeOptions = [
+  { value: "qbit", label: "qBit" },
+  { value: "watch", label: "Watch" },
+];
+const torrentClientLinkingOptions = [
+  { value: "", label: "None" },
+  { value: "hardlink", label: "Hardlink" },
+  { value: "reflink", label: "Reflink" },
+  { value: "symlink", label: "Symlink" },
+];
 const imageHostOptionLabels = new Map(
   trackerImageHostOptions.map((option) => [option.value, option.label]),
 );
@@ -170,6 +182,7 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
     label: "Image host",
     options: imageHostOptions,
   }),
+  TorrentClient: stringField("TorrentClient", { label: "Torrent client" }),
   UseSpanishTitle: boolField("UseSpanishTitle", { label: "Use Spanish title", advanced: true }),
   UseItalianTitle: boolField("UseItalianTitle", { label: "Use Italian title", advanced: true }),
   OTPURI: stringField("OTPURI", { label: "OTP URI", sensitive: true, advanced: true }),
@@ -724,6 +737,33 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     MaxTotalSizeMB: { key: "MaxTotalSizeMB", advanced: true },
     MaxFiles: { key: "MaxFiles", advanced: true },
   },
+  TorrentClients: {
+    Type: stringField("Type", { label: "Type", options: torrentClientTypeOptions }),
+    WatchFolder: stringField("WatchFolder", { label: "Watch folder" }),
+    StorageDir: stringField("StorageDir", { label: "Storage directory" }),
+    QuiProxyURL: stringField("QuiProxyURL", { label: "Qui proxy URL", sensitive: true }),
+    QbitURL: stringField("QbitURL", { label: "qBit URL" }),
+    QbitPort: numberField("QbitPort", { label: "qBit port" }),
+    QbitUser: stringField("QbitUser", { label: "qBit user", sensitive: true }),
+    QbitPass: stringField("QbitPass", { label: "qBit pass", sensitive: true }),
+    QbitCategoryValue: stringField("QbitCategoryValue", { label: "qBit category" }),
+    QbitTag: stringField("QbitTag", { label: "qBit tag" }),
+    QbitCrossCategory: stringField("QbitCrossCategory", { label: "qBit cross category" }),
+    QbitCrossTag: stringField("QbitCrossTag", { label: "qBit cross tag" }),
+    UseTrackerAsTag: boolField("UseTrackerAsTag", { label: "Use tracker as tag" }),
+    Linking: stringField("Linking", {
+      label: "Linking",
+      options: torrentClientLinkingOptions,
+    }),
+    AllowFallback: boolField("AllowFallback", { label: "Allow link fallback" }),
+    LinkedFolder: stringField("LinkedFolder", { label: "Linked folder" }),
+    LocalPath: stringField("LocalPath", { label: "Local path", advanced: true }),
+    RemotePath: stringField("RemotePath", { label: "Remote path", advanced: true }),
+    VerifyWebUICertificate: boolField("VerifyWebUICertificate", {
+      label: "Verify WebUI certificate",
+      advanced: true,
+    }),
+  },
 };
 
 const isSensitiveKeyName = (key: string) => {
@@ -789,6 +829,133 @@ const restoreSensitiveConfig = (input: ConfigMap, originals: Record<string, stri
   return walk(input, []) as ConfigMap;
 };
 
+const legacyTorrentClientKeys = [
+  "Type",
+  "TorrentClient",
+  "URL",
+  "WatchFolder",
+  "StorageDir",
+  "Username",
+  "Password",
+  "Category",
+  "Tags",
+  "TLSSkipVerify",
+  "QbitTagsValue",
+];
+
+const qbitDefaultClient = (): ConfigMap => ({
+  Type: "qbit",
+  QuiProxyURL: "",
+  QbitCategoryValue: "",
+  QbitTag: "",
+  QbitCrossCategory: "",
+  QbitCrossTag: "",
+  UseTrackerAsTag: false,
+  Linking: "",
+  AllowFallback: true,
+  LinkedFolder: [],
+  LocalPath: [],
+  RemotePath: [],
+  VerifyWebUICertificate: true,
+});
+
+const qbitDirectDisabledValues: Readonly<Record<string, ConfigValue>> = {
+  QbitURL: "",
+  QbitPort: 0,
+  QbitUser: "",
+  QbitPass: "",
+  URL: "",
+  Username: "",
+  Password: "",
+  QuiProxyURL: "",
+};
+
+const normalizeStringArray = (value: ConfigValue) => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry ?? "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
+const normalizeTorrentClientType = (client: ConfigMap) => {
+  const directType = typeof client.Type === "string" ? client.Type.trim() : "";
+  if (directType) {
+    return directType.toLowerCase();
+  }
+  const legacyType = typeof client.TorrentClient === "string" ? client.TorrentClient.trim() : "";
+  if (legacyType) {
+    return legacyType.toLowerCase();
+  }
+  return "qbit";
+};
+
+export const normalizeTorrentClientForSave = (client: ConfigMap) => {
+  const next = { ...client };
+  if (normalizeTorrentClientType(next) !== "qbit") {
+    return next;
+  }
+
+  if (!next.QbitURL && typeof next.URL === "string") next.QbitURL = next.URL;
+  if (!next.QbitUser && typeof next.Username === "string") next.QbitUser = next.Username;
+  if (!next.QbitPass && typeof next.Password === "string") next.QbitPass = next.Password;
+  if (!next.QbitCategoryValue && typeof next.Category === "string") {
+    next.QbitCategoryValue = next.Category;
+  }
+  if (!next.QbitTag) {
+    if (Array.isArray(next.Tags)) {
+      next.QbitTag = normalizeStringArray(next.Tags).join(",");
+    } else if (Array.isArray(next.QbitTagsValue)) {
+      next.QbitTag = normalizeStringArray(next.QbitTagsValue).join(",");
+    }
+  }
+  if (next.VerifyWebUICertificate === undefined && typeof next.TLSSkipVerify === "boolean") {
+    next.VerifyWebUICertificate = !next.TLSSkipVerify;
+  }
+
+  legacyTorrentClientKeys.forEach((key) => {
+    delete next[key];
+  });
+
+  return next;
+};
+
+export const nextQbitDirectState = (client: ConfigMap, enabled: boolean): ConfigMap => {
+  if (enabled) {
+    return {
+      ...client,
+      QbitURL:
+        typeof client.QbitURL === "string" && client.QbitURL.trim() !== ""
+          ? client.QbitURL
+          : "http://127.0.0.1",
+      QbitPort: typeof client.QbitPort === "number" && client.QbitPort > 0 ? client.QbitPort : 8080,
+    };
+  }
+  return { ...client, ...qbitDirectDisabledValues };
+};
+
+export const normalizeTorrentClientsForSave = (input: ConfigMap) => {
+  const clients = input.TorrentClients;
+  if (!clients || typeof clients !== "object" || Array.isArray(clients)) {
+    return input;
+  }
+
+  const nextClients: ConfigMap = {};
+  Object.entries(clients as ConfigMap).forEach(([name, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return;
+    }
+    nextClients[name] = normalizeTorrentClientForSave(value as ConfigMap);
+  });
+
+  return { ...input, TorrentClients: nextClients };
+};
+
 export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsStateResult => {
   const { activeTab } = options;
   const [configData, setConfigData] = useState<ConfigMap | null>(null);
@@ -843,6 +1010,46 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     return configData.ScreenshotHandling as ConfigMap;
   }, [configData]);
 
+  const torrentClientOptions = useMemo<FieldOption[]>(() => {
+    if (
+      !configData ||
+      !configData.TorrentClients ||
+      typeof configData.TorrentClients !== "object" ||
+      Array.isArray(configData.TorrentClients)
+    ) {
+      return [];
+    }
+
+    return Object.entries(configData.TorrentClients as ConfigMap)
+      .filter(
+        ([name, value]) =>
+          name.trim() !== "" && value && typeof value === "object" && !Array.isArray(value),
+      )
+      .map(([name]) => ({ value: name, label: name }));
+  }, [configData]);
+
+  const effectiveSectionFieldMeta = useMemo<Record<string, Record<string, FieldMeta>>>(() => {
+    const clientOptions = [{ value: "", label: "" }, ...torrentClientOptions];
+    return {
+      ...sectionFieldMeta,
+      ClientSetup: {
+        ...(sectionFieldMeta.ClientSetup ?? {}),
+        DefaultClient: stringField("DefaultClient", {
+          label: "Default client",
+          options: clientOptions,
+        }),
+        InjectClients: stringField("InjectClients", {
+          label: "Injected clients",
+          options: clientOptions,
+        }),
+        SearchClients: stringField("SearchClients", {
+          label: "Searching clients",
+          options: clientOptions,
+        }),
+      },
+    };
+  }, [torrentClientOptions]);
+
   const setSettingsErrorMessage = (message: string) => {
     setSettingsError(message);
   };
@@ -865,7 +1072,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (!configData) {
       return null;
     }
-    const restored = restoreSensitiveConfig(configData, sensitiveValues);
+    const restored = normalizeTorrentClientsForSave(
+      restoreSensitiveConfig(configData, sensitiveValues),
+    );
     return JSON.stringify(restored, null, 2);
   };
 
@@ -1129,25 +1338,61 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (settingsSection === "trackers") return trackerHasAdvancedFields;
     const section = settingsSections.find((item) => item.key === settingsSection);
     if (!section) return false;
-    const meta = sectionFieldMeta[section.jsonKey];
+    const meta = effectiveSectionFieldMeta[section.jsonKey];
     if (!meta) return false;
     return Object.values(meta).some((field) => field.advanced);
   })();
 
-  const renderArrayEditor = (value: ConfigValue[], path: string[]) => {
+  const renderArrayEditor = (
+    value: ConfigValue[],
+    path: string[],
+    meta?: FieldMeta,
+    displayLabel?: string,
+  ) => {
+    const options = meta?.options ?? [];
+    const optionValueFor = (entry: ConfigValue) => (entry === null ? "" : String(entry ?? ""));
+    const optionsFor = (entry: ConfigValue) => {
+      const selected = optionValueFor(entry);
+      if (!selected || options.some((option) => option.value === selected)) {
+        return options;
+      }
+      return [...options, { value: selected, label: selected }];
+    };
+    const newItemValue = options.find((option) => option.value !== "")?.value ?? "";
+
     return (
       <div className="settings-array">
         {value.map((entry, index) => (
           <div className="settings-array-row" key={`${path.join(".")}-${index}`}>
-            <input
-              className={settingsInputClass}
-              value={entry === null ? "" : String(entry)}
-              onChange={(event) => {
-                const updated = [...value];
-                updated[index] = event.target.value;
-                updateConfigValue(path, updated);
-              }}
-            />
+            {options.length > 0 ? (
+              <select
+                aria-label={displayLabel ? `${displayLabel} ${index + 1}` : undefined}
+                className={settingsSelectClass}
+                value={optionValueFor(entry)}
+                onChange={(event) => {
+                  const updated = [...value];
+                  updated[index] = event.target.value;
+                  updateConfigValue(path, updated);
+                }}
+              >
+                {optionsFor(entry).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                aria-label={displayLabel ? `${displayLabel} ${index + 1}` : undefined}
+                className={settingsInputClass}
+                value={optionValueFor(entry)}
+                onChange={(event) => {
+                  const updated = [...value];
+                  updated[index] = event.target.value;
+                  updateConfigValue(path, updated);
+                }}
+              />
+            )}
             <Button
               type="button"
               onClick={() => {
@@ -1160,7 +1405,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             </Button>
           </div>
         ))}
-        <Button type="button" onClick={() => updateConfigValue(path, [...value, ""])}>
+        <Button type="button" onClick={() => updateConfigValue(path, [...value, newItemValue])}>
           Add item
         </Button>
       </div>
@@ -1170,16 +1415,28 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const renderField = (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => {
     const displayLabel = meta?.label ?? formatLabel(label);
     const typeHint = meta?.type;
+    if (Array.isArray(value)) {
+      return (
+        <div className="settings-field" key={path.join(".")}>
+          <span>{displayLabel}</span>
+          {renderArrayEditor(value, path, meta, displayLabel)}
+        </div>
+      );
+    }
     if (meta?.options && meta.options.length > 0) {
+      const selectedValue = value === null ? "" : String(value ?? "");
+      const options = meta.options.some((option) => option.value === selectedValue)
+        ? meta.options
+        : [...meta.options, { value: selectedValue, label: selectedValue }];
       return (
         <label className="settings-field" key={path.join(".")}>
           <span>{displayLabel}</span>
           <select
             className={settingsSelectClass}
-            value={value === null ? "" : String(value ?? "")}
+            value={selectedValue}
             onChange={(event) => updateConfigValue(path, event.target.value)}
           >
-            {meta.options.map((option) => (
+            {options.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -1212,14 +1469,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             onChange={(event) => updateConfigValue(path, Number(event.target.value))}
           />
         </label>
-      );
-    }
-    if (Array.isArray(value)) {
-      return (
-        <div className="settings-field" key={path.join(".")}>
-          <span>{displayLabel}</span>
-          {renderArrayEditor(value, path)}
-        </div>
       );
     }
     if (value && typeof value === "object") {
@@ -1336,6 +1585,278 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                 </div>
               </div>
             ))
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderTorrentClientsSection = (advancedOpen: boolean) => {
+    if (
+      !configData ||
+      !configData.TorrentClients ||
+      typeof configData.TorrentClients !== "object" ||
+      Array.isArray(configData.TorrentClients)
+    ) {
+      return null;
+    }
+
+    const clients = Object.entries(configData.TorrentClients as ConfigMap).filter(
+      ([, value]) => value && typeof value === "object" && !Array.isArray(value),
+    ) as Array<[string, ConfigMap]>;
+    const meta = effectiveSectionFieldMeta.TorrentClients || {};
+    const valueFor = (client: ConfigMap, primary: string, fallback?: string) => {
+      const primaryValue = client[primary];
+      if (primaryValue !== undefined && primaryValue !== null && primaryValue !== "") {
+        return primaryValue;
+      }
+      return fallback ? client[fallback] : primaryValue;
+    };
+    const arrayFor = (client: ConfigMap, key: string) => {
+      const value = client[key];
+      return Array.isArray(value) ? value : [];
+    };
+    const qbitTagFor = (client: ConfigMap) => {
+      const direct = client.QbitTag;
+      if (typeof direct === "string" && direct.trim() !== "") return direct;
+      const qbitTags = normalizeStringArray(client.QbitTagsValue);
+      if (qbitTags.length > 0) return qbitTags.join(",");
+      return normalizeStringArray(client.Tags).join(",");
+    };
+    const hasDirectConfig = (client: ConfigMap) =>
+      ["QbitURL", "QbitPort", "QbitUser", "QbitPass", "URL", "Username", "Password"].some((key) => {
+        const value = client[key];
+        if (typeof value === "number") return value > 0;
+        return typeof value === "string" && value.trim() !== "";
+      });
+    const setQbitDirect = (name: string, enabled: boolean) => {
+      const client = clients.find(([clientName]) => clientName === name)?.[1];
+      if (!client) {
+        return;
+      }
+      const nextClient = nextQbitDirectState(client, enabled);
+      for (const key of [
+        "QbitURL",
+        "QbitPort",
+        "QbitUser",
+        "QbitPass",
+        "URL",
+        "Username",
+        "Password",
+        "QuiProxyURL",
+      ]) {
+        if (client[key] === nextClient[key]) {
+          continue;
+        }
+        updateConfigValue(["TorrentClients", name, key], nextClient[key]);
+      }
+    };
+
+    return (
+      <div className="settings-map">
+        <div className="settings-map__header">
+          <p className="label">Entries</p>
+          <Button
+            type="button"
+            onClick={() => {
+              const name = globalThis.prompt("New entry name");
+              if (!name) return;
+              addConfigKey(["TorrentClients"], name, qbitDefaultClient());
+            }}
+          >
+            Add entry
+          </Button>
+        </div>
+
+        <div className="settings-map__grid">
+          {clients.length === 0 ? (
+            <p className="muted">No entries yet.</p>
+          ) : (
+            clients.map(([name, client]) => {
+              const clientType = normalizeTorrentClientType(client);
+              const watchClient = clientType === "watch";
+              const directEnabled = !watchClient && hasDirectConfig(client);
+              return (
+                <div className="settings-card" key={`TorrentClients-${name}`}>
+                  <div className="settings-card__header">
+                    <p className="value">{name}</p>
+                    <Button type="button" onClick={() => removeConfigKey(["TorrentClients"], name)}>
+                      Remove
+                    </Button>
+                  </div>
+                  <div className="settings-grid">
+                    {renderField(
+                      "Type",
+                      valueFor(client, "Type", "TorrentClient") ?? "qbit",
+                      ["TorrentClients", name, "Type"],
+                      meta.Type,
+                    )}
+                    {watchClient
+                      ? renderField(
+                          "WatchFolder",
+                          client.WatchFolder ?? "",
+                          ["TorrentClients", name, "WatchFolder"],
+                          meta.WatchFolder,
+                        )
+                      : null}
+                    {watchClient
+                      ? renderField(
+                          "StorageDir",
+                          client.StorageDir ?? "",
+                          ["TorrentClients", name, "StorageDir"],
+                          meta.StorageDir,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QuiProxyURL",
+                          client.QuiProxyURL ?? "",
+                          ["TorrentClients", name, "QuiProxyURL"],
+                          meta.QuiProxyURL,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QbitCategoryValue",
+                          valueFor(client, "QbitCategoryValue", "Category") ?? "",
+                          ["TorrentClients", name, "QbitCategoryValue"],
+                          meta.QbitCategoryValue,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QbitTag",
+                          qbitTagFor(client),
+                          ["TorrentClients", name, "QbitTag"],
+                          meta.QbitTag,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QbitCrossCategory",
+                          client.QbitCrossCategory ?? "",
+                          ["TorrentClients", name, "QbitCrossCategory"],
+                          meta.QbitCrossCategory,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QbitCrossTag",
+                          client.QbitCrossTag ?? "",
+                          ["TorrentClients", name, "QbitCrossTag"],
+                          meta.QbitCrossTag,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "UseTrackerAsTag",
+                          client.UseTrackerAsTag ?? false,
+                          ["TorrentClients", name, "UseTrackerAsTag"],
+                          meta.UseTrackerAsTag,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "Linking",
+                          client.Linking ?? "",
+                          ["TorrentClients", name, "Linking"],
+                          meta.Linking,
+                        )
+                      : null}
+                    {!watchClient ? (
+                      <div
+                        className="settings-switch-row"
+                        key={`TorrentClients-${name}-AllowFallback`}
+                      >
+                        <span>Allow link fallback</span>
+                        <Switch
+                          aria-label="Allow link fallback"
+                          checked={Boolean(client.AllowFallback ?? true)}
+                          onChange={(event) =>
+                            updateConfigValue(
+                              ["TorrentClients", name, "AllowFallback"],
+                              event.target.checked,
+                            )
+                          }
+                        />
+                      </div>
+                    ) : null}
+                    {!watchClient
+                      ? renderField(
+                          "LinkedFolder",
+                          arrayFor(client, "LinkedFolder"),
+                          ["TorrentClients", name, "LinkedFolder"],
+                          meta.LinkedFolder,
+                        )
+                      : null}
+                    {!watchClient && advancedOpen
+                      ? renderField(
+                          "LocalPath",
+                          arrayFor(client, "LocalPath"),
+                          ["TorrentClients", name, "LocalPath"],
+                          meta.LocalPath,
+                        )
+                      : null}
+                    {!watchClient && advancedOpen
+                      ? renderField(
+                          "RemotePath",
+                          arrayFor(client, "RemotePath"),
+                          ["TorrentClients", name, "RemotePath"],
+                          meta.RemotePath,
+                        )
+                      : null}
+                    {!watchClient && advancedOpen
+                      ? renderField(
+                          "VerifyWebUICertificate",
+                          client.VerifyWebUICertificate ?? true,
+                          ["TorrentClients", name, "VerifyWebUICertificate"],
+                          meta.VerifyWebUICertificate,
+                        )
+                      : null}
+                  </div>
+
+                  {!watchClient ? (
+                    <div className="settings-switch-row">
+                      <span>qBit direct</span>
+                      <Switch
+                        aria-label="qBit direct"
+                        checked={directEnabled}
+                        onChange={(event) => setQbitDirect(name, event.target.checked)}
+                      />
+                    </div>
+                  ) : null}
+
+                  {!watchClient && directEnabled ? (
+                    <div className="settings-grid">
+                      {renderField(
+                        "QbitURL",
+                        valueFor(client, "QbitURL", "URL") ?? "",
+                        ["TorrentClients", name, "QbitURL"],
+                        meta.QbitURL,
+                      )}
+                      {renderField(
+                        "QbitPort",
+                        client.QbitPort ?? 0,
+                        ["TorrentClients", name, "QbitPort"],
+                        meta.QbitPort,
+                      )}
+                      {renderField(
+                        "QbitUser",
+                        valueFor(client, "QbitUser", "Username") ?? "",
+                        ["TorrentClients", name, "QbitUser"],
+                        meta.QbitUser,
+                      )}
+                      {renderField(
+                        "QbitPass",
+                        valueFor(client, "QbitPass", "Password") ?? "",
+                        ["TorrentClients", name, "QbitPass"],
+                        meta.QbitPass,
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })
           )}
         </div>
       </div>
@@ -1498,6 +2019,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         .sort((a, b) => a.localeCompare(b));
       const allEntrySet = new Set(allEntries.map(([name]) => name));
       const availableTrackers = trackerOptions.filter((name) => !visibleTrackerSet.has(name));
+      const trackerClientOptions = [{ value: "", label: "" }, ...torrentClientOptions];
 
       const trackerFallbackSchema = [
         trackerFieldMeta.LinkDirName,
@@ -1513,8 +2035,16 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
           ...trackerFieldMeta.ImageHost,
           options: trackerOptionsForImageHost(name),
         };
+        const torrentClientField = {
+          ...trackerFieldMeta.TorrentClient,
+          options: trackerClientOptions,
+        };
         const base = trackerSchemas[name] || trackerFallbackSchema;
-        return [imageHostField, ...base.filter((meta) => meta.key !== "ImageHost")];
+        return [
+          imageHostField,
+          torrentClientField,
+          ...base.filter((meta) => meta.key !== "ImageHost" && meta.key !== "TorrentClient"),
+        ];
       };
 
       const buildDefault = (meta: FieldMeta) => {
@@ -1791,9 +2321,10 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     handleSaveSettings,
     renderImageHostingSection,
     renderTrackerSection,
+    renderTorrentClientsSection,
     renderMapSection,
     renderField,
-    sectionFieldMeta,
+    sectionFieldMeta: effectiveSectionFieldMeta,
     updateConfigValue,
     updateScreenshotConfigValue,
     configuredImageHosts,

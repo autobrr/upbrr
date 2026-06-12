@@ -191,13 +191,14 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			QuestionnaireAnswers map[string]map[string]string
 			DescriptionGroups    []api.DescriptionBuilderGroup
 			Debug                bool
+			NoSeed               bool
 			RunLogLevel          string
 		}
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.FetchTrackerDryRun(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.RunLogLevel)
+		value, err := s.backend.FetchTrackerDryRun(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.NoSeed, req.RunLogLevel)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -849,13 +850,14 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			QuestionnaireAnswers map[string]map[string]string
 			DescriptionGroups    []api.DescriptionBuilderGroup
 			Debug                bool
+			NoSeed               bool
 			RunLogLevel          string
 		}
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.StartTrackerUpload(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.RunLogLevel)
+		value, err := s.backend.StartTrackerUpload(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.NoSeed, req.RunLogLevel)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

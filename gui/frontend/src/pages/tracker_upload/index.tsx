@@ -25,6 +25,8 @@ type Props = {
   failedDupeTrackerSet: Set<string>;
   uploadToggles: Record<string, boolean>;
   setUploadToggles: Dispatch<SetStateAction<Record<string, boolean>>>;
+  skipClientInjection: boolean;
+  setSkipClientInjection: Dispatch<SetStateAction<boolean>>;
   namingOverrides: Array<[string, unknown]>;
   preview: MetadataPreview;
   formatLabel: (value: string) => string;
@@ -73,6 +75,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     failedDupeTrackerSet,
     uploadToggles,
     setUploadToggles,
+    skipClientInjection,
+    setSkipClientInjection,
     namingOverrides,
     preview,
     formatLabel,
@@ -355,6 +359,18 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
           <Button type="button" onClick={onRetryFailed} disabled={!canRetry}>
             Retry Failed
           </Button>
+          <label
+            className="inline-flex items-center gap-2 text-sm text-[var(--text)]"
+            htmlFor="skip-client-injection"
+          >
+            <Checkbox
+              id="skip-client-injection"
+              checked={skipClientInjection}
+              disabled={uploadRunning}
+              onCheckedChange={setSkipClientInjection}
+            />
+            <span>Skip client injection</span>
+          </label>
           <p className="m-0 text-xs text-[var(--muted)]">
             Selected: {selectedTrackerCount} · Uploaded: {uploadSnapshot?.uploadedCount || 0}
           </p>

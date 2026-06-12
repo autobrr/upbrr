@@ -80,6 +80,7 @@ func ensureDescriptionImageHostWithData(
 	if err != nil {
 		return descriptionImageHostResolution{}, err
 	}
+	selectionPolicy := reusableImageHostSelectionPolicy(policy, preferredHosts...)
 	feedback := api.ImageHostFeedback{
 		Status:       "reused",
 		AllowedHosts: append([]string{}, policy.allowed...),
@@ -130,11 +131,11 @@ func ensureDescriptionImageHostWithData(
 		return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
 	}
 
-	if screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, policy); err == nil && len(screenshots) > 0 {
+	if screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy); err == nil && len(screenshots) > 0 && reusableSelectionMatchesPolicy(host, selectionPolicy) {
 		feedback.SelectedHost = host
-		feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(policy))
+		feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
 		return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
-	} else if err != nil && allRenderableSlotsHaveEligibleVariant(slots, tracker, policy) {
+	} else if err != nil && allRenderableSlotsHaveEligibleVariant(slots, tracker, selectionPolicy) {
 		return descriptionImageHostResolution{}, err
 	}
 
@@ -172,9 +173,9 @@ func ensureDescriptionImageHostWithData(
 	}
 	if len(sourceImages) == 0 {
 		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded)
-		if screenshots, host := resolveTrackerScreenshotsForAllowedHost(urls, policy); len(screenshots) > 0 {
+		if screenshots, host := resolveTrackerScreenshotsForAllowedHost(urls, selectionPolicy); len(screenshots) > 0 && reusableSelectionMatchesPolicy(host, selectionPolicy) {
 			feedback.SelectedHost = host
-			feedback.Message = buildReuseMessage(tracker, host, globalImageUsageScope, host != preferredHost(policy))
+			feedback.Message = buildReuseMessage(tracker, host, globalImageUsageScope, host != preferredHost(selectionPolicy))
 			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
 		}
 		feedback.Status = "warning"
@@ -182,7 +183,7 @@ func ensureDescriptionImageHostWithData(
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
-	for _, host := range uploadAttemptHosts(policy) {
+	for _, host := range reusableHostCandidates(selectionPolicy) {
 		usageScope := usageScopeForHost(host)
 		screenshots, err := reusableUploadedScreenshotsForHost(ctx, tracker, meta, repo, preloaded, host, usageScope, sourceImages)
 		if err != nil {
@@ -190,19 +191,37 @@ func ensureDescriptionImageHostWithData(
 		}
 		if len(screenshots) > 0 {
 			feedback.SelectedHost = host
-			feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(policy))
+			feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
 			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
 		}
 	}
 
 	if images == nil {
+		fallbackPolicy := effectiveImageHostSelectionPolicy(policy, preferredHosts...)
+		if screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, fallbackPolicy); err == nil && len(screenshots) > 0 {
+			feedback.SelectedHost = host
+			feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
+			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
+		}
+		for _, host := range reusableHostCandidates(fallbackPolicy) {
+			usageScope := usageScopeForHost(host)
+			screenshots, err := reusableUploadedScreenshotsForHost(ctx, tracker, meta, repo, preloaded, host, usageScope, sourceImages)
+			if err != nil {
+				return descriptionImageHostResolution{}, err
+			}
+			if len(screenshots) > 0 {
+				feedback.SelectedHost = host
+				feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
+				return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
+			}
+		}
 		feedback.Status = "warning"
 		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but image hosting is unavailable.", tracker, strings.Join(policy.allowed, ", "))
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
 	var lastErr error
-	for _, host := range uploadAttemptHosts(policy) {
+	for _, host := range uploadAttemptHosts(policy, preferredHosts...) {
 		usageScope := usageScopeForHost(host)
 		uploaded, err := images.Upload(ctx, meta, host, usageScope, sourceImages)
 		if err != nil {
@@ -224,7 +243,7 @@ func ensureDescriptionImageHostWithData(
 		if summary.FallbackMatched > 0 && logger != nil {
 			logger.Debugf("trackers: image host resolution applied ordered slot fallback tracker=%s host=%s matched=%d", tracker, host, summary.FallbackMatched)
 		}
-		screenshots, _, _, err := selectScreenshotsFromSlots(tracker, candidateSlots, policy)
+		screenshots, _, _, err := selectScreenshotsFromSlots(tracker, candidateSlots, selectionPolicy)
 		if err != nil {
 			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
 			return descriptionImageHostResolution{}, err
@@ -259,7 +278,7 @@ func ensureDescriptionImageHostWithData(
 	}
 
 	feedback.Status = "warning"
-	attemptHosts := strings.Join(uploadAttemptHosts(policy), ", ")
+	attemptHosts := strings.Join(uploadAttemptHosts(policy, preferredHosts...), ", ")
 	if attemptHosts == "" {
 		attemptHosts = "none"
 	}
@@ -485,10 +504,38 @@ func failedImageHostNames(warnings []api.ImageHostWarning) []string {
 	return hosts
 }
 
-func uploadAttemptHosts(policy imageHostPolicy) []string {
-	if len(policy.preferred) == 0 {
-		return nil
+func effectiveImageHostSelectionPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
+	host := firstPreferredDescriptionImageHost(preferredHosts)
+	if host == "" || !hostAllowed(host, policy.allowed) {
+		return policy
 	}
+	effective := policy
+	effective.preferred = prependHost(host, effective.preferred)
+	return effective
+}
+
+func reusableImageHostSelectionPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
+	effective := effectiveImageHostSelectionPolicy(policy, preferredHosts...)
+	if !effective.required || effective.fallbackOK || len(effective.preferred) <= 1 {
+		return effective
+	}
+	effective.preferred = append([]string(nil), effective.preferred[:1]...)
+	return effective
+}
+
+func reusableSelectionMatchesPolicy(host string, policy imageHostPolicy) bool {
+	normalizedHost := strings.ToLower(strings.TrimSpace(host))
+	if normalizedHost == "" {
+		return false
+	}
+	if !policy.required || policy.fallbackOK {
+		return true
+	}
+	preferred := preferredHost(policy)
+	return preferred == "" || strings.EqualFold(normalizedHost, preferred)
+}
+
+func reusableHostCandidates(policy imageHostPolicy) []string {
 	allowedUploads := make(map[string]struct{}, len(policy.uploadHosts))
 	for _, host := range policy.uploadHosts {
 		normalized := strings.ToLower(strings.TrimSpace(host))
@@ -513,6 +560,18 @@ func uploadAttemptHosts(policy imageHostPolicy) []string {
 		out = append(out, normalized)
 	}
 	return out
+}
+
+func uploadAttemptHosts(policy imageHostPolicy, preferredHosts ...string) []string {
+	selectionPolicy := effectiveImageHostSelectionPolicy(policy, preferredHosts...)
+	candidates := reusableHostCandidates(selectionPolicy)
+	if len(candidates) == 0 {
+		return nil
+	}
+	if policy.fallbackOK || firstPreferredDescriptionImageHost(preferredHosts) != "" {
+		return candidates
+	}
+	return candidates[:1]
 }
 
 func resolveTrackerScreenshotsForAllowedHost(urls []string, policy imageHostPolicy) ([]api.ScreenshotImage, string) {

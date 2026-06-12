@@ -112,7 +112,7 @@ func (j *trackerUploadJob) closeResources() {
 	})
 }
 
-func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (string, error) {
+func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
 	if err := a.requireCore(); err != nil {
 		return "", err
 	}
@@ -124,7 +124,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	if len(resolvedTrackers) == 0 {
 		return "", errors.New("at least one tracker must be selected")
 	}
-	runOpts, err := a.buildRunOptions(debug, runLogLevel)
+	runOpts, err := a.buildRunOptions(debug, noSeed, runLogLevel)
 	if err != nil {
 		return "", err
 	}
@@ -240,7 +240,7 @@ func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 		return "", errors.New("no failed trackers to retry")
 	}
 
-	return a.StartTrackerUpload(sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.RunLogLevel)
+	return a.StartTrackerUpload(sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.NoSeed, runOptions.RunLogLevel)
 }
 
 func (a *App) GetTrackerUploadSnapshot(jobID string) (TrackerUploadSnapshot, error) {
