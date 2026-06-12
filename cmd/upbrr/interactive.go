@@ -173,17 +173,19 @@ func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, baseA
 		return err
 	}
 
+	req.Trackers = approved
+	req.TrackerQuestionnaireAnswers = questionnaireAnswers
+
 	if req.Options.Debug {
 		printDebugUploadReview(review)
-		return nil
+		_, err = coreSvc.RunUploadPrepared(ctx, req)
+		return wrapUpbrrError(err)
 	}
 	if req.Options.DryRun {
 		printDryRunUploadReview(review, req)
-		return nil
+		_, err = coreSvc.RunUploadPrepared(ctx, req)
+		return wrapUpbrrError(err)
 	}
-
-	req.Trackers = approved
-	req.TrackerQuestionnaireAnswers = questionnaireAnswers
 
 	_, err = coreSvc.RunUploadPrepared(ctx, req)
 	return wrapUpbrrError(err)

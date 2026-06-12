@@ -390,7 +390,7 @@ func (j *trackerUploadJob) closeResources() {
 	})
 }
 
-func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (string, error) {
+func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
 	if err := b.requireCore(); err != nil {
 		return "", err
 	}
@@ -402,7 +402,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	if len(resolvedTrackers) == 0 {
 		return "", errors.New("at least one tracker must be selected")
 	}
-	runOpts, err := b.buildRunOptions(debug, runLogLevel)
+	runOpts, err := b.buildRunOptions(debug, noSeed, runLogLevel)
 	if err != nil {
 		return "", err
 	}
@@ -498,7 +498,7 @@ func (b *Backend) RetryFailedTrackerUpload(jobID string) (string, error) {
 	if len(failedTrackers) == 0 {
 		return "", errors.New("no failed trackers to retry")
 	}
-	return b.StartTrackerUpload(sessionID, sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.RunLogLevel)
+	return b.StartTrackerUpload(sessionID, sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.NoSeed, runOptions.RunLogLevel)
 }
 
 func (b *Backend) GetTrackerUploadSnapshot(jobID string) (TrackerUploadSnapshot, error) {

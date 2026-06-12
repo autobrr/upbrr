@@ -28,6 +28,7 @@ var createReflink = reflinkFile
 func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, client config.TorrentClientConfig, meta api.PreparedMetadata, tracker string) (linkStagingResult, error) {
 	mode := client.LinkingMode()
 	if mode == "" {
+		s.logger.Tracef("clients: %s link staging disabled", clientName)
 		return linkStagingResult{}, nil
 	}
 	if mode != "symlink" && mode != "hardlink" && mode != "reflink" {
@@ -62,7 +63,9 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 	}
 
 	savePath := mapLocalPathToRemote(trackerDir, client.LocalPath, client.RemotePath)
-	return linkStagingResult{SavePath: qbitSavePath(savePath), Linked: true}, nil
+	result := linkStagingResult{SavePath: qbitSavePath(savePath), Linked: true}
+	s.logger.Debugf("clients: %s linked content tracker=%s mode=%s save_path=%s", clientName, strings.TrimSpace(tracker), mode, result.SavePath)
+	return result, nil
 }
 
 func (s *Service) trackerLinkDirName(tracker string) string {

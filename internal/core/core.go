@@ -298,7 +298,12 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 
 	if req.Options.DryRun || req.Options.Debug {
-		c.logger.Debugf("core: dry-run or debug enabled, skipping injection/upload")
+		if !meta.Options.NoSeed {
+			if err := c.injectPreparedTorrent(ctx, req, meta, torrent); err != nil {
+				return 0, err
+			}
+		}
+		c.logger.Debugf("core: dry-run or debug enabled, skipping tracker upload")
 		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "upload", "completed", "Dry run complete")
 		return 0, nil
 	}
@@ -342,6 +347,20 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 
 	return summary.Uploaded, nil
+}
+
+func (c *Core) injectPreparedTorrent(ctx context.Context, req api.Request, meta api.PreparedMetadata, torrent api.TorrentResult) error {
+	if c.services.Clients == nil {
+		return errors.New("core: client service not configured")
+	}
+	c.logger.Debugf("core: dry-run or debug enabled, injecting prepared torrent for %s", meta.SourcePath)
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "running", "Injecting torrent into client")
+	if err := c.services.Clients.Inject(ctx, meta, torrent); err != nil {
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "failed", "Client injection failed")
+		return fmt.Errorf("core: %w", err)
+	}
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "completed", "Client injection complete")
+	return nil
 }
 
 func emitPreparedUploadProgress(ctx context.Context, req api.Request, sourcePath string, task string, status string, message string) {
@@ -1920,6 +1939,7 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 		return api.TrackerDryRunPreview{}, err
 	}
 	options.DryRun = true
+	c.logger.Debugf("core: tracker dry-run options resolved path=%s debug=%t dry_run=%t no_seed=%t run_log_level=%s", uniquePaths[0], options.Debug, options.DryRun, options.NoSeed, options.RunLogLevel)
 
 	singleReq := req
 	singleReq.Paths = []string{uniquePaths[0]}
@@ -1945,7 +1965,7 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	if !ok {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: tracker dry-run requires prepared metadata for %s", uniquePaths[0])
 	}
-	c.logger.Debugf("core: tracker dry-run using cached prepared metadata for %s", uniquePaths[0])
+	c.logger.Debugf("core: tracker dry-run using cached prepared metadata for %s meta_no_seed=%t req_no_seed=%t", uniquePaths[0], meta.Options.NoSeed, singleReq.Options.NoSeed)
 	descriptionGroups, err := c.resolveCanonicalDescriptionGroups(ctx, meta, singleReq)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
@@ -1965,9 +1985,86 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	}
 	annotateDryRunReleaseNames(meta, entries)
 
+	c.logger.Debugf("core: tracker dry-run torrent ready for %s path=%s no_seed=%t", meta.SourcePath, torrent.Path, meta.Options.NoSeed)
+	if meta.Options.NoSeed {
+		c.logger.Debugf("core: tracker dry-run skipping client injection for %s: no-seed enabled", meta.SourcePath)
+	} else if err := c.injectTrackerDryRunTorrents(ctx, singleReq, meta, entries, torrent); err != nil {
+		return api.TrackerDryRunPreview{}, err
+	}
+
 	c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 
 	return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: entries}, nil
+}
+
+func (c *Core) injectTrackerDryRunTorrents(ctx context.Context, req api.Request, meta api.PreparedMetadata, entries []api.TrackerDryRunEntry, fallback api.TorrentResult) error {
+	ready := make([]api.TrackerDryRunEntry, 0, len(entries))
+	for _, entry := range entries {
+		if strings.EqualFold(strings.TrimSpace(entry.Status), "ready") {
+			ready = append(ready, entry)
+		} else {
+			c.logger.Debugf("core: tracker dry-run skipping client injection for tracker=%s status=%s", strings.TrimSpace(entry.Tracker), strings.TrimSpace(entry.Status))
+		}
+	}
+	if len(ready) == 0 {
+		c.logger.Warnf("core: tracker dry-run found no ready tracker payloads for client injection for %s", meta.SourcePath)
+		return nil
+	}
+	c.logger.Debugf("core: tracker dry-run injecting %d ready tracker torrent(s) for %s", len(ready), meta.SourcePath)
+
+	for _, entry := range ready {
+		trackerName := strings.ToUpper(strings.TrimSpace(entry.Tracker))
+		torrentPath := trackerDryRunTorrentPath(entry)
+		injectMeta, err := c.prepareDryRunInjectionMeta(meta, trackerName, torrentPath)
+		if err != nil {
+			return err
+		}
+		injectTorrent := api.TorrentResult{Path: strings.TrimSpace(injectMeta.TorrentPath), InfoHash: fallback.InfoHash, Tracker: trackerName}
+		if injectTorrent.Path == "" {
+			injectTorrent.Path = strings.TrimSpace(fallback.Path)
+		}
+		if injectTorrent.Path == "" {
+			c.logger.Debugf("core: tracker dry-run skipping client injection for tracker=%s: no torrent file", trackerName)
+			continue
+		}
+		if injectTorrent.Path == strings.TrimSpace(fallback.Path) {
+			c.logger.Debugf("core: tracker dry-run injecting fallback torrent for tracker=%s path=%s", trackerName, injectTorrent.Path)
+		} else {
+			c.logger.Debugf("core: tracker dry-run injecting tracker torrent for tracker=%s path=%s", trackerName, injectTorrent.Path)
+		}
+		if err := c.injectPreparedTorrent(ctx, req, injectMeta, injectTorrent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Core) prepareDryRunInjectionMeta(meta api.PreparedMetadata, trackerName string, torrentPath string) (api.PreparedMetadata, error) {
+	injectMeta := meta
+	if trimmed := strings.TrimSpace(torrentPath); trimmed != "" {
+		injectMeta.TorrentPath = trimmed
+	}
+	trackerCfg := config.TrackerConfig{}
+	for name, cfg := range c.cfg.Trackers.Trackers {
+		if strings.EqualFold(strings.TrimSpace(name), trackerName) {
+			trackerCfg = cfg
+			break
+		}
+	}
+	prepared, err := trackers.PrepareDryRunInjectionTorrent(injectMeta, c.cfg.MainSettings.DBPath, trackerName, trackerCfg)
+	if err != nil {
+		return api.PreparedMetadata{}, fmt.Errorf("core: tracker dry-run injection torrent artifact tracker=%s: %w", trackerName, err)
+	}
+	return prepared, nil
+}
+
+func trackerDryRunTorrentPath(entry api.TrackerDryRunEntry) string {
+	for _, file := range entry.Files {
+		if strings.EqualFold(strings.TrimSpace(file.Field), "torrent") && file.Present {
+			return strings.TrimSpace(file.Path)
+		}
+	}
+	return ""
 }
 
 func annotateDryRunReleaseNames(meta api.PreparedMetadata, entries []api.TrackerDryRunEntry) {
@@ -2831,8 +2928,10 @@ func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request)
 	}
 	meta, ok := c.lookupGUICachedMeta(req, path)
 	if !ok {
+		c.logger.Debugf("core: gui prepared metadata export miss path=%s", path)
 		return api.PreparedMetadata{}, false, nil
 	}
+	c.logger.Debugf("core: gui prepared metadata export hit path=%s meta_no_seed=%t", path, meta.Options.NoSeed)
 	return deepCopyPreparedMetadata(meta), true, nil
 }
 
@@ -2849,6 +2948,7 @@ func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request
 	overrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
 	signature := overrideSignature(overrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
 	c.storeDupeCache(path, signature, deepCopyPreparedMetadata(meta))
+	c.logger.Debugf("core: gui prepared metadata import stored path=%s request_no_seed=%t meta_no_seed=%t", path, req.Options.NoSeed, meta.Options.NoSeed)
 	return nil
 }
 

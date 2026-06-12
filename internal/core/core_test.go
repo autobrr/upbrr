@@ -394,7 +394,7 @@ func TestResolveGUICachedPreparedMetaAllowsTrackerlessFollowUp(t *testing.T) {
 	}
 }
 
-func TestRunUploadPreparedDryRunSkipsUpload(t *testing.T) {
+func TestRunUploadPreparedDryRunInjectsClientAndSkipsTrackerUpload(t *testing.T) {
 	t.Parallel()
 
 	repo := &stubRepo{}
@@ -433,12 +433,15 @@ func TestRunUploadPreparedDryRunSkipsUpload(t *testing.T) {
 	if tracker.calls != 0 {
 		t.Fatalf("expected tracker not called, got %d", tracker.calls)
 	}
-	if client.calls != 0 {
-		t.Fatalf("expected client not called, got %d", client.calls)
+	if client.calls != 1 {
+		t.Fatalf("expected client called once, got %d", client.calls)
+	}
+	if len(client.injected) != 1 || client.injected[0].Path != "/tmp/file.torrent" {
+		t.Fatalf("expected prepared torrent injection, got %#v", client.injected)
 	}
 }
 
-func TestRunUploadPreparedDebugSkipsUpload(t *testing.T) {
+func TestRunUploadPreparedDebugInjectsClientAndSkipsTrackerUpload(t *testing.T) {
 	t.Parallel()
 
 	repo := &stubRepo{}
@@ -477,8 +480,11 @@ func TestRunUploadPreparedDebugSkipsUpload(t *testing.T) {
 	if tracker.calls != 0 {
 		t.Fatalf("expected tracker not called, got %d", tracker.calls)
 	}
-	if client.calls != 0 {
-		t.Fatalf("expected client not called, got %d", client.calls)
+	if client.calls != 1 {
+		t.Fatalf("expected client called once, got %d", client.calls)
+	}
+	if len(client.injected) != 1 || client.injected[0].Path != "/tmp/file.torrent" {
+		t.Fatalf("expected prepared torrent injection, got %#v", client.injected)
 	}
 }
 
@@ -510,6 +516,54 @@ func TestRunUploadPreparedSiteCheckForcesDryRun(t *testing.T) {
 		Mode:  api.ModeGUI,
 		Execution: api.ExecutionOptions{
 			SiteCheck: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if result.UploadedCount != 0 {
+		t.Fatalf("expected 0 uploads, got %d", result.UploadedCount)
+	}
+	if tracker.calls != 0 {
+		t.Fatalf("expected tracker not called, got %d", tracker.calls)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected client called once, got %d", client.calls)
+	}
+	if len(client.injected) != 1 || client.injected[0].Path != "/tmp/file.torrent" {
+		t.Fatalf("expected prepared torrent injection, got %#v", client.injected)
+	}
+}
+
+func TestRunUploadPreparedDryRunNoSeedSkipsClient(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubRepo{}
+	tracker := &stubTrackers{}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: repo,
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+		Options: api.UploadOptions{
+			DryRun: true,
+			NoSeed: true,
 		},
 	})
 	if err != nil {
@@ -2351,14 +2405,23 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	t.Parallel()
 
 	meta := &stubMeta{}
-	tracker := &stubTrackers{}
+	client := &stubClient{}
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{
+		Tracker: "AITHER",
+		Status:  "ready",
+		Files: []api.TrackerDryRunFile{{
+			Field:   "torrent",
+			Path:    "/tmp/aither.torrent",
+			Present: true,
+		}},
+	}}}
 	core, err := New(api.CoreDependencies{
 		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
 		Services: api.ServiceSet{
 			Filesystem: &stubFS{},
 			Metadata:   meta,
 			Torrents:   &stubTorrent{},
-			Clients:    &stubClient{},
+			Clients:    client,
 			Trackers:   tracker,
 		},
 		Repository: &stubRepo{},
@@ -2386,6 +2449,59 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	}
 	if tracker.dryRunCalls != 1 {
 		t.Fatalf("expected 1 dry-run build call, got %d", tracker.dryRunCalls)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected client injection during tracker dry-run preview, got %d", client.calls)
+	}
+	if len(client.injected) != 1 || client.injected[0].Tracker != "AITHER" || client.injected[0].Path != "/tmp/aither.torrent" {
+		t.Fatalf("expected tracker dry-run injection artifact, got %#v", client.injected)
+	}
+}
+
+func TestFetchTrackerDryRunPreviewNoSeedSkipsClient(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{
+		Tracker: "AITHER",
+		Status:  "ready",
+		Files: []api.TrackerDryRunFile{{
+			Field:   "torrent",
+			Path:    "/tmp/aither.torrent",
+			Present: true,
+		}},
+	}}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	_, err = core.FetchTrackerDryRunPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+		Options:  api.UploadOptions{NoSeed: true},
+	})
+	if err != nil {
+		t.Fatalf("fetch tracker dry-run preview: %v", err)
+	}
+	if tracker.dryRunCalls != 1 {
+		t.Fatalf("expected 1 dry-run build call, got %d", tracker.dryRunCalls)
+	}
+	if client.calls != 0 {
+		t.Fatalf("expected no client injection with no-seed, got %d", client.calls)
 	}
 }
 

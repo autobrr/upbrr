@@ -358,6 +358,35 @@ func TestPrepareTrackerUploadTorrentNoSpecLeavesMetaUnchanged(t *testing.T) {
 	}
 }
 
+func TestPrepareDryRunInjectionTorrentCreatesGenericTrackerArtifact(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Release.mkv")
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	baseTorrentPath := filepath.Join(tmp, "base.torrent")
+	writeTestMetaInfo(t, baseTorrentPath, metainfo.MetaInfo{InfoBytes: testInfoBytes(t, "")})
+
+	meta, err := PrepareDryRunInjectionTorrent(api.PreparedMetadata{
+		SourcePath:  sourcePath,
+		TorrentPath: baseTorrentPath,
+	}, filepath.Join(tmp, "state", "upbrr.db"), "LUME", config.TrackerConfig{AnnounceURL: "https://luminarr.me/announce/passkey"})
+	if err != nil {
+		t.Fatalf("prepare dry-run injection torrent: %v", err)
+	}
+	if meta.TorrentPath == "" || meta.TorrentPath == baseTorrentPath {
+		t.Fatalf("expected dry-run tracker artifact path, got %q", meta.TorrentPath)
+	}
+
+	artifact := readTestMetaInfo(t, meta.TorrentPath)
+	if artifact.Announce != "https://luminarr.me/announce/passkey" {
+		t.Fatalf("expected announce set, got %q", artifact.Announce)
+	}
+	assertInfoSource(t, artifact, "LUME")
+}
+
 func TestResolveTrackerTorrentArtifactPathPrefixesTrackerName(t *testing.T) {
 	t.Parallel()
 

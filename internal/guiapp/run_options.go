@@ -17,16 +17,18 @@ import (
 
 type runOptions struct {
 	Debug       bool
+	NoSeed      bool
 	RunLogLevel string
 }
 
-func (a *App) buildRunOptions(debug bool, runLogLevel string) (runOptions, error) {
+func (a *App) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (runOptions, error) {
 	if a == nil {
 		return runOptions{}, errors.New("app not initialized")
 	}
 	if strings.TrimSpace(runLogLevel) == "" {
 		return runOptions{
 			Debug:       debug,
+			NoSeed:      noSeed,
 			RunLogLevel: "",
 		}, nil
 	}
@@ -38,6 +40,7 @@ func (a *App) buildRunOptions(debug bool, runLogLevel string) (runOptions, error
 
 	return runOptions{
 		Debug:       debug,
+		NoSeed:      noSeed,
 		RunLogLevel: normalized,
 	}, nil
 }
@@ -77,6 +80,7 @@ func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions
 	options.Debug = opts.Debug
 	// buildRunUploadOptions keeps runOptions legacy behavior: options.DryRun follows opts.Debug so debug runs stay non-uploading.
 	options.DryRun = opts.Debug
+	options.NoSeed = opts.NoSeed
 	options.RunLogLevel = opts.RunLogLevel
 	return options
 }

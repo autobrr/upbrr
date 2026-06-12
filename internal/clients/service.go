@@ -15,6 +15,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
@@ -44,8 +45,10 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 	torrentPath := strings.TrimSpace(torrent.Path)
 	torrentURL := strings.TrimSpace(torrent.URL)
 	if torrentPath == "" && torrentURL == "" {
+		s.logger.Debugf("clients: skipping injection for %s: no torrent file or URL", meta.SourcePath)
 		return internalerrors.ErrInvalidInput
 	}
+	s.logger.Tracef("clients: injection input source=%s tracker=%s has_file=%t has_url=%t configured_clients=%d", meta.SourcePath, strings.TrimSpace(torrent.Tracker), torrentPath != "", torrentURL != "", len(s.cfg.TorrentClients))
 
 	if len(s.cfg.TorrentClients) == 0 {
 		s.logger.Debugf("clients: no torrent clients configured, skipping injection")
@@ -57,6 +60,7 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 		s.logger.Debugf("clients: no matching torrent clients selected, skipping injection")
 		return nil
 	}
+	s.logger.Debugf("clients: selected %d torrent client(s) for injection", len(clients))
 
 	clientNames := make([]string, 0, len(clients))
 	for name := range clients {
@@ -73,6 +77,7 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 		}
 		switch clientType {
 		case "none", "disabled":
+			s.logger.Debugf("clients: skipping disabled client %s", name)
 			continue
 		case "watch":
 			if torrentURL != "" {
@@ -93,6 +98,7 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 		}
 	}
 
+	s.logger.Debugf("clients: injection dispatch complete for %s", meta.SourcePath)
 	return nil
 }
 
@@ -202,7 +208,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 		Password:      password,
 		TLSSkipVerify: client.QbitTLSSkipVerify(),
 	})
-	s.logger.Debugf("clients: connecting to qbit %s", host)
+	s.logger.Debugf("clients: connecting to qbit %s", redaction.RedactValue(host, nil))
 	if !client.UsesQuiProxy() {
 		if err := qbit.LoginCtx(ctx); err != nil {
 			return fmt.Errorf("clients: %s qbit login: %w", name, err)
@@ -215,6 +221,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 		return err
 	} else if staging.Linked {
 		options.SavePath = staging.SavePath
+		s.logger.Debugf("clients: qbit link staging ready client=%s tracker=%s save_path=%s", name, strings.TrimSpace(torrent.Tracker), staging.SavePath)
 	}
 	if layout := qbitContentLayout(client.QbitContentLayout()); layout != "" {
 		options.ContentLayout = layout
@@ -229,6 +236,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	}
 
 	if torrentPath := strings.TrimSpace(torrent.Path); torrentPath != "" {
+		s.logger.Debugf("clients: adding torrent file to qbit client %s for %s", name, meta.SourcePath)
 		if _, err := qbit.AddTorrentFromFileCtx(ctx, torrentPath, options.Prepare()); err != nil {
 			return fmt.Errorf("clients: %s qbit add torrent file: %w", name, err)
 		}
@@ -238,6 +246,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	}
 
 	if torrentURL := strings.TrimSpace(torrent.URL); torrentURL != "" {
+		s.logger.Debugf("clients: adding tracker torrent URL to qbit client %s for %s", name, meta.SourcePath)
 		if _, err := qbit.AddTorrentFromUrlCtx(ctx, torrentURL, options.Prepare()); err != nil {
 			return fmt.Errorf("clients: %s qbit add torrent URL: %w", name, err)
 		}

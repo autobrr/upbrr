@@ -84,6 +84,40 @@ func PrepareTrackerUploadTorrent(meta api.PreparedMetadata, dbPath string, track
 	return meta, nil
 }
 
+func PrepareDryRunInjectionTorrent(meta api.PreparedMetadata, dbPath string, tracker string, trackerConfig config.TrackerConfig) (api.PreparedMetadata, error) {
+	source, announce, ok := trackerUploadTorrentFields(tracker, trackerConfig)
+	if !ok {
+		source = strings.ToUpper(strings.TrimSpace(tracker))
+		announce = strings.TrimSpace(trackerConfig.AnnounceURL)
+		if announce == "" {
+			announce = strings.TrimSpace(trackerConfig.MyAnnounceURL)
+		}
+		if source == "" && announce == "" {
+			return meta, nil
+		}
+	}
+
+	basePath, err := ResolveUploadTorrentPath(meta, dbPath)
+	if err != nil {
+		if isUploadTorrentNotFound(err) {
+			return meta, nil
+		}
+		return api.PreparedMetadata{}, err
+	}
+	artifactPath, err := ResolveTrackerTorrentArtifactPath(meta, dbPath, tracker)
+	if err != nil {
+		if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
+			return meta, nil
+		}
+		return api.PreparedMetadata{}, err
+	}
+	if err := WritePersonalizedTorrent(basePath, artifactPath, announce, "", source); err != nil {
+		return api.PreparedMetadata{}, err
+	}
+	meta.TorrentPath = artifactPath
+	return meta, nil
+}
+
 func trackerUploadTorrentFields(tracker string, trackerConfig config.TrackerConfig) (string, string, bool) {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
 	spec, ok := trackerUploadTorrentSpecs[name]
