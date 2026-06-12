@@ -39,10 +39,16 @@ function extractTrackerHost(urlStr: string | undefined | null): string {
 
 /**
  * Resolves the primary domain or name for a tracker.
- * Prioritizes the tracker's custom base URL, falling back to the clean tracker name.
+ * Prioritizes the tracker name so the backend can resolve its configured default URL.
+ * Falls back to the custom favicon host only when no tracker name is available.
  * The backend dynamically resolves the name to the appropriate default URL and domain.
  */
 export function getTrackerDomain(trackerName: string, customUrl?: string): string {
+  const tracker = trackerName.trim();
+  if (tracker) {
+    return tracker;
+  }
+
   if (customUrl) {
     const host = extractTrackerHost(customUrl);
     if (host) {
@@ -50,5 +56,5 @@ export function getTrackerDomain(trackerName: string, customUrl?: string): strin
     }
   }
 
-  return trackerName.trim();
+  return "";
 }

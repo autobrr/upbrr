@@ -33,10 +33,7 @@ describe("useTrackerIcons", () => {
     const { result } = renderHook(() => useTrackerIcons(trackers, true));
 
     await waitFor(() =>
-      expect(getTrackerIcon).toHaveBeenCalledWith(
-        "icons.example",
-        "https://icons.example/aither.png",
-      ),
+      expect(getTrackerIcon).toHaveBeenCalledWith("AITHER", "https://icons.example/aither.png"),
     );
     await waitFor(() => expect(result.current.aither).toBe("data:image/png;base64,a"));
   });

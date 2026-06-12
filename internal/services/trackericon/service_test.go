@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -100,6 +101,46 @@ func TestGetTrackerIconFallsBackToCustomURLRootFavicon(t *testing.T) {
 	}
 }
 
+func TestGetTrackerIconSkipsOversizedResponse(t *testing.T) {
+	oversized := append([]byte{}, testPNG...)
+	oversized = append(oversized, bytes.Repeat([]byte{0}, int(maxIconBytes)+1-len(oversized))...)
+
+	var requested []string
+	withIconHTTPTestHooks(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requested = append(requested, req.URL.String())
+		body := oversized
+		if len(requested) == 2 {
+			body = testPNG
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewReader(body)),
+		}, nil
+	}), publicLookup)
+
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	dataURL, err := GetTrackerIcon(context.Background(), dbPath, "fallback.example", "")
+	if err != nil {
+		t.Fatalf("get tracker icon: %v", err)
+	}
+	if len(requested) != 2 {
+		t.Fatalf("expected oversized first response to be skipped, got requests %#v", requested)
+	}
+	if !strings.HasPrefix(dataURL, "data:image/png;base64,") {
+		t.Fatalf("expected PNG data URL, got %q", dataURL)
+	}
+
+	cachePath := filepath.Join(filepath.Dir(dbPath), "tracker-icons", "fallback.example")
+	cached, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cached icon: %v", err)
+	}
+	if !bytes.Equal(cached, testPNG) {
+		t.Fatalf("expected valid fallback icon to be cached, got %d bytes", len(cached))
+	}
+}
+
 func TestGetTrackerIconCachesDifferentCustomURLsSeparately(t *testing.T) {
 	var requested []string
 	withIconHTTPTestHooks(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -120,6 +161,42 @@ func TestGetTrackerIconCachesDifferentCustomURLsSeparately(t *testing.T) {
 	}
 	if len(requested) != 2 || requested[0] != "https://icons.example/one.png" || requested[1] != "https://icons.example/two.png" {
 		t.Fatalf("expected separate custom URL fetches, got %#v", requested)
+	}
+}
+
+func TestDetectIconContentTypeOnlyRelabelsICO(t *testing.T) {
+	unknownBinary := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05}
+	if got := DetectIconContentType(unknownBinary); got != "application/octet-stream" {
+		t.Fatalf("expected unknown binary to remain application/octet-stream, got %q", got)
+	}
+
+	ico := []byte{
+		0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+		0x10, 0x10, 0x00, 0x00, 0x01, 0x00, 0x20, 0x00,
+		0x04, 0x00, 0x00, 0x00,
+		0x16, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x01, 0x00,
+	}
+	if got := DetectIconContentType(ico); got != "image/x-icon" {
+		t.Fatalf("expected ICO to be detected as image/x-icon, got %q", got)
+	}
+}
+
+func TestWriteIconCacheFileReplacesExistingFile(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "icon")
+	if err := os.WriteFile(cachePath, []byte("old"), 0o600); err != nil {
+		t.Fatalf("write old cache file: %v", err)
+	}
+
+	if err := writeIconCacheFile(cachePath, testPNG); err != nil {
+		t.Fatalf("write icon cache file: %v", err)
+	}
+	cached, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache file: %v", err)
+	}
+	if !bytes.Equal(cached, testPNG) {
+		t.Fatalf("expected cache file replacement, got %q", string(cached))
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -21,6 +22,8 @@ import (
 
 	"github.com/autobrr/upbrr/internal/services/db"
 )
+
+const maxIconBytes int64 = 1 << 20
 
 var (
 	iconLookupIPAddr = net.DefaultResolver.LookupIPAddr
@@ -63,6 +66,9 @@ func GetTrackerIcon(ctx context.Context, dbPath string, domain string, customURL
 			return "", errors.New("empty icon file (negative cached)")
 		}
 		mime := DetectIconContentType(data)
+		if !isAllowedIconContentType(mime) {
+			return "", fmt.Errorf("trackericon: cached icon has unsupported content type %q", mime)
+		}
 		encoded := base64.StdEncoding.EncodeToString(data)
 		return "data:" + mime + ";base64," + encoded, nil
 	}
@@ -110,7 +116,7 @@ func GetTrackerIcon(ctx context.Context, dbPath string, domain string, customURL
 			continue
 		}
 
-		data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // max 1MB
+		data, err := readIconResponse(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil || len(data) == 0 {
 			continue
@@ -125,16 +131,72 @@ func GetTrackerIcon(ctx context.Context, dbPath string, domain string, customURL
 
 	if len(fetchedData) == 0 {
 		// Cache the failure as 0 bytes to prevent continuous spamming/network wait
-		_ = os.WriteFile(filePath, []byte{}, 0o600)
+		if err := writeIconCacheFile(filePath, []byte{}); err != nil {
+			return "", errors.Join(errors.New("failed to fetch icon from all candidate URLs"), err)
+		}
 		return "", errors.New("failed to fetch icon from all candidate URLs")
 	}
 
 	// Cache successful download
-	_ = os.WriteFile(filePath, fetchedData, 0o600)
+	if err := writeIconCacheFile(filePath, fetchedData); err != nil {
+		return "", fmt.Errorf("trackericon: cache icon: %w", err)
+	}
 
 	mime := DetectIconContentType(fetchedData)
 	encoded := base64.StdEncoding.EncodeToString(fetchedData)
 	return "data:" + mime + ";base64," + encoded, nil
+}
+
+func readIconResponse(body io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxIconBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("trackericon: read icon response: %w", err)
+	}
+	if int64(len(data)) > maxIconBytes {
+		return nil, errors.New("trackericon: icon response exceeds 1 MiB")
+	}
+	return data, nil
+}
+
+func writeIconCacheFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp cache file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("chmod temp cache file: %w", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write temp cache file: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("sync temp cache file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close temp cache file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+			_ = os.Remove(tmpPath)
+			return fmt.Errorf("replace cache file: remove existing: %w", removeErr)
+		}
+		if renameErr := os.Rename(tmpPath, path); renameErr != nil {
+			_ = os.Remove(tmpPath)
+			return fmt.Errorf("replace cache file: %w", renameErr)
+		}
+	}
+
+	return nil
 }
 
 func iconCandidates(domain string, customURL string) []string {
@@ -258,8 +320,20 @@ func SafeDomainFilename(domain string) string {
 // DetectIconContentType detects the image format MIME type.
 func DetectIconContentType(data []byte) string {
 	ct := http.DetectContentType(data)
-	if ct == "application/octet-stream" {
+	if ct == "application/octet-stream" && isICOFile(data) {
 		return "image/x-icon"
 	}
 	return ct
+}
+
+func isICOFile(data []byte) bool {
+	if len(data) < 6 {
+		return false
+	}
+	iconType := binary.LittleEndian.Uint16(data[2:4])
+	count := binary.LittleEndian.Uint16(data[4:6])
+	if (iconType != 1 && iconType != 2) || count == 0 {
+		return false
+	}
+	return len(data) >= 6+int(count)*16
 }
