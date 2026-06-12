@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { Dispatch, SetStateAction } from "react";
+import RenderedDescription from "../../components/RenderedDescription";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
+import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
+import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { DescriptionBuilderPreview } from "../../types";
-import { handleExternalLinkClick } from "../../utils/externalLinks";
 
 type Props = {
   path: string;
@@ -15,8 +18,12 @@ type Props = {
   builderSaving: boolean;
   builderRenderLoading: boolean;
   builderRefreshing: boolean;
+  builderProgressMessage: string;
   builderError: string;
   builderSaved: string;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
+  trackerIconSrcByName?: TrackerIconCache;
   refreshDescriptionBuilder: () => void;
   setBuilderRawByGroup: Dispatch<SetStateAction<Record<string, string>>>;
   setBuilderDirtyByGroup: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -24,16 +31,6 @@ type Props = {
   resetBuilderDescription: (groupKey: string) => void;
   renderBuilderDescription: (groupKey: string) => void;
   saveBuilderDescription: (groupKey: string) => void;
-};
-
-const decodeHtmlEntities = (value: string) => {
-  if (!value) return value;
-  if (!value.includes("&lt;") && !value.includes("&gt;") && !value.includes("&#")) {
-    return value;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.innerHTML = value;
-  return textarea.value;
 };
 
 const groupLabel = (groupKey: string, trackers: string[]) => {
@@ -53,8 +50,12 @@ export default function DescriptionBuilderPage(props: Props) {
     builderSaving,
     builderRenderLoading,
     builderRefreshing,
+    builderProgressMessage,
     builderError,
     builderSaved,
+    useFavicons = true,
+    faviconOnly = false,
+    trackerIconSrcByName = {},
     refreshDescriptionBuilder,
     setBuilderRawByGroup,
     setBuilderDirtyByGroup,
@@ -90,6 +91,11 @@ export default function DescriptionBuilderPage(props: Props) {
         >
           {builderRefreshing ? "Refreshing..." : "Refresh descriptions"}
         </button>
+        {builderProgressMessage ? (
+          <p className="m-0 basis-full text-right text-[0.82rem] text-[var(--muted)]">
+            {builderProgressMessage}
+          </p>
+        ) : null}
       </section>
 
       {builderError ? <p className="error">{builderError}</p> : null}
@@ -101,7 +107,8 @@ export default function DescriptionBuilderPage(props: Props) {
             <h2>Building Descriptions</h2>
           </div>
           <p className="muted">
-            Preparing tracker-group descriptions and image-host adjustments...
+            {builderProgressMessage ||
+              "Preparing tracker-group descriptions and image-host adjustments..."}
           </p>
         </section>
       ) : groups.length === 0 ? (
@@ -117,14 +124,31 @@ export default function DescriptionBuilderPage(props: Props) {
           const seededRendered = group.RawDescriptionHTML || "";
           const renderedHTML = builderRenderedByGroup[groupKey] ?? seededRendered;
           const expanded = builderExpandedGroups[groupKey] ?? false;
-          const label = groupLabel(groupKey, group.Trackers || []);
+          const trackers = (group.Trackers || []).map((tracker) => tracker.trim()).filter(Boolean);
+          const label = groupLabel(groupKey, trackers);
+          const hideTrackerNames = faviconOnly && useFavicons && trackers.length > 0;
           const imageHostWarnings = group.ImageHost?.Warnings || [];
 
           return (
             <section className="panel grid gap-3" key={reactKey}>
               <div className="mb-1 flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2>{label}</h2>
+                  <h2>
+                    <span
+                      aria-label={hideTrackerNames ? label : undefined}
+                      className="inline-flex flex-wrap items-center gap-1.5"
+                    >
+                      {trackers.map((tracker) => (
+                        <TrackerIconImage
+                          tracker={tracker}
+                          iconSrc={trackerIconFor(trackerIconSrcByName, tracker)}
+                          enabled={useFavicons}
+                          key={`${groupKey}-${tracker}`}
+                        />
+                      ))}
+                      {hideTrackerNames ? null : label}
+                    </span>
+                  </h2>
                   <p className="muted">
                     {group.HasOverride
                       ? "Saved override active for this group."
@@ -200,7 +224,8 @@ export default function DescriptionBuilderPage(props: Props) {
                     <div className="mb-2 flex flex-col gap-1">
                       <h2>Raw Description</h2>
                       <p className="muted">
-                        This saved raw description is the upload source of truth for {label}.
+                        This final raw description is the upload source of truth for{" "}
+                        {hideTrackerNames ? "this group" : label}.
                       </p>
                     </div>
                     <textarea
@@ -219,11 +244,7 @@ export default function DescriptionBuilderPage(props: Props) {
                       <h2>Rendered Raw Preview</h2>
                     </div>
                     {renderedHTML ? (
-                      <div
-                        className="tracker-description rendered"
-                        onClick={handleExternalLinkClick}
-                        dangerouslySetInnerHTML={{ __html: decodeHtmlEntities(renderedHTML) }}
-                      />
+                      <RenderedDescription html={renderedHTML} />
                     ) : (
                       <p className="muted">No rendered preview yet.</p>
                     )}

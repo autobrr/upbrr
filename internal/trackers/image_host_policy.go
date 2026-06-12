@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -17,6 +18,7 @@ type imageHostPolicy struct {
 	uploadHosts []string
 	preferred   []string
 	required    bool
+	fallbackOK  bool
 }
 
 type ImageUploadTarget struct {
@@ -56,6 +58,7 @@ func applyImageHostOverrides(tracker string, policy imageHostPolicy, overrides a
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is not allowed (allowed: %s)", strings.TrimSpace(tracker), host, strings.Join(policy.allowed, ", "))
 	}
 	policy.preferred = prependHost(host, policy.preferred)
+	policy.fallbackOK = true
 	return policy, nil
 }
 
@@ -78,6 +81,7 @@ func resolveImageHostPolicy(tracker string, trackerCfg config.TrackerConfig, ove
 		return newImageHostPolicy(true, host), nil
 	}
 	policy.preferred = prependHost(host, policy.preferred)
+	policy.fallbackOK = true
 	return policy, nil
 }
 
@@ -232,6 +236,24 @@ func neededImageUploadTargets(appCfg config.Config, trackerNames []string, selec
 		flexibleTargets = append(flexibleTargets, imageUploadPolicyTarget{tracker: name, policy: policy, candidates: userHosts})
 	}
 
+	if selectedHost != "" && trackerForOwnedHost(selectedHost) == "" && hostInList(selectedHost, userHosts) {
+		if _, excluded := excludedHosts[selectedHost]; !excluded && len(flexibleTargets) > 0 {
+			usableForAllFlexible := true
+			for _, target := range flexibleTargets {
+				if !imageHostUsableForPolicy(target.tracker, selectedHost, target.policy) {
+					usableForAllFlexible = false
+					break
+				}
+			}
+			if usableForAllFlexible {
+				for _, target := range flexibleTargets {
+					addTarget(selectedHost, target.tracker)
+				}
+				flexibleTargets = nil
+			}
+		}
+	}
+
 	assignFlexibleImageUploadTargets(flexibleTargets, excludedHosts, targets, addTarget)
 
 	if len(targets) == 0 && selectedHost != "" && trackerForOwnedHost(selectedHost) == "" && hostInList(selectedHost, userHosts) {
@@ -327,15 +349,32 @@ func betterImageUploadHostRanking(candidate imageUploadHostRanking, current imag
 }
 
 func candidateImageUploadTargetHosts(tracker string, policy imageHostPolicy, candidates []string, excludedHosts map[string]struct{}) []string {
-	hosts := make([]string, 0, len(candidates))
+	hostsByName := make(map[string]struct{}, len(candidates))
 	for _, host := range candidates {
 		normalizedHost := strings.ToLower(strings.TrimSpace(host))
 		if _, excluded := excludedHosts[normalizedHost]; excluded {
 			continue
 		}
 		if imageHostUsableForPolicy(tracker, normalizedHost, policy) {
-			hosts = appendUniqueHost(hosts, normalizedHost)
+			hostsByName[normalizedHost] = struct{}{}
 		}
+	}
+	hosts := make([]string, 0, len(hostsByName))
+	for _, host := range policy.preferred {
+		normalizedHost := strings.ToLower(strings.TrimSpace(host))
+		if _, ok := hostsByName[normalizedHost]; !ok {
+			continue
+		}
+		hosts = append(hosts, normalizedHost)
+		delete(hostsByName, normalizedHost)
+	}
+	for _, host := range candidates {
+		normalizedHost := strings.ToLower(strings.TrimSpace(host))
+		if _, ok := hostsByName[normalizedHost]; !ok {
+			continue
+		}
+		hosts = append(hosts, normalizedHost)
+		delete(hostsByName, normalizedHost)
 	}
 	return hosts
 }
@@ -450,10 +489,8 @@ func appendUniqueTracker(trackers []string, tracker string) []string {
 	if tracker == "" {
 		return trackers
 	}
-	for _, existing := range trackers {
-		if existing == tracker {
-			return trackers
-		}
+	if slices.Contains(trackers, tracker) {
+		return trackers
 	}
 	return append(trackers, tracker)
 }
@@ -463,10 +500,8 @@ func appendUniqueHost(hosts []string, host string) []string {
 	if host == "" {
 		return hosts
 	}
-	for _, existing := range hosts {
-		if existing == host {
-			return hosts
-		}
+	if slices.Contains(hosts, host) {
+		return hosts
 	}
 	return append(hosts, host)
 }
@@ -476,10 +511,5 @@ func hostInList(host string, hosts []string) bool {
 	if host == "" {
 		return false
 	}
-	for _, existing := range hosts {
-		if existing == host {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(hosts, host)
 }

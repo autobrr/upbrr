@@ -167,7 +167,7 @@ func TestBuildRunOptionsDefaults(t *testing.T) {
 	t.Parallel()
 
 	app := &App{cfg: config.Config{Logging: config.LoggingConfig{Level: "info"}}}
-	opts, err := app.buildRunOptions(true, "")
+	opts, err := app.buildRunOptions(true, false, "")
 	if err != nil {
 		t.Fatalf("build run options: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestBuildRunOptionsEmptyLogLevelSkipsNormalization(t *testing.T) {
 	t.Parallel()
 
 	app := &App{}
-	opts, err := app.buildRunOptions(false, "   ")
+	opts, err := app.buildRunOptions(false, false, "   ")
 	if err != nil {
 		t.Fatalf("build run options: %v", err)
 	}
@@ -196,8 +196,21 @@ func TestBuildRunOptionsRejectsInvalidLogLevel(t *testing.T) {
 	t.Parallel()
 
 	app := &App{}
-	if _, err := app.buildRunOptions(false, "verbose"); err == nil {
+	if _, err := app.buildRunOptions(false, false, "verbose"); err == nil {
 		t.Fatal("expected invalid log level to fail")
+	}
+}
+
+func TestBuildRunOptionsPropagatesNoSeed(t *testing.T) {
+	t.Parallel()
+
+	app := &App{}
+	opts, err := app.buildRunOptions(false, true, "")
+	if err != nil {
+		t.Fatalf("build run options: %v", err)
+	}
+	if !opts.NoSeed {
+		t.Fatalf("expected no-seed enabled, got %#v", opts)
 	}
 }
 

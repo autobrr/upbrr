@@ -58,6 +58,10 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	dailyDate := strings.TrimSpace(req.DailyDate)
 	videoCodec := strings.TrimSpace(req.VideoCodec)
 	videoEncode := strings.TrimSpace(req.VideoEncode)
+	videoName := videoEncode
+	if videoName == "" {
+		videoName = videoCodec
+	}
 	region := strings.TrimSpace(req.Region)
 	dvdSize := strings.TrimSpace(req.DVDSize)
 	edition := strings.TrimSpace(req.Edition)
@@ -127,18 +131,18 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 			name = joinParts(title, altTitle, yearValue, edition, repack, source, "REMUX", audio)
 			missing = []string{"edition", "description"}
 		case matchType == "ENCODE":
-			name = joinParts(title, altTitle, yearValue, edition, hybrid, repack, resolution, uhd, source, audio, hdr, videoEncode)
+			name = joinParts(title, altTitle, yearValue, edition, hybrid, repack, resolution, uhd, source, audio, hdr, videoName)
 			missing = []string{"edition", "description"}
 		case matchType == "WEBDL":
-			name = joinParts(title, altTitle, yearValue, edition, hybrid, repack, resolution, uhd, service, "WEB-DL", audio, hdr, videoEncode)
+			name = joinParts(title, altTitle, yearValue, edition, hybrid, repack, resolution, uhd, service, "WEB-DL", audio, hdr, videoName)
 			missing = []string{"edition", "service"}
 		case matchType == "WEBRIP":
-			name = joinParts(title, altTitle, yearValue, edition, hybrid, repack, resolution, uhd, service, "WEBRip", audio, hdr, videoEncode)
+			name = joinParts(title, altTitle, yearValue, edition, hybrid, repack, resolution, uhd, service, "WEBRip", audio, hdr, videoName)
 			missing = []string{"edition", "service"}
 		case matchType == "HDTV":
-			name = joinParts(title, altTitle, yearValue, edition, repack, resolution, source, audio, videoEncode)
+			name = joinParts(title, altTitle, yearValue, edition, repack, resolution, source, audio, videoName)
 		case matchType == "DVDRIP":
-			name = joinParts(title, altTitle, yearValue, source, videoEncode, "DVDRip", audio)
+			name = joinParts(title, altTitle, yearValue, source, videoName, "DVDRip", audio)
 		}
 	case "TV":
 		switch {
@@ -161,18 +165,18 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, repack, source, "REMUX", audio)
 			missing = []string{"edition", "description"}
 		case matchType == "ENCODE":
-			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, hybrid, repack, resolution, uhd, source, audio, hdr, videoEncode)
+			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, hybrid, repack, resolution, uhd, source, audio, hdr, videoName)
 			missing = []string{"edition", "description"}
 		case matchType == "WEBDL":
-			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, hybrid, repack, resolution, uhd, service, "WEB-DL", audio, hdr, videoEncode)
+			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, hybrid, repack, resolution, uhd, service, "WEB-DL", audio, hdr, videoName)
 			missing = []string{"edition", "service"}
 		case matchType == "WEBRIP":
-			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, hybrid, repack, resolution, uhd, service, "WEBRip", audio, hdr, videoEncode)
+			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, hybrid, repack, resolution, uhd, service, "WEBRip", audio, hdr, videoName)
 			missing = []string{"edition", "service"}
 		case matchType == "HDTV":
-			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, repack, resolution, source, audio, videoEncode)
+			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, repack, resolution, source, audio, videoName)
 		case matchType == "DVDRIP":
-			name = joinParts(title, yearValue, altTitle, season, source, "DVDRip", audio, videoEncode)
+			name = joinParts(title, yearValue, altTitle, season, source, "DVDRip", audio, videoName)
 		}
 	}
 

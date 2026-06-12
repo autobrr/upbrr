@@ -9,16 +9,21 @@ func TestPolicyMetadataExposesOnlySupportedTrackerUploadHosts(t *testing.T) {
 	t.Parallel()
 
 	metadata := PolicyMetadata()
-	a4kHosts := metadata.TrackerUploadHosts["A4K"]
+	ptpHosts := metadata.TrackerUploadHosts["PTP"]
 
-	if !HostAllowed("ptpimg", a4kHosts) {
-		t.Fatalf("A4K upload hosts should include supported host ptpimg: %v", a4kHosts)
+	if !HostAllowed("pixhost", ptpHosts) {
+		t.Fatalf("PTP upload hosts should include supported host pixhost: %v", ptpHosts)
 	}
-	if HostAllowed("imgur", a4kHosts) {
-		t.Fatalf("A4K upload hosts should exclude unsupported policy host imgur: %v", a4kHosts)
+	for _, host := range []string{"imgbb", "onlyimage", "ptscreens"} {
+		if !HostAllowed(host, ptpHosts) {
+			t.Fatalf("PTP upload hosts should include supported host %s: %v", host, ptpHosts)
+		}
 	}
-	if HostAllowed("postimg", a4kHosts) {
-		t.Fatalf("A4K upload hosts should exclude unsupported policy host postimg: %v", a4kHosts)
+	if len(ptpHosts) != 4 {
+		t.Fatalf("PTP upload hosts should only allow supported PTP hosts: %v", ptpHosts)
+	}
+	if HostAllowed("imgur", ptpHosts) {
+		t.Fatalf("PTP upload hosts should exclude unsupported host: %v", ptpHosts)
 	}
 }
 

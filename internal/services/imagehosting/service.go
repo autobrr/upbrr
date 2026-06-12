@@ -104,13 +104,12 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 	}
 
 	// Also include final selections (like menu images that didn't go through screenshot generation)
+	seenPaths := make(map[string]struct{}, len(images))
+	for _, img := range images {
+		seenPaths[img.Path] = struct{}{}
+	}
 	selections, err := s.repo.ListFinalSelections(ctx, meta.SourcePath)
 	if err == nil {
-		seenPaths := make(map[string]struct{}, len(images))
-		for _, img := range images {
-			seenPaths[img.Path] = struct{}{}
-		}
-
 		for _, sel := range selections {
 			pathValue := strings.TrimSpace(sel.ImagePath)
 			if pathValue == "" || !isAllowedImageExt(pathValue) {
@@ -144,6 +143,31 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 			images = append(images, img)
 			seenPaths[pathValue] = struct{}{}
 		}
+	}
+
+	for _, upload := range uploaded {
+		pathValue := strings.TrimSpace(upload.ImagePath)
+		if pathValue == "" || !isAllowedImageExt(pathValue) {
+			continue
+		}
+		if _, exists := seenPaths[pathValue]; exists {
+			continue
+		}
+		info, statErr := os.Stat(pathValue)
+		if statErr != nil || info.IsDir() {
+			continue
+		}
+		images = append(images, api.ScreenshotImage{
+			Path:       pathValue,
+			SizeBytes:  info.Size(),
+			Host:       upload.Host,
+			ImgURL:     upload.ImgURL,
+			RawURL:     upload.RawURL,
+			WebURL:     upload.WebURL,
+			UploadedAt: upload.UploadedAt,
+		})
+		seenPaths[pathValue] = struct{}{}
+		s.logger.Tracef("image hosting: found uploaded-only image %s (host: %s)", filepath.Base(pathValue), upload.Host)
 	}
 
 	sort.Slice(images, func(i, j int) bool {

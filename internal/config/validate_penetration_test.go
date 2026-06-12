@@ -111,18 +111,17 @@ func TestValidateLoggingFileDisabledIgnoresSizing(t *testing.T) {
 	}
 }
 
-// Torrent client with neither Type nor TorrentClient set must fail.
-func TestValidateTorrentClientTypeRequired(t *testing.T) {
+// Torrent clients default to qBittorrent; the UI no longer exposes a type field.
+func TestValidateTorrentClientTypeDefaultsToQbit(t *testing.T) {
 	t.Parallel()
 
 	cfg := withBase(func(c *Config) {
 		c.TorrentClients = map[string]TorrentClientConfig{
-			"no-type": {WatchFolder: "/tmp"},
+			"q": {QbitURL: "http://x", QbitUser: "u", QbitPass: "p"},
 		}
 	})
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "type") {
-		t.Fatalf("want type error, got %v", err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("qbit should be default torrent client type: %v", err)
 	}
 }
 
@@ -178,6 +177,34 @@ func TestValidateQbitHostAlternatives(t *testing.T) {
 	}
 }
 
+func TestQbitSpecificFieldsWinOverLegacyAliases(t *testing.T) {
+	t.Parallel()
+
+	client := TorrentClientConfig{
+		Username:          "legacy-user",
+		Password:          "legacy-pass",
+		Category:          "legacy-cat",
+		Tags:              []string{"legacy-tag"},
+		QbitUser:          "qbit-user",
+		QbitPass:          "qbit-pass",
+		QbitCategoryValue: "qbit-cat",
+		QbitTag:           "qbit-tag",
+	}
+
+	if got := client.QbitUsername(); got != "qbit-user" {
+		t.Fatalf("expected qbit user to win, got %q", got)
+	}
+	if got := client.QbitPassword(); got != "qbit-pass" {
+		t.Fatalf("expected qbit pass to win, got %q", got)
+	}
+	if got := client.QbitCategory(); got != "qbit-cat" {
+		t.Fatalf("expected qbit category to win, got %q", got)
+	}
+	if got := client.QbitTags(); got != "qbit-tag" {
+		t.Fatalf("expected qbit tag to win, got %q", got)
+	}
+}
+
 func TestValidateQbitMissingCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -199,6 +226,59 @@ func TestValidateQbitMissingCredentials(t *testing.T) {
 			err := cfg.Validate()
 			if err == nil || !strings.Contains(err.Error(), tc.msg) {
 				t.Fatalf("want error mentioning %s, got %v", tc.msg, err)
+			}
+		})
+	}
+}
+
+func TestValidateQbitLinking(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		client  TorrentClientConfig
+		wantErr string
+	}{
+		{
+			name:    "hardlink requires linked folder",
+			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "hardlink"},
+			wantErr: "linked_folder",
+		},
+		{
+			name:   "symlink accepts linked folder",
+			client: TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "symlink", LinkedFolder: StringList{"D:\\Links"}},
+		},
+		{
+			name:   "reflink accepts linked folder",
+			client: TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "reflink", LinkedFolder: StringList{"D:\\Links"}},
+		},
+		{
+			name:    "reflink requires linked folder",
+			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "reflink"},
+			wantErr: "linked_folder",
+		},
+		{
+			name:    "invalid mode rejected",
+			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "copy"},
+			wantErr: "linking",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := withBase(func(c *Config) {
+				c.TorrentClients = map[string]TorrentClientConfig{"q": tc.client}
+			})
+			err := cfg.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected valid, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error mentioning %s, got %v", tc.wantErr, err)
 			}
 		})
 	}

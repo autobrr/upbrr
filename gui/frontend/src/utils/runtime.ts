@@ -197,6 +197,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           questionnaireAnswers: Record<string, Record<string, string>>,
           descriptionGroups: unknown,
           debug: boolean,
+          noSeed: boolean,
           runLogLevel: string,
         ) =>
           call("FetchTrackerDryRun", {
@@ -208,6 +209,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             QuestionnaireAnswers: questionnaireAnswers,
             DescriptionGroups: descriptionGroups,
             Debug: debug,
+            NoSeed: noSeed,
             RunLogLevel: runLogLevel,
           }),
         CheckDupes: (
@@ -369,6 +371,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           call("SavePlaylistSelection", { Path: path, Playlists: playlists, UseAll: useAll }),
         LoadPlaylistSelection: (path: string) => call("LoadPlaylistSelection", { Path: path }),
         GetConfig: () => call("GetConfig"),
+        GetApplicationInfo: () => call("GetApplicationInfo"),
         GetDefaultConfig: () => call("GetDefaultConfig"),
         SaveConfig: (payload: string) => call("SaveConfig", { Payload: payload }),
         ExportConfig: async () => {
@@ -434,6 +437,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           questionnaireAnswers: Record<string, Record<string, string>>,
           descriptionGroups: unknown,
           debug: boolean,
+          noSeed: boolean,
           runLogLevel: string,
         ) =>
           call("StartTrackerUpload", {
@@ -445,6 +449,7 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             QuestionnaireAnswers: questionnaireAnswers,
             DescriptionGroups: descriptionGroups,
             Debug: debug,
+            NoSeed: noSeed,
             RunLogLevel: runLogLevel,
           }),
         CancelTrackerUpload: (jobID: string) => call("CancelTrackerUpload", { JobID: jobID }),
@@ -452,6 +457,8 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           call("RetryFailedTrackerUpload", { JobID: jobID }),
         GetTrackerUploadSnapshot: (jobID: string) =>
           call("GetTrackerUploadSnapshot", { JobID: jobID }),
+        GetTrackerIcon: (domain: string, url: string) =>
+          call<string>("GetTrackerIcon", { Domain: domain, URL: url }),
       },
     },
   };

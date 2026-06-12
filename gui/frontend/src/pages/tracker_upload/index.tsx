@@ -1,11 +1,14 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Switch } from "../../components/ui/switch";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
+import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
+import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type {
   MetadataPreview,
   TrackerDryRunPreview,
@@ -24,6 +27,8 @@ type Props = {
   failedDupeTrackerSet: Set<string>;
   uploadToggles: Record<string, boolean>;
   setUploadToggles: Dispatch<SetStateAction<Record<string, boolean>>>;
+  skipClientInjection: boolean;
+  setSkipClientInjection: Dispatch<SetStateAction<boolean>>;
   namingOverrides: Array<[string, unknown]>;
   preview: MetadataPreview;
   formatLabel: (value: string) => string;
@@ -35,6 +40,9 @@ type Props = {
   dryRunProgress: UploadProgressUpdate | null;
   dryRunPreview: TrackerDryRunPreview;
   trackerQuestionnaireAnswers: Record<string, Record<string, string>>;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
+  trackerIconSrcByName: TrackerIconCache;
   onQuestionnaireAnswerChange: (tracker: string, key: string, value: string) => void;
   onRunDryRun: () => void;
   onStartUpload: () => void;
@@ -60,6 +68,7 @@ const subtleBox = "rounded-md border border-white/10 bg-white/5 px-2 py-1.5";
 const blockReasonClass =
   "inline-flex h-5 items-center rounded border border-red-400/30 bg-red-500/10 px-1.5 text-[11px] font-semibold leading-none text-red-700 dark:text-red-100";
 const formatStatusText = (value: string) => value.replaceAll("_", " ");
+const trimName = (value: unknown) => String(value || "").trim();
 
 export default function TrackerUploadPage(props: Readonly<Props>) {
   const {
@@ -71,6 +80,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     failedDupeTrackerSet,
     uploadToggles,
     setUploadToggles,
+    skipClientInjection,
+    setSkipClientInjection,
     namingOverrides,
     preview,
     formatLabel,
@@ -82,6 +93,9 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     dryRunProgress,
     dryRunPreview,
     trackerQuestionnaireAnswers,
+    useFavicons = true,
+    faviconOnly = false,
+    trackerIconSrcByName,
     onQuestionnaireAnswerChange,
     onRunDryRun,
     onStartUpload,
@@ -204,6 +218,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
   const currentPercent = activeProgress.percent;
   const currentTotalPieces = activeProgress.totalPieces;
   const canRetry = !uploadRunning && (uploadSnapshot?.failedTrackers?.length || 0) > 0;
+  const lastDryRunSelectionKey = useRef("");
   const dryRunMap = useMemo(() => {
     const next: Record<string, (typeof dryRunPreview.Trackers)[number]> = {};
     (dryRunPreview?.Trackers || []).forEach((entry) => {
@@ -215,6 +230,44 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     });
     return next;
   }, [dryRunPreview]);
+  const selectedTrackerKey = useMemo(
+    () =>
+      availableTrackers
+        .filter((tracker) => Boolean(uploadToggles[tracker.name]))
+        .map((tracker) => tracker.name.toLowerCase().trim())
+        .sort()
+        .join("|"),
+    [availableTrackers, uploadToggles],
+  );
+  const namingOverrideKey = useMemo(() => JSON.stringify(namingOverrides), [namingOverrides]);
+
+  useEffect(() => {
+    const refreshKey = `${selectedTrackerKey}:${namingOverrideKey}`;
+    if (!dryRunPreview?.Trackers?.length || !selectedTrackerKey) {
+      lastDryRunSelectionKey.current = refreshKey;
+      return;
+    }
+    if (!lastDryRunSelectionKey.current) {
+      lastDryRunSelectionKey.current = refreshKey;
+      return;
+    }
+    if (lastDryRunSelectionKey.current === refreshKey) return;
+
+    if (dryRunLoading || uploadRunning) return;
+
+    const timeout = window.setTimeout(() => {
+      lastDryRunSelectionKey.current = refreshKey;
+      onRunDryRun();
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [
+    dryRunLoading,
+    dryRunPreview,
+    namingOverrideKey,
+    onRunDryRun,
+    selectedTrackerKey,
+    uploadRunning,
+  ]);
 
   const renderQuestionnaireField = (
     trackerName: string,
@@ -314,6 +367,18 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
           <Button type="button" onClick={onRetryFailed} disabled={!canRetry}>
             Retry Failed
           </Button>
+          <label
+            className="inline-flex items-center gap-2 text-sm text-[var(--text)]"
+            htmlFor="skip-client-injection"
+          >
+            <Checkbox
+              id="skip-client-injection"
+              checked={skipClientInjection}
+              disabled={uploadRunning}
+              onCheckedChange={setSkipClientInjection}
+            />
+            <span>Skip client injection</span>
+          </label>
           <p className="m-0 text-xs text-[var(--muted)]">
             Selected: {selectedTrackerCount} · Uploaded: {uploadSnapshot?.uploadedCount || 0}
           </p>
@@ -372,12 +437,20 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
               <div className="mt-2 grid gap-1">
                 {blockedTrackers.map((tracker) => {
                   const state = trackerBlockState[tracker.name];
+                  const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
                   return (
                     <div
                       className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1.5"
                       key={tracker.name}
                     >
-                      <span className="value text-sm leading-5">{tracker.name}</span>
+                      <span className="value text-sm leading-5 flex items-center gap-1.5">
+                        <TrackerIconImage
+                          tracker={tracker.name}
+                          iconSrc={iconSrc}
+                          enabled={useFavicons}
+                        />
+                        {faviconOnly && useFavicons ? null : tracker.name}
+                      </span>
                       <div className="flex flex-wrap items-center justify-end gap-1">
                         {state?.reasons.map((reason) => (
                           <span className={blockReasonClass} key={`${tracker.name}-${reason}`}>
@@ -400,13 +473,23 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
             const selected = Boolean(uploadToggles[tracker.name]);
             const enabled = selected;
             const trackerStatus = trackerStatusMap[tracker.name];
-            const dryRun = dryRunMap[normalizedTrackerName];
+            const dryRun = selected ? dryRunMap[normalizedTrackerName] : undefined;
             const imageHost = dryRun?.ImageHost;
             const imageHostWarnings = imageHost?.Warnings || [];
+            const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
             const imageHostStatus = String(imageHost?.Status || "").toLowerCase();
             const questionnaire = dryRun?.Questionnaire;
             const questionnaireAnswers =
               trackerQuestionnaireAnswers[tracker.name.toUpperCase().trim()] || {};
+            const originalReleaseName = trimName(
+              dryRun?.OriginalReleaseName || preview.ReleaseName,
+            );
+            const uploadReleaseName = trimName(dryRun?.UploadReleaseName || dryRun?.ReleaseName);
+            const releaseNameChanged =
+              Boolean(dryRun?.ReleaseNameChanged) ||
+              (Boolean(originalReleaseName) &&
+                Boolean(uploadReleaseName) &&
+                originalReleaseName !== uploadReleaseName);
             let statusLabel = trackerStatus?.status || "";
             if (!statusLabel) {
               statusLabel = enabled ? "ready" : "disabled";
@@ -418,8 +501,15 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                 key={tracker.name}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <p className="value text-base leading-5">{tracker.name}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <TrackerIconImage
+                      tracker={tracker.name}
+                      iconSrc={iconSrc}
+                      enabled={useFavicons}
+                    />
+                    {faviconOnly && useFavicons ? null : (
+                      <p className="value text-base leading-5">{tracker.name}</p>
+                    )}
                     <span
                       className={cn(
                         "inline-flex items-center rounded-full border px-2 py-0.5 text-xs capitalize",
@@ -490,6 +580,30 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                     </p>
                   );
                 })}
+
+                {releaseNameChanged ? (
+                  <div className="grid gap-1 rounded-md border border-amber-300/55 bg-amber-300/12 px-2.5 py-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex items-center rounded border border-amber-300/50 px-1.5 py-0.5 text-[11px] font-semibold uppercase leading-none text-amber-100">
+                        Name changed
+                      </span>
+                      {dryRun?.ReleaseNameChangeReason ? (
+                        <span className="text-xs text-amber-100/80">
+                          {dryRun.ReleaseNameChangeReason}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="grid gap-1 text-xs">
+                      <p className="m-0 text-[var(--muted)] [overflow-wrap:anywhere]">
+                        Original:{" "}
+                        <span className="mono text-[var(--text)]">{originalReleaseName}</span>
+                      </p>
+                      <p className="m-0 text-amber-100 [overflow-wrap:anywhere]">
+                        Upload: <span className="mono font-semibold">{uploadReleaseName}</span>
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
 
                 <details>
                   <summary className="cursor-pointer list-none text-sm font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">

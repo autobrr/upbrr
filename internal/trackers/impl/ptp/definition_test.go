@@ -4,15 +4,19 @@
 package ptp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/anacrolix/torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -32,6 +36,107 @@ func TestDefinitionBuildDescriptionUsesPTPGroup(t *testing.T) {
 	}
 	if result.Group != "ptp" {
 		t.Fatalf("expected ptp group, got %q", result.Group)
+	}
+}
+
+func TestDefinitionBuildDescriptionUsesResolvedAssetsAndMediaInfo(t *testing.T) {
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "PTP",
+		Meta: api.PreparedMetadata{
+			MediaInfoTextPath: mediaInfoPath,
+			Options:           api.UploadOptions{Screens: 1},
+		},
+		Assets: &trackers.DescriptionAssets{
+			Description: "kept https://pixhost.to/show/encoded.png",
+			Screenshots: []api.ScreenshotImage{{
+				Host:   "pixhost",
+				RawURL: "https://pixhost.to/show/encoded.png",
+			}},
+		},
+		Logger: api.NopLogger{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Description, "[mediainfo]General\nUnique ID : 123[/mediainfo]") {
+		t.Fatalf("expected mediainfo section, got %q", result.Description)
+	}
+	if !strings.Contains(result.Description, "kept") || !strings.Contains(result.Description, "[img]https://pixhost.to/show/encoded.png[/img]") {
+		t.Fatalf("expected resolved asset description, got %q", result.Description)
+	}
+	if strings.Contains(result.Description, "lostimg.cc") {
+		t.Fatalf("expected no stale image hosts, got %q", result.Description)
+	}
+}
+
+func TestDefinitionBuildDescriptionUsesAllResolvedPixhostScreenshots(t *testing.T) {
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	screenshots := []api.ScreenshotImage{
+		{Host: "pixhost", RawURL: "https://pixhost.to/1.png"},
+		{Host: "pixhost", RawURL: "https://pixhost.to/2.png"},
+		{Host: "pixhost", RawURL: "https://pixhost.to/3.png"},
+	}
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "PTP",
+		Meta: api.PreparedMetadata{
+			MediaInfoTextPath: mediaInfoPath,
+			Options:           api.UploadOptions{Screens: 2},
+		},
+		Assets: &trackers.DescriptionAssets{Screenshots: screenshots},
+		Logger: api.NopLogger{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, screenshot := range screenshots {
+		if !strings.Contains(result.Description, "[img]"+screenshot.RawURL+"[/img]") {
+			t.Fatalf("expected screenshot %q in description, got %q", screenshot.RawURL, result.Description)
+		}
+	}
+}
+
+func TestDefinitionBuildDescriptionUsesAllowedNonPixhostRawScreenshots(t *testing.T) {
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	screenshots := []api.ScreenshotImage{
+		{Host: "imgbb", RawURL: "https://i.ibb.co/raw-1/source.png", ImgURL: "https://i.ibb.co/thumb-1/source.png"},
+		{Host: "onlyimage", RawURL: "https://onlyimage.org/images/raw-2.png", ImgURL: "https://onlyimage.org/images/medium-2.png"},
+		{Host: "ptscreens", RawURL: "https://ptscreens.com/images/raw-3.png", ImgURL: "https://ptscreens.com/images/medium-3.png"},
+	}
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "PTP",
+		Meta: api.PreparedMetadata{
+			MediaInfoTextPath: mediaInfoPath,
+			Options:           api.UploadOptions{Screens: 2},
+		},
+		Assets: &trackers.DescriptionAssets{Screenshots: screenshots},
+		Logger: api.NopLogger{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, screenshot := range screenshots {
+		if !strings.Contains(result.Description, "[img]"+screenshot.RawURL+"[/img]") {
+			t.Fatalf("expected raw screenshot %q in description, got %q", screenshot.RawURL, result.Description)
+		}
+		if strings.Contains(result.Description, screenshot.ImgURL) {
+			t.Fatalf("expected PTP description to avoid non-raw URL %q, got %q", screenshot.ImgURL, result.Description)
+		}
 	}
 }
 
@@ -129,11 +234,53 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 	}
 }
 
+func TestResolveUploadTorrentPathReusesPreparedPTPArtifact(t *testing.T) {
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "ua.db")
+	sourcePath := filepath.Join(tmp, "Movie.mkv")
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
+
+	preparedMeta, err := trackers.PrepareTrackerUploadTorrent(
+		api.PreparedMetadata{SourcePath: sourcePath, TorrentPath: torrentPath},
+		dbPath,
+		"PTP",
+		config.TrackerConfig{AnnounceURL: "https://please.passthepopcorn.me/passkey/announce"},
+	)
+	if err != nil {
+		t.Fatalf("prepare tracker torrent: %v", err)
+	}
+
+	resolvedPath, err := resolveUploadTorrentPath(preparedMeta, dbPath)
+	if err != nil {
+		t.Fatalf("resolve upload torrent path: %v", err)
+	}
+	if resolvedPath != preparedMeta.TorrentPath {
+		t.Fatalf("expected prepared artifact path %q, got %q", preparedMeta.TorrentPath, resolvedPath)
+	}
+
+	torrentMeta, err := metainfo.LoadFromFile(resolvedPath)
+	if err != nil {
+		t.Fatalf("load prepared artifact: %v", err)
+	}
+	if torrentMeta.Announce != "https://please.passthepopcorn.me/passkey/announce" {
+		t.Fatalf("expected prepared announce preserved, got %q", torrentMeta.Announce)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatalf("unmarshal prepared info: %v", err)
+	}
+	if info.Source != "PTP" {
+		t.Fatalf("expected prepared source preserved, got %q", info.Source)
+	}
+}
+
 func TestDefinitionUploadSuccess(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "ua.db")
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
+	markTorrentWithPrivateMetadata(t, torrentPath)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.RequestURI() {
@@ -154,6 +301,32 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			case ptpUploadPath:
 				if err := r.ParseMultipartForm(5 << 20); err != nil {
 					t.Fatalf("parse multipart: %v", err)
+				}
+				files := r.MultipartForm.File["file_input"]
+				if len(files) != 1 {
+					t.Fatalf("expected one torrent file, got %d", len(files))
+				}
+				uploaded, err := files[0].Open()
+				if err != nil {
+					t.Fatalf("open uploaded torrent: %v", err)
+				}
+				defer uploaded.Close()
+				payload, err := io.ReadAll(uploaded)
+				if err != nil {
+					t.Fatalf("read uploaded torrent: %v", err)
+				}
+				uploadedMeta, err := metainfo.Load(bytes.NewReader(payload))
+				if err != nil {
+					t.Fatalf("load uploaded torrent: %v", err)
+				}
+				if uploadedMeta.Comment != "upbrr" {
+					t.Fatalf("expected cleaned upload torrent comment, got %q", uploadedMeta.Comment)
+				}
+				if uploadedMeta.CreatedBy != "uploaded with upbrr" {
+					t.Fatalf("expected cleaned upload torrent created-by, got %q", uploadedMeta.CreatedBy)
+				}
+				if uploadedMeta.Announce != "" {
+					t.Fatalf("expected upload torrent announce stripped, got %q", uploadedMeta.Announce)
 				}
 				if r.FormValue("AntiCsrfToken") != "csrf-token" {
 					t.Fatalf("expected csrf token, got %q", r.FormValue("AntiCsrfToken"))
@@ -237,11 +410,16 @@ func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 		_, _ = w.Write([]byte("poster-bytes"))
 	}))
 	defer posterServer.Close()
+	originalClientFactory := newPosterHTTPClient
+	newPosterHTTPClient = posterServer.Client
+	t.Cleanup(func() {
+		newPosterHTTPClient = originalClientFactory
+	})
 
 	images := &stubPTPImageHosting{
 		uploaded: []api.UploadedImageLink{{
-			Host:   "ptpimg",
-			RawURL: "https://ptpimg.me/rehosted.png",
+			Host:   "pixhost",
+			RawURL: "https://pixhost.to/rehosted.png",
 		}},
 	}
 	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
@@ -253,11 +431,11 @@ func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 		Images:    images,
 	}, posterServer.URL+"/poster")
 
-	if got != "https://ptpimg.me/rehosted.png" {
+	if got != "https://pixhost.to/rehosted.png" {
 		t.Fatalf("expected rehosted poster URL, got %q", got)
 	}
-	if images.host != "ptpimg" {
-		t.Fatalf("expected ptpimg upload host, got %q", images.host)
+	if images.host != "pixhost" {
+		t.Fatalf("expected pixhost upload host, got %q", images.host)
 	}
 	if len(images.images) != 1 {
 		t.Fatalf("expected one uploaded poster, got %d", len(images.images))
@@ -275,12 +453,59 @@ func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 	}
 }
 
+func TestRehostPosterToSelectedHostRejectsLoopbackPoster(t *testing.T) {
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Movie.mkv")
+	if err := os.WriteFile(sourcePath, []byte("movie"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	posterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("poster-bytes"))
+	}))
+	defer posterServer.Close()
+
+	images := &stubPTPImageHosting{
+		uploaded: []api.UploadedImageLink{{
+			Host:   "pixhost",
+			RawURL: "https://pixhost.to/rehosted.png",
+		}},
+	}
+	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			SourcePath: sourcePath,
+		},
+		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
+		Logger:    api.NopLogger{},
+		Images:    images,
+	}, posterServer.URL+"/poster")
+
+	if got != posterServer.URL+"/poster" {
+		t.Fatalf("expected original poster URL after blocked rehost, got %q", got)
+	}
+	if len(images.images) != 0 {
+		t.Fatalf("expected no upload for blocked loopback poster")
+	}
+}
+
+func TestIsPublicPosterIPRejectsPrivateRanges(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"127.0.0.1", "10.0.0.1", "192.168.1.20", "169.254.1.1", "::1", "fc00::1"} {
+		if isPublicPosterIP(netip.MustParseAddr(value)) {
+			t.Fatalf("expected %s to be rejected", value)
+		}
+	}
+	if !isPublicPosterIP(netip.MustParseAddr("93.184.216.34")) {
+		t.Fatal("expected public address to be accepted")
+	}
+}
+
 func TestRehostPosterToSelectedHostSkipsSelectedHost(t *testing.T) {
 	images := &stubPTPImageHosting{}
 	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
 		Images: images,
-	}, "https://ptpimg.me/existing.jpg")
-	if got != "https://ptpimg.me/existing.jpg" {
+	}, "https://pixhost.to/existing.jpg")
+	if got != "https://pixhost.to/existing.jpg" {
 		t.Fatalf("expected original poster URL, got %q", got)
 	}
 	if len(images.images) != 0 {
@@ -319,5 +544,24 @@ func createTestTorrent(t *testing.T, sourcePath string, torrentPath string) {
 	})
 	if err != nil {
 		t.Fatalf("create torrent: %v", err)
+	}
+}
+
+func markTorrentWithPrivateMetadata(t *testing.T, torrentPath string) {
+	t.Helper()
+
+	torrentMeta, err := metainfo.LoadFromFile(torrentPath)
+	if err != nil {
+		t.Fatalf("load torrent: %v", err)
+	}
+	torrentMeta.Announce = "https://private.example/passkey/announce"
+	torrentMeta.Comment = "Created by Upload Assistant https://private.example/download/1"
+	file, err := os.Create(torrentPath)
+	if err != nil {
+		t.Fatalf("rewrite torrent: %v", err)
+	}
+	defer file.Close()
+	if err := torrentMeta.Write(file); err != nil {
+		t.Fatalf("write torrent: %v", err)
 	}
 }

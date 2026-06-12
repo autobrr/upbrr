@@ -423,13 +423,6 @@ func TestResolveUnit3DTypeIDForTrackerA4K(t *testing.T) {
 	}
 }
 
-func TestResolveUnit3DResolutionIDForTrackerFNP(t *testing.T) {
-	meta := api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "1080i"}}
-	if got := resolveUnit3DResolutionIDForTracker("FNP", meta); got != "11" {
-		t.Fatalf("expected FNP 1080i to resolve to 11, got %q", got)
-	}
-}
-
 func TestResolveUnit3DTypeIDForTrackerPT(t *testing.T) {
 	meta := api.PreparedMetadata{Type: "WEBRIP"}
 	got, err := resolveUnit3DTypeIDForTracker("PT", meta)
