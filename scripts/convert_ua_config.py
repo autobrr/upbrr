@@ -375,6 +375,11 @@ def allowed_torrent_client_keys() -> dict[str, Any]:
         "category": "",
         "tags": [],
         "tls_skip_verify": False,
+        "linking": "",
+        "allow_fallback": True,
+        "linked_folder": [],
+        "local_path": [],
+        "remote_path": [],
         "qbit_url": "",
         "qbit_port": 0,
         "qbit_user": "",
@@ -382,6 +387,10 @@ def allowed_torrent_client_keys() -> dict[str, Any]:
         "qbit_cat": "",
         "qbit_tag": "",
         "qbit_tags": [],
+        "qbit_cross_cat": "",
+        "qbit_cross_tag": "",
+        "use_tracker_as_tag": False,
+        "content_layout": "",
         "verify_webui_certificate": True,
     }
 

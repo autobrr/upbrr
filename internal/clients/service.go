@@ -211,11 +211,21 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 
 	options := qbittorrent.TorrentAddOptions{}
 	options.SkipHashCheck = true
+	if staging, err := s.prepareLinkStaging(ctx, name, client, meta, torrent.Tracker); err != nil {
+		return err
+	} else if staging.Linked {
+		options.SavePath = staging.SavePath
+	}
+	if layout := qbitContentLayout(client.QbitContentLayout()); layout != "" {
+		options.ContentLayout = layout
+	}
 	if category := strings.TrimSpace(client.QbitCategory()); category != "" {
 		options.Category = category
 	}
 	if tags := strings.TrimSpace(client.QbitTags()); tags != "" {
 		options.Tags = tags
+	} else if client.UseTrackerAsTag {
+		options.Tags = strings.TrimSpace(torrent.Tracker)
 	}
 
 	if torrentPath := strings.TrimSpace(torrent.Path); torrentPath != "" {
@@ -236,6 +246,19 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	}
 
 	return internalerrors.ErrInvalidInput
+}
+
+func qbitContentLayout(value string) qbittorrent.ContentLayout {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "original":
+		return qbittorrent.ContentLayoutOriginal
+	case "nosubfolder", "no_subfolder", "subfolder_none", "none":
+		return qbittorrent.ContentLayoutSubfolderNone
+	case "subfolder", "subfolder_create":
+		return qbittorrent.ContentLayoutSubfolderCreate
+	default:
+		return ""
+	}
 }
 
 func selectedTorrentClients(clients map[string]config.TorrentClientConfig, overrides api.ClientOverrides) map[string]config.TorrentClientConfig {

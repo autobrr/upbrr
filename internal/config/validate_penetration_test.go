@@ -204,6 +204,50 @@ func TestValidateQbitMissingCredentials(t *testing.T) {
 	}
 }
 
+func TestValidateQbitLinking(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		client  TorrentClientConfig
+		wantErr string
+	}{
+		{
+			name:    "hardlink requires linked folder",
+			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "hardlink"},
+			wantErr: "linked_folder",
+		},
+		{
+			name:   "symlink accepts linked folder",
+			client: TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "symlink", LinkedFolder: StringList{"D:\\Links"}},
+		},
+		{
+			name:    "invalid mode rejected",
+			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "copy"},
+			wantErr: "linking",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := withBase(func(c *Config) {
+				c.TorrentClients = map[string]TorrentClientConfig{"q": tc.client}
+			})
+			err := cfg.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected valid, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error mentioning %s, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
 // A qui proxy URL supplies host AND credentials, so no user/pass is required.
 func TestValidateQbitWithQuiProxy(t *testing.T) {
 	t.Parallel()

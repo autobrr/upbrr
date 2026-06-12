@@ -529,7 +529,10 @@ export default function SettingsPage(props: Props) {
                 ) : settingsSection === "torrent_clients" &&
                   configData.TorrentClients &&
                   typeof configData.TorrentClients === "object" ? (
-                  renderMapSection("TorrentClients", configData.TorrentClients as ConfigMap)
+                  renderMapSection("TorrentClients", configData.TorrentClients as ConfigMap, {
+                    fieldMeta: sectionFieldMeta.TorrentClients || {},
+                    advancedOpen,
+                  })
                 ) : (
                   <div className="settings-grid">
                     {(() => {

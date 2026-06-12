@@ -93,6 +93,11 @@ const imageHostOptions = [
 ];
 
 const trackerImageHostOptions = [...imageHostOptions, { value: "hdb", label: "HDB" }];
+const torrentClientLinkingOptions = [
+  { value: "", label: "None" },
+  { value: "hardlink", label: "Hardlink" },
+  { value: "symlink", label: "Symlink" },
+];
 const imageHostOptionLabels = new Map(
   trackerImageHostOptions.map((option) => [option.value, option.label]),
 );
@@ -573,6 +578,12 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   Logging: {
     MaxTotalSizeMB: { key: "MaxTotalSizeMB", advanced: true },
     MaxFiles: { key: "MaxFiles", advanced: true },
+  },
+  TorrentClients: {
+    Linking: stringField("Linking", {
+      label: "Linking",
+      options: torrentClientLinkingOptions,
+    }),
   },
 };
 

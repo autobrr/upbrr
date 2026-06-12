@@ -245,6 +245,113 @@ func TestInjectQbitClientUsesRequestOverrides(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var addSavePath string
+	var addContentLayout string
+	var addTags string
+	errCh := make(chan error, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			if err := r.ParseMultipartForm(10 << 20); err != nil {
+				errCh <- err
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			addSavePath = r.FormValue("savepath")
+			addContentLayout = r.FormValue("contentLayout")
+			addTags = r.FormValue("tags")
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	linkRoot := filepath.Join(root, "links")
+	if err := os.MkdirAll(linkRoot, 0o700); err != nil {
+		t.Fatalf("mkdir links: %v", err)
+	}
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"AITHER": {LinkDirName: "aither-links"},
+		}},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:            "qbit",
+				URL:             server.URL,
+				Username:        "user",
+				Password:        "pass",
+				Linking:         "hardlink",
+				LinkedFolder:    config.StringList{linkRoot},
+				ContentLayout:   "Subfolder",
+				UseTrackerAsTag: true,
+			},
+		},
+	}, nil)
+
+	meta := api.PreparedMetadata{SourcePath: source, FileList: []string{source}}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath, Tracker: "AITHER"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	linkedSource := filepath.Join(linkRoot, "aither-links", filepath.Base(source))
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		t.Fatalf("stat source: %v", err)
+	}
+	linkedInfo, err := os.Stat(linkedSource)
+	if err != nil {
+		t.Fatalf("stat linked source: %v", err)
+	}
+	if !os.SameFile(sourceInfo, linkedInfo) {
+		t.Fatalf("expected linked file to share source file identity")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	wantSavePath := filepath.ToSlash(filepath.Join(linkRoot, "aither-links")) + "/"
+	if addSavePath != wantSavePath {
+		t.Fatalf("expected savepath %q, got %q", wantSavePath, addSavePath)
+	}
+	if addContentLayout != "Subfolder" {
+		t.Fatalf("expected Subfolder content layout, got %q", addContentLayout)
+	}
+	if addTags != "AITHER" {
+		t.Fatalf("expected tracker tag, got %q", addTags)
+	}
+}
+
 func TestInjectUsesSelectedClientOverride(t *testing.T) {
 	t.Parallel()
 

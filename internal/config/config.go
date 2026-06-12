@@ -668,17 +668,22 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type TorrentClientConfig struct {
-	Type          string   `yaml:"type"`
-	TorrentClient string   `yaml:"torrent_client"`
-	URL           string   `yaml:"url"`
-	QuiProxyURL   string   `yaml:"qui_proxy_url"`
-	WatchFolder   string   `yaml:"watch_folder"`
-	StorageDir    string   `yaml:"torrent_storage_dir"`
-	Username      string   `yaml:"username"`
-	Password      string   `yaml:"password"`
-	Category      string   `yaml:"category"`
-	Tags          []string `yaml:"tags"`
-	TLSSkipVerify *bool    `yaml:"tls_skip_verify"`
+	Type          string     `yaml:"type"`
+	TorrentClient string     `yaml:"torrent_client"`
+	URL           string     `yaml:"url"`
+	QuiProxyURL   string     `yaml:"qui_proxy_url"`
+	WatchFolder   string     `yaml:"watch_folder"`
+	StorageDir    string     `yaml:"torrent_storage_dir"`
+	Username      string     `yaml:"username"`
+	Password      string     `yaml:"password"`
+	Category      string     `yaml:"category"`
+	Tags          []string   `yaml:"tags"`
+	TLSSkipVerify *bool      `yaml:"tls_skip_verify"`
+	Linking       string     `yaml:"linking"`
+	AllowFallback *bool      `yaml:"allow_fallback"`
+	LinkedFolder  StringList `yaml:"linked_folder"`
+	LocalPath     StringList `yaml:"local_path"`
+	RemotePath    StringList `yaml:"remote_path"`
 
 	QbitURL                string   `yaml:"qbit_url"`
 	QbitPort               int      `yaml:"qbit_port"`
@@ -687,6 +692,10 @@ type TorrentClientConfig struct {
 	QbitCategoryValue      string   `yaml:"qbit_cat"`
 	QbitTag                string   `yaml:"qbit_tag"`
 	QbitTagsValue          []string `yaml:"qbit_tags"`
+	QbitCrossCategory      string   `yaml:"qbit_cross_cat"`
+	QbitCrossTag           string   `yaml:"qbit_cross_tag"`
+	UseTrackerAsTag        bool     `yaml:"use_tracker_as_tag"`
+	ContentLayout          string   `yaml:"content_layout"`
 	VerifyWebUICertificate *bool    `yaml:"verify_webui_certificate"`
 }
 
@@ -732,6 +741,16 @@ func (c Config) Validate() error {
 				}
 				if strings.TrimSpace(client.QbitPassword()) == "" {
 					return fmt.Errorf("config: torrent_clients.%s.password or qbit_pass is required", name)
+				}
+			}
+			switch strings.ToLower(strings.TrimSpace(client.Linking)) {
+			case "", "none", "disabled", "symlink", "hardlink":
+			default:
+				return fmt.Errorf("config: torrent_clients.%s.linking must be symlink, hardlink, or empty", name)
+			}
+			if strings.EqualFold(strings.TrimSpace(client.Linking), "symlink") || strings.EqualFold(strings.TrimSpace(client.Linking), "hardlink") {
+				if len(nonEmptyStrings(client.LinkedFolder)) == 0 {
+					return fmt.Errorf("config: torrent_clients.%s.linked_folder is required when linking is enabled", name)
 				}
 			}
 		case strings.EqualFold(clientType, "qui"):
@@ -919,6 +938,24 @@ func (c TorrentClientConfig) QbitTags() string {
 	return ""
 }
 
+func (c TorrentClientConfig) QbitContentLayout() string {
+	return strings.TrimSpace(c.ContentLayout)
+}
+
+func (c TorrentClientConfig) LinkingMode() string {
+	mode := strings.ToLower(strings.TrimSpace(c.Linking))
+	switch mode {
+	case "none", "disabled":
+		return ""
+	default:
+		return mode
+	}
+}
+
+func (c TorrentClientConfig) FallbackAllowed() bool {
+	return c.AllowFallback == nil || *c.AllowFallback
+}
+
 func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
 	if c.TLSSkipVerify != nil {
 		return *c.TLSSkipVerify
@@ -931,4 +968,16 @@ func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
 
 func (c TorrentClientConfig) UsesQuiProxy() bool {
 	return strings.TrimSpace(c.QuiProxyURL) != ""
+}
+
+func nonEmptyStrings[S ~[]string](values S) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+	return result
 }
