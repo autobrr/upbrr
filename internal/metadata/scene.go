@@ -240,7 +240,7 @@ func parseNFOExternalIDsText(text string) nfoExternalIDs {
 }
 
 func parseNFOService(text string) (string, string) {
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		key, value, ok := strings.Cut(line, ":")
 		if !ok || !strings.EqualFold(strings.TrimSpace(key), "Source") {
 			continue

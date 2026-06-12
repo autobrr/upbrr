@@ -336,6 +336,28 @@ func TestAudioFromMediaAddsEXFormatSetting(t *testing.T) {
 	}
 }
 
+func TestAudioFromMediaUsesCodecIDWhenFormatIsGenericAudio(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"Audio","CodecID":"A_VORBIS","Channels":"2","StreamOrder":"1"}]}}`)
+	audio, channels, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "VORBIS 2.0" {
+		t.Fatalf("expected VORBIS 2.0, got %q", audio)
+	}
+	if channels != "2.0" {
+		t.Fatalf("expected 2.0 channels, got %q", channels)
+	}
+}
+
+func TestAudioFromMediaKeepsGenericFormatWhenCodecIDUnknown(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"Audio","CodecID":"A_UNKNOWN","Channels":"2","StreamOrder":"1"}]}}`)
+	audio, channels, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "Audio 2.0" {
+		t.Fatalf("expected Audio 2.0, got %q", audio)
+	}
+	if channels != "2.0" {
+		t.Fatalf("expected 2.0 channels, got %q", channels)
+	}
+}
+
 func TestRemoveTrackerBlockReasonDoesNotMutateInput(t *testing.T) {
 	original := []api.TrackerBlockReason{api.TrackerBlockReasonAudio, api.TrackerBlockReasonClaim}
 	blocked := map[string][]api.TrackerBlockReason{

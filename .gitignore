@@ -13,6 +13,10 @@ tmp/
 *.exe
 /scripts/__pycache__/
 
+# E2E / Playwright artifacts
+gui/frontend/playwright-report/
+gui/frontend/test-results/
+
 # Lefthook
 .lefthook-local.yml
 .lefthook/

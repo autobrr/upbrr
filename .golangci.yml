@@ -84,6 +84,9 @@ linters:
   exclusions:
     generated: lax
 
+    paths:
+      - ^tmp/
+
     presets:
       - comments
       - common-false-positives

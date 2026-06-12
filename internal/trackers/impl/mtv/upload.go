@@ -89,9 +89,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	descText, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
+	descText := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		descText, err = descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		if err != nil {
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
+		}
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -156,9 +159,12 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	descText, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
-	if err != nil {
-		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
+	descText := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		descText, err = descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		if err != nil {
+			return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
+		}
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)

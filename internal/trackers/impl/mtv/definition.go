@@ -56,9 +56,12 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		}
 	}
 
-	description, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
-	if err != nil {
-		return trackers.DescriptionResult{}, fmt.Errorf("trackers: MTV description build: %w", err)
+	description := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		description, err = descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		if err != nil {
+			return trackers.DescriptionResult{}, fmt.Errorf("trackers: MTV description build: %w", err)
+		}
 	}
 
 	if strings.TrimSpace(description) == "" && req.Logger != nil {

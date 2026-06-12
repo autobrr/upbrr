@@ -898,7 +898,7 @@ func isIMDbTVMovie(ids api.ExternalIDs, metadata api.ExternalMetadata) bool {
 }
 
 func imdbTypeContains(value string, keyword string) bool {
-	for _, part := range strings.Split(value, ",") {
+	for part := range strings.SplitSeq(value, ",") {
 		if strings.EqualFold(strings.TrimSpace(part), keyword) {
 			return true
 		}

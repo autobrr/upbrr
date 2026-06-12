@@ -88,6 +88,12 @@ func TestParseServeOptionsDevNoAuth(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsRejectsGUIFlag(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"-gui"}); err == nil {
+		t.Fatal("expected gui flag to be rejected")
+	}
+}
+
 func TestParseCLIOptionsExportConfigPlaintext(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{"--export-config", "out.yaml", "--export-config-plaintext"})
 	if err != nil {
@@ -176,6 +182,35 @@ func TestBuildCLIRequestDebugImpliesDryRunAndOnlyID(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsFlagsAfterPath(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"movie.mkv", "--debug", "-dtmp"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "movie.mkv" {
+		t.Fatalf("unexpected paths: %#v", paths)
+	}
+	if !opts.Debug || !opts.DeleteTmp {
+		t.Fatalf("expected trailing flags to parse, got %#v", opts)
+	}
+	if !visited["debug"] || !visited["delete-tmp"] {
+		t.Fatalf("expected trailing flags visited, got %#v", visited)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if !req.Options.Debug || !req.Options.DryRun {
+		t.Fatalf("expected trailing debug to force dry run, got %#v", req.Options)
+	}
+}
+
+func TestParseCLIOptionsRejectsUnknownFlagAfterPath(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"movie.mkv", "--typo-flag"}); err == nil {
+		t.Fatal("expected unknown trailing flag to fail")
+	}
+}
+
 func TestParseCLIOptionsLogLevel(t *testing.T) {
 	opts, visited, _, err := parseCLIOptions([]string{"--log-level", "trace", "movie.mkv"})
 	if err != nil {
@@ -223,6 +258,23 @@ func TestBuildCLIRequestSkipAutoTorrent(t *testing.T) {
 	}
 	if !req.Options.SkipAutoTorrent {
 		t.Fatalf("expected skip_auto_torrent to propagate, got %#v", req.Options)
+	}
+}
+
+func TestBuildCLIRequestKeepFolder(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"-kf", "movie-folder"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !visited["keep-folder"] {
+		t.Fatalf("expected keep-folder visited, got %#v", visited)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if !req.Options.KeepFolder {
+		t.Fatalf("expected keep-folder to propagate, got %#v", req.Options)
 	}
 }
 
@@ -449,7 +501,7 @@ func TestBuildCLIRequestClientOverrides(t *testing.T) {
 
 func TestBuildCLIRequestImageHostOverrides(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{
-		"--imghost", "PTPIMG",
+		"--imghost", "pixhost",
 		"--skip-imagehost-upload",
 		"movie.mkv",
 	})
@@ -460,7 +512,7 @@ func TestBuildCLIRequestImageHostOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	if req.ImageHostOverrides.PreferredHost == nil || *req.ImageHostOverrides.PreferredHost != "ptpimg" {
+	if req.ImageHostOverrides.PreferredHost == nil || *req.ImageHostOverrides.PreferredHost != "pixhost" {
 		t.Fatalf("expected preferred image host override, got %#v", req.ImageHostOverrides.PreferredHost)
 	}
 	if req.ImageHostOverrides.SkipUpload == nil || !*req.ImageHostOverrides.SkipUpload {
@@ -489,7 +541,7 @@ func TestPrintDryRunSummary(t *testing.T) {
 					Reuploaded: true,
 					Message:    "reuploaded to imgbox",
 					Warnings: []api.ImageHostWarning{
-						{Host: "ptpimg", Message: "temporary failure"},
+						{Host: "pixhost", Message: "temporary failure"},
 					},
 				},
 			},
@@ -498,7 +550,7 @@ func TestPrintDryRunSummary(t *testing.T) {
 				"Tracker release name: Movie.2024.1080p",
 				"Payload fields: category, name",
 				"Images: reuploaded to imgbox",
-				"Image host warning: ptpimg failed: temporary failure",
+				"Image host warning: pixhost failed: temporary failure",
 			},
 		},
 		{
@@ -526,12 +578,13 @@ func TestPrintDryRunSummary(t *testing.T) {
 
 func TestPrintDryRunDetails(t *testing.T) {
 	tests := []struct {
-		name     string
-		entry    api.TrackerDryRunEntry
-		contains []string
+		name        string
+		entry       api.TrackerDryRunEntry
+		contains    []string
+		notContains []string
 	}{
 		{
-			name: "prints endpoint files payload and description",
+			name: "prints endpoint files payload and condenses body fields",
 			entry: api.TrackerDryRunEntry{
 				Endpoint: "https://tracker.test/upload",
 				Files: []api.TrackerDryRunFile{
@@ -539,10 +592,12 @@ func TestPrintDryRunDetails(t *testing.T) {
 					{Field: "nfo", Path: "", Present: false},
 				},
 				Payload: map[string]string{
-					"category": "MOVIE",
-					"name":     "Movie.2024",
+					"category":    "MOVIE",
+					"description": "line 1\nline 2",
+					"mediainfo":   "General\nComplete name: Movie.2024.mkv",
+					"name":        "Movie.2024",
 				},
-				Description: "hello world",
+				Description: "line 1\nline 2",
 			},
 			contains: []string{
 				"Endpoint: https://tracker.test/upload",
@@ -551,8 +606,13 @@ func TestPrintDryRunDetails(t *testing.T) {
 				"- nfo [missing]: (none)",
 				"Payload:",
 				"- category: MOVIE",
+				"- description: [13 bytes, 2 lines omitted]",
+				"- mediainfo: [37 bytes, 2 lines omitted]",
 				"- name: Movie.2024",
-				"Description:\nhello world\n",
+			},
+			notContains: []string{
+				"line 1\nline 2",
+				"General\nComplete name",
 			},
 		},
 		{
@@ -571,10 +631,31 @@ func TestPrintDryRunDetails(t *testing.T) {
 					t.Fatalf("expected output to contain %q, got %q", expected, output)
 				}
 			}
+			for _, unexpected := range tt.notContains {
+				if strings.Contains(output, unexpected) {
+					t.Fatalf("expected output not to contain %q, got %q", unexpected, output)
+				}
+			}
 			if len(tt.contains) == 0 && output != "" {
 				t.Fatalf("expected no output, got %q", output)
 			}
 		})
+	}
+}
+
+func TestPrintDryRunDetailsSummarizesDescriptionWithoutPayloadDescription(t *testing.T) {
+	output := captureStdout(t, func() {
+		printDryRunDetails(api.TrackerDryRunEntry{
+			Payload:     map[string]string{"name": "Movie.2024"},
+			Description: "first line\nsecond line",
+		})
+	})
+
+	if !strings.Contains(output, "Description: [22 bytes, 2 lines omitted]") {
+		t.Fatalf("expected summarized description, got %q", output)
+	}
+	if strings.Contains(output, "first line") {
+		t.Fatalf("expected raw description to be omitted, got %q", output)
 	}
 }
 

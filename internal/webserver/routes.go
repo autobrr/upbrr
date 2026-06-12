@@ -29,6 +29,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/logout", s.requireSession(s.handleLogout))
 	mux.HandleFunc("/api/auth/browse-policy", s.requireSession(s.handleBrowsePolicy))
 	mux.HandleFunc("/api/events", s.requireSession(s.handleEvents))
+	mux.HandleFunc("/api/app/TrackerIcon", s.requireSession(s.handleTrackerIcon))
 
 	s.registerAppRoutes(mux)
 
@@ -105,6 +106,10 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ session) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if !s.isLocalWebUIRequest(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "bootstrap is only available from localhost web sessions"})
 		return
 	}
 	if !s.allowAuthRequest(r) {

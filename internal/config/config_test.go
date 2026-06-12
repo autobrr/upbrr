@@ -59,6 +59,70 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid tracker torrent client",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "qbit"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid tracker torrent client",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "missing"},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "tracker torrent client none is not a sentinel",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "none"},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "tracker torrent client can reference client named none",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"none": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "none"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "qbit qui proxy",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
@@ -127,7 +191,7 @@ func TestValidate(t *testing.T) {
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				Trackers: TrackersConfig{
 					Trackers: map[string]TrackerConfig{
-						"PTP": {ImageHost: "ptpimg"},
+						"PTP": {ImageHost: "pixhost"},
 					},
 				},
 			},
@@ -153,7 +217,7 @@ func TestValidate(t *testing.T) {
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				Trackers: TrackersConfig{
 					Trackers: map[string]TrackerConfig{
-						"PTP": {ImageHost: "imgbb"},
+						"PTP": {ImageHost: "imgbox"},
 					},
 				},
 			},
@@ -241,9 +305,10 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 					APIKey:      "abc",
 					AnnounceURL: "https://should-not-be-here",
 					Username:    "should-not-be-here",
-					ImageHost:   "ptpimg",
+					ImageHost:   "pixhost",
+					FaviconURL:  "https://icons.example/a4k.png",
 					Anon:        true,
-					Unknown: map[string]interface{}{
+					Unknown: map[string]any{
 						"CustomFlag": "keep",
 					},
 				},
@@ -257,20 +322,20 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 		t.Fatalf("export json: %v", err)
 	}
 
-	var root map[string]interface{}
+	var root map[string]any
 	if err := json.Unmarshal([]byte(payload), &root); err != nil {
 		t.Fatalf("unmarshal json: %v", err)
 	}
 
-	trackersRoot, ok := root["Trackers"].(map[string]interface{})
+	trackersRoot, ok := root["Trackers"].(map[string]any)
 	if !ok {
 		t.Fatalf("trackers root missing")
 	}
-	a4kRaw, ok := trackersRoot["Trackers"].(map[string]interface{})
+	a4kRaw, ok := trackersRoot["Trackers"].(map[string]any)
 	if !ok {
 		t.Fatalf("nested trackers missing")
 	}
-	a4k, ok := a4kRaw["A4K"].(map[string]interface{})
+	a4k, ok := a4kRaw["A4K"].(map[string]any)
 	if !ok {
 		t.Fatalf("A4K tracker missing")
 	}
@@ -287,8 +352,11 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 	if _, exists := a4k["ModQ"]; !exists {
 		t.Fatalf("A4K should include ModQ from schema defaults")
 	}
-	if got := a4k["ImageHost"]; got != "ptpimg" {
+	if got := a4k["ImageHost"]; got != "pixhost" {
 		t.Fatalf("A4K should include ImageHost, got %v", got)
+	}
+	if got := a4k["FaviconURL"]; got != "https://icons.example/a4k.png" {
+		t.Fatalf("A4K should include FaviconURL, got %v", got)
 	}
 	if got := a4k["CustomFlag"]; got != "keep" {
 		t.Fatalf("custom key not preserved, got %v", got)
@@ -307,9 +375,10 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 				"A4K": {
 					APIKey:      "abc",
 					AnnounceURL: "https://should-not-be-here",
-					ImageHost:   "ptpimg",
+					ImageHost:   "pixhost",
+					FaviconURL:  "https://icons.example/a4k.png",
 					Anon:        true,
-					Unknown: map[string]interface{}{
+					Unknown: map[string]any{
 						"custom_yaml": "keep",
 					},
 				},
@@ -336,8 +405,11 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	if !regexp.MustCompile(`(?m)^\s*api_key:\s*\S+\s*$`).MatchString(text) {
 		t.Fatalf("A4K should include api_key with non-empty value in yaml export")
 	}
-	if !strings.Contains(text, "image_host: ptpimg") {
+	if !strings.Contains(text, "image_host: pixhost") {
 		t.Fatalf("A4K should include image_host in yaml export")
+	}
+	if !strings.Contains(text, "favicon_url: https://icons.example/a4k.png") {
+		t.Fatalf("A4K should include favicon_url in yaml export")
 	}
 	if !strings.Contains(text, "custom_yaml: keep") {
 		t.Fatalf("unknown custom key should be preserved in yaml export")
@@ -452,6 +524,9 @@ func TestMergeMissingTrackerDefaults(t *testing.T) {
 	if got := cfg.Trackers.Trackers["AITHER"].APIKey; got != "existing" {
 		t.Fatalf("expected existing tracker config to be preserved, got %q", got)
 	}
+	if got := cfg.Trackers.Trackers["AITHER"].URL; got != "https://aither.cc" {
+		t.Fatalf("expected AITHER URL to be backfilled, got %q", got)
+	}
 }
 
 func TestResolveBTNAPITokenPrefersTrackerConfig(t *testing.T) {
@@ -490,6 +565,100 @@ func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *te
 	}
 }
 
+func TestTorrentClientConfigExportUsesCanonicalTypeAndQbitSettings(t *testing.T) {
+	t.Parallel()
+
+	allowFallback := true
+	verifyWebUI := true
+	cfg := &Config{
+		TorrentClients: map[string]TorrentClientConfig{
+			"q": {
+				Type:                   "qbit",
+				TorrentClient:          "qbit",
+				URL:                    "http://legacy",
+				WatchFolder:            "D:\\Watch",
+				Username:               "legacy-user",
+				Password:               "legacy-pass",
+				Category:               "legacy-cat",
+				Tags:                   []string{"legacy-tag"},
+				QbitURL:                "http://qbit",
+				QbitPort:               8080,
+				QbitUser:               "qbit-user",
+				QbitPass:               "qbit-pass",
+				QbitCategoryValue:      "qbit-cat",
+				QbitTag:                "qbit-tag",
+				QbitCrossCategory:      "cross-cat",
+				QbitCrossTag:           "cross-tag",
+				AllowFallback:          &allowFallback,
+				VerifyWebUICertificate: &verifyWebUI,
+			},
+		},
+	}
+	configureConfigSecretEncryption(t, cfg)
+
+	exported, err := ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("ExportToPlaintextJSON failed: %v", err)
+	}
+	for _, key := range []string{"TorrentClient", "URL", "WatchFolder", "Username", "Password", "Category", "Tags"} {
+		if strings.Contains(exported, `"`+key+`"`) {
+			t.Fatalf("exported torrent client should not contain legacy key %s: %s", key, exported)
+		}
+	}
+	for _, key := range []string{"Type", "QbitURL", "QbitUser", "QbitPass", "QbitCategoryValue", "QbitTag", "QbitCrossCategory", "QbitCrossTag"} {
+		if !strings.Contains(exported, `"`+key+`"`) {
+			t.Fatalf("exported torrent client missing qbit key %s: %s", key, exported)
+		}
+	}
+}
+
+func TestTorrentClientConfigQbitHostPrecedence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		client TorrentClientConfig
+		want   string
+	}{
+		{
+			name: "qui proxy stays highest precedence",
+			client: TorrentClientConfig{
+				QuiProxyURL: "http://proxy.local:7476/proxy/abc",
+				QbitURL:     "http://qbit.local",
+				URL:         "http://legacy.local",
+			},
+			want: "http://proxy.local:7476/proxy/abc",
+		},
+		{
+			name: "canonical qbit url beats legacy url",
+			client: TorrentClientConfig{
+				QbitURL:  "http://qbit.local",
+				URL:      "http://legacy.local",
+				QbitPort: 8080,
+			},
+			want: "http://qbit.local:8080",
+		},
+		{
+			name: "legacy url remains fallback",
+			client: TorrentClientConfig{
+				URL:      "http://legacy.local",
+				QbitPort: 8080,
+			},
+			want: "http://legacy.local:8080",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tt.client.QbitHost(); got != tt.want {
+				t.Fatalf("QbitHost() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDisableUnsupportedTrackerImageRehosts(t *testing.T) {
 	t.Parallel()
 
@@ -511,5 +680,69 @@ func TestDisableUnsupportedTrackerImageRehosts(t *testing.T) {
 	}
 	if !cfg.Trackers.Trackers["HDB"].ImgRehost {
 		t.Fatal("expected HDB img_rehost to remain enabled")
+	}
+}
+
+func TestResolveTrackerDomain(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"AITHER": {URL: "https://aither.cc"},
+				"BLU":    {URL: "blutopia.cc"}, // no scheme
+			},
+		},
+	}
+
+	cases := []struct {
+		name         string
+		input        string
+		expectedHost string
+		expectedURL  string
+	}{
+		{
+			name:         "exact match with scheme",
+			input:        "AITHER",
+			expectedHost: "aither.cc",
+			expectedURL:  "https://aither.cc",
+		},
+		{
+			name:         "case-insensitive match",
+			input:        "aither",
+			expectedHost: "aither.cc",
+			expectedURL:  "https://aither.cc",
+		},
+		{
+			name:         "match without scheme",
+			input:        "BLU",
+			expectedHost: "blutopia.cc",
+			expectedURL:  "blutopia.cc",
+		},
+		{
+			name:         "unconfigured tracker is treated as raw domain",
+			input:        "my-random-domain.com",
+			expectedHost: "my-random-domain.com",
+			expectedURL:  "",
+		},
+		{
+			name:         "empty input",
+			input:        "",
+			expectedHost: "",
+			expectedURL:  "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gotHost, gotURL := ResolveTrackerDomain(cfg, tc.input)
+			if gotHost != tc.expectedHost {
+				t.Errorf("expected host %q, got %q", tc.expectedHost, gotHost)
+			}
+			if gotURL != tc.expectedURL {
+				t.Errorf("expected URL %q, got %q", tc.expectedURL, gotURL)
+			}
+		})
 	}
 }

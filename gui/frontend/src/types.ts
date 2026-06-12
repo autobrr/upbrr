@@ -272,6 +272,16 @@ export type WebAuthStatus = {
   message: string;
 };
 
+export type ApplicationInfo = {
+  version: string;
+  buildIdentifier: string;
+  goVersion: string;
+  goos: string;
+  goarch: string;
+  uptime: string;
+  uptimeSeconds: number;
+};
+
 export type ExternalPreview = {
   Provider: string;
   ID: number;
@@ -526,6 +536,8 @@ export type ImageHostWarning = {
 export type DescriptionBuilderGroup = {
   GroupKey: string;
   Trackers: string[];
+  Description: string;
+  DescriptionHTML: string;
   RawDescription: string;
   RawDescriptionHTML: string;
   HasOverride: boolean;
@@ -797,6 +809,10 @@ export type TrackerDryRunEntry = {
   Status: string;
   Message: string;
   ReleaseName: string;
+  OriginalReleaseName: string;
+  UploadReleaseName: string;
+  ReleaseNameChanged: boolean;
+  ReleaseNameChangeReason: string;
   DescriptionGroup: string;
   Description: string;
   Endpoint: string;
@@ -950,6 +966,7 @@ export type UIState = {
   selectedProvider?: string;
   releasePageTrackerSelection?: Record<string, boolean>;
   uploadToggles?: Record<string, boolean>;
+  uploadSkipClientInjection?: boolean;
   runDebug?: boolean;
   runLogLevel?: string;
   runLogLevelTouched?: boolean;

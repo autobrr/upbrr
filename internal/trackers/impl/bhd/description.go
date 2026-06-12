@@ -19,15 +19,16 @@ import (
 
 func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets) string {
 	base := strings.TrimSpace(assets.Description)
+	if assets.Final {
+		return base
+	}
+
 	cleaned := bbcode.CleanBHDDescription(base, bbcode.BHDOptions{
 		Framestor: hasGroup(meta.Tag, "framestor"),
 		Flux:      hasGroup(meta.Tag, "flux"),
 	})
 
 	descriptionBody := strings.TrimSpace(cleaned.Description)
-	if descriptionBody == "" {
-		descriptionBody = base
-	}
 	descriptionBody = stripUASignature(descriptionBody)
 	descriptionBody = strings.ReplaceAll(descriptionBody, "[img]", "[img width=300]")
 
@@ -46,7 +47,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets track
 	if screenshots := buildScreenshotSection(images, maxInt(1, meta.Options.Screens)); screenshots != "" {
 		parts = append(parts, screenshots)
 	}
-	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/align]`)
+	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/align]`)
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
@@ -132,6 +133,13 @@ func stripUASignature(value string) string {
 		`[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`,
 		`[align=right][url=https://github.com/autobrr/upbrr]upbrr[/url][/align]`,
 		`[align=right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/align]`,
+		`[align=right]Created by upbrr[/align]`,
+		`[align=right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/align]`,
+		`[right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/right]`,
+		`[right][url=https://github.com/autobrr/upbrr]upbrr[/url][/right]`,
+		`[right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/right]`,
+		`[right]Created by upbrr[/right]`,
+		`[right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]`,
 	}
 	for _, signature := range signatures {
 		trimmed = strings.TrimSpace(strings.ReplaceAll(trimmed, signature, ""))

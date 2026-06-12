@@ -110,11 +110,11 @@ func TestBuildDescriptionStripsImagesFromNotesWhenScreenshotsProvided(t *testing
 func TestBuildDescriptionStripsWidthImagesAndSignatureFromNotes(t *testing.T) {
 	meta := api.PreparedMetadata{}
 	kept := `[align=center]
-[url=https://ptpimg.me/fv71hr.png][img width=350]https://ptpimg.me/fv71hr.png[/img][/url]
+[url=https://pixhost.to/fv71hr.png][img width=350]https://pixhost.to/fv71hr.png[/img][/url]
 [/align]
 
 [align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`
-	screens := []api.ScreenshotImage{{RawURL: "https://ptpimg.me/fv71hr.png", ImgURL: "https://ptpimg.me/fv71hr.png"}}
+	screens := []api.ScreenshotImage{{RawURL: "https://pixhost.to/fv71hr.png", ImgURL: "https://pixhost.to/fv71hr.png"}}
 
 	desc, err := BuildDescription(context.Background(), meta, config.Config{}, kept, screens)
 	if err != nil {
@@ -123,7 +123,7 @@ func TestBuildDescriptionStripsWidthImagesAndSignatureFromNotes(t *testing.T) {
 	if strings.Contains(desc, "[spoiler=Notes]") {
 		t.Fatalf("expected notes section omitted when only screenshots/signature remain, got %q", desc)
 	}
-	if strings.Count(desc, "https://ptpimg.me/fv71hr.png") != 2 {
+	if strings.Count(desc, "https://pixhost.to/fv71hr.png") != 2 {
 		t.Fatalf("expected one screenshot block only, got %q", desc)
 	}
 	if strings.Contains(desc, "upbrr") {

@@ -46,7 +46,7 @@ func (s *Service) applyTrackerRules(ctx context.Context, meta api.PreparedMetada
 			ruleFailures[name] = append([]api.RuleFailure{}, failures...)
 			if s.logger != nil {
 				for _, failure := range failures {
-					s.logger.Warnf("metadata: tracker rule failed tracker=%s rule=%s reason=%s", name, failure.Rule, failure.Reason)
+					s.logger.Debugf("metadata: tracker rule failed tracker=%s rule=%s reason=%s", name, failure.Rule, failure.Reason)
 				}
 			}
 		} else {

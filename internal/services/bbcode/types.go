@@ -7,7 +7,7 @@ type Image struct {
 	ImgURL string
 	RawURL string
 	WebURL string
-	Host   string // Normalized host name (e.g., "imgbb", "ptpimg")
+	Host   string // Normalized host name (e.g., "imgbb", "pixhost")
 }
 
 type Note struct {

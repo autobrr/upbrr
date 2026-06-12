@@ -137,10 +137,7 @@ func convertComparisonToCollapse(value string, maxWidth int) string {
 		if screensPerLine == 0 {
 			continue
 		}
-		imgSize := maxWidth / screensPerLine
-		if imgSize > 350 {
-			imgSize = 350
-		}
+		imgSize := min(maxWidth/screensPerLine, 350)
 		line := make([]string, 0, screensPerLine)
 		output := make([]string, 0)
 		for _, img := range compImages {
@@ -181,10 +178,7 @@ func convertComparisonToCentered(value string, maxWidth int) string {
 		if screensPerLine == 0 {
 			continue
 		}
-		imgSize := maxWidth / screensPerLine
-		if imgSize > 350 {
-			imgSize = 350
-		}
+		imgSize := min(maxWidth/screensPerLine, 350)
 		line := make([]string, 0, screensPerLine)
 		output := make([]string, 0)
 		for _, img := range compImages {

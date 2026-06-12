@@ -83,6 +83,23 @@ func TestBuildReleaseNameHybridEdition(t *testing.T) {
 	}
 }
 
+func TestBuildReleaseNameEncodeFallsBackToVideoCodec(t *testing.T) {
+	result := BuildReleaseName(api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "ENCODE",
+		Title:      "Tears of Steel",
+		Year:       2012,
+		Resolution: "1080p",
+		Audio:      "VORBIS 2.0",
+		VideoCodec: "VP8",
+	}, api.NopLogger{})
+
+	expected := "Tears of Steel 2012 1080p VORBIS 2.0 VP8"
+	if result.NameNoTag != expected {
+		t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
+	}
+}
+
 func TestBuildReleaseNameCleanName(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category: "MOVIE",
@@ -110,10 +127,10 @@ func TestApplyReleaseNameOverrides(t *testing.T) {
 		Edition:  "Director",
 	}
 	overrides := api.ReleaseNameOverrides{
-		NoTag:      boolPtr(true),
-		ManualYear: intPtr(2025),
-		ManualDate: stringPtr("2025-01-01"),
-		NoAKA:      boolPtr(true),
+		NoTag:      new(true),
+		ManualYear: new(2025),
+		ManualDate: new("2025-01-01"),
+		NoAKA:      new(true),
 	}
 	updated := applyReleaseNameOverrides(base, overrides, api.NopLogger{})
 	if updated.Tag != "" {
@@ -421,7 +438,7 @@ func TestApplyReleaseNameOverridesUseSeasonEpisodeFallsBackToDailyWhenTMDBMissin
 		ManualDate:    true,
 		TMDBDateMatch: false,
 	}
-	updated := applyReleaseNameOverrides(base, api.ReleaseNameOverrides{UseSeasonEpisode: boolPtr(true)}, api.NopLogger{})
+	updated := applyReleaseNameOverrides(base, api.ReleaseNameOverrides{UseSeasonEpisode: new(true)}, api.NopLogger{})
 	if !updated.ManualDate {
 		t.Fatalf("expected daily-date mode to remain enabled when tmdb mapping is unavailable")
 	}
@@ -434,7 +451,7 @@ func TestApplyReleaseNameOverridesUseSeasonEpisodeUsesTMDBMatch(t *testing.T) {
 		ManualDate:    true,
 		TMDBDateMatch: true,
 	}
-	updated := applyReleaseNameOverrides(base, api.ReleaseNameOverrides{UseSeasonEpisode: boolPtr(true)}, api.NopLogger{})
+	updated := applyReleaseNameOverrides(base, api.ReleaseNameOverrides{UseSeasonEpisode: new(true)}, api.NopLogger{})
 	if updated.ManualDate {
 		t.Fatalf("expected season/episode mode when tmdb mapping is available")
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -121,6 +122,14 @@ func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 	}
 
 	services := deps.Services
+	if err := maybeApplyE2EServices(ctx, &services, cfg, repo, logger); err != nil {
+		if ownsRepo {
+			if closer, ok := repo.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
+		}
+		return nil, err
+	}
 	if services.Metadata == nil {
 		bdinfoService := bdinfo.New(logger)
 
@@ -269,7 +278,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 	meta.DescriptionGroups = descriptionGroups
 
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "torrent", "running", "Preparing torrent")
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "torrent", "running", "Preparing torrent")
 	torrent, err := c.services.Torrents.Create(ctx, meta)
 	if err != nil {
 		return 0, fmt.Errorf("core: %w", err)
@@ -289,19 +298,36 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 
 	if req.Options.DryRun || req.Options.Debug {
-		c.logger.Debugf("core: dry-run or debug enabled, skipping injection/upload")
-		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "upload", "completed", "Dry run complete")
+		if !meta.Options.NoSeed {
+			if err := c.injectPreparedTorrent(ctx, req, meta, torrent); err != nil {
+				return 0, err
+			}
+		}
+		c.logger.Debugf("core: dry-run or debug enabled, skipping tracker upload")
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "upload", "completed", "Dry run complete")
 		return 0, nil
 	}
 
 	c.logger.Debugf("core: uploading to trackers for %s", meta.SourcePath)
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "running", "Uploading to tracker")
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "running", "Uploading to tracker")
 	summary, err := c.services.Trackers.Upload(ctx, meta)
 	if err != nil {
-		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "failed", "Tracker upload failed")
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
 		return 0, fmt.Errorf("core: %w", err)
 	}
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "completed", "Tracker upload complete")
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "completed", "Tracker upload complete")
+
+	if !meta.Options.NoSeed {
+		// Cross-seed torrents come from dupe matches and should be injected even when
+		// the tracker upload summary later reports no successful uploads.
+		if err := c.injectCrossSeedTorrents(ctx, req, meta); err != nil {
+			return 0, err
+		}
+	}
+
+	if summary.Uploaded < 0 {
+		return 0, fmt.Errorf("upload summary invalid: %d", summary.Uploaded)
+	}
 
 	if !meta.Options.NoSeed {
 		if len(summary.UploadedTorrents) == 0 {
@@ -314,31 +340,75 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 					continue
 				}
 				c.logger.Debugf("core: injecting tracker torrent for %s from %s", meta.SourcePath, uploaded.Tracker)
-				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "running", "Injecting torrent into client")
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "running", "Injecting torrent into client")
 				if err := c.services.Clients.Inject(ctx, meta, api.TorrentResult{
 					Path:    torrentPath,
 					URL:     torrentURL,
 					Tracker: uploaded.Tracker,
 				}); err != nil {
-					emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "failed", "Client injection failed")
+					emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "failed", "Client injection failed")
 					return 0, fmt.Errorf("core: %w", err)
 				}
-				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "completed", "Client injection complete")
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "completed", "Client injection complete")
 			}
 		}
-	}
-
-	if summary.Uploaded < 0 {
-		return 0, fmt.Errorf("upload summary invalid: %d", summary.Uploaded)
 	}
 
 	return summary.Uploaded, nil
 }
 
-func emitPreparedUploadProgress(ctx context.Context, req api.Request, sourcePath string, task string, status string, message string) {
+func (c *Core) injectCrossSeedTorrents(ctx context.Context, req api.Request, meta api.PreparedMetadata) error {
+	if !c.cfg.PostUpload.CrossSeeding || len(meta.CrossSeedTorrents) == 0 {
+		return nil
+	}
+	if c.services.Clients == nil {
+		return errors.New("core: client service not configured")
+	}
+	for _, crossSeed := range meta.CrossSeedTorrents {
+		torrentPath := strings.TrimSpace(crossSeed.TorrentPath)
+		torrentURL := strings.TrimSpace(crossSeed.DownloadURL)
+		if torrentPath == "" && torrentURL == "" {
+			continue
+		}
+		tracker := strings.ToUpper(strings.TrimSpace(crossSeed.Tracker))
+		c.logger.Debugf("core: injecting cross-seed torrent for %s from %s", meta.SourcePath, tracker)
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, tracker, "client_injection", "running", "Injecting cross-seed torrent into client")
+		if err := c.services.Clients.Inject(ctx, meta, api.TorrentResult{
+			Path:      torrentPath,
+			URL:       torrentURL,
+			Tracker:   tracker,
+			CrossSeed: true,
+		}); err != nil {
+			emitPreparedUploadProgress(ctx, req, meta.SourcePath, tracker, "client_injection", "failed", "Cross-seed client injection failed")
+			return fmt.Errorf("core: %w", err)
+		}
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, tracker, "client_injection", "completed", "Cross-seed client injection complete")
+	}
+	return nil
+}
+
+func (c *Core) injectPreparedTorrent(ctx context.Context, req api.Request, meta api.PreparedMetadata, torrent api.TorrentResult) error {
+	if c.services.Clients == nil {
+		return errors.New("core: client service not configured")
+	}
+	c.logger.Debugf("core: dry-run or debug enabled, injecting prepared torrent for %s", meta.SourcePath)
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, torrent.Tracker, "client_injection", "running", "Injecting torrent into client")
+	if err := c.services.Clients.Inject(ctx, meta, torrent); err != nil {
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, torrent.Tracker, "client_injection", "failed", "Client injection failed")
+		return fmt.Errorf("core: %w", err)
+	}
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, torrent.Tracker, "client_injection", "completed", "Client injection complete")
+	return nil
+}
+
+func emitPreparedUploadProgress(ctx context.Context, req api.Request, sourcePath string, tracker string, task string, status string, message string) {
+	normalizedTracker := strings.TrimSpace(tracker)
+	if normalizedTracker == "" && len(req.Trackers) == 1 {
+		normalizedTracker = firstRequestedTracker(req.Trackers)
+	}
 	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
 		SourcePath: sourcePath,
-		Tracker:    firstRequestedTracker(req.Trackers),
+		Tracker:    normalizedTracker,
 		Task:       task,
 		Status:     status,
 		Message:    message,
@@ -383,13 +453,23 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 		return api.DupeCheckSummary{}, internalerrors.ErrInvalidInput
 	}
 
-	if req.Mode == api.ModeGUI {
-		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
+	options, err := c.applyDefaultOptions(req.Options)
+	if err != nil {
+		return api.DupeCheckSummary{}, err
+	}
+	cacheReq := req
+	cacheReq.Options = options
+
+	if req.Mode == api.ModeGUI || req.Mode == api.ModeCLI {
+		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, cacheReq, uniquePaths[0]); err != nil {
 			return api.DupeCheckSummary{}, err
 		} else if ok {
 			matchedTrackers := mergeTrackerRemovals(nil, cached.MatchedTrackers)
 			removeTrackers := mergeTrackerRemovals(req.TrackersRemove, matchedTrackers)
-			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, removeTrackers, c.logger)
+			resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
+			if req.Mode == api.ModeGUI {
+				resolvedTrackers = trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, removeTrackers, c.logger)
+			}
 			summary, err := c.services.Dupes.Check(ctx, cached, resolvedTrackers)
 			if err != nil {
 				return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
@@ -399,12 +479,9 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 			c.storeRefreshedDupeCache(cached.SourcePath, overrideSignature(cached.ExternalIDOverrides, cached.ReleaseNameOverrides, cached.MetadataOverrides, cached.TrackerConfigOverrides, cached.TrackerSiteOverrides, cached.ClientOverrides, cached.TorrentOverrides, cached.ImageHostOverrides, cached.ScreenshotOverrides), cached)
 			return summary, nil
 		}
-		return api.DupeCheckSummary{}, errors.New("core: dupe check requires metadata preview")
-	}
-
-	options, err := c.applyDefaultOptions(req.Options)
-	if err != nil {
-		return api.DupeCheckSummary{}, err
+		if req.Mode == api.ModeGUI {
+			return api.DupeCheckSummary{}, errors.New("core: dupe check requires metadata preview")
+		}
 	}
 
 	singleReq := req
@@ -1439,10 +1516,8 @@ func appendUniqueNormalizedTracker(trackersList []string, tracker string) []stri
 	if name == "" {
 		return trackersList
 	}
-	for _, existing := range trackersList {
-		if existing == name {
-			return trackersList
-		}
+	if slices.Contains(trackersList, name) {
+		return trackersList
 	}
 	return append(trackersList, name)
 }
@@ -1906,6 +1981,7 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 		return api.TrackerDryRunPreview{}, err
 	}
 	options.DryRun = true
+	c.logger.Debugf("core: tracker dry-run options resolved path=%s debug=%t dry_run=%t no_seed=%t run_log_level=%s", uniquePaths[0], options.Debug, options.DryRun, options.NoSeed, options.RunLogLevel)
 
 	singleReq := req
 	singleReq.Paths = []string{uniquePaths[0]}
@@ -1931,7 +2007,7 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	if !ok {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: tracker dry-run requires prepared metadata for %s", uniquePaths[0])
 	}
-	c.logger.Debugf("core: tracker dry-run using cached prepared metadata for %s", uniquePaths[0])
+	c.logger.Debugf("core: tracker dry-run using cached prepared metadata for %s meta_no_seed=%t req_no_seed=%t", uniquePaths[0], meta.Options.NoSeed, singleReq.Options.NoSeed)
 	descriptionGroups, err := c.resolveCanonicalDescriptionGroups(ctx, meta, singleReq)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
@@ -1949,10 +2025,110 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	if err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
 	}
+	annotateDryRunReleaseNames(meta, entries)
+
+	c.logger.Debugf("core: tracker dry-run torrent ready for %s path=%s no_seed=%t", meta.SourcePath, torrent.Path, meta.Options.NoSeed)
+	if meta.Options.NoSeed {
+		c.logger.Debugf("core: tracker dry-run skipping client injection for %s: no-seed enabled", meta.SourcePath)
+	} else if err := c.injectTrackerDryRunTorrents(ctx, singleReq, meta, entries, torrent); err != nil {
+		return api.TrackerDryRunPreview{}, err
+	}
 
 	c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 
 	return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: entries}, nil
+}
+
+func (c *Core) injectTrackerDryRunTorrents(ctx context.Context, req api.Request, meta api.PreparedMetadata, entries []api.TrackerDryRunEntry, fallback api.TorrentResult) error {
+	ready := make([]api.TrackerDryRunEntry, 0, len(entries))
+	for _, entry := range entries {
+		if strings.EqualFold(strings.TrimSpace(entry.Status), "ready") {
+			ready = append(ready, entry)
+		} else {
+			c.logger.Debugf("core: tracker dry-run skipping client injection for tracker=%s status=%s", strings.TrimSpace(entry.Tracker), strings.TrimSpace(entry.Status))
+		}
+	}
+	if len(ready) == 0 {
+		c.logger.Warnf("core: tracker dry-run found no ready tracker payloads for client injection for %s", meta.SourcePath)
+		return nil
+	}
+	c.logger.Debugf("core: tracker dry-run injecting %d ready tracker torrent(s) for %s", len(ready), meta.SourcePath)
+
+	for _, entry := range ready {
+		trackerName := strings.ToUpper(strings.TrimSpace(entry.Tracker))
+		torrentPath := trackerDryRunTorrentPath(entry)
+		injectMeta, err := c.prepareDryRunInjectionMeta(meta, trackerName, torrentPath)
+		if err != nil {
+			return err
+		}
+		injectTorrent := api.TorrentResult{Path: strings.TrimSpace(injectMeta.TorrentPath), InfoHash: fallback.InfoHash, Tracker: trackerName}
+		if injectTorrent.Path == "" {
+			injectTorrent.Path = strings.TrimSpace(fallback.Path)
+		}
+		if injectTorrent.Path == "" {
+			c.logger.Debugf("core: tracker dry-run skipping client injection for tracker=%s: no torrent file", trackerName)
+			continue
+		}
+		if injectTorrent.Path == strings.TrimSpace(fallback.Path) {
+			c.logger.Debugf("core: tracker dry-run injecting fallback torrent for tracker=%s path=%s", trackerName, injectTorrent.Path)
+		} else {
+			c.logger.Debugf("core: tracker dry-run injecting tracker torrent for tracker=%s path=%s", trackerName, injectTorrent.Path)
+		}
+		if err := c.injectPreparedTorrent(ctx, req, injectMeta, injectTorrent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Core) prepareDryRunInjectionMeta(meta api.PreparedMetadata, trackerName string, torrentPath string) (api.PreparedMetadata, error) {
+	injectMeta := meta
+	if trimmed := strings.TrimSpace(torrentPath); trimmed != "" {
+		injectMeta.TorrentPath = trimmed
+	}
+	trackerCfg := config.TrackerConfig{}
+	for name, cfg := range c.cfg.Trackers.Trackers {
+		if strings.EqualFold(strings.TrimSpace(name), trackerName) {
+			trackerCfg = cfg
+			break
+		}
+	}
+	prepared, err := trackers.PrepareDryRunInjectionTorrent(injectMeta, c.cfg.MainSettings.DBPath, trackerName, trackerCfg)
+	if err != nil {
+		return api.PreparedMetadata{}, fmt.Errorf("core: tracker dry-run injection torrent artifact tracker=%s: %w", trackerName, err)
+	}
+	return prepared, nil
+}
+
+func trackerDryRunTorrentPath(entry api.TrackerDryRunEntry) string {
+	for _, file := range entry.Files {
+		if strings.EqualFold(strings.TrimSpace(file.Field), "torrent") && file.Present {
+			return strings.TrimSpace(file.Path)
+		}
+	}
+	return ""
+}
+
+func annotateDryRunReleaseNames(meta api.PreparedMetadata, entries []api.TrackerDryRunEntry) {
+	original := strings.TrimSpace(meta.ReleaseName)
+	if original == "" {
+		original = strings.TrimSpace(meta.ReleaseNameNoTag)
+	}
+	if original == "" {
+		original = strings.TrimSpace(meta.Filename)
+	}
+	for idx := range entries {
+		uploadName := strings.TrimSpace(entries[idx].ReleaseName)
+		if uploadName == "" {
+			uploadName = original
+		}
+		entries[idx].OriginalReleaseName = original
+		entries[idx].UploadReleaseName = uploadName
+		entries[idx].ReleaseNameChanged = original != "" && uploadName != "" && uploadName != original
+		if entries[idx].ReleaseNameChanged && strings.TrimSpace(entries[idx].ReleaseNameChangeReason) == "" {
+			entries[idx].ReleaseNameChangeReason = "tracker naming rules"
+		}
+	}
 }
 
 func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Request) (api.DescriptionBuilderPreview, error) {
@@ -2012,7 +2188,7 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 			return api.DescriptionBuilderPreview{}, err
 		} else if ok {
 			c.logger.Debugf("core: description builder cache hit source=%s", uniquePaths[0])
-			meta = cached
+			meta = applyRequestToPreparedMetaWithDerivedFields(cached, req, c.cfg, c.logger, false)
 		}
 	}
 	if strings.TrimSpace(meta.SourcePath) == "" {
@@ -2083,29 +2259,44 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 	return preview, nil
 }
 
-func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGroup map[string]api.DescriptionOverride, meta api.PreparedMetadata, logger api.Logger) api.DescriptionBuilderGroup {
+func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGroup map[string]api.DescriptionOverride, _ api.PreparedMetadata, _ api.Logger) api.DescriptionBuilderGroup {
 	groupKey := normalizeDescriptionBuilderGroupKey(entry.GroupKey, entry.Trackers)
-	rawDescription := entry.RawDescription
-	rawDescriptionHTML := entry.RawDescriptionHTML
+	descriptionText := strings.TrimSpace(entry.Description)
+	if descriptionText == "" {
+		descriptionText = strings.TrimSpace(entry.RawDescription)
+	}
+	descriptionHTML := entry.DescriptionHTML
+	if strings.TrimSpace(descriptionHTML) == "" {
+		descriptionHTML = description.Render(descriptionText)
+	}
+	rawDescription := descriptionText
+	rawDescriptionHTML := descriptionHTML
 	if strings.TrimSpace(rawDescription) == "" {
-		rawDescription = entry.Description
-		rawDescriptionHTML = entry.DescriptionHTML
+		rawDescription = strings.TrimSpace(entry.RawDescription)
+		if strings.TrimSpace(rawDescription) != "" {
+			rawDescriptionHTML = entry.RawDescriptionHTML
+		} else {
+			rawDescriptionHTML = ""
+		}
 	}
 	hasOverride := entry.HasOverride
-	if override, ok := overrideByGroup[groupKey]; ok && strings.TrimSpace(override.Description) != "" {
-		rawDescription = override.Description
-		rawDescriptionHTML = description.Render(override.Description)
+	if strings.TrimSpace(rawDescription) == "" {
+		if override, ok := overrideByGroup[groupKey]; ok && strings.TrimSpace(override.Description) != "" {
+			rawDescription = strings.TrimSpace(override.Description)
+			rawDescriptionHTML = description.Render(rawDescription)
+		}
+	}
+	if _, ok := overrideByGroup[groupKey]; ok && strings.TrimSpace(rawDescription) != "" {
 		hasOverride = true
 	}
 	if strings.TrimSpace(rawDescriptionHTML) == "" {
 		rawDescriptionHTML = description.Render(rawDescription)
 	}
-	if !hasOverride {
-		rawDescriptionHTML = augmentDescriptionBuilderPreviewHTML(rawDescriptionHTML, entry, meta, logger)
-	}
 	return api.DescriptionBuilderGroup{
 		GroupKey:           groupKey,
 		Trackers:           append([]string{}, entry.Trackers...),
+		Description:        rawDescription,
+		DescriptionHTML:    rawDescriptionHTML,
 		RawDescription:     rawDescription,
 		RawDescriptionHTML: rawDescriptionHTML,
 		HasOverride:        hasOverride,
@@ -2149,56 +2340,6 @@ func descriptionBuilderEpisodeLike(meta api.PreparedMetadata) bool {
 		return true
 	}
 	return strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV")
-}
-
-func augmentDescriptionBuilderPreviewHTML(rendered string, entry api.PreparationDescription, meta api.PreparedMetadata, logger api.Logger) string {
-	if !descriptionBuilderGroupNeedsMediaInfoPreview(entry) {
-		return rendered
-	}
-	if strings.Contains(strings.ToLower(rendered), "mediainfo") {
-		return rendered
-	}
-	mediaInfo := descriptionBuilderMediaInfoText(meta, logger)
-	if strings.TrimSpace(mediaInfo) == "" {
-		return rendered
-	}
-	mediaHTML := description.Render("[mediainfo]" + mediaInfo + "[/mediainfo]")
-	if strings.TrimSpace(mediaHTML) == "" {
-		return rendered
-	}
-	if strings.TrimSpace(rendered) == "" {
-		return mediaHTML
-	}
-	return strings.TrimSpace(rendered) + "\n\n" + mediaHTML
-}
-
-func descriptionBuilderGroupNeedsMediaInfoPreview(entry api.PreparationDescription) bool {
-	candidates := append([]string{entry.GroupKey}, entry.Trackers...)
-	for _, candidate := range candidates {
-		switch strings.ToUpper(strings.TrimSpace(candidate)) {
-		case "BHD", "HDB":
-			return true
-		}
-	}
-	return false
-}
-
-func descriptionBuilderMediaInfoText(meta api.PreparedMetadata, logger api.Logger) string {
-	if strings.TrimSpace(meta.DVDVOBMediaInfoText) != "" {
-		return strings.TrimSpace(meta.DVDVOBMediaInfoText)
-	}
-	path := strings.TrimSpace(meta.MediaInfoTextPath)
-	if path == "" {
-		return ""
-	}
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		if logger != nil {
-			logger.Debugf("core: description builder failed to read mediainfo text path=%s: %v", path, err)
-		}
-		return ""
-	}
-	return strings.TrimSpace(string(payload))
 }
 
 func normalizeDescriptionBuilderGroupKey(groupKey string, trackersList []string) string {
@@ -2272,7 +2413,7 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.DescriptionBuilderGroup{}, err
 		} else if ok {
-			meta = cached
+			meta = applyRequestToPreparedMetaWithDerivedFields(cached, req, c.cfg, c.logger, false)
 		}
 	}
 	if strings.TrimSpace(meta.SourcePath) == "" {
@@ -2829,8 +2970,10 @@ func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request)
 	}
 	meta, ok := c.lookupGUICachedMeta(req, path)
 	if !ok {
+		c.logger.Debugf("core: gui prepared metadata export miss path=%s", path)
 		return api.PreparedMetadata{}, false, nil
 	}
+	c.logger.Debugf("core: gui prepared metadata export hit path=%s meta_no_seed=%t", path, meta.Options.NoSeed)
 	return deepCopyPreparedMetadata(meta), true, nil
 }
 
@@ -2847,6 +2990,7 @@ func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request
 	overrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
 	signature := overrideSignature(overrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
 	c.storeDupeCache(path, signature, deepCopyPreparedMetadata(meta))
+	c.logger.Debugf("core: gui prepared metadata import stored path=%s request_no_seed=%t meta_no_seed=%t", path, req.Options.NoSeed, meta.Options.NoSeed)
 	return nil
 }
 
@@ -2896,6 +3040,7 @@ func deepCopyPreparedMetadata(meta api.PreparedMetadata) api.PreparedMetadata {
 	copyMeta.TrackerIDs = cloneStringMap(meta.TrackerIDs)
 	copyMeta.TorrentComments = deepCopyTorrentMatches(meta.TorrentComments)
 	copyMeta.TrackerData = deepCopyTrackerMetadata(meta.TrackerData)
+	copyMeta.CrossSeedTorrents = append([]api.UploadedTorrent(nil), meta.CrossSeedTorrents...)
 	copyMeta.ArrGenres = append([]string(nil), meta.ArrGenres...)
 	copyMeta.ExternalIDOverrides = deepCopyExternalIDOverrides(meta.ExternalIDOverrides)
 	copyMeta.ReleaseNameOverrides = deepCopyReleaseNameOverrides(meta.ReleaseNameOverrides)
@@ -3041,9 +3186,7 @@ func deepCopyQuestionnaireAnswers(input map[string]map[string]string) map[string
 	cloned := make(map[string]map[string]string, len(input))
 	for tracker, values := range input {
 		inner := make(map[string]string, len(values))
-		for key, value := range values {
-			inner[key] = value
-		}
+		maps.Copy(inner, values)
 		cloned[tracker] = inner
 	}
 	return cloned
@@ -3221,23 +3364,23 @@ func deepCopyIMDBAKAs(items []api.IMDBAKA) []api.IMDBAKA {
 	return cloned
 }
 
-func deepCopyStringInterfaceMap(input map[string]interface{}) map[string]interface{} {
+func deepCopyStringInterfaceMap(input map[string]any) map[string]any {
 	if len(input) == 0 {
 		return nil
 	}
-	cloned := make(map[string]interface{}, len(input))
+	cloned := make(map[string]any, len(input))
 	for key, value := range input {
 		cloned[key] = deepCopyInterfaceValue(value)
 	}
 	return cloned
 }
 
-func deepCopyInterfaceValue(value interface{}) interface{} {
+func deepCopyInterfaceValue(value any) any {
 	switch typed := value.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		return deepCopyStringInterfaceMap(typed)
-	case []interface{}:
-		cloned := make([]interface{}, len(typed))
+	case []any:
+		cloned := make([]any, len(typed))
 		for idx, item := range typed {
 			cloned[idx] = deepCopyInterfaceValue(item)
 		}
@@ -3339,9 +3482,10 @@ func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (ap
 		return api.PlaylistSelection{}, errors.New("core: repository not initialized")
 	}
 
-	c.logger.Debugf("core: loading playlist selection for %q", sourcePath)
+	normalizedPath := filepath.ToSlash(filepath.Clean(sourcePath))
+	c.logger.Debugf("core: loading playlist selection for %q (normalized: %q)", sourcePath, normalizedPath)
 
-	selection, err := c.repo.GetPlaylistSelection(ctx, sourcePath)
+	selection, err := c.repo.GetPlaylistSelection(ctx, normalizedPath)
 	if err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
 			c.logger.Debugf("core: no playlist selection found for %q", sourcePath)

@@ -33,6 +33,8 @@ type DescriptionBuilderPreview struct {
 type DescriptionBuilderGroup struct {
 	GroupKey           string
 	Trackers           []string
+	Description        string
+	DescriptionHTML    string
 	RawDescription     string
 	RawDescriptionHTML string
 	HasOverride        bool
@@ -65,17 +67,21 @@ type TrackerReview struct {
 }
 
 type TrackerDryRunEntry struct {
-	Tracker          string
-	Status           string
-	Message          string
-	ReleaseName      string
-	DescriptionGroup string
-	Description      string
-	Endpoint         string
-	Payload          map[string]string
-	Files            []TrackerDryRunFile
-	Questionnaire    *TrackerQuestionnaire
-	ImageHost        ImageHostFeedback
+	Tracker                 string
+	Status                  string
+	Message                 string
+	ReleaseName             string
+	OriginalReleaseName     string
+	UploadReleaseName       string
+	ReleaseNameChanged      bool
+	ReleaseNameChangeReason string
+	DescriptionGroup        string
+	Description             string
+	Endpoint                string
+	Payload                 map[string]string
+	Files                   []TrackerDryRunFile
+	Questionnaire           *TrackerQuestionnaire
+	ImageHost               ImageHostFeedback
 }
 
 type TrackerDryRunFile struct {

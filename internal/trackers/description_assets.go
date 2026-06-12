@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -22,6 +23,7 @@ type DescriptionAssets struct {
 	MenuImages  []api.ScreenshotImage
 	Slots       []api.ScreenshotSlot
 	Override    bool
+	Final       bool
 }
 
 var embeddedNFOBlockPatterns = []*regexp.Regexp{
@@ -66,9 +68,7 @@ func cloneDescriptionOverrides(values map[string]api.DescriptionOverride) map[st
 		return nil
 	}
 	cloned := make(map[string]api.DescriptionOverride, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -77,9 +77,7 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -88,9 +86,7 @@ func cloneStringSet(values map[string]struct{}) map[string]struct{} {
 		return nil
 	}
 	cloned := make(map[string]struct{}, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -146,17 +142,19 @@ func resolveDescriptionAssets(ctx context.Context, tracker string, meta api.Prep
 	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		description := meta.DescriptionOverride
+		final := false
 		if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded); strings.TrimSpace(canonical) != "" {
 			description = canonical
+			final = true
 		}
 		description = sanitizeTrackerDescription(tracker, description)
-		return DescriptionAssets{Description: description, Override: strings.TrimSpace(description) != ""}, nil
+		return DescriptionAssets{Description: description, Override: strings.TrimSpace(description) != "", Final: final}, nil
 	}
 	if logger != nil {
 		logger.Tracef("trackers: description assets start tracker=%s source=%s", strings.TrimSpace(tracker), meta.SourcePath)
 	}
 
-	description, overridden := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded)
+	description, overridden, final := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded)
 	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded)
 	if err != nil {
 		if logger != nil {
@@ -177,6 +175,7 @@ func resolveDescriptionAssets(ctx context.Context, tracker string, meta api.Prep
 		MenuImages:  menuImages,
 		Slots:       slots,
 		Override:    overridden,
+		Final:       final,
 	}, nil
 }
 
@@ -184,7 +183,31 @@ func applyResolvedDescriptionScreenshots(ctx context.Context, meta api.PreparedM
 	if assets == nil {
 		return
 	}
-	assets.MenuImages, assets.Screenshots = splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
+	assets.Description = rewriteDescriptionSlotURLs(assets.Description, assets.Slots, screenshots, assets.Final)
+	if assets.Final {
+		assets.MenuImages = nil
+		assets.Screenshots = nil
+		return
+	}
+	assets.MenuImages, assets.Screenshots = splitResolvedDescriptionScreenshots(ctx, meta, repo, preloaded, assets.Slots, screenshots)
+}
+
+func splitResolvedDescriptionScreenshots(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData, slots []api.ScreenshotSlot, screenshots []api.ScreenshotImage) ([]api.ScreenshotImage, []api.ScreenshotImage) {
+	if len(screenshots) == 0 {
+		return nil, nil
+	}
+	if len(slots) == 0 {
+		return splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
+	}
+	renderable := renderableSlots(slots)
+	filtered := make([]api.ScreenshotImage, 0, len(screenshots))
+	for idx, screenshot := range screenshots {
+		if idx < len(renderable) && renderable[idx].SectionKind == screenshotSectionComparison {
+			continue
+		}
+		filtered = append(filtered, screenshot)
+	}
+	return splitDescriptionScreenshots(ctx, meta, repo, preloaded, filtered)
 }
 
 func splitDescriptionScreenshots(ctx context.Context, meta api.PreparedMetadata, repo api.MetadataRepository, preloaded *preloadedDescriptionAssetData, screenshots []api.ScreenshotImage) ([]api.ScreenshotImage, []api.ScreenshotImage) {
@@ -192,7 +215,10 @@ func splitDescriptionScreenshots(ctx context.Context, meta api.PreparedMetadata,
 		return nil, nil
 	}
 
-	selections, _ := finalSelectionsFromSource(ctx, meta, repo, preloaded)
+	var selections []api.ScreenshotFinalSelection
+	if repo != nil || preloaded != nil {
+		selections, _ = finalSelectionsFromSource(ctx, meta, repo, preloaded)
+	}
 	menuPaths := make(map[string]struct{})
 	for _, sel := range selections {
 		if sel.Source == screenshotPurposeMenu && strings.TrimSpace(sel.ImagePath) != "" {
@@ -249,21 +275,55 @@ func screenshotURLKey(shot api.ScreenshotImage) string {
 	return strings.TrimSpace(shot.WebURL)
 }
 
-func resolveTrackerDescription(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger, preloaded *preloadedDescriptionAssetData) (string, bool) {
+func rewriteDescriptionSlotURLs(description string, slots []api.ScreenshotSlot, screenshots []api.ScreenshotImage, preserveNonRenderable bool) string {
+	if strings.TrimSpace(description) == "" || len(slots) == 0 {
+		return description
+	}
+	renderable := renderableSlots(slots)
+	shotIdx := 0
+	result := description
+	for _, slot := range slots {
+		originalURL := strings.TrimSpace(slot.OriginalURL)
+		if originalURL == "" {
+			continue
+		}
+		if !slot.RenderInScreenshots {
+			if !preserveNonRenderable {
+				result = strings.ReplaceAll(result, originalURL, "")
+			}
+			continue
+		}
+		if shotIdx >= len(renderable) || shotIdx >= len(screenshots) {
+			continue
+		}
+		if renderable[shotIdx].SlotOrder != slot.SlotOrder {
+			continue
+		}
+		replacement := screenshotURLKey(screenshots[shotIdx])
+		shotIdx++
+		if replacement == "" {
+			continue
+		}
+		result = strings.ReplaceAll(result, originalURL, replacement)
+	}
+	return strings.TrimSpace(descriptionSpacingPattern.ReplaceAllString(result, "\n\n"))
+}
+
+func resolveTrackerDescription(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger, preloaded *preloadedDescriptionAssetData) (string, bool, bool) {
 	if err := ctx.Err(); err != nil {
-		return "", false
+		return "", false, false
 	}
 	if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded); strings.TrimSpace(canonical) != "" {
 		if logger != nil {
 			logger.Tracef("trackers: canonical group description applied source=%s tracker=%s len=%d", meta.SourcePath, strings.TrimSpace(tracker), len(strings.TrimSpace(canonical)))
 		}
-		return canonical, true
+		return canonical, true, true
 	}
 	if trimmed := strings.TrimSpace(meta.DescriptionOverride); trimmed != "" {
 		if logger != nil {
 			logger.Tracef("trackers: request description override applied source=%s len=%d", meta.SourcePath, len(trimmed))
 		}
-		return meta.DescriptionOverride, true
+		return meta.DescriptionOverride, true, false
 	}
 	if repo != nil && strings.TrimSpace(meta.SourcePath) != "" {
 		for _, groupKey := range descriptionOverrideLookupKeys(meta.DescriptionGroups, tracker) {
@@ -274,7 +334,7 @@ func resolveTrackerDescription(ctx context.Context, tracker string, meta api.Pre
 					if logger != nil {
 						logger.Tracef("trackers: description override applied source=%s group=%s len=%d", meta.SourcePath, strings.TrimSpace(groupKey), len(trimmed))
 					}
-					return override.Description, true
+					return override.Description, true, false
 				}
 				continue
 			}
@@ -301,7 +361,7 @@ func resolveTrackerDescription(ctx context.Context, tracker string, meta api.Pre
 	if logger != nil {
 		logger.Tracef("trackers: description assets description sources db=%d meta=%d combined=%d desc_len=%d", len(records), len(meta.TrackerData), len(combined), len(strings.TrimSpace(result)))
 	}
-	return result, false
+	return result, false, false
 }
 
 func descriptionGroupFromPreparedMeta(meta api.PreparedMetadata, tracker string, preloaded *preloadedDescriptionAssetData) string {

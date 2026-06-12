@@ -133,6 +133,7 @@ type PreparedMetadata struct {
 	StoredUpdatedAt             time.Time `ts_type:"string"`
 	StoredDataFresh             bool
 	TrackerData                 []TrackerMetadata
+	CrossSeedTorrents           []UploadedTorrent
 	ClientTorrentPath           string
 	TorrentPath                 string
 	MediaInfoCategory           string
@@ -207,7 +208,7 @@ type PreparedMetadata struct {
 	BlockedTrackers             map[string][]TrackerBlockReason
 	IgnoreTrackerRuleFailures   bool
 	TrackerRuleFailures         map[string][]RuleFailure
-	BDInfo                      map[string]interface{}
+	BDInfo                      map[string]any
 }
 
 type MetadataOverrides struct {
@@ -714,8 +715,9 @@ type TrackerQuestionnaireField struct {
 }
 
 type TorrentResult struct {
-	Path     string
-	InfoHash string
-	URL      string
-	Tracker  string
+	Path      string
+	InfoHash  string
+	URL       string
+	Tracker   string
+	CrossSeed bool
 }

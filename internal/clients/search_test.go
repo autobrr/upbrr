@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,22 @@ import (
 	qbittorrent "github.com/autobrr/go-qbittorrent"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 )
+
+type captureLogger struct {
+	debug []string
+}
+
+func (l *captureLogger) Tracef(string, ...any) {}
+
+func (l *captureLogger) Debugf(format string, args ...any) {
+	l.debug = append(l.debug, fmt.Sprintf(format, args...))
+}
+
+func (l *captureLogger) Infof(string, ...any) {}
+
+func (l *captureLogger) Warnf(string, ...any) {}
+
+func (l *captureLogger) Errorf(string, ...any) {}
 
 func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 	t.Parallel()
@@ -224,6 +241,45 @@ func TestSearchPathedTorrentsProxyStripsSymbolsFromSearch(t *testing.T) {
 	}
 	if !containsString(result.MatchedTrackers, "PTP") {
 		t.Fatalf("expected PTP in matched trackers, got %v", result.MatchedTrackers)
+	}
+}
+
+func TestLogPathedSearchMatchesRedactsTrackerURLs(t *testing.T) {
+	t.Parallel()
+
+	logger := &captureLogger{}
+	logPathedSearchMatches(logger, []api.TorrentMatch{{
+		Hash:              strings.Repeat("A", 40),
+		Name:              "Fixture.Title.2024",
+		SavePath:          "/data",
+		ContentPath:       "/data/Fixture.Title.2024",
+		Size:              123,
+		Category:          "movies",
+		Seeders:           7,
+		Tracker:           "https://tracker.beyond-hd.me/announce/passkey",
+		HasWorkingTracker: true,
+		TrackerURLsRaw:    []string{"https://tracker.beyond-hd.me/announce/passkey"},
+		TrackerURLs:       []api.TrackerMatch{{ID: "bhd", TrackerID: "10001"}},
+	}})
+
+	joined := strings.Join(logger.debug, "\n")
+	if !strings.Contains(joined, "Fixture.Title.2024") || !strings.Contains(joined, "BHD:10001") {
+		t.Fatalf("expected match details in debug log, got %q", joined)
+	}
+	if strings.Contains(joined, "announce") || strings.Contains(joined, "passkey") || strings.Contains(joined, "beyond-hd.me") {
+		t.Fatalf("expected tracker URLs redacted from debug log, got %q", joined)
+	}
+}
+
+func TestCommonPathDoesNotFoldCaseDistinctSegments(t *testing.T) {
+	t.Parallel()
+
+	got := commonPath([]string{
+		"Release/BDMV/STREAM/00001.m2ts",
+		"Release/bdmv/STREAM/00002.m2ts",
+	})
+	if got != "Release" {
+		t.Fatalf("expected exact shared root only, got %q", got)
 	}
 }
 
