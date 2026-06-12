@@ -1487,13 +1487,10 @@ func commonPath(paths []string) string {
 	parts := splitPath(paths[0])
 	for _, value := range paths[1:] {
 		candidate := splitPath(value)
-		limit := len(parts)
-		if len(candidate) < limit {
-			limit = len(candidate)
-		}
+		limit := min(len(candidate), len(parts))
 		idx := 0
 		for idx < limit {
-			if !strings.EqualFold(parts[idx], candidate[idx]) {
+			if parts[idx] != candidate[idx] {
 				break
 			}
 			idx++

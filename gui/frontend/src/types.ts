@@ -966,6 +966,7 @@ export type UIState = {
   selectedProvider?: string;
   releasePageTrackerSelection?: Record<string, boolean>;
   uploadToggles?: Record<string, boolean>;
+  uploadSkipClientInjection?: boolean;
   runDebug?: boolean;
   runLogLevel?: string;
   runLogLevelTouched?: boolean;

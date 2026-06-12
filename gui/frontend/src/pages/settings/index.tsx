@@ -69,16 +69,7 @@ type Props = {
   handleCreateWebAuth: () => void;
   renderImageHostingSection: () => JSX.Element | null;
   renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
-  renderMapSection: (
-    sectionKey: string,
-    sectionValue: ConfigMap,
-    options?: {
-      entriesKey?: string;
-      defaultKey?: string;
-      fieldMeta?: Record<string, FieldMeta>;
-      advancedOpen?: boolean;
-    },
-  ) => JSX.Element;
+  renderTorrentClientsSection: (advancedOpen: boolean) => JSX.Element | null;
   renderField: (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => JSX.Element;
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
 };
@@ -121,7 +112,7 @@ export default function SettingsPage(props: Props) {
     handleCreateWebAuth,
     renderImageHostingSection,
     renderTrackerSection,
-    renderMapSection,
+    renderTorrentClientsSection,
     renderField,
     sectionFieldMeta,
   } = props;
@@ -529,7 +520,7 @@ export default function SettingsPage(props: Props) {
                 ) : settingsSection === "torrent_clients" &&
                   configData.TorrentClients &&
                   typeof configData.TorrentClients === "object" ? (
-                  renderMapSection("TorrentClients", configData.TorrentClients as ConfigMap)
+                  renderTorrentClientsSection(advancedOpen)
                 ) : (
                   <div className="settings-grid">
                     {(() => {

@@ -323,6 +323,7 @@ declare global {
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
               debug: boolean,
+              noSeed: boolean,
               runLogLevel: string,
             ) => Promise<TrackerDryRunPreview>;
             CheckDupes: (
@@ -438,6 +439,7 @@ declare global {
               questionnaireAnswers: Record<string, Record<string, string>>,
               descriptionGroups: DescriptionBuilderPreview["Groups"],
               debug: boolean,
+              noSeed: boolean,
               runLogLevel: string,
             ) => Promise<string>;
             CancelTrackerUpload: (jobID: string) => Promise<void>;
@@ -647,6 +649,7 @@ export default function App() {
   const builderProgressTimers = useRef<number[]>([]);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
+  const [uploadSkipClientInjection, setUploadSkipClientInjection] = useState(false);
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
   const [trackerUploadError, setTrackerUploadError] = useState("");
   const [trackerUploadJobID, setTrackerUploadJobID] = useState("");
@@ -731,7 +734,7 @@ export default function App() {
     handleSaveSettings,
     renderImageHostingSection,
     renderTrackerSection,
-    renderMapSection,
+    renderTorrentClientsSection,
     renderField,
     sectionFieldMeta,
     updateConfigValue,
@@ -1324,6 +1327,9 @@ export default function App() {
         setReleasePageTrackerSelection(state.releasePageTrackerSelection);
       }
       if (state.uploadToggles) setUploadToggles(state.uploadToggles);
+      if (typeof state.uploadSkipClientInjection === "boolean") {
+        setUploadSkipClientInjection(state.uploadSkipClientInjection);
+      }
       if (typeof state.runDebug === "boolean") setRunDebug(state.runDebug);
       if (typeof state.runLogLevel === "string") setRunLogLevel(state.runLogLevel);
       if (typeof state.runLogLevelTouched === "boolean") {
@@ -1579,6 +1585,7 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
+      uploadSkipClientInjection,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1664,6 +1671,7 @@ export default function App() {
     selectedProvider,
     releasePageTrackerSelection,
     uploadToggles,
+    uploadSkipClientInjection,
     runDebug,
     runLogLevel,
     runLogLevelTouched,
@@ -3739,6 +3747,7 @@ export default function App() {
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
         builderPreview.Groups || [],
         runDebug,
+        uploadSkipClientInjection,
         runLogLevel,
       );
       setTrackerUploadJobID(jobID);
@@ -3760,6 +3769,7 @@ export default function App() {
     trackerQuestionnaireAnswers,
     builderPreview,
     runDebug,
+    uploadSkipClientInjection,
     runLogLevel,
   ]);
 
@@ -3826,6 +3836,7 @@ export default function App() {
           cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
           descriptionGroups,
           runDebug,
+          uploadSkipClientInjection,
           runLogLevel,
         );
         setTrackerDryRunPreview(result || emptyTrackerDryRun);
@@ -3864,6 +3875,7 @@ export default function App() {
       ignoredDupeTrackers,
       trackerQuestionnaireAnswers,
       runDebug,
+      uploadSkipClientInjection,
       runLogLevel,
     ],
   );
@@ -4357,7 +4369,7 @@ export default function App() {
               handleCreateWebAuth={handleCreateWebAuth}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}
-              renderMapSection={renderMapSection}
+              renderTorrentClientsSection={renderTorrentClientsSection}
               renderField={renderField}
               sectionFieldMeta={sectionFieldMeta}
             />
@@ -4531,6 +4543,8 @@ export default function App() {
               failedDupeTrackerSet={failedDupeTrackerSet}
               uploadToggles={uploadToggles}
               setUploadToggles={setUploadToggles}
+              skipClientInjection={uploadSkipClientInjection}
+              setSkipClientInjection={setUploadSkipClientInjection}
               namingOverrides={namingOverrides}
               preview={preview}
               formatLabel={formatLabel}

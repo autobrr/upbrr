@@ -78,6 +78,8 @@ describe("TrackerUploadPage", () => {
     failedDupeTrackerSet: new Set<string>(),
     uploadToggles: { AITHER: true },
     setUploadToggles: vi.fn(),
+    skipClientInjection: false,
+    setSkipClientInjection: vi.fn(),
     namingOverrides: [],
     preview,
     formatLabel: (value: string) => value,

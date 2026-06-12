@@ -271,6 +271,18 @@ func TestLogPathedSearchMatchesRedactsTrackerURLs(t *testing.T) {
 	}
 }
 
+func TestCommonPathDoesNotFoldCaseDistinctSegments(t *testing.T) {
+	t.Parallel()
+
+	got := commonPath([]string{
+		"Release/BDMV/STREAM/00001.m2ts",
+		"Release/bdmv/STREAM/00002.m2ts",
+	})
+	if got != "Release" {
+		t.Fatalf("expected exact shared root only, got %q", got)
+	}
+}
+
 func TestMatchTrackerURLsMatchesBTNLandOfTVAnnounce(t *testing.T) {
 	t.Parallel()
 

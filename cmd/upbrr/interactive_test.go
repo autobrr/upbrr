@@ -130,8 +130,31 @@ func TestRunInteractiveCLIPathDryRunSkipsScreenshotSideEffects(t *testing.T) {
 	if len(coreSvc.savedFinalImages) != 0 {
 		t.Fatalf("expected dry-run to skip saved screenshots, got %#v", coreSvc.savedFinalImages)
 	}
-	if coreSvc.runUploadPreparedCalls != 0 {
-		t.Fatalf("expected dry-run to skip upload, got %d", coreSvc.runUploadPreparedCalls)
+	if coreSvc.runUploadPreparedCalls != 1 {
+		t.Fatalf("expected dry-run to run prepared injection path, got %d", coreSvc.runUploadPreparedCalls)
+	}
+	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
+	if uploadReq.Options.NoSeed {
+		t.Fatalf("expected dry-run prepared upload to preserve no-seed=false, got %#v", uploadReq.Options)
+	}
+}
+
+func TestRunInteractiveCLIPathDryRunPreservesExplicitNoSeed(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true, DryRun: true, NoSeed: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+
+	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
+	if !uploadReq.Options.NoSeed {
+		t.Fatalf("expected explicit dry-run no-seed to be preserved, got %#v", uploadReq.Options)
 	}
 }
 
@@ -159,8 +182,12 @@ func TestRunInteractiveCLIPathDebugSkipsScreenshotSideEffects(t *testing.T) {
 	if len(coreSvc.savedFinalImages) != 0 {
 		t.Fatalf("expected debug to skip saved screenshots, got %#v", coreSvc.savedFinalImages)
 	}
-	if coreSvc.runUploadPreparedCalls != 0 {
-		t.Fatalf("expected debug to skip upload, got %d", coreSvc.runUploadPreparedCalls)
+	if coreSvc.runUploadPreparedCalls != 1 {
+		t.Fatalf("expected debug to run prepared injection path, got %d", coreSvc.runUploadPreparedCalls)
+	}
+	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
+	if uploadReq.Options.NoSeed {
+		t.Fatalf("expected debug prepared upload to preserve no-seed=false, got %#v", uploadReq.Options)
 	}
 }
 

@@ -674,7 +674,7 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 	return wrapGUIResult(a.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
-func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	if err := a.requireCore(); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -689,9 +689,12 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		return api.TrackerDryRunPreview{}, fmt.Errorf("gui: tracker dry-run preview canceled: %w", err)
 	}
 	trimmedPath := strings.TrimSpace(path)
-	runOpts, err := a.buildRunOptions(debug, runLogLevel)
+	runOpts, err := a.buildRunOptions(debug, noSeed, runLogLevel)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
+	}
+	if logger := a.currentLogger(); logger != nil {
+		logger.Debugf("gui: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", trimmedPath, debug, noSeed, runOpts.RunLogLevel)
 	}
 	runCore, runLogger, err := a.buildRunCore(runOpts)
 	if err != nil {

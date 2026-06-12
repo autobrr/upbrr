@@ -185,7 +185,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		baseURL = ptpBaseURL
 	}
 	announceURL := normalizedAnnounceURL(req.TrackerConfig.AnnounceURL)
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := resolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: PTP resolve upload torrent: %w", err)
 	}
@@ -228,6 +228,20 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 		description: description,
 		fields:      fields,
 	}, nil
+}
+
+func resolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
+	preparedPath, err := trackers.ResolveTrackerTorrentArtifactPath(meta, dbPath, "PTP")
+	if err == nil && strings.TrimSpace(meta.TorrentPath) == preparedPath {
+		if info, statErr := os.Stat(preparedPath); statErr == nil && !info.IsDir() {
+			return preparedPath, nil
+		}
+	}
+	path, err := trackers.ResolveUploadTorrentPath(meta, dbPath)
+	if err != nil {
+		return "", fmt.Errorf("trackers: resolve upload torrent path: %w", err)
+	}
+	return path, nil
 }
 
 func buildDescription(meta api.PreparedMetadata, trackerConfig config.TrackerConfig, appConfig config.Config, assets trackers.DescriptionAssets) string {

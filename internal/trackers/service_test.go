@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anacrolix/torrent/metainfo"
+	mkbrr "github.com/autobrr/mkbrr/torrent"
+
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/paths"
@@ -121,8 +124,10 @@ type stubPreparationDefinition struct {
 }
 
 type trackingUploadDefinition struct {
-	name    string
-	started chan<- string
+	name     string
+	started  chan<- string
+	requests chan<- UploadRequest
+	release  <-chan struct{}
 }
 
 type blockingImageService struct {
@@ -284,9 +289,15 @@ func (t trackingUploadDefinition) Name() string {
 	return t.name
 }
 
-func (t trackingUploadDefinition) Upload(context.Context, UploadRequest) (api.UploadSummary, error) {
+func (t trackingUploadDefinition) Upload(_ context.Context, req UploadRequest) (api.UploadSummary, error) {
 	if t.started != nil {
 		t.started <- t.name
+	}
+	if t.requests != nil {
+		t.requests <- req
+	}
+	if t.release != nil {
+		<-t.release
 	}
 	return api.UploadSummary{Uploaded: 1}, nil
 }
@@ -912,6 +923,83 @@ func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
 	}
 }
 
+func TestUploadPreparesDistinctTrackerArtifactsBeforeConcurrentUploads(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Movie.mkv")
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	createServiceTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
+
+	requests := make(chan UploadRequest, 2)
+	release := make(chan struct{})
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		trackingUploadDefinition{name: "HDB", requests: requests, release: release},
+		trackingUploadDefinition{name: "PTP", requests: requests, release: release},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")},
+		Trackers: config.TrackersConfig{
+			DefaultTrackers: config.CSVList{"HDB", "PTP"},
+			Trackers: map[string]config.TrackerConfig{
+				"HDB": {AnnounceURL: "https://hdb.example/passkey/announce"},
+				"PTP": {AnnounceURL: "https://ptp.example/passkey/announce"},
+			},
+		},
+	}
+	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+
+	done := make(chan struct {
+		summary api.UploadSummary
+		err     error
+	}, 1)
+	go func() {
+		summary, err := svc.Upload(context.Background(), api.PreparedMetadata{
+			SourcePath:  sourcePath,
+			TorrentPath: torrentPath,
+		})
+		done <- struct {
+			summary api.UploadSummary
+			err     error
+		}{summary: summary, err: err}
+	}()
+
+	received := make(map[string]UploadRequest, 2)
+	timeout := time.After(2 * time.Second)
+	for len(received) < 2 {
+		select {
+		case req := <-requests:
+			received[req.Tracker] = req
+		case <-timeout:
+			t.Fatalf("timed out waiting for upload requests, got %d", len(received))
+		}
+	}
+
+	hdbReq := received["HDB"]
+	ptpReq := received["PTP"]
+	if hdbReq.Meta.TorrentPath == ptpReq.Meta.TorrentPath {
+		t.Fatalf("expected distinct tracker artifact paths, got %q", hdbReq.Meta.TorrentPath)
+	}
+	assertTrackerArtifact(t, hdbReq.Meta.TorrentPath, "https://hdb.example/passkey/announce", "HDBits")
+	assertTrackerArtifact(t, ptpReq.Meta.TorrentPath, "https://ptp.example/passkey/announce", "PTP")
+
+	close(release)
+
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("unexpected upload error: %v", result.err)
+	}
+	if result.summary.Uploaded != 2 {
+		t.Fatalf("expected 2 uploads, got %d", result.summary.Uploaded)
+	}
+}
+
 func TestBuildPreparationPreflightsMultipleConfiguredImageHostsConcurrently(t *testing.T) {
 	t.Parallel()
 
@@ -1459,5 +1547,40 @@ func TestBuildUploadDryRunPreloadsDescriptionAssetQueriesOnce(t *testing.T) {
 	}
 	if repo.uploadsCalls != 1 {
 		t.Fatalf("expected 1 uploaded images query, got %d", repo.uploadsCalls)
+	}
+}
+
+func createServiceTestTorrent(t *testing.T, sourcePath string, torrentPath string) {
+	t.Helper()
+
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	_, err := mkbrr.Create(mkbrr.CreateOptions{
+		Path:       sourcePath,
+		OutputPath: torrentPath,
+		IsPrivate:  true,
+	})
+	if err != nil {
+		t.Fatalf("create torrent: %v", err)
+	}
+}
+
+func assertTrackerArtifact(t *testing.T, torrentPath string, wantAnnounce string, wantSource string) {
+	t.Helper()
+
+	torrentMeta, err := metainfo.LoadFromFile(torrentPath)
+	if err != nil {
+		t.Fatalf("load tracker artifact: %v", err)
+	}
+	if torrentMeta.Announce != wantAnnounce {
+		t.Fatalf("expected announce %q, got %q", wantAnnounce, torrentMeta.Announce)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatalf("unmarshal tracker artifact info: %v", err)
+	}
+	if info.Source != wantSource {
+		t.Fatalf("expected source %q, got %q", wantSource, info.Source)
 	}
 }

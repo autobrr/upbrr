@@ -447,20 +447,16 @@ trackers:
 
 torrent_clients:
   qbittorrent:
-    torrent_client: "qbit"
     qui_proxy_url: ""
-    qbit_url: "http://127.0.0.1"
-    qbit_port: 8080
-    qbit_user: ""
-    qbit_pass: ""
-    super_seed_trackers:
-      - ""
     use_tracker_as_tag: false
     qbit_tag: ""
     qbit_cat: ""
+    # Optional qBittorrent overrides for dupe-check cross-seed torrents.
+    # Normal upload injections continue to use qbit_tag/qbit_cat.
     qbit_cross_tag: ""
     qbit_cross_cat: ""
-    content_layout: "Original"
+    # Optional qBittorrent staging mode: "", "hardlink", "reflink", or "symlink".
+    # Reflink uses Linux FICLONE or Windows ReFS block cloning and requires source and linked_folder on the same supported filesystem.
     linking: ""
     allow_fallback: true
     linked_folder:
@@ -469,5 +465,4 @@ torrent_clients:
       - ""
     remote_path:
       - ""
-    torrent_storage_dir: ""
     verify_webui_certificate: true
