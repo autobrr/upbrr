@@ -36,6 +36,7 @@ type UseSettingsStateResult = {
   handleSaveSettings: () => void;
   renderImageHostingSection: () => JSX.Element | null;
   renderTrackerSection: (advancedOpen: boolean) => JSX.Element | null;
+  renderTorrentClientsSection: (advancedOpen: boolean) => JSX.Element | null;
   renderMapSection: (
     sectionKey: string,
     sectionValue: ConfigMap,
@@ -581,9 +582,27 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     MaxFiles: { key: "MaxFiles", advanced: true },
   },
   TorrentClients: {
+    QuiProxyURL: stringField("QuiProxyURL", { label: "Qui proxy URL", sensitive: true }),
+    QbitURL: stringField("QbitURL", { label: "qBit URL" }),
+    QbitPort: numberField("QbitPort", { label: "qBit port" }),
+    QbitUser: stringField("QbitUser", { label: "qBit user", sensitive: true }),
+    QbitPass: stringField("QbitPass", { label: "qBit pass", sensitive: true }),
+    QbitCategoryValue: stringField("QbitCategoryValue", { label: "qBit category" }),
+    QbitTag: stringField("QbitTag", { label: "qBit tag" }),
+    QbitCrossCategory: stringField("QbitCrossCategory", { label: "qBit cross category" }),
+    QbitCrossTag: stringField("QbitCrossTag", { label: "qBit cross tag" }),
+    UseTrackerAsTag: boolField("UseTrackerAsTag", { label: "Use tracker as tag" }),
     Linking: stringField("Linking", {
       label: "Linking",
       options: torrentClientLinkingOptions,
+    }),
+    AllowFallback: boolField("AllowFallback", { label: "Allow link fallback" }),
+    LinkedFolder: stringField("LinkedFolder", { label: "Linked folder" }),
+    LocalPath: stringField("LocalPath", { label: "Local path", advanced: true }),
+    RemotePath: stringField("RemotePath", { label: "Remote path", advanced: true }),
+    VerifyWebUICertificate: boolField("VerifyWebUICertificate", {
+      label: "Verify WebUI certificate",
+      advanced: true,
     }),
   },
 };
@@ -649,6 +668,89 @@ const restoreSensitiveConfig = (input: ConfigMap, originals: Record<string, stri
   };
 
   return walk(input, []) as ConfigMap;
+};
+
+const legacyTorrentClientKeys = [
+  "Type",
+  "TorrentClient",
+  "URL",
+  "WatchFolder",
+  "StorageDir",
+  "Username",
+  "Password",
+  "Category",
+  "Tags",
+  "TLSSkipVerify",
+  "QbitTagsValue",
+];
+
+const qbitDefaultClient = (): ConfigMap => ({
+  QuiProxyURL: "",
+  QbitCategoryValue: "",
+  QbitTag: "",
+  QbitCrossCategory: "",
+  QbitCrossTag: "",
+  UseTrackerAsTag: false,
+  Linking: "",
+  AllowFallback: true,
+  LinkedFolder: [],
+  LocalPath: [],
+  RemotePath: [],
+  VerifyWebUICertificate: true,
+});
+
+const normalizeStringArray = (value: ConfigValue) => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry ?? "").trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
+const normalizeTorrentClientForSave = (client: ConfigMap) => {
+  const next = { ...client };
+
+  if (!next.QbitURL && typeof next.URL === "string") next.QbitURL = next.URL;
+  if (!next.QbitUser && typeof next.Username === "string") next.QbitUser = next.Username;
+  if (!next.QbitPass && typeof next.Password === "string") next.QbitPass = next.Password;
+  if (!next.QbitCategoryValue && typeof next.Category === "string") {
+    next.QbitCategoryValue = next.Category;
+  }
+  if (!next.QbitTag) {
+    if (Array.isArray(next.Tags)) {
+      next.QbitTag = normalizeStringArray(next.Tags).join(",");
+    } else if (Array.isArray(next.QbitTagsValue)) {
+      next.QbitTag = normalizeStringArray(next.QbitTagsValue).join(",");
+    }
+  }
+
+  legacyTorrentClientKeys.forEach((key) => {
+    delete next[key];
+  });
+
+  return next;
+};
+
+const normalizeTorrentClientsForSave = (input: ConfigMap) => {
+  const clients = input.TorrentClients;
+  if (!clients || typeof clients !== "object" || Array.isArray(clients)) {
+    return input;
+  }
+
+  const nextClients: ConfigMap = {};
+  Object.entries(clients as ConfigMap).forEach(([name, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return;
+    }
+    nextClients[name] = normalizeTorrentClientForSave(value as ConfigMap);
+  });
+
+  return { ...input, TorrentClients: nextClients };
 };
 
 export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsStateResult => {
@@ -727,7 +829,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (!configData) {
       return null;
     }
-    const restored = restoreSensitiveConfig(configData, sensitiveValues);
+    const restored = normalizeTorrentClientsForSave(
+      restoreSensitiveConfig(configData, sensitiveValues),
+    );
     return JSON.stringify(restored, null, 2);
   };
 
@@ -1204,6 +1308,226 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     );
   };
 
+  const renderTorrentClientsSection = (advancedOpen: boolean) => {
+    if (
+      !configData ||
+      !configData.TorrentClients ||
+      typeof configData.TorrentClients !== "object" ||
+      Array.isArray(configData.TorrentClients)
+    ) {
+      return null;
+    }
+
+    const clients = Object.entries(configData.TorrentClients as ConfigMap).filter(
+      ([, value]) => value && typeof value === "object" && !Array.isArray(value),
+    ) as Array<[string, ConfigMap]>;
+    const meta = sectionFieldMeta.TorrentClients || {};
+    const valueFor = (client: ConfigMap, primary: string, fallback?: string) => {
+      const primaryValue = client[primary];
+      if (primaryValue !== undefined && primaryValue !== null && primaryValue !== "") {
+        return primaryValue;
+      }
+      return fallback ? client[fallback] : primaryValue;
+    };
+    const arrayFor = (client: ConfigMap, key: string) => {
+      const value = client[key];
+      return Array.isArray(value) ? value : [];
+    };
+    const qbitTagFor = (client: ConfigMap) => {
+      const direct = client.QbitTag;
+      if (typeof direct === "string" && direct.trim() !== "") return direct;
+      const qbitTags = normalizeStringArray(client.QbitTagsValue);
+      if (qbitTags.length > 0) return qbitTags.join(",");
+      return normalizeStringArray(client.Tags).join(",");
+    };
+    const hasDirectConfig = (client: ConfigMap) =>
+      ["QbitURL", "QbitPort", "QbitUser", "QbitPass", "URL", "Username", "Password"].some((key) => {
+        const value = client[key];
+        if (typeof value === "number") return value > 0;
+        return typeof value === "string" && value.trim() !== "";
+      });
+    const setQbitDirect = (name: string, enabled: boolean) => {
+      if (enabled) {
+        updateConfigValue(["TorrentClients", name, "QbitURL"], "http://127.0.0.1");
+        updateConfigValue(["TorrentClients", name, "QbitPort"], 8080);
+        return;
+      }
+      updateConfigValue(["TorrentClients", name, "QbitURL"], "");
+      updateConfigValue(["TorrentClients", name, "QbitPort"], 0);
+      updateConfigValue(["TorrentClients", name, "QbitUser"], "");
+      updateConfigValue(["TorrentClients", name, "QbitPass"], "");
+      updateConfigValue(["TorrentClients", name, "URL"], "");
+      updateConfigValue(["TorrentClients", name, "Username"], "");
+      updateConfigValue(["TorrentClients", name, "Password"], "");
+    };
+
+    return (
+      <div className="settings-map">
+        <div className="settings-map__header">
+          <p className="label">Entries</p>
+          <Button
+            type="button"
+            onClick={() => {
+              const name = globalThis.prompt("New entry name");
+              if (!name) return;
+              addConfigKey(["TorrentClients"], name, qbitDefaultClient());
+            }}
+          >
+            Add entry
+          </Button>
+        </div>
+
+        <div className="settings-map__grid">
+          {clients.length === 0 ? (
+            <p className="muted">No entries yet.</p>
+          ) : (
+            clients.map(([name, client]) => {
+              const directEnabled = hasDirectConfig(client);
+              return (
+                <div className="settings-card" key={`TorrentClients-${name}`}>
+                  <div className="settings-card__header">
+                    <p className="value">{name}</p>
+                    <Button type="button" onClick={() => removeConfigKey(["TorrentClients"], name)}>
+                      Remove
+                    </Button>
+                  </div>
+                  <div className="settings-grid">
+                    {renderField(
+                      "QuiProxyURL",
+                      client.QuiProxyURL ?? "",
+                      ["TorrentClients", name, "QuiProxyURL"],
+                      meta.QuiProxyURL,
+                    )}
+                    {renderField(
+                      "QbitCategoryValue",
+                      valueFor(client, "QbitCategoryValue", "Category") ?? "",
+                      ["TorrentClients", name, "QbitCategoryValue"],
+                      meta.QbitCategoryValue,
+                    )}
+                    {renderField(
+                      "QbitTag",
+                      qbitTagFor(client),
+                      ["TorrentClients", name, "QbitTag"],
+                      meta.QbitTag,
+                    )}
+                    {renderField(
+                      "QbitCrossCategory",
+                      client.QbitCrossCategory ?? "",
+                      ["TorrentClients", name, "QbitCrossCategory"],
+                      meta.QbitCrossCategory,
+                    )}
+                    {renderField(
+                      "QbitCrossTag",
+                      client.QbitCrossTag ?? "",
+                      ["TorrentClients", name, "QbitCrossTag"],
+                      meta.QbitCrossTag,
+                    )}
+                    {renderField(
+                      "UseTrackerAsTag",
+                      client.UseTrackerAsTag ?? false,
+                      ["TorrentClients", name, "UseTrackerAsTag"],
+                      meta.UseTrackerAsTag,
+                    )}
+                    {renderField(
+                      "Linking",
+                      client.Linking ?? "",
+                      ["TorrentClients", name, "Linking"],
+                      meta.Linking,
+                    )}
+                    <div
+                      className="settings-switch-row"
+                      key={`TorrentClients-${name}-AllowFallback`}
+                    >
+                      <span>Allow link fallback</span>
+                      <Switch
+                        aria-label="Allow link fallback"
+                        checked={Boolean(client.AllowFallback ?? true)}
+                        onChange={(event) =>
+                          updateConfigValue(
+                            ["TorrentClients", name, "AllowFallback"],
+                            event.target.checked,
+                          )
+                        }
+                      />
+                    </div>
+                    {renderField(
+                      "LinkedFolder",
+                      arrayFor(client, "LinkedFolder"),
+                      ["TorrentClients", name, "LinkedFolder"],
+                      meta.LinkedFolder,
+                    )}
+                    {advancedOpen
+                      ? renderField(
+                          "LocalPath",
+                          arrayFor(client, "LocalPath"),
+                          ["TorrentClients", name, "LocalPath"],
+                          meta.LocalPath,
+                        )
+                      : null}
+                    {advancedOpen
+                      ? renderField(
+                          "RemotePath",
+                          arrayFor(client, "RemotePath"),
+                          ["TorrentClients", name, "RemotePath"],
+                          meta.RemotePath,
+                        )
+                      : null}
+                    {advancedOpen
+                      ? renderField(
+                          "VerifyWebUICertificate",
+                          client.VerifyWebUICertificate ?? true,
+                          ["TorrentClients", name, "VerifyWebUICertificate"],
+                          meta.VerifyWebUICertificate,
+                        )
+                      : null}
+                  </div>
+
+                  <div className="settings-switch-row">
+                    <span>qBit direct</span>
+                    <Switch
+                      aria-label="qBit direct"
+                      checked={directEnabled}
+                      onChange={(event) => setQbitDirect(name, event.target.checked)}
+                    />
+                  </div>
+
+                  {directEnabled ? (
+                    <div className="settings-grid">
+                      {renderField(
+                        "QbitURL",
+                        valueFor(client, "QbitURL", "URL") ?? "",
+                        ["TorrentClients", name, "QbitURL"],
+                        meta.QbitURL,
+                      )}
+                      {renderField(
+                        "QbitPort",
+                        client.QbitPort ?? 0,
+                        ["TorrentClients", name, "QbitPort"],
+                        meta.QbitPort,
+                      )}
+                      {renderField(
+                        "QbitUser",
+                        valueFor(client, "QbitUser", "Username") ?? "",
+                        ["TorrentClients", name, "QbitUser"],
+                        meta.QbitUser,
+                      )}
+                      {renderField(
+                        "QbitPass",
+                        valueFor(client, "QbitPass", "Password") ?? "",
+                        ["TorrentClients", name, "QbitPass"],
+                        meta.QbitPass,
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  };
+
   /**
    * Check if a tracker is configured by comparing it to the baseline default config.
    * A tracker is considered configured if:
@@ -1653,6 +1977,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     handleSaveSettings,
     renderImageHostingSection,
     renderTrackerSection,
+    renderTorrentClientsSection,
     renderMapSection,
     renderField,
     sectionFieldMeta,

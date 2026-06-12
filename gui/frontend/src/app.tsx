@@ -734,7 +734,7 @@ export default function App() {
     handleSaveSettings,
     renderImageHostingSection,
     renderTrackerSection,
-    renderMapSection,
+    renderTorrentClientsSection,
     renderField,
     sectionFieldMeta,
     updateConfigValue,
@@ -4369,7 +4369,7 @@ export default function App() {
               handleCreateWebAuth={handleCreateWebAuth}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}
-              renderMapSection={renderMapSection}
+              renderTorrentClientsSection={renderTorrentClientsSection}
               renderField={renderField}
               sectionFieldMeta={sectionFieldMeta}
             />

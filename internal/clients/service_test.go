@@ -6,6 +6,7 @@ package clients
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -250,7 +251,6 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 
 	var mu sync.Mutex
 	var addSavePath string
-	var addContentLayout string
 	var addTags string
 	errCh := make(chan error, 1)
 
@@ -268,7 +268,6 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 			}
 			mu.Lock()
 			addSavePath = r.FormValue("savepath")
-			addContentLayout = r.FormValue("contentLayout")
 			addTags = r.FormValue("tags")
 			mu.Unlock()
 			w.Header().Set("Content-Type", "text/plain")
@@ -308,7 +307,6 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 				Password:        "pass",
 				Linking:         "hardlink",
 				LinkedFolder:    config.StringList{linkRoot},
-				ContentLayout:   "Subfolder",
 				UseTrackerAsTag: true,
 			},
 		},
@@ -343,9 +341,6 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 	wantSavePath := filepath.ToSlash(filepath.Join(linkRoot, "aither-links")) + "/"
 	if addSavePath != wantSavePath {
 		t.Fatalf("expected savepath %q, got %q", wantSavePath, addSavePath)
-	}
-	if addContentLayout != "Subfolder" {
-		t.Fatalf("expected Subfolder content layout, got %q", addContentLayout)
 	}
 	if addTags != "AITHER" {
 		t.Fatalf("expected tracker tag, got %q", addTags)
@@ -408,7 +403,7 @@ func TestInjectQbitClientReflinksSourceAndUsesLinkedSavePath(t *testing.T) {
 		cloneCalls = append(cloneCalls, src+"->"+dst)
 		data, err := os.ReadFile(src)
 		if err != nil {
-			return err
+			return fmt.Errorf("read reflink source: %w", err)
 		}
 		return os.WriteFile(dst, data, 0o600)
 	}

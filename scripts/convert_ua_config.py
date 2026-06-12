@@ -390,7 +390,6 @@ def allowed_torrent_client_keys() -> dict[str, Any]:
         "qbit_cross_cat": "",
         "qbit_cross_tag": "",
         "use_tracker_as_tag": False,
-        "content_layout": "",
         "verify_webui_certificate": True,
     }
 

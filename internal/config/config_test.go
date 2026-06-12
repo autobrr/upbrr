@@ -490,6 +490,53 @@ func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *te
 	}
 }
 
+func TestTorrentClientConfigExportUsesQbitSettingsOnly(t *testing.T) {
+	t.Parallel()
+
+	allowFallback := true
+	verifyWebUI := true
+	cfg := &Config{
+		TorrentClients: map[string]TorrentClientConfig{
+			"q": {
+				Type:                   "qbit",
+				TorrentClient:          "qbit",
+				URL:                    "http://legacy",
+				WatchFolder:            "D:\\Watch",
+				Username:               "legacy-user",
+				Password:               "legacy-pass",
+				Category:               "legacy-cat",
+				Tags:                   []string{"legacy-tag"},
+				QbitURL:                "http://qbit",
+				QbitPort:               8080,
+				QbitUser:               "qbit-user",
+				QbitPass:               "qbit-pass",
+				QbitCategoryValue:      "qbit-cat",
+				QbitTag:                "qbit-tag",
+				QbitCrossCategory:      "cross-cat",
+				QbitCrossTag:           "cross-tag",
+				AllowFallback:          &allowFallback,
+				VerifyWebUICertificate: &verifyWebUI,
+			},
+		},
+	}
+	configureConfigSecretEncryption(t, cfg)
+
+	exported, err := ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("ExportToPlaintextJSON failed: %v", err)
+	}
+	for _, key := range []string{"Type", "TorrentClient", "URL", "WatchFolder", "Username", "Password", "Category", "Tags"} {
+		if strings.Contains(exported, `"`+key+`"`) {
+			t.Fatalf("exported torrent client should not contain legacy key %s: %s", key, exported)
+		}
+	}
+	for _, key := range []string{"QbitURL", "QbitUser", "QbitPass", "QbitCategoryValue", "QbitTag", "QbitCrossCategory", "QbitCrossTag"} {
+		if !strings.Contains(exported, `"`+key+`"`) {
+			t.Fatalf("exported torrent client missing qbit key %s: %s", key, exported)
+		}
+	}
+}
+
 func TestDisableUnsupportedTrackerImageRehosts(t *testing.T) {
 	t.Parallel()
 

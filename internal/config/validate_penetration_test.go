@@ -111,18 +111,17 @@ func TestValidateLoggingFileDisabledIgnoresSizing(t *testing.T) {
 	}
 }
 
-// Torrent client with neither Type nor TorrentClient set must fail.
-func TestValidateTorrentClientTypeRequired(t *testing.T) {
+// Torrent clients default to qBittorrent; the UI no longer exposes a type field.
+func TestValidateTorrentClientTypeDefaultsToQbit(t *testing.T) {
 	t.Parallel()
 
 	cfg := withBase(func(c *Config) {
 		c.TorrentClients = map[string]TorrentClientConfig{
-			"no-type": {WatchFolder: "/tmp"},
+			"q": {QbitURL: "http://x", QbitUser: "u", QbitPass: "p"},
 		}
 	})
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "type") {
-		t.Fatalf("want type error, got %v", err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("qbit should be default torrent client type: %v", err)
 	}
 }
 
@@ -175,6 +174,34 @@ func TestValidateQbitHostAlternatives(t *testing.T) {
 				t.Fatalf("%s: expected valid, got %v", tc.name, err)
 			}
 		})
+	}
+}
+
+func TestQbitSpecificFieldsWinOverLegacyAliases(t *testing.T) {
+	t.Parallel()
+
+	client := TorrentClientConfig{
+		Username:          "legacy-user",
+		Password:          "legacy-pass",
+		Category:          "legacy-cat",
+		Tags:              []string{"legacy-tag"},
+		QbitUser:          "qbit-user",
+		QbitPass:          "qbit-pass",
+		QbitCategoryValue: "qbit-cat",
+		QbitTag:           "qbit-tag",
+	}
+
+	if got := client.QbitUsername(); got != "qbit-user" {
+		t.Fatalf("expected qbit user to win, got %q", got)
+	}
+	if got := client.QbitPassword(); got != "qbit-pass" {
+		t.Fatalf("expected qbit pass to win, got %q", got)
+	}
+	if got := client.QbitCategory(); got != "qbit-cat" {
+		t.Fatalf("expected qbit category to win, got %q", got)
+	}
+	if got := client.QbitTags(); got != "qbit-tag" {
+		t.Fatalf("expected qbit tag to win, got %q", got)
 	}
 }
 

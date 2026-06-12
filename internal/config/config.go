@@ -695,8 +695,106 @@ type TorrentClientConfig struct {
 	QbitCrossCategory      string   `yaml:"qbit_cross_cat"`
 	QbitCrossTag           string   `yaml:"qbit_cross_tag"`
 	UseTrackerAsTag        bool     `yaml:"use_tracker_as_tag"`
-	ContentLayout          string   `yaml:"content_layout"`
 	VerifyWebUICertificate *bool    `yaml:"verify_webui_certificate"`
+}
+
+func (c TorrentClientConfig) MarshalJSON() ([]byte, error) {
+	payload := torrentClientConfigJSONMap(c)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("config: marshal torrent client config: %w", err)
+	}
+	return data, nil
+}
+
+func (c TorrentClientConfig) MarshalYAML() (interface{}, error) {
+	return torrentClientConfigYAMLMap(c), nil
+}
+
+func torrentClientConfigJSONMap(c TorrentClientConfig) map[string]interface{} {
+	out := map[string]interface{}{}
+	addString := func(key string, value string) {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out[key] = trimmed
+		}
+	}
+	addStringList := func(key string, values StringList) {
+		if items := nonEmptyStrings(values); len(items) > 0 {
+			out[key] = items
+		}
+	}
+
+	addString("QuiProxyURL", c.QuiProxyURL)
+	if strings.TrimSpace(c.QuiProxyURL) == "" {
+		addString("QbitURL", firstNonEmpty(c.QbitURL, c.URL))
+		if c.QbitPort != 0 {
+			out["QbitPort"] = c.QbitPort
+		}
+		addString("QbitUser", c.QbitUsername())
+		addString("QbitPass", c.QbitPassword())
+	}
+	addString("QbitCategoryValue", c.QbitCategory())
+	addString("QbitTag", c.QbitTags())
+	addString("QbitCrossCategory", c.QbitCrossCategory)
+	addString("QbitCrossTag", c.QbitCrossTag)
+	if c.UseTrackerAsTag {
+		out["UseTrackerAsTag"] = c.UseTrackerAsTag
+	}
+	addString("Linking", c.LinkingMode())
+	if c.AllowFallback != nil {
+		out["AllowFallback"] = *c.AllowFallback
+	}
+	addStringList("LinkedFolder", c.LinkedFolder)
+	addStringList("LocalPath", c.LocalPath)
+	addStringList("RemotePath", c.RemotePath)
+	if c.VerifyWebUICertificate != nil {
+		out["VerifyWebUICertificate"] = *c.VerifyWebUICertificate
+	}
+
+	return out
+}
+
+func torrentClientConfigYAMLMap(c TorrentClientConfig) map[string]interface{} {
+	out := map[string]interface{}{}
+	addString := func(key string, value string) {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out[key] = trimmed
+		}
+	}
+	addStringList := func(key string, values StringList) {
+		if items := nonEmptyStrings(values); len(items) > 0 {
+			out[key] = items
+		}
+	}
+
+	addString("qui_proxy_url", c.QuiProxyURL)
+	if strings.TrimSpace(c.QuiProxyURL) == "" {
+		addString("qbit_url", firstNonEmpty(c.QbitURL, c.URL))
+		if c.QbitPort != 0 {
+			out["qbit_port"] = c.QbitPort
+		}
+		addString("qbit_user", c.QbitUsername())
+		addString("qbit_pass", c.QbitPassword())
+	}
+	addString("qbit_cat", c.QbitCategory())
+	addString("qbit_tag", c.QbitTags())
+	addString("qbit_cross_cat", c.QbitCrossCategory)
+	addString("qbit_cross_tag", c.QbitCrossTag)
+	if c.UseTrackerAsTag {
+		out["use_tracker_as_tag"] = c.UseTrackerAsTag
+	}
+	addString("linking", c.LinkingMode())
+	if c.AllowFallback != nil {
+		out["allow_fallback"] = *c.AllowFallback
+	}
+	addStringList("linked_folder", c.LinkedFolder)
+	addStringList("local_path", c.LocalPath)
+	addStringList("remote_path", c.RemotePath)
+	if c.VerifyWebUICertificate != nil {
+		out["verify_webui_certificate"] = *c.VerifyWebUICertificate
+	}
+
+	return out
 }
 
 func (c Config) Validate() error {
@@ -723,9 +821,6 @@ func (c Config) Validate() error {
 
 	for name, client := range c.TorrentClients {
 		clientType := strings.TrimSpace(client.ClientType())
-		if clientType == "" {
-			return fmt.Errorf("config: torrent_clients.%s.type or torrent_client is required", name)
-		}
 		switch {
 		case strings.EqualFold(clientType, "watch"):
 			if strings.TrimSpace(client.WatchFolder) == "" {
@@ -886,42 +981,34 @@ func (c TorrentClientConfig) ClientType() string {
 	if strings.TrimSpace(c.Type) != "" {
 		return strings.TrimSpace(c.Type)
 	}
-	return strings.TrimSpace(c.TorrentClient)
+	if strings.TrimSpace(c.TorrentClient) != "" {
+		return strings.TrimSpace(c.TorrentClient)
+	}
+	return "qbit"
 }
 
 func (c TorrentClientConfig) QbitUsername() string {
-	if strings.TrimSpace(c.Username) != "" {
-		return strings.TrimSpace(c.Username)
+	if strings.TrimSpace(c.QbitUser) != "" {
+		return strings.TrimSpace(c.QbitUser)
 	}
-	return strings.TrimSpace(c.QbitUser)
+	return strings.TrimSpace(c.Username)
 }
 
 func (c TorrentClientConfig) QbitPassword() string {
-	if strings.TrimSpace(c.Password) != "" {
-		return strings.TrimSpace(c.Password)
+	if strings.TrimSpace(c.QbitPass) != "" {
+		return strings.TrimSpace(c.QbitPass)
 	}
-	return strings.TrimSpace(c.QbitPass)
+	return strings.TrimSpace(c.Password)
 }
 
 func (c TorrentClientConfig) QbitCategory() string {
-	if strings.TrimSpace(c.Category) != "" {
-		return strings.TrimSpace(c.Category)
+	if strings.TrimSpace(c.QbitCategoryValue) != "" {
+		return strings.TrimSpace(c.QbitCategoryValue)
 	}
-	return strings.TrimSpace(c.QbitCategoryValue)
+	return strings.TrimSpace(c.Category)
 }
 
 func (c TorrentClientConfig) QbitTags() string {
-	if len(c.Tags) > 0 {
-		items := make([]string, 0, len(c.Tags))
-		for _, value := range c.Tags {
-			trimmed := strings.TrimSpace(value)
-			if trimmed == "" {
-				continue
-			}
-			items = append(items, trimmed)
-		}
-		return strings.Join(items, ",")
-	}
 	if strings.TrimSpace(c.QbitTag) != "" {
 		return strings.TrimSpace(c.QbitTag)
 	}
@@ -936,11 +1023,18 @@ func (c TorrentClientConfig) QbitTags() string {
 		}
 		return strings.Join(items, ",")
 	}
+	if len(c.Tags) > 0 {
+		items := make([]string, 0, len(c.Tags))
+		for _, value := range c.Tags {
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+			items = append(items, trimmed)
+		}
+		return strings.Join(items, ",")
+	}
 	return ""
-}
-
-func (c TorrentClientConfig) QbitContentLayout() string {
-	return strings.TrimSpace(c.ContentLayout)
 }
 
 func (c TorrentClientConfig) LinkingMode() string {
@@ -981,4 +1075,13 @@ func nonEmptyStrings[S ~[]string](values S) []string {
 		result = append(result, trimmed)
 	}
 	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,8 +25,8 @@ const (
 	maxCloneChunkSize           = 1024 * 1024 * 1024
 	copyBufferSize              = 1024 * 1024
 	refsFilesystemName          = "REFS"
-	fileAttributeSparseFile     = 0x00000200
-	invalidFileAttributes       = 0xFFFFFFFF
+	fileAttributeSparseFile     = uintptr(0x00000200)
+	invalidFileAttributes       = uintptr(0xFFFFFFFF)
 	fileBegin                   = 0
 )
 
@@ -43,7 +44,7 @@ var (
 	procSetFilePointerEx    = kernel32DLL.NewProc("SetFilePointerEx")
 	procSetEndOfFile        = kernel32DLL.NewProc("SetEndOfFile")
 	reflinkEvalSymlinks     = filepath.EvalSymlinks
-	reflinkCopyBufferPool   = sync.Pool{New: func() any { return make([]byte, copyBufferSize) }}
+	reflinkCopyBufferPool   = sync.Pool{New: func() any { buffer := make([]byte, copyBufferSize); return &buffer }}
 	errReflinkNotSupported  = errors.New("reflink is not supported")
 	errReflinkVolumeInvalid = errors.New("source and destination must be on the same ReFS volume")
 )
@@ -175,7 +176,11 @@ func volumeRootForPath(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("convert path: %w", err)
 	}
-	if err := windows.GetVolumePathName(pathPtr, &volumePath[0], uint32(len(volumePath))); err != nil {
+	volumePathLen, err := uint32Len("volume path buffer", len(volumePath))
+	if err != nil {
+		return "", err
+	}
+	if err := windows.GetVolumePathName(pathPtr, &volumePath[0], volumePathLen); err != nil {
 		return "", fmt.Errorf("get volume path name: %w", err)
 	}
 	volumeRoot := windows.UTF16ToString(volumePath)
@@ -194,6 +199,10 @@ func filesystemNameForVolume(volumeRoot string) (string, error) {
 	var volumeSerial uint32
 	var maxComponentLength uint32
 	var flags uint32
+	filesystemNameLen, err := uint32Len("filesystem name buffer", len(filesystemName))
+	if err != nil {
+		return "", err
+	}
 	if err := windows.GetVolumeInformation(
 		volumePathPtr,
 		nil,
@@ -202,7 +211,7 @@ func filesystemNameForVolume(volumeRoot string) (string, error) {
 		&maxComponentLength,
 		&flags,
 		&filesystemName[0],
-		uint32(len(filesystemName)),
+		filesystemNameLen,
 	); err != nil {
 		return "", fmt.Errorf("get volume information: %w", err)
 	}
@@ -244,13 +253,13 @@ func isSparseFile(path string) (bool, error) {
 		return false, fmt.Errorf("convert path: %w", err)
 	}
 	r1, _, callErr := procGetFileAttributesW.Call(uintptr(unsafe.Pointer(pathPtr)))
-	if uint32(r1) == invalidFileAttributes {
+	if r1 == invalidFileAttributes {
 		if callErr != nil && !errors.Is(callErr, windows.ERROR_SUCCESS) {
 			return false, fmt.Errorf("get file attributes: %w", callErr)
 		}
 		return false, errors.New("get file attributes: unknown error")
 	}
-	return uint32(r1)&fileAttributeSparseFile != 0, nil
+	return r1&fileAttributeSparseFile != 0, nil
 }
 
 func markFileSparse(fileHandle windows.Handle, path string) error {
@@ -263,9 +272,13 @@ func markFileSparse(fileHandle windows.Handle, path string) error {
 
 func setFileEnd(fileHandle windows.Handle, path string, size int64) error {
 	var newPosition int64
+	sizeArg, err := uintptrFromNonNegativeInt64("file size", size)
+	if err != nil {
+		return err
+	}
 	r1, _, callErr := procSetFilePointerEx.Call(
 		uintptr(fileHandle),
-		uintptr(size),
+		sizeArg,
 		uintptr(unsafe.Pointer(&newPosition)),
 		uintptr(fileBegin),
 	)
@@ -293,7 +306,7 @@ func duplicateExtent(targetHandle, sourceHandle windows.Handle, sourceOffset, ta
 		ByteCount:        byteCount,
 	}
 	var bytesReturned uint32
-	return windows.DeviceIoControl(
+	if err := windows.DeviceIoControl(
 		targetHandle,
 		fsctlDuplicateExtentsToFile,
 		(*byte)(unsafe.Pointer(&data)),
@@ -302,7 +315,10 @@ func duplicateExtent(targetHandle, sourceHandle windows.Handle, sourceOffset, ta
 		0,
 		&bytesReturned,
 		nil,
-	)
+	); err != nil {
+		return fmt.Errorf("duplicate extents: %w", err)
+	}
+	return nil
 }
 
 func copyFileTail(srcFile, dstFile *os.File, offset, length int64) error {
@@ -312,14 +328,36 @@ func copyFileTail(srcFile, dstFile *os.File, offset, length int64) error {
 	if _, err := dstFile.Seek(offset, io.SeekStart); err != nil {
 		return fmt.Errorf("seek destination: %w", err)
 	}
-	buffer := reflinkCopyBufferPool.Get().([]byte)
+	buffer, ok := reflinkCopyBufferPool.Get().(*[]byte)
+	if !ok || buffer == nil {
+		buffer = newReflinkCopyBuffer()
+	}
 	defer reflinkCopyBufferPool.Put(buffer)
-	copied, err := io.CopyBuffer(dstFile, io.LimitReader(srcFile, length), buffer)
+	copied, err := io.CopyBuffer(dstFile, io.LimitReader(srcFile, length), *buffer)
 	if err != nil {
-		return err
+		return fmt.Errorf("copy tail: %w", err)
 	}
 	if copied != length {
 		return io.ErrUnexpectedEOF
 	}
 	return nil
+}
+
+func newReflinkCopyBuffer() *[]byte {
+	buffer := make([]byte, copyBufferSize)
+	return &buffer
+}
+
+func uint32Len(label string, value int) (uint32, error) {
+	if value < 0 || uint64(value) > math.MaxUint32 {
+		return 0, fmt.Errorf("%s length overflows uint32", label)
+	}
+	return uint32(value), nil
+}
+
+func uintptrFromNonNegativeInt64(label string, value int64) (uintptr, error) {
+	if value < 0 || uint64(value) > uint64(^uintptr(0)) {
+		return 0, fmt.Errorf("%s overflows uintptr", label)
+	}
+	return uintptr(value), nil
 }
