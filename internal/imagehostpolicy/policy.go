@@ -4,6 +4,7 @@
 package imagehostpolicy
 
 import (
+	"maps"
 	"slices"
 	"strings"
 )
@@ -46,6 +47,7 @@ var uploadHosts = map[string]struct{}{
 	"passtheimage": {},
 	"pixhost":      {},
 	"ptscreens":    {},
+	"reelflix":     {},
 	"seedpool_cdn": {},
 	"sharex":       {},
 	"thr":          {},
@@ -54,13 +56,15 @@ var uploadHosts = map[string]struct{}{
 }
 
 var ownedHosts = map[string]string{
-	"hdb":     "HDB",
-	"lostimg": "LST",
-	"thr":     "THR",
+	"hdb":      "HDB",
+	"lostimg":  "LST",
+	"reelflix": "RF",
+	"thr":      "THR",
 }
 
 var trackerOptionalUploadHosts = map[string][]string{
 	"LST": {"lostimg"},
+	"RF":  {"reelflix"},
 }
 
 func ForTracker(tracker string, imgRehost bool, imgAPI string) Policy {
@@ -123,9 +127,7 @@ func KnownTrackerUploadPolicies() map[string][]string {
 
 func KnownOwnedHosts() map[string]string {
 	out := make(map[string]string, len(ownedHosts))
-	for host, tracker := range ownedHosts {
-		out[host] = tracker
-	}
+	maps.Copy(out, ownedHosts)
 	return out
 }
 

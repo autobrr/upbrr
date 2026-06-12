@@ -288,3 +288,48 @@ func TestNeededImageUploadTargetsSkipsLostimgWhenDisabled(t *testing.T) {
 		t.Fatalf("expected global imgbb fallback, got %#v", targets)
 	}
 }
+
+func TestNeededImageUploadTargetsUsesConfiguredReelflixForRF(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"RF": {ImageHost: "reelflix", ImgAPI: "secret"},
+			},
+		},
+	}, []string{"RF"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one target, got %#v", targets)
+	}
+	if targets[0].Host != "reelflix" || targets[0].UsageScope != "tracker:RF" {
+		t.Fatalf("expected RF scoped reelflix target, got %#v", targets[0])
+	}
+}
+
+func TestNeededImageUploadTargetsSkipsReelflixWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"RF": {ImgAPI: "secret"},
+			},
+		},
+	}, []string{"RF"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbb" {
+		t.Fatalf("expected global imgbb fallback, got %#v", targets)
+	}
+}

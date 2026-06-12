@@ -140,7 +140,7 @@ func TestHDBUploadBatchUsesSingleGalleryRequest(t *testing.T) {
 func TestHDBUploadBatchChunksLargeUploads(t *testing.T) {
 	tmpDir := t.TempDir()
 	paths := make([]string, 0, hdbMaxBatchUploadImages+1)
-	for idx := 0; idx < hdbMaxBatchUploadImages+1; idx++ {
+	for idx := range hdbMaxBatchUploadImages + 1 {
 		path := filepath.Join(tmpDir, fmt.Sprintf("shot-%02d.png", idx+1))
 		if err := os.WriteFile(path, []byte("testdata"), 0o644); err != nil {
 			t.Fatalf("write temp file: %v", err)
@@ -393,6 +393,76 @@ func TestLostimgUploaderAcceptsSingleURLResponse(t *testing.T) {
 	}
 	if result.RawURL != "https://lostimg.cc/shot.png" {
 		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+}
+
+func TestReelflixUploaderPostsSourceWithAPIKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://img.reelflix.cc/api/1/upload" {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			if got := req.Header.Get("X-Api-Key"); got != "secret" {
+				t.Fatalf("expected X-API-Key, got %q", got)
+			}
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			fileFields := []string{}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read multipart part: %v", err)
+				}
+				_, _ = io.Copy(io.Discard, part)
+				if part.FileName() != "" {
+					fileFields = append(fileFields, part.FormName())
+				}
+			}
+			if len(fileFields) != 1 || fileFields[0] != "source" {
+				t.Fatalf("expected source file field, got %v", fileFields)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"status_code": 200,
+					"image": {
+						"url": "https://img.reelflix.cc/images/shot.png",
+						"url_viewer": "https://img.reelflix.cc/image/shot",
+						"medium": {"url": "https://img.reelflix.cc/images/medium/shot.png"}
+					}
+				}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&reelflixUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.ImgURL != "https://img.reelflix.cc/images/medium/shot.png" {
+		t.Fatalf("unexpected img URL: %q", result.ImgURL)
+	}
+	if result.RawURL != "https://img.reelflix.cc/images/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+	if result.WebURL != "https://img.reelflix.cc/image/shot" {
+		t.Fatalf("unexpected web URL: %q", result.WebURL)
 	}
 }
 

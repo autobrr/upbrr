@@ -360,6 +360,7 @@ trackers:
   RF:
     link_dir_name: ""
     api_key: ""
+    img_api: ""
     anon: false
   RTF:
     link_dir_name: ""

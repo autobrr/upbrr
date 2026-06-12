@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -57,6 +58,7 @@ func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uplo
 		"dalexni":      &dalexniUploader{apiKey: cfg.ImageHosting.DalexniAPI, client: client},
 		"zipline":      &ziplineUploader{apiKey: cfg.ImageHosting.ZiplineAPIKey, url: cfg.ImageHosting.ZiplineURL, client: client},
 		"passtheimage": &passTheImageUploader{apiKey: cfg.ImageHosting.PassTheImageAPI, client: client},
+		"reelflix":     &reelflixUploader{apiKey: cfg.Trackers.Trackers["RF"].ImgAPI, client: client},
 		"seedpool_cdn": &seedpoolUploader{apiKey: cfg.ImageHosting.SeedpoolCDNAPI, client: client},
 		"sharex":       &shareXUploader{apiKey: cfg.ImageHosting.ShareXAPIKey, url: cfg.ImageHosting.ShareXURL, client: client},
 		"thr":          &thrUploader{apiKey: cfg.Trackers.Trackers["THR"].ImgAPI, client: client},
@@ -254,10 +256,7 @@ func (u *hdbUploader) UploadBatchWithName(ctx context.Context, imagePaths []stri
 	}
 	results := make([]uploadResult, 0, len(imagePaths))
 	for start := 0; start < len(imagePaths); start += hdbMaxBatchUploadImages {
-		end := start + hdbMaxBatchUploadImages
-		if end > len(imagePaths) {
-			end = len(imagePaths)
-		}
+		end := min(start+hdbMaxBatchUploadImages, len(imagePaths))
 		chunk, err := u.uploadBatchWithGalleryName(ctx, imagePaths[start:end], galleryName)
 		if err != nil {
 			return nil, err
@@ -393,7 +392,7 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 		}
 		return imgboxUploadToken{}, fmt.Errorf("imgbox token request failed with status %d, response: %s", resp.StatusCode, bodyStr)
 	}
-	var tokenResp map[string]interface{}
+	var tokenResp map[string]any
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		bodyStr := string(body)
 		if len(bodyStr) > 200 {
@@ -425,9 +424,7 @@ func imgboxHeaders(cookie string, extra map[string]string) map[string]string {
 	if strings.TrimSpace(cookie) != "" {
 		headers["Cookie"] = cookie
 	}
-	for key, value := range extra {
-		headers[key] = value
-	}
+	maps.Copy(headers, extra)
 	return headers
 }
 
@@ -464,7 +461,7 @@ func imgboxPickCookie(resp *http.Response) string {
 	return strings.Join(parts, "; ")
 }
 
-func imgboxJSONValue(value interface{}) string {
+func imgboxJSONValue(value any) string {
 	switch typed := value.(type) {
 	case nil:
 		return "null"
@@ -800,10 +797,7 @@ func (u *lostimgUploader) UploadBatch(ctx context.Context, imagePaths []string) 
 	}
 	results := make([]uploadResult, 0, len(imagePaths))
 	for start := 0; start < len(imagePaths); start += lostimgMaxBatchUploadImages {
-		end := start + lostimgMaxBatchUploadImages
-		if end > len(imagePaths) {
-			end = len(imagePaths)
-		}
+		end := min(start+lostimgMaxBatchUploadImages, len(imagePaths))
 		chunkResults, err := u.uploadBatch(ctx, imagePaths[start:end])
 		if err != nil {
 			return nil, err
@@ -975,6 +969,62 @@ func (u *passTheImageUploader) Upload(ctx context.Context, imagePath string) (up
 
 	return uploadResult{
 		ImgURL: response.Image.URL,
+		RawURL: response.Image.URL,
+		WebURL: response.Image.URLViewer,
+	}, nil
+}
+
+type reelflixUploader struct {
+	apiKey string
+	client *http.Client
+}
+
+func (u *reelflixUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
+	if strings.TrimSpace(u.apiKey) == "" {
+		return uploadResult{}, errors.New("image hosting: reelflix api key missing")
+	}
+	headers := map[string]string{"X-API-Key": strings.TrimSpace(u.apiKey)}
+	body, status, err := postMultipart(ctx, u.client, "https://img.reelflix.cc/api/1/upload", nil, "source", imagePath, headers)
+	if err != nil {
+		return uploadResult{}, err
+	}
+	if status != http.StatusOK {
+		return uploadResult{}, fmt.Errorf("reelflix upload failed with status %d", status)
+	}
+
+	var response struct {
+		StatusCode int `json:"status_code"`
+		Image      struct {
+			Medium struct {
+				URL string `json:"url"`
+			} `json:"medium"`
+			URL       string `json:"url"`
+			URLViewer string `json:"url_viewer"`
+		} `json:"image"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return uploadResult{}, fmt.Errorf("reelflix invalid response: %w", err)
+	}
+	if response.StatusCode != 0 && response.StatusCode != http.StatusOK {
+		message := strings.TrimSpace(response.Error.Message)
+		if message == "" {
+			message = "reelflix upload failed"
+		}
+		return uploadResult{}, fmt.Errorf("reelflix upload failed: %s", message)
+	}
+	if response.Image.URL == "" {
+		return uploadResult{}, errors.New("reelflix upload failed")
+	}
+	imgURL := response.Image.Medium.URL
+	if strings.TrimSpace(imgURL) == "" {
+		imgURL = response.Image.URL
+	}
+
+	return uploadResult{
+		ImgURL: imgURL,
 		RawURL: response.Image.URL,
 		WebURL: response.Image.URLViewer,
 	}, nil

@@ -39,7 +39,10 @@ func policyForTracker(tracker string, trackerCfg config.TrackerConfig) imageHost
 
 func policyForTrackerWithConfig(tracker string, appCfg config.Config, trackerCfg config.TrackerConfig) imageHostPolicy {
 	if lostimgEnabledForTracker(appCfg, tracker) {
-		return newImageHostPolicy(true, "lostimg")
+		return newImageHostPolicy("lostimg")
+	}
+	if reelflixEnabledForTracker(tracker, trackerCfg) {
+		return newImageHostPolicy("reelflix")
 	}
 	return policyForTracker(tracker, trackerCfg)
 }
@@ -59,7 +62,7 @@ func applyImageHostOverrides(tracker string, policy imageHostPolicy, overrides a
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is unsupported", strings.TrimSpace(tracker), host)
 	}
 	if len(policy.allowed) == 0 {
-		return newImageHostPolicy(true, host), nil
+		return newImageHostPolicy(host), nil
 	}
 	if !hostAllowed(host, policy.allowed) {
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is not allowed (allowed: %s)", strings.TrimSpace(tracker), host, strings.Join(policy.allowed, ", "))
@@ -85,7 +88,7 @@ func resolveImageHostPolicy(tracker string, trackerCfg config.TrackerConfig, ove
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s configured image_host %q is not allowed", strings.TrimSpace(tracker), trackerCfg.ImageHost)
 	}
 	if len(policy.allowed) == 0 {
-		return newImageHostPolicy(true, host), nil
+		return newImageHostPolicy(host), nil
 	}
 	policy.preferred = prependHost(host, policy.preferred)
 	policy.fallbackOK = true
@@ -95,6 +98,9 @@ func resolveImageHostPolicy(tracker string, trackerCfg config.TrackerConfig, ove
 func resolveImageHostPolicyForMetadata(tracker string, appCfg config.Config, trackerCfg config.TrackerConfig, _ api.PreparedMetadata, overrides api.ImageHostOverrides) (imageHostPolicy, error) {
 	host := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
 	if host == "lostimg" && !lostimgEnabledForTracker(appCfg, tracker) {
+		trackerCfg.ImageHost = ""
+	}
+	if host == "reelflix" && !reelflixEnabledForTracker(tracker, trackerCfg) {
 		trackerCfg.ImageHost = ""
 	}
 	if strings.TrimSpace(trackerCfg.ImageHost) != "" || overrides.PreferredHost != nil {
@@ -430,6 +436,9 @@ func imageUploadCandidatesForTracker(appCfg config.Config, tracker string, userH
 	if lostimgEnabledForTracker(appCfg, tracker) {
 		candidates = appendUniqueHost(candidates, "lostimg")
 	}
+	if reelflixEnabledForTracker(tracker, trackerConfigForImageHostPolicy(appCfg, tracker)) {
+		candidates = appendUniqueHost(candidates, "reelflix")
+	}
 	return candidates
 }
 
@@ -444,6 +453,13 @@ func lostimgEnabledForTracker(appCfg config.Config, tracker string) bool {
 	}
 	cfg := appCfg.ImageHosting
 	return cfg.LostimgEnabled
+}
+
+func reelflixEnabledForTracker(tracker string, trackerCfg config.TrackerConfig) bool {
+	if !strings.EqualFold(strings.TrimSpace(tracker), "RF") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(trackerCfg.ImageHost), "reelflix")
 }
 
 func normalizeConfiguredImageUploadHosts(hosts ...string) []string {
@@ -491,7 +507,7 @@ func supportedUploadImageHost(host string) bool {
 	return imagehostpolicy.IsUploadHost(host)
 }
 
-func newImageHostPolicy(required bool, hosts ...string) imageHostPolicy {
+func newImageHostPolicy(hosts ...string) imageHostPolicy {
 	normalized := make([]string, 0, len(hosts))
 	seen := make(map[string]struct{}, len(hosts))
 	for _, host := range hosts {
@@ -509,7 +525,7 @@ func newImageHostPolicy(required bool, hosts ...string) imageHostPolicy {
 		allowed:     normalized,
 		uploadHosts: uploadHostsFor(normalized),
 		preferred:   uploadHostsFor(normalized),
-		required:    required,
+		required:    true,
 	}
 }
 
