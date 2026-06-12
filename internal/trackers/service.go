@@ -321,10 +321,16 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 
 			trackerCfg := trackerConfigFor(s.cfg, tracker)
 			trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
+			trackerMeta, err := PrepareTrackerUploadTorrent(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg)
+			if err != nil {
+				result.err = fmt.Errorf("trackers: %s upload torrent artifact: %w", tracker, err)
+				results[idx] = result
+				continue
+			}
 			resolution, ok := preflight[strings.ToUpper(strings.TrimSpace(tracker))]
 			if !ok {
 				var err error
-				resolution, err = ensureDescriptionImageHost(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger)
+				resolution, err = ensureDescriptionImageHost(ctx, tracker, trackerMeta, s.cfg, trackerCfg, s.repo, s.images, s.logger)
 				if err != nil {
 					s.logger.Warnf("trackers: description image host resolution failed for %s: %v", tracker, err)
 					result.err = err
@@ -342,16 +348,16 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 				results[idx] = result
 				continue
 			}
-			assets, err := ResolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger)
+			assets, err := ResolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger)
 			if err != nil {
 				result.err = err
 				results[idx] = result
 				continue
 			}
-			applyResolvedDescriptionScreenshots(ctx, meta, s.repo, nil, &assets, resolution.screenshots)
+			applyResolvedDescriptionScreenshots(ctx, trackerMeta, s.repo, nil, &assets, resolution.screenshots)
 			uploadSummary, err := definition.Upload(ctx, UploadRequest{
 				Tracker:       tracker,
-				Meta:          meta,
+				Meta:          trackerMeta,
 				TrackerConfig: trackerCfg,
 				AppConfig:     s.cfg,
 				Logger:        s.logger,
@@ -862,7 +868,14 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 
 		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
-		resolution, err := ensureDescriptionImageHostWithData(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger, preloaded)
+		trackerMeta, err := PrepareTrackerUploadTorrent(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg)
+		if err != nil {
+			entry.Status = "error"
+			entry.Message = err.Error()
+			results = append(results, entry)
+			continue
+		}
+		resolution, err := ensureDescriptionImageHostWithData(ctx, tracker, trackerMeta, s.cfg, trackerCfg, s.repo, s.images, s.logger, preloaded)
 		if err != nil {
 			s.logger.Warnf("trackers: dry-run image host resolution failed for %s: %v", tracker, err)
 			entry.Status = "error"
@@ -877,17 +890,17 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			results = append(results, entry)
 			continue
 		}
-		assets, err := resolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger, preloaded)
+		assets, err := resolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger, preloaded)
 		if err != nil {
 			entry.Status = "error"
 			entry.Message = err.Error()
 			results = append(results, entry)
 			continue
 		}
-		applyResolvedDescriptionScreenshots(ctx, meta, s.repo, preloaded, &assets, resolution.screenshots)
+		applyResolvedDescriptionScreenshots(ctx, trackerMeta, s.repo, preloaded, &assets, resolution.screenshots)
 		preview, err := builder.BuildUploadDryRun(ctx, UploadRequest{
 			Tracker:       tracker,
-			Meta:          meta,
+			Meta:          trackerMeta,
 			TrackerConfig: trackerCfg,
 			AppConfig:     s.cfg,
 			Logger:        s.logger,
