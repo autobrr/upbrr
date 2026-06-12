@@ -108,7 +108,7 @@ func ensureDescriptionImageHostWithData(
 		}
 	}
 
-	if len(policy.allowed) == 0 {
+	if !policy.required {
 		selectionPolicy := imageHostPolicy{}
 		if host := firstPreferredDescriptionImageHost(preferredHosts); host != "" {
 			selectionPolicy.preferred = []string{host}
@@ -141,7 +141,7 @@ func ensureDescriptionImageHostWithData(
 
 	if skipUpload {
 		feedback.Status = "warning"
-		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but automatic image-host uploads are disabled.", tracker, strings.Join(policy.allowed, ", "))
+		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but automatic image-host uploads are disabled.", tracker, imageHostRequirementLabel(policy))
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
@@ -179,7 +179,7 @@ func ensureDescriptionImageHostWithData(
 			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
 		}
 		feedback.Status = "warning"
-		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but no local screenshots are available to rehost.", tracker, strings.Join(policy.allowed, ", "))
+		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but no local screenshots are available to rehost.", tracker, imageHostRequirementLabel(policy))
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
@@ -216,7 +216,7 @@ func ensureDescriptionImageHostWithData(
 			}
 		}
 		feedback.Status = "warning"
-		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but image hosting is unavailable.", tracker, strings.Join(policy.allowed, ", "))
+		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but image hosting is unavailable.", tracker, imageHostRequirementLabel(policy))
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
@@ -298,6 +298,16 @@ func firstPreferredDescriptionImageHost(hosts []string) string {
 		}
 	}
 	return ""
+}
+
+func imageHostRequirementLabel(policy imageHostPolicy) string {
+	if len(policy.allowed) > 0 {
+		return strings.Join(policy.allowed, ", ")
+	}
+	if len(policy.preferred) > 0 {
+		return strings.Join(policy.preferred, ", ")
+	}
+	return "a configured image host"
 }
 
 func imageHostUploadSkipped(meta api.PreparedMetadata) bool {

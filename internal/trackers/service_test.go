@@ -667,8 +667,8 @@ func TestBuildPreparationGroupsUnit3DWhenImageHostMessageOnlyDiffers(t *testing.
 	if preview.Descriptions[0].ImageHost.Status != "warning" {
 		t.Fatalf("expected image host warning status, got %q", preview.Descriptions[0].ImageHost.Status)
 	}
-	if len(preview.Descriptions[0].ImageHost.AllowedHosts) != 1 || preview.Descriptions[0].ImageHost.AllowedHosts[0] != "imgbox" {
-		t.Fatalf("expected allowed host imgbox policy to be preserved, got %#v", preview.Descriptions[0].ImageHost.AllowedHosts)
+	if len(preview.Descriptions[0].ImageHost.AllowedHosts) != 0 {
+		t.Fatalf("expected unrestricted configured-host policy, got %#v", preview.Descriptions[0].ImageHost.AllowedHosts)
 	}
 }
 

@@ -62,7 +62,7 @@ func applyImageHostOverrides(tracker string, policy imageHostPolicy, overrides a
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is unsupported", strings.TrimSpace(tracker), host)
 	}
 	if len(policy.allowed) == 0 {
-		return newImageHostPolicy(host), nil
+		return newPreferredImageHostPolicy(host), nil
 	}
 	if !hostAllowed(host, policy.allowed) {
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is not allowed (allowed: %s)", strings.TrimSpace(tracker), host, strings.Join(policy.allowed, ", "))
@@ -88,7 +88,7 @@ func resolveImageHostPolicy(tracker string, trackerCfg config.TrackerConfig, ove
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s configured image_host %q is not allowed", strings.TrimSpace(tracker), trackerCfg.ImageHost)
 	}
 	if len(policy.allowed) == 0 {
-		return newImageHostPolicy(host), nil
+		return newPreferredImageHostPolicy(host), nil
 	}
 	policy.preferred = prependHost(host, policy.preferred)
 	policy.fallbackOK = true
@@ -104,10 +104,18 @@ func resolveImageHostPolicyForMetadata(tracker string, appCfg config.Config, tra
 		trackerCfg.ImageHost = ""
 	}
 	if strings.TrimSpace(trackerCfg.ImageHost) != "" || overrides.PreferredHost != nil {
-		return resolveImageHostPolicy(tracker, trackerCfg, overrides)
+		policy, err := resolveImageHostPolicy(tracker, trackerCfg, overrides)
+		if err != nil {
+			return imageHostPolicy{}, err
+		}
+		return withUnrestrictedImageHostFallbacks(tracker, policy, appCfg), nil
 	}
 	policy := policyForTrackerWithConfig(tracker, appCfg, trackerCfg)
-	return applyImageHostOverrides(tracker, policy, overrides)
+	policy, err := applyImageHostOverrides(tracker, policy, overrides)
+	if err != nil {
+		return imageHostPolicy{}, err
+	}
+	return withUnrestrictedImageHostFallbacks(tracker, policy, appCfg), nil
 }
 
 func PreferredImageUploadHost(tracker string, trackerCfg config.TrackerConfig, overrides api.ImageHostOverrides) (string, error) {
@@ -422,7 +430,11 @@ func candidateImageUploadTargetHosts(tracker string, policy imageHostPolicy, can
 
 func resolveImageHostPolicyForTarget(tracker string, appCfg config.Config, trackerCfg config.TrackerConfig, meta *api.PreparedMetadata) (imageHostPolicy, error) {
 	if meta == nil {
-		return resolveImageHostPolicy(tracker, trackerCfg, api.ImageHostOverrides{})
+		policy, err := resolveImageHostPolicy(tracker, trackerCfg, api.ImageHostOverrides{})
+		if err != nil {
+			return imageHostPolicy{}, err
+		}
+		return withUnrestrictedImageHostFallbacks(tracker, policy, appCfg), nil
 	}
 	return resolveImageHostPolicyForMetadata(tracker, appCfg, trackerCfg, *meta, api.ImageHostOverrides{})
 }
@@ -527,6 +539,38 @@ func newImageHostPolicy(hosts ...string) imageHostPolicy {
 		preferred:   uploadHostsFor(normalized),
 		required:    true,
 	}
+}
+
+func newPreferredImageHostPolicy(host string, fallbackHosts ...string) imageHostPolicy {
+	hosts := make([]string, 0, len(fallbackHosts)+1)
+	if supportedUploadImageHost(host) {
+		hosts = appendUniqueHost(hosts, host)
+	}
+	for _, fallbackHost := range fallbackHosts {
+		if supportedUploadImageHost(fallbackHost) {
+			hosts = appendUniqueHost(hosts, fallbackHost)
+		}
+	}
+	return imageHostPolicy{
+		uploadHosts: hosts,
+		preferred:   hosts,
+		required:    len(hosts) > 0,
+		fallbackOK:  len(hosts) > 0,
+	}
+}
+
+func withUnrestrictedImageHostFallbacks(tracker string, policy imageHostPolicy, appCfg config.Config) imageHostPolicy {
+	if !policy.required || len(policy.allowed) > 0 || !policy.fallbackOK {
+		return policy
+	}
+	for _, host := range imageUploadCandidatesForTracker(appCfg, tracker, configuredImageUploadHosts(appCfg)) {
+		if !imageHostUsableForPolicy(tracker, host, policy) {
+			continue
+		}
+		policy.uploadHosts = appendUniqueHost(policy.uploadHosts, host)
+		policy.preferred = appendUniqueHost(policy.preferred, host)
+	}
+	return policy
 }
 
 func policyFromShared(policy imagehostpolicy.Policy) imageHostPolicy {

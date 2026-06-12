@@ -1742,6 +1742,48 @@ func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testin
 	}
 }
 
+func TestEnsureDescriptionImageHostFallsBackFromConfiguredHostForUnrestrictedTracker(t *testing.T) {
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	images := &stubImageService{
+		errs: map[string]error{"pixhost": errors.New("pixhost unavailable")},
+	}
+
+	resolution, err := ensureDescriptionImageHost(
+		context.Background(),
+		"HHD",
+		meta,
+		config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}},
+		config.TrackerConfig{ImageHost: "pixhost"},
+		repo,
+		images,
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolution.blocking {
+		t.Fatalf("expected fallback success not to block")
+	}
+	if resolution.feedback.SelectedHost != "imgbb" {
+		t.Fatalf("expected imgbb fallback, got %#v", resolution.feedback)
+	}
+	if len(resolution.feedback.AllowedHosts) != 0 {
+		t.Fatalf("expected unrestricted tracker policy, got %#v", resolution.feedback.AllowedHosts)
+	}
+	if len(resolution.feedback.Warnings) != 1 || resolution.feedback.Warnings[0].Host != "pixhost" {
+		t.Fatalf("expected pixhost warning, got %#v", resolution.feedback.Warnings)
+	}
+	if len(images.calls) != 2 || images.calls[0] != "pixhost" || images.calls[1] != "imgbb" {
+		t.Fatalf("expected pixhost then imgbb calls, got %#v", images.calls)
+	}
+}
+
 func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
