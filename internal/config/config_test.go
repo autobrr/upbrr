@@ -59,6 +59,70 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid tracker torrent client",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "qbit"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid tracker torrent client",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "missing"},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "tracker torrent client none is not a sentinel",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "none"},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "tracker torrent client can reference client named none",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"none": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "none"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "qbit qui proxy",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},

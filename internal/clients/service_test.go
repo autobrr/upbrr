@@ -1012,6 +1012,141 @@ func TestInjectUsesSelectedClientOverride(t *testing.T) {
 	}
 }
 
+func TestInjectUsesTrackerTorrentClient(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	firstWatch := filepath.Join(watchRoot, "first")
+	secondWatch := filepath.Join(watchRoot, "second")
+	if err := os.MkdirAll(firstWatch, 0o700); err != nil {
+		t.Fatalf("mkdir first: %v", err)
+	}
+	if err := os.MkdirAll(secondWatch, 0o700); err != nil {
+		t.Fatalf("mkdir second: %v", err)
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {TorrentClient: "second"},
+			},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"first":  {Type: "watch", WatchFolder: firstWatch},
+			"second": {Type: "watch", WatchFolder: secondWatch},
+		},
+	}, nil)
+
+	meta := api.PreparedMetadata{SourcePath: "video.mkv"}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath, Tracker: "aither"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(firstWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected first client untouched, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(secondWatch, filepath.Base(torrentPath))); err != nil {
+		t.Fatalf("expected second client copy, got %v", err)
+	}
+}
+
+func TestInjectClientOverrideWinsOverTrackerTorrentClient(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	firstWatch := filepath.Join(watchRoot, "first")
+	secondWatch := filepath.Join(watchRoot, "second")
+	if err := os.MkdirAll(firstWatch, 0o700); err != nil {
+		t.Fatalf("mkdir first: %v", err)
+	}
+	if err := os.MkdirAll(secondWatch, 0o700); err != nil {
+		t.Fatalf("mkdir second: %v", err)
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {TorrentClient: "second"},
+			},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"first":  {Type: "watch", WatchFolder: firstWatch},
+			"second": {Type: "watch", WatchFolder: secondWatch},
+		},
+	}, nil)
+
+	selectedClient := "first"
+	meta := api.PreparedMetadata{
+		SourcePath: "video.mkv",
+		ClientOverrides: api.ClientOverrides{
+			Client: &selectedClient,
+		},
+	}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath, Tracker: "AITHER"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(firstWatch, filepath.Base(torrentPath))); err != nil {
+		t.Fatalf("expected first client copy, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(secondWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected second client untouched, got %v", err)
+	}
+}
+
+func TestInjectTrackerTorrentClientCanSelectClientNamedNone(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	noneWatch := filepath.Join(watchRoot, "none")
+	otherWatch := filepath.Join(watchRoot, "other")
+	if err := os.MkdirAll(noneWatch, 0o700); err != nil {
+		t.Fatalf("mkdir none: %v", err)
+	}
+	if err := os.MkdirAll(otherWatch, 0o700); err != nil {
+		t.Fatalf("mkdir other: %v", err)
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {TorrentClient: "none"},
+			},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"none":  {Type: "watch", WatchFolder: noneWatch},
+			"other": {Type: "watch", WatchFolder: otherWatch},
+		},
+	}, nil)
+
+	meta := api.PreparedMetadata{SourcePath: "video.mkv"}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath, Tracker: "AITHER"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(noneWatch, filepath.Base(torrentPath))); err != nil {
+		t.Fatalf("expected none client copy, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(otherWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected other client untouched, got %v", err)
+	}
+}
+
 func TestInjectDisabledClient(t *testing.T) {
 	t.Parallel()
 
@@ -1465,10 +1600,10 @@ func TestInjectTrackerDelayOverrideBeatsGlobalDelay(t *testing.T) {
 		},
 	}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	if err := svc.Inject(ctx, api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://tracker.example/download/1", Tracker: "AITHER"}); err != nil {
+	if err := svc.Inject(ctx, api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://tracker.example/download/1", Tracker: "aither"}); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
 	if !addCalled {

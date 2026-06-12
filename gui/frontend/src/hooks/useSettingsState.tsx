@@ -15,6 +15,7 @@ const settingsInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
 
 const settingsSelectClass = `${settingsInputClass} cursor-pointer`;
+type FieldOption = NonNullable<FieldMeta["options"]>[number];
 
 type UseSettingsStateOptions = {
   activeTab: string;
@@ -69,12 +70,12 @@ const settingsSections: SettingsSection[] = [
   { key: "metadata", jsonKey: "Metadata", label: "Metadata" },
   { key: "screenshot_handling", jsonKey: "ScreenshotHandling", label: "Screens" },
   { key: "description_settings", jsonKey: "Description", label: "Description" },
-  { key: "client_setup", jsonKey: "ClientSetup", label: "Clients" },
   { key: "arr_integration", jsonKey: "ArrIntegration", label: "Arr" },
-  { key: "torrent_creation", jsonKey: "TorrentCreation", label: "Torrent" },
   { key: "post_upload", jsonKey: "PostUpload", label: "Post Upload" },
   { key: "trackers", jsonKey: "Trackers", label: "Trackers" },
   { key: "torrent_clients", jsonKey: "TorrentClients", label: "Torrent Clients" },
+  { key: "client_setup", jsonKey: "ClientSetup", label: "Client Handling" },
+  { key: "torrent_creation", jsonKey: "TorrentCreation", label: "Torrent Specific" },
 ];
 
 const imageHostOptions = [
@@ -180,6 +181,7 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
     label: "Image host",
     options: imageHostOptions,
   }),
+  TorrentClient: stringField("TorrentClient", { label: "Torrent client" }),
   UseSpanishTitle: boolField("UseSpanishTitle", { label: "Use Spanish title", advanced: true }),
   UseItalianTitle: boolField("UseItalianTitle", { label: "Use Italian title", advanced: true }),
   OTPURI: stringField("OTPURI", { label: "OTP URI", sensitive: true, advanced: true }),
@@ -858,6 +860,46 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     return configData.ScreenshotHandling as ConfigMap;
   }, [configData]);
 
+  const torrentClientOptions = useMemo<FieldOption[]>(() => {
+    if (
+      !configData ||
+      !configData.TorrentClients ||
+      typeof configData.TorrentClients !== "object" ||
+      Array.isArray(configData.TorrentClients)
+    ) {
+      return [];
+    }
+
+    return Object.entries(configData.TorrentClients as ConfigMap)
+      .filter(
+        ([name, value]) =>
+          name.trim() !== "" && value && typeof value === "object" && !Array.isArray(value),
+      )
+      .map(([name]) => ({ value: name, label: name }));
+  }, [configData]);
+
+  const effectiveSectionFieldMeta = useMemo<Record<string, Record<string, FieldMeta>>>(() => {
+    const clientOptions = [{ value: "", label: "" }, ...torrentClientOptions];
+    return {
+      ...sectionFieldMeta,
+      ClientSetup: {
+        ...(sectionFieldMeta.ClientSetup ?? {}),
+        DefaultClient: stringField("DefaultClient", {
+          label: "Default client",
+          options: clientOptions,
+        }),
+        InjectClients: stringField("InjectClients", {
+          label: "Injected clients",
+          options: clientOptions,
+        }),
+        SearchClients: stringField("SearchClients", {
+          label: "Searching clients",
+          options: clientOptions,
+        }),
+      },
+    };
+  }, [torrentClientOptions]);
+
   const setSettingsErrorMessage = (message: string) => {
     setSettingsError(message);
   };
@@ -1146,25 +1188,61 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (settingsSection === "trackers") return trackerHasAdvancedFields;
     const section = settingsSections.find((item) => item.key === settingsSection);
     if (!section) return false;
-    const meta = sectionFieldMeta[section.jsonKey];
+    const meta = effectiveSectionFieldMeta[section.jsonKey];
     if (!meta) return false;
     return Object.values(meta).some((field) => field.advanced);
   })();
 
-  const renderArrayEditor = (value: ConfigValue[], path: string[]) => {
+  const renderArrayEditor = (
+    value: ConfigValue[],
+    path: string[],
+    meta?: FieldMeta,
+    displayLabel?: string,
+  ) => {
+    const options = meta?.options ?? [];
+    const optionValueFor = (entry: ConfigValue) => (entry === null ? "" : String(entry ?? ""));
+    const optionsFor = (entry: ConfigValue) => {
+      const selected = optionValueFor(entry);
+      if (!selected || options.some((option) => option.value === selected)) {
+        return options;
+      }
+      return [...options, { value: selected, label: selected }];
+    };
+    const newItemValue = options.find((option) => option.value !== "")?.value ?? "";
+
     return (
       <div className="settings-array">
         {value.map((entry, index) => (
           <div className="settings-array-row" key={`${path.join(".")}-${index}`}>
-            <input
-              className={settingsInputClass}
-              value={entry === null ? "" : String(entry)}
-              onChange={(event) => {
-                const updated = [...value];
-                updated[index] = event.target.value;
-                updateConfigValue(path, updated);
-              }}
-            />
+            {options.length > 0 ? (
+              <select
+                aria-label={displayLabel ? `${displayLabel} ${index + 1}` : undefined}
+                className={settingsSelectClass}
+                value={optionValueFor(entry)}
+                onChange={(event) => {
+                  const updated = [...value];
+                  updated[index] = event.target.value;
+                  updateConfigValue(path, updated);
+                }}
+              >
+                {optionsFor(entry).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                aria-label={displayLabel ? `${displayLabel} ${index + 1}` : undefined}
+                className={settingsInputClass}
+                value={optionValueFor(entry)}
+                onChange={(event) => {
+                  const updated = [...value];
+                  updated[index] = event.target.value;
+                  updateConfigValue(path, updated);
+                }}
+              />
+            )}
             <Button
               type="button"
               onClick={() => {
@@ -1177,7 +1255,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             </Button>
           </div>
         ))}
-        <Button type="button" onClick={() => updateConfigValue(path, [...value, ""])}>
+        <Button type="button" onClick={() => updateConfigValue(path, [...value, newItemValue])}>
           Add item
         </Button>
       </div>
@@ -1187,16 +1265,28 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const renderField = (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => {
     const displayLabel = meta?.label ?? formatLabel(label);
     const typeHint = meta?.type;
+    if (Array.isArray(value)) {
+      return (
+        <div className="settings-field" key={path.join(".")}>
+          <span>{displayLabel}</span>
+          {renderArrayEditor(value, path, meta, displayLabel)}
+        </div>
+      );
+    }
     if (meta?.options && meta.options.length > 0) {
+      const selectedValue = value === null ? "" : String(value ?? "");
+      const options = meta.options.some((option) => option.value === selectedValue)
+        ? meta.options
+        : [...meta.options, { value: selectedValue, label: selectedValue }];
       return (
         <label className="settings-field" key={path.join(".")}>
           <span>{displayLabel}</span>
           <select
             className={settingsSelectClass}
-            value={value === null ? "" : String(value ?? "")}
+            value={selectedValue}
             onChange={(event) => updateConfigValue(path, event.target.value)}
           >
-            {meta.options.map((option) => (
+            {options.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
@@ -1229,14 +1319,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             onChange={(event) => updateConfigValue(path, Number(event.target.value))}
           />
         </label>
-      );
-    }
-    if (Array.isArray(value)) {
-      return (
-        <div className="settings-field" key={path.join(".")}>
-          <span>{displayLabel}</span>
-          {renderArrayEditor(value, path)}
-        </div>
       );
     }
     if (value && typeof value === "object") {
@@ -1372,7 +1454,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     const clients = Object.entries(configData.TorrentClients as ConfigMap).filter(
       ([, value]) => value && typeof value === "object" && !Array.isArray(value),
     ) as Array<[string, ConfigMap]>;
-    const meta = sectionFieldMeta.TorrentClients || {};
+    const meta = effectiveSectionFieldMeta.TorrentClients || {};
     const valueFor = (client: ConfigMap, primary: string, fallback?: string) => {
       const primaryValue = client[primary];
       if (primaryValue !== undefined && primaryValue !== null && primaryValue !== "") {
@@ -1787,6 +1869,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         .sort((a, b) => a.localeCompare(b));
       const allEntrySet = new Set(allEntries.map(([name]) => name));
       const availableTrackers = trackerOptions.filter((name) => !visibleTrackerSet.has(name));
+      const trackerClientOptions = [{ value: "", label: "" }, ...torrentClientOptions];
 
       const trackerFallbackSchema = [
         trackerFieldMeta.LinkDirName,
@@ -1802,8 +1885,16 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
           ...trackerFieldMeta.ImageHost,
           options: trackerOptionsForImageHost(name),
         };
+        const torrentClientField = {
+          ...trackerFieldMeta.TorrentClient,
+          options: trackerClientOptions,
+        };
         const base = trackerSchemas[name] || trackerFallbackSchema;
-        return [imageHostField, ...base.filter((meta) => meta.key !== "ImageHost")];
+        return [
+          imageHostField,
+          torrentClientField,
+          ...base.filter((meta) => meta.key !== "ImageHost" && meta.key !== "TorrentClient"),
+        ];
       };
 
       const buildDefault = (meta: FieldMeta) => {
@@ -2083,7 +2174,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     renderTorrentClientsSection,
     renderMapSection,
     renderField,
-    sectionFieldMeta,
+    sectionFieldMeta: effectiveSectionFieldMeta,
     updateConfigValue,
     updateScreenshotConfigValue,
     configuredImageHosts,

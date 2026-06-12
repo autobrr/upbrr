@@ -55,7 +55,8 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 		return nil
 	}
 
-	clients := selectedTorrentClients(s.cfg.TorrentClients, meta.ClientOverrides)
+	clientOverrides := s.resolveInjectClientOverrides(meta.ClientOverrides, torrent.Tracker)
+	clients := selectedTorrentClients(s.cfg.TorrentClients, clientOverrides)
 	if len(clients) == 0 {
 		s.logger.Debugf("clients: no matching torrent clients selected, skipping injection")
 		return nil
@@ -69,7 +70,7 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 	sort.Strings(clientNames)
 
 	for _, name := range clientNames {
-		client := applyClientOverrides(clients[name], meta.ClientOverrides)
+		client := applyClientOverrides(clients[name], clientOverrides)
 		clientType := strings.ToLower(strings.TrimSpace(client.ClientType()))
 		s.logger.Debugf("clients: processing client %s (%s)", name, clientType)
 		if err := s.waitInjectDelay(ctx, torrent.Tracker); err != nil {
@@ -102,9 +103,42 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 	return nil
 }
 
+func (s *Service) resolveInjectClientOverrides(overrides api.ClientOverrides, tracker string) api.ClientOverrides {
+	if overrides.Client != nil && strings.TrimSpace(*overrides.Client) != "" {
+		return overrides
+	}
+	trackerClient := s.trackerTorrentClient(tracker)
+	if trackerClient == "" {
+		return overrides
+	}
+	overrides.Client = &trackerClient
+	return overrides
+}
+
+func (s *Service) trackerTorrentClient(tracker string) string {
+	trackerCfg, ok := s.trackerConfig(tracker)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(trackerCfg.TorrentClient)
+}
+
+func (s *Service) trackerConfig(tracker string) (config.TrackerConfig, bool) {
+	trackerName := strings.TrimSpace(tracker)
+	if trackerName == "" {
+		return config.TrackerConfig{}, false
+	}
+	for name, trackerCfg := range s.cfg.Trackers.Trackers {
+		if strings.EqualFold(strings.TrimSpace(name), trackerName) {
+			return trackerCfg, true
+		}
+	}
+	return config.TrackerConfig{}, false
+}
+
 func (s *Service) waitInjectDelay(ctx context.Context, tracker string) error {
 	delay := s.cfg.PostUpload.InjectDelay
-	if trackerCfg, ok := s.cfg.Trackers.Trackers[strings.TrimSpace(tracker)]; ok && trackerCfg.InjectDelay != nil {
+	if trackerCfg, ok := s.trackerConfig(tracker); ok && trackerCfg.InjectDelay != nil {
 		delay = *trackerCfg.InjectDelay
 	}
 	if delay <= 0 {

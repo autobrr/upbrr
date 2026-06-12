@@ -138,6 +138,37 @@ function TorrentClientsHarness() {
   );
 }
 
+function ClientSetupHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+  const clientSetup = state.configData?.ClientSetup;
+
+  if (!clientSetup || typeof clientSetup !== "object" || Array.isArray(clientSetup)) {
+    return createElement("div", null);
+  }
+
+  const meta = state.sectionFieldMeta.ClientSetup ?? {};
+
+  return createElement(
+    "div",
+    null,
+    ...Object.entries(clientSetup).map(([key, value]) =>
+      state.renderField(key, value, ["ClientSetup", key], meta[key]),
+    ),
+    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+  );
+}
+
+function TrackerSettingsHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+
+  return createElement(
+    "div",
+    null,
+    state.renderTrackerSection(false),
+    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+  );
+}
+
 describe("renderTorrentClientsSection", () => {
   it("renders watch client fields and preserves qbit clients on update", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
@@ -205,5 +236,190 @@ describe("renderTorrentClientsSection", () => {
       QbitUser: "user",
       QbitPass: "secret",
     });
+  });
+});
+
+describe("ClientSetup client selectors", () => {
+  it("renders default client empty option without a none sentinel", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ClientSetup: {
+                DefaultClient: "",
+              },
+              TorrentClients: {
+                qbit: {
+                  Type: "qbit",
+                  QbitURL: "http://localhost:8080",
+                  QbitUser: "user",
+                  QbitPass: "secret",
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => [],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(ClientSetupHarness));
+
+    await waitFor(() => expect(screen.getByLabelText("Default client")).toHaveValue(""));
+
+    const defaultClientSelect = screen.getByLabelText("Default client") as HTMLSelectElement;
+    expect(Array.from(defaultClientSelect.options).map((option) => option.value)).toEqual([
+      "",
+      "qbit",
+    ]);
+    expect(Array.from(defaultClientSelect.options).map((option) => option.textContent)).toEqual([
+      "",
+      "qbit",
+    ]);
+
+    fireEvent.change(defaultClientSelect, { target: { value: "qbit" } });
+    await waitFor(() => expect(defaultClientSelect).toHaveValue("qbit"));
+
+    fireEvent.change(defaultClientSelect, { target: { value: "" } });
+    await waitFor(() => expect(defaultClientSelect).toHaveValue(""));
+
+    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      ClientSetup?: { DefaultClient?: string };
+    };
+    expect(payload.ClientSetup?.DefaultClient).toBe("");
+  });
+
+  it("renders default, injected, and searching clients as torrent client dropdowns", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ClientSetup: {
+                DefaultClient: "qbit",
+                InjectClients: ["qbit"],
+                SearchClients: ["watcher"],
+              },
+              TorrentClients: {
+                qbit: {
+                  Type: "qbit",
+                  QbitURL: "http://localhost:8080",
+                  QbitUser: "user",
+                  QbitPass: "secret",
+                },
+                watcher: {
+                  Type: "watch",
+                  WatchFolder: "/watch",
+                  StorageDir: "/storage",
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => [],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(ClientSetupHarness));
+
+    await waitFor(() => expect(screen.getByLabelText("Default client")).toHaveValue("qbit"));
+
+    expect(screen.getByLabelText("Injected clients 1")).toHaveValue("qbit");
+    expect(screen.getByLabelText("Searching clients 1")).toHaveValue("watcher");
+
+    fireEvent.change(screen.getByLabelText("Default client"), {
+      target: { value: "watcher" },
+    });
+    fireEvent.change(screen.getByLabelText("Injected clients 1"), {
+      target: { value: "watcher" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("Default client")).toHaveValue("watcher"));
+
+    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      ClientSetup?: {
+        DefaultClient?: string;
+        InjectClients?: string[];
+        SearchClients?: string[];
+      };
+    };
+    expect(payload.ClientSetup?.DefaultClient).toBe("watcher");
+    expect(payload.ClientSetup?.InjectClients).toEqual(["watcher"]);
+    expect(payload.ClientSetup?.SearchClients).toEqual(["watcher"]);
+  });
+});
+
+describe("Tracker client selectors", () => {
+  it("renders tracker torrent client as a configured client dropdown", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  AITHER: {
+                    LinkDirName: "",
+                    APIKey: "",
+                    ImageHost: "",
+                    TorrentClient: "qbit",
+                    Anon: false,
+                  },
+                },
+              },
+              TorrentClients: {
+                qbit: {
+                  Type: "qbit",
+                  QbitURL: "http://localhost:8080",
+                  QbitUser: "user",
+                  QbitPass: "secret",
+                },
+                watcher: {
+                  Type: "watch",
+                  WatchFolder: "/watch",
+                  StorageDir: "/storage",
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["AITHER"],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("AITHER", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("AITHER", { selector: ".settings-card__summary-name" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Torrent client")).toHaveValue("qbit"));
+
+    const torrentClientSelect = screen.getByLabelText("Torrent client") as HTMLSelectElement;
+    expect(Array.from(torrentClientSelect.options).map((option) => option.textContent)).toEqual([
+      "",
+      "qbit",
+      "watcher",
+    ]);
+
+    fireEvent.change(screen.getByLabelText("Torrent client"), {
+      target: { value: "watcher" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("Torrent client")).toHaveValue("watcher"));
+
+    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    };
+    expect(payload.Trackers?.Trackers?.AITHER?.TorrentClient).toBe("watcher");
   });
 });

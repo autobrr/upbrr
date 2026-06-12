@@ -227,6 +227,7 @@ type TrackerConfig struct {
 	UploaderName        string         `yaml:"uploader_name" json:"UploaderName"`
 	ImgRehost           bool           `yaml:"img_rehost" json:"ImgRehost"`
 	ImageHost           string         `yaml:"image_host" json:"ImageHost"`
+	TorrentClient       string         `yaml:"torrent_client" json:"TorrentClient"`
 	UseSpanishTitle     bool           `yaml:"use_spanish_title" json:"UseSpanishTitle"`
 	UseItalianTitle     bool           `yaml:"use_italian_title" json:"UseItalianTitle"`
 	OTPURI              string         `yaml:"otp_uri" json:"OTPURI"`
@@ -865,6 +866,13 @@ func (c Config) Validate() error {
 	}
 
 	for trackerName, trackerCfg := range c.Trackers.Trackers {
+		torrentClient := strings.TrimSpace(trackerCfg.TorrentClient)
+		if torrentClient != "" {
+			if _, ok := lookupTorrentClient(c.TorrentClients, torrentClient); !ok {
+				return fmt.Errorf("config: trackers.%s.torrent_client references unknown torrent client %q", trackerName, trackerCfg.TorrentClient)
+			}
+		}
+
 		imageHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
 		if imageHost != "" {
 			if !imagehostpolicy.IsUploadHost(imageHost) {
@@ -888,6 +896,19 @@ func (c Config) Validate() error {
 	}
 
 	return nil
+}
+
+func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string) (string, bool) {
+	trimmed := strings.TrimSpace(selected)
+	if trimmed == "" {
+		return "", false
+	}
+	for name := range clients {
+		if strings.EqualFold(strings.TrimSpace(name), trimmed) {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
