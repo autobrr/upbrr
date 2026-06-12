@@ -653,6 +653,67 @@ const trackerHasAdvancedFields = Object.values(trackerSchemas).some((fields) =>
 );
 
 const REDACTED_VALUE = "[REDACTED]";
+const trackerActivationKeys = new Set([
+  "APIKey",
+  "ApiUser",
+  "ApiKey",
+  "Username",
+  "Password",
+  "Passkey",
+  "AnnounceURL",
+  "MyAnnounceURL",
+  "BhdRSSKey",
+  "OTPURI",
+  "PTGenAPI",
+  "ImgAPI",
+  "PronfoAPIKey",
+  "LoginQuestion",
+  "LoginAnswer",
+  "UserID",
+  "Filebrowser",
+]);
+
+function hasConfiguredTrackerValue(
+  value: ConfigValue | undefined,
+  baseline: ConfigValue | undefined,
+): boolean {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return false;
+    }
+    return baseline !== value;
+  }
+  if (typeof value === "number") {
+    return value !== 0 && baseline !== value;
+  }
+  if (typeof value === "boolean") {
+    return value && baseline !== value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return false;
+    }
+    if (Array.isArray(baseline) && JSON.stringify(value) === JSON.stringify(baseline)) {
+      return false;
+    }
+    return true;
+  }
+  if (value && typeof value === "object") {
+    if (Object.keys(value).length === 0) {
+      return false;
+    }
+    if (
+      baseline &&
+      typeof baseline === "object" &&
+      JSON.stringify(value) === JSON.stringify(baseline)
+    ) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
 const sensitiveKeyHints = [
   "password",
   "passkey",
@@ -1865,16 +1926,16 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   /**
-   * Check if a tracker is configured by comparing it to the baseline default config.
-   * A tracker is considered configured if:
-   * - It has any field different from the baseline
-   * - The baseline doesn't have the tracker
-   * - It has Unknown keys (custom fields not in the schema)
+   * Check if a tracker has user-supplied upload/auth config. Catalog defaults
+   * include every tracker and URL, so entry presence or default_tracker membership
+   * cannot mean the tracker is enabled.
    */
   const isTrackerConfigured = useCallback(
     (trackerName: string, trackerValue: ConfigMap): boolean => {
       if (!defaultConfig || typeof defaultConfig !== "object" || Array.isArray(defaultConfig)) {
-        return true; // If we can't load defaults, assume it's configured
+        return Object.entries(trackerValue).some(([key, value]) =>
+          trackerActivationKeys.has(key) ? hasConfiguredTrackerValue(value, undefined) : false,
+        );
       }
 
       const defaultTrackersCfg = defaultConfig.Trackers;
@@ -1883,7 +1944,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         typeof defaultTrackersCfg !== "object" ||
         Array.isArray(defaultTrackersCfg)
       ) {
-        return true; // If defaults don't have Trackers section, assume all are configured
+        return Object.entries(trackerValue).some(([key, value]) =>
+          trackerActivationKeys.has(key) ? hasConfiguredTrackerValue(value, undefined) : false,
+        );
       }
 
       const defaultTrackersMap = defaultTrackersCfg.Trackers;
@@ -1892,53 +1955,26 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         typeof defaultTrackersMap !== "object" ||
         Array.isArray(defaultTrackersMap)
       ) {
-        return true; // If defaults don't have tracker entries, assume all are configured
+        return Object.entries(trackerValue).some(([key, value]) =>
+          trackerActivationKeys.has(key) ? hasConfiguredTrackerValue(value, undefined) : false,
+        );
       }
 
       const baselineTracker = (defaultTrackersMap as ConfigMap)[trackerName];
-      if (baselineTracker === undefined) {
-        // Not in baseline = configured (user added this tracker)
-        return true;
-      }
+      const baseline =
+        baselineTracker && typeof baselineTracker === "object" && !Array.isArray(baselineTracker)
+          ? (baselineTracker as ConfigMap)
+          : {};
 
-      if (typeof baselineTracker !== "object" || Array.isArray(baselineTracker)) {
-        // Baseline has invalid type = configured
-        return true;
-      }
-
-      // Compare field-by-field
-      const currentKeys = new Set(Object.keys(trackerValue));
-      const baselineKeys = new Set(Object.keys(baselineTracker as ConfigMap));
-
-      // Check if any current key differs from baseline
-      for (const key of currentKeys) {
-        const currentValue = trackerValue[key];
-        const baselineValue = (baselineTracker as ConfigMap)[key];
-
-        // If key not in baseline, or values differ, it's configured
-        if (baselineValue === undefined) {
-          return true; // User added a new field
+      for (const [key, currentValue] of Object.entries(trackerValue)) {
+        if (!trackerActivationKeys.has(key)) {
+          continue;
         }
-
-        // Deep comparison for objects, shallow for primitives
-        if (typeof currentValue === "object" && typeof baselineValue === "object") {
-          if (JSON.stringify(currentValue) !== JSON.stringify(baselineValue)) {
-            return true;
-          }
-        } else if (currentValue !== baselineValue) {
+        if (hasConfiguredTrackerValue(currentValue, baseline[key])) {
           return true;
         }
       }
 
-      // Check if baseline has keys not in current (field was removed from baseline template)
-      for (const key of baselineKeys) {
-        if (!currentKeys.has(key)) {
-          // User may have intentionally removed a field; this is also a configuration
-          return true;
-        }
-      }
-
-      // All fields match baseline exactly
       return false;
     },
     [defaultConfig],
