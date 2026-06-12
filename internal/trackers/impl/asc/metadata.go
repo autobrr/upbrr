@@ -338,21 +338,57 @@ func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string 
 		return strings.TrimSpace(answers["genre"])
 	}
 	ptBR := api.ExtractLocalizedPTBR(meta)
+
+	// 1. Use localized if available
 	if ptBR.Genres != "" {
-		return strings.TrimSpace(ptBR.Genres)
+		genres := strings.Split(strings.TrimSpace(ptBR.Genres), ",")
+		out := make([]string, 0, len(genres))
+		for _, genre := range genres {
+			g := strings.TrimSpace(genre)
+			capitalized := metautil.CapitalizeGenre(g)
+			if capitalized != "" {
+				out = append(out, capitalized)
+			}
+		}
+		return strings.Join(out, ", ")
 	}
+
+	// 2. Use metautil.TranslateGenreToPortugueseStrict to translate
+	var genreText string
 	switch {
 	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
+		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
 	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres)
+		genreText = strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres)
 	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.Genres) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVDB.Genres)
+		genreText = strings.TrimSpace(meta.ExternalMetadata.TVDB.Genres)
 	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Genres) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVmaze.Genres)
+		genreText = strings.TrimSpace(meta.ExternalMetadata.TVmaze.Genres)
 	default:
-		return strings.TrimSpace(meta.Release.Genre)
+		genreText = strings.TrimSpace(meta.Release.Genre)
 	}
+
+	if genreText == "" {
+		return ""
+	}
+
+	genres := strings.Split(genreText, ",")
+	out := make([]string, 0, len(genres))
+	for _, genre := range genres {
+		g := strings.TrimSpace(genre)
+		if g == "" {
+			continue
+		}
+		translated := metautil.TranslateGenreToPortugueseStrict(g)
+		if translated == "" {
+			continue // discard if translation fails
+		}
+		capitalized := metautil.CapitalizeGenre(translated)
+		if capitalized != "" {
+			out = append(out, capitalized)
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 func resolveTrailer(meta api.PreparedMetadata) string {

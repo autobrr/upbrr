@@ -693,25 +693,48 @@ func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) stri
 }
 
 func resolveTags(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
-	genreText := strings.TrimSpace(meta.Release.Genre)
+	// 1. Use localized if available
 	if ptBR.Genres != "" {
-		genreText = strings.TrimSpace(ptBR.Genres)
-	} else if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "" {
-		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
+		genres := strings.Split(strings.TrimSpace(ptBR.Genres), ",")
+		out := make([]string, 0, len(genres))
+		for _, g := range genres {
+			g = strings.TrimSpace(g)
+			t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+			g, _, _ = transform.String(t, g)
+			g = strings.ReplaceAll(g, " ", ".")
+			g = strings.ToLower(g)
+			if g != "" {
+				out = append(out, g)
+			}
+		}
+		return strings.Join(out, ", ")
 	}
+
+	// 2. Use metautil.TranslateGenreToPortugueseStrict to translate
+	var genreText string
+	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "" {
+		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
+	} else {
+		genreText = strings.TrimSpace(meta.Release.Genre)
+	}
+
 	if genreText == "" {
 		return ""
 	}
 
 	genres := strings.Split(genreText, ",")
-	for i, g := range genres {
-		g = strings.TrimSpace(g)
+	out := make([]string, 0, len(genres))
+	for _, g := range genres {
+		translated := metautil.TranslateGenreToPortugueseStrict(g)
+		if translated == "" {
+			continue // discard if translation fails
+		}
 		t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
-		g, _, _ = transform.String(t, g)
-		g = strings.ReplaceAll(g, " ", ".")
-		genres[i] = strings.ToLower(g)
+		tag, _, _ := transform.String(t, translated)
+		tag = strings.ReplaceAll(tag, " ", ".")
+		out = append(out, strings.ToLower(tag))
 	}
-	return strings.Join(genres, ", ")
+	return strings.Join(out, ", ")
 }
 
 func resolveYouTube(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {

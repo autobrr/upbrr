@@ -6,6 +6,7 @@ package metautil
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // ISO639PortugueseName returns the Portuguese-language display name for an
@@ -227,4 +228,125 @@ var iso639PTBR = map[string]string{
 	"za": "Zhuang",
 	"zh": "Chinês",
 	"zu": "Zulu",
+}
+
+// TranslateGenreToPortuguese maps a genre string from English to Portuguese if a translation exists.
+// Otherwise it returns the genre as-is.
+func TranslateGenreToPortuguese(genre string) string {
+	cleaned := strings.ToLower(strings.TrimSpace(genre))
+	if translated, ok := EnglishToPortugueseGenre[cleaned]; ok {
+		return translated
+	}
+	return genre
+}
+
+// TranslateGenreToPortugueseStrict maps an English genre string to Portuguese.
+// It returns the translated string, or "" if no translation is found.
+func TranslateGenreToPortugueseStrict(genre string) string {
+	cleaned := strings.ToLower(strings.TrimSpace(genre))
+	if translated, ok := EnglishToPortugueseGenre[cleaned]; ok {
+		return translated
+	}
+	return ""
+}
+
+// CapitalizeGenre capitalizes the first letter of a genre string.
+func CapitalizeGenre(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	runes := []rune(s)
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
+}
+
+// EnglishToPortugueseGenre maps English genre tags to Portuguese.
+var EnglishToPortugueseGenre = map[string]string{
+	"action & adventure":         "ação e aventura",
+	"action":                     "ação",
+	"adult":                      "adulto",
+	"adventure":                  "aventura",
+	"animation":                  "animação",
+	"arcade":                     "arcade",
+	"biography & autobiography":  "biografia e autobiografia",
+	"biography":                  "biografia",
+	"board game":                 "tabuleiro",
+	"board":                      "tabuleiro",
+	"card":                       "cartas",
+	"casual":                     "casual",
+	"classic":                    "clássico",
+	"comedy":                     "comédia",
+	"crime":                      "crime",
+	"documentary":                "documentário",
+	"drama":                      "drama",
+	"driving":                    "corrida",
+	"educational":                "educativo",
+	"family & relationships":     "família e relacionamentos",
+	"family":                     "família",
+	"film noir":                  "filme noir",
+	"game show":                  "game show",
+	"fantasy":                    "fantasia",
+	"fiction":                    "ficção",
+	"fighting":                   "luta",
+	"hack and slash":             "ação",
+	"hack and slash/beat 'em up": "ação",
+	"history":                    "história",
+	"horror":                     "terror",
+	"indie":                      "indie",
+	"juvenile fiction":           "ficção juvenil",
+	"kids":                       "infantil",
+	"mmo":                        "mmo",
+	"moba":                       "moba",
+	"music":                      "musical",
+	"musical":                    "musical",
+	"mystery":                    "mistério",
+	"philosophy":                 "filosofia",
+	"platform":                   "plataforma",
+	"platformer":                 "plataforma",
+	"point-and-click":            "aventura",
+	"psychological":              "psicológico",
+	"psychology":                 "psicologia",
+	"puzzle":                     "puzzle",
+	"racing":                     "corrida",
+	"real time strategy (rts)":   "rts",
+	"real time strategy":         "rts",
+	"reality":                    "reality show",
+	"reality-tv":                 "reality show",
+	"religion":                   "religião",
+	"rhythm":                     "musical",
+	"role-playing (rpg)":         "rpg",
+	"role-playing":               "rpg",
+	"romance":                    "romance",
+	"rpg":                        "rpg",
+	"rts":                        "rts",
+	"sandbox":                    "sandbox",
+	"sci-fi & fantasy":           "ficção científica e fantasia",
+	"sci-fi":                     "ficção científica",
+	"science fiction":            "ficção científica",
+	"science":                    "ciência",
+	"self-help":                  "autoajuda",
+	"shooter":                    "fps",
+	"short":                      "curta-metragem",
+	"simulation":                 "simulação",
+	"simulator":                  "simulação",
+	"slice of life":              "cotidiano",
+	"soap":                       "novela",
+	"social science":             "ciências sociais",
+	"sport":                      "esportes", //nolint:misspell
+	"sports":                     "esportes", //nolint:misspell
+	"strategy":                   "estratégia",
+	"survival":                   "sobrevivência",
+	"tactical":                   "estratégia",
+	"talk-show":                  "talk show",
+	"thriller":                   "suspense",
+	"turn-based strategy (tbs)":  "estratégia",
+	"turn-based strategy":        "estratégia",
+	"tv movie":                   "telefilme",
+	"virtual reality":            "rv",
+	"visual novel":               "aventura",
+	"vr":                         "rv",
+	"war":                        "guerra",
+	"western":                    "faroeste",
+	"young adult fiction":        "ficção jovem adulto",
 }

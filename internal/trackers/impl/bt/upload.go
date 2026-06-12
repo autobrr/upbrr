@@ -50,6 +50,7 @@ type uploadState struct {
 	releaseName   string
 	fields        map[string][]string
 	blockedReason string
+	questionnaire *api.TrackerQuestionnaire
 }
 
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
@@ -135,6 +136,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		Description:      state.description,
 		Endpoint:         uploadURL,
 		Payload:          flattenFields(state.fields),
+		Questionnaire:    state.questionnaire,
 		Files:            []api.TrackerDryRunFile{{Field: "file_input", Path: state.torrentPath, Present: strings.TrimSpace(state.torrentPath) != ""}},
 	}, nil
 }
@@ -163,13 +165,19 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	description := buildDescription(req, assets)
 	fields := buildFields(req, description, auth, req.TrackerConfig, assets)
 	state := uploadState{
-		torrentPath: torrentPath,
-		description: description,
-		releaseName: metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
-		fields:      fields,
+		torrentPath:   torrentPath,
+		description:   description,
+		releaseName:   metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
+		fields:        fields,
+		questionnaire: buildQuestionnaire(req.Meta, fields),
 	}
-	if len(fields["image"]) == 0 || strings.TrimSpace(fields["image"][0]) == "" {
+	switch {
+	case len(fields["image"]) == 0 || strings.TrimSpace(fields["image"][0]) == "":
 		state.blockedReason = "missing poster URL"
+	case len(fields["sinopse"]) == 0 || strings.TrimSpace(fields["sinopse"][0]) == "":
+		state.blockedReason = "missing overview"
+	case len(fields["tags"]) == 0 || strings.TrimSpace(fields["tags"][0]) == "":
+		state.blockedReason = "missing tags"
 	}
 
 	return state, cookies, nil
@@ -177,6 +185,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 
 func buildFields(req trackers.UploadRequest, description string, auth string, trackerCfg config.TrackerConfig, assets trackers.DescriptionAssets) map[string][]string {
 	meta := req.Meta
+	answers := questionnaireAnswers(meta)
 	hasPT, subtitleIDs := resolveSubtitle(meta)
 	width, height := resolveResolution(meta)
 	ptBR := api.ExtractLocalizedPTBR(meta)
@@ -196,9 +205,9 @@ func buildFields(req trackers.UploadRequest, description string, auth string, tr
 		"mediainfo":   {trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, meta)},
 		"resolucao_1": {width},
 		"resolucao_2": {height},
-		"sinopse":     {resolveOverview(meta, ptBR)},
+		"sinopse":     {metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["overview"]), resolveOverview(meta, ptBR))},
 		"submit":      {"true"},
-		"tags":        {resolveTags(meta, ptBR)},
+		"tags":        {metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta, ptBR))},
 		"title":       {resolveTitle(meta)},
 		"type":        {resolveType(meta)},
 		"video_c":     {resolveVideoCodec(meta)},
@@ -825,19 +834,43 @@ func removeDiacritics(s string) string {
 }
 
 func resolveTags(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
-	genreText := strings.TrimSpace(meta.Release.Genre)
+	// 1. Use localized if available
+	if ptBR.Genres != "" {
+		genres := strings.Split(strings.TrimSpace(ptBR.Genres), ",")
+		out := make([]string, 0, len(genres))
+		for _, genre := range genres {
+			cleaned := removeDiacritics(genre)
+			tag := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(cleaned), " ", "."))
+			if tag != "" {
+				out = append(out, tag)
+			}
+		}
+		return strings.Join(out, ", ")
+	}
+
+	// 2. Use metautil.TranslateGenreToPortugueseStrict to translate
+	var genreText string
 	switch {
-	case ptBR.Genres != "":
-		genreText = strings.TrimSpace(ptBR.Genres)
 	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "":
 		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
 	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres) != "":
 		genreText = strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres)
+	default:
+		genreText = strings.TrimSpace(meta.Release.Genre)
 	}
+
+	if genreText == "" {
+		return ""
+	}
+
 	genres := strings.Split(genreText, ",")
 	out := make([]string, 0, len(genres))
 	for _, genre := range genres {
-		cleaned := removeDiacritics(genre)
+		translated := metautil.TranslateGenreToPortugueseStrict(genre)
+		if translated == "" {
+			continue // discard if translation fails
+		}
+		cleaned := removeDiacritics(translated)
 		tag := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(cleaned), " ", "."))
 		if tag != "" {
 			out = append(out, tag)
@@ -1179,4 +1212,41 @@ func matchValue(values []string, idx int) string {
 		return values[idx]
 	}
 	return ""
+}
+
+func buildQuestionnaire(meta api.PreparedMetadata, fields map[string][]string) *api.TrackerQuestionnaire {
+	current := questionnaireAnswers(meta)
+	var items []api.TrackerQuestionnaireField
+
+	sinopse := ""
+	if len(fields["sinopse"]) > 0 {
+		sinopse = strings.TrimSpace(fields["sinopse"][0])
+	}
+	if sinopse == "" {
+		items = append(items, api.TrackerQuestionnaireField{
+			Key: "overview", Label: "Overview", Kind: "textarea", Value: current["overview"], Required: true,
+		})
+	}
+
+	tags := ""
+	if len(fields["tags"]) > 0 {
+		tags = strings.TrimSpace(fields["tags"][0])
+	}
+	if tags == "" {
+		items = append(items, api.TrackerQuestionnaireField{
+			Key: "tags", Label: "Tags", Kind: "text", Value: current["tags"], Required: true,
+		})
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+	return &api.TrackerQuestionnaire{Tracker: "BT", Fields: items}
+}
+
+func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
+	if len(meta.TrackerQuestionnaireAnswers) == 0 {
+		return nil
+	}
+	return meta.TrackerQuestionnaireAnswers["BT"]
 }
