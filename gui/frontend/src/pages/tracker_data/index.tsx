@@ -6,11 +6,12 @@ import type { Dispatch, SetStateAction } from "react";
 import RenderedDescription from "../../components/RenderedDescription";
 import { Button } from "../../components/ui/button";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
-import type { MetadataPreview, TrackerPreview } from "../../types";
+import type { MetadataPreview, TrackerPreview, TrackerUploadItem } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 
 type Props = {
   preview: MetadataPreview;
+  trackerUploadItems: TrackerUploadItem[];
   renderedDescriptions: Record<string, boolean>;
   setRenderedDescriptions: Dispatch<SetStateAction<Record<string, boolean>>>;
   setLightboxImage: Dispatch<SetStateAction<string>>;
@@ -22,6 +23,7 @@ type Props = {
 export default function TrackerDataPage(props: Props) {
   const {
     preview,
+    trackerUploadItems,
     renderedDescriptions,
     setRenderedDescriptions,
     setLightboxImage,
@@ -29,6 +31,15 @@ export default function TrackerDataPage(props: Props) {
     useFavicons = true,
     faviconOnly = false,
   } = props;
+
+  const configuredTrackerConfigByName = useMemo(() => {
+    const next = new Map<string, TrackerUploadItem["config"]>();
+    trackerUploadItems.forEach((tracker) => {
+      const name = tracker.name.toLowerCase().trim();
+      if (name) next.set(name, tracker.config);
+    });
+    return next;
+  }, [trackerUploadItems]);
 
   const trackerDataOrdered = useMemo(() => {
     const items = preview.TrackerData || [];
@@ -74,6 +85,10 @@ export default function TrackerDataPage(props: Props) {
               Boolean(renderedDescriptions[trackerKey]) && Boolean(item.DescriptionHTML);
             const renderedHTML = isRendered ? item.DescriptionHTML : "";
             const isPrimary = index === trackerDataOrdered.primaryIndex;
+            const iconConfig = configuredTrackerConfigByName.get(item.Tracker.toLowerCase().trim());
+            const iconEnabled = useFavicons && Boolean(iconConfig);
+            const faviconURL =
+              typeof iconConfig?.FaviconURL === "string" ? iconConfig.FaviconURL : undefined;
             return (
               <details
                 className="overflow-hidden rounded-lg border border-white/10 bg-[rgba(12,16,26,0.78)]"
@@ -82,15 +97,15 @@ export default function TrackerDataPage(props: Props) {
               >
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
                   <span
-                    aria-label={faviconOnly && useFavicons ? item.Tracker || "Unknown" : undefined}
+                    aria-label={faviconOnly && iconEnabled ? item.Tracker || "Unknown" : undefined}
                     className="flex items-center gap-2 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
                   >
                     <TrackerIconImage
                       tracker={item.Tracker}
-                      customUrl={item.TorrentURL}
-                      enabled={useFavicons}
+                      customUrl={faviconURL}
+                      enabled={iconEnabled}
                     />
-                    {faviconOnly && useFavicons ? null : item.Tracker || "Unknown"}
+                    {faviconOnly && iconEnabled ? null : item.Tracker || "Unknown"}
                   </span>
                   <span className="whitespace-nowrap text-sm font-medium text-[var(--muted)]">
                     Torrent ID: {item.TrackerID || "-"}
@@ -105,7 +120,7 @@ export default function TrackerDataPage(props: Props) {
                           className="tracker-link flex items-center gap-1.5"
                           href={item.TorrentURL}
                           aria-label={
-                            faviconOnly && useFavicons ? item.Tracker || "Unknown" : undefined
+                            faviconOnly && iconEnabled ? item.Tracker || "Unknown" : undefined
                           }
                           target="_blank"
                           rel="noreferrer"
@@ -114,20 +129,24 @@ export default function TrackerDataPage(props: Props) {
                         >
                           <TrackerIconImage
                             tracker={item.Tracker}
-                            customUrl={item.TorrentURL}
-                            enabled={useFavicons}
+                            customUrl={faviconURL}
+                            enabled={iconEnabled}
                           />
-                          {faviconOnly && useFavicons ? null : item.Tracker || "Unknown"}
+                          {faviconOnly && iconEnabled ? null : item.Tracker || "Unknown"}
                         </a>
                       ) : (
                         <div
                           aria-label={
-                            faviconOnly && useFavicons ? item.Tracker || "Unknown" : undefined
+                            faviconOnly && iconEnabled ? item.Tracker || "Unknown" : undefined
                           }
                           className="value flex items-center gap-1.5"
                         >
-                          <TrackerIconImage tracker={item.Tracker} enabled={useFavicons} />
-                          {faviconOnly && useFavicons ? null : (
+                          <TrackerIconImage
+                            tracker={item.Tracker}
+                            customUrl={faviconURL}
+                            enabled={iconEnabled}
+                          />
+                          {faviconOnly && iconEnabled ? null : (
                             <span>{item.Tracker || "Unknown"}</span>
                           )}
                         </div>

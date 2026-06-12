@@ -4405,6 +4405,7 @@ export default function App() {
               dupeLoading={dupeLoading}
               dupeError={dupeError}
               dupeSummary={dupeSummary}
+              trackerUploadItems={trackerUploadItems}
               dupeTrackerFlags={dupeTrackerFlags}
               dupeIgnore={dupeIgnore}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
@@ -4580,6 +4581,7 @@ export default function App() {
           ) : activeTab === "tracker" && hasTrackerData ? (
             <TrackerDataPage
               preview={preview}
+              trackerUploadItems={trackerUploadItems}
               renderedDescriptions={renderedDescriptions}
               setRenderedDescriptions={setRenderedDescriptions}
               setLightboxImage={setLightboxImage}

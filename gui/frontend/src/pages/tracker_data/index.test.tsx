@@ -9,6 +9,7 @@ import TrackerDataPage from "./index";
 
 describe("TrackerDataPage", () => {
   afterEach(() => {
+    vi.unstubAllGlobals();
     cleanup();
   });
 
@@ -38,6 +39,7 @@ describe("TrackerDataPage", () => {
     const { container } = render(
       <TrackerDataPage
         preview={preview}
+        trackerUploadItems={[]}
         renderedDescriptions={{ "BLU-0": true }}
         setRenderedDescriptions={vi.fn()}
         setLightboxImage={vi.fn()}
@@ -76,6 +78,7 @@ describe("TrackerDataPage", () => {
     render(
       <TrackerDataPage
         preview={preview}
+        trackerUploadItems={[{ name: "BLU", config: {} }]}
         renderedDescriptions={{}}
         setRenderedDescriptions={vi.fn()}
         setLightboxImage={vi.fn()}
@@ -86,5 +89,90 @@ describe("TrackerDataPage", () => {
     );
 
     expect(screen.queryByText("BLU")).toBeNull();
+  });
+
+  it("uses configured tracker favicon URLs", async () => {
+    const getTrackerIcon = vi.fn().mockResolvedValue("");
+    vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });
+    const preview = {
+      TrackerData: [
+        {
+          Tracker: "BLU",
+          TrackerID: "1",
+          TorrentURL: "https://blutopia.cc/torrents/1",
+          InfoHash: "",
+          TMDBID: 0,
+          IMDBID: 0,
+          TVDBID: 0,
+          MALID: 0,
+          Category: "",
+          Description: "",
+          DescriptionHTML: "",
+          ImageURLs: [],
+          Filename: "",
+          Matched: false,
+          UpdatedAt: "",
+        },
+      ],
+    } as unknown as MetadataPreview;
+
+    render(
+      <TrackerDataPage
+        preview={preview}
+        trackerUploadItems={[
+          { name: "BLU", config: { FaviconURL: "https://icons.example/blu.png" } },
+        ]}
+        renderedDescriptions={{}}
+        setRenderedDescriptions={vi.fn()}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        useFavicons={true}
+      />,
+    );
+
+    await screen.findByText("Torrent ID: 1");
+    expect(getTrackerIcon).toHaveBeenCalledWith("icons.example", "https://icons.example/blu.png");
+  });
+
+  it("does not fetch favicons for trackers missing from config", () => {
+    const getTrackerIcon = vi.fn().mockResolvedValue("");
+    vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });
+    const preview = {
+      TrackerData: [
+        {
+          Tracker: "UNCONFIGURED",
+          TrackerID: "1",
+          TorrentURL: "",
+          InfoHash: "",
+          TMDBID: 0,
+          IMDBID: 0,
+          TVDBID: 0,
+          MALID: 0,
+          Category: "",
+          Description: "",
+          DescriptionHTML: "",
+          ImageURLs: [],
+          Filename: "",
+          Matched: false,
+          UpdatedAt: "",
+        },
+      ],
+    } as unknown as MetadataPreview;
+
+    render(
+      <TrackerDataPage
+        preview={preview}
+        trackerUploadItems={[]}
+        renderedDescriptions={{}}
+        setRenderedDescriptions={vi.fn()}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        useFavicons={true}
+        faviconOnly={true}
+      />,
+    );
+
+    expect(screen.getAllByText("UNCONFIGURED").length).toBeGreaterThan(0);
+    expect(getTrackerIcon).not.toHaveBeenCalled();
   });
 });
