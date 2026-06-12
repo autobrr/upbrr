@@ -94,7 +94,12 @@ const imageHostOptions = [
   { value: "utppm", label: "UTPPM" },
 ];
 
-const trackerImageHostOptions = [...imageHostOptions, { value: "hdb", label: "HDB" }];
+const trackerImageHostOptions = [
+  ...imageHostOptions,
+  { value: "hdb", label: "HDB" },
+  { value: "lostimg", label: "Lostimg" },
+  { value: "reelflix", label: "Reelflix" },
+];
 const torrentClientTypeOptions = [
   { value: "qbit", label: "qBit" },
   { value: "watch", label: "Watch" },
@@ -108,7 +113,11 @@ const torrentClientLinkingOptions = [
 const imageHostOptionLabels = new Map(
   trackerImageHostOptions.map((option) => [option.value, option.label]),
 );
-const defaultOwnedImageHosts: Record<string, string> = { hdb: "HDB" };
+const defaultOwnedImageHosts: Record<string, string> = {
+  hdb: "HDB",
+  lostimg: "LST",
+  reelflix: "RF",
+};
 const normalizeImageHostValue = (value: string) => value.trim().toLowerCase();
 const imageHostOptionFor = (host: string) => {
   const value = normalizeImageHostValue(host);
@@ -532,6 +541,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
+    trackerFieldMeta.ImgAPI,
     trackerFieldMeta.Anon,
   ],
   RTF: [
@@ -665,7 +675,9 @@ const trackerActivationKeys = new Set([
   "BhdRSSKey",
   "OTPURI",
   "PTGenAPI",
+  "ImageHost",
   "ImgAPI",
+  "TorrentClient",
   "PronfoAPIKey",
   "LoginQuestion",
   "LoginAnswer",
@@ -729,6 +741,9 @@ const sensitiveKeyHints = [
 ];
 
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
+  ImageHosting: {
+    LostimgAPI: stringField("LostimgAPI", { label: "API key", sensitive: true }),
+  },
   MainSettings: {
     TrackerPassChecks: { key: "TrackerPassChecks", advanced: true },
     InputHistoryLimit: { key: "InputHistoryLimit", label: "Input history limit", type: "number" },
@@ -1140,8 +1155,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   const resolveImageHostLabel = (value: string) => {
-    const option = imageHostOptions.find((entry) => entry.value === value);
-    return option ? option.label : value;
+    return imageHostOptionLabels.get(value) ?? value;
   };
 
   const buildImageHostOptions = useCallback((hosts: string[]) => {
@@ -1171,15 +1185,68 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         imageHostPolicyMetadata.UploadHosts?.map((host) => normalizeImageHostValue(host)) ??
         imageHostOptions.filter((option) => option.value).map((option) => option.value);
       const ownerByHost = imageHostPolicyMetadata.OwnedHosts ?? defaultOwnedImageHosts;
-      const hosts = (policyHosts ?? fallbackHosts).filter((host) => {
+      const imageCfg =
+        configData?.ImageHosting &&
+        typeof configData.ImageHosting === "object" &&
+        !Array.isArray(configData.ImageHosting)
+          ? (configData.ImageHosting as ConfigMap)
+          : null;
+      const trackerRoot =
+        configData?.Trackers &&
+        typeof configData.Trackers === "object" &&
+        !Array.isArray(configData.Trackers)
+          ? (configData.Trackers as ConfigMap)
+          : null;
+      const trackerEntries =
+        trackerRoot?.Trackers &&
+        typeof trackerRoot.Trackers === "object" &&
+        !Array.isArray(trackerRoot.Trackers)
+          ? (trackerRoot.Trackers as ConfigMap)
+          : null;
+      const trackerCfg =
+        trackerEntries?.[trackerKey] &&
+        typeof trackerEntries[trackerKey] === "object" &&
+        !Array.isArray(trackerEntries[trackerKey])
+          ? (trackerEntries[trackerKey] as ConfigMap)
+          : null;
+      const globalFallbackHosts = fallbackHosts.filter((host) => !ownerByHost[host]);
+      const globalHosts = (configuredImageHosts.length ? configuredImageHosts : globalFallbackHosts)
+        .map((host) => normalizeImageHostValue(host))
+        .filter((host) => host.length > 0 && !ownerByHost[host]);
+      const policyHostSet = new Set(
+        (policyHosts ?? []).map((host) => normalizeImageHostValue(host)).filter(Boolean),
+      );
+      const policyHasGlobalHosts = Array.from(policyHostSet).some((host) => !ownerByHost[host]);
+      const policyAllowsGlobalFallback =
+        policyHostSet.size === 0 ||
+        Array.from(policyHostSet).every((host) => host === "lostimg" || host === "reelflix");
+      const hosts = globalHosts.filter(
+        (host) => policyAllowsGlobalFallback || (policyHasGlobalHosts && policyHostSet.has(host)),
+      );
+
+      (policyHosts ?? []).forEach((host) => {
         const normalizedHost = normalizeImageHostValue(host);
         const owner = ownerByHost[normalizedHost];
-        return !owner || owner.trim().toUpperCase() === trackerKey;
+        if (!owner || owner.trim().toUpperCase() !== trackerKey) {
+          return;
+        }
+        if (normalizedHost === "lostimg" && !Boolean(imageCfg?.LostimgEnabled)) {
+          return;
+        }
+        if (
+          normalizedHost === "reelflix" &&
+          normalizeImageHostValue(String(trackerCfg?.ImageHost ?? "")) !== "reelflix"
+        ) {
+          return;
+        }
+        if (!hosts.includes(normalizedHost)) {
+          hosts.push(normalizedHost);
+        }
       });
 
       return buildImageHostOptions(hosts);
     },
-    [buildImageHostOptions, imageHostPolicyMetadata],
+    [buildImageHostOptions, configData, configuredImageHosts, imageHostPolicyMetadata],
   );
 
   const updateConfigValue = (path: string[], value: ConfigValue) => {
@@ -2288,9 +2355,26 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
 
     const imageCfg = configData.ImageHosting as ConfigMap;
+    const trackersRoot =
+      configData.Trackers &&
+      typeof configData.Trackers === "object" &&
+      !Array.isArray(configData.Trackers)
+        ? (configData.Trackers as ConfigMap)
+        : null;
+    const trackerEntries =
+      trackersRoot?.Trackers &&
+      typeof trackersRoot.Trackers === "object" &&
+      !Array.isArray(trackersRoot.Trackers)
+        ? (trackersRoot.Trackers as ConfigMap)
+        : null;
+    const rfTrackerCfg =
+      trackerEntries?.RF &&
+      typeof trackerEntries.RF === "object" &&
+      !Array.isArray(trackerEntries.RF)
+        ? (trackerEntries.RF as ConfigMap)
+        : null;
     const hostFields = ["Host1", "Host2", "Host3", "Host4", "Host5", "Host6"];
     const requiredKeys = new Set<string>();
-
     hostFields.forEach((field) => {
       const selected = String(imageCfg[field] ?? "").trim();
       if (!selected) return;
@@ -2337,6 +2421,49 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               )}
             </div>
           )}
+        </div>
+
+        <div className="settings-subgroup">
+          <div className="settings-subgroup__title">Tracker Image Hosts</div>
+          <div className="settings-grid">
+            <div className="settings-switch-row">
+              <span>LST Lostimg</span>
+              <Switch
+                aria-label="LST Lostimg"
+                checked={Boolean(imageCfg.LostimgEnabled)}
+                onChange={(event) =>
+                  updateConfigValue(["ImageHosting", "LostimgEnabled"], event.target.checked)
+                }
+              />
+            </div>
+            {renderField(
+              "LostimgAPI",
+              (imageCfg.LostimgAPI as ConfigValue) ?? "",
+              ["ImageHosting", "LostimgAPI"],
+              sectionFieldMeta.ImageHosting.LostimgAPI,
+            )}
+            <div className="settings-switch-row">
+              <span>RF Reelflix</span>
+              <Switch
+                aria-label="RF Reelflix"
+                checked={
+                  normalizeImageHostValue(String(rfTrackerCfg?.ImageHost ?? "")) === "reelflix"
+                }
+                onChange={(event) =>
+                  updateConfigValue(
+                    ["Trackers", "Trackers", "RF", "ImageHost"],
+                    event.target.checked ? "reelflix" : "",
+                  )
+                }
+              />
+            </div>
+            {renderField(
+              "ImgAPI",
+              (rfTrackerCfg?.ImgAPI as ConfigValue) ?? "",
+              ["Trackers", "Trackers", "RF", "ImgAPI"],
+              trackerFieldMeta.ImgAPI,
+            )}
+          </div>
         </div>
       </div>
     );

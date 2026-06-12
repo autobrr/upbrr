@@ -223,6 +223,19 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "valid owned RF tracker image host",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"RF": {ImageHost: "reelflix"},
+					},
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tc := range cases {

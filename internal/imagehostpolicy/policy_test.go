@@ -37,3 +37,31 @@ func TestPolicyMetadataDefensivelyCopiesOwnedHosts(t *testing.T) {
 		t.Fatalf("OwnerForHost(hdb) = %q, want HDB", got)
 	}
 }
+
+func TestPolicyMetadataExposesLostimgAsLSTOwnedUploadHost(t *testing.T) {
+	t.Parallel()
+
+	metadata := PolicyMetadata()
+	lstHosts := metadata.TrackerUploadHosts["LST"]
+
+	if !HostAllowed("lostimg", lstHosts) {
+		t.Fatalf("LST upload hosts should include lostimg: %v", lstHosts)
+	}
+	if got := metadata.OwnedHosts["lostimg"]; got != "LST" {
+		t.Fatalf("lostimg owner = %q, want LST", got)
+	}
+}
+
+func TestPolicyMetadataExposesReelflixAsRFOwnedUploadHost(t *testing.T) {
+	t.Parallel()
+
+	metadata := PolicyMetadata()
+	rfHosts := metadata.TrackerUploadHosts["RF"]
+
+	if !HostAllowed("reelflix", rfHosts) {
+		t.Fatalf("RF upload hosts should include reelflix: %v", rfHosts)
+	}
+	if got := metadata.OwnedHosts["reelflix"]; got != "RF" {
+		t.Fatalf("reelflix owner = %q, want RF", got)
+	}
+}

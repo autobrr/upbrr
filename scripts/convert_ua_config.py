@@ -61,6 +61,8 @@ LEGACY_DEFAULT_SECTION_BY_KEY = {
     "sharex_url": "image_hosting",
     "sharex_api_key": "image_hosting",
     "utppm_api": "image_hosting",
+    "lostimg_enabled": "image_hosting",
+    "lostimg_api": "image_hosting",
     "btn_api": "metadata",
     "skip_auto_torrent": "metadata",
     "use_largest_playlist": "metadata",

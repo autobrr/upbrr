@@ -25,6 +25,8 @@ image_hosting:
   sharex_url: ""
   sharex_api_key: ""
   utppm_api: ""
+  lostimg_enabled: false
+  lostimg_api: ""
 
 metadata:
   btn_api: ""
@@ -401,6 +403,7 @@ trackers:
   RF:
     link_dir_name: ""
     api_key: ""
+    img_api: ""
     url: "https://reelflix.cc"
     anon: false
   RTF:
