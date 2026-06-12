@@ -3,6 +3,7 @@ main_settings:
   verbose_notification: false
   tmdb_api: ""
   tracker_pass_checks: 1
+  input_history_limit: 20
   db_path: ""
 
 image_hosting:
@@ -13,7 +14,6 @@ image_hosting:
   img_host_5: ""
   img_host_6: ""
   imgbb_api: ""
-  ptpimg_api: ""
   lensdump_api: ""
   ptscreens_api: ""
   onlyimage_api: ""
@@ -29,6 +29,7 @@ image_hosting:
 metadata:
   btn_api: ""
   skip_auto_torrent: false
+  skip_tracker_filename_lookup: false
   use_largest_playlist: false
   keep_images: true
   only_id: false
@@ -129,35 +130,43 @@ trackers:
   A4K:
     link_dir_name: ""
     api_key: ""
+    url: "https://aura4k.net"
+    image_host: ""
     anon: false
     modq: false
   ACM:
     link_dir_name: ""
     api_key: ""
+    url: "https://eiga.moi"
     announce_url: ""
     anon: false
   AITHER:
     link_dir_name: ""
     api_key: ""
+    url: "https://aither.cc"
     anon: false
     modq: false
   ANT:
     link_dir_name: ""
     api_key: ""
+    url: "https://anthelion.me"
     announce_url: ""
     anon: false
   AR:
     link_dir_name: ""
     username: ""
     password: ""
+    url: "https://alpharatio.cc"
     announce_url: ""
   ASC:
     link_dir_name: ""
     uploader_status: false
     custom_layout: "2"
+    url: "https://amigos-share.club"
     announce_url: ""
   AZ:
     link_dir_name: ""
+    url: "https://avistaz.to"
     announce_url: ""
     anon: false
     check_for_rules: true
@@ -165,26 +174,31 @@ trackers:
     link_dir_name: ""
     api_key: ""
     bhd_rss_key: ""
+    url: "https://beyond-hd.me"
     announce_url: ""
     draft_default: false
     anon: false
   BHDTV:
     link_dir_name: ""
     api_key: ""
+    url: "https://bit-hdtv.com"
     announce_url: ""
     my_announce_url: ""
     anon: false
   BJS:
     link_dir_name: ""
+    url: "https://bj-share.info"
     announce_url: ""
     anon: false
     show_group_if_anon: true
   BLU:
     link_dir_name: ""
     api_key: ""
+    url: "https://blutopia.cc"
     anon: false
   BT:
     link_dir_name: ""
+    url: "https://brasiltracker.org"
     announce_url: ""
     anon: false
   BTN:
@@ -197,33 +211,39 @@ trackers:
   CBR:
     link_dir_name: ""
     api_key: ""
+    url: "https://capybarabr.com"
     anon: false
     modq: false
     tag_for_custom_release: ""
   CZ:
     link_dir_name: ""
+    url: "https://cinemaz.to"
     announce_url: ""
     anon: false
     check_for_rules: true
   DC:
     link_dir_name: ""
     api_key: ""
+    url: "https://digitalcore.club"
     anon: false
     use_metadata_name: false
   DP:
     link_dir_name: ""
     api_key: ""
+    url: "https://darkpeers.org"
     anon: false
     modq: false
   EMUW:
     link_dir_name: ""
     api_key: ""
+    url: "https://emuwarez.com"
     anon: false
     use_spanish_title: false
   FF:
     link_dir_name: ""
     username: ""
     password: ""
+    url: "https://funfile.org"
     announce_url: ""
     check_requests: false
     full_mediainfo: false
@@ -232,26 +252,27 @@ trackers:
     username: ""
     passkey: ""
     uploader_name: ""
-    anon: false
-  FNP:
-    link_dir_name: ""
-    api_key: ""
+    url: "https://filelist.io"
     anon: false
   FRIKI:
     link_dir_name: ""
     api_key: ""
+    url: "https://frikibar.com"
   GPW:
     link_dir_name: ""
     api_key: ""
+    url: "https://greatposterwall.com"
     announce_url: ""
   HDB:
     link_dir_name: ""
     username: ""
     passkey: ""
+    url: "https://hdbits.org"
     announce_url: ""
     img_rehost: true
   HDS:
     link_dir_name: ""
+    url: "https://hd-space.org"
     announce_url: ""
     anon: false
     full_mediainfo: false
@@ -264,41 +285,50 @@ trackers:
   HHD:
     link_dir_name: ""
     api_key: ""
+    url: "https://homiehelpdesk.net"
     anon: false
   IHD:
     link_dir_name: ""
     api_key: ""
+    url: "https://infinityhd.net"
     anon: false
   IS:
     link_dir_name: ""
+    url: "https://immortalseed.me"
     announce_url: ""
     anon: false
   ITT:
     link_dir_name: ""
     api_key: ""
+    url: "https://itatorrents.xyz"
     anon: false
   LCD:
     link_dir_name: ""
     api_key: ""
+    url: "https://locadora.cc"
     anon: false
   LDU:
     link_dir_name: ""
     api_key: ""
+    url: "https://theldu.to"
     anon: false
   LST:
     link_dir_name: ""
     api_key: ""
+    url: "https://lst.gg"
     anon: false
     modq: false
     draft: false
   LT:
     link_dir_name: ""
     api_key: ""
+    url: "https://lat-team.com"
     anon: false
     modq: false
   LUME:
     link_dir_name: ""
     api_key: ""
+    url: "https://luminarr.me"
     anon: false
     modq: false
   MTV:
@@ -306,6 +336,7 @@ trackers:
     api_key: ""
     username: ""
     password: ""
+    url: "https://morethantv.me"
     announce_url: ""
     anon: false
     otp_uri: ""
@@ -314,24 +345,29 @@ trackers:
   NBL:
     link_dir_name: ""
     api_key: ""
+    url: "https://nebulance.io"
     announce_url: ""
   OE:
     link_dir_name: ""
     api_key: ""
+    url: "https://onlyencodes.cc"
     anon: false
   OTW:
     link_dir_name: ""
     api_key: ""
+    url: "https://oldtoons.world"
     modq: false
     anon: false
   PHD:
     link_dir_name: ""
+    url: "https://privatehd.to"
     announce_url: ""
     anon: false
     check_for_rules: true
   PT:
     link_dir_name: ""
     api_key: ""
+    url: "https://portugas.org"
     anon: false
   PTP:
     link_dir_name: ""
@@ -340,60 +376,73 @@ trackers:
     ApiKey: ""
     username: ""
     password: ""
+    url: "https://passthepopcorn.me"
     announce_url: ""
   PTS:
     link_dir_name: ""
+    url: "https://ptskit.org"
     announce_url: ""
   PTT:
     link_dir_name: ""
     api_key: ""
+    url: "https://polishtorrent.top"
     anon: false
   R4E:
     link_dir_name: ""
     api_key: ""
+    url: "https://racing4everyone.eu"
     announce_url: ""
     anon: false
   RAS:
     link_dir_name: ""
     api_key: ""
+    url: "https://rastastugan.org"
     anon: false
   RF:
     link_dir_name: ""
     api_key: ""
+    url: "https://reelflix.cc"
     anon: false
   RTF:
     link_dir_name: ""
     username: ""
     password: ""
     api_key: ""
+    url: "https://retroflix.club"
     announce_url: ""
     anon: true
   SAM:
     link_dir_name: ""
     api_key: ""
+    url: "https://samaritano.cc"
     anon: false
     tag_for_custom_release: ""
   SHRI:
     link_dir_name: ""
     api_key: ""
+    url: "https://shareisland.org"
     anon: false
     use_italian_title: false
   SP:
     link_dir_name: ""
     api_key: ""
+    url: "https://seedpool.org"
   SPD:
     link_dir_name: ""
     api_key: ""
+    url: "https://speedapp.io"
     channel: ""
   STC:
     link_dir_name: ""
     api_key: ""
+    url: "https://skipthecommercials.xyz"
     anon: false
   THR:
     link_dir_name: ""
     username: ""
     password: ""
     img_api: ""
+    url: "https://torrenthr.org"
     announce_url: ""
     pronfo_api_key: ""
     pronfo_theme: ""
@@ -402,67 +451,72 @@ trackers:
   TIK:
     link_dir_name: ""
     api_key: ""
+    url: "https://cinematik.net"
     anon: false
   TL:
     link_dir_name: ""
     api_upload: true
     passkey: ""
+    url: "https://torrentleech.org"
     anon: false
     img_rehost: false
     full_mediainfo: false
   TLZ:
     link_dir_name: ""
     api_key: ""
+    url: "https://tlzdigital.com"
     anon: false
   TOS:
     link_dir_name: ""
     api_key: ""
+    url: "https://theoldschool.cc"
     announce_url: ""
     anon: false
     exclusive: false
   TTR:
     link_dir_name: ""
     api_key: ""
+    url: "https://torrenteros.org"
     anon: false
     modq: false
   TVC:
     link_dir_name: ""
     image_count: 2
     api_key: ""
+    url: "https://tvchaosuk.com"
     announce_url: ""
     anon: false
   ULCX:
     link_dir_name: ""
     api_key: ""
+    url: "https://upload.cx"
     anon: false
     modq: false
   UTP:
     link_dir_name: ""
     api_key: ""
+    url: "https://utp.to"
     anon: false
   YUS:
     link_dir_name: ""
     api_key: ""
+    url: "https://yu-scene.net"
     anon: false
   MANUAL:
     filebrowser: ""
 
 torrent_clients:
   qbittorrent:
-    torrent_client: "qbit"
     qui_proxy_url: ""
-    qbit_url: "http://127.0.0.1"
-    qbit_port: 8080
-    qbit_user: ""
-    qbit_pass: ""
-    super_seed_trackers:
-      - ""
     use_tracker_as_tag: false
     qbit_tag: ""
     qbit_cat: ""
+    # Optional qBittorrent overrides for dupe-check cross-seed torrents.
+    # Normal upload injections continue to use qbit_tag/qbit_cat.
     qbit_cross_tag: ""
     qbit_cross_cat: ""
-    content_layout: "Original"
+    # Optional qBittorrent staging mode: "", "hardlink", "reflink", or "symlink".
+    # Reflink uses Linux FICLONE or Windows ReFS block cloning and requires source and linked_folder on the same supported filesystem.
     linking: ""
     allow_fallback: true
     linked_folder:
@@ -471,5 +525,4 @@ torrent_clients:
       - ""
     remote_path:
       - ""
-    torrent_storage_dir: ""
     verify_webui_certificate: true

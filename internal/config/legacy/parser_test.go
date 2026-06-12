@@ -8,6 +8,26 @@ import (
 	"testing"
 )
 
+func requireMap(t *testing.T, value any) map[string]any {
+	t.Helper()
+
+	m, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", value)
+	}
+	return m
+}
+
+func requireList(t *testing.T, value any) []any {
+	t.Helper()
+
+	list, ok := value.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T", value)
+	}
+	return list
+}
+
 func TestExtractConfigDict(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -56,10 +76,7 @@ func TestParseDict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m, ok := val.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map, got %T", val)
-	}
+	m := requireMap(t, val)
 	if m["key1"] != "value1" {
 		t.Errorf("key1: got %v, want value1", m["key1"])
 	}
@@ -75,7 +92,7 @@ func TestParseBoolsAndNone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := val.(map[string]any)
+	m := requireMap(t, val)
 	if m["a"] != true {
 		t.Errorf("a: got %v, want true", m["a"])
 	}
@@ -94,8 +111,8 @@ func TestParseNestedDict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := val.(map[string]any)
-	inner := m["outer"].(map[string]any)
+	m := requireMap(t, val)
+	inner := requireMap(t, m["outer"])
 	if inner["inner"] != "deep" {
 		t.Errorf("inner: got %v, want deep", inner["inner"])
 	}
@@ -108,7 +125,7 @@ func TestParseList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	list := val.([]any)
+	list := requireList(t, val)
 	if len(list) != 3 {
 		t.Fatalf("expected 3 elements, got %d", len(list))
 	}
@@ -127,7 +144,7 @@ func TestParseTrailingCommas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := val.(map[string]any)
+	m := requireMap(t, val)
 	if m["a"] != 1 || m["b"] != 2 {
 		t.Errorf("unexpected values: %v", m)
 	}
@@ -143,7 +160,7 @@ func TestParseComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := val.(map[string]any)
+	m := requireMap(t, val)
 	if m["key"] != "value" {
 		t.Errorf("key: got %v, want value", m["key"])
 	}
@@ -156,7 +173,7 @@ func TestParseSingleQuotedStrings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := val.(map[string]any)
+	m := requireMap(t, val)
 	if m["key"] != "value" {
 		t.Errorf("key: got %v, want value", m["key"])
 	}
@@ -169,7 +186,7 @@ func TestParseEscapes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := val.(map[string]any)
+	m := requireMap(t, val)
 	if m["key"] != "line1\nline2" {
 		t.Errorf("key: got %q, want %q", m["key"], "line1\nline2")
 	}
@@ -182,7 +199,7 @@ func TestParseFloats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := val.(map[string]any)
+	m := requireMap(t, val)
 	if m["score"] != 3.14 {
 		t.Errorf("score: got %v, want 3.14", m["score"])
 	}
@@ -198,8 +215,8 @@ func TestParseTuple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := val.(map[string]any)
-	list := m["t"].([]any)
+	m := requireMap(t, val)
+	list := requireList(t, m["t"])
 	if len(list) != 3 {
 		t.Fatalf("expected 3 elements, got %d", len(list))
 	}
@@ -212,7 +229,7 @@ config = {
     'DEFAULT': {
         'tmdb_api': 'my-api-key',
         'screens': 6,
-        'img_host_1': 'ptpimg',
+        'img_host_1': 'pixhost',
         'tone_map': True,
     },
     'TRACKERS': {
@@ -251,13 +268,13 @@ config = {
 	if trackers["default_trackers"] != "BHD, PTP" {
 		t.Errorf("default_trackers: got %v", trackers["default_trackers"])
 	}
-	bhd := trackers["BHD"].(map[string]any)
+	bhd := requireMap(t, trackers["BHD"])
 	if bhd["api_key"] != "bhd-secret-key" {
 		t.Errorf("BHD.api_key: got %v", bhd["api_key"])
 	}
 
 	clients := legacy.TorrentClients
-	qbit := clients["qbittorrent"].(map[string]any)
+	qbit := requireMap(t, clients["qbittorrent"])
 	if qbit["qbit_url"] != "http://localhost:8080" {
 		t.Errorf("qbit_url: got %v", qbit["qbit_url"])
 	}
@@ -270,7 +287,7 @@ func TestParseEmptyDict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := val.(map[string]any)
+	m := requireMap(t, val)
 	if len(m) != 0 {
 		t.Errorf("expected empty dict, got %v", m)
 	}
@@ -283,7 +300,7 @@ func TestParseEmptyList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	list := val.([]any)
+	list := requireList(t, val)
 	if len(list) != 0 {
 		t.Errorf("expected empty list, got %v", list)
 	}

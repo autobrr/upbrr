@@ -16,6 +16,7 @@ import (
 
 type stubDescriptionBuilderTrackers struct {
 	called      bool
+	prepareMeta api.PreparedMetadata
 	preview     api.PreparationPreview
 	dryRunMeta  api.PreparedMetadata
 	uploadMeta  api.PreparedMetadata
@@ -29,6 +30,7 @@ func (s *stubDescriptionBuilderTrackers) Upload(_ context.Context, meta api.Prep
 
 func (s *stubDescriptionBuilderTrackers) BuildPreparation(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.PreparationPreview, error) {
 	s.called = true
+	s.prepareMeta = meta
 	if strings.TrimSpace(s.preview.SourcePath) == "" {
 		s.preview.SourcePath = meta.SourcePath
 	}
@@ -201,6 +203,59 @@ func TestFetchDescriptionBuilderPreviewFallsBackToPrepareInGUI(t *testing.T) {
 	}
 	if preview.SourcePath != "/tmp/source" {
 		t.Fatalf("expected source path to be set, got %q", preview.SourcePath)
+	}
+}
+
+func TestFetchDescriptionBuilderPreviewRefreshesMissingLogoMetadata(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{}
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Paths:      []string{"/tmp/source"},
+		Mode:       api.ModeGUI,
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/tmp/source",
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/tmp/source",
+			TMDB:       &api.TMDBMetadata{TMDBID: 42, Title: "Cached without logo"},
+		},
+	}
+	refreshed := prepared
+	refreshed.ExternalMetadata.TMDB = &api.TMDBMetadata{TMDBID: 42, Logo: "https://image.tmdb.org/t/p/original/logo.png"}
+	metaSvc := &stubMeta{prepared: prepared, resolved: refreshed}
+	core := &Core{
+		cfg: config.Config{
+			Description:        config.DescriptionSettingsConfig{AddLogo: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	_, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+		Paths:   []string{"/tmp/source"},
+		Mode:    api.ModeGUI,
+		Options: api.UploadOptions{Screens: 1},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if metaSvc.resolveCalls != 1 {
+		t.Fatalf("expected description builder to refresh missing logo metadata, got %d calls", metaSvc.resolveCalls)
+	}
+	if trackerSvc.prepareMeta.ExternalMetadata.TMDB == nil || trackerSvc.prepareMeta.ExternalMetadata.TMDB.Logo == "" {
+		t.Fatalf("expected tracker preparation to receive refreshed logo metadata, got %#v", trackerSvc.prepareMeta.ExternalMetadata.TMDB)
 	}
 }
 
@@ -407,7 +462,118 @@ func TestFetchDescriptionBuilderPreviewSeedsRawDescriptionFromBuiltGroupText(t *
 	}
 }
 
-func TestFetchDescriptionBuilderPreviewAppliesOverrideCaseInsensitively(t *testing.T) {
+func TestFetchDescriptionBuilderPreviewAppliesIgnoredDupesToCachedMeta(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{
+		preview: api.PreparationPreview{
+			SourcePath: "/tmp/source",
+			Descriptions: []api.PreparationDescription{
+				{GroupKey: "hdb", Trackers: []string{"HDB"}, Description: "hdb body"},
+				{GroupKey: "bhd", Trackers: []string{"BHD"}, Description: "bhd body"},
+			},
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeRefreshedDupeCache("/tmp/source", "", api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"HDB": {api.TrackerBlockReasonDupe},
+			"BHD": {api.TrackerBlockReasonDupe},
+		},
+	})
+
+	_, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+		Paths:          []string{"/tmp/source"},
+		Mode:           api.ModeGUI,
+		Trackers:       []string{"HDB", "BHD"},
+		IgnoreDupesFor: []string{"HDB"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if _, ok := trackerSvc.prepareMeta.BlockedTrackers["HDB"]; ok {
+		t.Fatalf("expected ignored HDB dupe block to be cleared, got %#v", trackerSvc.prepareMeta.BlockedTrackers)
+	}
+	if got := trackerSvc.prepareMeta.BlockedTrackers["BHD"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
+		t.Fatalf("expected BHD dupe block to remain, got %#v", trackerSvc.prepareMeta.BlockedTrackers)
+	}
+}
+
+func TestFetchDescriptionBuilderGroupPreviewAppliesIgnoredFailuresToRefreshedCache(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{
+		preview: api.PreparationPreview{
+			SourcePath: "/tmp/source",
+			Descriptions: []api.PreparationDescription{
+				{GroupKey: "hdb", Trackers: []string{"HDB"}, Description: "hdb body"},
+				{GroupKey: "bhd", Trackers: []string{"BHD"}, Description: "bhd body"},
+			},
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeRefreshedDupeCache("/tmp/source", "", api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Mode:       api.ModeGUI,
+		Trackers:   []string{"HDB", "BHD"},
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"HDB": {api.TrackerBlockReasonDupe},
+			"BHD": {api.TrackerBlockReasonDupe},
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"HDB": {{Rule: "rule_hdb", Reason: "hdb"}},
+			"BHD": {{Rule: "rule_bhd", Reason: "bhd"}},
+		},
+	})
+
+	group, err := core.FetchDescriptionBuilderGroupPreview(context.Background(), api.Request{
+		Paths:                        []string{"/tmp/source"},
+		Mode:                         api.ModeGUI,
+		Trackers:                     []string{"HDB", "BHD"},
+		DescriptionOverrideGroup:     "HDB",
+		IgnoreDupesFor:               []string{"HDB"},
+		IgnoreTrackerRuleFailuresFor: []string{"HDB"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if group.GroupKey != "hdb" {
+		t.Fatalf("expected selected HDB group, got %q", group.GroupKey)
+	}
+	if _, ok := trackerSvc.prepareMeta.BlockedTrackers["HDB"]; ok {
+		t.Fatalf("expected ignored HDB dupe block to be cleared, got %#v", trackerSvc.prepareMeta.BlockedTrackers)
+	}
+	if got := trackerSvc.prepareMeta.BlockedTrackers["BHD"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
+		t.Fatalf("expected BHD dupe block to remain, got %#v", trackerSvc.prepareMeta.BlockedTrackers)
+	}
+	if _, ok := trackerSvc.prepareMeta.TrackerRuleFailures["HDB"]; ok {
+		t.Fatalf("expected ignored HDB rule failure to be cleared, got %#v", trackerSvc.prepareMeta.TrackerRuleFailures)
+	}
+	if _, ok := trackerSvc.prepareMeta.TrackerRuleFailures["BHD"]; !ok {
+		t.Fatalf("expected BHD rule failure to remain, got %#v", trackerSvc.prepareMeta.TrackerRuleFailures)
+	}
+}
+
+func TestFetchDescriptionBuilderPreviewPreservesFinalBuildWithOverrideCaseInsensitively(t *testing.T) {
 	t.Parallel()
 
 	repo := &stubDescriptionRepo{
@@ -422,9 +588,10 @@ func TestFetchDescriptionBuilderPreviewAppliesOverrideCaseInsensitively(t *testi
 			SourcePath: "/tmp/source",
 			Descriptions: []api.PreparationDescription{
 				{
-					GroupKey:       "hdb|hdb|tracker:hdb",
-					Trackers:       []string{"HDB"},
-					RawDescription: "generated body",
+					GroupKey:    "hdb|hdb|tracker:hdb",
+					Trackers:    []string{"HDB"},
+					Description: "built override body with rehosted images",
+					HasOverride: true,
 				},
 			},
 		},
@@ -455,15 +622,15 @@ func TestFetchDescriptionBuilderPreviewAppliesOverrideCaseInsensitively(t *testi
 	if preview.Groups[0].GroupKey != "hdb|hdb|tracker:hdb" {
 		t.Fatalf("expected normalized group key, got %q", preview.Groups[0].GroupKey)
 	}
-	if preview.Groups[0].RawDescription != "override body" {
-		t.Fatalf("expected override body, got %q", preview.Groups[0].RawDescription)
+	if preview.Groups[0].RawDescription != "built override body with rehosted images" {
+		t.Fatalf("expected final built override body, got %q", preview.Groups[0].RawDescription)
 	}
 	if !preview.Groups[0].HasOverride {
 		t.Fatalf("expected override flag to be true")
 	}
 }
 
-func TestFetchDescriptionBuilderGroupPreviewFindsOverrideCaseInsensitively(t *testing.T) {
+func TestFetchDescriptionBuilderGroupPreviewPreservesFinalBuildWithOverrideCaseInsensitively(t *testing.T) {
 	t.Parallel()
 
 	repo := &stubDescriptionRepo{
@@ -478,9 +645,10 @@ func TestFetchDescriptionBuilderGroupPreviewFindsOverrideCaseInsensitively(t *te
 			SourcePath: "/tmp/source",
 			Descriptions: []api.PreparationDescription{
 				{
-					GroupKey:       "hdb|hdb|tracker:hdb",
-					Trackers:       []string{"HDB"},
-					RawDescription: "generated body",
+					GroupKey:    "hdb|hdb|tracker:hdb",
+					Trackers:    []string{"HDB"},
+					Description: "built override body with rehosted images",
+					HasOverride: true,
 				},
 			},
 		},
@@ -510,8 +678,8 @@ func TestFetchDescriptionBuilderGroupPreviewFindsOverrideCaseInsensitively(t *te
 	if group.GroupKey != "hdb|hdb|tracker:hdb" {
 		t.Fatalf("expected normalized group key, got %q", group.GroupKey)
 	}
-	if group.RawDescription != "override body" {
-		t.Fatalf("expected override body, got %q", group.RawDescription)
+	if group.RawDescription != "built override body with rehosted images" {
+		t.Fatalf("expected final built override body, got %q", group.RawDescription)
 	}
 	if !group.HasOverride {
 		t.Fatalf("expected override flag to be true")
@@ -567,6 +735,7 @@ func TestFetchTrackerDryRunPreviewUsesCanonicalDescriptionGroups(t *testing.T) {
 			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
 			Metadata:   &stubMeta{},
 			Torrents:   stubTorrent{},
+			Clients:    &stubClient{},
 			Trackers:   trackerSvc,
 		},
 		dupeCache: make(map[string]dupeCacheEntry),

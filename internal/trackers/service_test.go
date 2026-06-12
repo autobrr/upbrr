@@ -6,11 +6,17 @@ package trackers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/anacrolix/torrent/metainfo"
+	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -118,8 +124,17 @@ type stubPreparationDefinition struct {
 }
 
 type trackingUploadDefinition struct {
-	name    string
+	name     string
+	started  chan<- string
+	requests chan<- UploadRequest
+	release  <-chan struct{}
+}
+
+type blockingImageService struct {
+	mu      sync.Mutex
 	started chan<- string
+	release <-chan struct{}
+	calls   []string
 }
 
 type blockingUploadDefinition struct {
@@ -179,6 +194,77 @@ func (s stubPreparationDefinition) BuildDescription(context.Context, Description
 	return DescriptionResult{Group: s.group, Description: s.description}, nil
 }
 
+func (s *blockingImageService) ListCandidates(context.Context, api.PreparedMetadata) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (s *blockingImageService) Upload(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, host)
+	s.mu.Unlock()
+	if s.started != nil {
+		select {
+		case s.started <- host:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+		}
+	}
+	if s.release != nil {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+		}
+	}
+	results := make([]api.UploadedImageLink, 0, len(images))
+	for idx, image := range images {
+		results = append(results, api.UploadedImageLink{
+			SourcePath: meta.SourcePath,
+			ImagePath:  image.Path,
+			Host:       host,
+			UsageScope: usageScope,
+			ImgURL:     fmt.Sprintf("https://%s/%d.png", host, idx),
+			RawURL:     fmt.Sprintf("https://%s/%d.png", host, idx),
+			WebURL:     fmt.Sprintf("https://%s/%d", host, idx),
+		})
+	}
+	return results, nil
+}
+
+func (s *blockingImageService) Calls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.calls...)
+}
+
+type hostAwareDescriptionDefinition struct {
+	name  string
+	group string
+}
+
+func (s hostAwareDescriptionDefinition) Name() string {
+	return s.name
+}
+
+func (s hostAwareDescriptionDefinition) Upload(context.Context, UploadRequest) (api.UploadSummary, error) {
+	return api.UploadSummary{Uploaded: 1}, nil
+}
+
+func (s hostAwareDescriptionDefinition) BuildDescription(_ context.Context, req DescriptionRequest) (DescriptionResult, error) {
+	host := "none"
+	if req.Assets != nil && len(req.Assets.Screenshots) > 0 {
+		host = strings.ToLower(strings.TrimSpace(req.Assets.Screenshots[0].Host))
+		if host == "" {
+			host = "none"
+		}
+	}
+
+	return DescriptionResult{
+		Group:       s.group,
+		Description: "unit3d screenshot host: " + host,
+	}, nil
+}
+
 func (testHDBPreparationDefinition) Name() string {
 	return "HDB"
 }
@@ -194,7 +280,7 @@ func (testHDBPreparationDefinition) BuildDescription(ctx context.Context, req De
 	}
 	description, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
 	if err != nil {
-		return DescriptionResult{}, err
+		return DescriptionResult{}, fmt.Errorf("trackers: %w", err)
 	}
 	return DescriptionResult{Group: "hdb", Description: description}, nil
 }
@@ -203,9 +289,15 @@ func (t trackingUploadDefinition) Name() string {
 	return t.name
 }
 
-func (t trackingUploadDefinition) Upload(context.Context, UploadRequest) (api.UploadSummary, error) {
+func (t trackingUploadDefinition) Upload(_ context.Context, req UploadRequest) (api.UploadSummary, error) {
 	if t.started != nil {
 		t.started <- t.name
+	}
+	if t.requests != nil {
+		t.requests <- req
+	}
+	if t.release != nil {
+		<-t.release
 	}
 	return api.UploadSummary{Uploaded: 1}, nil
 }
@@ -247,6 +339,95 @@ func TestBuildUploadDryRunUsesBuilder(t *testing.T) {
 	}
 	if entries[0].Payload["category"] != "movie" {
 		t.Fatalf("expected payload category movie, got %q", entries[0].Payload["category"])
+	}
+}
+
+func TestBuildUploadDryRunBlocksWhenImageHostFallbacksFail(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubDryRunDefinition{name: "PTP"}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	images := &stubImageService{
+		errs: map[string]error{
+			"pixhost": errors.New("pixhost unavailable"),
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(config.Config{}, nil, repo, registry, images)
+
+	entries, err := svc.BuildUploadDryRun(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"}, []string{"PTP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.Status != "blocked" {
+		t.Fatalf("expected blocked dry run, got %#v", entry)
+	}
+	if entry.ImageHost.Status != "warning" || len(entry.ImageHost.Warnings) != 1 {
+		t.Fatalf("expected image host warnings to be attached, got %#v", entry.ImageHost)
+	}
+}
+
+func TestBuildPreparationBlocksWhenImageHostFallbacksFail(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubPreparationDefinition{name: "PTP", group: "ptp", description: "saveable description"}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	images := &stubImageService{
+		errs: map[string]error{
+			"pixhost": errors.New("pixhost unavailable"),
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(config.Config{}, nil, repo, registry, images)
+
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"}, []string{"PTP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected 1 blocked placeholder, got %d", len(preview.Descriptions))
+	}
+	entry := preview.Descriptions[0]
+	if entry.GroupKey != "ptp|blocked|image-host" {
+		t.Fatalf("expected blocked image-host group key, got %q", entry.GroupKey)
+	}
+	if got := strings.Join(entry.Trackers, ","); got != "PTP" {
+		t.Fatalf("expected PTP tracker to remain visible, got %q", got)
+	}
+	if entry.Description != "" || entry.RawDescription != "" || entry.DescriptionHTML != "" || entry.RawDescriptionHTML != "" {
+		t.Fatalf("expected no saveable prepared description, got %#v", entry)
+	}
+	if entry.ImageHost.Status != "blocked" {
+		t.Fatalf("expected blocked image host status, got %#v", entry.ImageHost)
+	}
+	if !strings.Contains(entry.ImageHost.Message, "could not upload screenshots") {
+		t.Fatalf("expected blocking image host message, got %q", entry.ImageHost.Message)
+	}
+	if len(entry.ImageHost.Warnings) != 1 || entry.ImageHost.Warnings[0].Host != "pixhost" {
+		t.Fatalf("expected pixhost failure warning, got %#v", entry.ImageHost.Warnings)
+	}
+	if got := strings.Join(images.calls, ","); got != "pixhost" {
+		t.Fatalf("expected one preflight upload attempt, got %q", got)
 	}
 }
 
@@ -295,6 +476,340 @@ func TestBuildUploadDryRunNoBuilderMarkedUnsupported(t *testing.T) {
 	}
 	if entries[0].Status != "not_supported" {
 		t.Fatalf("expected not_supported status, got %q", entries[0].Status)
+	}
+}
+
+func TestBuildPreparationGroupsExactMatchingUnit3DDescriptions(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "unit3d", description: "same description"},
+		stubPreparationDefinition{name: "HHD", group: "unit3d", description: "same description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{}, []string{"AITHER", "HHD"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected exact matching unit3d descriptions to group, got %d groups", len(preview.Descriptions))
+	}
+	group := preview.Descriptions[0]
+	if group.GroupKey != "unit3d" {
+		t.Fatalf("expected canonical unit3d group key, got %q", group.GroupKey)
+	}
+	if got := strings.Join(group.Trackers, ","); got != "AITHER,HHD" {
+		t.Fatalf("expected both trackers in group, got %q", got)
+	}
+}
+
+func TestBuildPreparationSplitsSameGroupWhenDescriptionDiffers(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "unit3d", description: "aither description"},
+		stubPreparationDefinition{name: "HHD", group: "unit3d", description: "hhd description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{}, []string{"AITHER", "HHD"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 2 {
+		t.Fatalf("expected mismatched descriptions to split, got %d groups", len(preview.Descriptions))
+	}
+	if preview.Descriptions[0].GroupKey == preview.Descriptions[1].GroupKey {
+		t.Fatalf("expected unique group keys, got %q", preview.Descriptions[0].GroupKey)
+	}
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "AITHER" {
+		t.Fatalf("expected first group to contain AITHER, got %q", got)
+	}
+	if got := strings.Join(preview.Descriptions[1].Trackers, ","); got != "HHD" {
+		t.Fatalf("expected second group to contain HHD, got %q", got)
+	}
+	if preview.Descriptions[0].GroupKey != "unit3d|aither|tracker:AITHER" {
+		t.Fatalf("expected stable AITHER group key, got %q", preview.Descriptions[0].GroupKey)
+	}
+	if preview.Descriptions[1].GroupKey != "unit3d|hhd|tracker:HHD" {
+		t.Fatalf("expected stable HHD group key, got %q", preview.Descriptions[1].GroupKey)
+	}
+
+	reversed, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{}, []string{"HHD", "AITHER"})
+	if err != nil {
+		t.Fatalf("unexpected reversed error: %v", err)
+	}
+	groupKeyByTracker := make(map[string]string, len(reversed.Descriptions))
+	for _, group := range reversed.Descriptions {
+		for _, tracker := range group.Trackers {
+			groupKeyByTracker[tracker] = group.GroupKey
+		}
+	}
+	if groupKeyByTracker["AITHER"] != "unit3d|aither|tracker:AITHER" {
+		t.Fatalf("expected reversed AITHER stable group key, got %q", groupKeyByTracker["AITHER"])
+	}
+	if groupKeyByTracker["HHD"] != "unit3d|hhd|tracker:HHD" {
+		t.Fatalf("expected reversed HHD stable group key, got %q", groupKeyByTracker["HHD"])
+	}
+}
+
+func TestBuildPreparationGroupsSameFinalDescriptionWhenExtractedDescriptionDiffers(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "unit3d", description: "same final description"},
+		stubPreparationDefinition{name: "BLU", group: "unit3d", description: "same final description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "AITHER", Description: "aither raw description"},
+			{Tracker: "BLU", Description: "blu raw description"},
+		},
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, []string{"AITHER", "BLU"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected matching final description to group, got %d groups", len(preview.Descriptions))
+	}
+	if preview.Descriptions[0].RawDescription != "same final description" {
+		t.Fatalf("expected canonical raw description to be final build, got %q", preview.Descriptions[0].RawDescription)
+	}
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "AITHER,BLU" {
+		t.Fatalf("expected both trackers in grouped final description, got %q", got)
+	}
+}
+
+func TestBuildPreparationGroupsSameDescriptionWhenImageHostFeedbackDiffers(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "shared", description: "same description"},
+		stubPreparationDefinition{name: "PTP", group: "shared", description: "same description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{}, []string{"AITHER", "PTP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected matching descriptions to group despite image-host feedback mismatch, got %d groups", len(preview.Descriptions))
+	}
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "AITHER,PTP" {
+		t.Fatalf("expected both trackers in group, got %q", got)
+	}
+	if len(preview.Descriptions[0].ImageHost.AllowedHosts) == 0 {
+		t.Fatalf("expected PTP image host policy to be captured")
+	}
+}
+
+func TestBuildPreparationGroupsUnit3DWhenImageHostMessageOnlyDiffers(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{name: "AITHER", group: "unit3d", description: "same description"},
+		stubPreparationDefinition{name: "HHD", group: "unit3d", description: "same description"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {ImageHost: "imgbox", ImgRehost: true},
+				"HHD":    {ImageHost: "imgbox", ImgRehost: true},
+			},
+		},
+	}
+	repo := &stubRepo{}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, []string{"AITHER", "HHD"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected image-host message-only diff to group, got %d groups", len(preview.Descriptions))
+	}
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "AITHER,HHD" {
+		t.Fatalf("expected both unit3d trackers in group, got %q", got)
+	}
+	if preview.Descriptions[0].ImageHost.Status != "warning" {
+		t.Fatalf("expected image host warning status, got %q", preview.Descriptions[0].ImageHost.Status)
+	}
+	if len(preview.Descriptions[0].ImageHost.AllowedHosts) != 1 || preview.Descriptions[0].ImageHost.AllowedHosts[0] != "imgbox" {
+		t.Fatalf("expected allowed host imgbox policy to be preserved, got %#v", preview.Descriptions[0].ImageHost.AllowedHosts)
+	}
+}
+
+func TestBuildPreparationUnit3DGroupsOnConfiguredHostPreference(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		hostAwareDescriptionDefinition{name: "HHD", group: "unit3d"},
+		hostAwareDescriptionDefinition{name: "LUME", group: "unit3d"},
+		hostAwareDescriptionDefinition{name: "RAS", group: "unit3d"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	imagePath := filepath.Join(t.TempDir(), "screen.png")
+	olderUpload := time.Now().Add(-time.Hour)
+	newerUpload := time.Now()
+	repo := &stubRepo{
+		screenshotSlots: []api.ScreenshotSlot{
+			{
+				SourcePath:          sourcePath,
+				SlotOrder:           0,
+				SourceKind:          screenshotSlotSourceSelection,
+				ImagePath:           imagePath,
+				RenderInScreenshots: true,
+				Variants: []api.ScreenshotSlotVariant{
+					{
+						SourcePath: sourcePath,
+						SlotOrder:  0,
+						Host:       "pixhost",
+						UsageScope: globalImageUsageScope,
+						ImagePath:  imagePath,
+						ImgURL:     "https://pixhost/old.png",
+						RawURL:     "https://pixhost/raw-old.png",
+						WebURL:     "https://pixhost/old",
+						UploadedAt: olderUpload,
+					},
+					{
+						SourcePath: sourcePath,
+						SlotOrder:  0,
+						Host:       "imgbb",
+						UsageScope: globalImageUsageScope,
+						ImagePath:  imagePath,
+						ImgURL:     "https://imgbb/new.png",
+						RawURL:     "https://imgbb/raw-new.png",
+						WebURL:     "https://imgbb/new",
+						UploadedAt: newerUpload,
+					},
+				},
+			},
+		},
+		uploads: []api.UploadedImageLink{
+			{
+				Host:       "pixhost",
+				UsageScope: globalImageUsageScope,
+				ImagePath:  imagePath,
+				ImgURL:     "https://pixhost/old.png",
+				RawURL:     "https://pixhost/raw-old.png",
+				WebURL:     "https://pixhost/old",
+				UploadedAt: olderUpload,
+			},
+			{
+				Host:       "imgbb",
+				UsageScope: globalImageUsageScope,
+				ImagePath:  imagePath,
+				ImgURL:     "https://imgbb/new.png",
+				RawURL:     "https://imgbb/raw-new.png",
+				WebURL:     "https://imgbb/new",
+				UploadedAt: newerUpload,
+			},
+		},
+	}
+
+	cfg := config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "pixhost",
+			Host2: "imgbb",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"HHD": {ImageHost: "pixhost", ImgRehost: true},
+			},
+		},
+	}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, []string{"HHD", "LUME", "RAS"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected configured-host preference to collapse HHD+LUME+RAS into one group, got %d", len(preview.Descriptions))
+	}
+	if got := strings.Join(preview.Descriptions[0].Trackers, ","); got != "HHD,LUME,RAS" {
+		t.Fatalf("expected both unit3d trackers in group, got %q", got)
+	}
+	if preview.Descriptions[0].GroupKey != "unit3d|pixhost|global" {
+		t.Fatalf("expected preferred pixhost group key, got %q", preview.Descriptions[0].GroupKey)
+	}
+	if preview.Descriptions[0].Description != "unit3d screenshot host: pixhost" {
+		t.Fatalf("expected host-resolved description, got %q", preview.Descriptions[0].Description)
+	}
+}
+
+func TestPreparationDescriptionGroupMergesUnit3DHostVariantsWhenDescriptionMatches(t *testing.T) {
+	t.Parallel()
+
+	grouped := make(map[string]*api.PreparationDescription)
+	order := make([]string, 0, 2)
+	first := api.PreparationDescription{
+		RawDescription:     "raw",
+		RawDescriptionHTML: "<p>raw</p>",
+		Description:        "same description",
+		DescriptionHTML:    "<p>same description</p>",
+		ImageHost:          api.ImageHostFeedback{Status: "reused", SelectedHost: "pixhost", AllowedHosts: []string{"pixhost"}},
+	}
+	second := first
+	second.ImageHost = api.ImageHostFeedback{Status: "reused", SelectedHost: "imgbb", AllowedHosts: []string{"imgbb"}}
+	second.RawDescriptionHTML = "<div>raw</div>"
+	second.DescriptionHTML = "<div>same description</div>"
+
+	firstEntry := preparationDescriptionGroup(grouped, &order, "unit3d|pixhost|global", first)
+	firstEntry.Trackers = append(firstEntry.Trackers, "HHD")
+	secondEntry := preparationDescriptionGroup(grouped, &order, "unit3d|imgbb|global", second)
+	secondEntry.Trackers = append(secondEntry.Trackers, "LUME")
+	secondEntry.ImageHost = mergePreparationImageHostFeedback(secondEntry.ImageHost, second.ImageHost)
+
+	if firstEntry != secondEntry {
+		t.Fatal("expected matching unit3d descriptions to share one group across image-host key variants")
+	}
+	if len(order) != 1 {
+		t.Fatalf("expected one ordered group, got %d", len(order))
+	}
+	if got := strings.Join(firstEntry.Trackers, ","); got != "HHD,LUME" {
+		t.Fatalf("expected both trackers in merged group, got %q", got)
+	}
+	if len(firstEntry.ImageHost.AllowedHosts) != 2 {
+		t.Fatalf("expected merged image host policy data, got %#v", firstEntry.ImageHost.AllowedHosts)
 	}
 }
 
@@ -347,6 +862,208 @@ func TestUploadAggregatesUploadedTorrentArtifacts(t *testing.T) {
 	}
 	if summary.UploadedTorrents[0].DownloadURL != "https://aither.cc/torrent/download/374352.382" {
 		t.Fatalf("unexpected download URL: %q", summary.UploadedTorrents[0].DownloadURL)
+	}
+}
+
+func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubUploadArtifactDefinition{name: "PTP"},
+		stubUploadArtifactDefinition{name: "STC"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	images := &stubImageService{repo: repo}
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			DefaultTrackers: config.CSVList{"PTP", "STC"},
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {ImageHost: "pixhost"},
+				"STC": {ImageHost: "imgbox"},
+			},
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+
+	summary, err := svc.Upload(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"})
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if summary.Uploaded != 2 {
+		t.Fatalf("expected 2 tracker uploads, got %d", summary.Uploaded)
+	}
+	firstRunCalls := append([]string{}, images.calls...)
+	sort.Strings(firstRunCalls)
+	if got := strings.Join(firstRunCalls, ","); got != "imgbox,pixhost" {
+		t.Fatalf("expected one upload per configured host, got %q", got)
+	}
+
+	summary, err = svc.Upload(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"})
+	if err != nil {
+		t.Fatalf("unexpected second upload error: %v", err)
+	}
+	if summary.Uploaded != 2 {
+		t.Fatalf("expected 2 tracker uploads on second run, got %d", summary.Uploaded)
+	}
+	secondRunCalls := append([]string{}, images.calls...)
+	sort.Strings(secondRunCalls)
+	if got := strings.Join(secondRunCalls, ","); got != "imgbox,pixhost" {
+		t.Fatalf("expected existing host variants to be reused on second run, got calls %q", got)
+	}
+}
+
+func TestUploadPreparesDistinctTrackerArtifactsBeforeConcurrentUploads(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Movie.mkv")
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	createServiceTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
+
+	requests := make(chan UploadRequest, 2)
+	release := make(chan struct{})
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		trackingUploadDefinition{name: "HDB", requests: requests, release: release},
+		trackingUploadDefinition{name: "PTP", requests: requests, release: release},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")},
+		Trackers: config.TrackersConfig{
+			DefaultTrackers: config.CSVList{"HDB", "PTP"},
+			Trackers: map[string]config.TrackerConfig{
+				"HDB": {AnnounceURL: "https://hdb.example/passkey/announce"},
+				"PTP": {AnnounceURL: "https://ptp.example/passkey/announce"},
+			},
+		},
+	}
+	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+
+	done := make(chan struct {
+		summary api.UploadSummary
+		err     error
+	}, 1)
+	go func() {
+		summary, err := svc.Upload(context.Background(), api.PreparedMetadata{
+			SourcePath:  sourcePath,
+			TorrentPath: torrentPath,
+		})
+		done <- struct {
+			summary api.UploadSummary
+			err     error
+		}{summary: summary, err: err}
+	}()
+
+	received := make(map[string]UploadRequest, 2)
+	timeout := time.After(2 * time.Second)
+	for len(received) < 2 {
+		select {
+		case req := <-requests:
+			received[req.Tracker] = req
+		case <-timeout:
+			t.Fatalf("timed out waiting for upload requests, got %d", len(received))
+		}
+	}
+
+	hdbReq := received["HDB"]
+	ptpReq := received["PTP"]
+	if hdbReq.Meta.TorrentPath == ptpReq.Meta.TorrentPath {
+		t.Fatalf("expected distinct tracker artifact paths, got %q", hdbReq.Meta.TorrentPath)
+	}
+	assertTrackerArtifact(t, hdbReq.Meta.TorrentPath, "https://hdb.example/passkey/announce", "HDBits")
+	assertTrackerArtifact(t, ptpReq.Meta.TorrentPath, "https://ptp.example/passkey/announce", "PTP")
+
+	close(release)
+
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("unexpected upload error: %v", result.err)
+	}
+	if result.summary.Uploaded != 2 {
+		t.Fatalf("expected 2 uploads, got %d", result.summary.Uploaded)
+	}
+}
+
+func TestBuildPreparationPreflightsMultipleConfiguredImageHostsConcurrently(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		hostAwareDescriptionDefinition{name: "PTP", group: "ptp"},
+		hostAwareDescriptionDefinition{name: "STC", group: "stc"},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	images := &blockingImageService{started: started, release: release}
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {ImageHost: "pixhost"},
+				"STC": {ImageHost: "imgbox"},
+			},
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.BuildPreparation(ctx, api.PreparedMetadata{SourcePath: "/tmp/source"}, []string{"PTP", "STC"})
+		done <- err
+	}()
+
+	seen := make(map[string]struct{}, 2)
+	for len(seen) < 2 {
+		select {
+		case host := <-started:
+			seen[host] = struct{}{}
+		case <-ctx.Done():
+			t.Fatalf("expected both host uploads to start concurrently, saw %v: %v", seen, ctx.Err())
+		}
+	}
+	close(release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected preparation error: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("preparation did not finish after concurrent uploads released: %v", ctx.Err())
+	}
+
+	calls := images.Calls()
+	sort.Strings(calls)
+	if got := strings.Join(calls, ","); got != "imgbox,pixhost" {
+		t.Fatalf("expected one preflight upload per configured host, got %q", got)
 	}
 }
 
@@ -564,9 +1281,10 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 	}
 	meta := api.PreparedMetadata{
 		SourcePath: `D:\TV\The.Pitt.S02E15.1080p.WEB-DL.mkv`,
+		Options:    api.UploadOptions{KeepImages: true},
 		TrackerData: []api.TrackerMetadata{{
 			Tracker:   "AITHER",
-			ImageURLs: []string{"https://ptpimg.me/4m092k.png", "https://ptpimg.me/7oj122.png"},
+			ImageURLs: []string{"https://pixhost.to/4m092k.png", "https://pixhost.to/7oj122.png"},
 		}},
 	}
 	tmpRoot, err := dbsvc.Subdir(cfg.MainSettings.DBPath, "tmp")
@@ -592,13 +1310,13 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: strings.TrimSpace(`
 [center]
-[url=https://ptpimg.me/4m092k.png][img]https://ptpimg.me/4m092k.png[/img][/url]
-[url=https://ptpimg.me/7oj122.png][img]https://ptpimg.me/7oj122.png[/img][/url]
+[url=https://pixhost.to/4m092k.png][img]https://pixhost.to/4m092k.png[/img][/url]
+[url=https://pixhost.to/7oj122.png][img]https://pixhost.to/7oj122.png[/img][/url]
 [/center]`),
 		overrideGroupKey: "hdb",
 		trackerRecords: []api.TrackerMetadata{{
 			Tracker:   "AITHER",
-			ImageURLs: []string{"https://ptpimg.me/4m092k.png", "https://ptpimg.me/7oj122.png"},
+			ImageURLs: []string{"https://pixhost.to/4m092k.png", "https://pixhost.to/7oj122.png"},
 		}},
 	}
 	images := &stubImageService{
@@ -622,7 +1340,7 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 	if strings.TrimSpace(description) == "" {
 		t.Fatal("expected HDB description to be built")
 	}
-	if strings.Contains(description, "ptpimg.me/4m092k.png") || strings.Contains(description, "ptpimg.me/7oj122.png") {
+	if strings.Contains(description, "pixhost.to/4m092k.png") || strings.Contains(description, "pixhost.to/7oj122.png") {
 		t.Fatalf("expected HDB screenshots to replace original tracker urls, got %q", description)
 	}
 	if !strings.Contains(description, "img.hdbits.org/51q8jo2") || !strings.Contains(description, "img.hdbits.org/w0S7ltI") {
@@ -829,5 +1547,40 @@ func TestBuildUploadDryRunPreloadsDescriptionAssetQueriesOnce(t *testing.T) {
 	}
 	if repo.uploadsCalls != 1 {
 		t.Fatalf("expected 1 uploaded images query, got %d", repo.uploadsCalls)
+	}
+}
+
+func createServiceTestTorrent(t *testing.T, sourcePath string, torrentPath string) {
+	t.Helper()
+
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	_, err := mkbrr.Create(mkbrr.CreateOptions{
+		Path:       sourcePath,
+		OutputPath: torrentPath,
+		IsPrivate:  true,
+	})
+	if err != nil {
+		t.Fatalf("create torrent: %v", err)
+	}
+}
+
+func assertTrackerArtifact(t *testing.T, torrentPath string, wantAnnounce string, wantSource string) {
+	t.Helper()
+
+	torrentMeta, err := metainfo.LoadFromFile(torrentPath)
+	if err != nil {
+		t.Fatalf("load tracker artifact: %v", err)
+	}
+	if torrentMeta.Announce != wantAnnounce {
+		t.Fatalf("expected announce %q, got %q", wantAnnounce, torrentMeta.Announce)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatalf("unmarshal tracker artifact info: %v", err)
+	}
+	if info.Source != wantSource {
+		t.Fatalf("expected source %q, got %q", wantSource, info.Source)
 	}
 }

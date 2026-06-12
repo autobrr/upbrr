@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,8 +20,171 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func ptr[T any](v T) *T {
-	return &v
+func containsCoreString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestFirstRequestedTracker(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		trackers []string
+		want     string
+	}{
+		{name: "nil", trackers: nil, want: ""},
+		{name: "empty first", trackers: []string{"", "BHD"}, want: "BHD"},
+		{name: "whitespace first", trackers: []string{" \t", " HDB "}, want: "HDB"},
+		{name: "all empty", trackers: []string{"", "  "}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := firstRequestedTracker(tt.trackers); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestEmitPreparedUploadProgressKeepsAggregateTrackerBlank(t *testing.T) {
+	t.Parallel()
+
+	var updates []api.UploadProgressUpdate
+	ctx := api.WithUploadProgressReporter(context.Background(), func(update api.UploadProgressUpdate) {
+		updates = append(updates, update)
+	})
+
+	emitPreparedUploadProgress(ctx, api.Request{Trackers: []string{"AITHER", "BLU"}}, "/tmp/source", "", "tracker_upload", "running", "Uploading to tracker")
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 progress update, got %d", len(updates))
+	}
+	if updates[0].Tracker != "" {
+		t.Fatalf("expected aggregate tracker to stay blank, got %q", updates[0].Tracker)
+	}
+}
+
+func TestEmitPreparedUploadProgressUsesSingleRequestedTracker(t *testing.T) {
+	t.Parallel()
+
+	var updates []api.UploadProgressUpdate
+	ctx := api.WithUploadProgressReporter(context.Background(), func(update api.UploadProgressUpdate) {
+		updates = append(updates, update)
+	})
+
+	emitPreparedUploadProgress(ctx, api.Request{Trackers: []string{"BLU"}}, "/tmp/source", "", "tracker_upload", "running", "Uploading to tracker")
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 progress update, got %d", len(updates))
+	}
+	if updates[0].Tracker != "BLU" {
+		t.Fatalf("expected single tracker progress to carry BLU, got %q", updates[0].Tracker)
+	}
+}
+
+func TestLoadPlaylistSelectionUsesNormalizedSourcePath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		sourcePath string
+	}{
+		{name: "native", sourcePath: filepath.Join("media", "Movie", "BDMV")},
+		{name: "posix", sourcePath: "media/Movie/BDMV"},
+		{name: "windows", sourcePath: `media\Movie\BDMV`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			normalizedPath := filepath.ToSlash(filepath.Clean(tt.sourcePath))
+			repo := &playlistSelectionRepo{
+				selectionByPath: map[string]db.PlaylistSelection{
+					normalizedPath: {
+						SourcePath:        normalizedPath,
+						SelectedPlaylists: []string{"00001.mpls"},
+					},
+				},
+			}
+			core := &Core{repo: repo, logger: api.NopLogger{}}
+
+			selection, err := core.LoadPlaylistSelection(context.Background(), tt.sourcePath)
+			if err != nil {
+				t.Fatalf("LoadPlaylistSelection: %v", err)
+			}
+			if repo.loadedPath != normalizedPath {
+				t.Fatalf("expected normalized lookup path %q, got %q", normalizedPath, repo.loadedPath)
+			}
+			if len(selection.SelectedPlaylists) != 1 || selection.SelectedPlaylists[0] != "00001.mpls" {
+				t.Fatalf("unexpected playlist selection: %#v", selection)
+			}
+		})
+	}
+}
+
+type playlistSelectionRepo struct {
+	stubRepo
+	loadedPath      string
+	selectionByPath map[string]db.PlaylistSelection
+}
+
+func (r *playlistSelectionRepo) GetPlaylistSelection(_ context.Context, sourcePath string) (db.PlaylistSelection, error) {
+	r.loadedPath = sourcePath
+	selection, ok := r.selectionByPath[sourcePath]
+	if !ok {
+		return db.PlaylistSelection{}, internalerrors.ErrNotFound
+	}
+	return selection, nil
+}
+
+func TestBuildDescriptionBuilderGroupUsesFinalBuiltDescriptionAsRaw(t *testing.T) {
+	t.Parallel()
+
+	group := buildDescriptionBuilderGroup(api.PreparationDescription{
+		GroupKey:        "bhd",
+		Trackers:        []string{"BHD"},
+		RawDescription:  "",
+		Description:     "Generated BHD description",
+		DescriptionHTML: "Generated BHD description",
+	}, nil, api.PreparedMetadata{}, api.NopLogger{})
+
+	if !strings.Contains(group.RawDescriptionHTML, "Generated BHD description") {
+		t.Fatalf("expected generated description to remain in preview html, got %q", group.RawDescriptionHTML)
+	}
+	if group.Description != "Generated BHD description" {
+		t.Fatalf("expected generated description field, got %q", group.Description)
+	}
+	if !strings.Contains(group.DescriptionHTML, "Generated BHD description") {
+		t.Fatalf("expected generated description html, got %q", group.DescriptionHTML)
+	}
+}
+
+func TestBuildDescriptionBuilderGroupKeepsFinalBuiltDescriptionAsRaw(t *testing.T) {
+	t.Parallel()
+
+	group := buildDescriptionBuilderGroup(api.PreparationDescription{
+		GroupKey:    "hdb",
+		Trackers:    []string{"HDB"},
+		Description: "Generated HDB final description",
+	}, map[string]api.DescriptionOverride{
+		"hdb": {Description: "custom override"},
+	}, api.PreparedMetadata{}, api.NopLogger{})
+
+	if group.RawDescription != "Generated HDB final description" {
+		t.Fatalf("expected final built description, got %q", group.RawDescription)
+	}
+	if group.Description != group.RawDescription {
+		t.Fatalf("expected generated description to mirror raw, got %q", group.Description)
+	}
 }
 
 func TestGetHistoryOverviewIncludesGroupedDescriptionOverrides(t *testing.T) {
@@ -116,15 +280,157 @@ func TestRunUploadMultiplePaths(t *testing.T) {
 		t.Fatalf("expected 2 uploads, got %d", result.UploadedCount)
 	}
 
-	if metaCalls := svc.Metadata.(*stubMeta).calls; metaCalls != 0 {
+	metaSvc, ok := svc.Metadata.(*stubMeta)
+	if !ok {
+		t.Fatalf("expected metadata service type *stubMeta, got %T", svc.Metadata)
+	}
+	if metaCalls := metaSvc.calls; metaCalls != 0 {
 		t.Fatalf("expected 0 metadata calls, got %d", metaCalls)
 	}
-	if trackerCalls := svc.Trackers.(*stubTrackers).calls; trackerCalls != 2 {
+	trackerSvc, ok := svc.Trackers.(*stubTrackers)
+	if !ok {
+		t.Fatalf("expected tracker service type *stubTrackers, got %T", svc.Trackers)
+	}
+	if trackerCalls := trackerSvc.calls; trackerCalls != 2 {
 		t.Fatalf("expected 2 tracker calls, got %d", trackerCalls)
 	}
 }
 
-func TestRunUploadPreparedDryRunSkipsUpload(t *testing.T) {
+func TestResolveGUICachedPreparedMetaReusesRequestRefreshedCache(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Metadata: metaSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	sourcePath := "/tmp/a"
+	req := api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeGUI,
+	}
+	core.storeDupeCache(sourcePath, "", api.PreparedMetadata{SourcePath: sourcePath})
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), req, sourcePath); err != nil {
+		t.Fatalf("resolve cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata")
+	}
+	if metaSvc.refreshCalls != 1 {
+		t.Fatalf("expected first lookup to refresh once, got %d", metaSvc.refreshCalls)
+	}
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), req, sourcePath); err != nil {
+		t.Fatalf("resolve cached prepared metadata again: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata on second lookup")
+	}
+	if metaSvc.refreshCalls != 1 {
+		t.Fatalf("expected second lookup to reuse refreshed cache, got %d refreshes", metaSvc.refreshCalls)
+	}
+
+	edition := "Director's Cut"
+	editedReq := req
+	editedReq.ReleaseNameOverrides = api.ReleaseNameOverrides{Edition: &edition}
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), editedReq, sourcePath); err != nil {
+		t.Fatalf("resolve edited cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected fallback cache for edited request")
+	}
+	if metaSvc.refreshCalls != 2 {
+		t.Fatalf("expected edited request to refresh once, got %d refreshes", metaSvc.refreshCalls)
+	}
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), editedReq, sourcePath); err != nil {
+		t.Fatalf("resolve edited cached prepared metadata again: %v", err)
+	} else if !ok {
+		t.Fatal("expected exact edited cache on second lookup")
+	}
+	if metaSvc.refreshCalls != 2 {
+		t.Fatalf("expected repeated edited request to reuse refreshed cache, got %d refreshes", metaSvc.refreshCalls)
+	}
+}
+
+func TestResolveGUICachedPreparedMetaTreatsResolvedTrackerDataAsCacheMatch(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Metadata: metaSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	sourcePath := "/tmp/a"
+	req := api.Request{
+		Paths:    []string{sourcePath},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER", "HDB"},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath:     sourcePath,
+		Paths:          []string{sourcePath},
+		Mode:           api.ModeGUI,
+		Trackers:       []string{"AITHER", "HDB"},
+		TrackersRemove: []string{"HDB"},
+		TrackerIDs:     map[string]string{"hdb": "123"},
+	}
+	core.storeRefreshedDupeCache(sourcePath, "", meta)
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), req, sourcePath); err != nil {
+		t.Fatalf("resolve cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata")
+	}
+	if metaSvc.refreshCalls != 0 {
+		t.Fatalf("expected resolved tracker data to remain cacheable, got %d refreshes", metaSvc.refreshCalls)
+	}
+}
+
+func TestResolveGUICachedPreparedMetaAllowsTrackerlessFollowUp(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	core := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Metadata: metaSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	sourcePath := "/tmp/a"
+	meta := api.PreparedMetadata{
+		SourcePath: sourcePath,
+		Paths:      []string{sourcePath},
+		Mode:       api.ModeGUI,
+		Trackers:   []string{"AITHER", "HDB"},
+	}
+	core.storeRefreshedDupeCache(sourcePath, "", meta)
+
+	if _, ok, err := core.resolveGUICachedPreparedMeta(context.Background(), api.Request{
+		Paths: []string{sourcePath},
+		Mode:  api.ModeGUI,
+	}, sourcePath); err != nil {
+		t.Fatalf("resolve trackerless cached prepared metadata: %v", err)
+	} else if !ok {
+		t.Fatal("expected cached metadata")
+	}
+	if metaSvc.refreshCalls != 0 {
+		t.Fatalf("expected trackerless follow-up to reuse cache, got %d refreshes", metaSvc.refreshCalls)
+	}
+}
+
+func TestRunUploadPreparedDryRunInjectsClientAndSkipsTrackerUpload(t *testing.T) {
 	t.Parallel()
 
 	repo := &stubRepo{}
@@ -163,8 +469,58 @@ func TestRunUploadPreparedDryRunSkipsUpload(t *testing.T) {
 	if tracker.calls != 0 {
 		t.Fatalf("expected tracker not called, got %d", tracker.calls)
 	}
-	if client.calls != 0 {
-		t.Fatalf("expected client not called, got %d", client.calls)
+	if client.calls != 1 {
+		t.Fatalf("expected client called once, got %d", client.calls)
+	}
+	if len(client.injected) != 1 || client.injected[0].Path != "/tmp/file.torrent" {
+		t.Fatalf("expected prepared torrent injection, got %#v", client.injected)
+	}
+}
+
+func TestRunUploadPreparedDebugInjectsClientAndSkipsTrackerUpload(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubRepo{}
+	tracker := &stubTrackers{}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: repo,
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+		Options: api.UploadOptions{
+			Debug: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if result.UploadedCount != 0 {
+		t.Fatalf("expected 0 uploads, got %d", result.UploadedCount)
+	}
+	if tracker.calls != 0 {
+		t.Fatalf("expected tracker not called, got %d", tracker.calls)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected client called once, got %d", client.calls)
+	}
+	if len(client.injected) != 1 || client.injected[0].Path != "/tmp/file.torrent" {
+		t.Fatalf("expected prepared torrent injection, got %#v", client.injected)
 	}
 }
 
@@ -196,6 +552,54 @@ func TestRunUploadPreparedSiteCheckForcesDryRun(t *testing.T) {
 		Mode:  api.ModeGUI,
 		Execution: api.ExecutionOptions{
 			SiteCheck: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if result.UploadedCount != 0 {
+		t.Fatalf("expected 0 uploads, got %d", result.UploadedCount)
+	}
+	if tracker.calls != 0 {
+		t.Fatalf("expected tracker not called, got %d", tracker.calls)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected client called once, got %d", client.calls)
+	}
+	if len(client.injected) != 1 || client.injected[0].Path != "/tmp/file.torrent" {
+		t.Fatalf("expected prepared torrent injection, got %#v", client.injected)
+	}
+}
+
+func TestRunUploadPreparedDryRunNoSeedSkipsClient(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubRepo{}
+	tracker := &stubTrackers{}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: repo,
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+		Options: api.UploadOptions{
+			DryRun: true,
+			NoSeed: true,
 		},
 	})
 	if err != nil {
@@ -306,7 +710,7 @@ func TestRunUploadDefaultsScreens(t *testing.T) {
 			Clients:    &stubClient{},
 			Trackers:   tracker,
 		},
-		Repository: &stubRepo{},
+		Repository: trackerRepo{},
 	})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
@@ -464,7 +868,7 @@ func TestRunUploadSkipsPathedSearchWithStoredInfoHash(t *testing.T) {
 			Clients:  client,
 			Trackers: &stubTrackers{},
 		},
-		Repository: &stubRepo{},
+		Repository: trackerRepo{},
 	})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
@@ -520,12 +924,25 @@ func TestRunUploadSkipsPathedSearchWithFreshStoredSnapshot(t *testing.T) {
 func TestFetchMetadataPreviewRunsPathedSearchWithStoredTrackerData(t *testing.T) {
 	t.Parallel()
 
-	client := &stubClient{}
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		InfoHash: "abc123",
+		TrackerIDs: map[string]string{
+			"aither": "111",
+		},
+		FoundTrackerMatch: true,
+		TorrentComments: []api.TorrentMatch{{
+			Hash: "abc123",
+			Name: "Fixture Title 2024 BluRay 1080p DTS x264-FixtureGroup",
+		}},
+		MatchedTrackers: []string{"AITHER"},
+		TorrentPath:     "/downloads/Fixture Title",
+	}}
+	metaSvc := &stubMeta{}
 	core, err := New(api.CoreDependencies{
 		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
 		Services: api.ServiceSet{
 			Filesystem: &stubFS{},
-			Metadata:   &stubMeta{},
+			Metadata:   metaSvc,
 			Clients:    client,
 		},
 		Repository: trackerRepo{},
@@ -542,7 +959,22 @@ func TestFetchMetadataPreviewRunsPathedSearchWithStoredTrackerData(t *testing.T)
 		t.Fatalf("fetch metadata preview: %v", err)
 	}
 	if client.searchCalls != 1 {
-		t.Fatalf("expected pathed search to run once for tracker presence, got %d calls", client.searchCalls)
+		t.Fatalf("expected pathed search to run once for fresh client data, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected tracker enrichment once, got %d calls", metaSvc.enrichCalls)
+	}
+	if got := metaSvc.enrichMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected fresh AITHER tracker id, got %q", got)
+	}
+	if got := metaSvc.enrichMeta.TrackerIDs["blu"]; got != "" {
+		t.Fatalf("expected stale stored BLU tracker id cleared, got %q", got)
+	}
+	if containsCoreString(metaSvc.enrichMeta.MatchedTrackers, "BLU") {
+		t.Fatalf("expected stale stored BLU match cleared, got %v", metaSvc.enrichMeta.MatchedTrackers)
+	}
+	if !containsCoreString(metaSvc.enrichMeta.TrackersRemove, "AITHER") {
+		t.Fatalf("expected fresh AITHER removal, got %v", metaSvc.enrichMeta.TrackersRemove)
 	}
 }
 
@@ -557,13 +989,13 @@ func TestFetchMetadataPreviewSkipAutoTorrentSkipsPathedSearch(t *testing.T) {
 			Metadata:   &stubMeta{},
 			Clients:    client,
 		},
-		Repository: &stubRepo{},
+		Repository: trackerRepo{},
 	})
 	if err != nil {
 		t.Fatalf("new core: %v", err)
 	}
 
-	_, err = core.FetchMetadataPreview(context.Background(), api.Request{
+	preview, err := core.FetchMetadataPreview(context.Background(), api.Request{
 		Paths: []string{"/tmp/a"},
 		Mode:  api.ModeGUI,
 		Options: api.UploadOptions{
@@ -575,6 +1007,45 @@ func TestFetchMetadataPreviewSkipAutoTorrentSkipsPathedSearch(t *testing.T) {
 	}
 	if client.searchCalls != 0 {
 		t.Fatalf("expected pathed search skipped, got %d calls", client.searchCalls)
+	}
+	if len(preview.TrackerData) != 0 {
+		t.Fatalf("expected stored tracker metadata ignored, got %#v", preview.TrackerData)
+	}
+}
+
+func TestFetchMetadataPreviewSkipAutoTorrentFromConfigSkipsPathedSearch(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			Metadata:           config.MetadataConfig{SkipAutoTorrent: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Clients:    client,
+		},
+		Repository: trackerRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	preview, err := core.FetchMetadataPreview(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if client.searchCalls != 0 {
+		t.Fatalf("expected pathed search skipped from config, got %d calls", client.searchCalls)
+	}
+	if len(preview.TrackerData) != 0 {
+		t.Fatalf("expected stored tracker metadata ignored, got %#v", preview.TrackerData)
 	}
 }
 
@@ -606,6 +1077,352 @@ func TestFetchMetadataPreviewRunsPathedSearchWithFreshStoredSnapshot(t *testing.
 	}
 	if client.searchCalls != 1 {
 		t.Fatalf("expected pathed search to run once for tracker presence, got %d calls", client.searchCalls)
+	}
+}
+
+func TestFetchMetadataPreviewUsesPathedTrackerDataWithFreshStoredSnapshot(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		InfoHash: "abc123",
+		TrackerIDs: map[string]string{
+			"aither": "111",
+		},
+		FoundTrackerMatch: true,
+		TorrentComments: []api.TorrentMatch{{
+			Hash: "abc123",
+			Name: "Fixture Title 2024 BluRay 1080p DTS x264-FixtureGroup",
+		}},
+		MatchedTrackers: []string{"AITHER"},
+		TorrentPath:     "/downloads/Fixture Title",
+	}}
+	metaSvc := &stubMeta{prepared: api.PreparedMetadata{
+		StoredDataFresh: true,
+	}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    client,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.FetchMetadataPreview(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected pathed search to run once, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected tracker enrichment once, got %d calls", metaSvc.enrichCalls)
+	}
+	if metaSvc.enrichMeta.StoredDataFresh {
+		t.Fatalf("expected client torrent data to invalidate fresh snapshot for tracker enrichment")
+	}
+	if got := metaSvc.enrichMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected pathed tracker id, got %q", got)
+	}
+	if got := metaSvc.enrichMeta.InfoHash; got != "abc123" {
+		t.Fatalf("expected pathed infohash, got %q", got)
+	}
+	if len(metaSvc.enrichMeta.TorrentComments) != 1 {
+		t.Fatalf("expected pathed torrent comments, got %d", len(metaSvc.enrichMeta.TorrentComments))
+	}
+	if !metaSvc.enrichMeta.FoundTrackerMatch {
+		t.Fatalf("expected tracker match flag")
+	}
+}
+
+func TestFetchMetadataPreviewUsesPathedPieceGuidanceWithFreshStoredSnapshot(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		PieceSizeConstraint: "16MiB",
+		FoundPreferredPiece: "16MiB",
+	}}
+	metaSvc := &stubMeta{prepared: api.PreparedMetadata{
+		StoredDataFresh: true,
+	}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    client,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.FetchMetadataPreview(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected pathed search to run once, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected tracker enrichment once, got %d calls", metaSvc.enrichCalls)
+	}
+	if metaSvc.enrichMeta.StoredDataFresh {
+		t.Fatalf("expected piece guidance to invalidate fresh snapshot for tracker enrichment")
+	}
+	if got := metaSvc.enrichMeta.PieceSizeConstraint; got != "16MiB" {
+		t.Fatalf("expected piece size constraint from pathed search, got %q", got)
+	}
+	if got := metaSvc.enrichMeta.FoundPreferredPiece; got != "16MiB" {
+		t.Fatalf("expected preferred piece from pathed search, got %q", got)
+	}
+	if got := metaSvc.enrichMeta.InfoHash; got != "" {
+		t.Fatalf("expected no infohash required for piece guidance, got %q", got)
+	}
+	if len(metaSvc.enrichMeta.TrackerIDs) != 0 {
+		t.Fatalf("expected no tracker ids required for piece guidance, got %#v", metaSvc.enrichMeta.TrackerIDs)
+	}
+	if len(metaSvc.enrichMeta.TorrentComments) != 0 {
+		t.Fatalf("expected no torrent comments required for piece guidance, got %#v", metaSvc.enrichMeta.TorrentComments)
+	}
+}
+
+func TestApplyPathedTorrentDataAppliesPieceGuidanceOnly(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{StoredDataFresh: true}
+
+	if !applyPathedTorrentData(&meta, api.ClientSearchResult{
+		PieceSizeConstraint: "16MiB",
+		FoundPreferredPiece: "16MiB",
+	}) {
+		t.Fatalf("expected piece guidance to count as pathed torrent data")
+	}
+	if meta.StoredDataFresh {
+		t.Fatalf("expected piece guidance to invalidate stored snapshot")
+	}
+	if meta.PieceSizeConstraint != "16MiB" {
+		t.Fatalf("expected piece constraint copied, got %q", meta.PieceSizeConstraint)
+	}
+	if meta.FoundPreferredPiece != "16MiB" {
+		t.Fatalf("expected preferred piece copied, got %q", meta.FoundPreferredPiece)
+	}
+}
+
+func TestCheckDupesUsesPathedTrackerDataWithFreshStoredSnapshot(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		InfoHash: "abc123",
+		TrackerIDs: map[string]string{
+			"aither": "111",
+		},
+		FoundTrackerMatch: true,
+		TorrentComments: []api.TorrentMatch{{
+			Hash: "abc123",
+			Name: "Fixture Title 2024 BluRay 1080p DTS x264-FixtureGroup",
+		}},
+		MatchedTrackers: []string{"AITHER"},
+	}}
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata: &stubMeta{prepared: api.PreparedMetadata{
+				StoredDataFresh: true,
+			}},
+			Clients: client,
+			Dupes:   dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.CheckDupes(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected pathed search to run once, got %d calls", client.searchCalls)
+	}
+	if dupes.lastMeta.StoredDataFresh {
+		t.Fatalf("expected client torrent data to invalidate fresh snapshot for dupe metadata")
+	}
+	if got := dupes.lastMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected pathed tracker id, got %q", got)
+	}
+	if got := dupes.lastMeta.InfoHash; got != "abc123" {
+		t.Fatalf("expected pathed infohash, got %q", got)
+	}
+}
+
+func TestCheckDupesReusesCLIMetadataPreviewCache(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{searchResult: api.ClientSearchResult{
+		InfoHash:          "abc123",
+		MatchedTrackers:   []string{"AITHER"},
+		FoundTrackerMatch: true,
+		TrackerIDs: map[string]string{
+			"aither": "111",
+		},
+	}}
+	metaSvc := &stubMeta{}
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    client,
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	req := api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER", "BHD"},
+		Options: api.UploadOptions{
+			InteractionMode: api.InteractionModeInteractive,
+			Screens:         1,
+		},
+	}
+	if _, err := core.FetchMetadataPreview(context.Background(), req); err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if metaSvc.calls != 1 {
+		t.Fatalf("expected preview to prepare metadata once, got %d calls", metaSvc.calls)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected preview to run pathed search once, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected preview to enrich tracker data once, got %d calls", metaSvc.enrichCalls)
+	}
+
+	if _, err := core.CheckDupes(context.Background(), req); err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+	if metaSvc.calls != 1 {
+		t.Fatalf("expected cached dupe check to skip metadata prepare, got %d calls", metaSvc.calls)
+	}
+	if client.searchCalls != 1 {
+		t.Fatalf("expected cached dupe check to skip pathed search, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 1 {
+		t.Fatalf("expected cached dupe check to skip tracker enrichment, got %d calls", metaSvc.enrichCalls)
+	}
+	if got := dupes.lastMeta.InfoHash; got != "abc123" {
+		t.Fatalf("expected cached infohash, got %q", got)
+	}
+	if got := dupes.lastMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected cached tracker id, got %q", got)
+	}
+	if containsCoreString(dupes.lastTrackers, "AITHER") {
+		t.Fatalf("expected matched tracker excluded from dupe check, got %v", dupes.lastTrackers)
+	}
+	if !containsCoreString(dupes.lastTrackers, "BHD") {
+		t.Fatalf("expected unmatched tracker checked, got %v", dupes.lastTrackers)
+	}
+}
+
+func TestFetchPreparationPreviewUsesCachedClientDataForCachedMeta(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	metaSvc := &stubMeta{}
+	trackerSvc := &stubTrackers{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    client,
+			Trackers:   trackerSvc,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	sourcePath := "/tmp/a"
+	core.storeDupeCache(sourcePath, "", api.PreparedMetadata{
+		SourcePath:        sourcePath,
+		Paths:             []string{sourcePath},
+		Mode:              api.ModeGUI,
+		Trackers:          []string{"AITHER", "RF", "BLU"},
+		MatchedTrackers:   []string{"AITHER", "RF"},
+		TrackersRemove:    []string{"AITHER", "RF"},
+		FoundTrackerMatch: true,
+		TrackerIDs: map[string]string{
+			"aither": "111",
+			"rf":     "222",
+		},
+	})
+
+	_, err = core.FetchPreparationPreview(context.Background(), api.Request{
+		Paths:    []string{sourcePath},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER", "RF", "BLU"},
+	})
+	if err != nil {
+		t.Fatalf("fetch preparation preview: %v", err)
+	}
+	if client.searchCalls != 0 {
+		t.Fatalf("expected cached preparation to skip fresh client search, got %d calls", client.searchCalls)
+	}
+	if metaSvc.enrichCalls != 0 {
+		t.Fatalf("expected cached preparation to skip tracker enrichment, got %d calls", metaSvc.enrichCalls)
+	}
+	if trackerSvc.prepCalls != 1 {
+		t.Fatalf("expected preparation build once, got %d calls", trackerSvc.prepCalls)
+	}
+	if got := trackerSvc.lastMeta.TrackerIDs["aither"]; got != "111" {
+		t.Fatalf("expected cached AITHER tracker id, got %q", got)
+	}
+	if got := trackerSvc.lastMeta.TrackerIDs["rf"]; got != "222" {
+		t.Fatalf("expected cached RF tracker id, got %q", got)
+	}
+	if !containsCoreString(trackerSvc.lastMeta.MatchedTrackers, "AITHER") {
+		t.Fatalf("expected cached AITHER match, got %v", trackerSvc.lastMeta.MatchedTrackers)
+	}
+	if !containsCoreString(trackerSvc.lastMeta.MatchedTrackers, "RF") {
+		t.Fatalf("expected cached RF match, got %v", trackerSvc.lastMeta.MatchedTrackers)
+	}
+	if !containsCoreString(trackerSvc.lastMeta.TrackersRemove, "AITHER") {
+		t.Fatalf("expected cached AITHER removal, got %v", trackerSvc.lastMeta.TrackersRemove)
+	}
+	if !containsCoreString(trackerSvc.lastMeta.TrackersRemove, "RF") {
+		t.Fatalf("expected cached RF removal, got %v", trackerSvc.lastMeta.TrackersRemove)
+	}
+	if containsCoreString(trackerSvc.lastTrackers, "AITHER") {
+		t.Fatalf("expected matched tracker excluded from preparation, got %v", trackerSvc.lastTrackers)
+	}
+	if containsCoreString(trackerSvc.lastTrackers, "RF") {
+		t.Fatalf("expected RF excluded from preparation, got %v", trackerSvc.lastTrackers)
 	}
 }
 
@@ -680,6 +1497,41 @@ func TestCheckDupesSkipAutoTorrentSkipsPathedSearch(t *testing.T) {
 	}
 	if client.searchCalls != 0 {
 		t.Fatalf("expected pathed search skipped, got %d calls", client.searchCalls)
+	}
+}
+
+func TestCheckDupesSkipAutoTorrentFromConfigSkipsPathedSearch(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			Metadata:           config.MetadataConfig{SkipAutoTorrent: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Clients:    client,
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.CheckDupes(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("check duplicates: %v", err)
+	}
+	if client.searchCalls != 0 {
+		t.Fatalf("expected pathed search skipped from config, got %d calls", client.searchCalls)
 	}
 }
 
@@ -773,13 +1625,7 @@ func TestFetchMetadataPreviewRunsPathedSearchWithSourceURLOverride(t *testing.T)
 	if got := cached.TrackerIDs["aither"]; got != "111" {
 		t.Fatalf("expected source lookup tracker id preserved, got %q", got)
 	}
-	foundBLU := false
-	for _, tracker := range cached.MatchedTrackers {
-		if tracker == "BLU" {
-			foundBLU = true
-			break
-		}
-	}
+	foundBLU := slices.Contains(cached.MatchedTrackers, "BLU")
 	if !foundBLU {
 		t.Fatalf("expected BLU to be tracked as existing in client, got %v", cached.MatchedTrackers)
 	}
@@ -840,12 +1686,12 @@ func TestExportGUICachedPreparedMetaExactSignature(t *testing.T) {
 
 	prepared := api.PreparedMetadata{
 		SourcePath:           "/tmp/a",
-		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: ptr("Exact Match")},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: new("Exact Match")},
 	}
 	req := api.Request{
 		Paths:                []string{"/tmp/a"},
 		Mode:                 api.ModeGUI,
-		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: ptr("Exact Match")},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: new("Exact Match")},
 	}
 	if err := core.ImportPreparedMetadataForGUI(context.Background(), req, prepared); err != nil {
 		t.Fatalf("import prepared metadata for gui: %v", err)
@@ -863,7 +1709,7 @@ func TestExportGUICachedPreparedMetaExactSignature(t *testing.T) {
 	}
 }
 
-func TestExportGUICachedPreparedMetaFallsBackForGUIWithoutExternalOverrides(t *testing.T) {
+func TestExportGUICachedPreparedMetaFallsBackForNonExternalSignedOverrides(t *testing.T) {
 	t.Parallel()
 
 	core, err := New(api.CoreDependencies{
@@ -892,16 +1738,67 @@ func TestExportGUICachedPreparedMetaFallsBackForGUIWithoutExternalOverrides(t *t
 	exported, ok, err := core.ExportGUICachedPreparedMeta(context.Background(), api.Request{
 		Paths:                []string{"/tmp/a"},
 		Mode:                 api.ModeGUI,
-		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: ptr("Later UI edit")},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: new("Later UI edit")},
 	})
 	if err != nil {
 		t.Fatalf("export gui cached prepared meta: %v", err)
 	}
 	if !ok {
-		t.Fatal("expected GUI fallback cache hit")
+		t.Fatal("expected non-external GUI override to fall back to cached metadata")
 	}
 	if exported.SourcePath != "/tmp/a" {
-		t.Fatalf("expected cached source path /tmp/a, got %q", exported.SourcePath)
+		t.Fatalf("expected cached prepared metadata on fallback, got %q", exported.SourcePath)
+	}
+}
+
+func TestCheckDupesGUIFallbackReappliesReleaseOverrides(t *testing.T) {
+	t.Parallel()
+
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	}, api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Release: api.ReleaseInfo{
+			Title:  "Example",
+			Source: "WEB",
+		},
+	}); err != nil {
+		t.Fatalf("import prepared metadata for gui: %v", err)
+	}
+
+	category := "TV"
+	edition := "Hybrid"
+	if _, err := core.CheckDupes(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			Category: &category,
+			Edition:  &edition,
+		},
+	}); err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+
+	if dupes.lastMeta.ReleaseNameOverrides.Category == nil || *dupes.lastMeta.ReleaseNameOverrides.Category != category {
+		t.Fatalf("expected dupe check to receive category override, got %#v", dupes.lastMeta.ReleaseNameOverrides)
+	}
+	if dupes.lastMeta.ReleaseNameOverrides.Edition == nil || *dupes.lastMeta.ReleaseNameOverrides.Edition != edition {
+		t.Fatalf("expected dupe check to receive edition override, got %#v", dupes.lastMeta.ReleaseNameOverrides)
 	}
 }
 
@@ -978,8 +1875,8 @@ func TestExportGUICachedPreparedMetaReturnsIsolatedCopy(t *testing.T) {
 		Release: api.ReleaseInfo{
 			Codec: []string{"x264"},
 		},
-		BDInfo: map[string]interface{}{
-			"playlists": []interface{}{"00001", "00002"},
+		BDInfo: map[string]any{
+			"playlists": []any{"00001", "00002"},
 		},
 	}
 	if err := core.ImportPreparedMetadataForGUI(context.Background(), api.Request{
@@ -1005,7 +1902,11 @@ func TestExportGUICachedPreparedMetaReturnsIsolatedCopy(t *testing.T) {
 	exported.TrackerQuestionnaireAnswers["AITHER"]["season"] = "2"
 	exported.TrackerRuleFailures["AITHER"][0].Rule = "rule_b"
 	exported.Release.Codec[0] = "x265"
-	exported.BDInfo["playlists"].([]interface{})[0] = "99999"
+	exportedPlaylists, ok := exported.BDInfo["playlists"].([]any)
+	if !ok {
+		t.Fatalf("expected exported BDInfo playlists to be []interface{}, got %T", exported.BDInfo["playlists"])
+	}
+	exportedPlaylists[0] = "99999"
 
 	cached, ok := core.getDupeCache("/tmp/a", "")
 	if !ok {
@@ -1026,7 +1927,11 @@ func TestExportGUICachedPreparedMetaReturnsIsolatedCopy(t *testing.T) {
 	if cached.Release.Codec[0] != "x264" {
 		t.Fatalf("expected cached release info to remain isolated, got %#v", cached.Release)
 	}
-	if cached.BDInfo["playlists"].([]interface{})[0] != "00001" {
+	cachedPlaylists, ok := cached.BDInfo["playlists"].([]any)
+	if !ok {
+		t.Fatalf("expected cached BDInfo playlists to be []interface{}, got %T", cached.BDInfo["playlists"])
+	}
+	if cachedPlaylists[0] != "00001" {
 		t.Fatalf("expected cached BDInfo to remain isolated, got %#v", cached.BDInfo)
 	}
 }
@@ -1064,7 +1969,7 @@ func TestExportGUICachedPreparedMetaConcurrentCopiesStayIsolated(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for idx := 0; idx < 16; idx++ {
+	for idx := range 16 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -1500,6 +2405,132 @@ func TestRunUploadPreparedForwardsTrackerTorrentPath(t *testing.T) {
 	if client.injected[0].URL != "https://hdbits.org/download.php/file?id=333&passkey=abc" {
 		t.Fatalf("expected download URL to be forwarded, got %q", client.injected[0].URL)
 	}
+	if client.injected[0].CrossSeed {
+		t.Fatalf("expected uploaded tracker torrent injection to not be marked cross-seed")
+	}
+}
+
+func TestRunUploadPreparedInjectsDupeMatchedCrossSeedTorrents(t *testing.T) {
+	t.Parallel()
+
+	meta := &stubMeta{}
+	tracker := &stubTrackers{summary: api.UploadSummary{Uploaded: 1}}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			PostUpload:         config.PostUploadConfig{CrossSeeding: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   meta,
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Trackers:   []string{"AITHER"},
+		CrossSeedTorrents: []api.UploadedTorrent{{
+			Tracker:     "HDB",
+			DownloadURL: "https://hdbits.org/download.php/file?id=333&passkey=abc",
+		}},
+	}
+	core.storeDupeCache("/tmp/a", "", prepared)
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if result.UploadedCount != 1 {
+		t.Fatalf("expected 1 upload, got %d", result.UploadedCount)
+	}
+	if len(client.injected) != 1 {
+		t.Fatalf("expected one cross-seed injection, got %#v", client.injected)
+	}
+	injected := client.injected[0]
+	if !injected.CrossSeed {
+		t.Fatalf("expected cross-seed injection")
+	}
+	if injected.Tracker != "HDB" {
+		t.Fatalf("expected HDB tracker, got %q", injected.Tracker)
+	}
+	if injected.URL != "https://hdbits.org/download.php/file?id=333&passkey=abc" {
+		t.Fatalf("expected cross-seed download URL, got %q", injected.URL)
+	}
+}
+
+func TestRunUploadPreparedSkipsTrackerInjectionAfterFailedUploadButInjectsCrossSeed(t *testing.T) {
+	t.Parallel()
+
+	meta := &stubMeta{}
+	tracker := &stubTrackers{summary: api.UploadSummary{
+		Uploaded: -1,
+		UploadedTorrents: []api.UploadedTorrent{{
+			Tracker:     "AITHER",
+			DownloadURL: "https://aither.cc/torrent/download/1234",
+		}},
+	}}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			PostUpload:         config.PostUploadConfig{CrossSeeding: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   meta,
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Trackers:   []string{"AITHER"},
+		CrossSeedTorrents: []api.UploadedTorrent{{
+			Tracker:     "HDB",
+			DownloadURL: "https://hdbits.org/download.php/file?id=333&passkey=abc",
+		}},
+	}
+	core.storeDupeCache("/tmp/a", "", prepared)
+
+	_, err = core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err == nil || !strings.Contains(err.Error(), "upload summary invalid: -1") {
+		t.Fatalf("expected invalid upload summary error, got %v", err)
+	}
+	if len(client.injected) != 1 {
+		t.Fatalf("expected only cross-seed injection, got %#v", client.injected)
+	}
+	injected := client.injected[0]
+	if !injected.CrossSeed {
+		t.Fatalf("expected cross-seed injection")
+	}
+	if injected.Tracker != "HDB" {
+		t.Fatalf("expected HDB cross-seed injection, got %q", injected.Tracker)
+	}
+	if injected.URL != "https://hdbits.org/download.php/file?id=333&passkey=abc" {
+		t.Fatalf("expected cross-seed download URL, got %q", injected.URL)
+	}
 }
 
 func TestRunUploadPreparedRequiresCachedMetadata(t *testing.T) {
@@ -1536,14 +2567,23 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	t.Parallel()
 
 	meta := &stubMeta{}
-	tracker := &stubTrackers{}
+	client := &stubClient{}
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{
+		Tracker: "AITHER",
+		Status:  "ready",
+		Files: []api.TrackerDryRunFile{{
+			Field:   "torrent",
+			Path:    "/tmp/aither.torrent",
+			Present: true,
+		}},
+	}}}
 	core, err := New(api.CoreDependencies{
 		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
 		Services: api.ServiceSet{
 			Filesystem: &stubFS{},
 			Metadata:   meta,
 			Torrents:   &stubTorrent{},
-			Clients:    &stubClient{},
+			Clients:    client,
 			Trackers:   tracker,
 		},
 		Repository: &stubRepo{},
@@ -1571,6 +2611,173 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	}
 	if tracker.dryRunCalls != 1 {
 		t.Fatalf("expected 1 dry-run build call, got %d", tracker.dryRunCalls)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected client injection during tracker dry-run preview, got %d", client.calls)
+	}
+	if len(client.injected) != 1 || client.injected[0].Tracker != "AITHER" || client.injected[0].Path != "/tmp/aither.torrent" {
+		t.Fatalf("expected tracker dry-run injection artifact, got %#v", client.injected)
+	}
+}
+
+func TestFetchTrackerDryRunPreviewNoSeedSkipsClient(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{
+		Tracker: "AITHER",
+		Status:  "ready",
+		Files: []api.TrackerDryRunFile{{
+			Field:   "torrent",
+			Path:    "/tmp/aither.torrent",
+			Present: true,
+		}},
+	}}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	_, err = core.FetchTrackerDryRunPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+		Options:  api.UploadOptions{NoSeed: true},
+	})
+	if err != nil {
+		t.Fatalf("fetch tracker dry-run preview: %v", err)
+	}
+	if tracker.dryRunCalls != 1 {
+		t.Fatalf("expected 1 dry-run build call, got %d", tracker.dryRunCalls)
+	}
+	if client.calls != 0 {
+		t.Fatalf("expected no client injection with no-seed, got %d", client.calls)
+	}
+}
+
+func TestFetchTrackerDryRunPreviewEmitsInjectedTrackerProgress(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{
+		{
+			Tracker: "AITHER",
+			Status:  "ready",
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent",
+				Path:    "/tmp/aither.torrent",
+				Present: true,
+			}},
+		},
+		{
+			Tracker: "BLU",
+			Status:  "ready",
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent",
+				Path:    "/tmp/blu.torrent",
+				Present: true,
+			}},
+		},
+	}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	var completedTrackers []string
+	ctx := api.WithUploadProgressReporter(context.Background(), func(update api.UploadProgressUpdate) {
+		if update.Task == "client_injection" && update.Status == "completed" {
+			completedTrackers = append(completedTrackers, update.Tracker)
+		}
+	})
+	_, err = core.FetchTrackerDryRunPreview(ctx, api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER", "BLU"},
+	})
+	if err != nil {
+		t.Fatalf("fetch tracker dry-run preview: %v", err)
+	}
+	if got, want := completedTrackers, []string{"AITHER", "BLU"}; !slices.Equal(got, want) {
+		t.Fatalf("expected injected tracker progress %v, got %v", want, got)
+	}
+}
+
+func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
+	t.Parallel()
+
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{
+		Tracker:     "AITHER",
+		ReleaseName: "Watcher.2160p.WEB-DL.DDP5.1-FLUX",
+	}}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{
+		SourcePath:  "/tmp/a",
+		ReleaseName: "Watcher 2160p WEB-DL DD+ 5.1-FLUX",
+		Trackers:    []string{"AITHER", "BLU"},
+	})
+
+	preview, err := core.FetchTrackerDryRunPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("fetch tracker dry-run preview: %v", err)
+	}
+	if len(tracker.lastTrackers) != 1 || tracker.lastTrackers[0] != "AITHER" {
+		t.Fatalf("expected dry run for selected tracker only, got %#v", tracker.lastTrackers)
+	}
+	if len(preview.Trackers) != 1 {
+		t.Fatalf("expected one dry-run entry, got %d", len(preview.Trackers))
+	}
+	entry := preview.Trackers[0]
+	if !entry.ReleaseNameChanged {
+		t.Fatalf("expected release name change annotation, got %#v", entry)
+	}
+	if entry.OriginalReleaseName != "Watcher 2160p WEB-DL DD+ 5.1-FLUX" {
+		t.Fatalf("expected original release name, got %q", entry.OriginalReleaseName)
+	}
+	if entry.UploadReleaseName != "Watcher.2160p.WEB-DL.DDP5.1-FLUX" {
+		t.Fatalf("expected upload release name, got %q", entry.UploadReleaseName)
 	}
 }
 
@@ -2094,12 +3301,18 @@ func (s stubFS) ValidatePaths(_ context.Context, paths []string) ([]string, erro
 }
 
 type stubMeta struct {
-	calls    int
-	options  api.UploadOptions
-	prepared api.PreparedMetadata
+	calls        int
+	enrichCalls  int
+	refreshCalls int
+	resolveCalls int
+	options      api.UploadOptions
+	prepared     api.PreparedMetadata
+	enrichMeta   api.PreparedMetadata
+	enriched     api.PreparedMetadata
+	resolved     api.PreparedMetadata
 }
 
-func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
+func (s *stubMeta) Prepare(_ context.Context, req api.Request) (api.PreparedMetadata, error) {
 	s.calls++
 	s.options = req.Options
 	meta := api.PreparedMetadata{SourcePath: req.Paths[0], Paths: req.Paths, Mode: req.Mode, Options: req.Options}
@@ -2121,23 +3334,37 @@ func (s *stubMeta) Prepare(ctx context.Context, req api.Request) (api.PreparedMe
 	return meta, nil
 }
 
-func (s *stubMeta) EnrichTrackerData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) RefreshPreparedMetadata(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	s.refreshCalls++
 	return meta, nil
 }
 
-func (s *stubMeta) ApplyMediaInfoIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) EnrichTrackerData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	s.enrichCalls++
+	s.enrichMeta = meta
+	if strings.TrimSpace(s.enriched.SourcePath) != "" {
+		return s.enriched, nil
+	}
 	return meta, nil
 }
 
-func (s *stubMeta) ApplyArrData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ApplyMediaInfoIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ApplyArrData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
-func (s *stubMeta) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *stubMeta) ResolveExternalIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	s.resolveCalls++
+	if strings.TrimSpace(s.resolved.SourcePath) != "" {
+		return s.resolved, nil
+	}
+	return meta, nil
+}
+
+func (s *stubMeta) ApplyMediaDetails(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 
@@ -2208,21 +3435,26 @@ func (s *stubClient) SearchPathedTorrents(context.Context, api.PreparedMetadata)
 
 type stubDupes struct {
 	lastTrackers []string
+	lastMeta     api.PreparedMetadata
 }
 
-func (s *stubDupes) Check(ctx context.Context, _ api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
+func (s *stubDupes) Check(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
+	s.lastMeta = meta
 	s.lastTrackers = append([]string{}, trackers...)
 	return api.DupeCheckSummary{}, nil
 }
 
 type stubTrackers struct {
-	calls       int
-	dryRunCalls int
-	lastMeta    api.PreparedMetadata
-	summary     api.UploadSummary
+	calls         int
+	prepCalls     int
+	dryRunCalls   int
+	lastMeta      api.PreparedMetadata
+	lastTrackers  []string
+	dryRunEntries []api.TrackerDryRunEntry
+	summary       api.UploadSummary
 }
 
-func (s *stubTrackers) Upload(ctx context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
+func (s *stubTrackers) Upload(_ context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
 	s.calls++
 	s.lastMeta = meta
 	if s.summary.Uploaded == 0 {
@@ -2241,12 +3473,16 @@ func (s *stubTrackers) Upload(ctx context.Context, meta api.PreparedMetadata) (a
 	return s.summary, nil
 }
 
-func (s *stubTrackers) BuildPreparation(context.Context, api.PreparedMetadata, []string) (api.PreparationPreview, error) {
+func (s *stubTrackers) BuildPreparation(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.PreparationPreview, error) {
+	s.prepCalls++
+	s.lastMeta = meta
+	s.lastTrackers = append([]string{}, trackers...)
 	return api.PreparationPreview{}, nil
 }
 
-func (s *stubTrackers) BuildUploadDryRun(_ context.Context, meta api.PreparedMetadata, _ []string) ([]api.TrackerDryRunEntry, error) {
+func (s *stubTrackers) BuildUploadDryRun(_ context.Context, meta api.PreparedMetadata, trackers []string) ([]api.TrackerDryRunEntry, error) {
 	s.dryRunCalls++
 	s.lastMeta = meta
-	return []api.TrackerDryRunEntry{}, nil
+	s.lastTrackers = append([]string{}, trackers...)
+	return append([]api.TrackerDryRunEntry{}, s.dryRunEntries...), nil
 }

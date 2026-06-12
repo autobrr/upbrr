@@ -164,7 +164,17 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 				if c.logger != nil {
 					c.logger.Tracef("tvdb: episodes cache hit series_id=%d language=%s episodes=%d", seriesID, languageKey, len(cached.Episodes))
 				}
-				return cached, specificYearAlias(cached.Aliases, cached.Slug), nil
+				if strings.TrimSpace(cached.SeriesTitle) == "" && cached.SeriesYear == 0 {
+					if details, err := c.fetchSeriesDetails(ctx, seriesID, language); err == nil {
+						cached = applySeriesDetails(cached, details)
+						if cachePath != "" {
+							_ = writeEpisodesCache(cachePath, cached)
+						}
+					} else if c.logger != nil {
+						c.logger.Debugf("tvdb: cached episodes series metadata refresh failed series_id=%d: %v", seriesID, err)
+					}
+				}
+				return cached, specificSeriesAlias(cached), nil
 			}
 			if c.logger != nil {
 				c.logger.Debugf("tvdb: cached episodes missing requested data for %d language=%s", seriesID, languageKey)
@@ -176,36 +186,30 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 	if err != nil {
 		return EpisodesData{}, "", err
 	}
-	aliases := []Alias{}
-	airsDays := []string{}
-	airsTime := ""
-	airsTimezone := ""
-	airsTimezoneSource := ""
-	if details, err := c.fetchSeriesDetails(ctx, seriesID, language); err == nil {
-		aliases = details.aliases
-		airsDays = details.airsDays
-		airsTime = details.airsTime
-		airsTimezone = details.airsTimezone
-		airsTimezoneSource = details.airsTimezoneSource
+	details := seriesDetails{}
+	if fetchedDetails, err := c.fetchSeriesDetails(ctx, seriesID, language); err == nil {
+		details = fetchedDetails
 	}
 	data := EpisodesData{
 		Episodes:           episodes,
-		Aliases:            aliases,
+		Aliases:            details.aliases,
 		Slug:               slug,
-		AirsDays:           airsDays,
-		AirsTime:           airsTime,
-		AirsTimezone:       airsTimezone,
-		AirsTimezoneSource: airsTimezoneSource,
+		SeriesTitle:        details.seriesTitle,
+		SeriesYear:         details.seriesYear,
+		AirsDays:           details.airsDays,
+		AirsTime:           details.airsTime,
+		AirsTimezone:       details.airsTimezone,
+		AirsTimezoneSource: details.airsTimezoneSource,
 	}
 
 	if cachePath != "" && len(episodes) > 0 {
 		_ = writeEpisodesCache(cachePath, data)
 	}
 	if c.logger != nil {
-		c.logger.Debugf("tvdb: episodes loaded series_id=%d language=%s episodes=%d aliases=%d", seriesID, languageKey, len(episodes), len(aliases))
+		c.logger.Debugf("tvdb: episodes loaded series_id=%d language=%s episodes=%d aliases=%d", seriesID, languageKey, len(episodes), len(details.aliases))
 	}
 
-	return data, specificYearAlias(aliases, slug), nil
+	return data, specificSeriesAlias(data), nil
 }
 
 func (c *Client) GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
@@ -271,6 +275,15 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 		Poster:           extractPosterURL(resp.Data),
 		Aliases:          mapAliases(resp.Data.Aliases),
 	}
+	seriesTranslation, translationErr := c.fetchSeriesTranslation(ctx, metadata.TVDBID, "eng")
+	if translationErr != nil && c.logger != nil {
+		c.logger.Debugf("tvdb: series english translation lookup failed series_id=%d: %v", metadata.TVDBID, translationErr)
+	}
+	seriesMeta := seriesTranslationMetadata(resp.Data, seriesTranslation)
+	if strings.TrimSpace(seriesMeta.title) != "" {
+		metadata.NameEnglish = metautil.FirstNonEmptyTrimmed(seriesMeta.title, metadata.NameEnglish)
+	}
+	metadata.SeriesYear = seriesMeta.year
 
 	if metadata.Name == "" && len(resp.Data.Aliases) > 0 {
 		metadata.Name = strings.TrimSpace(resp.Data.Aliases[0].Name)
@@ -279,16 +292,12 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 		needsEnglishName := strings.TrimSpace(metadata.NameEnglish) == "" && containsEnglishTranslation(resp.Data.NameTranslations)
 		needsEnglishOverview := strings.TrimSpace(metadata.OverviewEnglish) == "" && containsEnglishTranslation(resp.Data.OverviewTranslations)
 		if needsEnglishName || needsEnglishOverview {
-			if translated, err := c.fetchSeriesTranslation(ctx, metadata.TVDBID, "eng"); err != nil {
-				if c.logger != nil {
-					c.logger.Debugf("tvdb: series english translation lookup failed series_id=%d: %v", metadata.TVDBID, err)
-				}
-			} else {
+			if translationErr == nil {
 				if needsEnglishName {
-					metadata.NameEnglish = metautil.FirstNonEmptyTrimmed(translated.Name, metadata.NameEnglish)
+					metadata.NameEnglish = metautil.FirstNonEmptyTrimmed(seriesTranslation.Name, metadata.NameEnglish)
 				}
 				if needsEnglishOverview {
-					metadata.OverviewEnglish = metautil.FirstNonEmptyTrimmed(translated.Overview, metadata.OverviewEnglish)
+					metadata.OverviewEnglish = metautil.FirstNonEmptyTrimmed(seriesTranslation.Overview, metadata.OverviewEnglish)
 				}
 			}
 		}
@@ -436,6 +445,8 @@ func (c *Client) fetchEpisodes(ctx context.Context, seriesID int, language strin
 
 type seriesDetails struct {
 	aliases            []Alias
+	seriesTitle        string
+	seriesYear         int
 	airsDays           []string
 	airsTime           string
 	airsTimezone       string
@@ -449,8 +460,15 @@ func (c *Client) fetchSeriesDetails(ctx context.Context, seriesID int, language 
 		return seriesDetails{}, err
 	}
 	airsDays, airsTime, airsTimezone, airsTimezoneSource := extractTVDBAirsSchedule(resp.Data)
+	translation, translationErr := c.fetchSeriesTranslation(ctx, seriesID, "eng")
+	if translationErr != nil && c.logger != nil {
+		c.logger.Debugf("tvdb: series english translation lookup failed series_id=%d: %v", seriesID, translationErr)
+	}
+	seriesMeta := seriesTranslationMetadata(resp.Data, translation)
 	return seriesDetails{
 		aliases:            mapAliases(resp.Data.Aliases),
+		seriesTitle:        seriesMeta.title,
+		seriesYear:         seriesMeta.year,
 		airsDays:           airsDays,
 		airsTime:           airsTime,
 		airsTimezone:       airsTimezone,
@@ -734,6 +752,65 @@ func deriveEnglishSeriesOverview(data seriesExtendedDataResponse, requestLanguag
 	return ""
 }
 
+type seriesMetadataFields struct {
+	title string
+	year  int
+}
+
+func seriesTranslationMetadata(data seriesExtendedDataResponse, translation seriesTranslationDataResponse) seriesMetadataFields {
+	translationAliases := trimStringList(translation.Aliases)
+	extendedEnglishAliases := englishAliasNames(data.Aliases)
+	englishAliases := append(append([]string{}, translationAliases...), extendedEnglishAliases...)
+
+	fallbackTitle := ""
+	if len(translationAliases) > 0 {
+		fallbackTitle = translationAliases[len(translationAliases)-1]
+	} else if len(extendedEnglishAliases) > 0 {
+		fallbackTitle = extendedEnglishAliases[len(extendedEnglishAliases)-1]
+	}
+
+	title := metautil.FirstNonEmptyTrimmed(translation.Name, fallbackTitle)
+	year := 0
+	for _, alias := range englishAliases {
+		if parsed := extractYearFromText(alias); parsed != "" {
+			year, _ = strconv.Atoi(parsed)
+			break
+		}
+	}
+	if len(englishAliases) == 0 {
+		if data.Year != 0 {
+			year = int(data.Year)
+		} else if parsed := extractYearFromText(data.Slug); parsed != "" {
+			year, _ = strconv.Atoi(parsed)
+		}
+	}
+	return seriesMetadataFields{title: title, year: year}
+}
+
+func englishAliasNames(values []aliasResponse) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if !isEnglishCode(value.Language) {
+			continue
+		}
+		name := strings.TrimSpace(value.Name)
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func trimStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 func (c *Client) fetchSeriesTranslation(ctx context.Context, seriesID int, language string) (seriesTranslationDataResponse, error) {
 	if seriesID == 0 {
 		return seriesTranslationDataResponse{}, errNotFound
@@ -859,30 +936,57 @@ func episodeFromResponse(item episodeResponse) Episode {
 	}
 }
 
-func specificYearAlias(aliases []Alias, slug string) string {
-	englishAliases := make([]string, 0)
+func applySeriesDetails(data EpisodesData, details seriesDetails) EpisodesData {
+	if len(data.Aliases) == 0 {
+		data.Aliases = details.aliases
+	}
+	if strings.TrimSpace(data.SeriesTitle) == "" {
+		data.SeriesTitle = details.seriesTitle
+	}
+	if data.SeriesYear == 0 {
+		data.SeriesYear = details.seriesYear
+	}
+	if len(data.AirsDays) == 0 {
+		data.AirsDays = details.airsDays
+	}
+	if strings.TrimSpace(data.AirsTime) == "" {
+		data.AirsTime = details.airsTime
+	}
+	if strings.TrimSpace(data.AirsTimezone) == "" {
+		data.AirsTimezone = details.airsTimezone
+	}
+	if strings.TrimSpace(data.AirsTimezoneSource) == "" {
+		data.AirsTimezoneSource = details.airsTimezoneSource
+	}
+	return data
+}
+
+func specificSeriesAlias(data EpisodesData) string {
+	title := strings.TrimSpace(data.SeriesTitle)
+	if title != "" {
+		if data.SeriesYear > 0 {
+			return fmt.Sprintf("%s (%d)", title, data.SeriesYear)
+		}
+		return title
+	}
+	return explicitYearAlias(data.Aliases)
+}
+
+func explicitYearAlias(aliases []Alias) string {
 	matches := make([]string, 0)
 	for _, alias := range aliases {
 		name := strings.TrimSpace(alias.Name)
-		if alias.Language != "eng" || name == "" {
+		if !isEnglishCode(alias.Language) || name == "" {
 			continue
 		}
-		englishAliases = append(englishAliases, name)
 		if yearAliasPattern.MatchString(name) {
-			matches = append(matches, alias.Name)
+			matches = append(matches, name)
 		}
 	}
-	if len(matches) > 0 {
-		return matches[len(matches)-1]
-	}
-	if len(englishAliases) == 0 {
+	if len(matches) == 0 {
 		return ""
 	}
-	year := extractYearFromSlug(slug)
-	if year == "" {
-		return ""
-	}
-	return fmt.Sprintf("%s (%s)", englishAliases[len(englishAliases)-1], year)
+	return matches[len(matches)-1]
 }
 
 func aliasYearMatches(name, year string) bool {
@@ -895,10 +999,6 @@ func aliasYearMatches(name, year string) bool {
 	}
 	plain := extractYearFromText(name)
 	return plain == year
-}
-
-func extractYearFromSlug(slug string) string {
-	return extractYearFromText(slug)
 }
 
 func extractYearFromText(text string) string {
@@ -1032,20 +1132,20 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: build request for %s: %w", path, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: execute request for %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb read response body: %w", err)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.refreshToken(ctx); err != nil {
@@ -1092,20 +1192,20 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	payload := map[string]string{"apikey": c.apiKey}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: marshal login payload: %w", err)
 	}
 
 	url := c.baseURL + "/login"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: build login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: execute login request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -1115,7 +1215,7 @@ func (c *Client) loginLocked(ctx context.Context) error {
 
 	var loginResp loginResponse
 	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		return err
+		return fmt.Errorf("tvdb: decode login response: %w", err)
 	}
 	if strings.TrimSpace(loginResp.Data.Token) == "" {
 		return errors.New("tvdb: login token missing")
@@ -1157,13 +1257,16 @@ func readEpisodesCache(path string) (EpisodesData, bool) {
 
 func writeEpisodesCache(path string, data EpisodesData) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("tvdb: create episodes cache dir: %w", err)
 	}
 	encoded, err := json.Marshal(data)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvdb: marshal episodes cache: %w", err)
 	}
-	return os.WriteFile(path, encoded, 0o600)
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		return fmt.Errorf("tvdb: write episodes cache: %w", err)
+	}
+	return nil
 }
 
 func normalizeIMDbRemote(value string) string {
@@ -1273,7 +1376,7 @@ func (e *episodesDataResponse) UnmarshalJSON(data []byte) error {
 	case '[':
 		var episodes []episodeResponse
 		if err := json.Unmarshal(trimmed, &episodes); err != nil {
-			return err
+			return fmt.Errorf("tvdb: unmarshal episodes list: %w", err)
 		}
 		e.Episodes = episodes
 		e.Slug = ""
@@ -1284,7 +1387,7 @@ func (e *episodesDataResponse) UnmarshalJSON(data []byte) error {
 			Slug     string            `json:"slug"`
 		}
 		if err := json.Unmarshal(trimmed, &payload); err != nil {
-			return err
+			return fmt.Errorf("tvdb: unmarshal episodes payload: %w", err)
 		}
 		e.Episodes = payload.Episodes
 		e.Slug = payload.Slug
@@ -1318,7 +1421,7 @@ func (v *intOrString) UnmarshalJSON(data []byte) error {
 	if trimmed[0] == '"' {
 		var text string
 		if err := json.Unmarshal(trimmed, &text); err != nil {
-			return err
+			return fmt.Errorf("tvdb: unmarshal integer string: %w", err)
 		}
 		text = strings.TrimSpace(text)
 		if text == "" {
@@ -1335,7 +1438,7 @@ func (v *intOrString) UnmarshalJSON(data []byte) error {
 
 	var numeric int
 	if err := json.Unmarshal(trimmed, &numeric); err != nil {
-		return err
+		return fmt.Errorf("tvdb: unmarshal integer: %w", err)
 	}
 	*v = intOrString(numeric)
 	return nil
@@ -1350,8 +1453,9 @@ type seriesTranslationResponse struct {
 }
 
 type seriesTranslationDataResponse struct {
-	Name     string `json:"name"`
-	Overview string `json:"overview"`
+	Name     string   `json:"name"`
+	Overview string   `json:"overview"`
+	Aliases  []string `json:"aliases"`
 }
 
 type seriesExtendedDataResponse struct {
@@ -1359,6 +1463,7 @@ type seriesExtendedDataResponse struct {
 	Name                 string                  `json:"name"`
 	Overview             string                  `json:"overview"`
 	Slug                 string                  `json:"slug"`
+	Year                 intOrString             `json:"year"`
 	NameTranslations     []string                `json:"nameTranslations"`
 	OverviewTranslations []string                `json:"overviewTranslations"`
 	FirstAired           string                  `json:"firstAired"`

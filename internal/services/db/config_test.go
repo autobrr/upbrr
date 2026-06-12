@@ -292,8 +292,14 @@ func TestMultipleSectionsSaveLoad(t *testing.T) {
 			t.Fatalf("load section %s: %v", section, err)
 		}
 
-		expectedJSON, _ := json.Marshal(expectedData)
-		loadedJSON, _ := json.Marshal(loaded)
+		expectedJSON, err := json.Marshal(expectedData)
+		if err != nil {
+			t.Fatalf("marshal expected section %s: %v", section, err)
+		}
+		loadedJSON, err := json.Marshal(loaded)
+		if err != nil {
+			t.Fatalf("marshal loaded section %s: %v", section, err)
+		}
 
 		if string(expectedJSON) != string(loadedJSON) {
 			t.Errorf("section %s mismatch: got %s, want %s", section, string(loadedJSON), string(expectedJSON))

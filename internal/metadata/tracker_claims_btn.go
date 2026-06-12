@@ -243,14 +243,14 @@ func (s *Service) fetchBTNClaimedTitles(ctx context.Context) (map[string]struct{
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims request build failed: %v", err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("metadata: build BTN claims request: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims fetch request failed: %v", err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("metadata: execute BTN claims request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -315,7 +315,7 @@ func (s *Service) loginBTNForClaims(ctx context.Context, client *http.Client) er
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims login request build failed: %v", err)
 		}
-		return err
+		return fmt.Errorf("metadata: build BTN claims login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "upbrr")
@@ -324,7 +324,7 @@ func (s *Service) loginBTNForClaims(ctx context.Context, client *http.Client) er
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims login request failed: %v", err)
 		}
-		return err
+		return fmt.Errorf("metadata: execute BTN claims login request: %w", err)
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
@@ -397,7 +397,7 @@ func setBTNJarCookiesFromNetscape(client *http.Client, rawURL string, values []*
 
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("metadata: parse BTN cookie URL: %w", err)
 	}
 
 	jarCookies := make([]*http.Cookie, 0, len(values))
@@ -427,13 +427,13 @@ func (s *Service) btnClaimsSessionValid(ctx context.Context, client *http.Client
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, btnSiteBaseURL+btnUserPath, nil)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("metadata: build BTN claims session validation request: %w", err)
 	}
 	req.Header.Set("User-Agent", "upbrr")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("metadata: execute BTN claims session validation request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -454,7 +454,7 @@ func resolveBTNClaims2FACode(otpURI string) (string, error) {
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("metadata: parse BTN claims otp_uri: %w", err)
 	}
 	secret := strings.TrimSpace(parsed.Query().Get("secret"))
 	if secret == "" {
@@ -469,9 +469,13 @@ func resolveBTNClaims2FACode(otpURI string) (string, error) {
 	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
 	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("metadata: decode BTN otp secret: %w", err)
 	}
-	counter := uint64(time.Now().Unix() / int64(period))
+	counterTime := time.Now().Unix() / int64(period)
+	if counterTime < 0 {
+		return "", errors.New("totp counter before unix epoch")
+	}
+	counter := uint64(counterTime)
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, counter)
 	mac := hmac.New(sha1.New, secretBytes)
@@ -617,8 +621,8 @@ func btnHTMLNodeID(node *htmlnode.Node) string {
 }
 
 func btnHTMLNodeHasClass(node *htmlnode.Node, className string) bool {
-	classes := strings.Fields(strings.TrimSpace(btnHTMLAttr(node, "class")))
-	for _, candidate := range classes {
+	classes := strings.FieldsSeq(strings.TrimSpace(btnHTMLAttr(node, "class")))
+	for candidate := range classes {
 		if strings.EqualFold(candidate, className) {
 			return true
 		}
@@ -813,10 +817,7 @@ func btnClaimFailureReason(meta api.PreparedMetadata, graceHours int) string {
 	if hoursSinceAir <= 0 {
 		return fmt.Sprintf("BTN has an active claim for this release; up to %d hours remain in the claim window", thresholdHours)
 	}
-	hoursRemaining := int(float64(thresholdHours) - hoursSinceAir + 0.999999999)
-	if hoursRemaining < 1 {
-		hoursRemaining = 1
-	}
+	hoursRemaining := max(int(float64(thresholdHours)-hoursSinceAir+0.999999999), 1)
 	return fmt.Sprintf("BTN has an active claim for this release; approximately %d hours remain in the %d-hour claim window", hoursRemaining, thresholdHours)
 }
 
@@ -853,11 +854,11 @@ func parseBTNTime(value string) (time.Time, bool) {
 func readBTNClaimedCache(path string) (map[string]struct{}, int64, error) {
 	payload, err := os.ReadFile(path)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("metadata: read BTN claimed cache: %w", err)
 	}
 	var cache btnClaimedShowsCache
 	if err := json.Unmarshal(payload, &cache); err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("metadata: unmarshal BTN claimed cache: %w", err)
 	}
 	titles := make(map[string]struct{}, len(cache.Titles))
 	for _, title := range cache.Titles {
@@ -870,7 +871,7 @@ func readBTNClaimedCache(path string) (map[string]struct{}, int64, error) {
 
 func writeBTNClaimedCache(path string, titles map[string]struct{}) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("metadata: create BTN claimed cache dir: %w", err)
 	}
 	serializedTitles := make([]string, 0, len(titles))
 	for title := range titles {
@@ -885,9 +886,12 @@ func writeBTNClaimedCache(path string, titles map[string]struct{}) error {
 	}
 	encoded, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("metadata: marshal BTN claimed cache: %w", err)
 	}
-	return os.WriteFile(path, encoded, 0o600)
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		return fmt.Errorf("metadata: write BTN claimed cache: %w", err)
+	}
+	return nil
 }
 
 func parseOptionalInt(value any) int {
@@ -957,5 +961,9 @@ func ioReadAllLimit(resp *http.Response, maxBytes int64) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("nil response body")
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read limited response body: %w", err)
+	}
+	return body, nil
 }

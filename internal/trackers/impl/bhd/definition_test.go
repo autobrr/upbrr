@@ -84,6 +84,37 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	}
 }
 
+func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+	torrentPath := filepath.Join(tmp, "Movie.torrent")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	_, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+		Tracker: "BHD",
+		Meta: api.PreparedMetadata{
+			SourcePath:        filepath.Join(tmp, "Movie.avi"),
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			ExternalIDs:       api.ExternalIDs{TMDBID: 123, Category: "MOVIE"},
+			Type:              "REMUX",
+			Container:         "avi",
+		},
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		Logger:        api.NopLogger{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "container") {
+		t.Fatalf("expected container validation error, got %v", err)
+	}
+}
+
 func TestUploadRetriesInvalidIMDb(t *testing.T) {
 	t.Parallel()
 
@@ -179,10 +210,120 @@ func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Count(result.Description, "Created by upbrr") != 1 {
+	if strings.Count(result.Description, "Uploaded by upbrr") != 1 {
 		t.Fatalf("expected single signature, got %q", result.Description)
 	}
 	if !strings.Contains(result.Description, "[img width=350]https://img.hdbits.org/full.jpg[/img]") {
 		t.Fatalf("expected raw image url to be used, got %q", result.Description)
+	}
+}
+
+func TestDefinitionBuildDescriptionStripsLegacyCreatedFooter(t *testing.T) {
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "BHD",
+		Meta: api.PreparedMetadata{
+			Options: api.UploadOptions{Screens: 4},
+		},
+		AppConfig: config.Config{},
+		Logger:    api.NopLogger{},
+		Assets: &trackers.DescriptionAssets{
+			Description: strings.Join([]string{
+				"Body",
+				`[align=right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/align]`,
+			}, "\n\n"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result.Description, "Created by upbrr") {
+		t.Fatalf("expected legacy footer stripped, got %q", result.Description)
+	}
+	if strings.Count(result.Description, "Uploaded by upbrr") != 1 {
+		t.Fatalf("expected single current footer, got %q", result.Description)
+	}
+	if !strings.Contains(result.Description, "Body") {
+		t.Fatalf("expected body preserved, got %q", result.Description)
+	}
+}
+
+func TestDefinitionBuildDescriptionDoesNotRestoreRawImagesOnlyBody(t *testing.T) {
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "BHD",
+		Meta: api.PreparedMetadata{
+			Options: api.UploadOptions{Screens: 4},
+		},
+		AppConfig: config.Config{},
+		Logger:    api.NopLogger{},
+		Assets: &trackers.DescriptionAssets{
+			Description: strings.Join([]string{
+				`[url=https://example.com/page][img]https://example.com/full.jpg[/img][/url]`,
+				`[right]Created by Upload Assistant[/right]`,
+			}, "\n\n"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result.Description, "Upload Assistant") {
+		t.Fatalf("expected bot footer stripped, got %q", result.Description)
+	}
+	if strings.Count(result.Description, "https://example.com/full.jpg") != 1 {
+		t.Fatalf("expected one screenshot instance, got %q", result.Description)
+	}
+	if strings.Count(result.Description, "Uploaded by upbrr") != 1 {
+		t.Fatalf("expected single current footer, got %q", result.Description)
+	}
+}
+
+func TestDefinitionBuildDescriptionStripsRightFormUpbrrFooter(t *testing.T) {
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "BHD",
+		Meta: api.PreparedMetadata{
+			Options: api.UploadOptions{Screens: 4},
+		},
+		AppConfig: config.Config{},
+		Logger:    api.NopLogger{},
+		Assets: &trackers.DescriptionAssets{
+			Description: strings.Join([]string{
+				"Body",
+				`[right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/right]`,
+			}, "\n\n"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Count(result.Description, "Uploaded by upbrr") != 1 {
+		t.Fatalf("expected only current BHD footer, got %q", result.Description)
+	}
+	if strings.Contains(result.Description, "[right]") || strings.Contains(result.Description, "[size=10]upbrr[/size]") {
+		t.Fatalf("expected right-form footer stripped, got %q", result.Description)
+	}
+	if !strings.Contains(result.Description, "Body") {
+		t.Fatalf("expected body preserved, got %q", result.Description)
+	}
+}
+
+func TestDefinitionBuildDescriptionDoesNotRestoreBotOnlyBody(t *testing.T) {
+	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "BHD",
+		Meta: api.PreparedMetadata{
+			Options: api.UploadOptions{Screens: 4},
+		},
+		AppConfig: config.Config{},
+		Logger:    api.NopLogger{},
+		Assets: &trackers.DescriptionAssets{
+			Description: `[right]Created by Upload Assistant[/right]`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result.Description, "Upload Assistant") {
+		t.Fatalf("expected bot-only body stripped, got %q", result.Description)
+	}
+	if strings.Count(result.Description, "Uploaded by upbrr") != 1 {
+		t.Fatalf("expected single current footer, got %q", result.Description)
 	}
 }

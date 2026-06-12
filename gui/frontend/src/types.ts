@@ -266,8 +266,20 @@ export type WebAuthStatus = {
   canCreate: boolean;
   username: string;
   allowUnencryptedExport: boolean;
+  browseRoot: string;
+  allowUnrestrictedBrowse: boolean;
   encryptionEnabled: boolean;
   message: string;
+};
+
+export type ApplicationInfo = {
+  version: string;
+  buildIdentifier: string;
+  goVersion: string;
+  goos: string;
+  goarch: string;
+  uptime: string;
+  uptimeSeconds: number;
 };
 
 export type ExternalPreview = {
@@ -302,6 +314,64 @@ export type ExternalPreview = {
   IMDB?: IMDBMetadata;
   TVDB?: TVDBMetadata;
   TVmaze?: TVmazeMetadata;
+};
+
+export type BlurayImage = {
+  Kind: string;
+  URL: string;
+};
+
+export type BluraySpecs = {
+  Video: {
+    Codec: string;
+    Resolution: string;
+  };
+  Audio: string[];
+  Subtitles: string[];
+  Discs: {
+    Type: string;
+    Count: number;
+    Format: string;
+  };
+  Playback: {
+    Region: string;
+    RegionNotes: string;
+  };
+};
+
+export type BlurayReleaseCandidate = {
+  ReleaseID: string;
+  ProductID: string;
+  MovieTitle: string;
+  MovieYear: string;
+  Title: string;
+  URL: string;
+  Price: string;
+  Publisher: string;
+  Country: string;
+  Region: string;
+  Score: number;
+  Accepted: boolean;
+  Warnings: string[];
+  MatchNotes: string[];
+  Specs: BluraySpecs;
+  CoverImages: BlurayImage[];
+  GenericDisc: boolean;
+  SpecsMissing: boolean;
+};
+
+export type BlurayMetadata = {
+  SourcePath: string;
+  IMDBID: number;
+  SearchURL: string;
+  SelectedReleaseID: string;
+  SelectedURL: string;
+  AutoSelected: boolean;
+  SelectionReason: string;
+  BestScore: number;
+  Threshold: number;
+  Candidates: BlurayReleaseCandidate[];
+  UpdatedAt: string;
 };
 
 export type TrackerPreview = {
@@ -420,6 +490,7 @@ export type MetadataPreview = {
   ExternalIDCandidates: ExternalIDCandidates;
   ExternalIDInfo: ExternalIDInfo[];
   ExternalPreview: ExternalPreview[];
+  Bluray?: BlurayMetadata;
   TrackerData: TrackerPreview[];
 };
 
@@ -452,13 +523,21 @@ export type ImageHostFeedback = {
   Status: string;
   SelectedHost: string;
   AllowedHosts: string[];
+  Warnings?: ImageHostWarning[];
   Reuploaded: boolean;
+  Message: string;
+};
+
+export type ImageHostWarning = {
+  Host: string;
   Message: string;
 };
 
 export type DescriptionBuilderGroup = {
   GroupKey: string;
   Trackers: string[];
+  Description: string;
+  DescriptionHTML: string;
   RawDescription: string;
   RawDescriptionHTML: string;
   HasOverride: boolean;
@@ -533,11 +612,24 @@ export type UploadedImageLink = {
   SourcePath: string;
   ImagePath: string;
   Host: string;
+  UsageScope: string;
   ImgURL: string;
   RawURL: string;
   WebURL: string;
   SizeBytes: number;
   UploadedAt: string;
+};
+
+export type UploadImageHostFailure = {
+  Host: string;
+  UsageScope: string;
+  Trackers: string[];
+  Message: string;
+};
+
+export type UploadImagesResult = {
+  Links: UploadedImageLink[];
+  Failures: UploadImageHostFailure[];
 };
 
 export type HistoryEntry = {
@@ -596,13 +688,39 @@ export type HistoryOverview = {
   ExternalIDs: ExternalIDs;
   ExternalMetadata: Record<string, unknown>;
   ReleaseNameOverrides: ReleaseNameOverrides;
-  DescriptionOverride: { SourcePath: string; GroupKey: string; Description: string; UpdatedAt: string };
-  DescriptionOverrides: Array<{ SourcePath: string; GroupKey: string; Description: string; UpdatedAt: string }>;
-  PlaylistSelection: { SourcePath: string; SelectedPlaylists: string[]; UseAll: boolean; UpdatedAt: string };
+  DescriptionOverride: {
+    SourcePath: string;
+    GroupKey: string;
+    Description: string;
+    UpdatedAt: string;
+  };
+  DescriptionOverrides: Array<{
+    SourcePath: string;
+    GroupKey: string;
+    Description: string;
+    UpdatedAt: string;
+  }>;
+  PlaylistSelection: {
+    SourcePath: string;
+    SelectedPlaylists: string[];
+    UseAll: boolean;
+    UpdatedAt: string;
+  };
   TrackerMetadata: HistoryTrackerMetadata[];
   TrackerRuleFailures: HistoryRuleFailure[];
-  Screenshots: Array<{ SourcePath: string; ImagePath: string; Purpose: string; CapturedAt: string }>;
-  FinalSelections: Array<{ SourcePath: string; ImagePath: string; Order: number; Source: string; SelectedAt: string }>;
+  Screenshots: Array<{
+    SourcePath: string;
+    ImagePath: string;
+    Purpose: string;
+    CapturedAt: string;
+  }>;
+  FinalSelections: Array<{
+    SourcePath: string;
+    ImagePath: string;
+    Order: number;
+    Source: string;
+    SelectedAt: string;
+  }>;
   UploadedImages: UploadedImageLink[];
   UploadHistory: HistoryUploadRecord[];
 };
@@ -620,16 +738,42 @@ export type TrackerUploadItem = {
 export type TrackerUploadTrackerState = {
   tracker: string;
   status: string;
+  task: string;
+  taskStatus: string;
   message: string;
+  completedPieces: number;
+  totalPieces: number;
+  percent: number;
+  hashRateMiB: number;
   uploadedCount: number;
   startedAt: string;
   finishedAt: string;
+};
+
+export type UploadProgressUpdate = {
+  sourcePath: string;
+  tracker: string;
+  task: string;
+  status: string;
+  message: string;
+  completedPieces: number;
+  totalPieces: number;
+  percent: number;
+  hashRateMiB: number;
+  timestamp: string;
 };
 
 export type TrackerUploadSnapshot = {
   jobID: string;
   sourcePath: string;
   status: string;
+  currentTask: string;
+  currentTaskStatus: string;
+  currentMessage: string;
+  currentCompletedPieces: number;
+  currentTotalPieces: number;
+  currentPercent: number;
+  currentHashRateMiB: number;
   trackers: TrackerUploadTrackerState[];
   failedTrackers: string[];
   uploadedCount: number;
@@ -665,6 +809,10 @@ export type TrackerDryRunEntry = {
   Status: string;
   Message: string;
   ReleaseName: string;
+  OriginalReleaseName: string;
+  UploadReleaseName: string;
+  ReleaseNameChanged: boolean;
+  ReleaseNameChangeReason: string;
   DescriptionGroup: string;
   Description: string;
   Endpoint: string;
@@ -681,6 +829,11 @@ export type TrackerDryRunPreview = {
 
 export type ConfigValue = string | number | boolean | null | ConfigMap | ConfigValue[];
 export type ConfigMap = { [key: string]: ConfigValue };
+export type ImageHostPolicyMetadata = {
+  UploadHosts?: string[];
+  TrackerUploadHosts?: Record<string, string[]>;
+  OwnedHosts?: Record<string, string>;
+};
 export type FieldType = "string" | "number" | "boolean";
 export type FieldMeta = {
   key: string;
@@ -688,6 +841,7 @@ export type FieldMeta = {
   type?: FieldType;
   advanced?: boolean;
   sensitive?: boolean;
+  options?: Array<{ value: string; label: string }>;
 };
 
 export type ReleaseNameEditState = {
@@ -740,6 +894,13 @@ export type ReleaseNameTouchedState = {
   region: boolean;
 };
 
+export type ReleaseNameIDEditState = {
+  tmdb: string;
+  imdb: string;
+  tvdb: string;
+  tvmaze: string;
+};
+
 export type DetailItem = {
   label: string;
   value: string;
@@ -771,4 +932,77 @@ export type PlaylistSelection = {
   SelectedPlaylists: string[];
   UseAll: boolean;
   UpdatedAt: string;
+};
+
+export type BrowseDirectoryEntry = {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  modifiedAt: string;
+};
+
+export type BrowseDirectoryResponse = {
+  currentPath: string;
+  parentPath: string;
+  mode: "file" | "folder";
+  entries: BrowseDirectoryEntry[];
+};
+
+export type BrowseDirectoryRequest = {
+  path: string;
+  mode: "file" | "folder";
+};
+
+export type UIState = {
+  path?: string;
+  sourceLookupURL?: string;
+  activeTab?: string;
+  preview?: MetadataPreview;
+  idEdits?: ReleaseNameIDEditState;
+  releaseEdits?: ReleaseNameEditState;
+  releaseTouched?: ReleaseNameTouchedState;
+  showExternalIDInputUI?: boolean;
+  selectedProvider?: string;
+  releasePageTrackerSelection?: Record<string, boolean>;
+  uploadToggles?: Record<string, boolean>;
+  uploadSkipClientInjection?: boolean;
+  runDebug?: boolean;
+  runLogLevel?: string;
+  runLogLevelTouched?: boolean;
+  dupeSummary?: DupeCheckSummary;
+  dupeChecked?: boolean;
+  dupeIgnore?: Record<string, boolean>;
+  dupeTrackerFlags?: Record<string, boolean>;
+  dupeCheckJobID?: string;
+  dupeCheckSnapshot?: DupeCheckSnapshot | null;
+  prepPreview?: PreparationPreview;
+  screenshotPlan?: ScreenshotPlan | null;
+  screenshotSelections?: ScreenshotSelection[];
+  showFrameSelections?: boolean;
+  previewImages?: ScreenshotPreviewImage[];
+  existingImages?: ScreenshotPreviewImage[];
+  existingTrackerImages?: ScreenshotPreviewImage[];
+  finalImages?: ScreenshotPreviewImage[];
+  finalResult?: ScreenshotResult | null;
+  deletedTrackerImages?: string[];
+  uploadHost?: string;
+  uploadSelections?: Record<string, boolean>;
+  uploadedImages?: UploadedImageLink[];
+  uploadedImageRecords?: UploadedImageLink[];
+  trackerUploadJobID?: string;
+  trackerUploadSnapshot?: TrackerUploadSnapshot | null;
+  trackerDryRunPreview?: TrackerDryRunPreview;
+  trackerQuestionnaireAnswers?: Record<string, Record<string, string>>;
+};
+
+export type UIStateRecord = {
+  id: string;
+  label: string;
+  updatedAt: string;
+  state: UIState;
+};
+
+export type UIStateList = {
+  states: UIStateRecord[];
 };

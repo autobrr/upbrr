@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +48,7 @@ func (commandRunner) Run(ctx context.Context, name string, args []string, dir st
 			exitCode = exitErr.ExitCode()
 		}
 		result.ExitCode = exitCode
-		return result, err
+		return result, fmt.Errorf("screenshots: run ffmpeg command: %w", err)
 	}
 	return result, nil
 }
@@ -119,6 +120,10 @@ type captureRequest struct {
 	FrameOverlay  bool
 	OverlaySize   int
 	FrameInfo     frameInfoResult
+	SourceWidth   int
+	SourceHeight  int
+	WidthScale    float64
+	HeightScale   float64
 }
 
 type frameInfoResult struct {
@@ -224,6 +229,10 @@ func buildFFmpegArgs(req captureRequest, useLibplacebo bool) []string {
 func buildFilterChain(req captureRequest, useLibplacebo bool) string {
 	filters := make([]string, 0, 6)
 
+	if scale := buildPARScaleFilter(req); scale != "" {
+		filters = append(filters, scale)
+	}
+
 	if req.ToneMap {
 		if useLibplacebo {
 			filters = append(filters, "libplacebo=tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv")
@@ -247,6 +256,37 @@ func buildFilterChain(req captureRequest, useLibplacebo bool) string {
 	}
 
 	return strings.Join(filters, ",")
+}
+
+func buildPARScaleFilter(req captureRequest) string {
+	widthScale := req.WidthScale
+	heightScale := req.HeightScale
+	if widthScale == 0 {
+		widthScale = 1
+	}
+	if heightScale == 0 {
+		heightScale = 1
+	}
+	if widthScale == 1 && heightScale == 1 {
+		return ""
+	}
+	if req.SourceWidth <= 0 || req.SourceHeight <= 0 {
+		return ""
+	}
+	scaledWidth := roundToEven(float64(req.SourceWidth) * widthScale)
+	scaledHeight := roundToEven(float64(req.SourceHeight) * heightScale)
+	if scaledWidth <= 0 || scaledHeight <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("scale=%d:%d", scaledWidth, scaledHeight)
+}
+
+func roundToEven(value float64) int {
+	rounded := int(math.RoundToEven(value))
+	if rounded%2 != 0 {
+		rounded++
+	}
+	return rounded
 }
 
 func overlayFilters(req captureRequest) []string {

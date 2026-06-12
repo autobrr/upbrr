@@ -8,7 +8,7 @@ import "testing"
 func TestRedactValueURLPatterns(t *testing.T) {
 	t.Parallel()
 
-	input := "https://tracker.example/0123456789abcdef/announce?passkey=secret&token=abc&info_hash=deadbeef"
+	input := "https://tracker.example/0123456789abcdef/announce?passkey=secret&token=abc&info_hash=deadbeef&authkey=private&uid=123"
 	output := RedactValue(input, nil)
 
 	if output == input {
@@ -17,8 +17,33 @@ func TestRedactValueURLPatterns(t *testing.T) {
 	if contains(output, "0123456789abcdef") {
 		t.Fatalf("expected passkey redacted, got %q", output)
 	}
-	if contains(output, "secret") || contains(output, "token=abc") {
+	if contains(output, "secret") || contains(output, "token=abc") || contains(output, "authkey=private") || contains(output, "uid=123") {
 		t.Fatalf("expected query params redacted, got %q", output)
+	}
+}
+
+func TestRedactValueAnnouncePathToken(t *testing.T) {
+	t.Parallel()
+
+	input := "https://tracker.example/announce/0123456789abcdef"
+	output := RedactValue(input, nil)
+
+	if contains(output, "0123456789abcdef") {
+		t.Fatalf("expected announce path token redacted, got %q", output)
+	}
+}
+
+func TestRedactValueTrackerLookupRequestErrors(t *testing.T) {
+	t.Parallel()
+
+	input := "trackerdata: bhd request: Post \"https://beyond-hd.me/api/torrents/bhdSecretKey123\": dial tcp timeout; unit3d: request: Get \"https://aither.cc/api/torrents/filter?api_token=aitherSecretKey123&file_name=Release.Name\": context deadline exceeded"
+	output := RedactValue(input, nil)
+
+	if contains(output, "bhdSecretKey123") || contains(output, "aitherSecretKey123") {
+		t.Fatalf("expected request error secrets redacted, got %q", output)
+	}
+	if !contains(output, "/api/torrents/[REDACTED]") || !contains(output, "api_token=[REDACTED]") {
+		t.Fatalf("expected redacted request error shape preserved, got %q", output)
 	}
 }
 
@@ -33,6 +58,20 @@ func TestRedactValueProxyPath(t *testing.T) {
 	}
 }
 
+func TestRedactValueBareProxyPath(t *testing.T) {
+	t.Parallel()
+
+	input := "clients: connecting to qbit http://127.0.0.1:7476/proxy/secret"
+	output := RedactValue(input, nil)
+
+	if contains(output, "/proxy/secret") {
+		t.Fatalf("expected bare proxy secret redacted, got %q", output)
+	}
+	if !contains(output, "/proxy/[REDACTED]") {
+		t.Fatalf("expected proxy path shape preserved, got %q", output)
+	}
+}
+
 func TestRedactPrivateInfoJSON(t *testing.T) {
 	t.Parallel()
 
@@ -42,11 +81,17 @@ func TestRedactPrivateInfoJSON(t *testing.T) {
 		"entries": []any{"passkey", "value"},
 	}
 
-	redacted := RedactPrivateInfo(input, nil).(map[string]any)
+	redacted, ok := RedactPrivateInfo(input, nil).(map[string]any)
+	if !ok {
+		t.Fatalf("expected redacted value to be map[string]any")
+	}
 	if redacted["token"] != "[REDACTED]" {
 		t.Fatalf("expected token redacted, got %#v", redacted["token"])
 	}
-	nested := redacted["nested"].(map[string]any)
+	nested, ok := redacted["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested redacted value to be map[string]any")
+	}
 	if nested["password"] != "[REDACTED]" {
 		t.Fatalf("expected password redacted, got %#v", nested["password"])
 	}

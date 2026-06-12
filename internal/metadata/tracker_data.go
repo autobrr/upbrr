@@ -32,7 +32,7 @@ const (
 func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -90,7 +90,7 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 	for _, tracker := range trackers {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, ctx.Err()
+			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if s.isTrackerCoolingDown(ctx, tracker, now) {
@@ -102,15 +102,27 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 		return meta, nil
 	}
 
-	if !shouldUseStrictPriorityLookup(meta) {
+	if !shouldUseStrictPriorityLookup(meta, eligible, s.cfg.Trackers.PreferredTracker) {
 		return s.enrichTrackerDataConcurrent(ctx, meta, eligible, now, unit3dClient)
 	}
 
 	return s.enrichTrackerDataPriority(ctx, meta, eligible, now, unit3dClient)
 }
 
-func shouldUseStrictPriorityLookup(meta api.PreparedMetadata) bool {
-	return len(meta.TrackerIDs) > 0
+func shouldUseStrictPriorityLookup(meta api.PreparedMetadata, eligible []string, preferred string) bool {
+	if len(meta.TrackerIDs) > 0 {
+		return true
+	}
+	preferred = strings.TrimSpace(preferred)
+	if preferred == "" {
+		return false
+	}
+	for _, tracker := range eligible {
+		if strings.EqualFold(strings.TrimSpace(tracker), preferred) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) enrichTrackerDataPriority(
@@ -124,14 +136,14 @@ func (s *Service) enrichTrackerDataPriority(
 	for _, tracker := range eligible {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, ctx.Err()
+			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
 		record, persistable, hasIDs, err := s.lookupTrackerData(ctx, meta, tracker, now, unit3dClient)
 		if err != nil {
 			if s.logger != nil {
-				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %v", tracker, err)
+				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", tracker, redaction.RedactValue(err.Error(), nil))
 			}
 			continue
 		}
@@ -185,21 +197,17 @@ func (s *Service) enrichTrackerDataConcurrent(
 	jobs := make(chan string, len(eligible))
 	results := make(chan trackerLookupOutcome, len(eligible))
 
-	workerCount := trackerLookupWorkers
-	if workerCount > len(eligible) {
-		workerCount = len(eligible)
-	}
+	workerCount := min(trackerLookupWorkers, len(eligible))
 	if workerCount <= 0 {
 		workerCount = 1
 	}
 
+	lookupMeta := meta
 	var workers sync.WaitGroup
 	for idx := 0; idx < workerCount; idx++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			for tracker := range jobs {
-				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, meta, tracker, now, unit3dClient)
+				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, lookupMeta, tracker, now, unit3dClient)
 				results <- trackerLookupOutcome{
 					tracker:     tracker,
 					record:      record,
@@ -208,7 +216,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 					err:         err,
 				}
 			}
-		}()
+		})
 	}
 
 	for _, tracker := range eligible {
@@ -218,11 +226,11 @@ func (s *Service) enrichTrackerDataConcurrent(
 
 	winnerResolved := false
 	assetSourceTracker := ""
-	for idx := 0; idx < len(eligible); idx++ {
+	for range eligible {
 		outcome := <-results
 		if outcome.err != nil {
 			if s.logger != nil {
-				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %v", outcome.tracker, outcome.err)
+				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", outcome.tracker, redaction.RedactValue(outcome.err.Error(), nil))
 			}
 			continue
 		}
@@ -288,7 +296,7 @@ func (s *Service) lookupTrackerData(
 ) (api.TrackerMetadata, bool, bool, error) {
 	select {
 	case <-ctx.Done():
-		return api.TrackerMetadata{}, false, false, ctx.Err()
+		return api.TrackerMetadata{}, false, false, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -302,19 +310,20 @@ func (s *Service) lookupTrackerData(
 	}
 
 	if trackerdata.IsUnit3DTracker(tracker) {
+		fileName := trackerLookupFileName(meta, record.TrackerID, s.cfg.Metadata.SkipTrackerFilenameLookup)
 		if s.logger != nil {
-			s.logger.Tracef("metadata: unit3d lookup start tracker=%s id=%q file=%q", tracker, record.TrackerID, searchFileName(meta))
+			s.logger.Tracef("metadata: unit3d lookup start tracker=%s id=%q file=%q", tracker, record.TrackerID, fileName)
 		}
 		result, err := unit3dClient.TorrentInfo(
 			ctx,
 			tracker,
 			record.TrackerID,
-			searchFileName(meta),
+			fileName,
 			meta.Options.OnlyID,
 			meta.Options.KeepImages,
 		)
 		if err != nil {
-			return api.TrackerMetadata{}, false, false, err
+			return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
 		}
 		if !hasUnit3DData(result) {
 			if s.logger != nil {
@@ -340,7 +349,7 @@ func (s *Service) lookupTrackerData(
 		record.Category = normalizeUnit3DCategory(result.Category)
 		record.InfoHash = metautil.FirstNonEmptyTrimmed(record.InfoHash, result.InfoHash)
 		record.Description = result.Description
-		record.ImageURLs = downloadedImages
+		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Options.KeepImages)
 		record.Filename = result.FileName
 		record.Matched = true
 		if s.logger != nil {
@@ -382,12 +391,12 @@ func (s *Service) lookupTrackerData(
 		tracker,
 		record.TrackerID,
 		meta,
-		searchFileName(meta),
+		trackerLookupFileName(meta, record.TrackerID, s.cfg.Metadata.SkipTrackerFilenameLookup),
 		meta.Options.OnlyID,
 		meta.Options.KeepImages,
 	)
 	if err != nil {
-		return api.TrackerMetadata{}, false, false, err
+		return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
 	}
 	if !result.HasData() {
 		if s.logger != nil {
@@ -404,14 +413,14 @@ func (s *Service) lookupTrackerData(
 
 	applyTrackerDataResult(&record, result)
 	if strings.TrimSpace(result.Description) != "" || len(result.Images) > 0 {
-		downloaded := s.persistUnit3DArtifacts(
+		downloadedImages := s.persistUnit3DArtifacts(
 			ctx,
 			meta,
 			tracker,
 			trackerdata.Result{Description: result.Description, Validated: result.Images},
 			meta.Options.KeepImages,
 		)
-		record.ImageURLs = downloaded
+		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Options.KeepImages)
 	}
 	if s.logger != nil {
 		s.logger.Debugf(
@@ -434,6 +443,26 @@ func (s *Service) lookupTrackerData(
 		return api.TrackerMetadata{}, false, false, nil
 	}
 	return record, true, hasTrackerMetadataIDs(record), nil
+}
+
+func trackerImageURLsFromResult(_ trackerdata.Result, downloadedImages []string, keepImages bool) []string {
+	if !keepImages || len(downloadedImages) == 0 {
+		return nil
+	}
+	urls := make([]string, len(downloadedImages))
+	hasUsable := false
+	for idx, imageURL := range downloadedImages {
+		trimmed := strings.TrimSpace(imageURL)
+		if trimmed == "" {
+			continue
+		}
+		urls[idx] = trimmed
+		hasUsable = true
+	}
+	if !hasUsable {
+		return nil
+	}
+	return urls
 }
 
 func trackerRecordHasPathedData(record api.TrackerMetadata) bool {
@@ -662,7 +691,7 @@ func trackerLookupConfigured(tracker string, entry config.TrackerConfig) bool {
 		return len(strings.TrimSpace(entry.APIKey)) >= minTrackerTokenLen &&
 			len(strings.TrimSpace(entry.BhdRSSKey)) >= minTrackerTokenLen
 	case "PTP":
-		return strings.TrimSpace(entry.ApiUser) != "" && strings.TrimSpace(entry.ApiKey) != ""
+		return strings.TrimSpace(entry.PTPAPIUser) != "" && strings.TrimSpace(entry.PTPAPIKey) != ""
 	case "HDB":
 		return strings.TrimSpace(entry.Username) != "" && strings.TrimSpace(entry.Passkey) != ""
 	case "ANT":
@@ -810,7 +839,7 @@ func logClientSearchIDs(meta api.PreparedMetadata, logger api.Logger) {
 		if value == "" {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s=%s", strings.ToUpper(key), value))
+		parts = append(parts, fmt.Sprintf("%s=%s", strings.ToUpper(key), redaction.RedactValue(value, nil)))
 	}
 	if len(parts) == 0 {
 		return
@@ -841,15 +870,19 @@ func searchFileName(meta api.PreparedMetadata) string {
 	return pathutil.Base(base)
 }
 
-func normalizeUnit3DCategory(category string) string {
-	value := strings.ToUpper(strings.TrimSpace(category))
-	if strings.Contains(value, "MOVIE") {
-		return "MOVIE"
+func trackerLookupFileName(meta api.PreparedMetadata, trackerID string, skipFilenameLookup bool) string {
+	if skipFilenameLookup && strings.TrimSpace(trackerID) == "" {
+		return ""
 	}
-	if strings.Contains(value, "TV") {
-		return "TV"
+	return searchFileName(meta)
+}
+
+func normalizeUnit3DCategory(category string) api.Category {
+	normalized := api.NormalizeCategory(category)
+	if normalized.IsValid() {
+		return normalized.Canonical()
 	}
-	return strings.TrimSpace(category)
+	return api.CategoryUnknown
 }
 
 func hasUnit3DData(result trackerdata.Result) bool {

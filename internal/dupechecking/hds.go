@@ -14,6 +14,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -47,7 +48,7 @@ func (h hdsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 			"pages":   {strconv.Itoa(page)},
 		}
 		resp, body, err := doTextGet(ctx, h.http, baseURL+"/index.php", params, nil, cookies)
-		if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if err != nil || !resp.ok() {
 			return nil, []string{noteSkip("HDS search failed")}, nil
 		}
 		parts := strings.SplitN(body, "Show/Hide Categories", 2)
@@ -70,7 +71,7 @@ func (h hdsHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 				continue
 			}
 			entry := api.DupeEntry{
-				Name: strings.TrimSpace(firstNonEmpty(nodeTextHTML(nameNode), attrValueHTML(nameNode, "title"))),
+				Name: strings.TrimSpace(metautil.FirstNonEmptyTrimmed(nodeTextHTML(nameNode), attrValueHTML(nameNode, "title"))),
 				Link: absoluteURL(baseURL, attrValueHTML(nameNode, "href")),
 			}
 			cells := findNodes(row, func(node *xhtml.Node) bool {

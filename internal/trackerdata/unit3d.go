@@ -9,13 +9,16 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
+	_ "image/gif"  // register GIF decoder for tracker images
+	_ "image/jpeg" // register JPEG decoder for tracker images
+	_ "image/png"  // register PNG decoder for tracker images
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
-	"path"
+	"path" //nolint:depguard // Builds Unit3D API URL paths, not local filesystem paths.
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +37,20 @@ const (
 	maxImageBytes    = 20 * 1024 * 1024
 	imageConcurrency = 5
 )
+
+var unit3DImageBlockedIPRanges = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+}
 
 var unit3DCategoryNamesByID = map[string][]string{
 	"1": {"MOVIE"},
@@ -99,7 +116,7 @@ func IsUnit3DTrackerWithConfig(cfg config.Config, tracker string) bool {
 	if strings.TrimSpace(entry.Username) != "" || strings.TrimSpace(entry.Password) != "" || strings.TrimSpace(entry.Passkey) != "" {
 		return false
 	}
-	if strings.TrimSpace(entry.ApiUser) != "" || strings.TrimSpace(entry.ApiKey) != "" {
+	if strings.TrimSpace(entry.PTPAPIUser) != "" || strings.TrimSpace(entry.PTPAPIKey) != "" {
 		return false
 	}
 	return true
@@ -211,10 +228,8 @@ func reverseLookupCanonicalID(canonical string, namesByID map[string][]string) s
 		return ""
 	}
 	for id, names := range namesByID {
-		for _, name := range names {
-			if name == canonical {
-				return id
-			}
+		if slices.Contains(names, canonical) {
+			return id
 		}
 	}
 	return ""
@@ -271,7 +286,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 		c.logger.Debugf("unit3d: %s missing api token; request may be unauthenticated", tracker)
 	}
 
-	endpoint := ""
+	var endpoint string
 	switch {
 	case strings.TrimSpace(id) != "":
 		endpoint = baseURL + "/api/torrents/" + strings.TrimSpace(id)
@@ -325,15 +340,22 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	if description == "" {
 		return result, nil
 	}
-	report := descriptionunit3d.CleanDescription(description, baseURL)
-	cleaned := report.Description
-	images := convertCleanedUnit3DImages(report.Images)
+	reports := make([]descriptionunit3d.Report, 0, 2)
+	cleaned := ""
+	if !onlyID {
+		report := descriptionunit3d.CleanDescriptionBody(description, baseURL)
+		reports = append(reports, report)
+		cleaned = report.Description
+	}
+	images := []bbcode.Image(nil)
+	if keepImages {
+		report := descriptionunit3d.CleanDescriptionImages(description, baseURL)
+		reports = append(reports, report)
+		images = convertCleanedUnit3DImages(report.Images)
+	}
 	cleanedLen := len(cleaned)
 	imageCount := len(images)
 	validated := []bbcode.Image(nil)
-	if onlyID {
-		cleaned = ""
-	}
 	if keepImages {
 		validated = validateImages(ctx, c.http, images)
 		images = validated
@@ -344,8 +366,10 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	result.Images = images
 	result.Validated = validated
 	c.logger.Debugf("unit3d: %s description raw=%d cleaned=%d images=%d validated=%d onlyID=%t keepImages=%t", tracker, len(description), cleanedLen, imageCount, len(validated), onlyID, keepImages)
-	for _, note := range report.Notes {
-		c.logger.Debugf("unit3d: %s description note kind=%s msg=%s", tracker, note.Kind, note.Message)
+	for _, report := range reports {
+		for _, note := range report.Notes {
+			c.logger.Debugf("unit3d: %s description note kind=%s msg=%s", tracker, note.Kind, note.Message)
+		}
 	}
 
 	return result, nil
@@ -381,8 +405,36 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 		c.logger.Debugf("unit3d: %s missing api token; request may be unauthenticated", tracker)
 	}
 
-	endpoint := strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "filter")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	endpoints := []unit3dSearchEndpoint{{
+		url: strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "filter"),
+	}}
+	if usesUnit3DPendingSearch(tracker) {
+		tmdbID, _ := strconv.Atoi(strings.TrimSpace(params.Get("tmdbId")))
+		endpoints = append(endpoints, unit3dSearchEndpoint{
+			url:           strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "pending"),
+			pending:       true,
+			filterTMDBID:  tmdbID,
+			pendingWebURL: strings.TrimRight(baseURL, "/") + "/torrents/pending",
+		})
+	}
+
+	var entries []api.DupeEntry
+	for _, endpoint := range endpoints {
+		endpointEntries, warning, err := c.searchUnit3DEndpoint(ctx, tracker, endpoint, params, isDisc)
+		if err != nil {
+			return nil, "", err
+		}
+		if warning != "" {
+			return entries, warning, nil
+		}
+		entries = append(entries, endpointEntries...)
+	}
+
+	return entries, "", nil
+}
+
+func (c *Client) searchUnit3DEndpoint(ctx context.Context, tracker string, endpoint unit3dSearchEndpoint, params url.Values, isDisc bool) ([]api.DupeEntry, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.url, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("unit3d: request: %w", err)
 	}
@@ -402,13 +454,24 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 		return nil, fmt.Sprintf("%s search failed (status=%d)", strings.ToUpper(strings.TrimSpace(tracker)), resp.StatusCode), nil
 	}
 
+	if endpoint.pending {
+		var payload unit3dPendingSearchResponse
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			return nil, "", fmt.Errorf("unit3d: decode: %w", err)
+		}
+		return buildUnit3DPendingEntries(payload.Data, endpoint, isDisc), "", nil
+	}
+
 	var payload unit3dSearchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, "", fmt.Errorf("unit3d: decode: %w", err)
 	}
+	return buildUnit3DSearchEntries(payload.Data, isDisc), "", nil
+}
 
-	entries := make([]api.DupeEntry, 0, len(payload.Data))
-	for _, item := range payload.Data {
+func buildUnit3DSearchEntries(items []unit3dSearchItem, isDisc bool) []api.DupeEntry {
+	entries := make([]api.DupeEntry, 0, len(items))
+	for _, item := range items {
 		entry := api.DupeEntry{
 			Name:        strings.TrimSpace(item.Attributes.Name),
 			Trumpable:   item.Attributes.Trumpable,
@@ -446,16 +509,65 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 		entries = append(entries, entry)
 	}
 
-	return entries, "", nil
+	return entries
+}
+
+func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dSearchEndpoint, isDisc bool) []api.DupeEntry {
+	entries := make([]api.DupeEntry, 0, len(items))
+	for _, item := range items {
+		if endpoint.filterTMDBID > 0 && item.TMDBID != endpoint.filterTMDBID {
+			continue
+		}
+
+		entry := api.DupeEntry{
+			Name:        strings.TrimSpace(item.Name),
+			Trumpable:   item.Trumpable,
+			Link:        endpoint.pendingWebURL,
+			Download:    strings.TrimSpace(item.DownloadLink),
+			ID:          strings.TrimSpace(item.ID.String()),
+			Type:        strings.TrimSpace(item.Type),
+			Res:         strings.TrimSpace(item.Resolution),
+			Internal:    item.Internal,
+			BDInfo:      strings.TrimSpace(item.BDInfo),
+			Description: strings.TrimSpace(item.Description),
+			Flags:       append([]string{}, item.Flags...),
+		}
+
+		if sizeValue, err := parseNumberToInt64(item.Size); err == nil {
+			entry.SizeBytes = sizeValue
+			entry.SizeKnown = sizeValue > 0
+		} else if raw := strings.TrimSpace(item.Size.String()); raw != "" {
+			entry.SizeText = raw
+		}
+
+		if len(item.Files) > 0 {
+			entry.FileCount = len(item.Files)
+			if !isDisc {
+				entry.Files = make([]string, 0, len(item.Files))
+				for _, file := range item.Files {
+					trimmed := strings.TrimSpace(file.Name)
+					if trimmed != "" {
+						entry.Files = append(entry.Files, trimmed)
+					}
+				}
+			}
+		}
+
+		entries = append(entries, entry)
+	}
+
+	return entries
+}
+
+func usesUnit3DPendingSearch(tracker string) bool {
+	return strings.EqualFold(tracker, "CBR")
 }
 
 func validateImages(ctx context.Context, client *http.Client, images []bbcode.Image) []bbcode.Image {
 	if len(images) == 0 {
 		return nil
 	}
-	if client == nil {
-		client = &http.Client{Timeout: imageTimeout}
-	}
+	client = Unit3DImageHTTPClient(client)
 
 	results := make([]bbcode.Image, len(images))
 	valid := make([]bool, len(images))
@@ -463,16 +575,14 @@ func validateImages(ctx context.Context, client *http.Client, images []bbcode.Im
 	var wg sync.WaitGroup
 
 	for idx, img := range images {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if checkImage(ctx, client, img.RawURL) {
 				results[idx] = img
 				valid[idx] = true
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -488,6 +598,9 @@ func validateImages(ctx context.Context, client *http.Client, images []bbcode.Im
 func checkImage(ctx context.Context, client *http.Client, rawURL string) bool {
 	trimmed := strings.TrimSpace(rawURL)
 	if trimmed == "" {
+		return false
+	}
+	if err := ValidateUnit3DImageURL(ctx, trimmed); err != nil {
 		return false
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, trimmed, nil)
@@ -512,6 +625,150 @@ func checkImage(ctx context.Context, client *http.Client, rawURL string) bool {
 	limited := io.LimitReader(resp.Body, maxImageBytes)
 	if _, _, err := image.DecodeConfig(limited); err != nil {
 		return false
+	}
+	return true
+}
+
+// Unit3DImageHTTPClient returns a clone that rejects non-public image redirects and,
+// for standard transports, dials only public target IPs.
+func Unit3DImageHTTPClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{Timeout: imageTimeout}
+	}
+	cloned := *client
+	if cloned.Timeout == 0 {
+		cloned.Timeout = imageTimeout
+	}
+	if transport, ok := unit3DImagePublicTransport(cloned.Transport); ok {
+		cloned.Transport = transport
+	}
+	checkRedirect := cloned.CheckRedirect
+	cloned.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := ValidateUnit3DImageURL(req.Context(), req.URL.String()); err != nil {
+			return err
+		}
+		if checkRedirect != nil {
+			return checkRedirect(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &cloned
+}
+
+func unit3DImagePublicTransport(rt http.RoundTripper) (http.RoundTripper, bool) {
+	var transport *http.Transport
+	switch typed := rt.(type) {
+	case nil:
+		defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return rt, false
+		}
+		transport = defaultTransport.Clone()
+	case *http.Transport:
+		transport = typed.Clone()
+	default:
+		return rt, false
+	}
+
+	originalDial := transport.DialContext
+	dialer := &net.Dialer{Timeout: imageTimeout}
+	transport.DialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("parse address: %w", err)
+		}
+		addrs, err := resolveUnit3DImagePublicAddrs(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		var lastErr error
+		for _, addr := range addrs {
+			target := net.JoinHostPort(addr.String(), port)
+			var conn net.Conn
+			if originalDial != nil {
+				conn, err = originalDial(ctx, network, target)
+			} else {
+				conn, err = dialer.DialContext(ctx, network, target)
+			}
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
+	}
+	return transport, true
+}
+
+// ValidateUnit3DImageURL rejects non-HTTP(S) or non-public Unit3D image targets.
+func ValidateUnit3DImageURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return errors.New("missing host")
+	}
+	_, err = resolveUnit3DImagePublicAddrs(ctx, host)
+	return err
+}
+
+func resolveUnit3DImagePublicAddrs(ctx context.Context, host string) ([]netip.Addr, error) {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return nil, errors.New("missing host")
+	}
+	lowerHost := strings.ToLower(host)
+	if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") || strings.Contains(lowerHost, "%") {
+		return nil, fmt.Errorf("blocked private image host %q", host)
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap()
+		if !isUnit3DImagePublicIP(addr) {
+			return nil, fmt.Errorf("blocked private image address %q", addr)
+		}
+		return []netip.Addr{addr}, nil
+	}
+
+	resolved, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	addrs := make([]netip.Addr, 0, len(resolved))
+	for _, item := range resolved {
+		addr, ok := netip.AddrFromSlice(item.IP)
+		if !ok {
+			continue
+		}
+		addr = addr.Unmap()
+		if !isUnit3DImagePublicIP(addr) {
+			return nil, fmt.Errorf("blocked private image address %q", addr)
+		}
+		addrs = append(addrs, addr)
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("host %q resolved no public addresses", host)
+	}
+	return addrs, nil
+}
+
+func isUnit3DImagePublicIP(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+		return false
+	}
+	for _, blocked := range unit3DImageBlockedIPRanges {
+		if blocked.Contains(addr) {
+			return false
+		}
 	}
 	return true
 }
@@ -579,7 +836,7 @@ func parseNumberToInt64(value json.Number) (int64, error) {
 	}
 	parsed, err := strconv.ParseFloat(text, 64)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("parse numeric JSON value %q: %w", text, err)
 	}
 	return int64(parsed), nil
 }
@@ -694,6 +951,13 @@ type unit3dSearchResponse struct {
 	Data []unit3dSearchItem `json:"data"`
 }
 
+type unit3dSearchEndpoint struct {
+	url           string
+	pending       bool
+	filterTMDBID  int
+	pendingWebURL string
+}
+
 type unit3dSearchItem struct {
 	ID         json.Number       `json:"id"`
 	Attributes unit3dSearchAttrs `json:"attributes"`
@@ -705,6 +969,26 @@ type unit3dSearchAttrs struct {
 	Files        []unit3dFile `json:"files"`
 	Trumpable    bool         `json:"trumpable"`
 	DetailsLink  string       `json:"details_link"`
+	DownloadLink string       `json:"download_link"`
+	Type         string       `json:"type"`
+	Resolution   string       `json:"resolution"`
+	Internal     bool         `json:"internal"`
+	BDInfo       string       `json:"bd_info"`
+	Description  string       `json:"description"`
+	Flags        []string     `json:"flags"`
+}
+
+type unit3dPendingSearchResponse struct {
+	Data []unit3dPendingSearchItem `json:"data"`
+}
+
+type unit3dPendingSearchItem struct {
+	ID           json.Number  `json:"id"`
+	TMDBID       int          `json:"tmdb_id"`
+	Name         string       `json:"name"`
+	Size         json.Number  `json:"size"`
+	Files        []unit3dFile `json:"files"`
+	Trumpable    bool         `json:"trumpable"`
 	DownloadLink string       `json:"download_link"`
 	Type         string       `json:"type"`
 	Resolution   string       `json:"resolution"`

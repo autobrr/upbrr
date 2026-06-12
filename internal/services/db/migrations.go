@@ -53,6 +53,9 @@ var migrationRegistry = []migrationStep{
 	{id: "2026_04_add_screenshot_slot_tables", dependsOn: []string{"2026_04_backfill_uploaded_image_usage_scope"}, apply: migrateAddScreenshotSlotTables},
 	{id: "2026_04_normalize_description_overrides", dependsOn: []string{"2026_04_add_screenshot_slot_tables"}, apply: migrateNormalizeDescriptionOverrides},
 	{id: "2026_04_add_tracker_cookies", dependsOn: []string{"2026_04_normalize_description_overrides"}, apply: migrateAddTrackerCookies},
+	{id: "2026_04_add_release_category", dependsOn: []string{"2026_04_add_tracker_cookies"}, apply: migrateAddReleaseCategory},
+	{id: "2026_04_add_ui_state", dependsOn: []string{"2026_04_add_release_category"}, apply: migrateAddUIState},
+	{id: "2026_05_add_bluray_external_metadata", dependsOn: []string{"2026_04_add_ui_state"}, apply: migrateAddBlurayExternalMetadata},
 }
 
 var legacyVersionToMigrationIDs = map[int][]string{
@@ -91,7 +94,7 @@ func migrateAddDVDMediaInfo(ctx context.Context, exec migrationExecutor) error {
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -105,7 +108,7 @@ func migrateAddReleaseOverrideUseSeasonEpisode(ctx context.Context, exec migrati
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -120,7 +123,7 @@ func migrateAddHistoryIndexes(ctx context.Context, exec migrationExecutor) error
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -145,7 +148,7 @@ func migrateBackfillUploadedImageUsageScope(ctx context.Context, exec migrationE
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -192,7 +195,7 @@ func migrateAddScreenshotSlotTables(ctx context.Context, exec migrationExecutor)
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -214,10 +217,10 @@ func migrateNormalizeDescriptionOverrides(ctx context.Context, exec migrationExe
 				PRIMARY KEY (source_path, group_key)
 			)
 		`); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 		if _, err := exec.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 		return nil
 	}
@@ -253,7 +256,7 @@ func migrateNormalizeDescriptionOverrides(ctx context.Context, exec migrationExe
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
@@ -281,17 +284,74 @@ func migrateAddTrackerCookies(ctx context.Context, exec migrationExecutor) error
 
 	for _, statement := range statements {
 		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return err
+			return fmt.Errorf("db: %w", err)
 		}
 	}
 
 	return nil
 }
 
+func migrateAddReleaseCategory(ctx context.Context, exec migrationExecutor) error {
+	tablePresent, err := tableExists(ctx, exec, "file_metadata")
+	if err != nil {
+		return err
+	}
+	if !tablePresent {
+		return nil
+	}
+	exists, err := tableColumnExists(ctx, exec, "file_metadata", "release_category")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE file_metadata ADD COLUMN release_category TEXT NOT NULL DEFAULT ""`); err != nil {
+		return fmt.Errorf("db: %w", err)
+	}
+	return nil
+}
+
+func migrateAddUIState(ctx context.Context, exec migrationExecutor) error {
+	_, err := exec.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS ui_states (
+			id TEXT PRIMARY KEY,
+			label TEXT NOT NULL DEFAULT "",
+			data TEXT NOT NULL DEFAULT "{}",
+			updated_at TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("db: %w", err)
+	}
+	return nil
+}
+
+func migrateAddBlurayExternalMetadata(ctx context.Context, exec migrationExecutor) error {
+	tablePresent, err := tableExists(ctx, exec, "external_metadata")
+	if err != nil {
+		return err
+	}
+	if !tablePresent {
+		return nil
+	}
+	exists, err := tableColumnExists(ctx, exec, "external_metadata", "bluray_json")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE external_metadata ADD COLUMN bluray_json TEXT NOT NULL DEFAULT ""`); err != nil {
+		return fmt.Errorf("db: %w", err)
+	}
+	return nil
+}
+
 func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName string, columnName string) (bool, error) {
 	rows, err := exec.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("db: %w", err)
 	}
 	defer rows.Close()
 
@@ -303,14 +363,14 @@ func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName st
 		var defaultValue any
 		var primaryKey int
 		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return false, err
+			return false, fmt.Errorf("scan column metadata for table %q: %w", tableName, err)
 		}
 		if strings.EqualFold(name, columnName) {
 			return true, nil
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return false, err
+		return false, fmt.Errorf("iterate column metadata for table %q: %w", tableName, err)
 	}
 	return false, nil
 }
@@ -318,7 +378,7 @@ func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName st
 func tableExists(ctx context.Context, exec migrationExecutor, tableName string) (bool, error) {
 	var count int
 	if err := exec.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=?`, tableName).Scan(&count); err != nil {
-		return false, err
+		return false, fmt.Errorf("check table %q exists: %w", tableName, err)
 	}
 	return count > 0, nil
 }
@@ -716,6 +776,7 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			imdb_json TEXT NOT NULL DEFAULT "",
 			tvdb_json TEXT NOT NULL DEFAULT "",
 			tvmaze_json TEXT NOT NULL DEFAULT "",
+			bluray_json TEXT NOT NULL DEFAULT "",
 			updated_at TEXT NOT NULL
 		)
 		`,
@@ -725,6 +786,14 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 		CREATE TABLE IF NOT EXISTS config_settings (
 			section TEXT PRIMARY KEY,
 			data TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)
+		`,
+		`
+		CREATE TABLE IF NOT EXISTS ui_states (
+			id TEXT PRIMARY KEY,
+			label TEXT NOT NULL DEFAULT '',
+			data TEXT NOT NULL DEFAULT '{}',
 			updated_at TEXT NOT NULL
 		)
 		`,

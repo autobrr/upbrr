@@ -47,32 +47,11 @@ The project handles the full preparation pipeline around an upload candidate: me
 
 ## Requirements
 
-### Runtime
-
 - A TMDB API key in config: `main_settings.tmdb_api`
 - SQLite is embedded via `modernc.org/sqlite`, so no separate database server is required
 - Additional media tools may be needed depending on your workflow, especially for screenshots and media analysis
 
-### Development
-
-- Go `1.26`
-- Node.js `20`
-- `pnpm`
-- Wails CLI `v2.10.1` for desktop builds
-
-On Linux, Wails builds also require GTK/WebKit development packages. The CI workflow installs:
-
-- `build-essential`
-- `libgtk-3-dev`
-- `libwebkit2gtk-4.0-dev` or `libwebkit2gtk-4.1-dev`
-- `libglib2.0-dev`
-- `libx11-dev`
-- `libxkbcommon-dev`
-- `libxrandr-dev`
-- `libxinerama-dev`
-- `libxcursor-dev`
-- `libxi-dev`
-- `pkg-config`
+Setting up a development environment? See [CONTRIBUTING.md](./CONTRIBUTING.md) for dependencies, supported platforms, and git hooks.
 
 ## Quick start
 
@@ -132,78 +111,6 @@ go run ./cmd/upbrr serve
 
 This starts the internal web server and serves the frontend from embedded assets or `gui/frontend/dist` when available.
 
-## Build
-
-### Build everything with helper scripts
-
-Windows:
-
-```powershell
-.\scripts\build.ps1
-```
-
-macOS/Linux:
-
-```bash
-./scripts/build.sh
-```
-
-These scripts:
-
-- install frontend dependencies
-- build the React frontend
-- sync frontend assets into `internal/guiapp/assets`
-- build the CLI into `dist`
-- build the Wails GUI into `gui/build/bin`
-
-### Build the CLI only
-
-```bash
-go build -o dist/upbrr ./cmd/upbrr
-```
-
-### Build the GUI frontend only
-
-```bash
-cd gui/frontend
-pnpm install
-pnpm run build
-```
-
-### Build the Wails GUI manually
-
-```bash
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
-cd gui
-wails build
-```
-
-## Development workflow
-
-### Backend
-
-Run all Go tests:
-
-```bash
-go test -v -timeout 20m ./...
-```
-
-Run `golangci-lint` with the repo config:
-
-```bash
-golangci-lint run --timeout=5m
-```
-
-### Frontend
-
-```bash
-cd gui/frontend
-pnpm install --frozen-lockfile
-pnpm run lint
-pnpm run typecheck
-pnpm run dev
-```
-
 ## Configuration model
 
 Configuration is centered around `internal/config.Config` and includes:
@@ -240,18 +147,15 @@ GitHub Actions includes workflows for:
 
 The Dockerfile builds both `upbrr` and `upbrr-gui` binaries and places them in the final image.
 
-## Notes for contributors
+## Frontend Styling Strategy
 
-- The frontend build output is embedded into the Go app from `internal/guiapp/assets`
-- The GUI and CLI share the same core services and config model
-- Tracker-specific code lives primarily under `internal/trackers/impl`
-- The repo currently includes generated and built assets in a few locations, so review changes carefully before committing
+The frontend is in an incremental migration from broad custom CSS blocks toward Tailwind utilities. Existing `.settings-*` and `.screens-*` classes may stay until their JSX is touched, but new UI should prefer Tailwind utilities for local layout and spacing. Keep custom classes for shared component states, cross-cutting selectors, theme variables, or styles that would make JSX hard to read.
 
-## AI agent instructions
+Owner: frontend maintainers. Timeline: migrate class families opportunistically with the component PR that already changes the matching UI, then remove obsolete custom CSS in the same PR.
 
-This project uses [AGENTS.md](https://agents.md/) — an open standard for guiding AI coding agents. The root `AGENTS.md` file contains build commands, code style rules, testing instructions, and project conventions.
+## Contributing
 
-Most modern AI coding tools support `AGENTS.md` natively or via simple configuration. Check your tool's official documentation to verify `AGENTS.md` support is active in your environment.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to set up a development environment, run the test suite, install the git hooks, and write commit messages that pass the repo's commit-message validator ([`cmd/commitmsgcheck`](./cmd/commitmsgcheck)). The project uses [AGENTS.md](https://agents.md/) for AI-coding-agent guidance — see [`AGENTS.md`](./AGENTS.md).
 
 ## License
 

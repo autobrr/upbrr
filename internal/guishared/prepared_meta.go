@@ -5,6 +5,7 @@ package guishared
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -28,8 +29,14 @@ func SeedRunCorePreparedMeta(ctx context.Context, source api.Core, target api.Co
 	}
 
 	meta, found, err := exporter.ExportGUICachedPreparedMeta(ctx, req)
-	if err != nil || !found {
-		return err
+	if err != nil {
+		return fmt.Errorf("gui shared: %w", err)
 	}
-	return importer.ImportPreparedMetadataForGUI(ctx, req, meta)
+	if !found {
+		return nil
+	}
+	if err := importer.ImportPreparedMetadataForGUI(ctx, req, meta); err != nil {
+		return fmt.Errorf("gui shared: import prepared metadata: %w", err)
+	}
+	return nil
 }

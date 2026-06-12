@@ -35,7 +35,7 @@ func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadR
 func (d *Definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
-		return trackers.DescriptionResult{}, ctx.Err()
+		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -50,9 +50,12 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		assets = trackers.DescriptionAssets{}
 	}
 
-	description, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
-	if err != nil {
-		return trackers.DescriptionResult{}, fmt.Errorf("trackers: HDB description build: %w", err)
+	description := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		description, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		if err != nil {
+			return trackers.DescriptionResult{}, fmt.Errorf("trackers: HDB description build: %w", err)
+		}
 	}
 
 	if strings.TrimSpace(description) == "" && req.Logger != nil {

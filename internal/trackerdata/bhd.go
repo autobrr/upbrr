@@ -42,10 +42,16 @@ func (c *Client) lookupBHD(
 	} else {
 		payload["action"] = "search"
 		payload["rsskey"] = rssKey
+		hasSearchFilter := false
 		if shouldUseFolderSearch(meta) {
 			payload["folder_name"] = pathutil.Base(meta.SourcePath)
+			hasSearchFilter = true
 		} else if trimmed := strings.TrimSpace(searchFileName); trimmed != "" {
 			payload["file_name"] = trimmed
+			hasSearchFilter = true
+		}
+		if !hasSearchFilter {
+			return Result{}, nil
 		}
 	}
 
@@ -110,7 +116,10 @@ func (c *Client) bhdRequestFirst(ctx context.Context, endpoint string, payload m
 }
 
 func (c *Client) bhdRequest(ctx context.Context, endpoint string, payload map[string]any) (map[string]any, error) {
-	raw, _ := json.Marshal(payload)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("trackerdata: bhd encode request: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("trackerdata: bhd request: %w", err)
@@ -143,11 +152,11 @@ func parseBHDTMDB(value any) (string, int) {
 	if raw == "" || raw == "0" {
 		return "", 0
 	}
-	if strings.HasPrefix(raw, "tv/") {
-		return "TV", intValue(strings.TrimPrefix(raw, "tv/"))
+	if after, ok := strings.CutPrefix(raw, "tv/"); ok {
+		return "TV", intValue(after)
 	}
-	if strings.HasPrefix(raw, "movie/") {
-		return "MOVIE", intValue(strings.TrimPrefix(raw, "movie/"))
+	if after, ok := strings.CutPrefix(raw, "movie/"); ok {
+		return "MOVIE", intValue(after)
 	}
 	return "", intValue(raw)
 }

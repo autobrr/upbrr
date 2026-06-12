@@ -21,6 +21,9 @@ type mediaInfoDoc struct {
 	} `json:"media"`
 }
 
+var canonicalResolutionWidths = []int{3840, 2560, 1920, 1280, 1024, 854, 720, 15360, 7680, 0}
+var canonicalResolutionHeights = []int{2160, 1440, 1080, 720, 576, 540, 480, 8640, 4320, 0}
+
 func loadMediaInfoDoc(path string) (mediaInfoDoc, error) {
 	var doc mediaInfoDoc
 	trimmed := strings.TrimSpace(path)
@@ -132,17 +135,14 @@ func extractDVDMediaInfo(meta api.PreparedMetadata) api.DVDMediaInfo {
 	}
 
 	scanType := strings.TrimSpace(trackString(videoTrack, "ScanType"))
-	if (scanType == "" || strings.EqualFold(scanType, "Progressive")) && mediaInfoText != "" {
+	if scanType == "" && mediaInfoText != "" {
 		if scanText := regexString(scanTypeRegex, mediaInfoText); scanText != "" {
 			scanType = strings.TrimSpace(scanText)
 		}
 	}
-	scan := normalizeDVDScan(scanType, frameRate, meta.SourcePath)
+	scan := normalizeDVDScan(scanType, meta.SourcePath)
 
-	closestWidth := closestDVDValue([]int{3840, 2560, 1920, 1280, 1024, 854, 720, 15360, 7680, 0}, width)
-	closestHeight := closestDVDValue([]int{2160, 1440, 1080, 720, 576, 540, 480, 8640, 4320, 0}, height)
-	resKey := fmt.Sprintf("%dx%d%s", closestWidth, closestHeight, scan)
-	resolution := mapDVDResolution(resKey, meta.Release.Resolution, closestWidth, scan)
+	closestWidth, closestHeight, resolution := snapAndMapResolution(width, height, scan, meta.Release.Resolution)
 
 	return api.DVDMediaInfo{
 		Width:         closestWidth,
@@ -218,7 +218,7 @@ func regexInt(pattern *regexp.Regexp, value string) int {
 	return parsed
 }
 
-func normalizeDVDScan(scanType string, frameRate string, sourceHint string) string {
+func normalizeDVDScan(scanType string, sourceHint string) string {
 	scan := strings.TrimSpace(scanType)
 	if strings.EqualFold(scan, "Progressive") {
 		return "p"
@@ -237,7 +237,7 @@ func closestDVDValue(values []int, input int) int {
 		return 0
 	}
 	sorted := append([]int{}, values...)
-	for i := 0; i < len(sorted); i++ {
+	for i := range sorted {
 		for j := i + 1; j < len(sorted); j++ {
 			if sorted[j] < sorted[i] {
 				sorted[i], sorted[j] = sorted[j], sorted[i]
@@ -325,6 +325,43 @@ func mapDVDResolution(res string, guessed string, width int, scan string) string
 
 	if _, ok := resMap[resolution]; !ok {
 		return "OTHER"
+	}
+	return resolution
+}
+
+func snapAndMapResolution(width int, height int, scan string, guessed string) (int, int, string) {
+	closestWidth := closestDVDValue(canonicalResolutionWidths, width)
+	closestHeight := closestDVDValue(canonicalResolutionHeights, height)
+	resKey := fmt.Sprintf("%dx%d%s", closestWidth, closestHeight, scan)
+	resolution := mapDVDResolution(resKey, guessed, closestWidth, scan)
+	return closestWidth, closestHeight, resolution
+}
+
+// resolutionFromMediaInfo derives a standard resolution string from a MediaInfo
+// document for non-DVD content. It mirrors the Python get_resolution() logic:
+// read Width/Height from the video track, snap each using the same Python
+// closest() helper semantics, compose a WxHscan key, and map it through the
+// same resolution table used for DVD content. Returns "" when
+// the video track is absent or either dimension is zero.
+func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string) string {
+	_, videoTracks, _ := splitMediaInfoTracks(doc)
+	if len(videoTracks) == 0 {
+		return ""
+	}
+	track := videoTracks[0]
+
+	width := trackNumericInt(track, "Width")
+	height := trackNumericInt(track, "Height")
+	if width == 0 || height == 0 {
+		return ""
+	}
+
+	scanType := strings.TrimSpace(trackString(track, "ScanType"))
+	scan := normalizeDVDScan(scanType, sourcePath)
+
+	_, _, resolution := snapAndMapResolution(width, height, scan, "")
+	if resolution == "OTHER" {
+		return ""
 	}
 	return resolution
 }

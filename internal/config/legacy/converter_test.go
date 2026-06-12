@@ -94,12 +94,12 @@ func TestCoerceToStringSlice(t *testing.T) {
 }
 
 func TestConvertDefaults(t *testing.T) {
-	legacy := &LegacyConfig{
+	legacy := &Config{
 		Default: map[string]any{
 			"tmdb_api":    "test-key",
 			"screens":     8,
 			"tone_map":    true,
-			"img_host_1":  "ptpimg",
+			"img_host_1":  "pixhost",
 			"unknown_key": "should-be-skipped",
 		},
 		Trackers:       make(map[string]any),
@@ -120,8 +120,8 @@ func TestConvertDefaults(t *testing.T) {
 	if cfg.ScreenshotHandling.ToneMap != true {
 		t.Errorf("ToneMap: got %v, want true", cfg.ScreenshotHandling.ToneMap)
 	}
-	if cfg.ImageHosting.Host1 != "ptpimg" {
-		t.Errorf("Host1: got %q, want ptpimg", cfg.ImageHosting.Host1)
+	if cfg.ImageHosting.Host1 != "pixhost" {
+		t.Errorf("Host1: got %q, want pixhost", cfg.ImageHosting.Host1)
 	}
 
 	hasUnknownWarning := false
@@ -136,7 +136,7 @@ func TestConvertDefaults(t *testing.T) {
 }
 
 func TestConvertTorrentClients(t *testing.T) {
-	legacy := &LegacyConfig{
+	legacy := &Config{
 		Default: map[string]any{
 			"tmdb_api": "test",
 			"screens":  6,
@@ -176,7 +176,7 @@ func TestConvertTorrentClients(t *testing.T) {
 }
 
 func TestConvertClientKeyAliases(t *testing.T) {
-	legacy := &LegacyConfig{
+	legacy := &Config{
 		Default: map[string]any{
 			"tmdb_api": "test",
 			"screens":  6,
@@ -209,7 +209,7 @@ func TestConvertClientKeyAliases(t *testing.T) {
 }
 
 func TestConvertTrackers(t *testing.T) {
-	legacy := &LegacyConfig{
+	legacy := &Config{
 		Default: map[string]any{
 			"tmdb_api": "test",
 			"screens":  6,
@@ -332,7 +332,7 @@ config = {
     'DEFAULT': {
         'tmdb_api': 'abc123',
         'screens': 6,
-        'img_host_1': 'ptpimg',
+        'img_host_1': 'pixhost',
         'img_host_2': 'imgbb',
         'tone_map': True,
         'default_torrent_client': 'qbit',
@@ -371,7 +371,7 @@ config = {
 	if cfg.ScreenshotHandling.Screens != 6 {
 		t.Errorf("Screens: got %d", cfg.ScreenshotHandling.Screens)
 	}
-	if cfg.ImageHosting.Host1 != "ptpimg" {
+	if cfg.ImageHosting.Host1 != "pixhost" {
 		t.Errorf("Host1: got %q", cfg.ImageHosting.Host1)
 	}
 	if cfg.ScreenshotHandling.ToneMap != true {
@@ -415,8 +415,8 @@ config = {
 }
 
 // marshalLegacyConfig creates a Python config.py format string from a
-// LegacyConfig for testing purposes.
-func marshalLegacyConfig(lc *LegacyConfig) []byte {
+// Config for testing purposes.
+func marshalLegacyConfig(lc *Config) []byte {
 	var sb []byte
 	sb = append(sb, "config = {\n"...)
 	sb = appendPythonSection(sb, "DEFAULT", lc.Default)

@@ -35,6 +35,138 @@ func TestFetchMetadataReportsCoreValidationFailure(t *testing.T) {
 	}
 }
 
+func TestFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &closeCounterCore{}
+	app := &App{
+		cfg: config.Config{
+			Metadata:           config.MetadataConfig{SkipAutoTorrent: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 3},
+		},
+		core: coreSvc,
+	}
+
+	_, err := app.FetchMetadata("C:\\releases\\Example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil)
+	if err != nil {
+		t.Fatalf("fetch metadata: %v", err)
+	}
+	if !coreSvc.fetchReq.Options.SkipAutoTorrent {
+		t.Fatalf("expected skip_auto_torrent request option, got %#v", coreSvc.fetchReq.Options)
+	}
+}
+
+func TestSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "save-config.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+	initial := config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+	t.Cleanup(func() {
+		if coreSvc := app.currentCore(); coreSvc != nil {
+			_ = coreSvc.Close()
+		}
+		if logger := app.currentLogger(); logger != nil {
+			_ = logger.Close()
+		}
+	})
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	updated.Metadata.OnlyID = true
+	updated.ScreenshotHandling.Screens = 4
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	if err := app.SaveConfig(payload); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	runtimeCfg := app.currentConfig()
+	if !runtimeCfg.Metadata.SkipAutoTorrent || !runtimeCfg.Metadata.OnlyID {
+		t.Fatalf("expected metadata settings applied, got %#v", runtimeCfg.Metadata)
+	}
+	if runtimeCfg.ScreenshotHandling.Screens != 4 {
+		t.Fatalf("expected screenshots=4, got %d", runtimeCfg.ScreenshotHandling.Screens)
+	}
+	if app.currentCore() == nil {
+		t.Fatal("expected runtime core to be rebuilt")
+	}
+	options := buildRunUploadOptions(runtimeCfg, runOptions{})
+	if !options.SkipAutoTorrent || !options.OnlyID || options.Screens != 4 {
+		t.Fatalf("expected upload options from saved config, got %#v", options)
+	}
+}
+
+func TestSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
+	t.Setenv("UA_DEFAULT_SCREENS", "0")
+
+	repoPath := filepath.Join(t.TempDir(), "save-config-env.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	initial := config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+
+	updated := initial
+	updated.ScreenshotHandling.Screens = 4
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	err = app.SaveConfig(payload)
+	if err == nil {
+		t.Fatal("expected env-derived runtime validation error")
+	}
+	if !strings.Contains(err.Error(), "screenshot_handling.screens") {
+		t.Fatalf("expected screens validation error, got %v", err)
+	}
+	if got := app.currentConfig().ScreenshotHandling.Screens; got != 1 {
+		t.Fatalf("expected runtime config to remain unchanged, got screens=%d", got)
+	}
+	if app.currentCore() != nil {
+		t.Fatal("expected runtime core not to be rebuilt")
+	}
+	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); loadErr == nil {
+		t.Fatal("expected invalid runtime config to be rejected before database save")
+	}
+}
+
 func TestListHistoryUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	t.Parallel()
 
@@ -143,6 +275,51 @@ func TestGetHistoryOverviewUsesRepositoryWhenCoreDisabled(t *testing.T) {
 	}
 	if overview.DescriptionOverride.GroupKey != "unit3d" {
 		t.Fatalf("expected preferred description override key to be unit3d, got %q", overview.DescriptionOverride.GroupKey)
+	}
+}
+
+func TestGetLogExclusionsReturnsEmptySlice(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, app *App)
+	}{
+		{
+			name: "missing",
+		},
+		{
+			name: "stored empty",
+			setup: func(t *testing.T, app *App) {
+				t.Helper()
+
+				if err := app.UpdateLogExclusions(nil); err != nil {
+					t.Fatalf("update log exclusions: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := &App{repo: openGUIAppTestRepo(t)}
+			if tt.setup != nil {
+				tt.setup(t, app)
+			}
+
+			patterns, err := app.GetLogExclusions()
+			if err != nil {
+				t.Fatalf("get log exclusions: %v", err)
+			}
+			if patterns == nil {
+				t.Fatal("expected non-nil empty exclusions")
+			}
+			if len(patterns) != 0 {
+				t.Fatalf("expected no exclusions, got %#v", patterns)
+			}
+		})
 	}
 }
 
@@ -258,6 +435,56 @@ func TestNewAppKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 		UpdatedAt: time.Now().UTC().Truncate(time.Second),
 	}); err != nil {
 		t.Fatalf("expected startup repo to remain usable after core close: %v", err)
+	}
+}
+
+func TestNewAppClearsPersistedUIState(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "fresh-ui.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+	if err := repo.SaveUIState(context.Background(), "state-a", "Upload", map[string]any{"activeTab": "upload"}); err != nil {
+		t.Fatalf("save ui state: %v", err)
+	}
+
+	cfg := &config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	authPath := filepath.Join(filepath.Dir(repoPath), authmaterial.WebAuthFileName)
+	if err := os.WriteFile(authPath, []byte(`{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":"stable-seed-for-tests"}`), 0o600); err != nil {
+		t.Fatalf("write web auth fixture: %v", err)
+	}
+	if err := config.ExportToYAML(cfg, configPath); err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	app, err := NewApp(configPath, true)
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	t.Cleanup(func() {
+		app.shutdown(context.Background())
+	})
+
+	stateList, err := app.ListUIStates()
+	if err != nil {
+		t.Fatalf("list ui states: %v", err)
+	}
+	if len(stateList.States) != 0 {
+		t.Fatalf("expected startup to clear persisted UI state, got %#v", stateList.States)
 	}
 }
 

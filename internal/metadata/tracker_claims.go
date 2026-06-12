@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -85,7 +86,7 @@ func (s *Service) applyTrackerClaims(ctx context.Context, meta api.PreparedMetad
 	for _, tracker := range resolved {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, ctx.Err()
+			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -359,7 +360,7 @@ func trackerClaimTarget(meta api.PreparedMetadata) (trackerClaimMatchTarget, boo
 }
 
 func resolveTrackerClaimCategory(meta api.PreparedMetadata) string {
-	for _, candidate := range []string{meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Type, meta.Release.Type} {
+	for _, candidate := range []string{meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category} {
 		if canonical := trackerdata.CanonicalUnit3DCategory(candidate); canonical != "" {
 			return canonical
 		}
@@ -389,7 +390,11 @@ func resolveTrackerClaimResolution(meta api.PreparedMetadata) string {
 }
 
 func trackerClaimsPath(dbPath string, tracker string) (string, error) {
-	return db.FileInSubdir(dbPath, "cache", filepath.Join("banned", strings.ToUpper(strings.TrimSpace(tracker))+"_claimed_releases.json"))
+	path, err := db.FileInSubdir(dbPath, "cache", filepath.Join("banned", strings.ToUpper(strings.TrimSpace(tracker))+"_claimed_releases.json"))
+	if err != nil {
+		return "", fmt.Errorf("metadata: resolve tracker claims path: %w", err)
+	}
+	return path, nil
 }
 
 func trackerClaimsBaseURL(cfg config.Config, tracker string) (string, bool) {
@@ -471,10 +476,8 @@ func addMetadataTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, 
 	if blocked == nil {
 		blocked = make(map[string][]api.TrackerBlockReason)
 	}
-	for _, existing := range blocked[name] {
-		if existing == reason {
-			return blocked
-		}
+	if slices.Contains(blocked[name], reason) {
+		return blocked
 	}
 	blocked[name] = append(blocked[name], reason)
 	return blocked
@@ -560,7 +563,7 @@ func decodeTrackerClaimValues(data []byte, namesByID func(string) []string, cano
 	var items []json.RawMessage
 	if trimmed[0] == '[' {
 		if err := json.Unmarshal(trimmed, &items); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("metadata: unmarshal tracker claim values: %w", err)
 		}
 	} else {
 		items = []json.RawMessage{trimmed}

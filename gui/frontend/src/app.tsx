@@ -1,15 +1,20 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
+import BlurayCandidatesPage from "./pages/bluray_candidates";
 import DupeCheckPage from "./pages/dupe_check";
 import InputPage from "./pages/input";
 import HistoryPage from "./pages/history/index";
 import LoggingPage from "./pages/logging";
 import PlaylistSelectionPage from "./pages/playlist_selection";
 import ScreenshotsPage from "./pages/screenshots";
+import MenuImagesPage from "./pages/menu_images";
 import SettingsPage from "./pages/settings";
 import TrackerDataPage from "./pages/tracker_data";
 import TrackerUploadPage from "./pages/tracker_upload";
@@ -17,8 +22,12 @@ import UploadImagesPage from "./pages/upload_images";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useUploadImages } from "./hooks/useUploadImages";
+import { useTrackerIcons } from "./hooks/useTrackerIcons";
+import { cn } from "./utils/cn";
 import type {
   ConfigMap,
+  ApplicationInfo,
+  BrowseDirectoryResponse,
   DescriptionBuilderPreview,
   DupeCheckSnapshot,
   DupeCheckSummary,
@@ -27,9 +36,9 @@ import type {
   ExternalIDs,
   HistoryEntry,
   HistoryOverview,
+  ImageHostPolicyMetadata,
   MetadataPreview,
   MetadataProgressUpdate,
-  PreparationDescription,
   PreparationPreview,
   ReleaseNameEditState,
   ReleaseNameOverrides,
@@ -43,15 +52,72 @@ import type {
   TrackerQuestionnaire,
   TrackerDryRunPreview,
   TrackerUploadSnapshot,
+  UIState,
+  UIStateList,
+  UIStateRecord,
   WebAuthStatus,
-  UploadedImageLink
+  UploadedImageLink,
+  UploadImagesResult,
+  UploadProgressUpdate,
 } from "./types";
-import { formatLabel, normalizeDefaultTrackerList } from "./utils/settings";
+import {
+  formatLabel,
+  isSkipAutoTorrentEnabled,
+  normalizeDefaultTrackerList,
+} from "./utils/settings";
+import {
+  addSourcePathHistoryEntry,
+  defaultInputHistoryLimit,
+  filterBrowseEntries,
+  inferSourcePathMode,
+  normalizeSourcePathHistory,
+  resolveInputHistoryLimit,
+  type SourcePathHistoryEntry,
+  type SourcePathMode,
+  sourcePathHistoryStorageKey,
+} from "./utils/inputHistory";
+import { handleExternalLinkClick } from "./utils/externalLinks";
+
+const appLayoutClass =
+  "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
+
+const sidebarClass =
+  "fixed left-0 top-0 z-[1000] flex h-screen w-[204px] flex-col gap-2.5 border-r border-white/10 bg-[var(--panel)]/95 p-2.5 backdrop-blur max-[960px]:bottom-0 max-[960px]:top-auto max-[960px]:h-auto max-[960px]:w-full max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-2 max-[960px]:border-r-0 max-[960px]:border-t max-[960px]:p-2";
+
+const sidebarGroupClass =
+  "grid gap-1 rounded-lg border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.08)] p-1.5 max-[960px]:flex max-[960px]:flex-wrap max-[960px]:gap-1 max-[960px]:p-1";
+
+const sidebarFooterClass = `${sidebarGroupClass} mt-auto max-[960px]:mt-0`;
+
+const navButtonClass = (active: boolean, nested = false) =>
+  cn(
+    "w-full rounded-md border border-transparent bg-transparent px-2 py-1.5 text-left text-[0.84rem] font-semibold leading-tight text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--text)] max-[960px]:w-auto max-[960px]:py-1.5",
+    nested && "pl-4 text-[0.8rem] font-medium max-[960px]:pl-2",
+    active &&
+      "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] shadow-[0_8px_22px_rgba(245,185,66,0.18)] hover:bg-[var(--sidebar-active-bg)] hover:text-[var(--sidebar-active-text)]",
+  );
+
+const sidebarButtonClass = (active = false) =>
+  cn(
+    "flex min-h-[30px] w-full items-center justify-start gap-1.5 rounded-md border border-transparent bg-transparent px-2 py-1.5 text-[0.84rem] font-semibold leading-tight text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--text)] max-[960px]:w-auto max-[960px]:min-h-7 max-[960px]:py-1",
+    active &&
+      "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] shadow-[0_8px_22px_rgba(245,185,66,0.18)] hover:bg-[var(--sidebar-active-bg)] hover:text-[var(--sidebar-active-text)]",
+  );
+
+const liveButtonClass =
+  "border-[rgba(53,194,193,0.24)] bg-[rgba(53,194,193,0.1)] text-[var(--text)] hover:bg-[rgba(53,194,193,0.16)]";
+
+const sidebarAppDetailsClass =
+  "mt-1 grid grid-cols-[1fr_auto] items-center gap-1.5 px-2 py-1.5 text-[0.72rem] leading-tight text-[var(--muted)] max-[960px]:hidden";
+
+type AppBridgeWithApplicationInfo = {
+  GetApplicationInfo?: () => Promise<ApplicationInfo>;
+};
 
 const emptyDupeSummary: DupeCheckSummary = {
   SourcePath: "",
   Results: [],
-  Notes: []
+  Notes: [],
 };
 
 const emptyPreview: MetadataPreview = {
@@ -69,40 +135,43 @@ const emptyPreview: MetadataPreview = {
     SourceTMDB: "",
     SourceIMDB: "",
     SourceTVDB: "",
-    SourceTVmaze: ""
+    SourceTVmaze: "",
   },
   ExternalIDCandidates: {
     TMDB: [],
     IMDB: [],
     TMDBAutoSelected: false,
-    IMDBAutoSelected: false
+    IMDBAutoSelected: false,
   },
   ExternalIDInfo: [],
   ExternalPreview: [],
-  TrackerData: []
+  Bluray: undefined,
+  TrackerData: [],
 };
 
 const emptyPreparation: PreparationPreview = {
   SourcePath: "",
-  Descriptions: []
+  Descriptions: [],
 };
 
 const emptyTrackerDryRun: TrackerDryRunPreview = {
   SourcePath: "",
-  Trackers: []
+  Trackers: [],
 };
 
 const cloneQuestionnaireAnswers = (input: Record<string, Record<string, string>>) =>
   Object.fromEntries(
     Object.entries(input).map(([tracker, values]) => [
       tracker,
-      Object.fromEntries(Object.entries(values || {}).map(([key, value]) => [key, String(value ?? "")]))
-    ])
+      Object.fromEntries(
+        Object.entries(values || {}).map(([key, value]) => [key, String(value ?? "")]),
+      ),
+    ]),
   );
 
 const buildQuestionnaireAnswerDefaults = (
   questionnaire: TrackerQuestionnaire | null | undefined,
-  existing: Record<string, string> | undefined
+  existing: Record<string, string> | undefined,
 ) => {
   const next: Record<string, string> = { ...(existing || {}) };
   (questionnaire?.Fields || []).forEach((field) => {
@@ -113,19 +182,20 @@ const buildQuestionnaireAnswerDefaults = (
   return next;
 };
 
-const splitTrackerLabel = (value: string) => value
-  .split(",")
-  .map((entry) => entry.toLowerCase().trim())
-  .filter((entry) => entry.length > 0);
+const splitTrackerLabel = (value: string) =>
+  value
+    .split(",")
+    .map((entry) => entry.toLowerCase().trim())
+    .filter((entry) => entry.length > 0);
 
 const emptyDescriptionBuilder: DescriptionBuilderPreview = {
   SourcePath: "",
-  Groups: []
+  Groups: [],
 };
 
 const upsertBuilderGroup = (
   preview: DescriptionBuilderPreview,
-  nextGroup: DescriptionBuilderPreview["Groups"][number]
+  nextGroup: DescriptionBuilderPreview["Groups"][number],
 ): DescriptionBuilderPreview => {
   const nextGroups = [...(preview.Groups || [])];
   const existingIndex = nextGroups.findIndex((group) => group.GroupKey === nextGroup.GroupKey);
@@ -136,7 +206,7 @@ const upsertBuilderGroup = (
   }
   return {
     ...preview,
-    Groups: nextGroups
+    Groups: nextGroups,
   };
 };
 
@@ -144,14 +214,21 @@ const bdinfoProgressEvent = "bdinfo:progress";
 const metadataProgressEvent = "metadata:progress";
 const dupeCheckEventPrefix = "dupe:job:";
 const trackerUploadEventPrefix = "upload:job:";
+const trackerUploadProgressEvent = "upload:progress";
 const runLogLevels = ["error", "warn", "info", "debug", "trace"] as const;
+
+type SourcePathSelection = {
+  path: string;
+  mode: SourcePathMode;
+  waitsForPlaylistSelection: boolean;
+};
 
 const progressUpdatePrefixes = new Set([
   "scanning",
   "initialize",
   "playlist",
   "clipinfo",
-  "stream"
+  "stream",
 ]);
 
 const progressLineKey = (line: string): string | null => {
@@ -197,31 +274,144 @@ declare global {
           App?: {
             BrowsePath: () => Promise<string>;
             BrowseFile: () => Promise<string>;
+            BrowseFiles: () => Promise<string[]>;
+            BrowseImageFiles: () => Promise<string[]>;
             BrowseFolder: () => Promise<string>;
+            BrowseDirectory: (
+              path: string,
+              mode: "file" | "folder",
+            ) => Promise<BrowseDirectoryResponse>;
+            OpenExternalURL?: (url: string) => Promise<void>;
+            ListUIStates: () => Promise<UIStateList>;
+            GetUIState: (id: string) => Promise<UIStateRecord>;
+            SaveUIState: (id: string, label: string, state: UIState) => Promise<void>;
             DetectDiscType: (path: string) => Promise<string>;
-            FetchMetadata: (path: string, sourceLookupURL: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<MetadataPreview>;
-            ResetMetadata: (path: string, sourceLookupURL: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<MetadataPreview>;
-            FetchDescriptionBuilder: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreDupesFor: string[]) => Promise<DescriptionBuilderPreview>;
-            FetchPreparation: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreDupesFor: string[]) => Promise<PreparationPreview>;
-            FetchTrackerDryRun: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: DescriptionBuilderPreview["Groups"], debug: boolean, runLogLevel: string) => Promise<TrackerDryRunPreview>;
-            CheckDupes: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<DupeCheckSummary>;
-            StartDupeCheck: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[]) => Promise<string>;
+            FetchMetadata: (
+              path: string,
+              sourceLookupURL: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+            ) => Promise<MetadataPreview>;
+            ResetMetadata: (
+              path: string,
+              sourceLookupURL: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+            ) => Promise<MetadataPreview>;
+            SelectBlurayCandidate: (path: string, releaseID: string) => Promise<MetadataPreview>;
+            FetchDescriptionBuilder: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+              ignoreDupesFor: string[],
+            ) => Promise<DescriptionBuilderPreview>;
+            FetchPreparation: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+              ignoreDupesFor: string[],
+            ) => Promise<PreparationPreview>;
+            FetchTrackerDryRun: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+              ignoreDupesFor: string[],
+              questionnaireAnswers: Record<string, Record<string, string>>,
+              descriptionGroups: DescriptionBuilderPreview["Groups"],
+              debug: boolean,
+              noSeed: boolean,
+              runLogLevel: string,
+            ) => Promise<TrackerDryRunPreview>;
+            CheckDupes: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+            ) => Promise<DupeCheckSummary>;
+            StartDupeCheck: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+            ) => Promise<string>;
             CancelDupeCheck: (jobID: string) => Promise<void>;
             GetDupeCheckSnapshot: (jobID: string) => Promise<DupeCheckSnapshot>;
-            FetchScreenshotPlan: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<ScreenshotPlan>;
-            GenerateScreenshots: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, selections: ScreenshotSelection[], purpose: ScreenshotPurpose) => Promise<ScreenshotResult>;
-            PreviewScreenshotFrame: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, timestampSeconds: number) => Promise<string>;
-            DeleteScreenshot: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, imagePath: string) => Promise<void>;
-            SaveFinalScreenshotSelections: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, images: ScreenshotImage[]) => Promise<void>;
+            FetchScreenshotPlan: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<ScreenshotPlan>;
+            GenerateScreenshots: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              selections: ScreenshotSelection[],
+              purpose: ScreenshotPurpose,
+            ) => Promise<ScreenshotResult>;
+            PreviewScreenshotFrame: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              timestampSeconds: number,
+            ) => Promise<string>;
+            DeleteScreenshot: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              imagePath: string,
+            ) => Promise<void>;
+            SaveFinalScreenshotSelections: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              images: ScreenshotImage[],
+            ) => Promise<void>;
+            ImportMenuImages: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              paths: string[],
+            ) => Promise<void>;
             ReadScreenshotImage: (path: string) => Promise<string>;
-            ListUploadCandidates: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<ScreenshotImage[]>;
-            ListUploadedImages: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<UploadedImageLink[]>;
-            UploadImages: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, host: string, images: ScreenshotImage[]) => Promise<UploadedImageLink[]>;
+            ListUploadCandidates: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<ScreenshotImage[]>;
+            ListUploadedImages: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<UploadedImageLink[]>;
+            UploadImages: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+              host: string,
+              images: ScreenshotImage[],
+            ) => Promise<UploadImagesResult>;
             DeleteUploadedImage: (path: string, imagePath: string, host: string) => Promise<void>;
             RenderDescription: (raw: string) => Promise<string>;
-            SaveDescriptionOverride: (path: string, groupKey: string, raw: string, trackers: string[], overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => Promise<DescriptionBuilderPreview["Groups"][number]>;
+            SaveDescriptionOverride: (
+              path: string,
+              groupKey: string,
+              raw: string,
+              trackers: string[],
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<DescriptionBuilderPreview["Groups"][number]>;
             DiscoverPlaylists: (path: string) => Promise<any[]>;
-            SavePlaylistSelection: (path: string, playlists: string[], useAll: boolean) => Promise<void>;
+            SavePlaylistSelection: (
+              path: string,
+              playlists: string[],
+              useAll: boolean,
+            ) => Promise<void>;
             LoadPlaylistSelection: (path: string) => Promise<any>;
             GetConfig: () => Promise<string>;
             GetDefaultConfig: () => Promise<string>;
@@ -237,13 +427,26 @@ declare global {
             GetLogExclusions: () => Promise<string[]>;
             UpdateLogExclusions: (patterns: string[]) => Promise<void>;
             ListKnownTrackers: () => Promise<string[]>;
+            GetImageHostPolicyMetadata: () => Promise<ImageHostPolicyMetadata>;
             ListHistory: () => Promise<HistoryEntry[]>;
             GetHistoryOverview: (sourcePath: string) => Promise<HistoryOverview>;
             DeleteHistoryRelease: (sourcePath: string) => Promise<void>;
-            StartTrackerUpload: (path: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides, trackers: string[], ignoreRuleFailures: boolean, ignoreDupesFor: string[], questionnaireAnswers: Record<string, Record<string, string>>, descriptionGroups: DescriptionBuilderPreview["Groups"], debug: boolean, runLogLevel: string) => Promise<string>;
+            StartTrackerUpload: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              trackers: string[],
+              ignoreDupesFor: string[],
+              questionnaireAnswers: Record<string, Record<string, string>>,
+              descriptionGroups: DescriptionBuilderPreview["Groups"],
+              debug: boolean,
+              noSeed: boolean,
+              runLogLevel: string,
+            ) => Promise<string>;
             CancelTrackerUpload: (jobID: string) => Promise<void>;
             RetryFailedTrackerUpload: (jobID: string) => Promise<string>;
             GetTrackerUploadSnapshot: (jobID: string) => Promise<TrackerUploadSnapshot>;
+            GetTrackerIcon?: (domain: string, customURL: string) => Promise<string>;
           };
         };
       }
@@ -265,7 +468,7 @@ const providerOrder = ["tmdb", "imdb", "tvdb", "tvmaze"] as const;
 
 const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
   const orderIndex = new Map<string, number>(
-    providerOrder.map((provider, index) => [provider, index])
+    providerOrder.map((provider, index) => [provider, index]),
   );
 
   return [...info].sort((left, right) => {
@@ -278,12 +481,11 @@ const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
 
 const formatNumber = (value: number) => (value ? value.toString() : "");
 
-
 const buildIDEditState = (ids: ExternalIDs) => ({
   tmdb: formatNumber(ids.TMDBID),
   imdb: formatNumber(ids.IMDBID),
   tvdb: formatNumber(ids.TVDBID),
-  tvmaze: formatNumber(ids.TVmazeID)
+  tvmaze: formatNumber(ids.TVmazeID),
 });
 
 const buildReleaseEditState = (overrides?: ReleaseNameOverrides): ReleaseNameEditState => ({
@@ -308,7 +510,7 @@ const buildReleaseEditState = (overrides?: ReleaseNameOverrides): ReleaseNameEdi
   noDub: Boolean(overrides?.NoDub),
   noDual: Boolean(overrides?.NoDual),
   dualAudio: Boolean(overrides?.DualAudio),
-  region: overrides?.Region ?? ""
+  region: overrides?.Region ?? "",
 });
 
 const buildReleaseTouchedState = (overrides?: ReleaseNameOverrides): ReleaseNameTouchedState => ({
@@ -324,7 +526,8 @@ const buildReleaseTouchedState = (overrides?: ReleaseNameOverrides): ReleaseName
   episodeTitle: overrides?.EpisodeTitle !== undefined && overrides?.EpisodeTitle !== null,
   manualYear: overrides?.ManualYear !== undefined && overrides?.ManualYear !== null,
   manualDate: overrides?.ManualDate !== undefined && overrides?.ManualDate !== null,
-  useSeasonEpisode: overrides?.UseSeasonEpisode !== undefined && overrides?.UseSeasonEpisode !== null,
+  useSeasonEpisode:
+    overrides?.UseSeasonEpisode !== undefined && overrides?.UseSeasonEpisode !== null,
   noSeason: overrides?.NoSeason !== undefined && overrides?.NoSeason !== null,
   noYear: overrides?.NoYear !== undefined && overrides?.NoYear !== null,
   noAKA: overrides?.NoAKA !== undefined && overrides?.NoAKA !== null,
@@ -333,7 +536,7 @@ const buildReleaseTouchedState = (overrides?: ReleaseNameOverrides): ReleaseName
   noDub: overrides?.NoDub !== undefined && overrides?.NoDub !== null,
   noDual: overrides?.NoDual !== undefined && overrides?.NoDual !== null,
   dualAudio: overrides?.DualAudio !== undefined && overrides?.DualAudio !== null,
-  region: overrides?.Region !== undefined && overrides?.Region !== null
+  region: overrides?.Region !== undefined && overrides?.Region !== null,
 });
 
 const normalizeTag = (value: string) => {
@@ -349,6 +552,14 @@ const isValidManualDate = (value: string) => {
 };
 
 type ThemeMode = "light" | "dark" | "auto";
+type UIStateMode = "fresh" | "live";
+
+const loadUIStateMode = (): UIStateMode => {
+  const storedMode = localStorage.getItem("ui-state-mode");
+  return storedMode === "fresh" || storedMode === "live" ? storedMode : "live";
+};
+
+const maxUIStateLabelLength = 18;
 
 const emptyWebAuthStatus: WebAuthStatus = {
   path: "",
@@ -357,26 +568,50 @@ const emptyWebAuthStatus: WebAuthStatus = {
   canCreate: false,
   username: "",
   allowUnencryptedExport: false,
+  browseRoot: "",
+  allowUnrestrictedBrowse: false,
   encryptionEnabled: false,
-  message: ""
+  message: "",
 };
 
 export default function App() {
-  const browserNativeBrowseAvailable = !isBrowserMode() || isBrowserNativeBrowseAvailable();
+  const browserMode = isBrowserMode();
+  const browserNativeBrowseAvailable = !browserMode || isBrowserNativeBrowseAvailable();
   const [path, setPath] = useState("");
+  const [sourcePathHistory, setSourcePathHistory] = useState<SourcePathHistoryEntry[]>(() => {
+    try {
+      return normalizeSourcePathHistory(
+        JSON.parse(localStorage.getItem(sourcePathHistoryStorageKey) || "[]"),
+        defaultInputHistoryLimit,
+      );
+    } catch {
+      return [];
+    }
+  });
+  const [sourcePathMode, setSourcePathMode] = useState<SourcePathMode | undefined>();
+  const [currentDiscType, setCurrentDiscType] = useState("");
   const [sourceLookupURL, setSourceLookupURL] = useState("");
   const [loading, setLoading] = useState(false);
   const [metadataResetting, setMetadataResetting] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<MetadataPreview>(emptyPreview);
   const [idEdits, setIdEdits] = useState(() => buildIDEditState(emptyPreview.ExternalIDs));
-  const [releaseEdits, setReleaseEdits] = useState(() => buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
-  const [releaseTouched, setReleaseTouched] = useState(() => buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
+  const [releaseEdits, setReleaseEdits] = useState(() =>
+    buildReleaseEditState(emptyPreview.ReleaseNameOverrides),
+  );
+  const [releaseTouched, setReleaseTouched] = useState(() =>
+    buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides),
+  );
   const [showExternalIDInputUI, setShowExternalIDInputUI] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [activeTab, setActiveTab] = useState("input");
   const [theme, setTheme] = useState<ThemeMode>("auto");
+  const [uiStateMode, setUIStateMode] = useState<UIStateMode>(() => loadUIStateMode());
+  const [uiStateID, setUIStateID] = useState(() => localStorage.getItem("ui-state-id") || "");
+  const [liveUIStates, setLiveUIStates] = useState<UIStateRecord[]>([]);
   const [renderedDescriptions, setRenderedDescriptions] = useState<Record<string, boolean>>({});
+  const [bluraySelecting, setBluraySelecting] = useState(false);
+  const [bluraySelectionError, setBluraySelectionError] = useState("");
   const [lightboxImage, setLightboxImage] = useState<string>("");
   const [lightboxAlt, setLightboxAlt] = useState<string>("");
   const [lightboxFit, setLightboxFit] = useState<boolean>(true);
@@ -387,7 +622,9 @@ export default function App() {
   const [bdinfoProgressLines, setBdinfoProgressLines] = useState<string[]>([]);
   const [metadataProgressTarget, setMetadataProgressTarget] = useState("");
   const [metadataProgressActive, setMetadataProgressActive] = useState(false);
-  const [metadataProgressUpdates, setMetadataProgressUpdates] = useState<MetadataProgressUpdate[]>([]);
+  const [metadataProgressUpdates, setMetadataProgressUpdates] = useState<MetadataProgressUpdate[]>(
+    [],
+  );
   const [dupeSummary, setDupeSummary] = useState<DupeCheckSummary>(emptyDupeSummary);
   const [dupeLoading, setDupeLoading] = useState(false);
   const [dupeError, setDupeError] = useState("");
@@ -397,9 +634,9 @@ export default function App() {
   const [dupeIgnore, setDupeIgnore] = useState<Record<string, boolean>>({});
   const [dupeTrackerFlags, setDupeTrackerFlags] = useState<Record<string, boolean>>({});
   const [prepPreview, setPrepPreview] = useState<PreparationPreview>(emptyPreparation);
-  const [prepLoading, setPrepLoading] = useState(false);
-  const [prepError, setPrepError] = useState("");
-  const [builderPreview, setBuilderPreview] = useState<DescriptionBuilderPreview>(emptyDescriptionBuilder);
+  const [, setPrepError] = useState("");
+  const [builderPreview, setBuilderPreview] =
+    useState<DescriptionBuilderPreview>(emptyDescriptionBuilder);
   const [builderRawByGroup, setBuilderRawByGroup] = useState<Record<string, string>>({});
   const [builderRenderedByGroup, setBuilderRenderedByGroup] = useState<Record<string, string>>({});
   const [builderExpandedGroups, setBuilderExpandedGroups] = useState<Record<string, boolean>>({});
@@ -409,18 +646,31 @@ export default function App() {
   const [builderRenderLoading, setBuilderRenderLoading] = useState(false);
   const [builderSaved, setBuilderSaved] = useState("");
   const [builderSaving, setBuilderSaving] = useState(false);
+  const [builderRefreshing, setBuilderRefreshing] = useState(false);
+  const [builderProgressMessage, setBuilderProgressMessage] = useState("");
+  const builderProgressTimers = useRef<number[]>([]);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
-  const [overrideRuleBlocks, setOverrideRuleBlocks] = useState(false);
+  const [uploadSkipClientInjection, setUploadSkipClientInjection] = useState(false);
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
   const [trackerUploadError, setTrackerUploadError] = useState("");
   const [trackerUploadJobID, setTrackerUploadJobID] = useState("");
-  const [trackerUploadSnapshot, setTrackerUploadSnapshot] = useState<TrackerUploadSnapshot | null>(null);
+  const [trackerUploadSnapshot, setTrackerUploadSnapshot] = useState<TrackerUploadSnapshot | null>(
+    null,
+  );
   const [trackerDryRunLoading, setTrackerDryRunLoading] = useState(false);
   const [trackerDryRunError, setTrackerDryRunError] = useState("");
-  const [trackerDryRunPreview, setTrackerDryRunPreview] = useState<TrackerDryRunPreview>(emptyTrackerDryRun);
-  const [trackerQuestionnaireAnswers, setTrackerQuestionnaireAnswers] = useState<Record<string, Record<string, string>>>({});
-  const [releasePageTrackerSelection, setReleasePageTrackerSelection] = useState<Record<string, boolean>>({});
+  const [trackerDryRunPreview, setTrackerDryRunPreview] =
+    useState<TrackerDryRunPreview>(emptyTrackerDryRun);
+  const [trackerDryRunProgress, setTrackerDryRunProgress] = useState<UploadProgressUpdate | null>(
+    null,
+  );
+  const [trackerQuestionnaireAnswers, setTrackerQuestionnaireAnswers] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  const [releasePageTrackerSelection, setReleasePageTrackerSelection] = useState<
+    Record<string, boolean>
+  >({});
   const [runDebug, setRunDebug] = useState(false);
   const [runLogLevel, setRunLogLevel] = useState("info");
   const [runLogLevelTouched, setRunLogLevelTouched] = useState(false);
@@ -442,22 +692,33 @@ export default function App() {
   const [webAuthPassword, setWebAuthPassword] = useState("");
   const [webAuthConfirm, setWebAuthConfirm] = useState("");
   const [webAuthError, setWebAuthError] = useState("");
+  const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
   const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const uiStateHydratedRef = useRef(false);
+  const uiStateInitialLiveStateCheckedRef = useRef(false);
+  const freshUIStateCanPromoteRef = useRef(false);
+  const uiStateSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const uiStateResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sourcePathDropHandlerRef = useRef<(paths: string[]) => void>(() => undefined);
+  const [hostBrowserMode, setHostBrowserMode] = useState<"file" | "folder" | null>(null);
+  const [hostBrowser, setHostBrowser] = useState<BrowseDirectoryResponse | null>(null);
+  const [hostBrowserLoading, setHostBrowserLoading] = useState(false);
+  const [hostBrowserError, setHostBrowserError] = useState("");
+  const [hostBrowserSearch, setHostBrowserSearch] = useState("");
+  const [debouncedHostBrowserSearch, setDebouncedHostBrowserSearch] = useState("");
+  const hostBrowserEntryRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   const builderDirty = useMemo(
     () => Object.values(builderDirtyByGroup).some(Boolean),
-    [builderDirtyByGroup]
+    [builderDirtyByGroup],
   );
-  const builderReady = useMemo(
-    () => {
-      const normalizedPath = path.trim();
-      if (!normalizedPath) {
-        return false;
-      }
-      return builderPreview.SourcePath === normalizedPath && builderPreview.Groups !== undefined;
-    },
-    [builderPreview.SourcePath, builderPreview.Groups, path]
-  );
+  const builderReady = useMemo(() => {
+    const normalizedPath = path.trim();
+    if (!normalizedPath) {
+      return false;
+    }
+    return builderPreview.SourcePath === normalizedPath && builderPreview.Groups !== undefined;
+  }, [builderPreview.SourcePath, builderPreview.Groups, path]);
 
   const {
     configData,
@@ -475,7 +736,7 @@ export default function App() {
     handleSaveSettings,
     renderImageHostingSection,
     renderTrackerSection,
-    renderMapSection,
+    renderTorrentClientsSection,
     renderField,
     sectionFieldMeta,
     updateConfigValue,
@@ -485,15 +746,72 @@ export default function App() {
     buildSavePayload,
     clearSettingsStatus,
     markSettingsSaved,
-    setSettingsSavedMessage,
-    setSettingsErrorMessage,
     resolveImageHostLabel,
-    trackerSelectionNames
+    trackerSelectionNames,
   } = useSettingsState({ activeTab });
+
+  const inputHistoryLimit = useMemo(() => {
+    const mainSettings = ((configData as ConfigMap | null)?.MainSettings ??
+      null) as ConfigMap | null;
+    return resolveInputHistoryLimit(mainSettings?.InputHistoryLimit);
+  }, [configData]);
+  const useFavicons = useMemo(() => {
+    const mainSettings = ((configData as ConfigMap | null)?.MainSettings ??
+      null) as ConfigMap | null;
+    return typeof mainSettings?.UseFavicons === "boolean" ? mainSettings.UseFavicons : true;
+  }, [configData]);
+  const faviconOnly = useMemo(() => {
+    const mainSettings = ((configData as ConfigMap | null)?.MainSettings ??
+      null) as ConfigMap | null;
+    return typeof mainSettings?.FaviconOnly === "boolean" ? mainSettings.FaviconOnly : false;
+  }, [configData]);
+
+  const persistSourcePathHistory = useCallback((entries: SourcePathHistoryEntry[]) => {
+    try {
+      if (entries.length === 0) {
+        localStorage.removeItem(sourcePathHistoryStorageKey);
+        return;
+      }
+      localStorage.setItem(sourcePathHistoryStorageKey, JSON.stringify(entries));
+    } catch {
+      // Storage may be unavailable in locked-down browser sessions.
+    }
+  }, []);
+
+  const rememberSourcePath = useCallback(
+    (value: string, mode?: SourcePathMode) => {
+      setSourcePathHistory((prev) => {
+        const next = addSourcePathHistoryEntry(
+          prev,
+          value,
+          mode ?? inferSourcePathMode(value),
+          inputHistoryLimit,
+        );
+        persistSourcePathHistory(next);
+        return next;
+      });
+    },
+    [inputHistoryLimit, persistSourcePathHistory],
+  );
+
+  const handleSourcePathChange = useCallback((value: string) => {
+    setPath(value);
+    setSourcePathMode(undefined);
+  }, []);
+
+  useEffect(() => {
+    setSourcePathHistory((prev) => {
+      const next = normalizeSourcePathHistory(prev, inputHistoryLimit);
+      persistSourcePathHistory(next);
+      return next;
+    });
+  }, [inputHistoryLimit, persistSourcePathHistory]);
 
   const configuredRunLogLevel = useMemo(() => {
     const loggingSection = ((configData as ConfigMap | null)?.Logging ?? null) as ConfigMap | null;
-    const rawLevel = String(loggingSection?.Level ?? "info").toLowerCase().trim();
+    const rawLevel = String(loggingSection?.Level ?? "info")
+      .toLowerCase()
+      .trim();
     return runLogLevels.includes(rawLevel as (typeof runLogLevels)[number]) ? rawLevel : "info";
   }, [configData]);
 
@@ -527,8 +845,6 @@ export default function App() {
     root.classList.add(effectiveTheme);
   };
 
-
-
   const handleThemeToggle = () => {
     const themes: ThemeMode[] = ["auto", "light", "dark"];
     const currentIndex = themes.indexOf(theme);
@@ -539,16 +855,31 @@ export default function App() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    const getter = (globalThis.go?.guiapp?.App as AppBridgeWithApplicationInfo | undefined)
+      ?.GetApplicationInfo;
+    if (!getter) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void getter()
+      .then((info) => {
+        if (!cancelled) {
+          setApplicationInfo(info);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!lightboxImage) return;
     setLightboxFit(true);
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setLightboxImage("");
-        setLightboxAlt("");
-      }
-    };
-    globalThis.addEventListener("keydown", handleKeyDown);
-    return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, [lightboxImage]);
 
   useEffect(() => {
@@ -581,7 +912,10 @@ export default function App() {
         return;
       }
       const eventPath = typeof payload?.path === "string" ? payload.path : "";
-      if (metadataProgressTarget && normalizePath(eventPath) !== normalizePath(metadataProgressTarget)) {
+      if (
+        metadataProgressTarget &&
+        normalizePath(eventPath) !== normalizePath(metadataProgressTarget)
+      ) {
         return;
       }
 
@@ -591,7 +925,7 @@ export default function App() {
         message: typeof payload?.message === "string" ? payload.message : "",
         status: typeof payload?.status === "string" ? payload.status : "",
         level: typeof payload?.level === "string" ? payload.level : "info",
-        timestamp: typeof payload?.timestamp === "string" ? payload.timestamp : ""
+        timestamp: typeof payload?.timestamp === "string" ? payload.timestamp : "",
       };
 
       if (update.phase === "complete" && update.status === "completed") {
@@ -614,157 +948,6 @@ export default function App() {
     };
   }, [metadataProgressActive, metadataProgressTarget]);
 
-  useEffect(() => {
-    type ComparisonElement = HTMLElement & { __uaComparisonInit?: boolean };
-    const comparisons = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        ".tracker-description.rendered .comparison"
-      )
-    );
-    const cleanups: Array<() => void> = [];
-
-    comparisons.forEach((comparison) => {
-      const element = comparison as ComparisonElement;
-      if (element.__uaComparisonInit) {
-        return;
-      }
-      element.__uaComparisonInit = true;
-
-      const details = comparison.querySelector<HTMLDetailsElement>(
-        ".comparison__details"
-      );
-      const summary = comparison.querySelector<HTMLElement>(
-        ".comparison__details > summary"
-      );
-      const rows = Array.from(
-        comparison.querySelectorAll<HTMLElement>(".comparison__row")
-      );
-      if (!details || rows.length === 0) {
-        return;
-      }
-
-      const maxColumns = rows.reduce(
-        (max, row) => Math.max(max, row.children.length),
-        0
-      );
-      if (maxColumns <= 1) {
-        return;
-      }
-
-      let current = 0;
-
-      const applyColumn = (next: number) => {
-        const clamped = Math.min(Math.max(next, 1), maxColumns);
-        if (clamped === current) {
-          return;
-        }
-        current = clamped;
-        rows.forEach((row) => {
-          const columns = Array.from(row.children) as HTMLElement[];
-          columns.forEach((cell, index) => {
-            const isActive = index + 1 === current;
-            cell.classList.toggle(
-              "comparison__image-container--hidden",
-              !isActive
-            );
-            const image = cell.querySelector<HTMLElement>(
-              ".comparison__image"
-            );
-            if (image) {
-              image.classList.toggle("comparison__image--hidden", !isActive);
-            }
-          });
-        });
-      };
-
-      const handleKeyDown = (event: KeyboardEvent) => {
-        if (!details.open && !comparison.classList.contains("comparison--open")) {
-          return;
-        }
-        if (event.key === "ArrowLeft") {
-          event.preventDefault();
-          const next = current - 1 < 1 ? maxColumns : current - 1;
-          applyColumn(next);
-          return;
-        }
-        if (event.key === "ArrowRight") {
-          event.preventDefault();
-          const next = current + 1 > maxColumns ? 1 : current + 1;
-          applyColumn(next);
-          return;
-        }
-        if (event.key === "Escape") {
-          event.preventDefault();
-          details.open = false;
-          comparison.classList.remove("comparison--open");
-          return;
-        }
-        const digit = Number.parseInt(event.key, 10);
-        if (!Number.isNaN(digit) && digit >= 1 && digit <= maxColumns) {
-          event.preventDefault();
-          applyColumn(digit);
-        }
-      };
-
-      const handleMouseMove = (event: MouseEvent) => {
-        if (
-          (!details.open && !comparison.classList.contains("comparison--open")) ||
-          maxColumns <= 1
-        ) {
-          return;
-        }
-        const width = globalThis.innerWidth || 1;
-        const ratio = event.clientX / width;
-        const next = Math.min(
-          maxColumns,
-          Math.max(1, Math.ceil(ratio * maxColumns))
-        );
-        applyColumn(next);
-      };
-
-      const handleToggle = () => {
-        if (details.open || comparison.classList.contains("comparison--open")) {
-          applyColumn(current);
-          globalThis.addEventListener("keydown", handleKeyDown);
-          globalThis.addEventListener("mousemove", handleMouseMove);
-        } else {
-          globalThis.removeEventListener("keydown", handleKeyDown);
-          globalThis.removeEventListener("mousemove", handleMouseMove);
-        }
-      };
-
-      const handleSummaryClick = (event: MouseEvent) => {
-        event.preventDefault();
-        details.open = !details.open;
-        comparison.classList.toggle("comparison--open", details.open);
-        handleToggle();
-      };
-
-      details.addEventListener("toggle", handleToggle);
-      if (summary) {
-        summary.addEventListener("click", handleSummaryClick);
-      }
-      applyColumn(1);
-      if (details.open) {
-        handleToggle();
-      }
-
-      cleanups.push(() => {
-        details.removeEventListener("toggle", handleToggle);
-        if (summary) {
-          summary.removeEventListener("click", handleSummaryClick);
-        }
-        globalThis.removeEventListener("keydown", handleKeyDown);
-        globalThis.removeEventListener("mousemove", handleMouseMove);
-        element.__uaComparisonInit = false;
-      });
-    });
-
-    return () => {
-      cleanups.forEach((cleanup) => cleanup());
-    };
-  }, [renderedDescriptions, preview.TrackerData, prepPreview.Descriptions, builderRenderedByGroup, builderPreview.Groups, activeTab]);
-
   const getThemeIcon = () => {
     if (theme === "auto") return "🔄";
     if (theme === "light") return "☀️";
@@ -777,8 +960,17 @@ export default function App() {
     return "Dark";
   };
 
-  const hasTrackerData = preview.TrackerData && preview.TrackerData.length > 0;
+  const skipAutoTorrentEnabled = isSkipAutoTorrentEnabled(configData);
+  const hasTrackerData =
+    !skipAutoTorrentEnabled && preview.TrackerData && preview.TrackerData.length > 0;
+  const hasBlurayData = Boolean(preview.Bluray);
   const hasPreview = Boolean(preview.SourcePath);
+
+  useEffect(() => {
+    if (skipAutoTorrentEnabled && activeTab === "tracker") {
+      setActiveTab("input");
+    }
+  }, [activeTab, skipAutoTorrentEnabled]);
 
   useEffect(() => {
     setDupeIgnore((prev) => {
@@ -841,7 +1033,9 @@ export default function App() {
     const next = new Set<string>();
     (dupeSummary.Results || []).forEach((result) => {
       if (!result.Tracker) return;
-      const status = String(result.Status || "").toLowerCase().trim();
+      const status = String(result.Status || "")
+        .toLowerCase()
+        .trim();
       const hasError = Boolean(String(result.Error || "").trim());
       if (status !== "failed" && !hasError) return;
       const normalized = result.Tracker.toLowerCase().trim();
@@ -876,23 +1070,6 @@ export default function App() {
     });
     return Array.from(next);
   }, [dupeIgnore]);
-  const filterPrepDescriptions = (descriptions: PreparationDescription[]) => {
-    if (dupedTrackerSet.size === 0 && ruleSkippedTrackerSet.size === 0) return descriptions;
-    const filtered: PreparationDescription[] = [];
-    descriptions.forEach((entry) => {
-      const trackers = (entry.Trackers || []).filter(
-        (tracker) => {
-          const normalized = String(tracker).toLowerCase().trim();
-          return !dupedTrackerSet.has(normalized) && !ruleSkippedTrackerSet.has(normalized);
-        }
-      );
-      if (trackers.length === 0) return;
-      filtered.push({ ...entry, Trackers: trackers });
-    });
-    return filtered;
-  };
-
-
 
   const trackerUploadItems = useMemo(() => {
     if (!configData || !configData.Trackers || typeof configData.Trackers !== "object") {
@@ -906,7 +1083,7 @@ export default function App() {
         ? (rawEntries as ConfigMap)
         : {};
     const entries = Object.entries(entriesRoot).filter(
-      ([, value]) => value && typeof value === "object" && !Array.isArray(value)
+      ([, value]) => value && typeof value === "object" && !Array.isArray(value),
     ) as Array<[string, ConfigMap]>;
     const visibleTrackerSet = new Set(trackerSelectionNames);
 
@@ -915,6 +1092,7 @@ export default function App() {
       .map(([name, config]) => ({ name, config }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [configData, trackerSelectionNames]);
+  const trackerIconSrcByName = useTrackerIcons(trackerUploadItems, useFavicons);
 
   const defaultTrackerSet = useMemo(() => {
     if (!configData || !configData.Trackers || typeof configData.Trackers !== "object") {
@@ -930,15 +1108,21 @@ export default function App() {
       tmdb: parseIDInput("tmdb", idEdits.tmdb),
       imdb: parseIDInput("imdb", idEdits.imdb),
       tvdb: parseIDInput("tvdb", idEdits.tvdb),
-      tvmaze: parseIDInput("tvmaze", idEdits.tvmaze)
+      tvmaze: parseIDInput("tvmaze", idEdits.tvmaze),
     };
 
     const invalid = Object.values(parsed).includes(null);
     const overrides: ExternalIDOverrides = {
-      TMDBID: parsed.tmdb !== null && parsed.tmdb !== preview.ExternalIDs.TMDBID ? parsed.tmdb : null,
-      IMDBID: parsed.imdb !== null && parsed.imdb !== preview.ExternalIDs.IMDBID ? parsed.imdb : null,
-      TVDBID: parsed.tvdb !== null && parsed.tvdb !== preview.ExternalIDs.TVDBID ? parsed.tvdb : null,
-      TVmazeID: parsed.tvmaze !== null && parsed.tvmaze !== preview.ExternalIDs.TVmazeID ? parsed.tvmaze : null
+      TMDBID:
+        parsed.tmdb !== null && parsed.tmdb !== preview.ExternalIDs.TMDBID ? parsed.tmdb : null,
+      IMDBID:
+        parsed.imdb !== null && parsed.imdb !== preview.ExternalIDs.IMDBID ? parsed.imdb : null,
+      TVDBID:
+        parsed.tvdb !== null && parsed.tvdb !== preview.ExternalIDs.TVDBID ? parsed.tvdb : null,
+      TVmazeID:
+        parsed.tvmaze !== null && parsed.tvmaze !== preview.ExternalIDs.TVmazeID
+          ? parsed.tvmaze
+          : null,
     };
     const dirty = Object.values(overrides).some((value) => value !== null);
 
@@ -952,16 +1136,27 @@ export default function App() {
     }
 
     const overrides: ReleaseNameOverrides = {};
-    const stored = (preview.ReleaseNameOverrides && typeof preview.ReleaseNameOverrides === 'object') ? preview.ReleaseNameOverrides : {};
+    const stored =
+      preview.ReleaseNameOverrides && typeof preview.ReleaseNameOverrides === "object"
+        ? preview.ReleaseNameOverrides
+        : {};
     let invalid = false;
 
     const readTrimmed = (value: string | null | undefined) => (value || "").trim();
-    const stringDirty = (touched: boolean, current: string | null | undefined, storedValue?: string | null) => {
+    const stringDirty = (
+      touched: boolean,
+      current: string | null | undefined,
+      storedValue?: string | null,
+    ) => {
       if (!touched) return false;
       if (storedValue === undefined || storedValue === null) return true;
       return readTrimmed(current) !== readTrimmed(storedValue);
     };
-    const boolDirty = (touched: boolean, current: boolean | null | undefined, storedValue?: boolean | null) => {
+    const boolDirty = (
+      touched: boolean,
+      current: boolean | null | undefined,
+      storedValue?: boolean | null,
+    ) => {
       if (!touched) return false;
       if (storedValue === undefined || storedValue === null) return true;
       return Boolean(current) !== Boolean(storedValue);
@@ -976,7 +1171,8 @@ export default function App() {
     if (releaseTouched.edition) overrides.Edition = readTrimmed(releaseEdits.edition);
     if (releaseTouched.season) overrides.Season = readTrimmed(releaseEdits.season);
     if (releaseTouched.episode) overrides.Episode = readTrimmed(releaseEdits.episode);
-    if (releaseTouched.episodeTitle) overrides.EpisodeTitle = readTrimmed(releaseEdits.episodeTitle);
+    if (releaseTouched.episodeTitle)
+      overrides.EpisodeTitle = readTrimmed(releaseEdits.episodeTitle);
 
     if (releaseTouched.manualYear) {
       const trimmed = readTrimmed(releaseEdits.manualYear);
@@ -1023,7 +1219,11 @@ export default function App() {
       stringDirty(releaseTouched.episode, releaseEdits.episode, stored.Episode) ||
       stringDirty(releaseTouched.episodeTitle, releaseEdits.episodeTitle, stored.EpisodeTitle) ||
       stringDirty(releaseTouched.manualDate, releaseEdits.manualDate, stored.ManualDate) ||
-      boolDirty(releaseTouched.useSeasonEpisode, releaseEdits.useSeasonEpisode, stored.UseSeasonEpisode) ||
+      boolDirty(
+        releaseTouched.useSeasonEpisode,
+        releaseEdits.useSeasonEpisode,
+        stored.UseSeasonEpisode,
+      ) ||
       boolDirty(releaseTouched.noSeason, releaseEdits.noSeason, stored.NoSeason) ||
       boolDirty(releaseTouched.noYear, releaseEdits.noYear, stored.NoYear) ||
       boolDirty(releaseTouched.noAKA, releaseEdits.noAKA, stored.NoAKA) ||
@@ -1060,17 +1260,41 @@ export default function App() {
     livePreviewImage,
     setLivePreviewImage,
     livePreviewRequestId,
-    screenshotsEnabled,
-    setScreenshotsEnabled,
+    setScreenshotPlan,
+    setScreenshotSelections,
     screenshotsSettingsSaving,
     setScreenshotsSettingsSaving,
-    setScreenshotsError,
+    setShowFrameSelections,
+    setFinalResult,
+    setDeletedTrackerImages,
     loadScreenshotPlan,
     readScreenshotImage,
     setExistingImages,
     resetScreenshotState: resetScreenshots,
     handleDeleteTrackerImageURL,
   } = screenshots;
+
+  const selectedUploadImageTrackers = useMemo(() => {
+    const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
+    return Object.entries(uploadToggles)
+      .filter(([name, enabled]) => {
+        if (!enabled) return false;
+        if (!validTrackers.has(name)) return false;
+        const normalized = name.toLowerCase().trim();
+        if (!normalized) return false;
+        if (dupedTrackerSet.has(normalized)) return false;
+        if (ruleSkippedTrackerSet.has(normalized)) return false;
+        if (failedDupeTrackerSet.has(normalized)) return false;
+        return true;
+      })
+      .map(([name]) => name);
+  }, [
+    uploadToggles,
+    trackerUploadItems,
+    dupedTrackerSet,
+    ruleSkippedTrackerSet,
+    failedDupeTrackerSet,
+  ]);
 
   // Upload images workflow hook
   const uploadImages = useUploadImages({
@@ -1079,14 +1303,420 @@ export default function App() {
     releaseOverrideState,
     uploadCandidates: screenshots.uploadCandidates,
     configuredImageHosts,
+    selectedTrackers: selectedUploadImageTrackers,
   });
   const {
     refreshUploadedImages,
     resetUploadState,
     setUploadSelections,
     setUploadHost,
+    setUploadedImages,
+    setUploadedImageRecords,
     uploadHost,
   } = uploadImages;
+
+  const applyUIState = useCallback(
+    (state: UIState) => {
+      if (typeof state.path === "string") {
+        setPath(state.path);
+        setSourcePathMode(undefined);
+      }
+      if (typeof state.sourceLookupURL === "string") setSourceLookupURL(state.sourceLookupURL);
+      if (typeof state.activeTab === "string") setActiveTab(state.activeTab);
+      if (state.preview) setPreview({ ...emptyPreview, ...state.preview });
+      if (state.idEdits)
+        setIdEdits({ ...buildIDEditState(emptyPreview.ExternalIDs), ...state.idEdits });
+      if (state.releaseEdits) {
+        setReleaseEdits({ ...buildReleaseEditState({}), ...state.releaseEdits });
+      }
+      if (state.releaseTouched) {
+        setReleaseTouched({ ...buildReleaseTouchedState({}), ...state.releaseTouched });
+      }
+      if (typeof state.showExternalIDInputUI === "boolean") {
+        setShowExternalIDInputUI(state.showExternalIDInputUI);
+      }
+      if (typeof state.selectedProvider === "string") setSelectedProvider(state.selectedProvider);
+      if (state.releasePageTrackerSelection) {
+        setReleasePageTrackerSelection(state.releasePageTrackerSelection);
+      }
+      if (state.uploadToggles) setUploadToggles(state.uploadToggles);
+      if (typeof state.uploadSkipClientInjection === "boolean") {
+        setUploadSkipClientInjection(state.uploadSkipClientInjection);
+      }
+      if (typeof state.runDebug === "boolean") setRunDebug(state.runDebug);
+      if (typeof state.runLogLevel === "string") setRunLogLevel(state.runLogLevel);
+      if (typeof state.runLogLevelTouched === "boolean") {
+        setRunLogLevelTouched(state.runLogLevelTouched);
+      }
+      if (state.dupeSummary) setDupeSummary({ ...emptyDupeSummary, ...state.dupeSummary });
+      if (typeof state.dupeChecked === "boolean") setDupeChecked(state.dupeChecked);
+      if (state.dupeIgnore) setDupeIgnore(state.dupeIgnore);
+      if (state.dupeTrackerFlags) setDupeTrackerFlags(state.dupeTrackerFlags);
+      if (typeof state.dupeCheckJobID === "string") setDupeCheckJobID(state.dupeCheckJobID);
+      if (state.dupeCheckSnapshot !== undefined) setDupeCheckSnapshot(state.dupeCheckSnapshot);
+      if (state.prepPreview) setPrepPreview({ ...emptyPreparation, ...state.prepPreview });
+      if (state.screenshotPlan !== undefined) setScreenshotPlan(state.screenshotPlan);
+      if (state.screenshotSelections) setScreenshotSelections(state.screenshotSelections);
+      if (typeof state.showFrameSelections === "boolean") {
+        setShowFrameSelections(state.showFrameSelections);
+      }
+      if (state.finalResult !== undefined) setFinalResult(state.finalResult);
+      if (state.deletedTrackerImages) setDeletedTrackerImages(state.deletedTrackerImages);
+      if (typeof state.uploadHost === "string") setUploadHost(state.uploadHost);
+      if (state.uploadSelections) setUploadSelections(state.uploadSelections);
+      if (state.uploadedImages) setUploadedImages(state.uploadedImages);
+      if (state.uploadedImageRecords) {
+        setUploadedImageRecords(state.uploadedImageRecords);
+      }
+      if (typeof state.trackerUploadJobID === "string") {
+        setTrackerUploadJobID(state.trackerUploadJobID);
+      }
+      if (state.trackerUploadSnapshot !== undefined) {
+        setTrackerUploadSnapshot(state.trackerUploadSnapshot);
+      }
+      if (state.trackerDryRunPreview) {
+        setTrackerDryRunPreview({ ...emptyTrackerDryRun, ...state.trackerDryRunPreview });
+      }
+      if (state.trackerQuestionnaireAnswers) {
+        setTrackerQuestionnaireAnswers(state.trackerQuestionnaireAnswers);
+      }
+    },
+    [
+      setDeletedTrackerImages,
+      setFinalResult,
+      setScreenshotPlan,
+      setScreenshotSelections,
+      setShowFrameSelections,
+      setUploadHost,
+      setUploadSelections,
+      setUploadedImageRecords,
+      setUploadedImages,
+    ],
+  );
+
+  const createUIStateID = () => {
+    const randomID =
+      typeof globalThis.crypto?.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return `ui-${randomID}`;
+  };
+
+  const uiStateLabel = (state: UIState) => {
+    const statePath = typeof state.path === "string" ? state.path.trim() : "";
+    let label = "";
+    if (statePath) {
+      const parts = statePath.replaceAll("\\", "/").split("/").filter(Boolean);
+      label = parts[parts.length - 1] || statePath;
+    }
+    if (!label) {
+      label = state.preview?.ReleaseName?.trim() || "";
+    }
+    if (!label) {
+      const stateTab = typeof state.activeTab === "string" ? state.activeTab.trim() : "";
+      label = stateTab ? `Live ${stateTab}` : "Live state";
+    }
+    return label.length > maxUIStateLabelLength
+      ? `${label.slice(0, maxUIStateLabelLength - 3)}...`
+      : label;
+  };
+
+  const hasRealUIState = useCallback((state?: UIState | null) => {
+    if (!state) {
+      return false;
+    }
+    const hasText = (...values: Array<string | undefined>) =>
+      values.some((value) => typeof value === "string" && value.trim().length > 0);
+    return (
+      hasText(
+        state.preview?.SourcePath,
+        state.preview?.ReleaseName,
+        state.dupeCheckJobID,
+        state.trackerUploadJobID,
+        state.dupeSummary?.SourcePath,
+      ) ||
+      Boolean(state.preview?.TrackerData?.length) ||
+      Boolean(state.dupeChecked) ||
+      Boolean(state.dupeCheckSnapshot) ||
+      hasText(state.prepPreview?.SourcePath) ||
+      Boolean(state.prepPreview?.Descriptions?.length) ||
+      Boolean(state.screenshotPlan) ||
+      Boolean(state.screenshotSelections?.length) ||
+      Boolean(state.finalResult) ||
+      Boolean(state.uploadedImages?.length) ||
+      Boolean(state.uploadedImageRecords?.length) ||
+      Boolean(state.trackerUploadSnapshot) ||
+      Boolean(state.trackerDryRunPreview?.Trackers?.length) ||
+      Boolean(Object.keys(state.releasePageTrackerSelection || {}).length) ||
+      Boolean(Object.keys(state.uploadToggles || {}).length)
+    );
+  }, []);
+
+  const liveUIStateRecords = useCallback(
+    (records: UIStateRecord[] | undefined) =>
+      (records || []).filter((record) => hasRealUIState(record.state)),
+    [hasRealUIState],
+  );
+
+  const uiStateSourceKey = useCallback((state?: UIState | null) => {
+    const raw =
+      state?.preview?.SourcePath ||
+      state?.dupeSummary?.SourcePath ||
+      state?.dupeCheckSnapshot?.sourcePath ||
+      state?.prepPreview?.SourcePath ||
+      state?.trackerDryRunPreview?.SourcePath ||
+      state?.path ||
+      "";
+    return raw.trim().replaceAll("\\", "/").toLowerCase();
+  }, []);
+
+  const matchingLiveUIState = useCallback(
+    (records: UIStateRecord[], state: UIState) => {
+      const key = uiStateSourceKey(state);
+      if (!key) {
+        return null;
+      }
+      return records.find((record) => uiStateSourceKey(record.state) === key) || null;
+    },
+    [uiStateSourceKey],
+  );
+
+  const refreshLiveUIStates = useCallback(async () => {
+    const listUIStates = globalThis.go?.guiapp?.App?.ListUIStates;
+    if (!listUIStates) {
+      return [];
+    }
+    const result = await listUIStates();
+    const states = liveUIStateRecords(result?.states);
+    setLiveUIStates(states);
+    return states;
+  }, [liveUIStateRecords]);
+
+  const suspendUIStateSaves = () => {
+    uiStateHydratedRef.current = false;
+    if (uiStateSaveTimerRef.current) {
+      clearTimeout(uiStateSaveTimerRef.current);
+      uiStateSaveTimerRef.current = null;
+    }
+    if (uiStateResumeTimerRef.current) {
+      clearTimeout(uiStateResumeTimerRef.current);
+      uiStateResumeTimerRef.current = null;
+    }
+  };
+
+  const resumeUIStateSavesSoon = () => {
+    if (uiStateResumeTimerRef.current) {
+      clearTimeout(uiStateResumeTimerRef.current);
+    }
+    uiStateResumeTimerRef.current = setTimeout(() => {
+      uiStateHydratedRef.current = true;
+      uiStateResumeTimerRef.current = null;
+    }, 250);
+  };
+
+  useEffect(() => {
+    const shouldCheckForSavedLiveState =
+      browserMode &&
+      !uiStateInitialLiveStateCheckedRef.current &&
+      uiStateMode === "fresh" &&
+      !uiStateID;
+    const shouldBootstrapLiveState = uiStateMode === "live" || shouldCheckForSavedLiveState;
+    if (!shouldBootstrapLiveState) {
+      uiStateHydratedRef.current = true;
+      return;
+    }
+    if (browserMode && !uiStateInitialLiveStateCheckedRef.current) {
+      uiStateInitialLiveStateCheckedRef.current = true;
+    }
+
+    let canceled = false;
+    suspendUIStateSaves();
+    refreshLiveUIStates()
+      .then((states) => {
+        if (canceled) {
+          return;
+        }
+        const selected =
+          (uiStateID ? states.find((record) => record.id === uiStateID) : null) ||
+          states[0] ||
+          null;
+        if (selected) {
+          setUIStateID(selected.id);
+          localStorage.setItem("ui-state-mode", "live");
+          localStorage.setItem("ui-state-id", selected.id);
+          applyUIState(selected.state || {});
+          setUIStateMode("live");
+          return;
+        }
+        if (shouldCheckForSavedLiveState) {
+          return;
+        }
+        const nextID = uiStateID || createUIStateID();
+        localStorage.setItem("ui-state-mode", "live");
+        localStorage.setItem("ui-state-id", nextID);
+        setUIStateID(nextID);
+        setUIStateMode("live");
+      })
+      .catch((err) => {
+        console.error("Failed to load UI states:", err);
+      })
+      .finally(() => {
+        if (!canceled) {
+          resumeUIStateSavesSoon();
+        }
+      });
+
+    return () => {
+      canceled = true;
+      suspendUIStateSaves();
+    };
+  }, [applyUIState, browserMode, refreshLiveUIStates, uiStateID, uiStateMode]);
+
+  useEffect(() => {
+    if (uiStateMode !== "live" && !freshUIStateCanPromoteRef.current) {
+      return;
+    }
+    if (!uiStateHydratedRef.current) {
+      return;
+    }
+    const saveUIState = globalThis.go?.guiapp?.App?.SaveUIState;
+    if (!saveUIState) {
+      return;
+    }
+    if (uiStateSaveTimerRef.current) {
+      clearTimeout(uiStateSaveTimerRef.current);
+    }
+    const state: UIState = {
+      path,
+      sourceLookupURL,
+      activeTab,
+      preview,
+      idEdits,
+      releaseEdits,
+      releaseTouched,
+      showExternalIDInputUI,
+      selectedProvider,
+      releasePageTrackerSelection,
+      uploadToggles,
+      uploadSkipClientInjection,
+      runDebug,
+      runLogLevel,
+      runLogLevelTouched,
+      dupeSummary,
+      dupeChecked,
+      dupeIgnore,
+      dupeTrackerFlags,
+      dupeCheckJobID,
+      dupeCheckSnapshot,
+      prepPreview,
+      screenshotPlan: screenshots.screenshotPlan,
+      screenshotSelections: screenshots.screenshotSelections,
+      showFrameSelections: screenshots.showFrameSelections,
+      finalResult: screenshots.finalResult,
+      deletedTrackerImages: screenshots.deletedTrackerImages,
+      uploadHost: uploadImages.uploadHost,
+      uploadSelections: uploadImages.uploadSelections,
+      uploadedImages: uploadImages.uploadedImages,
+      uploadedImageRecords: uploadImages.uploadedImageRecords,
+      trackerUploadJobID,
+      trackerUploadSnapshot,
+      trackerDryRunPreview,
+      trackerQuestionnaireAnswers,
+    };
+    if (!hasRealUIState(state)) {
+      return;
+    }
+    uiStateSaveTimerRef.current = setTimeout(() => {
+      void (async () => {
+        let saveID = uiStateID;
+        let records = liveUIStates;
+        try {
+          records = await refreshLiveUIStates();
+        } catch (err) {
+          console.error("Failed to refresh UI states before save:", err);
+        }
+        const currentSource = uiStateSourceKey(state);
+        const attachedRecord = saveID
+          ? records.find((record) => record.id === saveID) || null
+          : null;
+        const attachedSource = uiStateSourceKey(attachedRecord?.state);
+        if (!saveID || (currentSource && attachedSource && currentSource !== attachedSource)) {
+          const matchingRecord = matchingLiveUIState(records, state);
+          saveID = matchingRecord?.id || createUIStateID();
+          localStorage.setItem("ui-state-mode", "live");
+          localStorage.setItem("ui-state-id", saveID);
+          setUIStateID(saveID);
+          setUIStateMode("live");
+        }
+        const label = uiStateLabel(state);
+        await saveUIState(saveID, label, state);
+        freshUIStateCanPromoteRef.current = false;
+        setLiveUIStates((prev) => {
+          const baseRecords = records.length > 0 ? records : prev;
+          return liveUIStateRecords([
+            ...baseRecords.filter((record) => record.id !== saveID),
+            {
+              id: saveID,
+              label,
+              updatedAt: new Date().toISOString(),
+              state,
+            },
+          ]);
+        });
+      })().catch((err) => {
+        console.error("Failed to save UI state:", err);
+      });
+    }, 750);
+    return () => {
+      if (uiStateSaveTimerRef.current) {
+        clearTimeout(uiStateSaveTimerRef.current);
+      }
+    };
+  }, [
+    path,
+    sourceLookupURL,
+    activeTab,
+    preview,
+    idEdits,
+    releaseEdits,
+    releaseTouched,
+    showExternalIDInputUI,
+    selectedProvider,
+    releasePageTrackerSelection,
+    uploadToggles,
+    uploadSkipClientInjection,
+    runDebug,
+    runLogLevel,
+    runLogLevelTouched,
+    dupeSummary,
+    dupeChecked,
+    dupeIgnore,
+    dupeTrackerFlags,
+    dupeCheckJobID,
+    dupeCheckSnapshot,
+    prepPreview,
+    screenshots.screenshotPlan,
+    screenshots.screenshotSelections,
+    screenshots.showFrameSelections,
+    screenshots.finalResult,
+    screenshots.deletedTrackerImages,
+    uploadImages.uploadHost,
+    uploadImages.uploadSelections,
+    uploadImages.uploadedImages,
+    uploadImages.uploadedImageRecords,
+    trackerUploadJobID,
+    trackerUploadSnapshot,
+    trackerDryRunPreview,
+    trackerQuestionnaireAnswers,
+    hasRealUIState,
+    liveUIStateRecords,
+    liveUIStates,
+    matchingLiveUIState,
+    refreshLiveUIStates,
+    uiStateSourceKey,
+    uiStateID,
+    uiStateMode,
+  ]);
 
   // Tracker image URL handling
   const trackerImageURLs = useMemo(() => {
@@ -1119,34 +1749,315 @@ export default function App() {
 
   const uploadCandidatePaths = useMemo(() => {
     return new Set(
-      screenshots.uploadCandidates.map((item) => item.image.Path).filter((path): path is string => Boolean(path))
+      screenshots.uploadCandidates
+        .map((item) => item.image.Path)
+        .filter((path): path is string => Boolean(path)),
     );
   }, [screenshots.uploadCandidates]);
+
+  const activeLiveState = useMemo(
+    () => liveUIStates.find((record) => record.id === uiStateID) || null,
+    [liveUIStates, uiStateID],
+  );
+
+  const activeLiveIndex = useMemo(
+    () => liveUIStates.findIndex((record) => record.id === uiStateID),
+    [liveUIStates, uiStateID],
+  );
+
+  const uiStateToggleLabel =
+    uiStateMode === "fresh"
+      ? "Fresh"
+      : activeLiveIndex >= 0
+        ? `Live ${activeLiveIndex + 1}/${Math.max(1, liveUIStates.length)}`
+        : "Live";
+
+  const uiStateToggleTitle =
+    uiStateMode === "fresh"
+      ? "Using a fresh local workspace"
+      : liveUIStates.length > 1
+        ? `Using shared live UI state ${Math.max(
+            1,
+            liveUIStates.findIndex((record) => record.id === uiStateID) + 1,
+          )} of ${liveUIStates.length}${activeLiveState?.label ? `: ${activeLiveState.label}` : ""}`
+        : `Using shared live UI state${activeLiveState?.label ? `: ${activeLiveState.label}` : ""}`;
 
   const resetScreenshotState = useCallback(() => {
     resetScreenshots();
     resetUploadState();
     setUploadToggles({});
-    setOverrideRuleBlocks(false);
     setFinalDragIndex(null);
     setLiveCaptureLoading(false);
   }, [resetScreenshots, resetUploadState]);
 
+  const buildCurrentUIState = useCallback(
+    (): UIState => ({
+      path,
+      sourceLookupURL,
+      activeTab,
+      preview,
+      idEdits,
+      releaseEdits,
+      releaseTouched,
+      showExternalIDInputUI,
+      selectedProvider,
+      releasePageTrackerSelection,
+      uploadToggles,
+      runDebug,
+      runLogLevel,
+      runLogLevelTouched,
+      dupeSummary,
+      dupeChecked,
+      dupeIgnore,
+      dupeTrackerFlags,
+      dupeCheckJobID,
+      dupeCheckSnapshot,
+      prepPreview,
+      screenshotPlan: screenshots.screenshotPlan,
+      screenshotSelections: screenshots.screenshotSelections,
+      showFrameSelections: screenshots.showFrameSelections,
+      finalResult: screenshots.finalResult,
+      deletedTrackerImages: screenshots.deletedTrackerImages,
+      uploadHost: uploadImages.uploadHost,
+      uploadSelections: uploadImages.uploadSelections,
+      uploadedImages: uploadImages.uploadedImages,
+      uploadedImageRecords: uploadImages.uploadedImageRecords,
+      trackerUploadJobID,
+      trackerUploadSnapshot,
+      trackerDryRunPreview,
+      trackerQuestionnaireAnswers,
+    }),
+    [
+      path,
+      sourceLookupURL,
+      activeTab,
+      preview,
+      idEdits,
+      releaseEdits,
+      releaseTouched,
+      showExternalIDInputUI,
+      selectedProvider,
+      releasePageTrackerSelection,
+      uploadToggles,
+      runDebug,
+      runLogLevel,
+      runLogLevelTouched,
+      dupeSummary,
+      dupeChecked,
+      dupeIgnore,
+      dupeTrackerFlags,
+      dupeCheckJobID,
+      dupeCheckSnapshot,
+      prepPreview,
+      screenshots.screenshotPlan,
+      screenshots.screenshotSelections,
+      screenshots.showFrameSelections,
+      screenshots.finalResult,
+      screenshots.deletedTrackerImages,
+      uploadImages.uploadHost,
+      uploadImages.uploadSelections,
+      uploadImages.uploadedImages,
+      uploadImages.uploadedImageRecords,
+      trackerUploadJobID,
+      trackerUploadSnapshot,
+      trackerDryRunPreview,
+      trackerQuestionnaireAnswers,
+    ],
+  );
 
+  const resetFreshWorkflowState = useCallback(
+    (nextActiveTab = "input") => {
+      freshUIStateCanPromoteRef.current = false;
+      if (uiStateSaveTimerRef.current) {
+        clearTimeout(uiStateSaveTimerRef.current);
+      }
+      setPath("");
+      setSourcePathMode(undefined);
+      setSourceLookupURL("");
+      setLoading(false);
+      setMetadataResetting(false);
+      setError("");
+      setPreview(emptyPreview);
+      setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
+      setReleaseEdits(buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
+      setReleaseTouched(buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
+      setShowExternalIDInputUI(true);
+      setSelectedProvider("");
+      setActiveTab(nextActiveTab);
+      setRenderedDescriptions({});
+      setLightboxImage("");
+      setLightboxAlt("");
+      setShowPlaylistSelection(false);
+      setPlaylistSelectionPath("");
+      setPlaylistAutoPreparing(false);
+      setPlaylistPreparationError("");
+      setBdinfoProgressLines([]);
+      setMetadataProgressTarget("");
+      setMetadataProgressActive(false);
+      setMetadataProgressUpdates([]);
+      setDupeSummary(emptyDupeSummary);
+      setDupeLoading(false);
+      setDupeError("");
+      setDupeChecked(false);
+      setDupeCheckJobID("");
+      setDupeCheckSnapshot(null);
+      setDupeIgnore({});
+      setDupeTrackerFlags({});
+      setPrepPreview(emptyPreparation);
+      setPrepError("");
+      setBuilderPreview(emptyDescriptionBuilder);
+      setBuilderRawByGroup({});
+      setBuilderRenderedByGroup({});
+      setBuilderExpandedGroups({});
+      setBuilderLoading(false);
+      setBuilderError("");
+      setBuilderDirtyByGroup({});
+      setBuilderRenderLoading(false);
+      setBuilderSaved("");
+      setBuilderSaving(false);
+      setBuilderRefreshing(false);
+      setBuilderAutoRequestKey("");
+      resetScreenshotState();
+      setTrackerUploadRunning(false);
+      setTrackerUploadError("");
+      setTrackerUploadJobID("");
+      setTrackerUploadSnapshot(null);
+      setTrackerDryRunLoading(false);
+      setTrackerDryRunError("");
+      setTrackerDryRunPreview(emptyTrackerDryRun);
+      setTrackerDryRunProgress(null);
+      setTrackerQuestionnaireAnswers({});
+      setReleasePageTrackerSelection({});
+      setRunDebug(false);
+      setRunLogLevel(configuredRunLogLevel);
+      setRunLogLevelTouched(false);
+      setLiveCaptureLoading(false);
+      setHostBrowserMode(null);
+      setHostBrowser(null);
+      setHostBrowserLoading(false);
+      setHostBrowserError("");
+    },
+    [configuredRunLogLevel, resetScreenshotState],
+  );
+
+  const handleHistoryReleaseDeleted = useCallback(
+    (deletedPath: string) => {
+      const deletedKey = uiStateSourceKey({ path: deletedPath });
+      if (!deletedKey) {
+        return;
+      }
+      if (uiStateSourceKey(buildCurrentUIState()) !== deletedKey) {
+        return;
+      }
+      localStorage.setItem("ui-state-mode", "fresh");
+      localStorage.removeItem("ui-state-id");
+      suspendUIStateSaves();
+      resetFreshWorkflowState("history");
+      setUIStateID("");
+      setUIStateMode("fresh");
+      resumeUIStateSavesSoon();
+      void refreshLiveUIStates().catch((err) => {
+        console.error("Failed to refresh UI states after history delete:", err);
+      });
+    },
+    [buildCurrentUIState, refreshLiveUIStates, resetFreshWorkflowState, uiStateSourceKey],
+  );
+
+  const toggleUIStateMode = async () => {
+    let states = liveUIStates;
+    try {
+      states = await refreshLiveUIStates();
+    } catch (err) {
+      console.error("Failed to refresh UI states:", err);
+    }
+    const currentIndex = states.findIndex((record) => record.id === uiStateID);
+
+    if (uiStateMode === "live" && currentIndex >= 0 && currentIndex + 1 < states.length) {
+      const nextState = states[currentIndex + 1];
+      localStorage.setItem("ui-state-mode", "live");
+      localStorage.setItem("ui-state-id", nextState.id);
+      suspendUIStateSaves();
+      applyUIState(nextState.state || {});
+      setUIStateID(nextState.id);
+      setUIStateMode("live");
+      resumeUIStateSavesSoon();
+      return;
+    }
+
+    if (uiStateMode === "live") {
+      localStorage.setItem("ui-state-mode", "fresh");
+      localStorage.removeItem("ui-state-id");
+      suspendUIStateSaves();
+      resetFreshWorkflowState();
+      setUIStateID("");
+      setUIStateMode("fresh");
+      return;
+    }
+
+    const state = buildCurrentUIState();
+    const matchingState = matchingLiveUIState(states, state);
+    const nextState = matchingState || states[0];
+    if (nextState) {
+      localStorage.setItem("ui-state-mode", "live");
+      localStorage.setItem("ui-state-id", nextState.id);
+      suspendUIStateSaves();
+      applyUIState(nextState.state || {});
+      setUIStateID(nextState.id);
+      setUIStateMode("live");
+      resumeUIStateSavesSoon();
+      return;
+    }
+
+    if (!hasRealUIState(state)) {
+      localStorage.setItem("ui-state-mode", "fresh");
+      localStorage.removeItem("ui-state-id");
+      setUIStateID("");
+      setUIStateMode("fresh");
+      return;
+    }
+    const nextID = createUIStateID();
+    const nextRecord = {
+      id: nextID,
+      label: uiStateLabel(state),
+      updatedAt: new Date().toISOString(),
+      state,
+    };
+    const saveUIState = globalThis.go?.guiapp?.App?.SaveUIState;
+    if (saveUIState) {
+      try {
+        await saveUIState(nextID, nextRecord.label, state);
+      } catch (err) {
+        console.error("Failed to save UI state:", err);
+        return;
+      }
+    }
+    localStorage.setItem("ui-state-mode", "live");
+    localStorage.setItem("ui-state-id", nextID);
+    suspendUIStateSaves();
+    setLiveUIStates([...states.filter((record) => record.id !== nextID), nextRecord]);
+    setUIStateID(nextID);
+    setUIStateMode("live");
+    resumeUIStateSavesSoon();
+  };
 
   // Helper functions for screenshot management (not in the hook)
   const handleDeleteExistingImage = (image: ScreenshotImage) => {
     if (!image.Path) return;
     const deletedPath = image.Path;
-    screenshots.setExistingImages((prev) => prev.filter((entry) => entry.image.Path !== deletedPath));
+    screenshots.setExistingImages((prev) =>
+      prev.filter((entry) => entry.image.Path !== deletedPath),
+    );
     if (screenshots.finalImagesRef.current.length > 0) {
       screenshots.saveFinalSelections(
-        screenshots.finalImagesRef.current.filter((entry) => entry.image.Path !== deletedPath)
+        screenshots.finalImagesRef.current.filter((entry) => entry.image.Path !== deletedPath),
       );
     }
   };
 
-  const mergeFinalSelections = (current: ScreenshotPreviewImage[], additions: ScreenshotPreviewImage[]) => {
+  const mergeFinalSelections = (
+    current: ScreenshotPreviewImage[],
+    additions: ScreenshotPreviewImage[],
+  ) => {
     if (additions.length === 0) return current;
     const seen = new Map<string, number>();
     const merged = [...current];
@@ -1226,10 +2137,17 @@ export default function App() {
   };
 
   const desiredScreenCount = () => {
-    if (screenshotConfig && typeof screenshotConfig.Screens === "number" && screenshotConfig.Screens > 0) {
+    if (
+      screenshotConfig &&
+      typeof screenshotConfig.Screens === "number" &&
+      screenshotConfig.Screens > 0
+    ) {
       return screenshotConfig.Screens;
     }
-    if (screenshots.screenshotPlan && Array.isArray(screenshots.screenshotPlan.SuggestedSelections)) {
+    if (
+      screenshots.screenshotPlan &&
+      Array.isArray(screenshots.screenshotPlan.SuggestedSelections)
+    ) {
       return screenshots.screenshotPlan.SuggestedSelections.length;
     }
     return 0;
@@ -1254,22 +2172,25 @@ export default function App() {
     const tolerance = previewFrameRate > 0 ? 1 / previewFrameRate : 0;
     const filtered = candidates.filter((entry) => {
       const ts = normalizeSelectionTimestamp(entry);
-      return !manual.some((manualEntry) => Math.abs(normalizeSelectionTimestamp(manualEntry) - ts) <= tolerance);
+      return !manual.some(
+        (manualEntry) => Math.abs(normalizeSelectionTimestamp(manualEntry) - ts) <= tolerance,
+      );
     });
 
     const needed = Math.max(0, targetCount - manual.length);
     const auto = filtered.slice(0, needed).map((entry) => ({
       ...entry,
-      Source: "auto"
+      Source: "auto",
     }));
 
     return [...manual, ...auto];
   };
 
   const namingOverrides = useMemo(() => {
-    const stored = (preview.ReleaseNameOverrides && typeof preview.ReleaseNameOverrides === "object")
-      ? preview.ReleaseNameOverrides
-      : {};
+    const stored =
+      preview.ReleaseNameOverrides && typeof preview.ReleaseNameOverrides === "object"
+        ? preview.ReleaseNameOverrides
+        : {};
     const overrides = releaseOverrideState?.dirty
       ? releaseOverrideState.overrides
       : preview.ReleaseNameOverrides || {};
@@ -1388,9 +2309,15 @@ export default function App() {
     return payload;
   };
 
-  const applyPreviewResult = (result: MetadataPreview) => {
+  const applyPreviewResult = (
+    result: MetadataPreview,
+    options: { switchToInput?: boolean } = {},
+  ) => {
+    const { switchToInput = true } = options;
     setPreview(result);
-    setActiveTab("input");
+    if (switchToInput) {
+      setActiveTab("input");
+    }
     setIdEdits(buildIDEditState(result.ExternalIDs));
     setReleaseEdits(buildReleaseEditState(result.ReleaseNameOverrides || {}));
     setReleaseTouched(buildReleaseTouchedState(result.ReleaseNameOverrides || {}));
@@ -1411,13 +2338,44 @@ export default function App() {
     setBuilderError("");
     setBuilderDirtyByGroup({});
     setBuilderSaved("");
+    setBuilderRefreshing(false);
     setBuilderAutoRequestKey("");
     resetScreenshotState();
+  };
+
+  const clearHostBrowserSearch = () => {
+    setHostBrowserSearch("");
+    setDebouncedHostBrowserSearch("");
+  };
+
+  const openHostBrowser = async (mode: "file" | "folder", startPath = "") => {
+    const browser = globalThis.go?.guiapp?.App?.BrowseDirectory;
+    if (!browser) {
+      setError("Browse is unavailable in this build.");
+      return;
+    }
+    setHostBrowserMode(mode);
+    setHostBrowserLoading(true);
+    setHostBrowserError("");
+    clearHostBrowserSearch();
+    try {
+      const selectedStart = startPath || path.trim();
+      const result = await browser(selectedStart, mode);
+      setHostBrowser(result);
+    } catch (err) {
+      setHostBrowserError(String(err));
+    } finally {
+      setHostBrowserLoading(false);
+    }
   };
 
   const runBrowse = async (mode: "file" | "folder") => {
     setError("");
     const app = globalThis.go?.guiapp?.App;
+    if (browserMode && app?.BrowseDirectory) {
+      await openHostBrowser(mode);
+      return;
+    }
     const browse =
       mode === "file" ? app?.BrowseFile || app?.BrowsePath : app?.BrowseFolder || app?.BrowsePath;
     if (!browse) {
@@ -1442,6 +2400,103 @@ export default function App() {
     await runBrowse("folder");
   };
 
+  const closeHostBrowser = () => {
+    setHostBrowserMode(null);
+    setHostBrowser(null);
+    setHostBrowserError("");
+    clearHostBrowserSearch();
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedHostBrowserSearch(hostBrowserSearch);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [hostBrowserSearch]);
+
+  const hostBrowserEntries = useMemo(
+    () => filterBrowseEntries(hostBrowser?.entries || [], debouncedHostBrowserSearch),
+    [hostBrowser?.entries, debouncedHostBrowserSearch],
+  );
+
+  useEffect(() => {
+    hostBrowserEntryRefs.current = [];
+  }, [hostBrowserEntries]);
+
+  useEffect(() => {
+    if (!hostBrowserMode || hostBrowserLoading) {
+      return;
+    }
+
+    hostBrowserEntryRefs.current.find((entry) => entry !== null)?.focus();
+  }, [hostBrowser?.currentPath, hostBrowserLoading, hostBrowserMode]);
+
+  const browseHostDirectory = async (nextPath: string) => {
+    if (!hostBrowserMode) {
+      return;
+    }
+    await openHostBrowser(hostBrowserMode, nextPath);
+  };
+
+  const selectHostPath = async (selectedPath: string, isDir: boolean) => {
+    if (!hostBrowserMode) {
+      return;
+    }
+    if (hostBrowserMode === "folder") {
+      await handlePathSelected(selectedPath, "folder");
+      closeHostBrowser();
+      return;
+    }
+    if (isDir) {
+      await browseHostDirectory(selectedPath);
+      return;
+    }
+    await handlePathSelected(selectedPath, "file");
+    closeHostBrowser();
+  };
+
+  const moveHostBrowserEntryFocus = (currentIndex: number, direction: 1 | -1) => {
+    const entries = hostBrowserEntryRefs.current.filter((entry): entry is HTMLDivElement =>
+      Boolean(entry),
+    );
+    if (entries.length === 0) {
+      return;
+    }
+    const current = hostBrowserEntryRefs.current[currentIndex];
+    const resolvedIndex = current ? entries.indexOf(current) : -1;
+    const nextIndex =
+      resolvedIndex >= 0
+        ? (resolvedIndex + direction + entries.length) % entries.length
+        : direction > 0
+          ? 0
+          : entries.length - 1;
+    entries[nextIndex]?.focus();
+  };
+
+  const handleHostBrowserEntryKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+    entry: BrowseDirectoryResponse["entries"][number],
+    index: number,
+  ) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveHostBrowserEntryFocus(index, 1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveHostBrowserEntryFocus(index, -1);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      void selectHostPath(entry.path, entry.isDir);
+    }
+  };
+
   const detectDiscType = async (selectedPath: string): Promise<string> => {
     const detector = globalThis.go?.guiapp?.App?.DetectDiscType;
     if (detector) {
@@ -1464,40 +2519,56 @@ export default function App() {
   };
 
   // Auto-detect BDMV and show playlist selection
-  const handlePathSelected = async (selectedPath: string, mode: "file" | "folder" = "folder") => {
-    setPath(selectedPath);
+  const handlePathSelected = async (
+    selectedPath: string,
+    mode?: SourcePathMode,
+  ): Promise<SourcePathSelection | null> => {
+    freshUIStateCanPromoteRef.current = false;
+    const trimmedPath = selectedPath.trim();
+    if (!trimmedPath) {
+      return null;
+    }
+    const selectedMode = mode ?? inferSourcePathMode(trimmedPath);
+    setPath(trimmedPath);
+    setSourcePathMode(selectedMode);
+    rememberSourcePath(trimmedPath, selectedMode);
+    const discType = await detectDiscType(trimmedPath);
+    setCurrentDiscType(discType);
     setShowExternalIDInputUI(true);
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
     setPlaylistAutoPreparing(false);
 
-    if (mode === "file") {
+    if (selectedMode === "file") {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
       setActiveTab("input");
-      return;
+      return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: false };
     }
 
-    const discType = await detectDiscType(selectedPath);
     if (discType !== "BDMV") {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
       setActiveTab("input");
-      return;
+      return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: false };
     }
 
-    // Smart path detection: check if path already contains BDMV or PLAYLIST
-    const upperPath = selectedPath.toUpperCase();
-    let bdmvPath = selectedPath;
+    const upperPath = trimmedPath.toUpperCase();
+    let bdmvPath = trimmedPath;
 
     if (!upperPath.includes("\\BDMV") && !upperPath.includes("/BDMV")) {
-      // Try BDMV subfolder first
-      bdmvPath = `${selectedPath}/BDMV`;
+      bdmvPath = `${trimmedPath}/BDMV`;
     }
 
     // Set the path for playlist discovery (component will discover the playlists)
     setPlaylistSelectionPath(bdmvPath);
     setShowPlaylistSelection(true);
+    return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: true };
+  };
+
+  const handleSourcePathHistorySelect = async (entry: SourcePathHistoryEntry) => {
+    setError("");
+    await handlePathSelected(entry.path, entry.mode);
   };
 
   const runPlaylistBDInfo = async () => {
@@ -1536,7 +2607,8 @@ export default function App() {
   const runFetch = async (
     overrides: ExternalIDOverrides,
     nameOverrides: ReleaseNameOverrides,
-    hideExternalIDInputUIOnSuccess = false
+    hideExternalIDInputUIOnSuccess = false,
+    options: { targetPath?: string; targetMode?: SourcePathMode } = {},
   ) => {
     setError("");
     setDupeChecked(false);
@@ -1548,16 +2620,17 @@ export default function App() {
     setBuilderRenderedByGroup({});
     setBuilderExpandedGroups({});
     setBuilderDirtyByGroup({});
+    setBluraySelectionError("");
     const fetcher = globalThis.go?.guiapp?.App?.FetchMetadata;
     if (!fetcher) {
       setError("Fetch metadata is unavailable in this build.");
       return;
     }
-    if (!path.trim()) {
+    const targetPath = (options.targetPath ?? path).trim();
+    if (!targetPath) {
       setError("Please select a file or folder.");
       return;
     }
-    const targetPath = path.trim();
     setMetadataProgressTarget(targetPath);
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
@@ -1568,9 +2641,14 @@ export default function App() {
         sourceLookupURL.trim(),
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
-        getSelectedTrackers()
+        getSelectedTrackers(),
       );
       applyPreviewResult(result);
+      rememberSourcePath(
+        targetPath,
+        options.targetMode ?? sourcePathMode ?? inferSourcePathMode(targetPath),
+      );
+      freshUIStateCanPromoteRef.current = uiStateMode === "fresh";
       setShowExternalIDInputUI(!hideExternalIDInputUIOnSuccess);
     } catch (err) {
       setError(String(err));
@@ -1584,6 +2662,50 @@ export default function App() {
     await runFetch({}, {}, false);
   };
 
+  const handleSourcePathDrop = async (paths: string[]) => {
+    if (loading) {
+      setError("Metadata fetch is already running.");
+      return;
+    }
+    const droppedPath = paths.find((candidate) => candidate.trim())?.trim() || "";
+    if (!droppedPath) {
+      setError("Dropped file path was empty.");
+      return;
+    }
+    setError("");
+    const selection = await handlePathSelected(droppedPath);
+    if (!selection || selection.waitsForPlaylistSelection) {
+      return;
+    }
+    await runFetch({}, {}, false, {
+      targetPath: selection.path,
+      targetMode: selection.mode,
+    });
+  };
+
+  sourcePathDropHandlerRef.current = (paths: string[]) => {
+    void handleSourcePathDrop(paths);
+  };
+
+  useEffect(() => {
+    const runtime = (
+      globalThis as typeof globalThis & {
+        runtime?: { OnFileDrop?: unknown; OnFileDropOff?: unknown };
+      }
+    ).runtime;
+    if (browserMode || typeof runtime?.OnFileDrop !== "function") {
+      return;
+    }
+    OnFileDrop((_x, _y, paths) => {
+      sourcePathDropHandlerRef.current(paths);
+    }, true);
+    return () => {
+      if (typeof runtime.OnFileDropOff === "function") {
+        OnFileDropOff();
+      }
+    };
+  }, [browserMode]);
+
   const clearEditAttributesState = () => {
     setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
     setReleaseEdits(buildReleaseEditState({}));
@@ -1591,7 +2713,11 @@ export default function App() {
   };
 
   const handleRefresh = async () => {
-    if ((!idOverrideState?.dirty && !releaseOverrideState?.dirty && !sourceLookupURL.trim()) || idOverrideState?.invalid || releaseOverrideState?.invalid) {
+    if (
+      (!idOverrideState?.dirty && !releaseOverrideState?.dirty && !sourceLookupURL.trim()) ||
+      idOverrideState?.invalid ||
+      releaseOverrideState?.invalid
+    ) {
       return;
     }
     await runFetch(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {}, true);
@@ -1608,7 +2734,11 @@ export default function App() {
       setError("Please select a file or folder.");
       return;
     }
-    if (!globalThis.confirm("Remove cached metadata and temporary files for this content, then refetch metadata?")) {
+    if (
+      !globalThis.confirm(
+        "Remove cached metadata and temporary files for this content, then refetch metadata?",
+      )
+    ) {
       return;
     }
     const targetPath = path.trim();
@@ -1624,7 +2754,7 @@ export default function App() {
         sourceLookupURL.trim(),
         {},
         {},
-        getSelectedTrackers()
+        getSelectedTrackers(),
       );
       applyPreviewResult(result);
       setShowExternalIDInputUI(true);
@@ -1637,89 +2767,149 @@ export default function App() {
     }
   };
 
-  const runPreparation = async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
-    setPrepError("");
-    const fetcher = globalThis.go?.guiapp?.App?.FetchPreparation;
-    if (!fetcher) {
-      setPrepError("Preparation preview is unavailable in this build.");
-      return false;
+  const handleSelectBlurayCandidate = async (releaseID: string) => {
+    setBluraySelectionError("");
+    const selector = globalThis.go?.guiapp?.App?.SelectBlurayCandidate;
+    if (!selector) {
+      setBluraySelectionError("Blu-ray candidate selection is unavailable in this build.");
+      return;
     }
-    if (!path.trim()) {
-      setPrepError("Please select a file or folder.");
-      return false;
+    const targetPath = (preview.SourcePath || path).trim();
+    if (!targetPath || !releaseID.trim()) {
+      setBluraySelectionError("Path and release candidate are required.");
+      return;
     }
-    setPrepLoading(true);
+    setBluraySelecting(true);
     try {
-      const result = await fetcher(
-        path.trim(),
-        normalizeOverrides(overrides),
-        normalizeReleaseOverrides(nameOverrides),
-        Object.entries(releasePageTrackerSelection)
-          .filter(([, selected]) => selected)
-          .map(([name]) => name),
-        ignoredDupeTrackers
-      );
-      const filteredDescriptions = filterPrepDescriptions(result.Descriptions || []);
-      setPrepPreview({ ...result, Descriptions: filteredDescriptions });
-      return true;
+      const result = await selector(targetPath, releaseID.trim());
+      applyPreviewResult(result, { switchToInput: false });
     } catch (err) {
-      setPrepError(String(err));
-      return false;
+      setBluraySelectionError(String(err));
     } finally {
-      setPrepLoading(false);
+      setBluraySelecting(false);
     }
   };
 
-  const runDescriptionBuilder = useCallback(async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
-    setBuilderError("");
-    setBuilderSaved("");
-    const fetcher = globalThis.go?.guiapp?.App?.FetchDescriptionBuilder;
-    if (!fetcher) {
-      setBuilderError("Description builder is unavailable in this build.");
-      return;
-    }
-    if (!path.trim()) {
-      setBuilderError("Please select a file or folder.");
-      return;
-    }
-    setBuilderLoading(true);
-    try {
-      const result = await fetcher(
-        path.trim(),
-        normalizeOverrides(overrides),
-        normalizeReleaseOverrides(nameOverrides),
-        Object.entries(releasePageTrackerSelection)
-          .filter(([, selected]) => selected)
-          .map(([name]) => name),
-        ignoredDupeTrackers
-      );
-      setBuilderPreview(result);
-      setBuilderRawByGroup(
-        Object.fromEntries(
-          (result.Groups || []).map((group) => [group.GroupKey, group.RawDescription || ""])
-        )
-      );
-      setBuilderRenderedByGroup(
-        Object.fromEntries(
-          (result.Groups || []).map((group) => [group.GroupKey, group.RawDescriptionHTML || ""])
-        )
-      );
-      setBuilderExpandedGroups((prev) => {
-        const next: Record<string, boolean> = {};
-        (result.Groups || []).forEach((group) => {
-          next[group.GroupKey] = prev[group.GroupKey] ?? false;
+  const runDescriptionBuilder = useCallback(
+    async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
+      const clearBuilderProgressTimers = () => {
+        builderProgressTimers.current.forEach((timer) => window.clearTimeout(timer));
+        builderProgressTimers.current = [];
+      };
+      clearBuilderProgressTimers();
+      setBuilderError("");
+      setBuilderSaved("");
+      setBuilderProgressMessage("");
+      const fetcher = globalThis.go?.guiapp?.App?.FetchDescriptionBuilder;
+      if (!fetcher) {
+        setBuilderError("Description builder is unavailable in this build.");
+        return;
+      }
+      if (!path.trim()) {
+        setBuilderError("Please select a file or folder.");
+        return;
+      }
+      setBuilderLoading(true);
+      setBuilderProgressMessage("Preparing metadata and tracker selection...");
+      builderProgressTimers.current = [
+        window.setTimeout(
+          () => setBuilderProgressMessage("Checking image-host requirements..."),
+          900,
+        ),
+        window.setTimeout(
+          () =>
+            setBuilderProgressMessage("Rehosting required comparison and description images..."),
+          2500,
+        ),
+        window.setTimeout(
+          () => setBuilderProgressMessage("Still rehosting images and building descriptions..."),
+          5000,
+        ),
+        window.setTimeout(
+          () => setBuilderProgressMessage("Large image upload still running..."),
+          15000,
+        ),
+        window.setTimeout(
+          () => setBuilderProgressMessage("Waiting for image hosts to finish..."),
+          30000,
+        ),
+      ];
+      try {
+        const result = await fetcher(
+          path.trim(),
+          normalizeOverrides(overrides),
+          normalizeReleaseOverrides(nameOverrides),
+          Object.entries(releasePageTrackerSelection)
+            .filter(([, selected]) => selected)
+            .map(([name]) => name),
+          ignoredDupeTrackers,
+        );
+        setBuilderPreview(result);
+        setBuilderRawByGroup(
+          Object.fromEntries(
+            (result.Groups || []).map((group) => [group.GroupKey, group.RawDescription || ""]),
+          ),
+        );
+        setBuilderRenderedByGroup(
+          Object.fromEntries(
+            (result.Groups || []).map((group) => [group.GroupKey, group.RawDescriptionHTML || ""]),
+          ),
+        );
+        setBuilderExpandedGroups((prev) => {
+          const next: Record<string, boolean> = {};
+          (result.Groups || []).forEach((group) => {
+            next[group.GroupKey] = prev[group.GroupKey] ?? false;
+          });
+          return next;
         });
-        return next;
-      });
-      setBuilderDirtyByGroup({});
-    } catch (err) {
-      setBuilderError(String(err));
-    } finally {
-      setBuilderLoading(false);
-    }
-  }, [path, releasePageTrackerSelection, ignoredDupeTrackers]);
+        setBuilderDirtyByGroup({});
+        clearBuilderProgressTimers();
+        setBuilderProgressMessage("Refreshing uploaded image records...");
+        await refreshUploadedImages();
+      } catch (err) {
+        setBuilderError(String(err));
+      } finally {
+        clearBuilderProgressTimers();
+        setBuilderProgressMessage("");
+        setBuilderLoading(false);
+      }
+    },
+    [path, releasePageTrackerSelection, ignoredDupeTrackers, refreshUploadedImages],
+  );
 
-  const resetBuilderDescription = async (groupKey: string, overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
+  const refreshDescriptionBuilder = useCallback(async () => {
+    if (builderDirty) {
+      const shouldRefresh = window.confirm(
+        "Refreshing descriptions will discard unsaved description edits. Continue?",
+      );
+      if (!shouldRefresh) {
+        return;
+      }
+    }
+
+    setBuilderRefreshing(true);
+    try {
+      await runDescriptionBuilder(
+        idOverrideState?.overrides || {},
+        releaseOverrideState?.overrides || {},
+      );
+    } finally {
+      setBuilderRefreshing(false);
+    }
+  }, [builderDirty, idOverrideState, releaseOverrideState, runDescriptionBuilder]);
+
+  useEffect(() => {
+    return () => {
+      builderProgressTimers.current.forEach((timer) => window.clearTimeout(timer));
+      builderProgressTimers.current = [];
+    };
+  }, []);
+
+  const resetBuilderDescription = async (
+    groupKey: string,
+    overrides: ExternalIDOverrides,
+    nameOverrides: ReleaseNameOverrides,
+  ) => {
     setBuilderError("");
     setBuilderSaved("");
     const saver = globalThis.go?.guiapp?.App?.SaveDescriptionOverride;
@@ -1744,11 +2934,14 @@ export default function App() {
         "",
         currentGroup.Trackers || [],
         normalizeOverrides(overrides),
-        normalizeReleaseOverrides(nameOverrides)
+        normalizeReleaseOverrides(nameOverrides),
       );
       setBuilderPreview((prev) => upsertBuilderGroup(prev, updatedGroup));
       setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
-      setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescriptionHTML || "" }));
+      setBuilderRenderedByGroup((prev) => ({
+        ...prev,
+        [groupKey]: updatedGroup.RawDescriptionHTML || "",
+      }));
       setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: false }));
       setBuilderSaved("Description reset.");
     } catch (err) {
@@ -1806,14 +2999,19 @@ export default function App() {
         builderRawByGroup[groupKey] || "",
         currentGroup.Trackers || [],
         normalizeOverrides(idOverrideState?.overrides || {}),
-        normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
       );
       const nextPreview = upsertBuilderGroup(builderPreview, updatedGroup);
-      const shouldRefreshDryRun = path.trim() === String(trackerDryRunPreview.SourcePath || "").trim() && (trackerDryRunPreview.Trackers || []).length > 0;
+      const shouldRefreshDryRun =
+        path.trim() === String(trackerDryRunPreview.SourcePath || "").trim() &&
+        (trackerDryRunPreview.Trackers || []).length > 0;
 
       setBuilderPreview(nextPreview);
       setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
-      setBuilderRenderedByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescriptionHTML || "" }));
+      setBuilderRenderedByGroup((prev) => ({
+        ...prev,
+        [groupKey]: updatedGroup.RawDescriptionHTML || "",
+      }));
       setBuilderSaved("Description saved.");
       setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: false }));
 
@@ -1832,9 +3030,10 @@ export default function App() {
     }
   };
 
-
-
-  const runScreenshotCapture = async (selections: ScreenshotSelection[], purpose: ScreenshotPurpose) => {
+  const runScreenshotCapture = async (
+    selections: ScreenshotSelection[],
+    purpose: ScreenshotPurpose,
+  ) => {
     const runner = globalThis.go?.guiapp?.App?.GenerateScreenshots;
     if (!runner) {
       throw new Error("Screenshot capture is unavailable in this build.");
@@ -1844,7 +3043,7 @@ export default function App() {
       normalizeOverrides(idOverrideState?.overrides || {}),
       normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
       selections,
-      purpose
+      purpose,
     );
   };
 
@@ -1861,7 +3060,7 @@ export default function App() {
       sourceLookupURL.trim(),
       normalizeOverrides(idOverrideState?.overrides || {}),
       normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-      getSelectedTrackers()
+      getSelectedTrackers(),
     );
   };
 
@@ -1870,15 +3069,21 @@ export default function App() {
     return rate > 0 ? rate : 24;
   }, [screenshots.screenshotPlan]);
 
-  const previewDuration = useMemo(() => screenshots.screenshotPlan?.DurationSeconds || 0, [screenshots.screenshotPlan]);
+  const previewDuration = useMemo(
+    () => screenshots.screenshotPlan?.DurationSeconds || 0,
+    [screenshots.screenshotPlan],
+  );
 
-  const clampPreviewSeconds = useCallback((value: number) => {
-    if (!Number.isFinite(value)) return 0;
-    if (previewDuration > 0) {
-      return Math.min(Math.max(value, 0), previewDuration);
-    }
-    return Math.max(value, 0);
-  }, [previewDuration]);
+  const clampPreviewSeconds = useCallback(
+    (value: number) => {
+      if (!Number.isFinite(value)) return 0;
+      if (previewDuration > 0) {
+        return Math.min(Math.max(value, 0), previewDuration);
+      }
+      return Math.max(value, 0);
+    },
+    [previewDuration],
+  );
 
   const livePreviewFrame = useMemo(() => {
     if (previewFrameRate <= 0) return 0;
@@ -1889,10 +3094,6 @@ export default function App() {
 
   const runLivePreviewAt = async (timestampSeconds: number) => {
     setLivePreviewError("");
-    if (!screenshotsEnabled) {
-      setLivePreviewError("Enable screenshot capture to generate previews.");
-      return;
-    }
     if (!path.trim()) {
       setLivePreviewError("Please select a file or folder.");
       return;
@@ -1917,7 +3118,7 @@ export default function App() {
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-        timestamp
+        timestamp,
       );
       if (livePreviewRequestId.current !== requestId) {
         return;
@@ -1946,14 +3147,8 @@ export default function App() {
     void runLivePreviewAt(next);
   };
 
-
-
   const handlePreviewSelection = async (selection: ScreenshotSelection) => {
     screenshots.setScreenshotsError("");
-    if (!screenshotsEnabled) {
-      screenshots.setScreenshotsError("Enable screenshot capture to generate previews.");
-      return;
-    }
     if (!path.trim()) {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
@@ -1986,19 +3181,16 @@ export default function App() {
 
   const handleCapturePreviewFrame = async () => {
     screenshots.setScreenshotsError("");
-    if (!screenshotsEnabled) {
-      screenshots.setScreenshotsError("Enable screenshot capture to save previews.");
-      return;
-    }
     if (!path.trim()) {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
     }
 
     const timestamp = clampPreviewSeconds(livePreviewSeconds);
-    const baseSelections = screenshots.screenshotSelections.length > 0
-      ? screenshots.screenshotSelections
-      : (screenshots.screenshotPlan?.SuggestedSelections || []);
+    const baseSelections =
+      screenshots.screenshotSelections.length > 0
+        ? screenshots.screenshotSelections
+        : screenshots.screenshotPlan?.SuggestedSelections || [];
     if (baseSelections.length === 0) {
       screenshots.setScreenshotsError("No screenshot selections available.");
       return;
@@ -2020,13 +3212,16 @@ export default function App() {
       return 0;
     };
 
-    const closest = candidates.reduce((best, entry) => {
-      const currentDiff = Math.abs(resolveTimestamp(entry) - timestamp);
-      if (!best) return entry;
-      const bestDiff = Math.abs(resolveTimestamp(best) - timestamp);
-      if (currentDiff < bestDiff) return entry;
-      return best;
-    }, undefined as ScreenshotSelection | undefined);
+    const closest = candidates.reduce(
+      (best, entry) => {
+        const currentDiff = Math.abs(resolveTimestamp(entry) - timestamp);
+        if (!best) return entry;
+        const bestDiff = Math.abs(resolveTimestamp(best) - timestamp);
+        if (currentDiff < bestDiff) return entry;
+        return best;
+      },
+      undefined as ScreenshotSelection | undefined,
+    );
 
     if (!closest) {
       screenshots.setScreenshotsError("No screenshot selections available.");
@@ -2038,11 +3233,11 @@ export default function App() {
       Index: closest.Index,
       TimestampSeconds: timestamp,
       Frame: frame,
-      Source: "manual"
+      Source: "manual",
     };
 
     const updatedSelections = baseSelections.map((entry) =>
-      entry.Index === selection.Index ? selection : entry
+      entry.Index === selection.Index ? selection : entry,
     );
     const regenerated = regenerateAutoSelections(updatedSelections);
     const reindexed = reindexSelectionsByTimestamp(regenerated, selection.Index);
@@ -2054,8 +3249,9 @@ export default function App() {
       if (!Number.isFinite(ts) || ts <= 0) return false;
       return Math.abs(ts - timestamp) <= tolerance;
     });
-    const resolvedSelection = manualSelection
-      || (reindexed.targetIndex >= 0 ? reindexed.selections[reindexed.targetIndex] : undefined);
+    const resolvedSelection =
+      manualSelection ||
+      (reindexed.targetIndex >= 0 ? reindexed.selections[reindexed.targetIndex] : undefined);
     if (!resolvedSelection) {
       screenshots.setScreenshotsError("Failed to resolve capture index.");
       return;
@@ -2115,10 +3311,6 @@ export default function App() {
 
   const handleGenerateScreenshots = async () => {
     screenshots.setScreenshotsError("");
-    if (!screenshotsEnabled) {
-      screenshots.setScreenshotsError("Enable screenshot capture to generate screenshots.");
-      return;
-    }
     if (!path.trim()) {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
@@ -2153,6 +3345,29 @@ export default function App() {
     }
   };
 
+  const applyDupeCheckSnapshot = useCallback((snapshot: DupeCheckSnapshot) => {
+    setDupeCheckSnapshot(snapshot);
+    setDupeSummary(snapshot.summary || emptyDupeSummary);
+
+    const normalized = String(snapshot.status || "")
+      .toLowerCase()
+      .trim();
+    const running = normalized === "queued" || normalized === "running";
+    setDupeLoading(running);
+
+    if (normalized === "completed") {
+      setDupeChecked(true);
+      setDupeError("");
+    } else if (normalized === "completed_with_errors") {
+      setDupeChecked(true);
+      setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
+    } else if (normalized === "failed" || normalized === "canceled") {
+      setDupeChecked(false);
+      setPrepPreview(emptyPreparation);
+      setDupeError(snapshot.error || "Dupe check failed.");
+    }
+  }, []);
+
   const handleDupeCheck = async () => {
     setDupeError("");
     const starter = globalThis.go?.guiapp?.App?.StartDupeCheck;
@@ -2182,13 +3397,12 @@ export default function App() {
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-        selectedTrackers
+        selectedTrackers,
       );
       setDupeCheckJobID(jobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(jobID);
-        setDupeCheckSnapshot(snapshot);
-        setDupeSummary(snapshot.summary || emptyDupeSummary);
+        applyDupeCheckSnapshot(snapshot);
       }
     } catch (err) {
       const message = String(err);
@@ -2212,25 +3426,7 @@ export default function App() {
       if (payload?.jobID !== dupeCheckJobID) {
         return;
       }
-      const snapshot = payload as DupeCheckSnapshot;
-      setDupeCheckSnapshot(snapshot);
-      setDupeSummary(snapshot.summary || emptyDupeSummary);
-
-      const normalized = String(snapshot.status || "").toLowerCase().trim();
-      const running = normalized === "queued" || normalized === "running";
-      setDupeLoading(running);
-
-      if (normalized === "completed") {
-        setDupeChecked(true);
-        setDupeError("");
-      } else if (normalized === "completed_with_errors") {
-        setDupeChecked(true);
-        setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
-      } else if (normalized === "failed" || normalized === "canceled") {
-        setDupeChecked(false);
-        setPrepPreview(emptyPreparation);
-        setDupeError(snapshot.error || "Dupe check failed.");
-      }
+      applyDupeCheckSnapshot(payload as DupeCheckSnapshot);
     });
 
     return () => {
@@ -2238,7 +3434,7 @@ export default function App() {
         off();
       }
     };
-  }, [dupeCheckJobID]);
+  }, [applyDupeCheckSnapshot, dupeCheckJobID]);
 
   useEffect(() => {
     setDupeChecked(false);
@@ -2256,8 +3452,8 @@ export default function App() {
     setBuilderError("");
     setBuilderDirtyByGroup({});
     setBuilderSaved("");
+    setBuilderRefreshing(false);
     setBuilderAutoRequestKey("");
-    setOverrideRuleBlocks(false);
     setTrackerUploadRunning(false);
     setTrackerUploadError("");
     setTrackerUploadJobID("");
@@ -2265,6 +3461,7 @@ export default function App() {
     setTrackerDryRunLoading(false);
     setTrackerDryRunError("");
     setTrackerDryRunPreview(emptyTrackerDryRun);
+    setTrackerDryRunProgress(null);
     setMetadataProgressTarget("");
     setMetadataProgressActive(false);
     setMetadataProgressUpdates([]);
@@ -2281,12 +3478,23 @@ export default function App() {
     const requestKey = JSON.stringify({
       path: normalizedPath,
       external: normalizeOverrides(idOverrideState?.overrides || {}),
-      release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+      release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
     });
     if (builderAutoRequestKey === requestKey) return;
     setBuilderAutoRequestKey(requestKey);
     runDescriptionBuilder(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {});
-  }, [activeTab, dupeChecked, builderLoading, builderSaving, builderDirty, path, idOverrideState, releaseOverrideState, builderAutoRequestKey, runDescriptionBuilder]);
+  }, [
+    activeTab,
+    dupeChecked,
+    builderLoading,
+    builderSaving,
+    builderDirty,
+    path,
+    idOverrideState,
+    releaseOverrideState,
+    builderAutoRequestKey,
+    runDescriptionBuilder,
+  ]);
 
   useEffect(() => {
     if (activeTab !== "upload") return;
@@ -2299,14 +3507,26 @@ export default function App() {
     if (!dupeChecked) return;
     if (screenshots.screenshotPlan || screenshots.screenshotsLoading) return;
     loadScreenshotPlan();
-  }, [activeTab, dupeChecked, screenshots.screenshotPlan, screenshots.screenshotsLoading, loadScreenshotPlan]);
+  }, [
+    activeTab,
+    dupeChecked,
+    screenshots.screenshotPlan,
+    screenshots.screenshotsLoading,
+    loadScreenshotPlan,
+  ]);
 
   useEffect(() => {
     if (activeTab !== "upload_images") return;
     if (!dupeChecked) return;
     if (screenshots.screenshotPlan || screenshots.screenshotsLoading) return;
     loadScreenshotPlan();
-  }, [activeTab, dupeChecked, screenshots.screenshotPlan, screenshots.screenshotsLoading, loadScreenshotPlan]);
+  }, [
+    activeTab,
+    dupeChecked,
+    screenshots.screenshotPlan,
+    screenshots.screenshotsLoading,
+    loadScreenshotPlan,
+  ]);
 
   useEffect(() => {
     if (activeTab !== "upload_images") return;
@@ -2316,7 +3536,7 @@ export default function App() {
         const candidates = await globalThis.go?.guiapp?.App?.ListUploadCandidates(
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {})
+          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         );
         if (!candidates || candidates.length === 0) {
           setExistingImages([]);
@@ -2330,16 +3550,26 @@ export default function App() {
             } catch {
               return null;
             }
-          })
+          }),
         );
-        setExistingImages(previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)));
+        setExistingImages(
+          previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
+        );
         await refreshUploadedImages();
       } catch (err) {
         console.error("Failed to load upload candidates:", err);
       }
     };
     loadUploadCandidates();
-  }, [activeTab, path, idOverrideState, releaseOverrideState, setExistingImages, readScreenshotImage, refreshUploadedImages]);
+  }, [
+    activeTab,
+    path,
+    idOverrideState,
+    releaseOverrideState,
+    setExistingImages,
+    readScreenshotImage,
+    refreshUploadedImages,
+  ]);
 
   useEffect(() => {
     if (trackerUploadItems.length === 0) return;
@@ -2351,7 +3581,7 @@ export default function App() {
           next[item.name] = false;
           return;
         }
-        if ((dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) && !overrideRuleBlocks) {
+        if (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) {
           next[item.name] = false;
           return;
         }
@@ -2366,7 +3596,14 @@ export default function App() {
       });
       return next;
     });
-  }, [trackerUploadItems, defaultTrackerSet, dupedTrackerSet, ruleSkippedTrackerSet, failedDupeTrackerSet, releasePageTrackerSelection, overrideRuleBlocks]);
+  }, [
+    trackerUploadItems,
+    defaultTrackerSet,
+    dupedTrackerSet,
+    ruleSkippedTrackerSet,
+    failedDupeTrackerSet,
+    releasePageTrackerSelection,
+  ]);
 
   useEffect(() => {
     if (screenshots.uploadCandidates.length === 0) {
@@ -2426,6 +3663,7 @@ export default function App() {
     setTrackerQuestionnaireAnswers({});
     setTrackerDryRunPreview(emptyTrackerDryRun);
     setTrackerDryRunError("");
+    setTrackerDryRunProgress(null);
   }, [path]);
 
   // NOTE: releasePageTrackerSelection is memory-only state tracking which trackers
@@ -2440,34 +3678,26 @@ export default function App() {
       .map(([name]) => name);
   };
 
-  const getSelectedUploadTrackers = useCallback(() => {
-    const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
-    return Object.entries(uploadToggles)
-      .filter(([name, enabled]) => {
-        if (!enabled) return false;
-        if (!validTrackers.has(name)) return false;
-        const normalized = name.toLowerCase().trim();
-        if (!normalized) return false;
-        if (dupedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
-        if (ruleSkippedTrackerSet.has(normalized) && !overrideRuleBlocks) return false;
-        if (failedDupeTrackerSet.has(normalized)) return false;
-        return true;
-      })
-      .map(([name]) => name);
-  }, [uploadToggles, trackerUploadItems, dupedTrackerSet, ruleSkippedTrackerSet, failedDupeTrackerSet, overrideRuleBlocks]);
+  const getSelectedUploadTrackers = useCallback(
+    () => selectedUploadImageTrackers,
+    [selectedUploadImageTrackers],
+  );
 
-  const updateTrackerQuestionnaireAnswer = useCallback((tracker: string, key: string, value: string) => {
-    setTrackerQuestionnaireAnswers((prev) => {
-      const trackerKey = tracker.toUpperCase().trim();
-      return {
-        ...prev,
-        [trackerKey]: {
-          ...(prev[trackerKey] || {}),
-          [key]: value
-        }
-      };
-    });
-  }, []);
+  const updateTrackerQuestionnaireAnswer = useCallback(
+    (tracker: string, key: string, value: string) => {
+      setTrackerQuestionnaireAnswers((prev) => {
+        const trackerKey = tracker.toUpperCase().trim();
+        return {
+          ...prev,
+          [trackerKey]: {
+            ...(prev[trackerKey] || {}),
+            [key]: value,
+          },
+        };
+      });
+    },
+    [],
+  );
 
   const handleStartTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
@@ -2493,7 +3723,10 @@ export default function App() {
     const missingRequiredFields: string[] = [];
     selectedTrackers.forEach((tracker) => {
       const dryRunEntry = (trackerDryRunPreview.Trackers || []).find(
-        (entry) => String(entry?.Tracker || "").toLowerCase().trim() === tracker.toLowerCase().trim()
+        (entry) =>
+          String(entry?.Tracker || "")
+            .toLowerCase()
+            .trim() === tracker.toLowerCase().trim(),
       );
       const questionnaire = dryRunEntry?.Questionnaire;
       if (!questionnaire?.Fields?.length) {
@@ -2501,7 +3734,7 @@ export default function App() {
       }
       const trackerAnswers = buildQuestionnaireAnswerDefaults(
         questionnaire,
-        trackerQuestionnaireAnswers[tracker.toUpperCase().trim()]
+        trackerQuestionnaireAnswers[tracker.toUpperCase().trim()],
       );
       questionnaire.Fields.forEach((field) => {
         if (field.Required && !String(trackerAnswers[field.Key] || "").trim()) {
@@ -2510,7 +3743,9 @@ export default function App() {
       });
     });
     if (missingRequiredFields.length > 0) {
-      setTrackerUploadError(`Complete required questionnaire fields before uploading: ${missingRequiredFields.join(", ")}`);
+      setTrackerUploadError(
+        `Complete required questionnaire fields before uploading: ${missingRequiredFields.join(", ")}`,
+      );
       return;
     }
     setTrackerUploadRunning(true);
@@ -2521,12 +3756,12 @@ export default function App() {
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
-        overrideRuleBlocks,
         ignoredDupeTrackers,
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
         builderPreview.Groups || [],
         runDebug,
-        runLogLevel
+        uploadSkipClientInjection,
+        runLogLevel,
       );
       setTrackerUploadJobID(jobID);
       if (snapshotLoader) {
@@ -2537,88 +3772,147 @@ export default function App() {
       setTrackerUploadRunning(false);
       setTrackerUploadError(String(err));
     }
-    }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerDryRunPreview, trackerQuestionnaireAnswers, builderPreview, runDebug, runLogLevel]);
+  }, [
+    path,
+    idOverrideState,
+    releaseOverrideState,
+    getSelectedUploadTrackers,
+    ignoredDupeTrackers,
+    trackerDryRunPreview,
+    trackerQuestionnaireAnswers,
+    builderPreview,
+    runDebug,
+    uploadSkipClientInjection,
+    runLogLevel,
+  ]);
 
-  const runTrackerDryRun = useCallback(async (descriptionGroups: DescriptionBuilderPreview["Groups"], surfaceError = true) => {
-    if (surfaceError) {
-      setTrackerDryRunError("");
-    }
-    const fetcher = globalThis.go?.guiapp?.App?.FetchTrackerDryRun;
-    if (!fetcher) {
-      const message = "Tracker dry run is unavailable in this build.";
+  const runTrackerDryRun = useCallback(
+    async (descriptionGroups: DescriptionBuilderPreview["Groups"], surfaceError = true) => {
       if (surfaceError) {
-        setTrackerDryRunError(message);
-        return null;
+        setTrackerDryRunError("");
       }
-      throw new Error(message);
-    }
-    if (!path.trim()) {
-      const message = "Please select a file or folder.";
-      if (surfaceError) {
-        setTrackerDryRunError(message);
-        return null;
+      const fetcher = globalThis.go?.guiapp?.App?.FetchTrackerDryRun;
+      if (!fetcher) {
+        const message = "Tracker dry run is unavailable in this build.";
+        if (surfaceError) {
+          setTrackerDryRunError(message);
+          return null;
+        }
+        throw new Error(message);
       }
-      throw new Error(message);
-    }
-    if (idOverrideState?.invalid || releaseOverrideState?.invalid) {
-      const message = "Fix invalid overrides before running dry run.";
-      if (surfaceError) {
-        setTrackerDryRunError(message);
-        return null;
+      if (!path.trim()) {
+        const message = "Please select a file or folder.";
+        if (surfaceError) {
+          setTrackerDryRunError(message);
+          return null;
+        }
+        throw new Error(message);
       }
-      throw new Error(message);
-    }
-    const selectedTrackers = getSelectedUploadTrackers();
-    if (selectedTrackers.length === 0) {
-      const message = "Enable at least one tracker in Upload Targets.";
-      if (surfaceError) {
-        setTrackerDryRunError(message);
-        return null;
+      if (idOverrideState?.invalid || releaseOverrideState?.invalid) {
+        const message = "Fix invalid overrides before running dry run.";
+        if (surfaceError) {
+          setTrackerDryRunError(message);
+          return null;
+        }
+        throw new Error(message);
       }
-      throw new Error(message);
-    }
+      const selectedTrackers = getSelectedUploadTrackers();
+      if (selectedTrackers.length === 0) {
+        const message = "Enable at least one tracker in Upload Targets.";
+        if (surfaceError) {
+          setTrackerDryRunError(message);
+          return null;
+        }
+        throw new Error(message);
+      }
 
-    setTrackerDryRunLoading(true);
-    try {
-      const result = await fetcher(
-        path.trim(),
-        normalizeOverrides(idOverrideState?.overrides || {}),
-        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-        selectedTrackers,
-        overrideRuleBlocks,
-        ignoredDupeTrackers,
-        cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
-        descriptionGroups,
-        runDebug,
-        runLogLevel
-      );
-      setTrackerDryRunPreview(result || emptyTrackerDryRun);
-      setTrackerQuestionnaireAnswers((prev) => {
-        const next = cloneQuestionnaireAnswers(prev);
-        (result?.Trackers || []).forEach((entry) => {
-          const trackerKey = String(entry?.Tracker || "").toUpperCase().trim();
-          if (!trackerKey) {
-            return;
-          }
-          next[trackerKey] = buildQuestionnaireAnswerDefaults(entry.Questionnaire, next[trackerKey]);
-        });
-        return next;
+      setTrackerDryRunLoading(true);
+      setTrackerDryRunProgress({
+        sourcePath: path.trim(),
+        tracker: "",
+        task: "dry_run",
+        status: "running",
+        message: "Starting dry run",
+        completedPieces: 0,
+        totalPieces: 0,
+        percent: 0,
+        hashRateMiB: 0,
+        timestamp: new Date().toISOString(),
       });
-      return result || emptyTrackerDryRun;
-    } catch (err) {
-      if (surfaceError) {
-        setTrackerDryRunError(String(err));
-        return null;
+      try {
+        const result = await fetcher(
+          path.trim(),
+          normalizeOverrides(idOverrideState?.overrides || {}),
+          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          selectedTrackers,
+          ignoredDupeTrackers,
+          cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
+          descriptionGroups,
+          runDebug,
+          uploadSkipClientInjection,
+          runLogLevel,
+        );
+        setTrackerDryRunPreview(result || emptyTrackerDryRun);
+        setTrackerQuestionnaireAnswers((prev) => {
+          const next = cloneQuestionnaireAnswers(prev);
+          (result?.Trackers || []).forEach((entry) => {
+            const trackerKey = String(entry?.Tracker || "")
+              .toUpperCase()
+              .trim();
+            if (!trackerKey) {
+              return;
+            }
+            next[trackerKey] = buildQuestionnaireAnswerDefaults(
+              entry.Questionnaire,
+              next[trackerKey],
+            );
+          });
+          return next;
+        });
+        return result || emptyTrackerDryRun;
+      } catch (err) {
+        if (surfaceError) {
+          setTrackerDryRunError(String(err));
+          return null;
+        }
+        throw err;
+      } finally {
+        setTrackerDryRunLoading(false);
       }
-      throw err;
-    } finally {
-      setTrackerDryRunLoading(false);
-    }
-  }, [path, idOverrideState, releaseOverrideState, getSelectedUploadTrackers, overrideRuleBlocks, ignoredDupeTrackers, trackerQuestionnaireAnswers, runDebug, runLogLevel]);
+    },
+    [
+      path,
+      idOverrideState,
+      releaseOverrideState,
+      getSelectedUploadTrackers,
+      ignoredDupeTrackers,
+      trackerQuestionnaireAnswers,
+      runDebug,
+      uploadSkipClientInjection,
+      runLogLevel,
+    ],
+  );
 
   const handleRunTrackerDryRun = useCallback(async () => {
     await runTrackerDryRun(builderPreview.Groups || []);
   }, [builderPreview, runTrackerDryRun]);
+
+  useEffect(() => {
+    const off = EventsOn(trackerUploadProgressEvent, (payload: any) => {
+      const update = payload as UploadProgressUpdate;
+      const updatePath = String(update?.sourcePath || "").trim();
+      if (updatePath && updatePath !== path.trim()) {
+        return;
+      }
+      setTrackerDryRunProgress(update);
+    });
+
+    return () => {
+      if (typeof off === "function") {
+        off();
+      }
+    };
+  }, [path]);
 
   const handleCancelTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
@@ -2745,7 +4039,11 @@ export default function App() {
     dismissConfigOpStatus();
     const exportConfig = globalThis.go?.guiapp?.App?.ExportConfig;
     if (!exportConfig) {
-      showConfigOpStatus({ type: "error", title: "Export Failed", message: "Settings export is unavailable in this build." });
+      showConfigOpStatus({
+        type: "error",
+        title: "Export Failed",
+        message: "Settings export is unavailable in this build.",
+      });
       return;
     }
 
@@ -2753,7 +4051,11 @@ export default function App() {
     try {
       const exportedPath = await exportConfig();
       if (exportedPath?.trim()) {
-        showConfigOpStatus({ type: "success", title: "Configuration Exported", message: `Saved to ${exportedPath}` });
+        showConfigOpStatus({
+          type: "success",
+          title: "Configuration Exported",
+          message: `Saved to ${exportedPath}`,
+        });
       }
     } catch (err) {
       showConfigOpStatus({ type: "error", title: "Export Failed", message: String(err) });
@@ -2777,7 +4079,11 @@ export default function App() {
     const importConfig = globalThis.go?.guiapp?.App?.ImportConfig;
     if (!importConfig) {
       setImportConfirmOpen(false);
-      showConfigOpStatus({ type: "error", title: "Import Failed", message: "Config import is unavailable in this build." });
+      showConfigOpStatus({
+        type: "error",
+        title: "Import Failed",
+        message: "Config import is unavailable in this build.",
+      });
       return;
     }
 
@@ -2858,7 +4164,7 @@ export default function App() {
     markSettingsSaved,
     webAuthConfirm,
     webAuthPassword,
-    webAuthUsername
+    webAuthUsername,
   ]);
 
   useEffect(() => {
@@ -2872,16 +4178,15 @@ export default function App() {
   const dupeCompletedCount = Number(dupeCheckSnapshot?.completedCount || 0);
   const dupeTotalCount = Number(dupeCheckSnapshot?.totalCount || 0);
 
-
   return (
     <div className="app-shell">
       <div className="gradient-orb orb-a" />
       <div className="gradient-orb orb-b" />
-      <div className="app-layout">
-        <aside className="side-panel">
-          <div className="side-panel__tabs">
+      <div className={appLayoutClass}>
+        <aside className={sidebarClass}>
+          <div className={sidebarGroupClass}>
             <button
-              className={`tab-button ${activeTab === "input" ? "active" : ""}`}
+              className={navButtonClass(activeTab === "input")}
               type="button"
               onClick={() => setActiveTab("input")}
             >
@@ -2889,16 +4194,25 @@ export default function App() {
             </button>
             {hasTrackerData ? (
               <button
-                className={`subtab-button ${activeTab === "tracker" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "tracker", true)}
                 type="button"
                 onClick={() => setActiveTab("tracker")}
               >
                 Tracker Data
               </button>
             ) : null}
+            {hasBlurayData ? (
+              <button
+                className={navButtonClass(activeTab === "bluray", true)}
+                type="button"
+                onClick={() => setActiveTab("bluray")}
+              >
+                Blu-ray.com
+              </button>
+            ) : null}
             {hasPreview ? (
               <button
-                className={`subtab-button ${activeTab === "dupes" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "dupes", true)}
                 type="button"
                 onClick={() => setActiveTab("dupes")}
               >
@@ -2907,16 +4221,25 @@ export default function App() {
             ) : null}
             {dupeChecked ? (
               <button
-                className={`subtab-button ${activeTab === "screenshots" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "screenshots", true)}
                 type="button"
                 onClick={() => setActiveTab("screenshots")}
               >
                 Screenshots
               </button>
             ) : null}
+            {dupeChecked && ["BDMV", "DVD", "HDDVD"].includes(currentDiscType) ? (
+              <button
+                className={`subtab-button ${activeTab === "menu_images" ? "active" : ""}`}
+                type="button"
+                onClick={() => setActiveTab("menu_images")}
+              >
+                Menu Images
+              </button>
+            ) : null}
             {dupeChecked ? (
               <button
-                className={`subtab-button ${activeTab === "upload_images" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "upload_images", true)}
                 type="button"
                 onClick={() => setActiveTab("upload_images")}
               >
@@ -2925,7 +4248,7 @@ export default function App() {
             ) : null}
             {dupeChecked ? (
               <button
-                className={`subtab-button ${activeTab === "description_builder" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "description_builder", true)}
                 type="button"
                 onClick={() => setActiveTab("description_builder")}
               >
@@ -2934,7 +4257,7 @@ export default function App() {
             ) : null}
             {builderReady ? (
               <button
-                className={`subtab-button ${activeTab === "upload" ? "active" : ""}`}
+                className={navButtonClass(activeTab === "upload", true)}
                 type="button"
                 onClick={() => setActiveTab("upload")}
               >
@@ -2942,36 +4265,72 @@ export default function App() {
               </button>
             ) : null}
           </div>
-          <div className="side-panel__footer">
+          <div className={sidebarFooterClass}>
             <button
-              className={`settings-button ${activeTab === "settings" ? "active" : ""}`}
+              className={sidebarButtonClass(activeTab === "settings")}
               type="button"
               onClick={() => setActiveTab("settings")}
             >
               <span>Settings</span>
             </button>
             <button
-              className={`settings-button ${activeTab === "logging" ? "active" : ""}`}
+              className={sidebarButtonClass(activeTab === "logging")}
               type="button"
               onClick={() => setActiveTab("logging")}
             >
               <span>Logging</span>
             </button>
             <button
-              className={`settings-button ${activeTab === "history" ? "active" : ""}`}
+              className={sidebarButtonClass(activeTab === "history")}
               type="button"
               onClick={() => setActiveTab("history")}
             >
               <span>History</span>
             </button>
             <button
-              className="settings-button settings-button--theme"
+              className={cn(sidebarButtonClass(false), "mt-1", liveButtonClass)}
+              type="button"
+              onClick={toggleUIStateMode}
+              title={uiStateToggleTitle}
+            >
+              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                {uiStateToggleLabel}
+              </span>
+            </button>
+            <button
+              className={cn(sidebarButtonClass(), "mt-0")}
               type="button"
               onClick={handleThemeToggle}
             >
-              <span className="theme-toggle">{getThemeIcon()}</span>
+              <span className="mr-0.5 text-base">{getThemeIcon()}</span>
               <span>{getThemeLabel()}</span>
             </button>
+            <div className={sidebarAppDetailsClass}>
+              <div className="grid min-w-0 gap-0.5">
+                {applicationInfo?.version ? (
+                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--text)]">
+                    v{applicationInfo.version}
+                  </span>
+                ) : null}
+                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                  © 2026 autobrr
+                </span>
+              </div>
+              <a
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/10 text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                href="https://github.com/autobrr/upbrr"
+                target="_blank"
+                rel="noreferrer"
+                onAuxClick={handleExternalLinkClick}
+                onClick={handleExternalLinkClick}
+                aria-label="Open autobrr/upbrr on GitHub"
+                title="autobrr/upbrr"
+              >
+                <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor">
+                  <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4l-.01-1.4c-2.22.5-2.69-1.1-2.69-1.1-.36-.95-.89-1.2-.89-1.2-.73-.51.05-.5.05-.5.81.06 1.24.85 1.24.85.72 1.27 1.89.9 2.35.69.07-.53.28-.9.51-1.1-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .68-.22 2.2.84A7.37 7.37 0 0 1 8 3.99c.68 0 1.36.09 2 .28 1.52-1.06 2.19-.84 2.19-.84.44 1.12.16 1.95.08 2.16.52.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.25.54.76.54 1.54l-.01 2.22c0 .22.14.48.55.4A8.13 8.13 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
+                </svg>
+              </a>
+            </div>
           </div>
         </aside>
 
@@ -3023,7 +4382,7 @@ export default function App() {
               handleCreateWebAuth={handleCreateWebAuth}
               renderImageHostingSection={renderImageHostingSection}
               renderTrackerSection={renderTrackerSection}
-              renderMapSection={renderMapSection}
+              renderTorrentClientsSection={renderTorrentClientsSection}
               renderField={renderField}
               sectionFieldMeta={sectionFieldMeta}
             />
@@ -3041,7 +4400,7 @@ export default function App() {
               sectionFieldMeta={sectionFieldMeta}
             />
           ) : activeTab === "history" ? (
-            <HistoryPage />
+            <HistoryPage onReleaseDeleted={handleHistoryReleaseDeleted} />
           ) : activeTab === "dupes" ? (
             <DupeCheckPage
               path={path}
@@ -3055,6 +4414,9 @@ export default function App() {
               dupeProgressStatus={dupeProgressStatus}
               dupeCompletedCount={dupeCompletedCount}
               dupeTotalCount={dupeTotalCount}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
               handleDupeCheck={handleDupeCheck}
               setDupeIgnore={setDupeIgnore}
             />
@@ -3064,8 +4426,6 @@ export default function App() {
               screenshotPlan={screenshots.screenshotPlan}
               screenshotsLoading={screenshots.screenshotsLoading}
               screenshotsError={screenshots.screenshotsError}
-              screenshotsEnabled={screenshotsEnabled}
-              setScreenshotsEnabled={setScreenshotsEnabled}
               loadScreenshotPlan={screenshots.loadScreenshotPlan}
               handleGenerateScreenshots={handleGenerateScreenshots}
               screenshotConfig={screenshotConfig}
@@ -3116,6 +4476,16 @@ export default function App() {
               finalResult={screenshots.finalResult}
               handleDeleteAllFinalImages={screenshots.handleDeleteAllFinalImages}
             />
+          ) : activeTab === "menu_images" ? (
+            <MenuImagesPage
+              path={path}
+              overrides={idOverrideState?.overrides || {}}
+              nameOverrides={releaseOverrideState?.overrides || {}}
+              browseAvailable={browserNativeBrowseAvailable}
+              onImportComplete={() => {
+                setActiveTab("upload_images");
+              }}
+            />
           ) : activeTab === "upload_images" ? (
             <UploadImagesPage
               path={path}
@@ -3128,6 +4498,7 @@ export default function App() {
               setAllUploadSelections={uploadImages.setAllUploadSelections}
               handleUploadImages={uploadImages.handleUploadImages}
               uploadImagesError={uploadImages.uploadImagesError}
+              uploadImageFailures={uploadImages.uploadImageFailures}
               uploadCandidates={screenshots.uploadCandidates}
               uploadSelections={uploadImages.uploadSelections}
               toggleUploadSelection={uploadImages.toggleUploadSelection}
@@ -3137,7 +4508,18 @@ export default function App() {
               uploadedImages={uploadImages.uploadedImages}
               uploadedImageRecords={uploadImages.uploadedImageRecords}
               trackerImageLinks={screenshots.trackerImageLinks}
+              trackerImageURLs={trackerImageURLs}
               handleDeleteUploadedImage={uploadImages.handleDeleteUploadedImage}
+              handleDeleteTrackerImage={screenshots.handleDeleteTrackerImage}
+            />
+          ) : activeTab === "bluray" ? (
+            <BlurayCandidatesPage
+              preview={preview}
+              selecting={bluraySelecting}
+              error={bluraySelectionError}
+              onSelect={(releaseID) => void handleSelectBlurayCandidate(releaseID)}
+              setLightboxImage={setLightboxImage}
+              setLightboxAlt={setLightboxAlt}
             />
           ) : activeTab === "description_builder" ? (
             <DescriptionBuilderPage
@@ -3149,13 +4531,23 @@ export default function App() {
               builderLoading={builderLoading}
               builderSaving={builderSaving}
               builderRenderLoading={builderRenderLoading}
+              builderRefreshing={builderRefreshing}
+              builderProgressMessage={builderProgressMessage}
               builderError={builderError}
               builderSaved={builderSaved}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
+              refreshDescriptionBuilder={refreshDescriptionBuilder}
               setBuilderRawByGroup={setBuilderRawByGroup}
               setBuilderDirtyByGroup={setBuilderDirtyByGroup}
               setBuilderExpandedGroups={setBuilderExpandedGroups}
               resetBuilderDescription={(groupKey) =>
-                resetBuilderDescription(groupKey, idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {})
+                resetBuilderDescription(
+                  groupKey,
+                  idOverrideState?.overrides || {},
+                  releaseOverrideState?.overrides || {},
+                )
               }
               renderBuilderDescription={renderBuilderDescription}
               saveBuilderDescription={saveBuilderDescription}
@@ -3167,10 +4559,11 @@ export default function App() {
               dupedTrackerSet={dupedTrackerSet}
               ruleSkipReasons={ruleSkipReasons}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
-              overrideRuleBlocks={overrideRuleBlocks}
-              setOverrideRuleBlocks={setOverrideRuleBlocks}
+              failedDupeTrackerSet={failedDupeTrackerSet}
               uploadToggles={uploadToggles}
               setUploadToggles={setUploadToggles}
+              skipClientInjection={uploadSkipClientInjection}
+              setSkipClientInjection={setUploadSkipClientInjection}
               namingOverrides={namingOverrides}
               preview={preview}
               formatLabel={formatLabel}
@@ -3179,23 +4572,40 @@ export default function App() {
               uploadSnapshot={trackerUploadSnapshot}
               dryRunLoading={trackerDryRunLoading}
               dryRunError={trackerDryRunError}
+              dryRunProgress={trackerDryRunProgress}
               dryRunPreview={trackerDryRunPreview}
               trackerQuestionnaireAnswers={trackerQuestionnaireAnswers}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
               onQuestionnaireAnswerChange={updateTrackerQuestionnaireAnswer}
               onRunDryRun={handleRunTrackerDryRun}
               onStartUpload={handleStartTrackerUpload}
               onCancelUpload={handleCancelTrackerUpload}
               onRetryFailed={handleRetryFailedTrackerUpload}
             />
-          ) : activeTab === "input" ? (
+          ) : activeTab === "tracker" && hasTrackerData ? (
+            <TrackerDataPage
+              preview={preview}
+              renderedDescriptions={renderedDescriptions}
+              setRenderedDescriptions={setRenderedDescriptions}
+              setLightboxImage={setLightboxImage}
+              setLightboxAlt={setLightboxAlt}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
+            />
+          ) : (
             <InputPage
               path={path}
-              setPath={setPath}
+              handleSourcePathChange={handleSourcePathChange}
+              sourcePathHistory={sourcePathHistory}
+              handleSourcePathHistorySelect={handleSourcePathHistorySelect}
               sourceLookupURL={sourceLookupURL}
-            setSourceLookupURL={setSourceLookupURL}
-            browseAvailable={browserNativeBrowseAvailable}
-            handleBrowseFile={handleBrowseFile}
-            handleBrowseFolder={handleBrowseFolder}
+              setSourceLookupURL={setSourceLookupURL}
+              browseAvailable={browserMode || browserNativeBrowseAvailable}
+              handleBrowseFile={handleBrowseFile}
+              handleBrowseFolder={handleBrowseFolder}
               handleFetch={handleFetch}
               handleRefresh={handleRefresh}
               handleResetMetadata={handleResetMetadata}
@@ -3227,31 +4637,25 @@ export default function App() {
               setRunLogLevel={setRunLogLevel}
               runLogLevelTouched={runLogLevelTouched}
               setRunLogLevelTouched={setRunLogLevelTouched}
-            />
-          ) : (
-            <TrackerDataPage
-              preview={preview}
-              renderedDescriptions={renderedDescriptions}
-              setRenderedDescriptions={setRenderedDescriptions}
-              setLightboxImage={setLightboxImage}
-              setLightboxAlt={setLightboxAlt}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
             />
           )}
         </main>
-        {lightboxImage ? (
-          <div
-            className="lightbox-overlay"
-            role="dialog"
-            aria-modal="true"
-            onClick={() => {
+        <Dialog.Root
+          open={Boolean(lightboxImage)}
+          onOpenChange={(open) => {
+            if (!open) {
               setLightboxImage("");
               setLightboxAlt("");
-            }}
-          >
-            <div
-              className={`lightbox-content ${lightboxFit ? "fit" : "native"}`}
-              onClick={(event) => event.stopPropagation()}
-            >
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="lightbox-overlay" />
+            <Dialog.Content className={`lightbox-content ${lightboxFit ? "fit" : "native"}`}>
+              <Dialog.Title className="sr-only">{lightboxAlt || "Preview"}</Dialog.Title>
               <div className="lightbox-toolbar">
                 <button
                   className="lightbox-toggle"
@@ -3261,10 +4665,143 @@ export default function App() {
                   {lightboxFit ? "Actual size" : "Fit to screen"}
                 </button>
               </div>
-              <img src={lightboxImage} alt={lightboxAlt || "Preview"} />
-            </div>
-          </div>
-        ) : null}
+              <img className="lightbox-image" src={lightboxImage} alt={lightboxAlt || "Preview"} />
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+        <Dialog.Root
+          open={Boolean(hostBrowserMode)}
+          onOpenChange={(open) => {
+            if (!open) closeHostBrowser();
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="host-browser-overlay" />
+            <Dialog.Content className="host-browser-dialog">
+              <div className="host-browser-header">
+                <div>
+                  <Dialog.Title asChild>
+                    <h2 className="label">Host browser</h2>
+                  </Dialog.Title>
+                  <Dialog.Description asChild>
+                    <p className="mono host-browser-path">
+                      {hostBrowser?.currentPath || "Computer"}
+                    </p>
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button className="ghost" type="button">
+                    Close
+                  </button>
+                </Dialog.Close>
+              </div>
+              <div className="host-browser-toolbar">
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={hostBrowserLoading || !hostBrowser?.parentPath}
+                  onClick={() => void browseHostDirectory(hostBrowser?.parentPath || "")}
+                >
+                  Up
+                </button>
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={hostBrowserLoading}
+                  onClick={() => void browseHostDirectory("")}
+                >
+                  Roots
+                </button>
+                {hostBrowserMode === "folder" && hostBrowser?.currentPath ? (
+                  <button
+                    className="primary"
+                    type="button"
+                    disabled={hostBrowserLoading}
+                    onClick={() => void selectHostPath(hostBrowser.currentPath, true)}
+                  >
+                    Select folder
+                  </button>
+                ) : null}
+                <label className="host-browser-search" htmlFor="host-browser-search">
+                  <span>Search</span>
+                  <input
+                    id="host-browser-search"
+                    className="host-browser-search__input"
+                    value={hostBrowserSearch}
+                    onChange={(event) => setHostBrowserSearch(event.target.value)}
+                    placeholder="Filter current path"
+                    disabled={hostBrowserLoading || !hostBrowser}
+                  />
+                </label>
+              </div>
+              {hostBrowserError ? <p className="error">{hostBrowserError}</p> : null}
+              {hostBrowserLoading ? <p className="muted">Loading host paths...</p> : null}
+              {!hostBrowserLoading && hostBrowser ? (
+                <div className="host-browser-list">
+                  {hostBrowserEntries.length === 0 ? (
+                    <p className="muted host-browser-empty">No matching paths.</p>
+                  ) : (
+                    hostBrowserEntries.map((entry, index) => (
+                      <div
+                        key={entry.path}
+                        className="host-browser-entry"
+                        ref={(element) => {
+                          hostBrowserEntryRefs.current[index] = element;
+                        }}
+                        tabIndex={0}
+                        onKeyDown={(event) => handleHostBrowserEntryKeyDown(event, entry, index)}
+                        onDoubleClick={() => {
+                          if (entry.isDir) {
+                            void browseHostDirectory(entry.path);
+                            return;
+                          }
+                          void selectHostPath(entry.path, entry.isDir);
+                        }}
+                      >
+                        <span className="host-browser-entry__name">
+                          {entry.isDir ? "[DIR] " : ""}
+                          {entry.name}
+                        </span>
+                        <span className="host-browser-entry__meta">
+                          {entry.isDir
+                            ? "Folder"
+                            : `${Math.round(entry.size / 1024).toLocaleString()} KiB`}
+                        </span>
+                        <span className="host-browser-entry__actions">
+                          {entry.isDir ? (
+                            <button
+                              className="ghost"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void browseHostDirectory(entry.path);
+                              }}
+                            >
+                              Open
+                            </button>
+                          ) : null}
+                          {(hostBrowserMode === "folder" && entry.isDir) ||
+                          (hostBrowserMode === "file" && !entry.isDir) ? (
+                            <button
+                              className="primary"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void selectHostPath(entry.path, entry.isDir);
+                              }}
+                            >
+                              Select
+                            </button>
+                          ) : null}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
       </div>
     </div>
   );

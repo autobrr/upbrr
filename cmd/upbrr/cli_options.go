@@ -11,9 +11,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -32,6 +34,7 @@ type cliOptions struct {
 	Screens               int
 	NoSeed                bool
 	SkipAutoTorrent       bool
+	KeepFolder            bool
 	OnlyID                bool
 	UploadOnly            bool
 	Category              string
@@ -57,7 +60,6 @@ type cliOptions struct {
 	NoDual                bool
 	DualAudio             bool
 	Region                string
-	GUI                   bool
 	CreateAuth            bool
 	ExportConfigPath      string
 	ExportConfigPlaintext bool
@@ -108,6 +110,7 @@ type cliOptions struct {
 	ManualFrames          string
 	Comparison            string
 	ComparisonIndex       int
+	MenuImages            string
 	InfoHash              string
 	MaxPieceSize          int
 	NoHash                bool
@@ -116,6 +119,22 @@ type cliOptions struct {
 
 type serveOptions struct {
 	ConfigPath string
+	DevNoAuth  bool
+}
+
+type cliHelpError struct {
+	usage string
+}
+
+func (e *cliHelpError) Error() string {
+	return "help requested"
+}
+
+func (e *cliHelpError) Usage() string {
+	if e == nil {
+		return ""
+	}
+	return e.usage
 }
 
 func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, error) {
@@ -145,6 +164,8 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.BoolVar(&opts.NoSeed, "ns", false, "Do not inject torrent into clients")
 	fs.BoolVar(&opts.SkipAutoTorrent, "skip_auto_torrent", false, "Skip automated torrent client searching")
 	fs.BoolVar(&opts.SkipAutoTorrent, "sat", false, "Skip automated torrent client searching")
+	fs.BoolVar(&opts.KeepFolder, "keep-folder", false, "Keep a supplied folder instead of processing its selected video file directly")
+	fs.BoolVar(&opts.KeepFolder, "kf", false, "Keep a supplied folder instead of processing its selected video file directly")
 	fs.BoolVar(&opts.OnlyID, "onlyID", false, "Only grab tracker metadata IDs")
 	fs.BoolVar(&opts.UploadOnly, "upload-only", false, "Upload using prepared metadata cache only")
 	fs.StringVar(&opts.Category, "category", "", "Override category")
@@ -180,7 +201,6 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.BoolVar(&opts.NoDub, "no-dub", false, "Remove dubbed tag from audio name")
 	fs.BoolVar(&opts.NoDual, "no-dual", false, "Remove dual-audio tag from audio name")
 	fs.BoolVar(&opts.DualAudio, "dual-audio", false, "Add dual-audio tag to audio name")
-	fs.BoolVar(&opts.GUI, "gui", false, "Launch the GUI")
 	fs.BoolVar(&opts.CreateAuth, "create-auth", false, "Create web-auth.json beside the active database and exit")
 	fs.StringVar(&opts.ExportConfigPath, "export-config", "", "Export SQLite config to YAML file and exit")
 	fs.BoolVar(&opts.ExportConfigPlaintext, "export-config-plaintext", false, "Export config with plaintext secrets (requires --export-config)")
@@ -229,6 +249,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.Comparison, "comps", "", "Comparison folder path or comma-separated paths")
 	fs.IntVar(&opts.ComparisonIndex, "comparison_index", 0, "Primary comparison index")
 	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
+	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
 	fs.StringVar(&opts.InfoHash, "torrenthash", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "th", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "infohash", "", "Override v1 info hash")
@@ -265,61 +286,16 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.Channel, "ch", "", "Override SPD channel")
 	fs.StringVar(&opts.Channel, "channel", "", "Override SPD channel")
 
-	if err := fs.Parse(args); err != nil {
-		return cliOptions{}, nil, nil, err
+	flagArgs, positionalArgs := splitInterspersedCLIFlags(fs, args)
+	if err := fs.Parse(flagArgs); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return cliOptions{}, nil, nil, &cliHelpError{usage: formatFlagUsage(fs, "upbrr [options] <input path>...")}
+		}
+		return cliOptions{}, nil, nil, fmt.Errorf("parse CLI options: %w", err)
 	}
 
 	visited := make(map[string]bool)
-	aliases := map[string]string{
-		"tk":                   "trackers",
-		"lq":                   "limit-queue",
-		"sc":                   "site-check",
-		"su":                   "site-upload",
-		"rtk":                  "trackers-remove",
-		"dtmp":                 "delete-tmp",
-		"s":                    "screens",
-		"ns":                   "no-seed",
-		"sat":                  "skip_auto_torrent",
-		"c":                    "category",
-		"t":                    "type",
-		"res":                  "resolution",
-		"g":                    "tag",
-		"serv":                 "service",
-		"dist":                 "distributor",
-		"ol":                   "original-language",
-		"repack":               "edition",
-		"manual-episode-title": "episode-title",
-		"met":                  "episode-title",
-		"year":                 "manual-year",
-		"reg":                  "region",
-		"df":                   "descfile",
-		"pb":                   "desclink",
-		"qbt":                  "qbit-tag",
-		"qbc":                  "qbit-cat",
-		"frc":                  "force-recheck",
-		"ih":                   "imghost",
-		"siu":                  "skip-imagehost-upload",
-		"mf":                   "manual_frames",
-		"comps":                "comparison",
-		"comps_index":          "comparison_index",
-		"th":                   "infohash",
-		"torrenthash":          "infohash",
-		"mps":                  "max-piece-size",
-		"nh":                   "nohash",
-		"rh":                   "rehash",
-		"ua":                   "unattended",
-		"uac":                  "unattended_confirm",
-		"sdc":                  "skip-dupe-check",
-		"sda":                  "skip-dupe-asking",
-		"ddc":                  "double-dupe-check",
-		"mc":                   "commentary",
-		"pr":                   "personalrelease",
-		"st":                   "stream",
-		"a":                    "anon",
-		"dr":                   "draft",
-		"mq":                   "modq",
-		"ch":                   "channel",
-	}
+	aliases := cliFlagAliases()
 	fs.Visit(func(f *flag.Flag) {
 		name := f.Name
 		if canonical, ok := aliases[name]; ok {
@@ -385,7 +361,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	}
 	if visited["log-level"] {
 		if _, err := api.ParseLogLevel(opts.LogLevel); err != nil {
-			return cliOptions{}, nil, nil, err
+			return cliOptions{}, nil, nil, fmt.Errorf("upbrr: %w", err)
 		}
 	}
 	if visited["tmdb"] {
@@ -415,7 +391,107 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 		return cliOptions{}, nil, nil, err
 	}
 
-	return opts, visited, fs.Args(), nil
+	return opts, visited, positionalArgs, nil
+}
+
+func splitInterspersedCLIFlags(fs *flag.FlagSet, args []string) ([]string, []string) {
+	flagArgs := make([]string, 0, len(args))
+	positionalArgs := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionalArgs = append(positionalArgs, args[i+1:]...)
+			break
+		}
+		name, ok := cliFlagName(arg)
+		if !ok {
+			positionalArgs = append(positionalArgs, arg)
+			continue
+		}
+		flagDef := fs.Lookup(name)
+		if flagDef == nil {
+			flagArgs = append(flagArgs, arg)
+			continue
+		}
+
+		flagArgs = append(flagArgs, arg)
+		if strings.Contains(arg, "=") || isBoolFlag(flagDef) {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
+			flagArgs = append(flagArgs, args[i])
+		}
+	}
+	return flagArgs, positionalArgs
+}
+
+func cliFlagName(arg string) (string, bool) {
+	if !strings.HasPrefix(arg, "-") || arg == "-" {
+		return "", false
+	}
+	trimmed := strings.TrimLeft(arg, "-")
+	if trimmed == "" {
+		return "", false
+	}
+	if before, _, ok := strings.Cut(trimmed, "="); ok {
+		trimmed = before
+	}
+	return trimmed, trimmed != ""
+}
+
+func cliFlagAliases() map[string]string {
+	return map[string]string{
+		"tk":                   "trackers",
+		"lq":                   "limit-queue",
+		"sc":                   "site-check",
+		"su":                   "site-upload",
+		"rtk":                  "trackers-remove",
+		"dtmp":                 "delete-tmp",
+		"s":                    "screens",
+		"ns":                   "no-seed",
+		"sat":                  "skip_auto_torrent",
+		"kf":                   "keep-folder",
+		"c":                    "category",
+		"t":                    "type",
+		"res":                  "resolution",
+		"g":                    "tag",
+		"serv":                 "service",
+		"dist":                 "distributor",
+		"ol":                   "original-language",
+		"repack":               "edition",
+		"manual-episode-title": "episode-title",
+		"met":                  "episode-title",
+		"year":                 "manual-year",
+		"reg":                  "region",
+		"df":                   "descfile",
+		"pb":                   "desclink",
+		"qbt":                  "qbit-tag",
+		"qbc":                  "qbit-cat",
+		"frc":                  "force-recheck",
+		"ih":                   "imghost",
+		"siu":                  "skip-imagehost-upload",
+		"mf":                   "manual_frames",
+		"comps":                "comparison",
+		"comps_index":          "comparison_index",
+		"th":                   "infohash",
+		"torrenthash":          "infohash",
+		"mps":                  "max-piece-size",
+		"nh":                   "nohash",
+		"rh":                   "rehash",
+		"ua":                   "unattended",
+		"uac":                  "unattended_confirm",
+		"sdc":                  "skip-dupe-check",
+		"sda":                  "skip-dupe-asking",
+		"ddc":                  "double-dupe-check",
+		"mc":                   "commentary",
+		"pr":                   "personalrelease",
+		"st":                   "stream",
+		"a":                    "anon",
+		"dr":                   "draft",
+		"mq":                   "modq",
+		"ch":                   "channel",
+	}
 }
 
 func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
@@ -424,9 +500,13 @@ func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	fs.SetOutput(io.Discard)
 
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
+	fs.BoolVar(&opts.DevNoAuth, "dev-no-auth", false, "Development only: serve web UI without web authentication on loopback hosts")
 
 	if err := fs.Parse(args); err != nil {
-		return serveOptions{}, nil, err
+		if errors.Is(err, flag.ErrHelp) {
+			return serveOptions{}, nil, &cliHelpError{usage: formatFlagUsage(fs, "upbrr serve [options]")}
+		}
+		return serveOptions{}, nil, fmt.Errorf("parse serve options: %w", err)
 	}
 
 	visited := make(map[string]bool)
@@ -435,6 +515,132 @@ func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	})
 
 	return opts, visited, nil
+}
+
+func formatFlagUsage(fs *flag.FlagSet, usage string) string {
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "Usage: %s\n", usage)
+	if fs.Name() == "upbrr" {
+		fmt.Fprint(&builder, "\nCommands:\n")
+		fmt.Fprint(&builder, "  serve\n")
+		fmt.Fprint(&builder, "      Start the embedded web UI server\n")
+	}
+	fmt.Fprint(&builder, "\nOptions:\n")
+	sections := cliHelpSections(fs.Name())
+	aliasesByCanonical := cliAliasesByCanonical()
+	seen := make(map[string]bool)
+	for _, section := range sections {
+		wroteHeader := false
+		for _, name := range section.names {
+			f := fs.Lookup(name)
+			if f == nil || seen[name] {
+				continue
+			}
+			if !wroteHeader {
+				fmt.Fprintf(&builder, "\n%s:\n", section.title)
+				wroteHeader = true
+			}
+			formatHelpFlag(&builder, f, aliasesByCanonical[name])
+			seen[name] = true
+			for _, alias := range aliasesByCanonical[name] {
+				seen[alias] = true
+			}
+		}
+	}
+
+	var remaining []*flag.Flag
+	fs.VisitAll(func(f *flag.Flag) {
+		if !seen[f.Name] {
+			remaining = append(remaining, f)
+		}
+	})
+	if len(remaining) > 0 {
+		sort.Slice(remaining, func(i, j int) bool {
+			return remaining[i].Name < remaining[j].Name
+		})
+		fmt.Fprintln(&builder, "\nOther:")
+		for _, f := range remaining {
+			formatHelpFlag(&builder, f, nil)
+		}
+	}
+	return builder.String()
+}
+
+type helpSection struct {
+	title string
+	names []string
+}
+
+func cliHelpSections(name string) []helpSection {
+	if name == "serve" {
+		return []helpSection{
+			{title: "Config", names: []string{"config"}},
+			{title: "Development", names: []string{"dev-no-auth"}},
+		}
+	}
+	return []helpSection{
+		{title: "Config", names: []string{"config", "export-config", "export-config-plaintext", "import-config", "create-auth"}},
+		{title: "Application", names: []string{"version", "cleanup"}},
+		{title: "Execution", names: []string{
+			"queue", "limit-queue", "site-check", "site-upload", "dry-run", "debug", "log-level", "upload-only",
+			"delete-tmp", "unattended", "unattended_confirm",
+		}},
+		{title: "Tracker Selection", names: []string{"trackers", "trackers-remove"}},
+		{title: "Tracker IDs", names: []string{"ptp", "blu", "aither", "lst", "oe", "hdb", "btn", "bhd", "ulcx"}},
+		{title: "Release Overrides", names: []string{
+			"category", "type", "source", "resolution", "tag", "service", "distributor", "original-language",
+			"edition", "season", "episode", "episode-title", "manual-year", "daily", "region", "no-season", "no-year",
+			"no-aka", "no-tag", "no-edition", "no-dub", "no-dual", "dual-audio",
+		}},
+		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
+		{title: "Tracker Overrides", names: []string{
+			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
+			"commentary", "personalrelease", "stream", "webdv", "not-anime", "anon", "draft", "modq", "channel",
+		}},
+		{title: "Screenshots and Images", names: []string{
+			"screens", "manual_frames", "comparison", "comparison_index", "menu-images", "imghost", "skip-imagehost-upload",
+			"descfile", "desclink",
+		}},
+		{title: "Client and Torrent", names: []string{
+			"client", "qbit-tag", "qbit-cat", "force-recheck", "no-seed", "skip_auto_torrent", "keep-folder", "onlyID", "infohash",
+			"max-piece-size", "nohash", "rehash",
+		}},
+	}
+}
+
+func cliAliasesByCanonical() map[string][]string {
+	result := make(map[string][]string)
+	for alias, canonical := range cliFlagAliases() {
+		result[canonical] = append(result[canonical], alias)
+	}
+	for canonical := range result {
+		sort.Strings(result[canonical])
+	}
+	return result
+}
+
+func formatHelpFlag(builder *strings.Builder, f *flag.Flag, aliases []string) {
+	valueName, usage := flag.UnquoteUsage(f)
+	names := make([]string, 0, 2+len(aliases))
+	names = append(names, "-"+f.Name, "--"+f.Name)
+	for _, alias := range aliases {
+		names = append(names, "-"+alias)
+	}
+	suffix := ""
+	if !isBoolFlag(f) && valueName != "" {
+		suffix = " " + valueName
+	}
+	fmt.Fprintf(builder, "  %s%s\n", strings.Join(names, ", "), suffix)
+	fmt.Fprintf(builder, "      %s\n", usage)
+}
+
+type boolFlag interface {
+	IsBoolFlag() bool
+}
+
+func isBoolFlag(f *flag.Flag) bool {
+	boolValue, ok := f.Value.(boolFlag)
+	return ok && boolValue.IsBoolFlag()
 }
 
 func (o cliOptions) interactionMode() api.InteractionMode {
@@ -452,7 +658,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 	if visited["log-level"] {
 		normalized, err := api.ParseLogLevel(opts.LogLevel)
 		if err != nil {
-			return api.Request{}, err
+			return api.Request{}, fmt.Errorf("upbrr: %w", err)
 		}
 		runLogLevel = normalized
 	}
@@ -475,6 +681,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 			Screens:         screens,
 			NoSeed:          opts.NoSeed,
 			SkipAutoTorrent: opts.SkipAutoTorrent,
+			KeepFolder:      opts.KeepFolder,
 			OnlyID:          opts.OnlyID,
 			InteractionMode: opts.interactionMode(),
 		},
@@ -650,6 +857,12 @@ func buildScreenshotOverrides(opts cliOptions, visited map[string]bool) api.Scre
 			overrides.ComparisonPaths = paths
 		}
 	}
+	if visited["menu-images"] {
+		paths, err := parseComparisonPaths(opts.MenuImages)
+		if err == nil {
+			overrides.MenuPaths = paths
+		}
+	}
 	if visited["comparison_index"] {
 		value := opts.ComparisonIndex
 		overrides.ComparisonPrimaryIndex = &value
@@ -814,12 +1027,10 @@ func parseInfoHash(raw string) (string, error) {
 
 func parseImageHost(raw string) (string, error) {
 	trimmed := strings.ToLower(strings.TrimSpace(raw))
-	switch trimmed {
-	case "imgbb", "ptpimg", "imgbox", "pixhost", "lensdump", "ptscreens", "onlyimage", "dalexni", "zipline", "passtheimage", "seedpool_cdn", "utppm":
+	if imagehostpolicy.IsUploadHost(trimmed) && imagehostpolicy.OwnerForHost(trimmed) == "" {
 		return trimmed, nil
-	default:
-		return "", fmt.Errorf("invalid imghost %q", raw)
 	}
+	return "", fmt.Errorf("invalid imghost %q", raw)
 }
 
 func parseManualFrames(raw string) ([]int, error) {

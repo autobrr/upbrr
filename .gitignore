@@ -1,19 +1,39 @@
 gui/frontend/node_modules/
 gui/frontend/dist/
 gui/frontend/package.json.md5
+gui/frontend/tsconfig.tsbuildinfo
+gui/frontend/wailsjs/go/
 gui/build/bin/
 internal/webserver/assets/
 internal/guiapp/assets/*
 !internal/guiapp/assets/.keep
 dist/
+tmp/
 .trunk/
 *.exe
 /scripts/__pycache__/
+
+# E2E / Playwright artifacts
+gui/frontend/playwright-report/
+gui/frontend/test-results/
+
+# Lefthook
+.lefthook-local.yml
+.lefthook/
+
+# Lint / formatter caches
+lint-report.json
+gui/frontend/.eslintcache
+gui/frontend/node_modules/.cache/prettier/
+
+# App Configs
 /config/*.yaml
 /config/*.yml
 /config.converted.yaml
 /config.converted.yml
 /config-export.yaml
+
+#Claude user local settings
 .claude/settings.local.json
 .claude/CLAUDE.local.md
 CLAUDE.local.md

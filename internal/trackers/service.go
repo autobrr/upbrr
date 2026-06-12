@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,8 @@ type trackerUploadResult struct {
 	notImplemented bool
 }
 
+type imageHostPreflight map[string]descriptionImageHostResolution
+
 func NewService(cfg config.Config, logger api.Logger, repo db.MetadataRepository) *Service {
 	return NewServiceWithRegistryAndImages(cfg, logger, repo, nil, nil)
 }
@@ -54,7 +57,7 @@ func NewServiceWithRegistryAndImages(cfg config.Config, logger api.Logger, repo 
 func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
-		return api.UploadSummary{}, ctx.Err()
+		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -76,7 +79,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 		for _, tracker := range trackers {
 			select {
 			case <-ctx.Done():
-				return api.UploadSummary{}, ctx.Err()
+				return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 			default:
 			}
 			banned, err := s.banned.IsBanned(tracker, group)
@@ -164,7 +167,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 			select {
 			case <-ctx.Done():
 				finalizePending("canceled")
-				return api.UploadSummary{}, ctx.Err()
+				return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 			default:
 			}
 			s.logger.Debugf("trackers: creating pending record for %s", tracker)
@@ -189,7 +192,8 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 			recordMu.Unlock()
 		}
 
-		results, err := s.uploadTrackersConcurrently(ctx, meta, trackers)
+		preflight := s.preflightDescriptionImageHosts(ctx, meta, trackers)
+		results, err := s.uploadTrackersConcurrently(ctx, meta, trackers, preflight)
 		if err != nil {
 			finalizePending("canceled")
 			return api.UploadSummary{}, err
@@ -240,7 +244,8 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 		return summary, nil
 	}
 
-	results, err := s.uploadTrackersConcurrently(ctx, meta, trackers)
+	preflight := s.preflightDescriptionImageHosts(ctx, meta, trackers)
+	results, err := s.uploadTrackersConcurrently(ctx, meta, trackers, preflight)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -285,11 +290,29 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 	return summary, nil
 }
 
-func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.PreparedMetadata, trackers []string) ([]trackerUploadResult, error) {
+func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.PreparedMetadata, trackers []string, preflight imageHostPreflight) ([]trackerUploadResult, error) {
 	workerCount := s.maxConcurrentTrackerUploads(len(trackers))
 	results := make([]trackerUploadResult, len(trackers))
 	if workerCount <= 0 {
 		return results, nil
+	}
+
+	trackerConfigs := make([]config.TrackerConfig, len(trackers))
+	trackerMetas := make([]api.PreparedMetadata, len(trackers))
+	prepErrors := make([]error, len(trackers))
+	for idx, tracker := range trackers {
+		trackerCfg := trackerConfigFor(s.cfg, tracker)
+		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
+		trackerConfigs[idx] = trackerCfg
+		if _, ok := s.registry.Lookup(tracker); !ok {
+			continue
+		}
+		trackerMeta, err := PrepareTrackerUploadTorrent(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg)
+		if err != nil {
+			prepErrors[idx] = fmt.Errorf("trackers: %s upload torrent artifact: %w", tracker, err)
+			continue
+		}
+		trackerMetas[idx] = trackerMeta
 	}
 
 	jobs := make(chan int)
@@ -314,29 +337,49 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 				continue
 			}
 
-			trackerCfg, _ := trackerConfigFor(s.cfg, tracker)
-			trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
-			resolution, err := ensureDescriptionImageHost(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger)
+			trackerCfg := trackerConfigs[idx]
+			trackerMeta := trackerMetas[idx]
+			if prepErrors[idx] != nil {
+				result.err = prepErrors[idx]
+				results[idx] = result
+				continue
+			}
+			resolution, ok := preflight[strings.ToUpper(strings.TrimSpace(tracker))]
+			if !ok {
+				var err error
+				resolution, err = ensureDescriptionImageHost(ctx, tracker, trackerMeta, s.cfg, trackerCfg, s.repo, s.images, s.logger)
+				if err != nil {
+					s.logger.Warnf("trackers: description image host resolution failed for %s: %v", tracker, err)
+					result.err = err
+					results[idx] = result
+					continue
+				}
+			}
+			if resolution.blocking {
+				message := strings.TrimSpace(resolution.feedback.Message)
+				if message == "" {
+					message = "image-host requirements could not be met"
+				}
+				s.logger.Warnf("trackers: skipping %s due to image host failure: %s", tracker, message)
+				result.err = errors.New(message)
+				results[idx] = result
+				continue
+			}
+			assets, err := ResolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger)
 			if err != nil {
-				s.logger.Warnf("trackers: description image host resolution failed for %s: %v", tracker, err)
 				result.err = err
 				results[idx] = result
 				continue
 			}
-			assets, err := ResolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger)
-			if err != nil {
-				result.err = err
-				results[idx] = result
-				continue
-			}
-			assets.Screenshots = resolution.screenshots
+			applyResolvedDescriptionScreenshots(ctx, trackerMeta, s.repo, nil, &assets, resolution.screenshots)
 			uploadSummary, err := definition.Upload(ctx, UploadRequest{
 				Tracker:       tracker,
-				Meta:          meta,
+				Meta:          trackerMeta,
 				TrackerConfig: trackerCfg,
 				AppConfig:     s.cfg,
 				Logger:        s.logger,
 				Repo:          s.repo,
+				Images:        s.images,
 				Assets:        &assets,
 			})
 			if err != nil {
@@ -355,7 +398,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 		}
 	}
 
-	for i := 0; i < workerCount; i++ {
+	for range workerCount {
 		wg.Add(1)
 		go worker()
 	}
@@ -365,7 +408,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 		case <-ctx.Done():
 			close(jobs)
 			wg.Wait()
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		case jobs <- idx:
 		}
 	}
@@ -374,7 +417,7 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 	wg.Wait()
 
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 	}
 
 	return results, nil
@@ -394,10 +437,158 @@ func (s *Service) maxConcurrentTrackerUploads(total int) int {
 	return limit
 }
 
+func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.PreparedMetadata, trackers []string) imageHostPreflight {
+	return s.preflightDescriptionImageHostsWithPreferences(ctx, meta, trackers, nil, nil, true)
+}
+
+func (s *Service) preflightDescriptionImageHostsWithPreferences(
+	ctx context.Context,
+	meta api.PreparedMetadata,
+	trackers []string,
+	preferredImageHosts map[string]string,
+	preloaded *preloadedDescriptionAssetData,
+	resolveAll bool,
+) imageHostPreflight {
+	if len(trackers) == 0 || s.registry == nil {
+		return nil
+	}
+
+	type preflightEntry struct {
+		tracker    string
+		trackerCfg config.TrackerConfig
+		targetKey  string
+	}
+
+	entries := make([]preflightEntry, 0, len(trackers))
+	representatives := make(map[string]preflightEntry)
+	for _, tracker := range trackers {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
+		if _, ok := s.registry.Lookup(tracker); !ok {
+			continue
+		}
+		trackerCfg := trackerConfigFor(s.cfg, tracker)
+		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
+		targetKey := ""
+		policy, err := resolveImageHostPolicy(tracker, trackerCfg, meta.ImageHostOverrides)
+		if err != nil {
+			s.logger.Warnf("trackers: image host preflight failed for %s: %v", tracker, err)
+			continue
+		}
+		if host := preferredHost(effectiveImageHostSelectionPolicy(policy, preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))])); host != "" {
+			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(host))
+		} else if host := preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))]; strings.TrimSpace(host) != "" {
+			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(host))
+		}
+		entry := preflightEntry{
+			tracker:    tracker,
+			trackerCfg: trackerCfg,
+			targetKey:  targetKey,
+		}
+		entries = append(entries, entry)
+		if targetKey != "" {
+			if _, ok := representatives[targetKey]; !ok {
+				representatives[targetKey] = entry
+			}
+		}
+	}
+
+	if preloaded == nil && (len(representatives) > 0 || resolveAll) {
+		var err error
+		preloaded, err = preloadDescriptionAssetData(ctx, meta, s.repo)
+		if err != nil {
+			s.logger.Warnf("trackers: image host preflight preload failed for %s: %v", meta.SourcePath, err)
+			preloaded = nil
+		}
+	}
+
+	resolutions := make(imageHostPreflight, len(entries))
+	var (
+		mu         sync.Mutex
+		wg         sync.WaitGroup
+		reuploaded bool
+	)
+	for _, entry := range representatives {
+		preloadedCopy := clonePreloadedDescriptionAssetData(preloaded)
+		wg.Add(1)
+		go func(entry preflightEntry, preloadedCopy *preloadedDescriptionAssetData) {
+			defer wg.Done()
+			if ctx.Err() != nil {
+				return
+			}
+			resolution, err := ensureDescriptionImageHostWithData(
+				ctx,
+				entry.tracker,
+				meta,
+				s.cfg,
+				entry.trackerCfg,
+				s.repo,
+				s.images,
+				s.logger,
+				preloadedCopy,
+				preferredImageHosts[strings.ToUpper(strings.TrimSpace(entry.tracker))],
+			)
+			if err != nil {
+				s.logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
+				return
+			}
+			mu.Lock()
+			resolutions[strings.ToUpper(strings.TrimSpace(entry.tracker))] = resolution
+			if resolution.feedback.Reuploaded {
+				reuploaded = true
+			}
+			mu.Unlock()
+		}(entry, preloadedCopy)
+	}
+	wg.Wait()
+
+	if !resolveAll {
+		return resolutions
+	}
+
+	if len(representatives) > 0 && reuploaded {
+		refreshed, err := preloadDescriptionAssetData(ctx, meta, s.repo)
+		if err != nil {
+			s.logger.Warnf("trackers: image host preflight reload failed for %s: %v", meta.SourcePath, err)
+		} else {
+			preloaded = refreshed
+		}
+	}
+
+	for _, entry := range entries {
+		key := strings.ToUpper(strings.TrimSpace(entry.tracker))
+		if _, ok := resolutions[key]; ok {
+			continue
+		}
+		resolution, err := ensureDescriptionImageHostWithData(
+			ctx,
+			entry.tracker,
+			meta,
+			s.cfg,
+			entry.trackerCfg,
+			s.repo,
+			s.images,
+			s.logger,
+			preloaded,
+			preferredImageHosts[strings.ToUpper(strings.TrimSpace(entry.tracker))],
+		)
+		if err != nil {
+			s.logger.Warnf("trackers: image host preflight failed for %s: %v", entry.tracker, err)
+			continue
+		}
+		resolutions[key] = resolution
+	}
+	return resolutions
+}
+
 func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadata, trackersList []string) (api.PreparationPreview, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparationPreview{}, ctx.Err()
+		return api.PreparationPreview{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -421,11 +612,28 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		s.logger.Warnf("trackers: preparation preload failed for %s: %v", meta.SourcePath, err)
 		preloaded = nil
 	}
+	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, s.logger)
+	preflight := s.preflightDescriptionImageHostsWithPreferences(ctx, meta, resolved, preferredImageHosts, preloaded, false)
+	preflightUploaded := false
+	for _, resolution := range preflight {
+		if resolution.feedback.Reuploaded {
+			preflightUploaded = true
+			break
+		}
+	}
+	if preflightUploaded {
+		refreshed, reloadErr := preloadDescriptionAssetData(ctx, meta, s.repo)
+		if reloadErr != nil {
+			s.logger.Warnf("trackers: preparation preload reload failed for %s: %v", meta.SourcePath, reloadErr)
+		} else {
+			preloaded = refreshed
+		}
+	}
 
 	grouped := make(map[string]*api.PreparationDescription)
 	order := make([]string, 0, len(resolved))
 	placeholderCount := 0
-	placeholder := func(groupKey, tracker string, note string) {
+	placeholder := func(groupKey, tracker string, note string, imageHost api.ImageHostFeedback) {
 		key := strings.TrimSpace(groupKey)
 		if key == "" {
 			key = tracker
@@ -439,9 +647,12 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 				RawDescriptionHTML: "",
 				Description:        "",
 				DescriptionHTML:    "",
+				ImageHost:          imageHost,
 			}
 			grouped[key] = entry
 			order = append(order, key)
+		} else {
+			entry.ImageHost = mergePreparationImageHostFeedback(entry.ImageHost, imageHost)
 		}
 		entry.Trackers = append(entry.Trackers, tracker)
 		placeholderCount++
@@ -455,26 +666,47 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 	for _, tracker := range resolved {
 		select {
 		case <-ctx.Done():
-			return api.PreparationPreview{}, ctx.Err()
+			return api.PreparationPreview{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
 		definition, ok := s.registry.Lookup(tracker)
 		if !ok {
-			placeholder("", tracker, "not registered")
+			placeholder("", tracker, "not registered", api.ImageHostFeedback{})
 			continue
 		}
 		builder, ok := definition.(DescriptionBuilder)
 		if !ok {
-			placeholder("", tracker, "no description builder")
+			placeholder("", tracker, "no description builder", api.ImageHostFeedback{})
 			continue
 		}
-		trackerCfg, _ := trackerConfigFor(s.cfg, tracker)
+		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
-		resolution, err := ensureDescriptionImageHostWithData(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger, preloaded)
-		if err != nil {
-			s.logger.Warnf("trackers: preparation image host resolution failed for %s: %v", tracker, err)
-			placeholder("", tracker, fmt.Sprintf("image host error: %v", err))
+		key := strings.ToUpper(strings.TrimSpace(tracker))
+		resolution, ok := preflight[key]
+		if !ok {
+			var err error
+			resolution, err = ensureDescriptionImageHostWithData(
+				ctx,
+				tracker,
+				meta,
+				s.cfg,
+				trackerCfg,
+				s.repo,
+				s.images,
+				s.logger,
+				preloaded,
+				preferredImageHosts[key],
+			)
+			if err != nil {
+				s.logger.Warnf("trackers: preparation image host resolution failed for %s: %v", tracker, err)
+				placeholder("", tracker, fmt.Sprintf("image host error: %v", err), api.ImageHostFeedback{})
+				continue
+			}
+		}
+		if resolution.blocking {
+			feedback := blockedPreparationImageHostFeedback(resolution.feedback)
+			placeholder(preparationBlockedImageHostGroupKey(tracker), tracker, "image host blocked", feedback)
 			continue
 		}
 		assets, err := resolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger, preloaded)
@@ -482,7 +714,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 			s.logger.Warnf("trackers: preparation assets failed for %s: %v", tracker, err)
 			assets = DescriptionAssets{}
 		}
-		assets.Screenshots = resolution.screenshots
+		applyResolvedDescriptionScreenshots(ctx, meta, s.repo, preloaded, &assets, resolution.screenshots)
 		result, err := builder.BuildDescription(ctx, DescriptionRequest{
 			Tracker:       tracker,
 			Meta:          meta,
@@ -494,7 +726,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		})
 		if err != nil {
 			s.logger.Errorf("trackers: preparation failed for %s: %v", tracker, err)
-			placeholder("", tracker, "build error")
+			placeholder("", tracker, "build error", api.ImageHostFeedback{})
 			continue
 		}
 
@@ -508,31 +740,19 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		}
 		groupKey = preparationGroupKey(groupKey, resolution.feedback.SelectedHost, resolution.usageScope)
 
-		entry, exists := grouped[groupKey]
-		switch {
-		case !exists:
-			entry = &api.PreparationDescription{
-				GroupKey:           groupKey,
-				Trackers:           []string{},
-				RawDescription:     strings.TrimSpace(assets.Description),
-				RawDescriptionHTML: description.Render(strings.TrimSpace(assets.Description)),
-				Description:        descriptionText,
-				DescriptionHTML:    description.Render(descriptionText),
-				HasOverride:        assets.Override,
-				ImageHost:          resolution.feedback,
-			}
-			grouped[groupKey] = entry
-			order = append(order, groupKey)
-		case entry.Description != descriptionText:
-			s.logger.Warnf("trackers: preparation group %s description mismatch (tracker=%s)", groupKey, tracker)
-		case entry.RawDescription != strings.TrimSpace(assets.Description):
-			s.logger.Warnf("trackers: preparation group %s raw description mismatch (tracker=%s)", groupKey, tracker)
+		descriptionHTML := description.Render(descriptionText)
+		candidate := api.PreparationDescription{
+			RawDescription:     descriptionText,
+			RawDescriptionHTML: descriptionHTML,
+			Description:        descriptionText,
+			DescriptionHTML:    descriptionHTML,
+			HasOverride:        assets.Override,
+			ImageHost:          resolution.feedback,
 		}
+		entry := preparationDescriptionGroup(grouped, &order, groupKey, candidate)
 
 		entry.Trackers = append(entry.Trackers, tracker)
-		if entry.ImageHost.Status == "" {
-			entry.ImageHost = resolution.feedback
-		}
+		entry.ImageHost = mergePreparationImageHostFeedback(entry.ImageHost, resolution.feedback)
 		if descriptionText == "" {
 			placeholderCount++
 		} else {
@@ -553,13 +773,67 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		results = append(results, *entry)
 	}
 
+	results = stabilizePreparationDescriptionGroupKeys(results)
+
 	return api.PreparationPreview{SourcePath: meta.SourcePath, Descriptions: results}, nil
+}
+
+func preparationImageHostPreferences(appCfg config.Config, meta api.PreparedMetadata, trackers []string, logger api.Logger) map[string]string {
+	if meta.ImageHostOverrides.PreferredHost != nil {
+		return nil
+	}
+	targets, err := NeededImageUploadTargets(appCfg, trackers, "")
+	if err != nil {
+		if logger != nil {
+			logger.Warnf("trackers: preparation image host target resolution failed: %v", err)
+		}
+		return nil
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	preferred := make(map[string]string, len(trackers))
+	for _, target := range targets {
+		host := strings.ToLower(strings.TrimSpace(target.Host))
+		if host == "" {
+			continue
+		}
+		for _, tracker := range target.Trackers {
+			name := strings.ToUpper(strings.TrimSpace(tracker))
+			if name == "" {
+				continue
+			}
+			if _, exists := preferred[name]; !exists {
+				preferred[name] = host
+			}
+		}
+	}
+	return preferred
+}
+
+func blockedPreparationImageHostFeedback(feedback api.ImageHostFeedback) api.ImageHostFeedback {
+	feedback.Status = "blocked"
+	if strings.TrimSpace(feedback.Message) == "" {
+		feedback.Message = "image-host requirements could not be met"
+	}
+	if len(feedback.Warnings) == 0 {
+		feedback.Warnings = []api.ImageHostWarning{{Message: feedback.Message}}
+	}
+	return feedback
+}
+
+func preparationBlockedImageHostGroupKey(tracker string) string {
+	name := strings.ToLower(strings.TrimSpace(tracker))
+	if name == "" {
+		name = "tracker"
+	}
+	return name + "|blocked|image-host"
 }
 
 func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetadata, trackersList []string) ([]api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -589,7 +863,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 	for _, tracker := range resolved {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -609,9 +883,16 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			continue
 		}
 
-		trackerCfg, _ := trackerConfigFor(s.cfg, tracker)
+		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
-		resolution, err := ensureDescriptionImageHostWithData(ctx, tracker, meta, s.cfg, trackerCfg, s.repo, s.images, s.logger, preloaded)
+		trackerMeta, err := PrepareTrackerUploadTorrent(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg)
+		if err != nil {
+			entry.Status = "error"
+			entry.Message = err.Error()
+			results = append(results, entry)
+			continue
+		}
+		resolution, err := ensureDescriptionImageHostWithData(ctx, tracker, trackerMeta, s.cfg, trackerCfg, s.repo, s.images, s.logger, preloaded)
 		if err != nil {
 			s.logger.Warnf("trackers: dry-run image host resolution failed for %s: %v", tracker, err)
 			entry.Status = "error"
@@ -619,21 +900,29 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			results = append(results, entry)
 			continue
 		}
-		assets, err := resolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger, preloaded)
+		if resolution.blocking {
+			entry.Status = "blocked"
+			entry.Message = resolution.feedback.Message
+			entry.ImageHost = resolution.feedback
+			results = append(results, entry)
+			continue
+		}
+		assets, err := resolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger, preloaded)
 		if err != nil {
 			entry.Status = "error"
 			entry.Message = err.Error()
 			results = append(results, entry)
 			continue
 		}
-		assets.Screenshots = resolution.screenshots
+		applyResolvedDescriptionScreenshots(ctx, trackerMeta, s.repo, preloaded, &assets, resolution.screenshots)
 		preview, err := builder.BuildUploadDryRun(ctx, UploadRequest{
 			Tracker:       tracker,
-			Meta:          meta,
+			Meta:          trackerMeta,
 			TrackerConfig: trackerCfg,
 			AppConfig:     s.cfg,
 			Logger:        s.logger,
 			Repo:          s.repo,
+			Images:        s.images,
 			Assets:        &assets,
 		})
 		if err != nil {
@@ -856,6 +1145,270 @@ func preparationGroupKey(group string, host string, usageScope string) string {
 		return trimmedGroup
 	}
 	return trimmedGroup + "|" + trimmedHost + "|" + trimmedScope
+}
+
+func preparationDescriptionGroup(grouped map[string]*api.PreparationDescription, order *[]string, groupKey string, candidate api.PreparationDescription) *api.PreparationDescription {
+	baseKey := strings.TrimSpace(groupKey)
+	if baseKey == "" {
+		baseKey = "description"
+	}
+	if entry := matchingUnit3DPreparationDescriptionGroup(grouped, *order, baseKey, candidate); entry != nil {
+		return entry
+	}
+
+	if entry, ok := grouped[baseKey]; ok && preparationDescriptionsMatch(*entry, candidate) {
+		return entry
+	}
+	if _, ok := grouped[baseKey]; !ok {
+		return addPreparationDescriptionGroup(grouped, order, baseKey, candidate)
+	}
+
+	for variant := 2; ; variant++ {
+		key := preparationVariantGroupKey(baseKey, variant)
+		if entry, ok := grouped[key]; ok && preparationDescriptionsMatch(*entry, candidate) {
+			return entry
+		}
+		if _, ok := grouped[key]; !ok {
+			return addPreparationDescriptionGroup(grouped, order, key, candidate)
+		}
+	}
+}
+
+func matchingUnit3DPreparationDescriptionGroup(grouped map[string]*api.PreparationDescription, order []string, groupKey string, candidate api.PreparationDescription) *api.PreparationDescription {
+	if preparationDescriptionBaseGroup(groupKey) != "unit3d" {
+		return nil
+	}
+	for _, key := range order {
+		if preparationDescriptionBaseGroup(key) != "unit3d" {
+			continue
+		}
+		entry := grouped[key]
+		if entry == nil || !preparationDescriptionsMatch(*entry, candidate) {
+			continue
+		}
+		return entry
+	}
+	return nil
+}
+
+func preparationDescriptionBaseGroup(groupKey string) string {
+	baseGroup, _, _ := parsePreparationDescriptionGroupKey(groupKey)
+	if baseGroup == "" {
+		baseGroup = strings.ToLower(strings.TrimSpace(groupKey))
+	}
+	return baseGroup
+}
+
+func addPreparationDescriptionGroup(grouped map[string]*api.PreparationDescription, order *[]string, groupKey string, candidate api.PreparationDescription) *api.PreparationDescription {
+	entry := candidate
+	entry.GroupKey = groupKey
+	entry.Trackers = []string{}
+	grouped[groupKey] = &entry
+	*order = append(*order, groupKey)
+	return &entry
+}
+
+func preparationDescriptionsMatch(left api.PreparationDescription, right api.PreparationDescription) bool {
+	return left.RawDescription == right.RawDescription &&
+		left.Description == right.Description &&
+		left.HasOverride == right.HasOverride
+}
+
+func mergePreparationImageHostFeedback(left api.ImageHostFeedback, right api.ImageHostFeedback) api.ImageHostFeedback {
+	if left.Status == "" {
+		return right
+	}
+	if right.Status == "" {
+		return left
+	}
+
+	merged := left
+	if imageHostStatusRank(right.Status) > imageHostStatusRank(merged.Status) {
+		merged.Status = right.Status
+	}
+	if strings.TrimSpace(merged.SelectedHost) == "" {
+		merged.SelectedHost = strings.TrimSpace(right.SelectedHost)
+	} else if strings.TrimSpace(right.SelectedHost) != "" && !strings.EqualFold(strings.TrimSpace(merged.SelectedHost), strings.TrimSpace(right.SelectedHost)) {
+		merged.SelectedHost = ""
+	}
+	merged.AllowedHosts = appendUniqueStrings(merged.AllowedHosts, right.AllowedHosts)
+	merged.Warnings = appendUniqueImageHostWarnings(merged.Warnings, right.Warnings)
+	merged.Reuploaded = merged.Reuploaded || right.Reuploaded
+
+	leftMessage := strings.TrimSpace(merged.Message)
+	rightMessage := strings.TrimSpace(right.Message)
+	switch {
+	case leftMessage == "":
+		merged.Message = rightMessage
+	case rightMessage == "" || leftMessage == rightMessage:
+		merged.Message = leftMessage
+	default:
+		merged.Message = "Multiple image-host states apply to this description group."
+	}
+
+	return merged
+}
+
+func imageHostStatusRank(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "blocked":
+		return 4
+	case "warning":
+		return 3
+	case "reuploaded":
+		return 2
+	case "reused":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func appendUniqueStrings(values []string, additions []string) []string {
+	if len(additions) == 0 {
+		return values
+	}
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	out := make([]string, 0, len(values)+len(additions))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	for _, value := range additions {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func appendUniqueImageHostWarnings(values []api.ImageHostWarning, additions []api.ImageHostWarning) []api.ImageHostWarning {
+	if len(additions) == 0 {
+		return values
+	}
+	seen := make(map[string]struct{}, len(values)+len(additions))
+	out := make([]api.ImageHostWarning, 0, len(values)+len(additions))
+	for _, value := range values {
+		host := strings.TrimSpace(value.Host)
+		message := strings.TrimSpace(value.Message)
+		if host == "" && message == "" {
+			continue
+		}
+		key := strings.ToLower(host) + "\x00" + message
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, api.ImageHostWarning{Host: host, Message: message})
+	}
+	for _, value := range additions {
+		host := strings.TrimSpace(value.Host)
+		message := strings.TrimSpace(value.Message)
+		if host == "" && message == "" {
+			continue
+		}
+		key := strings.ToLower(host) + "\x00" + message
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, api.ImageHostWarning{Host: host, Message: message})
+	}
+	return out
+}
+
+func preparationVariantGroupKey(groupKey string, variant int) string {
+	trimmed := strings.TrimSpace(groupKey)
+	if variant <= 1 {
+		return trimmed
+	}
+	parts := strings.SplitN(trimmed, "|", 3)
+	if len(parts) == 3 {
+		host := strings.TrimSpace(parts[1])
+		if host == "" {
+			host = "variant"
+		}
+		return fmt.Sprintf("%s|%s#%d|%s", strings.TrimSpace(parts[0]), host, variant, strings.TrimSpace(parts[2]))
+	}
+	return fmt.Sprintf("%s|variant:%d|%s", trimmed, variant, globalImageUsageScope)
+}
+
+func stabilizePreparationDescriptionGroupKeys(descriptions []api.PreparationDescription) []api.PreparationDescription {
+	if len(descriptions) < 2 {
+		return descriptions
+	}
+
+	countByBase := make(map[string]int, len(descriptions))
+	for _, entry := range descriptions {
+		baseGroup, _, _ := parsePreparationDescriptionGroupKey(entry.GroupKey)
+		if baseGroup == "" {
+			baseGroup = strings.ToLower(strings.TrimSpace(entry.GroupKey))
+		}
+		if baseGroup == "" {
+			continue
+		}
+		countByBase[baseGroup]++
+	}
+
+	for idx := range descriptions {
+		baseGroup, _, _ := parsePreparationDescriptionGroupKey(descriptions[idx].GroupKey)
+		if baseGroup == "" {
+			baseGroup = strings.ToLower(strings.TrimSpace(descriptions[idx].GroupKey))
+		}
+		if baseGroup == "" || countByBase[baseGroup] <= 1 {
+			continue
+		}
+		descriptions[idx].GroupKey = stablePreparationDescriptionGroupKey(baseGroup, descriptions[idx].Trackers)
+	}
+	return descriptions
+}
+
+func stablePreparationDescriptionGroupKey(baseGroup string, trackers []string) string {
+	base := strings.TrimSpace(baseGroup)
+	normalized := normalizedPreparationGroupTrackers(trackers)
+	if len(normalized) == 0 {
+		return preparationGroupKey(base, "variant", globalImageUsageScope)
+	}
+	if len(normalized) == 1 {
+		return preparationGroupKey(base, strings.ToLower(normalized[0]), trackerImageUsageScope(normalized[0]))
+	}
+	return preparationGroupKey(base, strings.ToLower(strings.Join(normalized, "+")), globalImageUsageScope)
+}
+
+func normalizedPreparationGroupTrackers(trackers []string) []string {
+	if len(trackers) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(trackers))
+	normalized := make([]string, 0, len(trackers))
+	for _, tracker := range trackers {
+		value := strings.ToUpper(strings.TrimSpace(tracker))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	sort.Strings(normalized)
+	return normalized
 }
 
 func normalizeTrackers(values []string) []string {

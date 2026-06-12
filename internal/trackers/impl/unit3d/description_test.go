@@ -20,14 +20,14 @@ import (
 func TestBuildUnit3DDescriptionTemplate(t *testing.T) {
 	meta := api.PreparedMetadata{DescriptionTemplate: "  Example Template  "}
 	cfg := config.Config{}
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(result, "Example Template") {
 		t.Fatalf("expected template to be used, got %q", result)
 	}
-	if !strings.Contains(result, "Created by upbrr") {
+	if !strings.Contains(result, "Uploaded by upbrr") {
 		t.Fatalf("expected signature in description, got %q", result)
 	}
 }
@@ -37,7 +37,7 @@ func TestBuildUnit3DDescriptionKeptAppendsScreenshots(t *testing.T) {
 	cfg := config.Config{Description: config.DescriptionSettingsConfig{ThumbnailSize: 350}}
 	kept := "Kept Description"
 	screens := []api.ScreenshotImage{{ImgURL: "https://img.example/s1.png"}}
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, kept, screens)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, kept, nil, screens)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestBuildUnit3DDescriptionKeptAppendsScreenshots(t *testing.T) {
 	if !strings.Contains(result, "[img=350]https://img.example/s1.png[/img]") {
 		t.Fatalf("expected screenshot to be appended, got %q", result)
 	}
-	if !strings.Contains(result, "Created by upbrr") {
+	if !strings.Contains(result, "Uploaded by upbrr") {
 		t.Fatalf("expected signature in description, got %q", result)
 	}
 }
@@ -67,7 +67,7 @@ func TestBuildUnit3DDescriptionAppliesDescriptionConfig(t *testing.T) {
 		{RawURL: "https://raw.example/2.png", WebURL: "https://web.example/2"},
 		{RawURL: "https://raw.example/3.png", WebURL: "https://web.example/3"},
 	}
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", screens)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, screens)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestBuildUnit3DDescriptionAppliesDescriptionConfig(t *testing.T) {
 	if !strings.Contains(result, "[size=2]custom sig[/size]") {
 		t.Fatalf("expected custom signature, got %q", result)
 	}
-	if strings.Contains(result, "Created by upbrr") {
+	if strings.Contains(result, "Uploaded by upbrr") {
 		t.Fatalf("expected custom signature to replace UA signature, got %q", result)
 	}
 	expectedLine := "[center]\n[url=https://web.example/1][img=300]https://raw.example/1.png[/img][/url] [url=https://web.example/2][img=300]https://raw.example/2.png[/img][/url]\n[url=https://web.example/3][img=300]https://raw.example/3.png[/img][/url]\n[/center]"
@@ -86,12 +86,134 @@ func TestBuildUnit3DDescriptionAppliesDescriptionConfig(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DDescriptionAddsLogoEpisodeOverviewAndMenuImages(t *testing.T) {
+	meta := api.PreparedMetadata{
+		EpisodeOverview: "Episode [b]overview[/b] text",
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{Logo: "https://image.tmdb.org/t/p/original/logo.png"},
+		},
+	}
+	cfg := config.Config{
+		Description: config.DescriptionSettingsConfig{
+			AddLogo:         true,
+			LogoSize:        400,
+			EpisodeOverview: true,
+			DiscMenuHeader:  "Disc menu",
+			ThumbnailSize:   250,
+		},
+	}
+	menuImages := []api.ScreenshotImage{{ImgURL: "https://img.example/menu1.png"}}
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", menuImages, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, expected := range []string{
+		"[img=400]https://image.tmdb.org/t/p/original/logo.png[/img]",
+		"[center]Episode %5Bb%5Doverview%5B/b%5D text[/center]",
+		"Disc menu",
+		"[img=250]https://img.example/menu1.png[/img]",
+	} {
+		if !strings.Contains(result, expected) {
+			t.Fatalf("expected %q in description, got %q", expected, result)
+		}
+	}
+}
+
+func TestBuildUnit3DDescriptionAddsBlurayLinkAndImages(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DiscType: "BDMV",
+		ExternalMetadata: api.ExternalMetadata{
+			Bluray: &api.BlurayMetadata{
+				SelectedReleaseID: "123",
+				Candidates: []api.BlurayReleaseCandidate{
+					{
+						ReleaseID: "123",
+						URL:       "https://www.blu-ray.com/movies/Example-Blu-ray/123/",
+						CoverImages: []api.BlurayImage{
+							{Kind: "front", URL: "https://img.example/front[1].jpg"},
+							{Kind: "back", URL: "https://img.example/back.jpg"},
+							{Kind: "bad", URL: "javascript:alert(1)"},
+						},
+					},
+				},
+			},
+		},
+	}
+	cfg := config.Config{
+		Description: config.DescriptionSettingsConfig{
+			AddBlurayLink:   true,
+			UseBlurayImages: true,
+			BlurayImageSize: 260,
+		},
+	}
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, expected := range []string{
+		"[center]https://www.blu-ray.com/movies/Example-Blu-ray/123/[/center]",
+		"[img=260]https://img.example/front%5B1%5D.jpg[/img]",
+		"[img=260]https://img.example/back.jpg[/img]",
+	} {
+		if !strings.Contains(result, expected) {
+			t.Fatalf("expected %q in description, got %q", expected, result)
+		}
+	}
+	if strings.Contains(result, "javascript:alert") {
+		t.Fatalf("expected unsafe blu-ray image URL to be skipped, got %q", result)
+	}
+}
+
+func TestBuildUnit3DDescriptionSanitizesBlurayLink(t *testing.T) {
+	cfg := config.Config{
+		Description: config.DescriptionSettingsConfig{
+			AddBlurayLink: true,
+		},
+	}
+	meta := api.PreparedMetadata{
+		DiscType: "BDMV",
+		ExternalMetadata: api.ExternalMetadata{
+			Bluray: &api.BlurayMetadata{
+				SelectedReleaseID: "123",
+				Candidates: []api.BlurayReleaseCandidate{
+					{
+						ReleaseID: "123",
+						URL:       "https://www.blu-ray.com/movies/Example-[Bad]/123/",
+					},
+				},
+			},
+		},
+	}
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "[center]https://www.blu-ray.com/movies/Example-%5BBad%5D/123/[/center]") {
+		t.Fatalf("expected escaped blu-ray URL in description, got %q", result)
+	}
+	if strings.Contains(result, "Example-[Bad]") {
+		t.Fatalf("expected raw BBCode brackets to be escaped, got %q", result)
+	}
+
+	meta.ExternalMetadata.Bluray.Candidates[0].URL = "not a url"
+	result, err = buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result, "[center]not a url[/center]") {
+		t.Fatalf("expected invalid blu-ray URL to be skipped, got %q", result)
+	}
+}
+
 func TestBuildUnit3DDescriptionKeptIncludesScreenshots(t *testing.T) {
 	meta := api.PreparedMetadata{}
 	cfg := config.Config{Description: config.DescriptionSettingsConfig{ThumbnailSize: 350}}
 	kept := "Kept [img]https://img.example/keep.png[/img]"
 	screens := []api.ScreenshotImage{{ImgURL: "https://img.example/s1.png"}}
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, kept, screens)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, kept, nil, screens)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +250,7 @@ func TestBuildUnit3DDescriptionSkipsBDInfo(t *testing.T) {
 		t.Fatalf("write bdinfo: %v", err)
 	}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +275,7 @@ func TestBuildUnit3DDescriptionSkipsMediaInfo(t *testing.T) {
 		MediaInfoTextPath: miPath,
 	}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -168,14 +290,14 @@ func TestBuildUnit3DDescriptionIncludesDVDVOBMediaInfo(t *testing.T) {
 		DVDVOBMediaInfoText: "VOB_MI_CONTENT",
 	}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "", nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(result, "[spoiler=VOB MediaInfo][code]VOB_MI_CONTENT[/code][/spoiler]") {
 		t.Fatalf("expected dvd vob mediainfo block, got %q", result)
 	}
-	if !strings.Contains(result, "Created by upbrr") {
+	if !strings.Contains(result, "Uploaded by upbrr") {
 		t.Fatalf("expected signature in description, got %q", result)
 	}
 }
@@ -186,7 +308,7 @@ func TestBuildUnit3DDescriptionSkipsDVDVOBMediaInfoForNonDVD(t *testing.T) {
 		DVDVOBMediaInfoText: "VOB_MI_CONTENT",
 	}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "", nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -201,7 +323,7 @@ func TestBuildUnit3DDescriptionSkipsDVDVOBMediaInfoWhenEmpty(t *testing.T) {
 		DVDVOBMediaInfoText: "   \n\t",
 	}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "", nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -220,7 +342,7 @@ func TestBuildUnit3DDescriptionIncludesTonemapHeaderForHDRScreens(t *testing.T) 
 	}
 	screens := []api.ScreenshotImage{{ImgURL: "https://img.example/s1.png"}}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", screens)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, screens)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,7 +361,7 @@ func TestBuildUnit3DDescriptionSkipsTonemapHeaderForNonHDR(t *testing.T) {
 	}
 	screens := []api.ScreenshotImage{{ImgURL: "https://img.example/s1.png"}}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", screens)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, screens)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -253,7 +375,7 @@ func TestBuildUnit3DDescriptionACMTransformsBaseDescription(t *testing.T) {
 		Type:            "WEBDL",
 		ServiceLongName: "Netflix",
 	}
-	result, err := buildUnit3DDescription(context.Background(), "ACM", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "[pre]x[/pre]\n[hide=test]y[/hide]\n[img]https://img.example/z.png[/img]", nil)
+	result, err := buildUnit3DDescription(context.Background(), "ACM", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "[pre]x[/pre]\n[hide=test]y[/hide]\n[img]https://img.example/z.png[/img]", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -275,7 +397,7 @@ func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
 	meta := api.PreparedMetadata{}
 	kept := "[hide=Extras]notes[/hide]\n[user]name[/user]\n[comparison=Source, Encode]https://img.example/a.png https://img.example/b.png[/comparison]"
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -285,42 +407,121 @@ func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
 	if strings.Contains(result, "[user]") || strings.Contains(result, "[/user]") {
 		t.Fatalf("expected user tags removed, got %q", result)
 	}
-	if !strings.Contains(result, "[spoiler=Source vs Encode][center]Source | Encode[/center]") {
-		t.Fatalf("expected comparison converted to collapse, got %q", result)
+	if !strings.Contains(result, "[comparison=Source, Encode]") {
+		t.Fatalf("expected comparison tag preserved, got %q", result)
 	}
-	if !strings.Contains(result, "[url=https://img.example/a.png][img=350]https://img.example/a.png[/img][/url]") {
-		t.Fatalf("expected comparison images rebuilt with unit3d formatting, got %q", result)
+	if !strings.Contains(result, "https://img.example/a.png https://img.example/b.png[/comparison]") {
+		t.Fatalf("expected comparison images preserved, got %q", result)
+	}
+}
+
+func TestBuildUnit3DDescriptionAddsSHRIIslandReleaseNotes(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Group: "island"},
+	}
+
+	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Release Shareisland 🏴‍☠️") {
+		t.Fatalf("expected Shareisland notes, got %q", result)
+	}
+	if !strings.Contains(result, "Base description") {
+		t.Fatalf("expected base description to be preserved, got %q", result)
+	}
+}
+
+func TestBuildUnit3DDescriptionSkipsSHRIIslandReleaseNotesForOtherGroups(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Group: "other"},
+	}
+
+	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result, "Release Shareisland") {
+		t.Fatalf("did not expect Shareisland notes, got %q", result)
 	}
 }
 
 func TestBuildUnit3DDescriptionSkipsDuplicateTemplateAndKeptContent(t *testing.T) {
 	block := `[center]
-[url=https://ptpimg.me/8ca234.png][img=350]https://ptpimg.me/8ca234.png[/img][/url]
-[url=https://ptpimg.me/4oh0bz.png][img=350]https://ptpimg.me/4oh0bz.png[/img][/url]
+[url=https://pixhost.to/8ca234.png][img=350]https://pixhost.to/8ca234.png[/img][/url]
+[url=https://pixhost.to/4oh0bz.png][img=350]https://pixhost.to/4oh0bz.png[/img][/url]
 [/center]
 
 [right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/right]`
 	meta := api.PreparedMetadata{DescriptionTemplate: block}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, block, nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, block, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if count := strings.Count(result, "[center]"); count != 1 {
 		t.Fatalf("expected one screenshot block, got %d in %q", count, result)
 	}
-	if count := strings.Count(result, "Created by upbrr"); count != 1 {
+	if count := strings.Count(result, "Uploaded by upbrr"); count != 1 {
 		t.Fatalf("expected one signature, got %d in %q", count, result)
+	}
+}
+
+func TestBuildUnit3DDescriptionStripsKnownBotSignatures(t *testing.T) {
+	kept := strings.Join([]string{
+		"Body",
+		"[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+		"[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
+		"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+		"[center]   [/center]",
+		"[right]Created by Upload Assistant[/right]",
+	}, "\n")
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.PreparedMetadata{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, unexpected := range []string{"Uploaded Using", "uploadrr", "Only-Uploader", "/torrents?perPage", "Aither users", "[center]   [/center]", "Upload Assistant"} {
+		if strings.Contains(result, unexpected) {
+			t.Fatalf("expected %q to be stripped, got %q", unexpected, result)
+		}
+	}
+	if !strings.Contains(result, "Body") {
+		t.Fatalf("expected body to remain, got %q", result)
+	}
+}
+
+func TestBuildUnit3DDescriptionKeepsCenteredScreenshotsBeforeAitherFooter(t *testing.T) {
+	kept := strings.Join([]string{
+		"Body",
+		"[center][url=https://web.example/1][img=350]https://raw.example/1.png[/img][/url][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+	}, "\n\n")
+
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.PreparedMetadata{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result, "Aither users") {
+		t.Fatalf("expected aither footer stripped, got %q", result)
+	}
+	if !strings.Contains(result, "https://raw.example/1.png") {
+		t.Fatalf("expected centered screenshot preserved, got %q", result)
+	}
+	if count := strings.Count(result, "[center]"); count != 1 {
+		t.Fatalf("expected one centered screenshot block, got %d in %q", count, result)
 	}
 }
 
 func TestBuildUnit3DDescriptionReplacesExistingScreenshotBlock(t *testing.T) {
 	base := `[center]
-[url=https://ptpimg.me/8ca234.png][img=350]https://ptpimg.me/8ca234.png[/img][/url]
-[url=https://ptpimg.me/7129bd.png][img=350]https://ptpimg.me/7129bd.png[/img][/url]
+[url=https://pixhost.to/8ca234.png][img=350]https://pixhost.to/8ca234.png[/img][/url]
+[url=https://pixhost.to/7129bd.png][img=350]https://pixhost.to/7129bd.png[/img][/url]
 
-[url=https://ptpimg.me/4oh0bz.png][img=350]https://ptpimg.me/4oh0bz.png[/img][/url]
-[url=https://ptpimg.me/7sv795.png][img=350]https://ptpimg.me/7sv795.png[/img][/url]
+[url=https://pixhost.to/4oh0bz.png][img=350]https://pixhost.to/4oh0bz.png[/img][/url]
+[url=https://pixhost.to/7sv795.png][img=350]https://pixhost.to/7sv795.png[/img][/url]
 [/center]
 
 [center][spoiler=Scene NFO:][code]scene nfo[/code][/spoiler][/center]`
@@ -333,11 +534,11 @@ func TestBuildUnit3DDescriptionReplacesExistingScreenshotBlock(t *testing.T) {
 
 	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.PreparedMetadata{}, config.Config{
 		Description: config.DescriptionSettingsConfig{ThumbnailSize: 350, ScreensPerRow: "2"},
-	}, config.TrackerConfig{}, api.NopLogger{}, base, screens)
+	}, config.TrackerConfig{}, api.NopLogger{}, base, nil, screens)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(result, "https://ptpimg.me/8ca234.png") {
+	if strings.Contains(result, "https://pixhost.to/8ca234.png") {
 		t.Fatalf("expected old screenshot block removed, got %q", result)
 	}
 	if strings.Contains(result, "scene nfo") {
@@ -357,7 +558,7 @@ func TestBuildUnit3DDescriptionStripsExistingSceneNFOBlock(t *testing.T) {
 Custom body`
 	meta := api.PreparedMetadata{Scene: true}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -394,5 +595,25 @@ func TestDefinitionBuildDescriptionFormatsOverrideContent(t *testing.T) {
 	}
 	if !strings.Contains(result.Description, "[center]") {
 		t.Fatalf("expected unit3d-safe centering, got %q", result.Description)
+	}
+}
+
+func TestBuildUnit3DDescriptionFiltersMenuImagesFromScreenshots(t *testing.T) {
+	meta := api.PreparedMetadata{}
+	cfg := config.Config{}
+	menuImages := []api.ScreenshotImage{{ImgURL: "https://img.example/menu1.png"}}
+	screenshots := []api.ScreenshotImage{
+		{ImgURL: "https://img.example/screen1.png"},
+		{ImgURL: "https://img.example/menu1.png"}, // Duplicate of menu image
+	}
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", menuImages, screenshots)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Count occurrences of menu1.png
+	count := strings.Count(result, "menu1.png")
+	if count != 1 {
+		t.Fatalf("expected menu image to appear only once, got %d times in %q", count, result)
 	}
 }

@@ -1,8 +1,14 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import { Button } from "../../components/ui/button";
+import { PillCheckbox } from "../../components/ui/checkbox";
+import { Switch } from "../../components/ui/switch";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
+import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
+import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type {
   DetailBlock,
   DetailItem,
@@ -22,8 +28,12 @@ import type {
   TMDBCompany,
   TMDBCountry,
   TMDBNetwork,
-  TrackerUploadItem
+  TrackerUploadItem,
 } from "../../types";
+import type { SourcePathHistoryEntry } from "../../utils/inputHistory";
+
+const compactInputClass =
+  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
 
 const formatProvider = (value: string) => value.toUpperCase();
 
@@ -37,7 +47,7 @@ const providerOrder = ["tmdb", "imdb", "tvdb", "tvmaze"] as const;
 
 const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
   const orderIndex = new Map<string, number>(
-    providerOrder.map((provider, index) => [provider, index])
+    providerOrder.map((provider, index) => [provider, index]),
   );
 
   return [...info].sort((left, right) => {
@@ -48,8 +58,7 @@ const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
   });
 };
 
-const normalizeKey = (value: string) =>
-  value.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+const normalizeKey = (value: string) => value.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
 
 const imdbTypeLabels: Record<string, string> = {
   movie: "Movie",
@@ -59,7 +68,7 @@ const imdbTypeLabels: Record<string, string> = {
   tvmovie: "TV movie",
   short: "Short",
   video: "Video",
-  videogame: "Video game"
+  videogame: "Video game",
 };
 
 const formatIMDBType = (value: string) => {
@@ -135,13 +144,18 @@ const hasTVDBEnglishDisplay = (preview: ExternalPreview) => {
   if (!tvdb.HasEnglish) return false;
   return Boolean(
     tvdb.NameEnglish ||
-      tvdb.OverviewEnglish ||
-      tvdb.EpisodeNameEnglish ||
-      tvdb.EpisodeOverviewEnglish
+    tvdb.OverviewEnglish ||
+    tvdb.EpisodeNameEnglish ||
+    tvdb.EpisodeOverviewEnglish,
   );
 };
 
-const pickTVDBText = (mode: TVDBDisplayMode, originalValue: string, englishValue: string, fallbackValue = "") => {
+const pickTVDBText = (
+  mode: TVDBDisplayMode,
+  originalValue: string,
+  englishValue: string,
+  fallbackValue = "",
+) => {
   if (mode === "english") {
     return englishValue || originalValue || fallbackValue;
   }
@@ -150,9 +164,7 @@ const pickTVDBText = (mode: TVDBDisplayMode, originalValue: string, englishValue
 
 const formatPeopleList = (values?: IMDBPerson[] | null) => {
   if (!values || values.length === 0) return "";
-  const cleaned = values
-    .map((item) => item?.Name?.trim())
-    .filter(Boolean);
+  const cleaned = values.map((item) => item?.Name?.trim()).filter(Boolean);
   if (cleaned.length === 0) return "";
   return cleaned.join("\n");
 };
@@ -250,9 +262,7 @@ const formatSeasonsSummary = (values?: IMDBSeasonSummary[] | null) => {
 
 const formatTMDBCountries = (values?: TMDBCountry[] | null) => {
   if (!values || values.length === 0) return "";
-  const lines = values
-    .map((item) => item?.Name?.trim())
-    .filter(Boolean);
+  const lines = values.map((item) => item?.Name?.trim()).filter(Boolean);
   if (lines.length === 0) return "";
   return lines.join("\n");
 };
@@ -305,11 +315,14 @@ const buildNetworkBlocks = (values?: TMDBNetwork[] | null) => {
   return blocks;
 };
 
-const buildPreviewDetails = (preview: ExternalPreview, tvdbDisplayMode: TVDBDisplayMode): DetailItem[] => {
+const buildPreviewDetails = (
+  preview: ExternalPreview,
+  tvdbDisplayMode: TVDBDisplayMode,
+): DetailItem[] => {
   const baseID: DetailItem = {
     label: `${formatProvider(preview.Provider)} ID`,
     value: formatID(preview.Provider, preview.ID),
-    mono: true
+    mono: true,
   };
 
   if (preview.Provider === "imdb") {
@@ -325,7 +338,13 @@ const buildPreviewDetails = (preview: ExternalPreview, tvdbDisplayMode: TVDBDisp
       { label: "Original language", value: imdb?.OriginalLanguage ?? "" },
       { label: "Country", value: imdb?.Country ?? preview.Country },
       { label: "Country list", value: imdb?.CountryList ?? "" },
-      { label: "Rating", value: formatRating(imdb?.Rating ?? preview.Rating, imdb?.RatingCount ?? preview.RatingCount) },
+      {
+        label: "Rating",
+        value: formatRating(
+          imdb?.Rating ?? preview.Rating,
+          imdb?.RatingCount ?? preview.RatingCount,
+        ),
+      },
       { label: "Rating text", value: imdb?.RatingText ?? "" },
       { label: "Rating count", value: formatNumber(imdb?.RatingCount ?? preview.RatingCount) },
       { label: "Runtime", value: formatRuntime(imdb?.RuntimeMinutes ?? preview.RuntimeMinutes) },
@@ -341,7 +360,7 @@ const buildPreviewDetails = (preview: ExternalPreview, tvdbDisplayMode: TVDBDisp
       { label: "AKA entries", value: formatIMDBAkas(imdb?.Akas) },
       { label: "Season summary", value: formatSeasonsSummary(imdb?.SeasonsSummary) },
       { label: "Episodes", value: formatEpisodes(imdb?.Episodes) },
-      { label: "Cover URL", value: imdb?.Cover ?? preview.PosterURL, mono: true }
+      { label: "Cover URL", value: imdb?.Cover ?? preview.PosterURL, mono: true },
     ].filter((item) => item.value || (item.blocks && item.blocks.length > 0));
   }
 
@@ -371,13 +390,13 @@ const buildPreviewDetails = (preview: ExternalPreview, tvdbDisplayMode: TVDBDisp
       {
         label: "Production companies",
         value: "",
-        blocks: buildCompanyBlocks(tmdb?.ProductionCompanies)
+        blocks: buildCompanyBlocks(tmdb?.ProductionCompanies),
       },
       { label: "Production countries", value: formatTMDBCountries(tmdb?.ProductionCountries) },
       {
         label: "Networks",
         value: "",
-        blocks: buildNetworkBlocks(tmdb?.Networks)
+        blocks: buildNetworkBlocks(tmdb?.Networks),
       },
       { label: "Poster URL", value: tmdb?.Poster ?? preview.PosterURL, mono: true },
       { label: "Poster path", value: tmdb?.TMDBPosterPath ?? "", mono: true },
@@ -390,21 +409,40 @@ const buildPreviewDetails = (preview: ExternalPreview, tvdbDisplayMode: TVDBDisp
       { label: "Demographic", value: tmdb?.Demographic ?? "" },
       { label: "Retrieved AKA", value: tmdb?.RetrievedAKA ?? "" },
       { label: "IMDb mismatch", value: tmdb ? formatBoolean(tmdb.IMDbMismatch) : "" },
-      { label: "Mismatched IMDb ID", value: formatNumber(tmdb?.MismatchedIMDbID ?? 0), mono: true }
+      { label: "Mismatched IMDb ID", value: formatNumber(tmdb?.MismatchedIMDbID ?? 0), mono: true },
     ].filter((item) => item.value || (item.blocks && item.blocks.length > 0));
   }
 
   if (preview.Provider === "tvdb") {
     const tvdb = preview.TVDB;
-    const displayName = pickTVDBText(tvdbDisplayMode, tvdb?.Name ?? preview.Title, tvdb?.NameEnglish ?? "", preview.Title);
-    const displayOverview = pickTVDBText(tvdbDisplayMode, tvdb?.Overview ?? preview.Overview, tvdb?.OverviewEnglish ?? "", preview.Overview);
-    const displayEpisodeName = pickTVDBText(tvdbDisplayMode, tvdb?.EpisodeName ?? "", tvdb?.EpisodeNameEnglish ?? "");
-    const displayEpisodeOverview = pickTVDBText(tvdbDisplayMode, tvdb?.EpisodeOverview ?? "", tvdb?.EpisodeOverviewEnglish ?? "");
+    const displayName = pickTVDBText(
+      tvdbDisplayMode,
+      tvdb?.Name ?? preview.Title,
+      tvdb?.NameEnglish ?? "",
+      preview.Title,
+    );
+    const displayOverview = pickTVDBText(
+      tvdbDisplayMode,
+      tvdb?.Overview ?? preview.Overview,
+      tvdb?.OverviewEnglish ?? "",
+      preview.Overview,
+    );
+    const displayEpisodeName = pickTVDBText(
+      tvdbDisplayMode,
+      tvdb?.EpisodeName ?? "",
+      tvdb?.EpisodeNameEnglish ?? "",
+    );
+    const displayEpisodeOverview = pickTVDBText(
+      tvdbDisplayMode,
+      tvdb?.EpisodeOverview ?? "",
+      tvdb?.EpisodeOverviewEnglish ?? "",
+    );
     const seasonNumber = tvdb?.EpisodeSeason ?? 0;
     const episodeNumber = tvdb?.EpisodeNumber ?? 0;
-    const episodeTag = seasonNumber > 0 && episodeNumber > 0
-      ? `S${String(seasonNumber).padStart(2, "0")}E${String(episodeNumber).padStart(2, "0")}`
-      : "";
+    const episodeTag =
+      seasonNumber > 0 && episodeNumber > 0
+        ? `S${String(seasonNumber).padStart(2, "0")}E${String(episodeNumber).padStart(2, "0")}`
+        : "";
     return [
       baseID,
       { label: "Name", value: displayName },
@@ -422,7 +460,7 @@ const buildPreviewDetails = (preview: ExternalPreview, tvdbDisplayMode: TVDBDisp
       { label: "Episode aired", value: tvdb?.EpisodeAired ?? "" },
       { label: "Episode overview", value: displayEpisodeOverview },
       { label: "Overview", value: displayOverview },
-      { label: "Poster URL", value: tvdb?.Poster ?? preview.PosterURL, mono: true }
+      { label: "Poster URL", value: tvdb?.Poster ?? preview.PosterURL, mono: true },
     ].filter((item) => item.value || (item.blocks && item.blocks.length > 0));
   }
 
@@ -430,12 +468,10 @@ const buildPreviewDetails = (preview: ExternalPreview, tvdbDisplayMode: TVDBDisp
     const tvmaze = preview.TVmaze;
     const network = tvmaze?.Network ?? "";
     const webChannel = tvmaze?.WebChannel ?? "";
-    const networkText = network && tvmaze?.NetworkCountry
-      ? `${network} - ${tvmaze.NetworkCountry}`
-      : network;
-    const webChannelText = webChannel && tvmaze?.WebCountry
-      ? `${webChannel} - ${tvmaze.WebCountry}`
-      : webChannel;
+    const networkText =
+      network && tvmaze?.NetworkCountry ? `${network} - ${tvmaze.NetworkCountry}` : network;
+    const webChannelText =
+      webChannel && tvmaze?.WebCountry ? `${webChannel} - ${tvmaze.WebCountry}` : webChannel;
     return [
       baseID,
       { label: "IMDB ID", value: formatID("imdb", tvmaze?.IMDBID ?? preview.IMDBID), mono: true },
@@ -451,7 +487,13 @@ const buildPreviewDetails = (preview: ExternalPreview, tvdbDisplayMode: TVDBDisp
       { label: "Country", value: tvmaze?.Country ?? preview.Country },
       { label: "Runtime", value: formatRuntime(tvmaze?.Runtime ?? preview.Runtime) },
       { label: "Average runtime", value: formatRuntime(tvmaze?.AverageRuntime ?? 0) },
-      { label: "Rating", value: formatRating(tvmaze?.Rating ?? preview.Rating, tvmaze?.Weight ?? preview.RatingCount) },
+      {
+        label: "Rating",
+        value: formatRating(
+          tvmaze?.Rating ?? preview.Rating,
+          tvmaze?.Weight ?? preview.RatingCount,
+        ),
+      },
       { label: "Score", value: formatNumber(tvmaze?.Weight ?? preview.RatingCount) },
       { label: "Network", value: networkText },
       { label: "Web channel", value: webChannelText },
@@ -462,7 +504,7 @@ const buildPreviewDetails = (preview: ExternalPreview, tvdbDisplayMode: TVDBDisp
       { label: "Backdrop URL", value: tvmaze?.Backdrop ?? preview.BackdropURL, mono: true },
       { label: "Backdrop medium", value: tvmaze?.BackdropMedium ?? "", mono: true },
       { label: "Network logo", value: tvmaze?.NetworkLogo ?? "", mono: true },
-      { label: "Web logo", value: tvmaze?.WebLogo ?? "", mono: true }
+      { label: "Web logo", value: tvmaze?.WebLogo ?? "", mono: true },
     ].filter((item) => item.value || (item.blocks && item.blocks.length > 0));
   }
 
@@ -480,7 +522,12 @@ const renderDetailValue = (item: DetailItem) => {
                 src={block.imageUrl}
                 alt={block.imageAlt || "Logo"}
                 loading="lazy"
-                style={{ width: tmdbLogoSize, height: tmdbLogoSize, objectFit: "contain", display: "block" }}
+                style={{
+                  width: tmdbLogoSize,
+                  height: tmdbLogoSize,
+                  objectFit: "contain",
+                  display: "block",
+                }}
               />
             ) : null}
             {block.text ? <span>{block.text}</span> : null}
@@ -518,7 +565,9 @@ type IDEdits = {
 
 type Props = Readonly<{
   path: string;
-  setPath: Dispatch<SetStateAction<string>>;
+  handleSourcePathChange: (path: string) => void;
+  sourcePathHistory: SourcePathHistoryEntry[];
+  handleSourcePathHistorySelect: (entry: SourcePathHistoryEntry) => void;
   sourceLookupURL: string;
   setSourceLookupURL: Dispatch<SetStateAction<string>>;
   browseAvailable: boolean;
@@ -555,12 +604,17 @@ type Props = Readonly<{
   setRunLogLevel: Dispatch<SetStateAction<string>>;
   runLogLevelTouched: boolean;
   setRunLogLevelTouched: Dispatch<SetStateAction<boolean>>;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
+  trackerIconSrcByName: TrackerIconCache;
 }>;
 
 export default function InputPage(props: Props) {
   const {
     path,
-    setPath,
+    handleSourcePathChange,
+    sourcePathHistory,
+    handleSourcePathHistorySelect,
     sourceLookupURL,
     setSourceLookupURL,
     browseAvailable,
@@ -597,14 +651,59 @@ export default function InputPage(props: Props) {
     setRunLogLevel,
     runLogLevelTouched,
     setRunLogLevelTouched,
+    useFavicons = true,
+    faviconOnly = false,
+    trackerIconSrcByName,
   } = props;
 
-  const hasPreview = preview.ReleaseName || (preview.ExternalIDInfo && preview.ExternalIDInfo.length > 0);
+  const [sourcePathHistoryOpen, setSourcePathHistoryOpen] = useState(false);
+  const sourcePathHistoryRef = useRef<HTMLDivElement | null>(null);
+  const sourcePathHistoryAvailable = sourcePathHistory.length > 0;
+
+  useEffect(() => {
+    if (!sourcePathHistoryOpen) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || sourcePathHistoryRef.current?.contains(target)) {
+        return;
+      }
+      setSourcePathHistoryOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [sourcePathHistoryOpen]);
+
+  useEffect(() => {
+    if (!sourcePathHistoryAvailable) {
+      setSourcePathHistoryOpen(false);
+    }
+  }, [sourcePathHistoryAvailable]);
+
+  const openSourcePathHistory = () => {
+    if (sourcePathHistoryAvailable) {
+      setSourcePathHistoryOpen(true);
+    }
+  };
+
+  const selectSourcePathHistory = (entry: SourcePathHistoryEntry) => {
+    setSourcePathHistoryOpen(false);
+    handleSourcePathHistorySelect(entry);
+  };
+
+  const hasPreview =
+    preview.ReleaseName || (preview.ExternalIDInfo && preview.ExternalIDInfo.length > 0);
   const isTVEpisodePreview = (preview.ExternalIDs?.Category || "").trim().toUpperCase() === "TV";
-  const hasResolvedPrimaryExternalID = (preview.ExternalIDs?.TMDBID || 0) > 0 || (preview.ExternalIDs?.IMDBID || 0) > 0;
+  const hasResolvedPrimaryExternalID =
+    (preview.ExternalIDs?.TMDBID || 0) > 0 || (preview.ExternalIDs?.IMDBID || 0) > 0;
   const selectedTrackerCount = useMemo(
-    () => trackerUploadItems.reduce((count, tracker) => count + (releasePageTrackerSelection[tracker.name] ? 1 : 0), 0),
-    [trackerUploadItems, releasePageTrackerSelection]
+    () =>
+      trackerUploadItems.reduce(
+        (count, tracker) => count + (releasePageTrackerSelection[tracker.name] ? 1 : 0),
+        0,
+      ),
+    [trackerUploadItems, releasePageTrackerSelection],
   );
 
   const discHint = useMemo(() => {
@@ -623,11 +722,17 @@ export default function InputPage(props: Props) {
 
   const orderedExternalIDs = useMemo(
     () => filterAndOrderExternalIDs(preview.ExternalIDInfo || []),
-    [preview.ExternalIDInfo]
+    [preview.ExternalIDInfo],
   );
 
-  const tmdbCandidates = useMemo(() => preview.ExternalIDCandidates?.TMDB || [], [preview.ExternalIDCandidates?.TMDB]);
-  const imdbCandidates = useMemo(() => preview.ExternalIDCandidates?.IMDB || [], [preview.ExternalIDCandidates?.IMDB]);
+  const tmdbCandidates = useMemo(
+    () => preview.ExternalIDCandidates?.TMDB || [],
+    [preview.ExternalIDCandidates?.TMDB],
+  );
+  const imdbCandidates = useMemo(
+    () => preview.ExternalIDCandidates?.IMDB || [],
+    [preview.ExternalIDCandidates?.IMDB],
+  );
   const [candidatePreview, setCandidatePreview] = useState<{
     provider: "tmdb" | "imdb";
     candidate: ExternalIDCandidate;
@@ -653,7 +758,10 @@ export default function InputPage(props: Props) {
       } else {
         setIdEdits((prev) => ({ ...prev, imdb: "" }));
       }
-      if (candidatePreview?.provider === provider && candidatePreview.candidate.ID === candidate.ID) {
+      if (
+        candidatePreview?.provider === provider &&
+        candidatePreview.candidate.ID === candidate.ID
+      ) {
         setCandidatePreview(null);
       }
       return;
@@ -674,8 +782,11 @@ export default function InputPage(props: Props) {
 
   useEffect(() => {
     if (!candidatePreview) return;
-    const providerCandidates = candidatePreview.provider === "tmdb" ? tmdbCandidates : imdbCandidates;
-    const stillExists = providerCandidates.some((candidate) => candidate.ID === candidatePreview.candidate.ID);
+    const providerCandidates =
+      candidatePreview.provider === "tmdb" ? tmdbCandidates : imdbCandidates;
+    const stillExists = providerCandidates.some(
+      (candidate) => candidate.ID === candidatePreview.candidate.ID,
+    );
     if (!stillExists) {
       setCandidatePreview(null);
     }
@@ -683,9 +794,9 @@ export default function InputPage(props: Props) {
 
   const selectedPreview = useMemo(() => {
     if (!selectedProvider) return null;
-    return (preview.ExternalPreview || []).find(
-      (item) => item.Provider === selectedProvider
-    ) || null;
+    return (
+      (preview.ExternalPreview || []).find((item) => item.Provider === selectedProvider) || null
+    );
   }, [preview.ExternalPreview, selectedProvider]);
 
   const [tvdbDisplayMode, setTVDBDisplayMode] = useState<TVDBDisplayMode>("original");
@@ -707,14 +818,24 @@ export default function InputPage(props: Props) {
     if (!selectedPreview) return "";
     if (selectedPreview.Provider !== "tvdb") return selectedPreview.Title;
     const tvdb = selectedPreview.TVDB;
-    return pickTVDBText(tvdbDisplayMode, tvdb?.Name ?? selectedPreview.Title, tvdb?.NameEnglish ?? "", selectedPreview.Title);
+    return pickTVDBText(
+      tvdbDisplayMode,
+      tvdb?.Name ?? selectedPreview.Title,
+      tvdb?.NameEnglish ?? "",
+      selectedPreview.Title,
+    );
   }, [selectedPreview, tvdbDisplayMode]);
 
   const selectedPreviewOverview = useMemo(() => {
     if (!selectedPreview) return "";
     if (selectedPreview.Provider !== "tvdb") return selectedPreview.Overview;
     const tvdb = selectedPreview.TVDB;
-    return pickTVDBText(tvdbDisplayMode, tvdb?.Overview ?? selectedPreview.Overview, tvdb?.OverviewEnglish ?? "", selectedPreview.Overview);
+    return pickTVDBText(
+      tvdbDisplayMode,
+      tvdb?.Overview ?? selectedPreview.Overview,
+      tvdb?.OverviewEnglish ?? "",
+      selectedPreview.Overview,
+    );
   }, [selectedPreview, tvdbDisplayMode]);
 
   const previewDetails = selectedPreview
@@ -727,7 +848,7 @@ export default function InputPage(props: Props) {
     { key: "mediainfo-ids", label: "Apply MediaInfo IDs" },
     { key: "external-ids", label: "Resolve external IDs" },
     { key: "media-details", label: "Apply media details" },
-    { key: "complete", label: "Complete" }
+    { key: "complete", label: "Complete" },
   ];
 
   const latestMetadataPhase = useMemo(() => {
@@ -759,70 +880,117 @@ export default function InputPage(props: Props) {
       </header>
 
       <section className="panel">
-        <div className="path-row">
-          <div className="path-input">
-            <label htmlFor="source-lookup-url" className="source-url-label">Site URL override</label>
-            <input
-              id="source-lookup-url"
-              value={sourceLookupURL}
-              onChange={(event) => setSourceLookupURL(event.target.value)}
-              placeholder="Paste tracker or media URL for ID lookup"
-            />
-            <p className="muted path-helper">Used for metadata ID, and tracker description/tracker image fetching when supported.</p>
+        <div className="grid gap-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 max-[1100px]:grid-cols-1">
+            <div className="grid grid-cols-2 gap-3 max-[900px]:grid-cols-1">
+              <label
+                className="grid gap-1.5 text-sm text-[var(--muted)]"
+                htmlFor="source-lookup-url"
+              >
+                <span>Site URL override</span>
+                <input
+                  id="source-lookup-url"
+                  className={compactInputClass}
+                  value={sourceLookupURL}
+                  onChange={(event) => setSourceLookupURL(event.target.value)}
+                  placeholder="Paste tracker or media URL for ID lookup"
+                />
+                <span className="text-xs leading-tight text-[var(--muted)]">
+                  Metadata ID and tracker description/image lookup.
+                </span>
+              </label>
 
-            <label htmlFor="source-path">Source path</label>
-            <input
-              id="source-path"
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder="Select a file or folder"
-            />
-            {discHint ? <p className="path-hint">{discHint}</p> : null}
-            <p className="muted path-helper">Select folder for discs (containing BDMV or VIDEO_TS) or Season Pack folder.</p>
-            {!browseAvailable ? (
-              <p className="muted path-helper">Native browse is only available when the WebUI is opened from localhost on this machine. Remote sessions must enter the server path manually.</p>
-            ) : null}
+              <div className="grid gap-1.5 text-sm text-[var(--muted)]" ref={sourcePathHistoryRef}>
+                <label htmlFor="source-path">Source path</label>
+                <div className="source-path-input-shell source-path-input-shell--drop-target">
+                  <input
+                    id="source-path"
+                    className={`${compactInputClass} source-path-input`}
+                    value={path}
+                    onChange={(event) => handleSourcePathChange(event.target.value)}
+                    onFocus={openSourcePathHistory}
+                    onClick={openSourcePathHistory}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setSourcePathHistoryOpen(false);
+                      }
+                    }}
+                    placeholder="Select a file or folder"
+                    aria-autocomplete="list"
+                    aria-expanded={sourcePathHistoryOpen}
+                    aria-haspopup="listbox"
+                    aria-controls="source-path-history"
+                  />
+                  {sourcePathHistoryOpen ? (
+                    <div
+                      id="source-path-history"
+                      className="source-path-history"
+                      role="listbox"
+                      aria-label="Source path history"
+                    >
+                      {sourcePathHistory.map((entry) => (
+                        <button
+                          key={entry.path}
+                          className="source-path-history__item"
+                          type="button"
+                          role="option"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => selectSourcePathHistory(entry)}
+                        >
+                          <span className="mono">{entry.path}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <span className="text-xs leading-tight text-[var(--muted)]">
+                  {discHint || "File, disc folder, or Season Pack folder."}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 max-[1100px]:justify-start">
+              {browseAvailable ? (
+                <>
+                  <Button type="button" onClick={handleBrowseFile}>
+                    Browse file
+                  </Button>
+                  <Button type="button" onClick={handleBrowseFolder}>
+                    Browse folder
+                  </Button>
+                </>
+              ) : null}
+              <Button variant="primary" type="button" onClick={handleFetch} disabled={loading}>
+                {loading ? "Fetching..." : "Fetch metadata"}
+              </Button>
+            </div>
           </div>
-          {browseAvailable ? (
-            <>
-              <button className="ghost" type="button" onClick={handleBrowseFile}>
-                Browse file
-              </button>
-              <button className="ghost" type="button" onClick={handleBrowseFolder}>
-                Browse folder
-              </button>
-            </>
+
+          {!browseAvailable ? (
+            <p className="m-0 text-xs text-[var(--muted)]">
+              Native browse is only available from localhost. Remote sessions must enter the server
+              path manually.
+            </p>
           ) : null}
-          <button
-            className="primary"
-            type="button"
-            onClick={handleFetch}
-            disabled={loading}
-          >
-            {loading ? "Fetching..." : "Fetch metadata"}
-          </button>
-        </div>
-        <div className="run-options-card">
-          <div className="run-options-card__header">
-            <p className="label">Run options</p>
-            <p className="muted">Applies only to tracker dry run and upload for this session.</p>
-          </div>
-          <div className="run-options-card__controls">
-            <label className="upload-toggle upload-toggle--labelled">
-              <input
-                type="checkbox"
+
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2">
+            <span className="text-sm font-semibold text-[var(--text)]">Run options</span>
+            <div className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
+              <Switch
                 aria-label="Enable debug run"
                 checked={runDebug}
                 onChange={(event) => setRunDebug(event.target.checked)}
               />
-              <span className="upload-toggle__pill" />
-              <span className="upload-toggle__label">Debug run</span>
-            </label>
-            <label className="run-options-card__field" htmlFor="run-log-level">
-              <span className="label">Run log level</span>
+              <span>Debug run</span>
+            </div>
+            <label
+              className="inline-flex items-center gap-2 text-sm text-[var(--muted)]"
+              htmlFor="run-log-level"
+            >
+              <span>Log level</span>
               <select
                 id="run-log-level"
-                className="text-input"
+                className={compactInputClass}
                 value={runLogLevel}
                 onChange={(event) => {
                   setRunLogLevel(event.target.value);
@@ -837,19 +1005,17 @@ export default function InputPage(props: Props) {
               </select>
             </label>
             {runLogLevelTouched ? (
-              <button
-                className="ghost"
-                type="button"
-                onClick={() => setRunLogLevelTouched(false)}
-              >
+              <Button type="button" onClick={() => setRunLogLevelTouched(false)}>
                 Reset log level
-              </button>
+              </Button>
             ) : null}
           </div>
         </div>
         {error ? <p className="error">{error}</p> : null}
         {(preview.Warnings || []).map((warning) => (
-          <p key={warning} className="muted">{warning}</p>
+          <p key={warning} className="muted">
+            {warning}
+          </p>
         ))}
         {metadataProgressActive || metadataProgressUpdates.length > 0 ? (
           <div className="metadata-progress">
@@ -878,15 +1044,11 @@ export default function InputPage(props: Props) {
           <div className="summary">
             <div>
               <p className="label">Tracker used</p>
-              <p className="value">
-                {preview.TrackerName || "No tracker used"}
-              </p>
+              <p className="value">{preview.TrackerName || "No tracker used"}</p>
             </div>
             <div>
               <p className="label">Release name</p>
-              <p className="value">
-                {preview.ReleaseName || "No release name yet"}
-              </p>
+              <p className="value">{preview.ReleaseName || "No release name yet"}</p>
             </div>
           </div>
         ) : null}
@@ -895,7 +1057,9 @@ export default function InputPage(props: Props) {
           <div className="panel">
             <div className="settings-subgroup">
               <div className="settings-subgroup__title">External ID candidates</div>
-              <p className="muted path-helper">Select a candidate to copy it into ID overrides, then refresh metadata.</p>
+              <p className="muted path-helper">
+                Select a candidate to copy it into ID overrides, then refresh metadata.
+              </p>
               {tmdbCandidates.length === 0 && imdbCandidates.length === 0 ? (
                 <p className="muted">No TMDB/IMDB candidates available for this search.</p>
               ) : (
@@ -915,7 +1079,9 @@ export default function InputPage(props: Props) {
                           >
                             {candidate.Title || "(Untitled)"}
                             {candidate.Year ? ` (${candidate.Year})` : ""}
-                            {formatSimilarity(candidate.Similarity) ? ` • ${formatSimilarity(candidate.Similarity)}` : ""}
+                            {formatSimilarity(candidate.Similarity)
+                              ? ` • ${formatSimilarity(candidate.Similarity)}`
+                              : ""}
                           </button>
                         ))}
                       </div>
@@ -927,7 +1093,9 @@ export default function InputPage(props: Props) {
                           <div className="candidate-preview__text">
                             <p className="value">
                               {candidatePreview.candidate.Title || "(Untitled)"}
-                              {candidatePreview.candidate.Year ? ` (${candidatePreview.candidate.Year})` : ""}
+                              {candidatePreview.candidate.Year
+                                ? ` (${candidatePreview.candidate.Year})`
+                                : ""}
                             </p>
                             <p className="muted">
                               {candidatePreview.candidate.Category || "Unknown category"}
@@ -954,7 +1122,9 @@ export default function InputPage(props: Props) {
                             </button>
                           ) : null}
                         </div>
-                        <p className="muted">{candidatePreview.candidate.Overview || "No overview available."}</p>
+                        <p className="muted">
+                          {candidatePreview.candidate.Overview || "No overview available."}
+                        </p>
                       </div>
                     ) : null}
                   </div>
@@ -973,7 +1143,9 @@ export default function InputPage(props: Props) {
                           >
                             {candidate.Title || "(Untitled)"}
                             {candidate.Year ? ` (${candidate.Year})` : ""}
-                            {formatSimilarity(candidate.Similarity) ? ` • ${formatSimilarity(candidate.Similarity)}` : ""}
+                            {formatSimilarity(candidate.Similarity)
+                              ? ` • ${formatSimilarity(candidate.Similarity)}`
+                              : ""}
                           </button>
                         ))}
                       </div>
@@ -985,7 +1157,9 @@ export default function InputPage(props: Props) {
                           <div className="candidate-preview__text">
                             <p className="value">
                               {candidatePreview.candidate.Title || "(Untitled)"}
-                              {candidatePreview.candidate.Year ? ` (${candidatePreview.candidate.Year})` : ""}
+                              {candidatePreview.candidate.Year
+                                ? ` (${candidatePreview.candidate.Year})`
+                                : ""}
                             </p>
                             <p className="muted">
                               {candidatePreview.candidate.Category || "Unknown category"}
@@ -1012,7 +1186,9 @@ export default function InputPage(props: Props) {
                             </button>
                           ) : null}
                         </div>
-                        <p className="muted">{candidatePreview.candidate.Overview || "No overview available."}</p>
+                        <p className="muted">
+                          {candidatePreview.candidate.Overview || "No overview available."}
+                        </p>
                       </div>
                     ) : null}
                   </div>
@@ -1037,7 +1213,9 @@ export default function InputPage(props: Props) {
             <details className="edit-dropdown tracker-dropdown">
               <summary>
                 <span>Select Trackers</span>
-                <span className="tracker-summary-count">{selectedTrackerCount}/{trackerUploadItems.length}</span>
+                <span className="tracker-summary-count">
+                  {selectedTrackerCount}/{trackerUploadItems.length}
+                </span>
               </summary>
               <div className="edit-dropdown__body">
                 <div className="tracker-selection-container">
@@ -1045,21 +1223,31 @@ export default function InputPage(props: Props) {
                     <p className="muted">No configured tracker entries found.</p>
                   ) : (
                     <div className="tracker-pills">
-                      {trackerUploadItems.map((tracker) => (
-                        <label key={tracker.name} className="tracker-pill">
-                          <input
-                            type="checkbox"
+                      {trackerUploadItems.map((tracker) => {
+                        const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
+                        return (
+                          <PillCheckbox
+                            aria-label={tracker.name}
+                            key={tracker.name}
                             checked={Boolean(releasePageTrackerSelection[tracker.name])}
-                            onChange={(event) =>
+                            onCheckedChange={(checked) =>
                               setReleasePageTrackerSelection((prev) => ({
                                 ...prev,
-                                [tracker.name]: event.target.checked
+                                [tracker.name]: checked,
                               }))
                             }
-                          />
-                          <span className="pill-label">{tracker.name}</span>
-                        </label>
-                      ))}
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <TrackerIconImage
+                                tracker={tracker.name}
+                                iconSrc={iconSrc}
+                                enabled={useFavicons}
+                              />
+                              {faviconOnly && useFavicons ? null : tracker.name}
+                            </span>
+                          </PillCheckbox>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1067,9 +1255,7 @@ export default function InputPage(props: Props) {
             </details>
           ) : null}
           {hasPreview ? (
-            <p className="helper edit-helper">
-              Edit external IDs and Release Name attributes.
-            </p>
+            <p className="helper edit-helper">Edit external IDs and Release Name attributes.</p>
           ) : null}
           {hasPreview ? (
             <details className="edit-dropdown">
@@ -1253,7 +1439,10 @@ export default function InputPage(props: Props) {
                         id="release-episode-title"
                         value={releaseEdits?.episodeTitle || ""}
                         onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, episodeTitle: event.target.value }));
+                          setReleaseEdits((prev) => ({
+                            ...prev,
+                            episodeTitle: event.target.value,
+                          }));
                           markReleaseTouched("episodeTitle");
                         }}
                         placeholder="Pilot"
@@ -1285,120 +1474,114 @@ export default function InputPage(props: Props) {
                       />
                     </div>
                     {isTVEpisodePreview ? (
-                      <label className="settings-toggle">
+                      <div className="settings-toggle">
                         <span>Use season/episode instead</span>
-                        <input
-                          type="checkbox"
+                        <Switch
+                          aria-label="Use season/episode instead"
                           checked={Boolean(releaseEdits?.useSeasonEpisode)}
                           onChange={(event) => {
-                            setReleaseEdits((prev) => ({ ...prev, useSeasonEpisode: event.target.checked }));
+                            setReleaseEdits((prev) => ({
+                              ...prev,
+                              useSeasonEpisode: event.target.checked,
+                            }));
                             markReleaseTouched("useSeasonEpisode");
                           }}
                         />
-                        <span className="settings-toggle__pill" />
-                      </label>
+                      </div>
                     ) : null}
                   </div>
                 </div>
                 <div className="settings-subgroup">
                   <div className="settings-subgroup__title">Flags</div>
                   <div className="settings-grid">
-                    <label className="settings-toggle">
+                    <div className="settings-toggle">
                       <span>No season</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No season"
                         checked={Boolean(releaseEdits?.noSeason)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noSeason: event.target.checked }));
                           markReleaseTouched("noSeason");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No year</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No year"
                         checked={Boolean(releaseEdits?.noYear)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noYear: event.target.checked }));
                           markReleaseTouched("noYear");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No AKA</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No AKA"
                         checked={Boolean(releaseEdits?.noAKA)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noAKA: event.target.checked }));
                           markReleaseTouched("noAKA");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No tag</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No tag"
                         checked={Boolean(releaseEdits?.noTag)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noTag: event.target.checked }));
                           markReleaseTouched("noTag");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No edition</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No edition"
                         checked={Boolean(releaseEdits?.noEdition)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noEdition: event.target.checked }));
                           markReleaseTouched("noEdition");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No dub</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No dub"
                         checked={Boolean(releaseEdits?.noDub)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noDub: event.target.checked }));
                           markReleaseTouched("noDub");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>No dual-audio</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="No dual-audio"
                         checked={Boolean(releaseEdits?.noDual)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noDual: event.target.checked }));
                           markReleaseTouched("noDual");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
-                    <label className="settings-toggle">
+                    </div>
+                    <div className="settings-toggle">
                       <span>Force dual-audio</span>
-                      <input
-                        type="checkbox"
+                      <Switch
+                        aria-label="Force dual-audio"
                         checked={Boolean(releaseEdits?.dualAudio)}
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, dualAudio: event.target.checked }));
                           markReleaseTouched("dualAudio");
                         }}
                       />
-                      <span className="settings-toggle__pill" />
-                    </label>
+                    </div>
                   </div>
                 </div>
                 {idOverrideState?.invalid ? (
@@ -1443,18 +1626,12 @@ export default function InputPage(props: Props) {
               orderedExternalIDs.map((item) => (
                 <button
                   key={item.Provider}
-                  className={`id-card ${
-                    selectedProvider === item.Provider ? "active" : ""
-                  }`}
+                  className={`id-card ${selectedProvider === item.Provider ? "active" : ""}`}
                   type="button"
                   onClick={() => setSelectedProvider(item.Provider)}
                 >
-                  <span className="id-label">
-                    {formatProvider(item.Provider)}
-                  </span>
-                  <span className="id-value">
-                    {formatID(item.Provider, item.ID)}
-                  </span>
+                  <span className="id-label">{formatProvider(item.Provider)}</span>
+                  <span className="id-value">{formatID(item.Provider, item.ID)}</span>
                   <span className="id-source">Source: {item.Source}</span>
                 </button>
               ))
@@ -1488,25 +1665,15 @@ export default function InputPage(props: Props) {
             {selectedPreview ? (
               <div className="preview-content">
                 <div className="preview-text">
-                  <p className="title">
-                    {selectedPreviewTitle || "Untitled"}
-                  </p>
-                  <p className="meta">
-                    {selectedPreview.Year ? `${selectedPreview.Year}` : ""}
-                  </p>
-                  <p className="overview">
-                    {selectedPreviewOverview || "No overview available."}
-                  </p>
+                  <p className="title">{selectedPreviewTitle || "Untitled"}</p>
+                  <p className="meta">{selectedPreview.Year ? `${selectedPreview.Year}` : ""}</p>
+                  <p className="overview">{selectedPreviewOverview || "No overview available."}</p>
                   {previewDetails.length > 0 ? (
                     <div className="preview-details">
                       {previewDetails.map((item) => (
                         <div className="preview-detail" key={item.label}>
                           <p className="label">{item.label}</p>
-                          <p
-                            className={`value preview-detail__value ${
-                              item.mono ? "mono" : ""
-                            }`}
-                          >
+                          <p className={`value preview-detail__value ${item.mono ? "mono" : ""}`}>
                             {renderDetailValue(item)}
                           </p>
                         </div>
@@ -1516,18 +1683,10 @@ export default function InputPage(props: Props) {
                 </div>
                 <div className="preview-images">
                   {selectedPreview.PosterURL ? (
-                    <img
-                      src={selectedPreview.PosterURL}
-                      alt="Poster"
-                      loading="lazy"
-                    />
+                    <img src={selectedPreview.PosterURL} alt="Poster" loading="lazy" />
                   ) : null}
                   {selectedPreview.BackdropURL ? (
-                    <img
-                      src={selectedPreview.BackdropURL}
-                      alt="Backdrop"
-                      loading="lazy"
-                    />
+                    <img src={selectedPreview.BackdropURL} alt="Backdrop" loading="lazy" />
                   ) : null}
                 </div>
               </div>

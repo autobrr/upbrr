@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -54,11 +55,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		{FieldName: "nfo", FileName: "MEDIAINFO.txt", Content: []byte(commonhttp.ReadOptionalFile(strings.TrimSpace(req.Meta.MediaInfoTextPath)))},
 	})
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: THR build upload request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -83,10 +84,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "THR")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announce, finalURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
@@ -95,7 +96,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "THR", "upload_failure", bodyBytes, ".html")
-	return api.UploadSummary{}, errors.New("trackers: THR upload failed")
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("THR", resp.StatusCode, bodyBytes)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -120,17 +121,14 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, *http.Client, error) {
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, req.TrackerConfig, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req.Meta, assets)
 	releaseName := resolveName(req.Meta)
 	if override := strings.TrimSpace(questionnaireAnswers(req.Meta)["name_override"]); override != "" {
 		releaseName = override
@@ -162,7 +160,10 @@ func login(ctx context.Context, cfg config.TrackerConfig) (*http.Client, error) 
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return nil, errors.New("trackers: THR missing username/password")
 	}
-	jar, _ := cookiejar.New(nil)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: THR create login cookie jar: %w", err)
+	}
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
 	form := url.Values{
 		"username": {strings.TrimSpace(cfg.Username)},
@@ -171,13 +172,13 @@ func login(ctx context.Context, cfg config.TrackerConfig) (*http.Client, error) 
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: THR build login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "upbrr")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: THR login request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusFound {
@@ -186,15 +187,14 @@ func login(ctx context.Context, cfg config.TrackerConfig) (*http.Client, error) 
 	return client, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, assets trackers.DescriptionAssets) (string, error) {
-	_ = cfg
+func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
 	parts := []string{
 		"[quote=Info]",
-		"Name: " + strings.TrimSpace(firstNonEmpty(meta.Release.Title, meta.ReleaseName)),
+		"Name: " + strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)),
 		"",
-		"Overview: " + strings.TrimSpace(firstNonEmpty(meta.EpisodeOverview, meta.ExternalMetadata.TMDB.Overview)),
+		"Overview: " + strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.EpisodeOverview, meta.ExternalMetadata.TMDB.Overview)),
 		"",
-		firstNonEmpty(meta.Release.Resolution, meta.Release.Source) + " / " + strings.TrimSpace(meta.Type),
+		metautil.FirstNonEmptyTrimmed(meta.Release.Resolution, meta.Release.Source) + " / " + strings.TrimSpace(meta.Type),
 		"",
 		"Category: " + categoryName(meta),
 	}
@@ -209,13 +209,13 @@ func buildDescription(meta api.PreparedMetadata, cfg config.TrackerConfig, asset
 		parts = append(parts, base)
 	}
 	for _, image := range assets.Screenshots {
-		raw := strings.TrimSpace(firstNonEmpty(image.RawURL, image.ImgURL))
+		raw := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL))
 		if raw != "" {
 			parts = append(parts, "[img]"+raw+"[/img]")
 		}
 	}
 	parts = append(parts, `[size=2][url=https://www.torrenthr.org/forums.php?action=viewtopic&topicid=8977]upbrr[/url][/size]`)
-	return bbcode.FinalizeTrackerDescription("THR", strings.TrimSpace(strings.Join(parts, "\n"))), nil
+	return bbcode.FinalizeTrackerDescription("THR", strings.TrimSpace(strings.Join(parts, "\n")))
 }
 
 func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
@@ -228,7 +228,7 @@ func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
 }
 
 func resolveName(meta api.PreparedMetadata) string {
-	base := strings.ReplaceAll(firstNonEmpty(meta.ReleaseName, meta.Release.Title, meta.Filename), "DD+", "DDP")
+	base := strings.ReplaceAll(metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.Release.Title, meta.Filename), "DD+", "DDP")
 	return regexp.MustCompile(`[^0-9a-zA-Z. '\-\[\]]+`).ReplaceAllString(base, " ")
 }
 
@@ -292,15 +292,6 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 	return meta.TrackerQuestionnaireAnswers["THR"]
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
 func isSD(res string) bool {
 	return strings.HasPrefix(res, "480") || strings.HasPrefix(res, "576") || strings.HasPrefix(res, "540")
 }
@@ -329,7 +320,7 @@ func isTV(meta api.PreparedMetadata) bool {
 }
 
 func genresText(meta api.PreparedMetadata) string {
-	return firstNonEmpty(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
 }
 
 func keywordsText(meta api.PreparedMetadata) string {

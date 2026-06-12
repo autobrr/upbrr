@@ -18,7 +18,9 @@ import (
 
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -69,7 +71,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}}
 	body, contentType, err := commonhttp.BuildMultipartPayload(state.fields, files)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
@@ -90,17 +92,17 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	responseBody, _ := io.ReadAll(resp.Body)
 	match := idPattern.FindStringSubmatch(finalURL + "\n" + string(responseBody))
-	id := firstNonEmpty(matchValue(match, 1), matchValue(match, 2))
+	id := metautil.FirstNonEmptyTrimmed(matchValue(match, 1), matchValue(match, 2))
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && id != "" {
 		tURL := torrentURL + id
 		artifactPath := ""
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "BJS")
 			if err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announce, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, err
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
 		return api.UploadSummary{
@@ -115,7 +117,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "BJS", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, fmt.Errorf("trackers: BJS upload failed status=%d", resp.StatusCode)
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("BJS", resp.StatusCode, responseBody)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
@@ -157,22 +159,19 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, nil, err
+		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
 	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
-	description, err := buildDescription(req.Meta, assets)
-	if err != nil {
-		return uploadState{}, nil, err
-	}
+	description := buildDescription(req, assets)
 	fields := buildFields(req.Meta, description, auth, questionnaireAnswers(req.Meta))
 	state := uploadState{
 		torrentPath:   torrentPath,
 		description:   description,
-		releaseName:   firstNonEmpty(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
+		releaseName:   metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
 		fields:        fields,
 		questionnaire: buildQuestionnaire(req.Meta, fields),
 	}
@@ -184,13 +183,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 
 func buildFields(meta api.PreparedMetadata, description string, auth string, answers map[string]string) map[string]string {
 	width, height := resolveResolution(meta)
+	runtimeMinutes := resolveRuntime(meta)
 	fields := map[string]string{
 		"audio":            resolveAudio(meta),
 		"auth":             auth,
 		"codecaudio":       resolveAudioCodec(meta),
 		"codecvideo":       resolveVideoCodec(meta),
-		"duracaoHR":        strconv.Itoa(resolveRuntime(meta) / 60),
-		"duracaoMIN":       strconv.Itoa(resolveRuntime(meta) % 60),
+		"duracaoHR":        strconv.Itoa(runtimeMinutes / 60),
+		"duracaoMIN":       strconv.Itoa(runtimeMinutes % 60),
 		"duracaotipo":      "selectbox",
 		"fichatecnica":     description,
 		"formato":          resolveContainer(meta),
@@ -201,12 +201,12 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 		"remaster_title":   strings.TrimSpace(meta.Edition),
 		"resolucaoh":       height,
 		"resolucaow":       width,
-		"sinopse":          firstNonEmpty(strings.TrimSpace(answers["overview"]), resolveOverview(meta)),
+		"sinopse":          metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["overview"]), resolveOverview(meta)),
 		"submit":           "true",
-		"tags":             firstNonEmpty(strings.TrimSpace(answers["tags"]), resolveTags(meta)),
+		"tags":             metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta)),
 		"tipolegenda":      resolveSubtitle(meta),
-		"title":            firstNonEmpty(meta.ExternalMetadata.TMDB.OriginalTitle, meta.Release.Title),
-		"titulobrasileiro": firstNonEmpty(meta.ExternalMetadata.TMDB.Title, meta.Release.Title),
+		"title":            metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.OriginalTitle, meta.Release.Title),
+		"titulobrasileiro": metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Title, meta.Release.Title),
 		"traileryoutube":   resolveYouTube(meta),
 		"type":             resolveType(meta),
 		"year":             resolveYearLabel(meta),
@@ -243,6 +243,9 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 	}
 	if meta.Anime && category == "TV" {
 		fields["adulto"] = resolveAdult(meta)
+	}
+	if strings.TrimSpace(meta.Repack) != "" {
+		fields["repack"] = "on"
 	}
 	if resolvePoster(meta) != "" {
 		fields["image"] = resolvePoster(meta)
@@ -289,34 +292,79 @@ func validateFields(fields map[string]string) string {
 	return ""
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) (string, error) {
-	parts := make([]string, 0, 5)
+func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
+	meta := req.Meta
+	var parts []string
+
+	// Custom Header
+	if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+		parts = append(parts, header)
+	}
+
+	// Logo
 	if logo := resolveLogo(meta); logo != "" {
-		parts = append(parts, "[center][img]"+logo+"[/img][/center]")
+		parts = append(parts, "[align=center][img]"+logo+"[/img][/align]")
 	}
+
+	// TV Episode details
 	if strings.TrimSpace(meta.EpisodeOverview) != "" {
-		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]\n[center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/center]")
+		parts = append(parts, "[align=center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/align]")
+		parts = append(parts, "[align=center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/align]")
 	}
+
+	// File information
+	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
+	if discType == "DVD" || discType == "HDDVD" {
+		mediainfo := strings.TrimSpace(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath))
+		if mediainfo != "" {
+			parts = append(parts, "[hide=DVD MediaInfo][pre]"+mediainfo+"[/pre][/hide]")
+		}
+	}
+	if discType == "BDMV" {
+		bdinfo, _ := trackers.ReadBDInfo(req.AppConfig.MainSettings.DBPath, meta)
+		parts = append(parts, "[hide=BDInfo][pre]"+bdinfo+"[/pre][/hide]")
+	}
+
+	// User description
 	if strings.TrimSpace(assets.Description) != "" {
 		parts = append(parts, strings.TrimSpace(assets.Description))
 	}
-	return bbcode.FinalizeTrackerDescription("BJS", strings.TrimSpace(strings.Join(parts, "\n\n"))), nil
+
+	// Tonemapped Header
+	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && descriptionunit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+		parts = append(parts, tonemapHeader)
+	}
+
+	// Signature
+	link, _ := descriptionunit3d.UppbrrSignatureLink()
+	parts = append(parts, fmt.Sprintf("[align=center][url=%s]Upload realizado via %s[/url][/align]", link, "upbrr"))
+
+	// Join and finalize
+	description := strings.Join(parts, "\n\n")
+	finalized := bbcode.FinalizeTrackerDescription("BJS", description)
+
+	// Debug saving
+	if meta.Options.Debug {
+		descriptionunit3d.SaveDescriptionDebug(meta, "BJS", req.AppConfig.MainSettings.DBPath, finalized, req.Logger)
+	}
+
+	return finalized
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	return cookies.LoadTrackerHTTPCookies(ctx, dbPath, "BJS", "bj-share.info")
+	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "BJS", "bj-share.info"))
 }
 
 func fetchAuth(ctx context.Context, cookies []*http.Cookie) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uploadURL, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BJS auth token request build: %w", err)
 	}
 	req.Header.Set("User-Agent", "upbrr")
 	commonhttp.ApplyCookies(req, cookies)
 	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BJS auth token request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -403,7 +451,7 @@ func resolveResolution(meta api.PreparedMetadata) (string, string) {
 }
 
 func resolveVideoCodec(meta api.PreparedMetadata) string {
-	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(meta.VideoEncode, meta.VideoCodec)))
+	value := strings.ToLower(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.VideoEncode, meta.VideoCodec)))
 	switch {
 	case strings.Contains(value, "265"), strings.Contains(value, "hevc"):
 		return "H.265"
@@ -416,7 +464,7 @@ func resolveVideoCodec(meta api.PreparedMetadata) string {
 	case strings.Contains(value, "xvid"):
 		return "XviD"
 	default:
-		return firstNonEmpty(meta.VideoCodec, "Outro")
+		return metautil.FirstNonEmptyTrimmed(meta.VideoCodec, "Outro")
 	}
 }
 
@@ -486,6 +534,11 @@ func resolveRuntime(meta api.PreparedMetadata) int {
 			return minutes
 		}
 	}
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		if minutes := parseBDInfoLengthMinutes(meta.BDInfo["length"]); minutes > 0 {
+			return minutes
+		}
+	}
 	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.RuntimeMinutes > 0 {
 		return meta.ExternalMetadata.IMDB.RuntimeMinutes
 	}
@@ -496,6 +549,34 @@ func resolveRuntime(meta api.PreparedMetadata) int {
 		return meta.ExternalMetadata.TVmaze.Runtime
 	}
 	return 0
+}
+
+func parseBDInfoLengthMinutes(value interface{}) int {
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "" || text == "<nil>" {
+		return 0
+	}
+	parts := strings.Split(text, ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	hours, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	if err != nil || hours < 0 {
+		return 0
+	}
+	minutes, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err != nil || minutes < 0 {
+		return 0
+	}
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+	if err != nil || seconds < 0 {
+		return 0
+	}
+	totalSeconds := hours*3600 + minutes*60 + seconds
+	if totalSeconds <= 0 {
+		return 0
+	}
+	return int(math.Round(totalSeconds / 60))
 }
 
 func parseMediaInfoDurationMinutes(text string) int {
@@ -615,7 +696,7 @@ func resolveNetworks(meta api.PreparedMetadata) string {
 
 func resolveReleaseDate(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil {
-		return firstNonEmpty(meta.ExternalMetadata.TMDB.ReleaseDate, meta.ExternalMetadata.TMDB.FirstAirDate)
+		return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.ReleaseDate, meta.ExternalMetadata.TMDB.FirstAirDate)
 	}
 	return ""
 }
@@ -639,7 +720,7 @@ func resolveYear(meta api.PreparedMetadata) int {
 }
 
 func resolveAdult(meta api.PreparedMetadata) string {
-	genres := strings.ToLower(resolveTags(meta) + " " + firstNonEmpty(meta.ExternalMetadata.TMDB.Keywords, ""))
+	genres := strings.ToLower(resolveTags(meta) + " " + metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Keywords, ""))
 	if meta.Anime && strings.Contains(genres, "hentai") {
 		return "1"
 	}
@@ -653,7 +734,7 @@ func resolveAdult(meta api.PreparedMetadata) string {
 
 func resolveDirectors(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Directors) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Directors, ", ")
+		return firstTrimmed(meta.ExternalMetadata.TMDB.Directors)
 	}
 	if meta.ExternalMetadata.IMDB != nil {
 		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Directors))
@@ -663,7 +744,7 @@ func resolveDirectors(meta api.PreparedMetadata) string {
 			}
 		}
 		if len(names) > 0 {
-			return strings.Join(names, ", ")
+			return names[0]
 		}
 	}
 	return ""
@@ -671,7 +752,7 @@ func resolveDirectors(meta api.PreparedMetadata) string {
 
 func resolveCreators(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Creators) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Creators, ", ")
+		return firstTrimmed(meta.ExternalMetadata.TMDB.Creators)
 	}
 	if meta.ExternalMetadata.IMDB != nil {
 		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Creators))
@@ -680,14 +761,16 @@ func resolveCreators(meta api.PreparedMetadata) string {
 				names = append(names, strings.TrimSpace(p.Name))
 			}
 		}
-		return strings.Join(names, ", ")
+		if len(names) > 0 {
+			return names[0]
+		}
 	}
 	return ""
 }
 
 func resolveCast(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Cast) > 0 {
-		return strings.Join(meta.ExternalMetadata.TMDB.Cast, ", ")
+		return strings.Join(firstNTrimmed(meta.ExternalMetadata.TMDB.Cast, 5), ", ")
 	}
 	if meta.ExternalMetadata.IMDB != nil {
 		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Stars))
@@ -696,7 +779,7 @@ func resolveCast(meta api.PreparedMetadata) string {
 				names = append(names, strings.TrimSpace(p.Name))
 			}
 		}
-		return strings.Join(names, ", ")
+		return strings.Join(firstNTrimmed(names, 5), ", ")
 	}
 	return ""
 }
@@ -722,7 +805,7 @@ func resolvePoster(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveScreens(meta api.PreparedMetadata) []string {
+func resolveScreens(_ api.PreparedMetadata) []string {
 	return nil
 }
 
@@ -741,13 +824,36 @@ func cloneFields(in map[string]string) map[string]string {
 	return out
 }
 
-func firstNonEmpty(values ...string) string {
+func firstTrimmed(values []string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
 			return trimmed
 		}
 	}
 	return ""
+}
+
+func firstNTrimmed(values []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]string, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
 }
 
 func matchValue(values []string, idx int) string {

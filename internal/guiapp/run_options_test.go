@@ -33,6 +33,7 @@ type closeCounterCore struct {
 	exportErr    error
 	importedMeta api.PreparedMetadata
 	importedReq  api.Request
+	fetchReq     api.Request
 }
 
 func (c *closeCounterCore) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -43,7 +44,8 @@ func (c *closeCounterCore) RunUploadPrepared(context.Context, api.Request) (api.
 	return api.Result{}, nil
 }
 
-func (c *closeCounterCore) FetchMetadataPreview(context.Context, api.Request) (api.MetadataPreview, error) {
+func (c *closeCounterCore) FetchMetadataPreview(_ context.Context, req api.Request) (api.MetadataPreview, error) {
+	c.fetchReq = req
 	return api.MetadataPreview{}, nil
 }
 
@@ -91,6 +93,10 @@ func (c *closeCounterCore) SaveFinalScreenshotSelections(context.Context, api.Re
 	return nil
 }
 
+func (c *closeCounterCore) ImportMenuImages(context.Context, api.Request, []string) error {
+	return nil
+}
+
 func (c *closeCounterCore) ListUploadCandidates(context.Context, api.Request) ([]api.ScreenshotImage, error) {
 	return nil, nil
 }
@@ -99,8 +105,8 @@ func (c *closeCounterCore) ListUploadedImages(context.Context, api.Request) ([]a
 	return nil, nil
 }
 
-func (c *closeCounterCore) UploadImages(context.Context, api.Request, string, []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
-	return nil, nil
+func (c *closeCounterCore) UploadImages(_ context.Context, _ api.Request, _ string, _ []api.ScreenshotImage) (api.UploadImagesResult, error) {
+	return api.UploadImagesResult{}, nil
 }
 
 func (c *closeCounterCore) DeleteUploadedImage(context.Context, api.Request, string, string) error {
@@ -161,7 +167,7 @@ func TestBuildRunOptionsDefaults(t *testing.T) {
 	t.Parallel()
 
 	app := &App{cfg: config.Config{Logging: config.LoggingConfig{Level: "info"}}}
-	opts, err := app.buildRunOptions(true, "")
+	opts, err := app.buildRunOptions(true, false, "")
 	if err != nil {
 		t.Fatalf("build run options: %v", err)
 	}
@@ -177,7 +183,7 @@ func TestBuildRunOptionsEmptyLogLevelSkipsNormalization(t *testing.T) {
 	t.Parallel()
 
 	app := &App{}
-	opts, err := app.buildRunOptions(false, "   ")
+	opts, err := app.buildRunOptions(false, false, "   ")
 	if err != nil {
 		t.Fatalf("build run options: %v", err)
 	}
@@ -190,8 +196,32 @@ func TestBuildRunOptionsRejectsInvalidLogLevel(t *testing.T) {
 	t.Parallel()
 
 	app := &App{}
-	if _, err := app.buildRunOptions(false, "verbose"); err == nil {
+	if _, err := app.buildRunOptions(false, false, "verbose"); err == nil {
 		t.Fatal("expected invalid log level to fail")
+	}
+}
+
+func TestBuildRunOptionsPropagatesNoSeed(t *testing.T) {
+	t.Parallel()
+
+	app := &App{}
+	opts, err := app.buildRunOptions(false, true, "")
+	if err != nil {
+		t.Fatalf("build run options: %v", err)
+	}
+	if !opts.NoSeed {
+		t.Fatalf("expected no-seed enabled, got %#v", opts)
+	}
+}
+
+func TestBuildRunUploadOptionsPropagatesSkipAutoTorrent(t *testing.T) {
+	t.Parallel()
+
+	options := buildRunUploadOptions(config.Config{
+		Metadata: config.MetadataConfig{SkipAutoTorrent: true},
+	}, runOptions{})
+	if !options.SkipAutoTorrent {
+		t.Fatalf("expected skip_auto_torrent upload option, got %#v", options)
 	}
 }
 

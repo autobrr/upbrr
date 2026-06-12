@@ -20,6 +20,21 @@ var videoExts = map[string]struct{}{
 	".ts":  {},
 }
 
+func SupportedVideoExtensions() []string {
+	exts := make([]string, 0, len(videoExts))
+	for ext := range videoExts {
+		exts = append(exts, ext)
+	}
+	sort.Strings(exts)
+	return exts
+}
+
+func IsVideoFile(name string) bool {
+	ext := strings.ToLower(filepath.Ext(strings.ToLower(name)))
+	_, ok := videoExts[ext]
+	return ok
+}
+
 // CollectVideoFiles returns the selected video path and file list for a non-disc source.
 // When preferLargest is true, the selected video is the largest file by size.
 func CollectVideoFiles(ctx context.Context, source string, preferLargest bool) (string, []string, error) {
@@ -54,7 +69,7 @@ func CollectVideoFiles(ctx context.Context, source string, preferLargest bool) (
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return "", nil, ctx.Err()
+			return "", nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if entry.IsDir() {
@@ -62,8 +77,7 @@ func CollectVideoFiles(ctx context.Context, source string, preferLargest bool) (
 		}
 		name := entry.Name()
 		lower := strings.ToLower(name)
-		ext := strings.ToLower(filepath.Ext(lower))
-		if _, ok := videoExts[ext]; !ok {
+		if !IsVideoFile(lower) {
 			continue
 		}
 		if strings.Contains(lower, "sample") && !strings.Contains(lower, "!sample") {

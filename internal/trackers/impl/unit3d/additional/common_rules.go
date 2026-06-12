@@ -25,10 +25,10 @@ var resolutionOrder = map[string]int{
 	"8640p": 11,
 }
 
-func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -46,10 +46,78 @@ func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, logger 
 	return Pass()
 }
 
-func checkOTWGenres(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkLUMERequirements(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
+	default:
+	}
+
+	if !isDiscType(meta.DiscType) && !strings.EqualFold(strings.TrimSpace(meta.Container), "mkv") {
+		return Fail("LUME only allows MKV containers for non-disc uploads.")
+	}
+	return checkLUMEResolution(ctx, meta, logger)
+}
+
+func checkBHDRequirements(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
+	select {
+	case <-ctx.Done():
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
+	default:
+	}
+
+	switch resolveType(meta) {
+	case "REMUX", "ENCODE", "WEBDL", "WEBRIP":
+		container := strings.ToLower(strings.TrimSpace(meta.Container))
+		if container != "" && container != "mkv" && container != "mp4" {
+			return Fail(fmt.Sprintf("Container %q is not allowed for %s. Only MKV and MP4 are permitted.", meta.Container, resolveType(meta)))
+		}
+	}
+	return Pass()
+}
+
+func checkBLUContainer(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
+	select {
+	case <-ctx.Done():
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
+	default:
+	}
+
+	if isDiscType(meta.DiscType) {
+		return Pass()
+	}
+
+	container := strings.ToLower(strings.TrimSpace(meta.Container))
+	if container == "" {
+		return Pass()
+	}
+
+	allowed := []string{"mkv"}
+	typeValue := resolveType(meta)
+	if typeValue == "HDTV" {
+		allowed = append(allowed, "ts")
+	}
+	if (typeValue == "WEBDL" || typeValue == "HDTV") && isDolbyVisionOnly(meta) {
+		allowed = append(allowed, "mp4")
+	}
+	if containsAny([]string{container}, allowed) {
+		return Pass()
+	}
+	return Fail("BLU requires one of the following containers for this release: " + strings.ToUpper(strings.Join(allowed, ", ")))
+}
+
+func isDolbyVisionOnly(meta api.PreparedMetadata) bool {
+	if meta.WebDV {
+		return true
+	}
+	hdr := strings.ToUpper(strings.TrimSpace(meta.HDR))
+	return strings.Contains(hdr, "DV") && !strings.Contains(hdr, "HDR")
+}
+
+func checkOTWGenres(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
+	select {
+	case <-ctx.Done():
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -78,10 +146,10 @@ func checkOTWGenres(ctx context.Context, meta api.PreparedMetadata, logger api.L
 	return Pass()
 }
 
-func checkSHRIRegion(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkSHRIRegion(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -94,10 +162,10 @@ func checkSHRIRegion(ctx context.Context, meta api.PreparedMetadata, logger api.
 	return Pass()
 }
 
-func checkTTRSubtitleOnly(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkTTRSubtitleOnly(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 
@@ -107,10 +175,10 @@ func checkTTRSubtitleOnly(ctx context.Context, meta api.PreparedMetadata, logger
 	return Pass()
 }
 
-func checkULCXRules(ctx context.Context, meta api.PreparedMetadata, logger api.Logger) Result {
+func checkULCXRules(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
 	select {
 	case <-ctx.Done():
-		return Fail(ctx.Err().Error())
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
 	default:
 	}
 

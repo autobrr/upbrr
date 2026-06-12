@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -16,17 +17,18 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets) (string, error) {
+func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets) string {
 	base := strings.TrimSpace(assets.Description)
+	if assets.Final {
+		return base
+	}
+
 	cleaned := bbcode.CleanBHDDescription(base, bbcode.BHDOptions{
 		Framestor: hasGroup(meta.Tag, "framestor"),
 		Flux:      hasGroup(meta.Tag, "flux"),
 	})
 
 	descriptionBody := strings.TrimSpace(cleaned.Description)
-	if descriptionBody == "" {
-		descriptionBody = base
-	}
 	descriptionBody = stripUASignature(descriptionBody)
 	descriptionBody = strings.ReplaceAll(descriptionBody, "[img]", "[img width=300]")
 
@@ -45,14 +47,14 @@ func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets track
 	if screenshots := buildScreenshotSection(images, maxInt(1, meta.Options.Screens)); screenshots != "" {
 		parts = append(parts, screenshots)
 	}
-	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/align]`)
-	return strings.TrimSpace(strings.Join(parts, "\n\n")), nil
+	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/align]`)
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
 func buildDiscSection(meta api.PreparedMetadata, dbPath string) string {
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "DVD":
-		media := firstNonEmpty(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
+		media := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
 		if media == "" {
 			return ""
 		}
@@ -80,8 +82,8 @@ func buildScreenshotSection(images []api.ScreenshotImage, limit int) string {
 		if count >= limit {
 			break
 		}
-		imgURL := firstNonEmpty(strings.TrimSpace(image.RawURL), strings.TrimSpace(image.ImgURL))
-		webURL := firstNonEmpty(strings.TrimSpace(image.WebURL), strings.TrimSpace(image.RawURL), imgURL)
+		imgURL := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(image.RawURL), strings.TrimSpace(image.ImgURL))
+		webURL := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(image.WebURL), strings.TrimSpace(image.RawURL), imgURL)
 		if imgURL == "" || webURL == "" {
 			continue
 		}
@@ -106,15 +108,15 @@ func screenshotsFromReport(images []bbcode.Image) []api.ScreenshotImage {
 	out := make([]api.ScreenshotImage, 0, len(images))
 	for idx, image := range images {
 		imgURL := strings.TrimSpace(image.ImgURL)
-		rawURL := firstNonEmpty(strings.TrimSpace(image.RawURL), imgURL)
-		webURL := firstNonEmpty(strings.TrimSpace(image.WebURL), rawURL, imgURL)
+		rawURL := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(image.RawURL), imgURL)
+		webURL := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(image.WebURL), rawURL, imgURL)
 		if imgURL == "" && rawURL == "" {
 			continue
 		}
 		out = append(out, api.ScreenshotImage{
 			Index:  idx,
 			Host:   strings.TrimSpace(image.Host),
-			ImgURL: firstNonEmpty(imgURL, rawURL),
+			ImgURL: metautil.FirstNonEmptyTrimmed(imgURL, rawURL),
 			RawURL: rawURL,
 			WebURL: webURL,
 		})
@@ -131,6 +133,13 @@ func stripUASignature(value string) string {
 		`[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`,
 		`[align=right][url=https://github.com/autobrr/upbrr]upbrr[/url][/align]`,
 		`[align=right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/align]`,
+		`[align=right]Created by upbrr[/align]`,
+		`[align=right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/align]`,
+		`[right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/right]`,
+		`[right][url=https://github.com/autobrr/upbrr]upbrr[/url][/right]`,
+		`[right][url=https://github.com/autobrr/upbrr]Created by upbrr[/url][/right]`,
+		`[right]Created by upbrr[/right]`,
+		`[right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]`,
 	}
 	for _, signature := range signatures {
 		trimmed = strings.TrimSpace(strings.ReplaceAll(trimmed, signature, ""))
@@ -168,15 +177,6 @@ func readBDInfoNoErr(dbPath string, meta api.PreparedMetadata) string {
 func hasGroup(tag string, name string) bool {
 	trimmed := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(tag, "-")))
 	return trimmed == strings.ToLower(strings.TrimSpace(name))
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func maxInt(left int, right int) int {

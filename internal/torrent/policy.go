@@ -72,10 +72,10 @@ func (p *trackerTorrentPolicy) requiredPieceExp(meta api.PreparedMetadata) (uint
 	if p == nil || len(p.pieceSizeChart) == 0 {
 		return 0, false
 	}
-	size := uint64(meta.SourceSize)
-	if size == 0 {
+	if meta.SourceSize <= 0 {
 		return 0, false
 	}
+	size := uint64(meta.SourceSize)
 	for _, entry := range p.pieceSizeChart {
 		if size <= entry.maxSize {
 			return entry.pieceExp, true

@@ -25,7 +25,7 @@ type mediaInfoIDs struct {
 func (s *Service) ApplyMediaInfoIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, ctx.Err()
+		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -97,8 +97,8 @@ type mediaInfoJSON struct {
 }
 
 type mediaInfoTrack struct {
-	Type  string                 `json:"@type"`
-	Extra map[string]interface{} `json:"extra"`
+	Type  string         `json:"@type"`
+	Extra map[string]any `json:"extra"`
 }
 
 func parseMediaInfoJSON(path string) (*mediaInfoIDs, error) {
@@ -119,7 +119,7 @@ func parseMediaInfoJSON(path string) (*mediaInfoIDs, error) {
 	return &ids, nil
 }
 
-func extractMediaInfoExtra(tracks []mediaInfoTrack) map[string]interface{} {
+func extractMediaInfoExtra(tracks []mediaInfoTrack) map[string]any {
 	if len(tracks) == 0 {
 		return nil
 	}
@@ -190,7 +190,7 @@ func parseMediaInfoText(path string) (*mediaInfoIDs, error) {
 	return &ids, nil
 }
 
-func parseMediaInfoExtra(extra map[string]interface{}) mediaInfoIDs {
+func parseMediaInfoExtra(extra map[string]any) mediaInfoIDs {
 	ids := mediaInfoIDs{}
 	var tvdbFallback int
 	for key, raw := range extra {

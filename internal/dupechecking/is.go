@@ -12,6 +12,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -36,10 +37,10 @@ func (h isHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ stri
 		params.Set("keywords", imdb)
 	} else {
 		params.Set("search_type", "t_name")
-		params.Set("keywords", strings.TrimSpace(firstNonEmpty(meta.Release.Title, meta.ReleaseName)+" "+resolveSeasonEpisodeQuery(meta)))
+		params.Set("keywords", strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)+" "+resolveSeasonEpisodeQuery(meta)))
 	}
-	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/browse.php", params, nil, cookies)
-	if err != nil || resp == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	resp, root, err := doHTMLGet(ctx, h.http, baseURL+"/browse.php", params, cookies)
+	if err != nil || !resp.ok() {
 		return nil, []string{noteSkip("IS search failed")}, nil
 	}
 	table := firstNode(root, func(node *xhtml.Node) bool {

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Checkbox } from "./ui/checkbox";
+import { Switch } from "./ui/switch";
+import { cn } from "../utils/cn";
 import { EventsOn } from "../utils/runtime";
 
 type LogEntry = {
@@ -23,6 +26,21 @@ const LOG_HARD_CAP = 10000;
 
 const levelOrder = ["trace", "debug", "info", "warn", "error"];
 
+const levelBadgeClass = (level: string) => {
+  switch (level.toLowerCase()) {
+    case "error":
+      return "bg-red-500/20 text-[var(--danger)]";
+    case "warn":
+      return "bg-amber-400/20 text-[var(--accent)]";
+    case "debug":
+      return "bg-blue-900 text-blue-100";
+    case "trace":
+      return "bg-violet-950 text-violet-100";
+    default:
+      return "bg-cyan-400/20 text-[var(--accent-2)]";
+  }
+};
+
 const normalizeEntry = (payload: any): LogEntry | null => {
   if (!payload) return null;
   if (typeof payload === "string") {
@@ -30,7 +48,7 @@ const normalizeEntry = (payload: any): LogEntry | null => {
       ID: Date.now(),
       Time: new Date().toISOString(),
       Level: "info",
-      Message: payload
+      Message: payload,
     };
   }
   const level = String(payload.Level ?? payload.level ?? "info").toLowerCase();
@@ -38,15 +56,18 @@ const normalizeEntry = (payload: any): LogEntry | null => {
     ID: Number(payload.ID ?? payload.id ?? Date.now()),
     Time: String(payload.Time ?? payload.time ?? new Date().toISOString()),
     Level: level,
-    Message: String(payload.Message ?? payload.message ?? "")
+    Message: String(payload.Message ?? payload.message ?? ""),
   };
 };
 
 const normalizeLevels = () =>
-  levelOrder.reduce((acc, level) => {
-    acc[level] = true;
-    return acc;
-  }, {} as Record<string, boolean>);
+  levelOrder.reduce(
+    (acc, level) => {
+      acc[level] = true;
+      return acc;
+    },
+    {} as Record<string, boolean>,
+  );
 
 const formatTime = (iso: string) => {
   const date = new Date(iso);
@@ -58,7 +79,7 @@ export default function LogSettingsPanel({
   configData,
   renderField,
   updateConfigValue,
-  fieldMeta
+  fieldMeta,
 }: LogSettingsPanelProps) {
   const [logPath, setLogPath] = useState("");
   const [entries, setEntries] = useState<LogEntry[]>([]);
@@ -98,19 +119,22 @@ export default function LogSettingsPanel({
     }
   };
 
-  const appendEntries = useCallback((incoming: LogEntry[]) => {
-    if (incoming.length === 0) return;
-    setEntries((prev) => {
-      let next = [...prev, ...incoming];
-      if (autoScroll && next.length > LOG_SOFT_CAP) {
-        next = next.slice(-LOG_SOFT_CAP);
-      } else if (!autoScroll && next.length > LOG_HARD_CAP) {
-        next = next.slice(-LOG_HARD_CAP);
-        setBufferWarning("Log buffer capped. Oldest entries were dropped.");
-      }
-      return next;
-    });
-  }, [autoScroll]);
+  const appendEntries = useCallback(
+    (incoming: LogEntry[]) => {
+      if (incoming.length === 0) return;
+      setEntries((prev) => {
+        let next = [...prev, ...incoming];
+        if (autoScroll && next.length > LOG_SOFT_CAP) {
+          next = next.slice(-LOG_SOFT_CAP);
+        } else if (!autoScroll && next.length > LOG_HARD_CAP) {
+          next = next.slice(-LOG_HARD_CAP);
+          setBufferWarning("Log buffer capped. Oldest entries were dropped.");
+        }
+        return next;
+      });
+    },
+    [autoScroll],
+  );
 
   useEffect(() => {
     const fetchLogPath = async () => {
@@ -246,9 +270,9 @@ export default function LogSettingsPanel({
   };
 
   return (
-    <div className="log-settings-panel">
-      <div className="panel log-settings-card">
-        <div className="log-settings-header">
+    <div className="grid gap-3 lg:grid-cols-[minmax(260px,360px)_minmax(0,1fr)]">
+      <div className="panel grid gap-3">
+        <div className="flex items-start justify-between gap-3">
           <div>
             <p className="label">Logging</p>
             <p className="helper">Adjust log verbosity and file rotation.</p>
@@ -264,7 +288,9 @@ export default function LogSettingsPanel({
                   <span>{label}</span>
                   <select
                     value={levelValue}
-                    onChange={(event) => updateConfigValue(["Logging", "Level"], event.target.value)}
+                    onChange={(event) =>
+                      updateConfigValue(["Logging", "Level"], event.target.value)
+                    }
                   >
                     {levelOrder.map((level) => (
                       <option key={level} value={level}>
@@ -278,41 +304,60 @@ export default function LogSettingsPanel({
             return renderField(key, loggingConfig[key], ["Logging", key], meta);
           })}
         </div>
-        <div className="log-path">
+        <div className="grid gap-1 rounded-md border border-white/10 bg-[var(--panel-light)] px-3 py-2 break-all">
           <span className="label">Log path</span>
           <span className="value">{logPath || "Unavailable"}</span>
         </div>
       </div>
 
-      <div className="panel log-viewer-card">
-        <div className="log-toolbar">
-          <div className="log-status">
-            <span className={`log-dot ${connected ? "on" : "off"}`} />
+      <div className="panel grid gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 font-semibold">
+            <span
+              className={cn(
+                "h-2.5 w-2.5 rounded-full",
+                connected
+                  ? "bg-[var(--success)] shadow-[0_0_10px_rgba(52,211,153,0.5)]"
+                  : "bg-[var(--danger)] shadow-[0_0_10px_rgba(255,107,107,0.4)]",
+              )}
+            />
             <span>{connected ? "Connected" : "Disconnected"}</span>
           </div>
-          <div className="log-actions">
+          <div className="flex items-center gap-2">
             <button className="ghost" type="button" onClick={handleClearLogs}>
               Clear
             </button>
-            <label className="settings-toggle log-autoscroll">
+            <div className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold text-[var(--text)]">
               <span>Auto-scroll</span>
-              <input type="checkbox" checked={autoScroll} onChange={(event) => setAutoScroll(event.target.checked)} />
-              <span className="settings-toggle__pill" />
-            </label>
+              <Switch
+                aria-label="Auto-scroll logs"
+                checked={autoScroll}
+                onChange={(event) => setAutoScroll(event.target.checked)}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="log-filters">
-          <div className="log-levels">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {levelOrder.map((level) => (
-              <label key={level} className={`log-level-toggle ${level}`}>
-                <input type="checkbox" checked={levelFilter[level]} onChange={() => toggleLevel(level)} />
-                <span>{level.toUpperCase()}</span>
-              </label>
+              <div
+                key={level}
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold uppercase"
+              >
+                <Checkbox
+                  id={`log-level-${level}`}
+                  checked={levelFilter[level]}
+                  onCheckedChange={() => toggleLevel(level)}
+                />
+                <label className="cursor-pointer" htmlFor={`log-level-${level}`}>
+                  {level.toUpperCase()}
+                </label>
+              </div>
             ))}
           </div>
           <input
-            className="log-search"
+            className="min-w-[200px] flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-sm text-[var(--text)]"
             placeholder="Search logs"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
@@ -321,35 +366,46 @@ export default function LogSettingsPanel({
 
         {bufferWarning ? <p className="warning">{bufferWarning}</p> : null}
 
-        <div className="log-stream" aria-live="polite" ref={logStreamRef}>
+        <div
+          className="grid max-h-[328px] gap-1.5 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-2 font-mono text-[0.82rem]"
+          aria-live="polite"
+          ref={logStreamRef}
+        >
           {filteredEntries.length === 0 ? (
             <p className="muted">No log entries yet.</p>
           ) : (
             filteredEntries.map((entry) => (
-              <div key={entry.ID} className="log-entry">
-                <span className="log-time">{formatTime(entry.Time)}</span>
+              <div
+                key={entry.ID}
+                className="grid grid-cols-[72px_64px_minmax(0,1fr)] items-center gap-2"
+              >
+                <span className="text-xs text-[var(--muted)]">{formatTime(entry.Time)}</span>
                 <button
-                  className={`log-level-badge ${entry.Level}`}
+                  className={cn(
+                    "rounded-full border-none px-1.5 py-1 text-[0.68rem] font-bold uppercase tracking-[0.08em]",
+                    levelBadgeClass(entry.Level),
+                  )}
                   type="button"
                   onClick={() => handleMuteMessage(entry.Message)}
                   title="Mute this message"
                 >
                   {entry.Level.toUpperCase()}
                 </button>
-                <span className="log-message">{entry.Message || "(empty message)"}</span>
+                <span className="overflow-wrap-anywhere">{entry.Message || "(empty message)"}</span>
               </div>
             ))
           )}
           <div ref={logEndRef} />
         </div>
 
-        <div className="log-mute-panel">
-          <div className="log-mute-header">
+        <div className="grid gap-2">
+          <div>
             <p className="label">Muted patterns</p>
             <p className="helper">Mute exact message matches.</p>
           </div>
-          <div className="log-mute-controls">
+          <div className="flex flex-wrap gap-2">
             <input
+              className="min-w-[220px] flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-sm text-[var(--text)]"
               placeholder="Message to mute"
               value={pendingMute}
               onChange={(event) => setPendingMute(event.target.value)}
@@ -364,9 +420,12 @@ export default function LogSettingsPanel({
           {mutedPatterns.length === 0 ? (
             <p className="muted">No muted patterns.</p>
           ) : (
-            <div className="log-mute-list">
+            <div className="grid gap-1.5">
               {mutedPatterns.map((pattern) => (
-                <div key={pattern} className="log-mute-item">
+                <div
+                  key={pattern}
+                  className="flex items-center justify-between gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1.5"
+                >
                   <span>{pattern}</span>
                   <button className="ghost" type="button" onClick={() => handleRemoveMute(pattern)}>
                     Remove

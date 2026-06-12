@@ -7,9 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -40,7 +44,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
-		return api.UploadReview{}, err
+		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
 	uniquePaths := make([]string, 0, len(normalizedPaths))
 	seenPaths := make(map[string]struct{}, len(normalizedPaths))
@@ -66,17 +70,34 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 	singleReq.ExternalIDOverrides = mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, uniquePaths[0]))
 
 	signature := overrideSignature(singleReq.ExternalIDOverrides, singleReq.ReleaseNameOverrides, singleReq.MetadataOverrides, singleReq.TrackerConfigOverrides, singleReq.TrackerSiteOverrides, singleReq.ClientOverrides, singleReq.TorrentOverrides, singleReq.ImageHostOverrides, singleReq.ScreenshotOverrides)
-	meta, ok := c.getDupeCache(uniquePaths[0], signature)
+	var (
+		meta api.PreparedMetadata
+		ok   bool
+	)
+	if req.Mode == api.ModeGUI {
+		meta, ok, err = c.resolveGUICachedPreparedMeta(ctx, singleReq, uniquePaths[0])
+		if err != nil {
+			return api.UploadReview{}, err
+		}
+	} else {
+		meta, ok = c.getDupeCache(uniquePaths[0], signature)
+		if ok {
+			meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, singleReq)
+			if err != nil {
+				return api.UploadReview{}, err
+			}
+		}
+	}
 	if !ok {
 		return api.UploadReview{}, fmt.Errorf("core: upload review requires prepared metadata for %s", uniquePaths[0])
 	}
-	meta = applyRequestToPreparedMeta(meta, singleReq)
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, singleReq.Trackers, singleReq.TrackersRemove, c.logger)
+	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, singleReq.Trackers, meta.TrackersRemove, c.logger)
 
 	dupeResults := make(map[string]api.DupeCheckResult)
 	if singleReq.SkipDupeCheck {
 		meta.BlockedTrackers = removeTrackerBlockReason(cloneBlockedTrackers(meta.BlockedTrackers), api.TrackerBlockReasonDupe)
+		meta.CrossSeedTorrents = nil
 		for _, tracker := range resolvedTrackers {
 			name := strings.ToUpper(strings.TrimSpace(tracker))
 			if name == "" {
@@ -92,25 +113,31 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 	} else {
 		summary, err := c.services.Dupes.Check(ctx, meta, resolvedTrackers)
 		if err != nil {
-			return api.UploadReview{}, err
+			return api.UploadReview{}, fmt.Errorf("core: %w", err)
 		}
 		summary = appendPathedDupeResults(summary, meta.MatchedTrackers)
 		applyDupeSummaryToPreparedMeta(&meta, summary)
+		meta.BlockedTrackers = removeTrackerBlockReasonForTrackers(meta.BlockedTrackers, api.TrackerBlockReasonDupe, singleReq.IgnoreDupesFor)
+		meta.CrossSeedTorrents = removeCrossSeedTorrentsForTrackers(meta.CrossSeedTorrents, singleReq.IgnoreDupesFor)
 		dupeResults = mapDupeResults(summary.Results)
+	}
+	if req.Mode == api.ModeGUI && cacheableGUIPreparedMetaRequest(singleReq) {
+		c.storeRefreshedDupeCache(uniquePaths[0], signature, meta)
 	}
 
 	dryRunMeta := meta
 	dryRunMeta.IgnoreTrackerRuleFailures = true
 	torrent, err := c.services.Torrents.Create(ctx, dryRunMeta)
 	if err != nil {
-		return api.UploadReview{}, err
+		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
 	dryRunMeta.TorrentPath = torrent.Path
 
 	dryRunEntries, err := c.services.Trackers.BuildUploadDryRun(ctx, dryRunMeta, resolvedTrackers)
 	if err != nil {
-		return api.UploadReview{}, err
+		return api.UploadReview{}, fmt.Errorf("core: %w", err)
 	}
+	annotateDryRunReleaseNames(dryRunMeta, dryRunEntries)
 	dryRunByTracker := make(map[string]api.TrackerDryRunEntry, len(dryRunEntries))
 	for _, entry := range dryRunEntries {
 		name := strings.ToUpper(strings.TrimSpace(entry.Tracker))
@@ -191,7 +218,19 @@ func formatBlockedReasons(reasons []api.TrackerBlockReason) string {
 	return strings.Join(labels, ", ")
 }
 
-func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request) api.PreparedMetadata {
+func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger) api.PreparedMetadata {
+	return applyRequestToPreparedMetaWithDerivedFields(meta, req, cfg, logger, true)
+}
+
+func applyRequestToPreparedMetaBeforeRefresh(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger) api.PreparedMetadata {
+	return applyRequestToPreparedMetaWithDerivedFields(meta, req, cfg, logger, false)
+}
+
+func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger, rebuildDerivedFields bool) api.PreparedMetadata {
+	meta = deepCopyPreparedMetadata(meta)
+	existingTrackerIDs := cloneStringMap(meta.TrackerIDs)
+	existingTrackersRemove := append([]string{}, meta.TrackersRemove...)
+	existingMatchedTrackers := append([]string{}, meta.MatchedTrackers...)
 	meta.Mode = req.Mode
 	meta.Options = req.Options
 	meta.Paths = append([]string{}, req.Paths...)
@@ -199,8 +238,9 @@ func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request) api.
 		meta.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
 	}
 	meta.Trackers = append([]string{}, req.Trackers...)
-	meta.TrackersRemove = append([]string{}, req.TrackersRemove...)
-	meta.TrackerIDs = cloneStringMap(req.TrackerIDOverrides)
+	meta.TrackersRemove = mergeTrackerRemovals(req.TrackersRemove, existingTrackersRemove)
+	meta.TrackersRemove = mergeTrackerRemovals(meta.TrackersRemove, existingMatchedTrackers)
+	meta.TrackerIDs = mergeTrackerIDOverrides(existingTrackerIDs, req.TrackerIDOverrides)
 	meta.DescriptionOverride = strings.TrimSpace(req.DescriptionOverrideRaw)
 	meta.MetadataOverrides = req.MetadataOverrides
 	meta.TrackerConfigOverrides = req.TrackerConfigOverrides
@@ -215,14 +255,63 @@ func applyRequestToPreparedMeta(meta api.PreparedMetadata, req api.Request) api.
 	meta.ReleaseNameOverrides = req.ReleaseNameOverrides
 	meta.TrackerQuestionnaireAnswers = cloneTrackerQuestionnaireAnswers(req.TrackerQuestionnaireAnswers)
 	applyMetadataOverridesToPreparedMeta(&meta)
+	if rebuildDerivedFields {
+		metadata.ApplyRequestScopedAudioPolicy(&meta, cfg, logger)
+		metadata.RebuildReleaseName(&meta, logger)
+	}
 	applyTorrentOverridesToPreparedMeta(&meta)
 	meta.TrackerRuleFailures = filterTrackerRuleFailures(meta.TrackerRuleFailures, req.IgnoreTrackerRuleFailuresFor)
 	if req.SkipDupeCheck {
 		meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonDupe)
+		meta.CrossSeedTorrents = nil
 	} else if len(req.IgnoreDupesFor) > 0 {
 		meta.BlockedTrackers = removeTrackerBlockReasonForTrackers(meta.BlockedTrackers, api.TrackerBlockReasonDupe, req.IgnoreDupesFor)
+		meta.CrossSeedTorrents = removeCrossSeedTorrentsForTrackers(meta.CrossSeedTorrents, req.IgnoreDupesFor)
 	}
 	return meta
+}
+
+func mergeTrackerIDOverrides(existing map[string]string, overrides map[string]string) map[string]string {
+	normalizedExisting := make(map[string]string, len(existing))
+	for key, value := range existing {
+		trimmedKey := strings.ToLower(strings.TrimSpace(key))
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		normalizedExisting[trimmedKey] = trimmedValue
+	}
+
+	merged := cloneStringMap(normalizedExisting)
+	if merged == nil {
+		merged = make(map[string]string)
+	}
+	for key, value := range overrides {
+		trimmedKey := strings.ToLower(strings.TrimSpace(key))
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		merged[trimmedKey] = trimmedValue
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func (c *Core) applyRequestToCachedPreparedMeta(ctx context.Context, meta api.PreparedMetadata, req api.Request) (api.PreparedMetadata, error) {
+	if c.services.Metadata == nil {
+		meta = applyRequestToPreparedMeta(meta, req, c.cfg, c.logger)
+		return meta, nil
+	}
+	meta = applyRequestToPreparedMetaBeforeRefresh(meta, req, c.cfg, c.logger)
+	refreshed, err := c.services.Metadata.RefreshPreparedMetadata(ctx, meta)
+	if err != nil {
+		return api.PreparedMetadata{}, fmt.Errorf("core: %w", err)
+	}
+	refreshed.TrackerRuleFailures = filterTrackerRuleFailures(refreshed.TrackerRuleFailures, req.IgnoreTrackerRuleFailuresFor)
+	return refreshed, nil
 }
 
 func applyMetadataOverridesToPreparedMeta(meta *api.PreparedMetadata) {
@@ -336,9 +425,7 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 
@@ -373,9 +460,7 @@ func cloneTrackerQuestionnaireAnswers(input map[string]map[string]string) map[st
 			continue
 		}
 		inner := make(map[string]string, len(values))
-		for key, value := range values {
-			inner[key] = value
-		}
+		maps.Copy(inner, values)
 		cloned[tracker] = inner
 	}
 	return cloned
@@ -387,8 +472,10 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 	}
 
 	blocked := removeTrackerBlockReason(cloneBlockedTrackers(meta.BlockedTrackers), api.TrackerBlockReasonDupe)
+	crossSeeds := make([]api.UploadedTorrent, 0)
+	seenCrossSeeds := make(map[string]struct{})
 	for _, result := range summary.Results {
-		if !result.HasDupes {
+		if !dupeResultBlocksTracker(result) {
 			continue
 		}
 
@@ -399,8 +486,43 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 		for _, tracker := range trackers {
 			blocked = addTrackerBlockReason(blocked, tracker, api.TrackerBlockReasonDupe)
 		}
+		if !result.HasDupes {
+			continue
+		}
+		downloadURL := strings.TrimSpace(result.Match.MatchedDownload)
+		if downloadURL == "" {
+			continue
+		}
+		for _, tracker := range trackers {
+			name := strings.ToUpper(strings.TrimSpace(tracker))
+			if name == "" {
+				continue
+			}
+			key := name + "\x00" + downloadURL
+			if _, exists := seenCrossSeeds[key]; exists {
+				continue
+			}
+			seenCrossSeeds[key] = struct{}{}
+			crossSeeds = append(crossSeeds, api.UploadedTorrent{
+				Tracker:     name,
+				TorrentID:   strings.TrimSpace(result.Match.MatchedID),
+				DownloadURL: downloadURL,
+				TorrentURL:  strings.TrimSpace(result.Match.MatchedLink),
+			})
+		}
 	}
 	meta.BlockedTrackers = blocked
+	meta.CrossSeedTorrents = crossSeeds
+}
+
+func dupeResultBlocksTracker(result api.DupeCheckResult) bool {
+	if result.HasDupes || result.Skipped {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
+		return true
+	}
+	return strings.TrimSpace(result.Error) != ""
 }
 
 func cloneBlockedTrackers(input map[string][]api.TrackerBlockReason) map[string][]api.TrackerBlockReason {
@@ -436,10 +558,8 @@ func addTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, tracker 
 	if blocked == nil {
 		blocked = make(map[string][]api.TrackerBlockReason)
 	}
-	for _, existing := range blocked[name] {
-		if existing == reason {
-			return blocked
-		}
+	if slices.Contains(blocked[name], reason) {
+		return blocked
 	}
 	blocked[name] = append(blocked[name], reason)
 	return blocked
@@ -504,6 +624,31 @@ func removeTrackerBlockReasonForTrackers(blocked map[string][]api.TrackerBlockRe
 	}
 	if len(filtered) == 0 {
 		return nil
+	}
+	return filtered
+}
+
+func removeCrossSeedTorrentsForTrackers(torrents []api.UploadedTorrent, trackers []string) []api.UploadedTorrent {
+	if len(torrents) == 0 || len(trackers) == 0 {
+		return torrents
+	}
+	ignored := make(map[string]struct{}, len(trackers))
+	for _, tracker := range trackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name != "" {
+			ignored[name] = struct{}{}
+		}
+	}
+	if len(ignored) == 0 {
+		return torrents
+	}
+	filtered := make([]api.UploadedTorrent, 0, len(torrents))
+	for _, torrent := range torrents {
+		name := strings.ToUpper(strings.TrimSpace(torrent.Tracker))
+		if _, skip := ignored[name]; skip {
+			continue
+		}
+		filtered = append(filtered, torrent)
 	}
 	return filtered
 }

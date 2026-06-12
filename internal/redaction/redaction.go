@@ -32,10 +32,12 @@ var DefaultSensitiveKeys = map[string]struct{}{
 }
 
 var (
-	passkeyPathRe  = regexp.MustCompile(`/([A-Za-z0-9]{10,})(/announce)`) // /<passkey>/announce
-	proxyPathRe    = regexp.MustCompile(`/proxy/([^/]+)(/api)`)           // /proxy/<secret>/api
-	queryParamRe   = regexp.MustCompile(`(?i)([?&](passkey|key|token|auth|info_hash|torrent_pass)=)[^&]+`)
-	longHexTokenRe = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
+	passkeyPathRe       = regexp.MustCompile(`(?i)/([A-Za-z0-9]{10,})(/announce(?:\.php)?)`) // /<passkey>/announce
+	announcePathTokenRe = regexp.MustCompile(`(?i)(/announce(?:\.php)?/)([A-Za-z0-9]{10,})($|[/?#])`)
+	apiPathTokenRe      = regexp.MustCompile(`(?i)(/api/torrents/)([A-Za-z0-9]{10,})($|[/?#"])`)
+	proxyPathRe         = regexp.MustCompile(`(?i)(/proxy/)([^/\s?#"]+)`) // /proxy/<secret>
+	queryParamRe        = regexp.MustCompile(`(?i)([?&](api[_-]?key|api[_-]?token|auth|authkey|info_hash|key|passkey|rsskey|token|torrent_pass|uid|user|user_id|userid)=)[^&]+`)
+	longHexTokenRe      = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
 )
 
 // ExtractJSONBlocks returns candidate JSON substrings based on bracket counting.
@@ -122,7 +124,9 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	}
 
 	value = passkeyPathRe.ReplaceAllString(value, `/[REDACTED]$2`)
-	value = proxyPathRe.ReplaceAllString(value, `/proxy/[REDACTED]$2`)
+	value = announcePathTokenRe.ReplaceAllString(value, `${1}[REDACTED]${3}`)
+	value = apiPathTokenRe.ReplaceAllString(value, `${1}[REDACTED]${3}`)
+	value = proxyPathRe.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
 

@@ -49,10 +49,20 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 
 	if input.ManualID != 0 {
 		selected := input.ManualID
+		candidates := make([]Candidate, 0, 1)
+		if cand, err := c.getShow(ctx, selected); err == nil {
+			candidates = append(candidates, cand)
+			if parsed := metautil.ParseIMDbNumeric(cand.Externals.IMDB); imdbID == 0 && parsed != 0 {
+				imdbID = parsed
+			}
+			if tvdbID == 0 && cand.Externals.TVDB != 0 {
+				tvdbID = cand.Externals.TVDB
+			}
+		}
 		if c.logger != nil {
 			c.logger.Infof("tvmaze: manual selected id=%d imdb=%d tvdb=%d", selected, imdbID, tvdbID)
 		}
-		return SearchResult{SelectedID: selected, IMDBID: imdbID, TVDBID: tvdbID}, nil
+		return SearchResult{SelectedID: selected, IMDBID: imdbID, TVDBID: tvdbID, Candidates: candidates}, nil
 	}
 
 	results := make([]Candidate, 0)
@@ -244,12 +254,25 @@ func (c *Client) searchShows(ctx context.Context, query string) ([]Candidate, er
 	return candidates, nil
 }
 
+func (c *Client) getShow(ctx context.Context, id int) (Candidate, error) {
+	if id == 0 {
+		return Candidate{}, errNotFound
+	}
+	endpoint := fmt.Sprintf("%s/shows/%d", c.baseURL, id)
+
+	var show showResponse
+	if err := c.getJSON(ctx, endpoint, nil, &show); err != nil {
+		return Candidate{}, err
+	}
+	return candidateFromShow(show), nil
+}
+
 func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values, target any) error {
 	reqURL := endpoint
 	if params != nil {
 		parsed, err := url.Parse(endpoint)
 		if err != nil {
-			return err
+			return fmt.Errorf("tvmaze: parse request endpoint: %w", err)
 		}
 		parsed.RawQuery = params.Encode()
 		reqURL = parsed.String()
@@ -257,12 +280,12 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvmaze: build request for %s: %w", endpoint, err)
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("tvmaze: execute request for %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
 
@@ -275,7 +298,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, params url.Values
 
 	decoder := json.NewDecoder(resp.Body)
 	if err := decoder.Decode(target); err != nil {
-		return err
+		return fmt.Errorf("tvmaze: decode response: %w", err)
 	}
 	return nil
 }
@@ -306,11 +329,15 @@ func selectCandidate(candidates []Candidate, imdbID, tvdbID int, manualDate stri
 	}
 
 	selected := candidates[0]
+	updatedIMDB := imdbID
+	if updatedIMDB == 0 {
+		updatedIMDB = metautil.ParseIMDbNumeric(selected.Externals.IMDB)
+	}
 	updatedTVDB := tvdbID
 	if updatedTVDB == 0 && selected.Externals.TVDB != 0 {
 		updatedTVDB = selected.Externals.TVDB
 	}
-	return selected.ID, imdbID, updatedTVDB
+	return selected.ID, updatedIMDB, updatedTVDB
 }
 
 func candidateFromShow(show showResponse) Candidate {

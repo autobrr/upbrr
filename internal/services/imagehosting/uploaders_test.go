@@ -6,6 +6,7 @@ package imagehosting
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -28,7 +29,14 @@ type trackingReadCloser struct {
 }
 
 func (t *trackingReadCloser) Read(p []byte) (int, error) {
-	return t.reader.Read(p)
+	n, err := t.reader.Read(p)
+	if err == nil {
+		return n, nil
+	}
+	if errors.Is(err, io.EOF) {
+		return n, io.EOF
+	}
+	return n, fmt.Errorf("read tracking response body: %w", err)
 }
 
 func (t *trackingReadCloser) Close() error {
@@ -129,6 +137,71 @@ func TestHDBUploadBatchUsesSingleGalleryRequest(t *testing.T) {
 	}
 }
 
+func TestHDBUploadBatchChunksLargeUploads(t *testing.T) {
+	tmpDir := t.TempDir()
+	paths := make([]string, 0, hdbMaxBatchUploadImages+1)
+	for idx := 0; idx < hdbMaxBatchUploadImages+1; idx++ {
+		path := filepath.Join(tmpDir, fmt.Sprintf("shot-%02d.png", idx+1))
+		if err := os.WriteFile(path, []byte("testdata"), 0o644); err != nil {
+			t.Fatalf("write temp file: %v", err)
+		}
+		paths = append(paths, path)
+	}
+
+	requestFileCounts := make([]int, 0)
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			fileCount := 0
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read multipart part: %v", err)
+				}
+				_, _ = io.Copy(io.Discard, part)
+				if part.FileName() != "" {
+					fileCount++
+				}
+			}
+			requestFileCounts = append(requestFileCounts, fileCount)
+			var body strings.Builder
+			for idx := 0; idx < fileCount; idx++ {
+				_, _ = fmt.Fprintf(&body, "[url=https://img.hdbits.org/%d][img]https://t.hdbits.org/%d.jpg[/img][/url]", len(requestFileCounts), idx)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body.String())),
+			}, nil
+		}),
+	}
+
+	uploader := &hdbUploader{username: "user", passkey: "pass", client: client}
+	results, err := uploader.UploadBatchWithName(context.Background(), paths, "release")
+	if err != nil {
+		t.Fatalf("UploadBatchWithName returned error: %v", err)
+	}
+	if len(requestFileCounts) != 2 {
+		t.Fatalf("expected 2 chunk requests, got %d", len(requestFileCounts))
+	}
+	if requestFileCounts[0] != hdbMaxBatchUploadImages || requestFileCounts[1] != 1 {
+		t.Fatalf("unexpected chunk sizes: %v", requestFileCounts)
+	}
+	if len(results) != len(paths) {
+		t.Fatalf("expected %d results, got %d", len(paths), len(results))
+	}
+}
+
 func TestParseHDBUploadResultsMultipleMatches(t *testing.T) {
 	results, err := parseHDBUploadResults([]byte(
 		"[url=https://img.hdbits.org/a1][img]https://t.hdbits.org/a1.jpg[/img][/url]\n" +
@@ -145,6 +218,95 @@ func TestParseHDBUploadResultsMultipleMatches(t *testing.T) {
 	}
 	if results[1].WebURL != "https://img.hdbits.org/b2" {
 		t.Fatalf("unexpected second web URL: %q", results[1].WebURL)
+	}
+}
+
+func TestTHRUploaderPostsSourceAndKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://img2.torrenthr.org/api/1/upload" {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			fields := map[string]string{}
+			fileFields := []string{}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read multipart part: %v", err)
+				}
+				body, err := io.ReadAll(part)
+				if err != nil {
+					t.Fatalf("read part body: %v", err)
+				}
+				if part.FileName() == "" {
+					fields[part.FormName()] = string(body)
+					continue
+				}
+				fileFields = append(fileFields, part.FormName())
+			}
+			if fields["key"] != "secret" {
+				t.Fatalf("expected key field, got %q", fields["key"])
+			}
+			if len(fileFields) != 1 || fileFields[0] != "source" {
+				t.Fatalf("expected source file field, got %v", fileFields)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"image":{"url":"https://img2.torrenthr.org/images/shot.png"}}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&thrUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.RawURL != "https://img2.torrenthr.org/images/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+}
+
+func TestTHRUploaderRequiresImageURL(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"image":{},"error":{"message":"bad image"}}`)),
+			}, nil
+		}),
+	}
+
+	_, err := (&thrUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err == nil {
+		t.Fatal("expected missing URL error")
+	}
+	if !strings.Contains(err.Error(), "bad image") {
+		t.Fatalf("expected response error message, got %v", err)
 	}
 }
 

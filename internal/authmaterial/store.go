@@ -38,12 +38,14 @@ const (
 )
 
 type Record struct {
-	Username               string          `json:"username"`
-	PasswordHash           string          `json:"password_hash"`
-	EncryptionKeySeed      string          `json:"encryption_key_seed,omitempty"`
-	AllowUnencryptedExport bool            `json:"allow_unencrypted_export,omitempty"`
-	PendingUpgrade         *PendingUpgrade `json:"pending_upgrade,omitempty"`
-	CreatedAt              time.Time       `json:"created_at"`
+	Username                string          `json:"username"`
+	PasswordHash            string          `json:"password_hash"`
+	EncryptionKeySeed       string          `json:"encryption_key_seed,omitempty"`
+	AllowUnencryptedExport  bool            `json:"allow_unencrypted_export,omitempty"`
+	BrowseRoot              string          `json:"browse_root,omitempty"`
+	AllowUnrestrictedBrowse bool            `json:"allow_unrestricted_browse,omitempty"`
+	PendingUpgrade          *PendingUpgrade `json:"pending_upgrade,omitempty"`
+	CreatedAt               time.Time       `json:"created_at"`
 }
 
 type PendingUpgrade struct {
@@ -94,7 +96,7 @@ func (s *Store) Exists() (bool, error) {
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("web auth: stat auth file: %w", err)
 }
 
 func (s *Store) Load() (Record, error) {
@@ -103,11 +105,11 @@ func (s *Store) Load() (Record, error) {
 
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		return Record{}, err
+		return Record{}, fmt.Errorf("web auth: read auth file: %w", err)
 	}
 	var record Record
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return Record{}, err
+		return Record{}, fmt.Errorf("web auth: unmarshal auth file: %w", err)
 	}
 	return record, nil
 }
@@ -157,6 +159,8 @@ func (s *Store) UpdateRecord(updated Record) error {
 		record.PasswordHash = strings.TrimSpace(updated.PasswordHash)
 		record.EncryptionKeySeed = strings.TrimSpace(updated.EncryptionKeySeed)
 		record.AllowUnencryptedExport = updated.AllowUnencryptedExport
+		record.BrowseRoot = strings.TrimSpace(updated.BrowseRoot)
+		record.AllowUnrestrictedBrowse = updated.AllowUnrestrictedBrowse
 		record.PendingUpgrade = updated.PendingUpgrade
 		return nil
 	})
@@ -169,7 +173,9 @@ func (s *Store) BeginPendingUpgrade(current Record, target Record) error {
 		}
 		if strings.TrimSpace(record.PasswordHash) != strings.TrimSpace(current.PasswordHash) ||
 			strings.TrimSpace(record.EncryptionKeySeed) != strings.TrimSpace(current.EncryptionKeySeed) ||
-			record.AllowUnencryptedExport != current.AllowUnencryptedExport {
+			record.AllowUnencryptedExport != current.AllowUnencryptedExport ||
+			strings.TrimSpace(record.BrowseRoot) != strings.TrimSpace(current.BrowseRoot) ||
+			record.AllowUnrestrictedBrowse != current.AllowUnrestrictedBrowse {
 			return errors.New("web auth: auth record changed during upgrade")
 		}
 
@@ -242,12 +248,12 @@ func (s *Store) updateRecordLocked(apply func(record *Record) error) error {
 
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		return err
+		return fmt.Errorf("web auth: read auth file: %w", err)
 	}
 
 	var record Record
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return err
+		return fmt.Errorf("web auth: unmarshal auth file: %w", err)
 	}
 	if err := apply(&record); err != nil {
 		return err
@@ -268,37 +274,37 @@ func (r Record) AuthMaterial() Material {
 func (s *Store) saveLocked(record Record) error {
 	raw, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("web auth: marshal auth file: %w", err)
 	}
 
 	dir := filepath.Dir(s.path)
 	tmpFile, err := os.CreateTemp(dir, filepath.Base(s.path)+".tmp-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("web auth: create temp auth file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 
 	if _, err := tmpFile.Write(raw); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: write temp auth file: %w", err)
 	}
 	if err := tmpFile.Sync(); err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: sync temp auth file: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: close temp auth file: %w", err)
 	}
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: chmod temp auth file: %w", err)
 	}
 	if err := os.Rename(tmpPath, s.path); err != nil {
 		_ = os.Remove(tmpPath)
-		return err
+		return fmt.Errorf("web auth: replace auth file: %w", err)
 	}
 	return nil
 }
@@ -457,7 +463,7 @@ func parseAuthHashConfig(part string) (authHashParams, bool) {
 func randomString(length int) (string, error) {
 	buf := make([]byte, length)
 	if _, err := rand.Read(buf); err != nil {
-		return "", err
+		return "", fmt.Errorf("auth material: generate random string: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf)[:length], nil
 }

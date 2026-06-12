@@ -14,6 +14,7 @@ type SeriesMetadata struct {
 	TVDBID           int
 	Name             string
 	NameEnglish      string
+	SeriesYear       int
 	Overview         string
 	OverviewEnglish  string
 	Slug             string
@@ -38,6 +39,8 @@ type EpisodesData struct {
 	Episodes           []Episode
 	Aliases            []Alias
 	Slug               string
+	SeriesTitle        string
+	SeriesYear         int
 	AirsDays           []string
 	AirsTime           string
 	AirsTimezone       string

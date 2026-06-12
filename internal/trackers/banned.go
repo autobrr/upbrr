@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,15 +78,15 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 			c.cache[tracker] = groups
 			return groups, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("trackers: read banned groups: %w", err)
 	}
 
 	var payload bannedGroupsFile
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("trackers: unmarshal banned groups: %w", err)
 	}
 
-	for _, value := range strings.Split(payload.BannedGroups, ",") {
+	for value := range strings.SplitSeq(payload.BannedGroups, ",") {
 		cleaned := strings.ToLower(strings.TrimSpace(value))
 		if cleaned == "" {
 			continue
@@ -98,6 +99,102 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 }
 
 var builtinBannedGroups = map[string][]string{
+	"BHD": {
+		"Sicario",
+		"TOMMY",
+		"x0r",
+		"nikt0",
+		"FGT",
+		"d3g",
+		"MeGusta",
+		"YIFY",
+		"tigole",
+		"TEKNO3D",
+		"C4K",
+		"RARBG",
+		"4K4U",
+		"EASports",
+		"ReaLHD",
+		"Telly",
+		"AOC",
+		"WKS",
+		"SasukeducK",
+		"CRUCiBLE",
+		"iFT",
+		"ProRes",
+		"MezRips",
+		"Flights",
+		"BiTOR",
+		"iVy",
+		"QxR",
+		"SyncUP",
+		"OFT",
+		"TGS",
+	},
+	"DP": {
+		"ARCADE",
+		"aXXo",
+		"BANDOLEROS",
+		"BONE",
+		"BRrip",
+		"CM8",
+		"CrEwSaDe",
+		"CTFOH",
+		"dAV1nci",
+		"DNL",
+		"eranger2",
+		"FaNGDiNG0",
+		"FGT",
+		"FiSTER",
+		"flower",
+		"GalaxyTV",
+		"HD2DVD",
+		"HDTime",
+		"HorribleSubs",
+		"iHYTECH",
+		"ION10",
+		"iPlanet",
+		"KiNGDOM",
+		"LAMA",
+		"MeGusta",
+		"mHD",
+		"mSD",
+		"NaNi",
+		"NhaNc3",
+		"nHD",
+		"nikt0",
+		"nSD",
+		"OFT",
+		"PiTBULL",
+		"PRODJi",
+		"PSA",
+		"RARBG",
+		"Rifftrax",
+		"ROCKETRACCOON",
+		"SANTi",
+		"SasukeducK",
+		"SEEDSTER",
+		"ShAaNiG",
+		"Sicario",
+		"STUTTERSHIT",
+		"Subsplease",
+		"SyncUp",
+		"TAoE",
+		"TGALAXY",
+		"TGx",
+		"TORRENTGALAXY",
+		"ToVaR",
+		"Trix",
+		"TSP",
+		"TSPxL",
+		"ViSION",
+		"VXT",
+		"WAF",
+		"WKS",
+		"X0r",
+		"YIFY",
+		"YTS",
+	},
 	"TOS": {
 		"FL3ER",
 		"SUNS3T",

@@ -37,13 +37,13 @@ func DetectDiscType(ctx context.Context, root string) (string, error) {
 	}
 
 	discType := ""
-	err = filepath.WalkDir(trimmed, func(path string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(trimmed, func(_ string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if !entry.IsDir() {
@@ -69,7 +69,7 @@ func DetectDiscType(ctx context.Context, root string) (string, error) {
 			return discType, nil
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return "", err
+			return "", fmt.Errorf("filesystem: scan disc interrupted: %w", err)
 		}
 		return "", fmt.Errorf("filesystem: scan disc: %w", err)
 	}

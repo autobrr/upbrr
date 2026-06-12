@@ -14,9 +14,7 @@ export const formatLabel = (value: string) => {
 
 export const normalizeDefaultTrackerList = (value: ConfigValue): string[] => {
   if (Array.isArray(value)) {
-    return value
-      .map((entry) => String(entry ?? "").trim())
-      .filter(Boolean);
+    return value.map((entry) => String(entry ?? "").trim()).filter(Boolean);
   }
   if (typeof value === "string") {
     return value
@@ -27,16 +25,10 @@ export const normalizeDefaultTrackerList = (value: ConfigValue): string[] => {
   return [];
 };
 
-export const trackerHasDetails = (value: ConfigValue): boolean => {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "string") return value.trim().length > 0;
-  if (typeof value === "number") return value > 0;
-  if (typeof value === "boolean") return value;
-  if (Array.isArray(value)) {
-    return value.some((entry) => trackerHasDetails(entry));
+export const isSkipAutoTorrentEnabled = (configData?: ConfigMap | null) => {
+  const metadata = configData?.Metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return false;
   }
-  if (typeof value === "object") {
-    return Object.values(value as ConfigMap).some((entry) => trackerHasDetails(entry));
-  }
-  return false;
+  return Boolean((metadata as ConfigMap).SkipAutoTorrent);
 };

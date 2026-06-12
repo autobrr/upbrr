@@ -15,6 +15,9 @@ func Render(raw string) string {
 	if trimmed == "" {
 		return ""
 	}
+	if rendered, ok := renderBBCodeWithMediaInfo(trimmed); ok {
+		return sanitizeHTML(rendered)
+	}
 	if looksLikeHTML(trimmed) {
 		return sanitizeHTML(trimmed)
 	}

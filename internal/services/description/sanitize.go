@@ -19,6 +19,7 @@ type tagPolicy struct {
 
 var allowedTags = map[string]tagPolicy{
 	"a":          {},
+	"article":    {},
 	"b":          {},
 	"blockquote": {},
 	"br":         {selfClosing: true},
@@ -26,6 +27,9 @@ var allowedTags = map[string]tagPolicy{
 	"code":       {},
 	"details":    {},
 	"div":        {},
+	"dd":         {},
+	"dl":         {},
+	"dt":         {},
 	"em":         {},
 	"figcaption": {},
 	"figure":     {},
@@ -40,6 +44,7 @@ var allowedTags = map[string]tagPolicy{
 	"ol":         {},
 	"p":          {},
 	"pre":        {},
+	"section":    {},
 	"span":       {},
 	"strong":     {},
 	"summary":    {},
@@ -63,6 +68,7 @@ var allowedAttrs = map[string]map[string]bool{
 	"figure":     {"class": true},
 	"img":        {"src": true, "alt": true, "title": true, "class": true, "width": true},
 	"p":          {"style": true, "align": true},
+	"section":    {"class": true},
 	"span":       {"style": true, "class": true, "align": true},
 	"summary":    {"class": true},
 	"ul":         {"class": true},
@@ -297,12 +303,32 @@ func sanitizeClass(value string) (string, bool) {
 		}
 		if isAllowedComparisonClass(part) {
 			allowed = append(allowed, part)
+			continue
+		}
+		if isAllowedMediaInfoClass(part) {
+			allowed = append(allowed, part)
 		}
 	}
 	if len(allowed) == 0 {
 		return "", false
 	}
 	return strings.Join(allowed, " "), true
+}
+
+func isAllowedMediaInfoClass(value string) bool {
+	switch value {
+	case "mediainfo-preview",
+		"mediainfo",
+		"mediainfo__filename",
+		"mediainfo__general",
+		"mediainfo__video",
+		"mediainfo__audio",
+		"mediainfo__subtitles",
+		"mediainfo__raw":
+		return true
+	default:
+		return false
+	}
 }
 
 func isAllowedComparisonClass(value string) bool {

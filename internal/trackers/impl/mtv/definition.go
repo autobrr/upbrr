@@ -35,7 +35,7 @@ func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadR
 func (d *Definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
-		return trackers.DescriptionResult{}, ctx.Err()
+		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -47,7 +47,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return trackers.DescriptionResult{}, err
+				return trackers.DescriptionResult{}, fmt.Errorf("trackers: %w", err)
 			}
 			if req.Logger != nil {
 				req.Logger.Warnf("trackers: MTV description assets failed: %v", err)
@@ -56,9 +56,12 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 		}
 	}
 
-	description, err := descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
-	if err != nil {
-		return trackers.DescriptionResult{}, fmt.Errorf("trackers: MTV description build: %w", err)
+	description := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		description, err = descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		if err != nil {
+			return trackers.DescriptionResult{}, fmt.Errorf("trackers: MTV description build: %w", err)
+		}
 	}
 
 	if strings.TrimSpace(description) == "" && req.Logger != nil {

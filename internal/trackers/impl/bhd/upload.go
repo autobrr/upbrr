@@ -20,10 +20,12 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -65,7 +67,14 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if artifactPath != "" && req.Logger != nil {
 			req.Logger.Warnf("trackers: BHD upload failure artifact saved to %s", artifactPath)
 		}
-		return api.UploadSummary{}, fmt.Errorf("trackers: BHD api error: %s", response.StatusMessage)
+		message := commonhttp.ExtractHTTPErrorDetail(responseBody)
+		if message == "" {
+			message = commonhttp.RedactErrorDetail(response.StatusMessage)
+		}
+		if message == "" {
+			message = "upload failed"
+		}
+		return api.UploadSummary{}, fmt.Errorf("trackers: BHD api error: %s", message)
 	}
 
 	torrentID := extractTorrentID(response.StatusMessage)
@@ -79,10 +88,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
 		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "BHD")
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, "BHD"); err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 
@@ -123,7 +132,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
 	select {
 	case <-ctx.Done():
-		return uploadState{}, ctx.Err()
+		return uploadState{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -132,6 +141,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	if req.Meta.ExternalIDs.TMDBID == 0 {
 		return uploadState{}, errors.New("trackers: BHD missing tmdb id")
+	}
+	if err := validateBHDContainer(req.Meta); err != nil {
+		return uploadState{}, err
 	}
 
 	var err error
@@ -145,17 +157,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description, err := buildDescription(req.Meta, req.AppConfig, assets)
-	if err != nil {
-		return uploadState{}, err
-	}
+	description := buildDescription(req.Meta, req.AppConfig, assets)
 	mediaDump, err := resolveMediaDump(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, err
 	}
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
-		return uploadState{}, err
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 
 	tags := resolveTags(req.Meta)
@@ -243,30 +252,30 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return nil, "", fmt.Errorf("trackers: BHD write multipart field %q: %w", key, err)
 		}
 	}
 	if err := writer.WriteField("mediainfo", mediaDump); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD write multipart field %q: %w", "mediainfo", err)
 	}
 	file, err := os.Open(torrentPath)
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD open torrent file: %w", err)
 	}
 	defer file.Close()
 	part, err := writer.CreateFormFile("file", "torrent.torrent")
 	if err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD create torrent form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD copy torrent file: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("trackers: BHD close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
@@ -280,7 +289,7 @@ func resolveMediaDump(meta api.PreparedMetadata, dbPath string) (string, error) 
 		}
 		return text, nil
 	case "DVD":
-		text := firstNonEmpty(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
+		text := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
 		if text == "" {
 			return "", errors.New("trackers: BHD missing DVD MediaInfo text")
 		}
@@ -335,11 +344,11 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 	}
 	tmpRoot, err := db.Subdir(req.AppConfig.MainSettings.DBPath, "tmp")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, req.Meta, req.Meta.SourcePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: %w", err)
 	}
 	ext := ".txt"
 	if bytes.Contains(bytes.ToLower(payload), []byte("<html")) {
@@ -347,13 +356,16 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 	}
 	path := filepath.Join(tmpDir, "[BHD]"+name+ext)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
+		return "", fmt.Errorf("trackers: BHD create failure artifact dir: %w", err)
 	}
-	return path, os.WriteFile(path, payload, 0o600)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return "", fmt.Errorf("trackers: BHD write failure artifact: %w", err)
+	}
+	return path, nil
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
-	name := firstNonEmpty(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.ReleaseNameNoTag), strings.TrimSpace(meta.Filename), pathutil.Base(meta.SourcePath))
+	name := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.ReleaseNameNoTag), strings.TrimSpace(meta.Filename), pathutil.Base(meta.SourcePath))
 	if isDVDSource(meta.Source) {
 		audio := strings.Join(strings.Fields(strings.TrimSpace(meta.Audio)), " ")
 		if audio != "" && strings.TrimSpace(meta.VideoCodec) != "" {
@@ -368,6 +380,17 @@ func resolveCategoryID(meta api.PreparedMetadata) string {
 		return "2"
 	}
 	return "1"
+}
+
+func validateBHDContainer(meta api.PreparedMetadata) error {
+	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
+	case "REMUX", "ENCODE", "WEBDL", "WEBRIP":
+		container := strings.ToLower(strings.TrimSpace(meta.Container))
+		if container != "" && container != "mkv" && container != "mp4" {
+			return fmt.Errorf("trackers: BHD container %q is not allowed for %s: only MKV and MP4 are permitted", meta.Container, meta.Type)
+		}
+	}
+	return nil
 }
 
 func resolveSource(source string) string {

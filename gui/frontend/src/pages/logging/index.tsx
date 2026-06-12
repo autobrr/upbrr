@@ -28,7 +28,7 @@ export default function LoggingPage(props: Props) {
     handleSaveSettings,
     renderField,
     updateConfigValue,
-    sectionFieldMeta
+    sectionFieldMeta,
   } = props;
 
   return (
@@ -36,21 +36,22 @@ export default function LoggingPage(props: Props) {
       <header className="hero">
         <p className="eyebrow">upbrr</p>
         <h1>Logging</h1>
-        <p className="subtitle">
-          Monitor live logs and adjust logging settings.
-        </p>
+        <p className="subtitle">Monitor live logs and adjust logging settings.</p>
       </header>
 
       <section className="panel">
-        <div className="settings-header">
-          <div className="settings-meta">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-col gap-1">
             <p className="label">Logging controls</p>
-            <p className="helper">
-              Changes apply immediately and are saved to SQLite.
-            </p>
+            <p className="helper">Changes apply immediately and are saved to SQLite.</p>
           </div>
-          <div className="settings-actions">
-            <button className="ghost" type="button" onClick={loadSettings} disabled={settingsLoading}>
+          <div className="flex items-center gap-2">
+            <button
+              className="ghost"
+              type="button"
+              onClick={loadSettings}
+              disabled={settingsLoading}
+            >
               Reload
             </button>
             <button
@@ -64,9 +65,9 @@ export default function LoggingPage(props: Props) {
           </div>
         </div>
 
-        <div className="settings-body">
+        <div className="min-w-0">
           {configData ? (
-            <div className="settings-form">
+            <div className="flex flex-col gap-3">
               <LogSettingsPanel
                 configData={configData}
                 renderField={renderField}

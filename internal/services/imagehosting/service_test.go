@@ -6,9 +6,11 @@ package imagehosting
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +23,9 @@ type recordingRepo struct {
 	savedHost   string
 	savedPath   string
 	savedImages []api.UploadedImageLink
+	screens     []api.Screenshot
+	selections  []api.ScreenshotFinalSelection
+	uploads     []api.UploadedImageLink
 }
 
 func (r *recordingRepo) SaveUploadedImages(_ context.Context, path string, host string, images []api.UploadedImageLink) error {
@@ -82,14 +87,14 @@ func (r *recordingRepo) ListTrackerMetadataByPath(context.Context, string) ([]ap
 }
 func (r *recordingRepo) SaveScreenshot(context.Context, api.Screenshot) error { return nil }
 func (r *recordingRepo) ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error) {
-	return nil, nil
+	return append([]api.Screenshot(nil), r.screens...), nil
 }
 func (r *recordingRepo) DeleteScreenshot(context.Context, string) error { return nil }
 func (r *recordingRepo) SaveFinalSelections(context.Context, string, []api.ScreenshotFinalSelection) error {
 	return nil
 }
 func (r *recordingRepo) ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error) {
-	return nil, nil
+	return append([]api.ScreenshotFinalSelection(nil), r.selections...), nil
 }
 func (r *recordingRepo) DeleteFinalSelection(context.Context, string) error { return nil }
 func (r *recordingRepo) ReplaceScreenshotSlots(context.Context, string, []api.ScreenshotSlot) error {
@@ -102,7 +107,7 @@ func (r *recordingRepo) UpsertScreenshotSlotVariants(context.Context, string, []
 	return nil
 }
 func (r *recordingRepo) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
-	return nil, nil
+	return append([]api.UploadedImageLink(nil), r.uploads...), nil
 }
 func (r *recordingRepo) DeleteUploadedImage(context.Context, string, string, string) error {
 	return nil
@@ -178,7 +183,7 @@ func (u *blockingUploader) Upload(ctx context.Context, imagePath string) (upload
 	u.mu.Unlock()
 
 	<-ctx.Done()
-	return uploadResult{}, ctx.Err()
+	return uploadResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 }
 
 type fakeBatchUploader struct {
@@ -279,12 +284,71 @@ func TestUploadImagesSuccess(t *testing.T) {
 	}
 }
 
+func TestListCandidatesIncludesUploadedOnlyImages(t *testing.T) {
+	imagePath := filepath.Join(t.TempDir(), "tracker-artifact.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	uploadedAt := time.Now().UTC()
+	repo := &recordingRepo{
+		uploads: []api.UploadedImageLink{{
+			SourcePath: "/tmp/source",
+			ImagePath:  imagePath,
+			Host:       "pixhost",
+			UsageScope: "global",
+			ImgURL:     "https://pixhost/img.png",
+			RawURL:     "https://pixhost/raw.png",
+			WebURL:     "https://pixhost/view",
+			UploadedAt: uploadedAt,
+			SizeBytes:  8,
+		}},
+	}
+	service := &Service{logger: api.NopLogger{}, repo: repo}
+
+	images, err := service.ListCandidates(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"})
+	if err != nil {
+		t.Fatalf("ListCandidates returned error: %v", err)
+	}
+	if len(images) != 1 {
+		t.Fatalf("expected uploaded-only image candidate, got %d", len(images))
+	}
+	if images[0].Path != imagePath || images[0].Host != "pixhost" || images[0].RawURL != "https://pixhost/raw.png" {
+		t.Fatalf("expected uploaded-only candidate details, got %#v", images[0])
+	}
+	if !images[0].UploadedAt.Equal(uploadedAt) {
+		t.Fatalf("expected uploaded timestamp, got %v", images[0].UploadedAt)
+	}
+}
+
 func TestUploadImagesUnsupportedHost(t *testing.T) {
 	service := &Service{logger: api.NopLogger{}, uploaders: map[string]uploader{}}
 	meta := api.PreparedMetadata{SourcePath: "source"}
 	_, err := service.Upload(context.Background(), meta, "missing", "global", []api.ScreenshotImage{{Path: "x.png"}})
 	if err == nil {
 		t.Fatal("expected error for unsupported host")
+	}
+}
+
+func TestUploadImagesRejectsTrackerOwnedHostOutsideOwnerScope(t *testing.T) {
+	service := &Service{
+		logger:    api.NopLogger{},
+		uploaders: map[string]uploader{"hdb": &fakeUploader{}},
+	}
+	tmp, err := os.CreateTemp(t.TempDir(), "imagehosting-owned-host-*.png")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		t.Fatalf("close temp file: %v", err)
+	}
+	meta := api.PreparedMetadata{SourcePath: "source"}
+	_, err = service.Upload(context.Background(), meta, "hdb", "global", []api.ScreenshotImage{{Path: tmpPath}})
+	if err == nil {
+		t.Fatal("expected tracker-owned host outside owner scope to fail")
+	}
+	if !strings.Contains(err.Error(), "scoped to tracker HDB") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -422,6 +486,7 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	firstCallCh := uploaderStub.firstCallCh
 	done := make(chan error, 1)
 	go func() {
 		_, err := service.Upload(ctx, api.PreparedMetadata{SourcePath: "source"}, "test", "global", []api.ScreenshotImage{
@@ -432,7 +497,7 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 	}()
 
 	select {
-	case <-uploaderStub.firstCallCh:
+	case <-firstCallCh:
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for first upload to start")
 	}

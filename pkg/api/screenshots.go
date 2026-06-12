@@ -10,6 +10,7 @@ type ScreenshotPurpose string
 const (
 	ScreenshotPurposePreview ScreenshotPurpose = "preview"
 	ScreenshotPurposeFinal   ScreenshotPurpose = "final"
+	ScreenshotPurposeMenu    ScreenshotPurpose = "menu"
 )
 
 type ScreenshotSelection struct {
@@ -23,6 +24,7 @@ type ScreenshotOverrides struct {
 	ManualFrames           []int
 	ComparisonPaths        []string
 	ComparisonPrimaryIndex *int
+	MenuPaths              []string
 }
 
 type ScreenshotFinalSelection struct {
@@ -30,7 +32,7 @@ type ScreenshotFinalSelection struct {
 	ImagePath  string
 	Order      int
 	Source     string
-	SelectedAt time.Time
+	SelectedAt time.Time `ts_type:"string"`
 }
 
 type ScreenshotPlan struct {
@@ -52,7 +54,7 @@ type ScreenshotLinkedImage struct {
 	Tracker string
 	URL     string
 	Path    string
-	Host    string // Normalized host name (e.g., "imgbb", "ptpimg") or domain name
+	Host    string // Normalized host name (e.g., "imgbb", "pixhost") or domain name
 }
 
 type ScreenshotImage struct {
@@ -67,7 +69,7 @@ type ScreenshotImage struct {
 	ImgURL     string    `json:"ImgURL,omitempty"`
 	RawURL     string    `json:"RawURL,omitempty"`
 	WebURL     string    `json:"WebURL,omitempty"`
-	UploadedAt time.Time `json:"UploadedAt,omitempty"`
+	UploadedAt time.Time `json:"UploadedAt,omitempty" ts_type:"string"`
 }
 
 type ScreenshotPreview struct {

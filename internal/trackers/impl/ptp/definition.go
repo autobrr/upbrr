@@ -34,24 +34,30 @@ func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadR
 func (d *Definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
-		return trackers.DescriptionResult{}, ctx.Err()
+		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return trackers.DescriptionResult{}, err
+	assets := trackers.DescriptionAssets{}
+	if req.Assets != nil {
+		assets = *req.Assets
+	} else {
+		resolvedAssets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return trackers.DescriptionResult{}, fmt.Errorf("trackers: %w", err)
+			}
+			if req.Logger != nil {
+				req.Logger.Warnf("trackers: PTP description assets failed: %v", err)
+			}
+		} else {
+			assets = resolvedAssets
 		}
-		if req.Logger != nil {
-			req.Logger.Warnf("trackers: PTP description assets failed: %v", err)
-		}
-		assets = trackers.DescriptionAssets{}
 	}
 
-	description, err := buildDescription(req.Meta, req.TrackerConfig, req.AppConfig, assets)
-	if err != nil {
-		return trackers.DescriptionResult{}, fmt.Errorf("trackers: PTP description build: %w", err)
+	description := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		description = buildDescription(req.Meta, req.TrackerConfig, req.AppConfig, assets)
 	}
 	if strings.TrimSpace(description) == "" && req.Logger != nil {
 		req.Logger.Infof("trackers: PTP preparation description empty")

@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
+wails_cli="github.com/wailsapp/wails/v2/cmd/wails@v2.12.0"
 
 echo "Building frontend..."
 (
@@ -28,10 +29,9 @@ else
 fi
 
 echo "Building GUI binary..."
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
 (
   cd gui
-  wails build
+  go run "$wails_cli" build
 )
 
 echo "Done. Binaries: dist/upbrr (CLI) and gui/build/bin/upbrr-gui (GUI)"

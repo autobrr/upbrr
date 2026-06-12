@@ -4,6 +4,7 @@
 package db
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ const defaultDBName = "db.sqlite"
 func DefaultPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("database: user home dir: %w", err)
 	}
 	return filepath.Join(home, defaultDirName, defaultDBName), nil
 }
@@ -43,7 +44,7 @@ func Subdir(dbPath, name string) (string, error) {
 	}
 	path := filepath.Join(root, name)
 	if err := os.MkdirAll(path, 0o700); err != nil {
-		return "", err
+		return "", fmt.Errorf("database: create subdir %q: %w", name, err)
 	}
 	return path, nil
 }
@@ -62,5 +63,8 @@ func CookiePath(dbPath, fileName string) (string, error) {
 
 func ensureDir(path string) error {
 	dir := filepath.Dir(path)
-	return os.MkdirAll(dir, 0o700)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("database: create root dir: %w", err)
+	}
+	return nil
 }

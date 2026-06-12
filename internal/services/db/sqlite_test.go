@@ -15,12 +15,13 @@ import (
 	"time"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func readSchemaMigrationIDs(t *testing.T, db *sql.DB) []string {
 	t.Helper()
 
-	rows, err := db.Query(`SELECT id FROM schema_migrations ORDER BY id`)
+	rows, err := db.QueryContext(context.Background(), `SELECT id FROM schema_migrations ORDER BY id`)
 	if err != nil {
 		t.Fatalf("query schema_migrations: %v", err)
 	}
@@ -273,6 +274,13 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 			Year:   2024,
 			Type:   "movie",
 		},
+		Bluray: &api.BlurayMetadata{
+			IMDBID:            200,
+			SelectedReleaseID: "123",
+			Candidates: []api.BlurayReleaseCandidate{
+				{ReleaseID: "123", Title: "Example 4K", Score: 99.5},
+			},
+		},
 		UpdatedAt: idsStamp,
 	}); err != nil {
 		t.Fatalf("save external metadata: %v", err)
@@ -282,8 +290,18 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get external metadata: %v", err)
 	}
-	if metadata.TMDB == nil || metadata.TMDB.TMDBID != 100 || metadata.IMDB == nil || metadata.IMDB.IMDBID != 200 {
+	if metadata.TMDB == nil || metadata.TMDB.TMDBID != 100 || metadata.IMDB == nil || metadata.IMDB.IMDBID != 200 || metadata.Bluray == nil || metadata.Bluray.SelectedReleaseID != "123" {
 		t.Fatalf("unexpected external metadata: %#v", metadata)
+	}
+	if metadata.Bluray.IMDBID != 200 {
+		t.Fatalf("unexpected bluray imdb id: %#v", metadata.Bluray)
+	}
+	if len(metadata.Bluray.Candidates) != 1 {
+		t.Fatalf("unexpected bluray candidates: %#v", metadata.Bluray.Candidates)
+	}
+	candidate := metadata.Bluray.Candidates[0]
+	if candidate.ReleaseID != "123" || candidate.Title != "Example 4K" || candidate.Score != 99.5 {
+		t.Fatalf("unexpected bluray candidate: %#v", candidate)
 	}
 
 	if err := repo.SaveReleaseNameOverrides(ctx, "/media/file.mkv", ReleaseNameOverrides{
@@ -341,7 +359,7 @@ func TestOpenWithLoggerConfiguresConcurrentSQLiteSettings(t *testing.T) {
 	}
 
 	var journalMode string
-	if err := repo.db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+	if err := repo.db.QueryRowContext(context.Background(), `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
 		t.Fatalf("query journal_mode: %v", err)
 	}
 	if !strings.EqualFold(journalMode, "wal") {
@@ -349,7 +367,7 @@ func TestOpenWithLoggerConfiguresConcurrentSQLiteSettings(t *testing.T) {
 	}
 
 	var busyTimeout int
-	if err := repo.db.QueryRow(`PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+	if err := repo.db.QueryRowContext(context.Background(), `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
 		t.Fatalf("query busy_timeout: %v", err)
 	}
 	if busyTimeout != sqliteBusyTimeout {
@@ -391,7 +409,7 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 			}
 			ctx := context.Background()
 			for item := 0; item < 10; item++ {
-				sourcePath := filepath.Join("C:\\shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
+				sourcePath := testStoredPath("shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
 				if err := repo.Save(ctx, FileMetadata{
 					Path:      sourcePath,
 					Title:     fmt.Sprintf("Title %d-%d", idx, item),
@@ -421,7 +439,7 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 	ctx := context.Background()
 	for idx := range repos {
 		for item := 0; item < 10; item++ {
-			sourcePath := filepath.Join("C:\\shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
+			sourcePath := testStoredPath("shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
 			if _, err := repos[0].GetByPath(ctx, sourcePath); err != nil {
 				t.Fatalf("get %s: %v", sourcePath, err)
 			}
@@ -447,7 +465,7 @@ func TestSQLiteRepositoryConcurrentReadsOnDisk(t *testing.T) {
 
 	ctx := context.Background()
 	for i := 0; i < 25; i++ {
-		sourcePath := filepath.Join("C:\\reads", fmt.Sprintf("release-%d.mkv", i))
+		sourcePath := testStoredPath("reads", fmt.Sprintf("release-%d.mkv", i))
 		if err := writerRepo.Save(ctx, FileMetadata{
 			Path:      sourcePath,
 			Title:     fmt.Sprintf("Title %d", i),
@@ -480,7 +498,7 @@ func TestSQLiteRepositoryConcurrentReadsOnDisk(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for item := 0; item < 25; item++ {
-				sourcePath := filepath.Join("C:\\reads", fmt.Sprintf("release-%d.mkv", item))
+				sourcePath := testStoredPath("reads", fmt.Sprintf("release-%d.mkv", item))
 				got, err := repo.GetByPath(ctx, sourcePath)
 				if err != nil {
 					errCh <- fmt.Errorf("reader %d get %d: %w", idx, item, err)
@@ -538,7 +556,7 @@ func TestSQLiteRepositoryReadsOverlapWithWriteTransaction(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	sourcePath := filepath.Join("C:\\overlap", "release.mkv")
+	sourcePath := testStoredPath("overlap", "release.mkv")
 	if err := writerRepo.Save(ctx, FileMetadata{
 		Path:      sourcePath,
 		Title:     "Before",
@@ -645,7 +663,7 @@ func TestIsBusyErrorUnwrapsSQLiteErrors(t *testing.T) {
 	if err := lockingRepo.Migrate(); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if _, err := contendingRepo.db.Exec(`PRAGMA busy_timeout = 1`); err != nil {
+	if _, err := contendingRepo.db.ExecContext(context.Background(), `PRAGMA busy_timeout = 1`); err != nil {
 		t.Fatalf("set contending busy_timeout: %v", err)
 	}
 
@@ -664,7 +682,7 @@ func TestIsBusyErrorUnwrapsSQLiteErrors(t *testing.T) {
 	}()
 
 	err = contendingRepo.Save(ctx, FileMetadata{
-		Path:      filepath.Join("C:\\locked", "file.mkv"),
+		Path:      testStoredPath("locked", "file.mkv"),
 		Title:     "Locked",
 		UpdatedAt: time.Now().UTC(),
 	})
@@ -798,7 +816,7 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 		`INSERT INTO description_overrides (source_path, description, updated_at) VALUES ('/tmp/source', 'latest desc', '')`,
 	}
 	for _, statement := range statements {
-		if _, err := dbConn.Exec(statement); err != nil {
+		if _, err := dbConn.ExecContext(context.Background(), statement); err != nil {
 			t.Fatalf("seed legacy schema: %v", err)
 		}
 	}
@@ -831,7 +849,7 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 		t.Fatalf("expected invalid input for blank path lookup, got %v", err)
 	}
 
-	row := dbConn.QueryRow(`SELECT COUNT(*) FROM description_overrides`)
+	row := dbConn.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM description_overrides`)
 	var count int
 	if err := row.Scan(&count); err != nil {
 		t.Fatalf("count migrated overrides: %v", err)
@@ -841,7 +859,7 @@ func TestMigrateV7NormalizesCorruptLegacyDescriptionOverrides(t *testing.T) {
 	}
 
 	var updatedAt string
-	if err := dbConn.QueryRow(`SELECT updated_at FROM description_overrides WHERE source_path = ? AND group_key = ?`, "/tmp/source", "").Scan(&updatedAt); err != nil {
+	if err := dbConn.QueryRowContext(context.Background(), `SELECT updated_at FROM description_overrides WHERE source_path = ? AND group_key = ?`, "/tmp/source", "").Scan(&updatedAt); err != nil {
 		t.Fatalf("read migrated updated_at: %v", err)
 	}
 	if strings.TrimSpace(updatedAt) == "" {
@@ -870,7 +888,7 @@ func TestSQLiteMigrationBootstrapRecordsLedgerAndCompatibilityStamp(t *testing.T
 	}
 
 	var userVersion int
-	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if userVersion != legacyCompatibilitySchemaVersion {
@@ -914,7 +932,7 @@ func TestSQLiteMigrationLegacyV8BridgeIsIdempotent(t *testing.T) {
 	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
 		t.Fatalf("apply legacy v8: %v", err)
 	}
-	if _, err := rawDB.Exec(`PRAGMA user_version = 8`); err != nil {
+	if _, err := rawDB.ExecContext(context.Background(), `PRAGMA user_version = 8`); err != nil {
 		t.Fatalf("set legacy user_version: %v", err)
 	}
 
@@ -931,11 +949,85 @@ func TestSQLiteMigrationLegacyV8BridgeIsIdempotent(t *testing.T) {
 	}
 
 	var userVersion int
-	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("read user_version after bridge: %v", err)
 	}
 	if userVersion != legacyCompatibilitySchemaVersion {
 		t.Fatalf("expected legacy compatibility user_version %d after bridge, got %d", legacyCompatibilitySchemaVersion, userVersion)
+	}
+}
+
+func TestSQLiteMigrationBridgesLegacyV8AndAppliesReleaseCategory(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	if err := createBaselineSchema(ctx, rawDB); err != nil {
+		t.Fatalf("create baseline schema: %v", err)
+	}
+	if err := migrateAddDVDMediaInfo(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v2: %v", err)
+	}
+	if err := migrateAddReleaseOverrideUseSeasonEpisode(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v3: %v", err)
+	}
+	if err := migrateAddHistoryIndexes(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v4: %v", err)
+	}
+	if err := migrateBackfillUploadedImageUsageScope(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v5: %v", err)
+	}
+	if err := migrateAddScreenshotSlotTables(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v6: %v", err)
+	}
+	if err := migrateNormalizeDescriptionOverrides(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v7: %v", err)
+	}
+	if err := migrateAddTrackerCookies(ctx, rawDB); err != nil {
+		t.Fatalf("apply legacy v8: %v", err)
+	}
+	if _, err := rawDB.ExecContext(context.Background(), `PRAGMA user_version = 8`); err != nil {
+		t.Fatalf("set legacy user_version: %v", err)
+	}
+
+	if err := Migrate(rawDB); err != nil {
+		t.Fatalf("migrate bridged legacy v8 db: %v", err)
+	}
+
+	if ok, err := tableColumnExists(ctx, rawDB, "file_metadata", "release_category"); err != nil {
+		t.Fatalf("check release_category column: %v", err)
+	} else if !ok {
+		t.Fatal("expected release_category column to be added after bridging legacy v8 db")
+	}
+
+	ids := readSchemaMigrationIDs(t, rawDB)
+	expected := []string{"2026_04_add_tracker_cookies", "2026_04_add_release_category"}
+	for _, id := range expected {
+		found := false
+		for _, got := range ids {
+			if got == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected migration %q to be recorded after v8 bridge, got %v", id, ids)
+		}
+	}
+
+	var userVersion int
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
+		t.Fatalf("read user_version after v8 bridge: %v", err)
+	}
+	if userVersion != legacyCompatibilitySchemaVersion {
+		t.Fatalf("expected compatibility user_version %d after v8 bridge, got %d", legacyCompatibilitySchemaVersion, userVersion)
 	}
 }
 
@@ -955,7 +1047,7 @@ func TestSQLiteMigrationKeepsLegacyRollbackCompatibilityStamp(t *testing.T) {
 	}
 
 	var userVersion int
-	if err := rawDB.QueryRow(`PRAGMA user_version`).Scan(&userVersion); err != nil {
+	if err := rawDB.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatalf("read compatibility user_version: %v", err)
 	}
 	if userVersion != legacyCompatibilitySchemaVersion {
@@ -967,7 +1059,7 @@ func TestSQLiteMigrationKeepsLegacyRollbackCompatibilityStamp(t *testing.T) {
 	if userVersion < 3 {
 		t.Fatalf("rollback binary would misclassify db as pre-v3, got user_version %d", userVersion)
 	}
-	if _, err := rawDB.Exec(`ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`); err == nil {
+	if _, err := rawDB.ExecContext(context.Background(), `ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`); err == nil {
 		t.Fatalf("expected legacy v3 ALTER to be unsafe if rerun, but it unexpectedly succeeded")
 	}
 }
@@ -986,7 +1078,7 @@ func TestSQLiteMigrationUnknownAppliedIDsAreTolerated(t *testing.T) {
 	if err := Migrate(rawDB); err != nil {
 		t.Fatalf("initial migrate: %v", err)
 	}
-	if _, err := rawDB.Exec(`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "branch_only_future_migration", "2026-04-18T00:00:00Z"); err != nil {
+	if _, err := rawDB.ExecContext(context.Background(), `INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "branch_only_future_migration", "2026-04-18T00:00:00Z"); err != nil {
 		t.Fatalf("insert unknown migration: %v", err)
 	}
 
@@ -1058,7 +1150,7 @@ func TestSQLiteMigrationFailsWhenAppliedMigrationIsMissingDependency(t *testing.
 	if err := ensureSchemaMigrationsTable(context.Background(), rawDB); err != nil {
 		t.Fatalf("ensure schema_migrations: %v", err)
 	}
-	if _, err := rawDB.Exec(`INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "child", "2026-04-18T00:00:00Z"); err != nil {
+	if _, err := rawDB.ExecContext(context.Background(), `INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)`, "child", "2026-04-18T00:00:00Z"); err != nil {
 		t.Fatalf("insert inconsistent applied migration: %v", err)
 	}
 
@@ -1242,11 +1334,58 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save uploaded image: %v", err)
 	}
+	if err := repo.ReplaceScreenshotSlots(ctx, targetPath, []ScreenshotSlot{{
+		SourcePath:          targetPath,
+		SlotOrder:           0,
+		SourceKind:          "tracker_metadata",
+		OriginalURL:         "https://example.invalid/a.png",
+		ImagePath:           "/tmp/slot-target-01.png",
+		RenderInScreenshots: true,
+		Variants: []ScreenshotSlotVariant{{
+			SourcePath: targetPath,
+			SlotOrder:  0,
+			Host:       "imgbox",
+			UsageScope: "global",
+			ImagePath:  "/tmp/slot-target-01.png",
+			ImgURL:     "https://example.invalid/a.png",
+			UploadedAt: now,
+		}},
+	}}); err != nil {
+		t.Fatalf("save screenshot slots target: %v", err)
+	}
+	if err := repo.ReplaceScreenshotSlots(ctx, otherPath, []ScreenshotSlot{{
+		SourcePath:          otherPath,
+		SlotOrder:           0,
+		SourceKind:          "tracker_metadata",
+		OriginalURL:         "https://example.invalid/other.png",
+		RenderInScreenshots: true,
+	}}); err != nil {
+		t.Fatalf("save screenshot slots other: %v", err)
+	}
 	if err := repo.CreateUploadRecord(ctx, UploadRecord{Tracker: "BLU", Status: "pending", SourcePath: targetPath}); err != nil {
 		t.Fatalf("save upload record target: %v", err)
 	}
 	if err := repo.CreateUploadRecord(ctx, UploadRecord{Tracker: "BLU", Status: "pending", SourcePath: otherPath}); err != nil {
 		t.Fatalf("save upload record other: %v", err)
+	}
+	if err := repo.SaveUIState(ctx, "target-state", "Target", api.UIState{
+		"path": targetPath,
+		"preview": map[string]any{
+			"SourcePath":  targetPath,
+			"TrackerData": []any{map[string]any{"Tracker": "BLU", "TrackerID": "123"}},
+		},
+	}); err != nil {
+		t.Fatalf("save target ui state: %v", err)
+	}
+	if err := repo.SaveUIState(ctx, "target-upload-state", "Target upload", api.UIState{
+		"trackerUploadSnapshot": map[string]any{"sourcePath": targetPath},
+	}); err != nil {
+		t.Fatalf("save target upload ui state: %v", err)
+	}
+	if err := repo.SaveUIState(ctx, "other-state", "Other", api.UIState{
+		"path": otherPath,
+	}); err != nil {
+		t.Fatalf("save other ui state: %v", err)
 	}
 
 	if err := repo.PurgeContentData(ctx, targetPath); err != nil {
@@ -1286,9 +1425,15 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if uploaded, err := repo.ListUploadedImagesByPath(ctx, targetPath); err != nil || len(uploaded) != 0 {
 		t.Fatalf("expected uploaded images removed, got len=%d err=%v", len(uploaded), err)
 	}
+	if slots, err := repo.ListScreenshotSlotsByPath(ctx, targetPath); err != nil || len(slots) != 0 {
+		t.Fatalf("expected screenshot slots removed, got len=%d err=%v", len(slots), err)
+	}
 
 	if _, err := repo.GetByPath(ctx, otherPath); err != nil {
 		t.Fatalf("expected other path untouched, got %v", err)
+	}
+	if slots, err := repo.ListScreenshotSlotsByPath(ctx, otherPath); err != nil || len(slots) != 1 {
+		t.Fatalf("expected other screenshot slots untouched, got len=%d err=%v", len(slots), err)
 	}
 	pending, err := repo.ListPendingUploads(ctx)
 	if err != nil {
@@ -1296,6 +1441,13 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}
 	if len(pending) != 1 || pending[0].SourcePath != otherPath {
 		t.Fatalf("expected only other upload record remaining, got %#v", pending)
+	}
+	uiStates, err := repo.ListUIStates(ctx)
+	if err != nil {
+		t.Fatalf("list ui states: %v", err)
+	}
+	if len(uiStates) != 1 || uiStates[0].ID != "other-state" {
+		t.Fatalf("expected only other ui state remaining, got %#v", uiStates)
 	}
 }
 
@@ -1330,13 +1482,31 @@ func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save screenshot: %v", err)
 	}
+	if err := repo.ReplaceScreenshotSlots(ctx, "/media/orphan-slot.mkv", []ScreenshotSlot{{
+		SourcePath:          "/media/orphan-slot.mkv",
+		SlotOrder:           0,
+		SourceKind:          "tracker_metadata",
+		OriginalURL:         "https://example.invalid/slot.png",
+		RenderInScreenshots: true,
+	}}); err != nil {
+		t.Fatalf("save screenshot slot: %v", err)
+	}
+	if err := repo.UpsertScreenshotSlotVariants(ctx, "/media/orphan-variant.mkv", []ScreenshotSlotVariant{{
+		SourcePath: "/media/orphan-variant.mkv",
+		SlotOrder:  0,
+		Host:       "imgbox",
+		UsageScope: "global",
+		ImgURL:     "https://example.invalid/variant.png",
+	}}); err != nil {
+		t.Fatalf("save screenshot slot variant: %v", err)
+	}
 
 	paths, err := repo.ListStoredReleasePaths(ctx)
 	if err != nil {
 		t.Fatalf("list stored release paths: %v", err)
 	}
 
-	expected := []string{"/media/a.mkv", "/media/orphan-shot.mkv", "/media/orphan-upload.mkv"}
+	expected := []string{"/media/a.mkv", "/media/orphan-shot.mkv", "/media/orphan-slot.mkv", "/media/orphan-upload.mkv", "/media/orphan-variant.mkv"}
 	if len(paths) != len(expected) {
 		t.Fatalf("expected %d stored paths, got %d (%#v)", len(expected), len(paths), paths)
 	}
@@ -1453,7 +1623,7 @@ func TestSQLiteMigrationBackfillsUploadedImageUsageScope(t *testing.T) {
 		`PRAGMA user_version = 4`,
 	}
 	for _, statement := range statements {
-		if _, err := rawDB.Exec(statement); err != nil {
+		if _, err := rawDB.ExecContext(context.Background(), statement); err != nil {
 			t.Fatalf("exec setup statement: %v", err)
 		}
 	}
@@ -1585,9 +1755,9 @@ func TestSQLiteRepositoryScreenshotSlotsRoundTrip(t *testing.T) {
 			SourcePath:          "/tmp/source",
 			SlotOrder:           1,
 			SourceKind:          "description",
-			OriginalKey:         "https://ptpimg.me/original-b.png",
-			OriginalURL:         "https://ptpimg.me/original-b.png",
-			OriginalHost:        "ptpimg",
+			OriginalKey:         "https://pixhost.to/original-b.png",
+			OriginalURL:         "https://pixhost.to/original-b.png",
+			OriginalHost:        "pixhost",
 			SectionKind:         "comparison",
 			RenderInScreenshots: true,
 		},
@@ -1616,7 +1786,7 @@ func TestSQLiteRepositoryScreenshotSlotsRoundTrip(t *testing.T) {
 	if len(loaded) != 2 {
 		t.Fatalf("expected 2 slots, got %d", len(loaded))
 	}
-	if loaded[0].OriginalURL != "https://imgbb.com/original-a.png" || loaded[1].OriginalHost != "ptpimg" {
+	if loaded[0].OriginalURL != "https://imgbb.com/original-a.png" || loaded[1].OriginalHost != "pixhost" {
 		t.Fatalf("unexpected loaded slots: %#v", loaded)
 	}
 	if len(loaded[0].Variants) != 1 || loaded[0].Variants[0].UsageScope != "global" {
@@ -1628,16 +1798,20 @@ func TestSQLiteRepositoryScreenshotSlotsRoundTrip(t *testing.T) {
 }
 
 func stringPtr(value string) *string {
-	copy := value
-	return &copy
+	ptrValue := value
+	return &ptrValue
 }
 
 func intPtr(value int) *int {
-	copy := value
-	return &copy
+	ptrValue := value
+	return &ptrValue
 }
 
 func boolPtr(value bool) *bool {
-	copy := value
-	return &copy
+	ptrValue := value
+	return &ptrValue
+}
+
+func testStoredPath(parts ...string) string {
+	return filepath.ToSlash(filepath.Join(parts...))
 }

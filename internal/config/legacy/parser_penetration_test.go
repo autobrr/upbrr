@@ -118,7 +118,7 @@ func TestParserUnicodeStrings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	m := val.(map[string]any)
+	m := requireMap(t, val)
 	if m["title"] != "日本語 — ÿµ€" {
 		t.Fatalf("got %q", m["title"])
 	}
@@ -288,7 +288,7 @@ func TestParserIntegerKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	m := val.(map[string]any)
+	m := requireMap(t, val)
 	if m["1"] != "a" || m["2"] != "b" {
 		t.Fatalf("got %v", m)
 	}

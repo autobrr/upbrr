@@ -23,8 +23,10 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guiapp"
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -34,6 +36,7 @@ import (
 const previewTimeout = 30 * time.Minute
 
 type Backend struct {
+	runtimeMu   sync.RWMutex
 	cfg         config.Config
 	core        api.Core
 	coreInitErr error
@@ -65,6 +68,7 @@ type backendLogStream struct {
 
 type runOptions struct {
 	Debug       bool
+	NoSeed      bool
 	RunLogLevel string
 }
 
@@ -74,22 +78,27 @@ func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
 
 func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub) (*Backend, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("webserver: context is required")
 	}
 	logger, err := logging.New(cfg.Logging, cfg.MainSettings.DBPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("web: %w", err)
 	}
 
-	repo, err := db.OpenWithLogger(cfg.MainSettings.DBPath, logger)
+	repo, err := db.OpenWithLoggerContext(ctx, cfg.MainSettings.DBPath, logger)
 	if err != nil {
 		_ = logger.Close()
-		return nil, err
+		return nil, fmt.Errorf("web: %w", err)
 	}
 	if err := repo.MigrateContext(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
-		return nil, err
+		return nil, fmt.Errorf("web: %w", err)
+	}
+	if err := repo.ClearUIState(ctx); err != nil {
+		_ = repo.Close()
+		_ = logger.Close()
+		return nil, fmt.Errorf("web: %w", err)
 	}
 
 	var coreSvc api.Core
@@ -98,10 +107,9 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		coreInitErr = err
 		logger.Warnf("web: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
-		coreSvc, err = core.New(api.CoreDependencies{
-			Context: ctx,
-			Config:  cfg,
-			Logger:  logger,
+		coreSvc, err = core.NewWithContext(ctx, api.CoreDependencies{
+			Config: cfg,
+			Logger: logger,
 			Services: api.ServiceSet{
 				Filesystem: filesystem.NewValidator(),
 			},
@@ -110,7 +118,7 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		if err != nil {
 			_ = repo.Close()
 			_ = logger.Close()
-			return nil, err
+			return nil, fmt.Errorf("web: %w", err)
 		}
 	}
 
@@ -131,29 +139,22 @@ func (b *Backend) Close() error {
 	b.stopAllLogStreams()
 	b.stopAllDupeJobs()
 	b.stopAllUploadJobs()
-	if b.core != nil {
-		_ = b.core.Close()
+	rt := b.runtimeSnapshot()
+	if rt.core != nil {
+		_ = rt.core.Close()
 	}
 	if b.repo != nil {
 		_ = b.repo.Close()
 	}
-	if b.logger != nil {
-		_ = b.logger.Close()
+	if rt.logger != nil {
+		_ = rt.logger.Close()
 	}
 	return nil
 }
 
 func (b *Backend) requireCore() error {
-	if b == nil {
-		return errors.New("backend not initialized")
-	}
-	if b.core != nil {
-		return nil
-	}
-	if b.coreInitErr != nil {
-		return fmt.Errorf("core unavailable: %w", b.coreInitErr)
-	}
-	return errors.New("core not initialized")
+	_, err := b.requireRuntime()
+	return err
 }
 
 func (b *Backend) requireHistoryRepo() error {
@@ -163,13 +164,13 @@ func (b *Backend) requireHistoryRepo() error {
 	return nil
 }
 
-func (b *Backend) DetectDiscType(path string) (string, error) {
+func (b *Backend) DetectDiscType(ctx context.Context, path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", errors.New("path is required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
-	return filesystem.DetectDiscType(ctx, path)
+	return wrapWebResult(filesystem.DetectDiscType(ctx, path))
 }
 
 func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
@@ -196,19 +197,39 @@ func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL s
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackersList,
+		Trackers:        append([]string{}, trackersList...),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Options:         b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 		ConfirmBDMVRescan:    confirmBDMVRescan,
 	}
 
-	return b.core.FetchMetadataPreview(progressCtx, req)
+	return wrapWebResult(b.currentCore().FetchMetadataPreview(progressCtx, req))
+}
+
+type blurayCandidateSelector interface {
+	SelectBlurayCandidate(ctx context.Context, sourcePath string, releaseID string) (api.MetadataPreview, error)
+}
+
+func (b *Backend) SelectBlurayCandidate(path string, releaseID string) (api.MetadataPreview, error) {
+	if strings.TrimSpace(path) == "" {
+		return api.MetadataPreview{}, errors.New("path is required")
+	}
+	if strings.TrimSpace(releaseID) == "" {
+		return api.MetadataPreview{}, errors.New("release ID is required")
+	}
+	if err := b.requireCore(); err != nil {
+		return api.MetadataPreview{}, err
+	}
+	selector, ok := b.currentCore().(blurayCandidateSelector)
+	if !ok {
+		return api.MetadataPreview{}, errors.New("blu-ray candidate selection is unavailable in this build")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return wrapWebResult(selector.SelectBlurayCandidate(ctx, path, releaseID))
 }
 
 func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
@@ -235,7 +256,7 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 		b.hub.Emit(sessionID, "metadata:progress", update)
 	})
 
-	tmpRoot, err := db.Subdir(b.cfg.MainSettings.DBPath, "tmp")
+	tmpRoot, err := db.Subdir(b.currentConfig().MainSettings.DBPath, "tmp")
 	if err != nil {
 		return api.MetadataPreview{}, fmt.Errorf("reset metadata: resolve tmp dir: %w", err)
 	}
@@ -271,12 +292,13 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 	if err == nil {
 		releaseBase := paths.ReleaseTempBase(api.PreparedMetadata{
 			Release: api.ReleaseInfo{
-				Title:  stored.Title,
-				Alt:    stored.Alt,
-				Year:   stored.Year,
-				Source: stored.Source,
-				Type:   stored.Type,
-				Group:  stored.Group,
+				Title:    stored.Title,
+				Alt:      stored.Alt,
+				Year:     stored.Year,
+				Category: string(stored.Category),
+				Source:   stored.Source,
+				Type:     stored.Type,
+				Group:    stored.Group,
 			},
 		}, trimmedPath)
 		tmpDirs[filepath.Join(tmpRoot, releaseBase)] = struct{}{}
@@ -291,27 +313,24 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 		return api.MetadataPreview{}, fmt.Errorf("reset metadata: purge sqlite: %w", err)
 	}
 	for _, filePath := range artifactPaths {
-		_, _ = removeIfWithinRoot(tmpRoot, filePath, false)
+		_ = removeIfWithinRoot(tmpRoot, filePath, false)
 	}
 	for dir := range tmpDirs {
-		_, _ = removeIfWithinRoot(tmpRoot, dir, true)
+		_ = removeIfWithinRoot(tmpRoot, dir, true)
 	}
 
 	req := api.Request{
 		Paths:           []string{trimmedPath},
 		Mode:            api.ModeGUI,
-		Trackers:        trackersList,
+		Trackers:        append([]string{}, trackersList...),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Options:         b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 		ConfirmBDMVRescan:    confirmBDMVRescan,
 	}
-	return b.core.FetchMetadataPreview(progressCtx, req)
+	return wrapWebResult(b.currentCore().FetchMetadataPreview(progressCtx, req))
 }
 
 func (b *Backend) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string) (api.DupeCheckSummary, error) {
@@ -323,16 +342,13 @@ func (b *Backend) CheckDupes(path string, overrides api.ExternalIDOverrides, nam
 	req := api.Request{
 		Paths:    []string{strings.TrimSpace(path)},
 		Mode:     api.ModeGUI,
-		Trackers: trackersList,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Trackers: append([]string{}, trackersList...),
+		Options:  b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
-	return b.core.CheckDupes(ctx, req)
+	return wrapWebResult(b.currentCore().CheckDupes(ctx, req))
 }
 
 func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string) (api.PreparationPreview, error) {
@@ -344,13 +360,10 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 	req := api.Request{
 		Paths:          []string{strings.TrimSpace(path)},
 		Mode:           api.ModeGUI,
-		Trackers:       trackersList,
+		Trackers:       append([]string{}, trackersList...),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Options:        b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
@@ -363,16 +376,19 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 			"line": line,
 		})
 	})
-	return b.core.FetchPreparationPreview(progressCtx, req)
+	return wrapWebResult(b.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
-func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreRuleFailures bool, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
-	runOpts, err := b.buildRunOptions(debug, runLogLevel)
+	runOpts, err := b.buildRunOptions(debug, noSeed, runLogLevel)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
+	}
+	if logger := b.currentLogger(); logger != nil {
+		logger.Debugf("web: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", strings.TrimSpace(path), debug, noSeed, runOpts.RunLogLevel)
 	}
 	runCore, runLogger, err := b.buildRunCore(runOpts)
 	if err != nil {
@@ -388,19 +404,22 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 		Paths:                       []string{strings.TrimSpace(path)},
 		Mode:                        api.ModeGUI,
 		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
-		Trackers:                    trackersList,
+		Trackers:                    append([]string{}, trackersList...),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
-		IgnoreTrackerRuleFailures:   ignoreRuleFailures,
-		Options:                     buildRunUploadOptions(b.cfg, runOpts),
+		IgnoreTrackerRuleFailures:   false,
+		Options:                     buildRunUploadOptions(b.currentConfig(), runOpts),
 		ExternalIDOverrides:         overrides,
 		ReleaseNameOverrides:        nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 	}
 	req.Options.DryRun = true
-	if err := guishared.SeedRunCorePreparedMeta(ctx, b.core, runCore, req); err != nil {
-		return api.TrackerDryRunPreview{}, err
+	if err := guishared.SeedRunCorePreparedMeta(ctx, b.currentCore(), runCore, req); err != nil {
+		return api.TrackerDryRunPreview{}, fmt.Errorf("web: %w", err)
 	}
-	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
+	progressCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+		b.hub.Emit(sessionID, trackerUploadProgressEvent, update)
+	})
+	progressCtx = bdinfo.WithProgressReporter(progressCtx, func(line string) {
 		if strings.TrimSpace(line) == "" {
 			return
 		}
@@ -409,7 +428,7 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 			"line": line,
 		})
 	})
-	return runCore.FetchTrackerDryRunPreview(progressCtx, req)
+	return wrapWebResult(runCore.FetchTrackerDryRunPreview(progressCtx, req))
 }
 
 func (b *Backend) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string) (api.DescriptionBuilderPreview, error) {
@@ -421,17 +440,14 @@ func (b *Backend) FetchDescriptionBuilder(path string, overrides api.ExternalIDO
 	req := api.Request{
 		Paths:          []string{strings.TrimSpace(path)},
 		Mode:           api.ModeGUI,
-		Trackers:       trackersList,
+		Trackers:       append([]string{}, trackersList...),
 		IgnoreDupesFor: normalizeTrackerList(ignoreDupesFor),
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Options:        b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
-	return b.core.FetchDescriptionBuilderPreview(ctx, req)
+	return wrapWebResult(b.currentCore().FetchDescriptionBuilderPreview(ctx, req))
 }
 
 func (b *Backend) RenderDescription(raw string) (string, error) {
@@ -440,7 +456,7 @@ func (b *Backend) RenderDescription(raw string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.RenderDescription(ctx, raw)
+	return wrapWebResult(b.currentCore().RenderDescription(ctx, raw))
 }
 
 func (b *Backend) SaveDescriptionOverride(path string, groupKey string, raw string, trackers []string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.DescriptionBuilderGroup, error) {
@@ -449,14 +465,14 @@ func (b *Backend) SaveDescriptionOverride(path string, groupKey string, raw stri
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.SaveDescriptionOverride(ctx, api.Request{
+	return wrapWebResult(b.currentCore().SaveDescriptionOverride(ctx, api.Request{
 		Paths:                    []string{strings.TrimSpace(path)},
 		Mode:                     api.ModeGUI,
 		DescriptionOverrideGroup: strings.TrimSpace(groupKey),
 		Trackers:                 append([]string{}, trackers...),
 		ExternalIDOverrides:      overrides,
 		ReleaseNameOverrides:     nameOverrides,
-	}, raw)
+	}, raw))
 }
 
 func (b *Backend) DiscoverPlaylists(path string) ([]api.PlaylistInfo, error) {
@@ -465,7 +481,7 @@ func (b *Backend) DiscoverPlaylists(path string) ([]api.PlaylistInfo, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.DiscoverPlaylists(ctx, path)
+	return wrapWebResult(b.currentCore().DiscoverPlaylists(ctx, path))
 }
 
 func (b *Backend) SavePlaylistSelection(path string, playlists []string, useAll bool) error {
@@ -474,7 +490,7 @@ func (b *Backend) SavePlaylistSelection(path string, playlists []string, useAll 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.SavePlaylistSelection(ctx, path, playlists, useAll)
+	return wrapWebError(b.currentCore().SavePlaylistSelection(ctx, path, playlists, useAll))
 }
 
 func (b *Backend) LoadPlaylistSelection(path string) (api.PlaylistSelection, error) {
@@ -483,7 +499,68 @@ func (b *Backend) LoadPlaylistSelection(path string) (api.PlaylistSelection, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.LoadPlaylistSelection(ctx, path)
+	return wrapWebResult(b.currentCore().LoadPlaylistSelection(ctx, path))
+}
+
+func (b *Backend) ListUIStates() (api.UIStateList, error) {
+	if b == nil || b.repo == nil {
+		return api.UIStateList{}, errors.New("config repository not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	states, err := b.repo.ListUIStates(ctx)
+	if err != nil {
+		return api.UIStateList{}, fmt.Errorf("web: %w", err)
+	}
+	return api.UIStateList{States: states}, nil
+}
+
+func (b *Backend) GetUIState(id string) (api.UIStateRecord, error) {
+	if b == nil || b.repo == nil {
+		return api.UIStateRecord{}, errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(id) == "" {
+		return api.UIStateRecord{}, errors.New("id is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return wrapWebResult(b.repo.LoadUIState(ctx, id))
+}
+
+func (b *Backend) SaveUIState(id string, label string, state api.UIState) error {
+	if b == nil || b.repo == nil {
+		return errors.New("config repository not initialized")
+	}
+	if strings.TrimSpace(id) == "" {
+		return errors.New("id is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return wrapWebError(b.repo.SaveUIState(ctx, id, label, state))
+}
+
+func (b *Backend) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResponse, error) {
+	if b == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(b.currentConfig().MainSettings.DBPath)
+	return wrapWebResult(guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback))
+}
+
+func (b *Backend) BrowseDirectoryWithinRoot(path string, mode string, root string) (api.BrowseDirectoryResponse, error) {
+	if b == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(b.currentConfig().MainSettings.DBPath)
+	return wrapWebResult(guishared.BrowseDirectoryWithinRoot(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, root))
+}
+
+func (b *Backend) BrowseDirectoryWithinRoots(path string, mode string, roots []string) (api.BrowseDirectoryResponse, error) {
+	if b == nil {
+		return api.BrowseDirectoryResponse{}, errors.New("backend not initialized")
+	}
+	fallback := guishared.BrowseDirectoryFallback(b.currentConfig().MainSettings.DBPath)
+	return wrapWebResult(guishared.BrowseDirectoryWithinRoots(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, roots))
 }
 
 func (b *Backend) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.ScreenshotPlan, error) {
@@ -493,17 +570,14 @@ func (b *Backend) FetchScreenshotPlan(path string, overrides api.ExternalIDOverr
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	req := api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeGUI,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
-	return b.core.FetchScreenshotPlan(ctx, req)
+	return wrapWebResult(b.currentCore().FetchScreenshotPlan(ctx, req))
 }
 
 func (b *Backend) GenerateScreenshots(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
@@ -513,17 +587,14 @@ func (b *Backend) GenerateScreenshots(path string, overrides api.ExternalIDOverr
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	req := api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeGUI,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
-	return b.core.GenerateScreenshots(ctx, req, selections, purpose)
+	return wrapWebResult(b.currentCore().GenerateScreenshots(ctx, req, selections, purpose))
 }
 
 func (b *Backend) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, timestampSeconds float64) (string, error) {
@@ -533,19 +604,16 @@ func (b *Backend) PreviewScreenshotFrame(path string, overrides api.ExternalIDOv
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	req := api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeGUI,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
-	preview, err := b.core.PreviewScreenshotFrame(ctx, req, timestampSeconds)
+	preview, err := b.currentCore().PreviewScreenshotFrame(ctx, req, timestampSeconds)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("web: %w", err)
 	}
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(preview.ImageBytes), nil
 }
@@ -556,17 +624,14 @@ func (b *Backend) DeleteScreenshot(path string, overrides api.ExternalIDOverride
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.DeleteScreenshot(ctx, api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeGUI,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+	return wrapWebError(b.currentCore().DeleteScreenshot(ctx, api.Request{
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
-	}, imagePath)
+	}, imagePath))
 }
 
 func (b *Backend) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, imageURL string) error {
@@ -575,17 +640,14 @@ func (b *Backend) DeleteTrackerImageURL(path string, overrides api.ExternalIDOve
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.DeleteTrackerImageURL(ctx, api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeGUI,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+	return wrapWebError(b.currentCore().DeleteTrackerImageURL(ctx, api.Request{
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
-	}, imageURL)
+	}, imageURL))
 }
 
 func (b *Backend) SaveFinalScreenshotSelections(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, images []api.ScreenshotImage) error {
@@ -594,17 +656,30 @@ func (b *Backend) SaveFinalScreenshotSelections(path string, overrides api.Exter
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.SaveFinalScreenshotSelections(ctx, api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeGUI,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+	return wrapWebError(b.currentCore().SaveFinalScreenshotSelections(ctx, api.Request{
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
-	}, images)
+	}, images))
+}
+
+func (b *Backend) ImportMenuImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, paths []string) error {
+	if err := b.requireCore(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	defer cancel()
+	return wrapWebError(b.currentCore().ImportMenuImages(ctx, api.Request{
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
+		ExternalIDOverrides:  overrides,
+		ReleaseNameOverrides: nameOverrides,
+	}, paths))
 }
 
 func (b *Backend) ReadScreenshotImage(path string) (string, error) {
@@ -617,7 +692,7 @@ func (b *Backend) ReadScreenshotImage(path string) (string, error) {
 	}
 	payload, err := os.ReadFile(trimmed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read preview image: %w", err)
 	}
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(payload), nil
 }
@@ -628,17 +703,14 @@ func (b *Backend) ListUploadCandidates(path string, overrides api.ExternalIDOver
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.ListUploadCandidates(ctx, api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeGUI,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+	return wrapWebResult(b.currentCore().ListUploadCandidates(ctx, api.Request{
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
-	})
+	}))
 }
 
 func (b *Backend) ListUploadedImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.UploadedImageLink, error) {
@@ -647,36 +719,31 @@ func (b *Backend) ListUploadedImages(path string, overrides api.ExternalIDOverri
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.ListUploadedImages(ctx, api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeGUI,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+	return wrapWebResult(b.currentCore().ListUploadedImages(ctx, api.Request{
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
-	})
+	}))
 }
 
-func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, host string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	if err := b.requireCore(); err != nil {
-		return nil, err
+		return api.UploadImagesResult{}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.UploadImages(ctx, api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeGUI,
-		Options: api.UploadOptions{
-			Screens:    b.cfg.ScreenshotHandling.Screens,
-			OnlyID:     b.cfg.Metadata.OnlyID,
-			KeepImages: b.cfg.Metadata.KeepImages,
-		},
+	return wrapWebResult(b.currentCore().UploadImages(ctx, api.Request{
+		Paths:   []string{path},
+		Mode:    api.ModeGUI,
+		Options: b.baseUploadOptions(),
+
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
-	}, host, images)
+		Trackers:             append([]string{}, trackersList...),
+	}, host, images))
 }
 
 func (b *Backend) DeleteUploadedImage(path string, imagePath string, host string) error {
@@ -685,10 +752,10 @@ func (b *Backend) DeleteUploadedImage(path string, imagePath string, host string
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.DeleteUploadedImage(ctx, api.Request{
+	return wrapWebError(b.currentCore().DeleteUploadedImage(ctx, api.Request{
 		Paths: []string{path},
 		Mode:  api.ModeGUI,
-	}, imagePath, host)
+	}, imagePath, host))
 }
 
 func (b *Backend) GetConfig() (string, error) {
@@ -696,7 +763,11 @@ func (b *Backend) GetConfig() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return config.ExportToJSON(cfg)
+	return wrapWebResult(config.ExportToJSON(cfg))
+}
+
+func (b *Backend) GetApplicationInfo() (api.ApplicationInfo, error) {
+	return api.CurrentApplicationInfo(), nil
 }
 
 func (b *Backend) ExportConfig() (string, error) {
@@ -710,18 +781,18 @@ func (b *Backend) ExportConfig() (string, error) {
 		return "", err
 	}
 	if allowPlaintext {
-		return config.ExportToPlaintextJSON(cfg)
+		return wrapWebResult(config.ExportToPlaintextJSON(cfg))
 	}
 
-	return config.ExportToJSON(cfg)
+	return wrapWebResult(config.ExportToJSON(cfg))
 }
 
 func (b *Backend) GetDefaultConfig() (string, error) {
 	cfg, err := config.LoadEmbeddedDefaultConfig()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("web: %w", err)
 	}
-	return config.ExportToJSON(cfg)
+	return wrapWebResult(config.ExportToJSON(cfg))
 }
 
 func (b *Backend) exportableConfig() (*config.Config, error) {
@@ -730,10 +801,10 @@ func (b *Backend) exportableConfig() (*config.Config, error) {
 	}
 	cfg, err := config.LoadFromDatabase(context.Background(), b.repo)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("web: %w", err)
 	}
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
-		cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
+		cfg.MainSettings.DBPath = b.currentConfig().MainSettings.DBPath
 	}
 	if cfg.Trackers.Trackers == nil {
 		cfg.Trackers.Trackers = map[string]config.TrackerConfig{}
@@ -745,14 +816,14 @@ func (b *Backend) exportableConfig() (*config.Config, error) {
 }
 
 func (b *Backend) allowUnencryptedExport() (bool, error) {
-	material, err := authmaterial.LoadFromDBPath(b.cfg.MainSettings.DBPath)
+	material, err := authmaterial.LoadFromDBPath(b.currentConfig().MainSettings.DBPath)
 	if err == nil {
 		return material.AllowUnencryptedExport, nil
 	}
 	if errors.Is(err, authmaterial.ErrUnavailable) {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("web: %w", err)
 }
 
 func (b *Backend) SaveConfig(payload string) error {
@@ -761,21 +832,31 @@ func (b *Backend) SaveConfig(payload string) error {
 	}
 	cfg, err := config.ImportFromJSONEncrypted(payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("web: %w", err)
 	}
+	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
+		return fmt.Errorf("web: %w", err)
+	}
+	currentCfg := b.currentConfig()
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
-		cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
+		cfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
 	}
-	if cfg.MainSettings.DBPath != b.cfg.MainSettings.DBPath {
+	if cfg.MainSettings.DBPath != currentCfg.MainSettings.DBPath {
 		return errors.New("changing main_settings.db_path requires restart")
 	}
 	if err := cfg.Validate(); err != nil {
-		return err
+		return fmt.Errorf("web: %w", err)
+	}
+	runtimeCfg := *cfg
+	config.ApplyEnvOverrides(&runtimeCfg)
+	runtimeCfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
+	if err := runtimeCfg.Validate(); err != nil {
+		return fmt.Errorf("web: %w", err)
 	}
 	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
-		return err
+		return fmt.Errorf("web: %w", err)
 	}
-	return b.applyConfig(*cfg)
+	return b.applyConfig(runtimeCfg)
 }
 
 const configImportMaxBytes = importer.MaxFileBytes
@@ -793,21 +874,27 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 
 	cfg, warnings, err := importer.ImportFromContent(fileName, []byte(fileContent))
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("web: %w", err)
 	}
 
-	cfg.MainSettings.DBPath = b.cfg.MainSettings.DBPath
+	currentCfg := b.currentConfig()
+	cfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
 
 	if err := cfg.Validate(); err != nil {
 		return "", nil, fmt.Errorf("validate imported config: %w", err)
 	}
-
-	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
-		return "", nil, err
+	runtimeCfg := *cfg
+	config.ApplyEnvOverrides(&runtimeCfg)
+	runtimeCfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
+	if err := runtimeCfg.Validate(); err != nil {
+		return "", nil, fmt.Errorf("validate imported config: %w", err)
 	}
 
-	config.ApplyEnvOverrides(cfg)
-	if err := b.applyConfig(*cfg); err != nil {
+	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
+		return "", nil, fmt.Errorf("web: %w", err)
+	}
+
+	if err := b.applyConfig(runtimeCfg); err != nil {
 		return "", nil, err
 	}
 
@@ -822,13 +909,17 @@ func (b *Backend) ListKnownTrackers() ([]string, error) {
 	return trackers.KnownTrackers(), nil
 }
 
+func (b *Backend) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {
+	return imagehostpolicy.PolicyMetadata(), nil
+}
+
 func (b *Backend) ListHistory() ([]api.HistoryEntry, error) {
 	if err := b.requireHistoryRepo(); err != nil {
 		return nil, err
 	}
 	entries, err := b.repo.ListHistoryEntries(context.Background())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("web: %w", err)
 	}
 	result := make([]api.HistoryEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -849,18 +940,19 @@ func (b *Backend) DeleteHistoryRelease(sourcePath string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return b.core.DeleteHistoryRelease(ctx, strings.TrimSpace(sourcePath))
+	return wrapWebError(b.currentCore().DeleteHistoryRelease(ctx, strings.TrimSpace(sourcePath)))
 }
 
 func (b *Backend) GetLogPath() (string, error) {
-	return logging.LogPath(b.cfg.MainSettings.DBPath)
+	return wrapWebResult(logging.LogPath(b.currentConfig().MainSettings.DBPath))
 }
 
 func (b *Backend) GetRecentLogs(limit int) ([]logging.Entry, error) {
-	if b.logger == nil {
+	logger := b.currentLogger()
+	if logger == nil {
 		return nil, errors.New("logger not initialized")
 	}
-	return b.logger.Recent(limit), nil
+	return logger.Recent(limit), nil
 }
 
 func (b *Backend) GetLogExclusions() ([]string, error) {
@@ -871,9 +963,9 @@ func (b *Backend) GetLogExclusions() ([]string, error) {
 	err := config.LoadSectionFromDatabase(context.Background(), "log_exclusions", &exclusions, b.repo)
 	if err != nil {
 		if errorsIsNotFound(err) {
-			return nil, nil
+			return []string{}, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("web: %w", err)
 	}
 	return normalizePatterns(exclusions.Patterns), nil
 }
@@ -882,13 +974,14 @@ func (b *Backend) UpdateLogExclusions(patterns []string) error {
 	if b.repo == nil {
 		return errors.New("config repository not initialized")
 	}
-	return config.SaveSectionToDatabase(context.Background(), "log_exclusions", guiapp.LogExclusions{
+	return wrapWebError(config.SaveSectionToDatabase(context.Background(), "log_exclusions", guiapp.LogExclusions{
 		Patterns: normalizePatterns(patterns),
-	}, b.repo)
+	}, b.repo))
 }
 
 func (b *Backend) StartLogStream(sessionID string) (string, error) {
-	if b.logger == nil {
+	logger := b.currentLogger()
+	if logger == nil {
 		return "", errors.New("logger not initialized")
 	}
 	streamID, err := randomString(12)
@@ -901,17 +994,15 @@ func (b *Backend) StartLogStream(sessionID string) (string, error) {
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
 	}
-	subID, ch := b.logger.Subscribe(0)
-	session.logger = b.logger
+	subID, ch := logger.Subscribe(0)
+	session.logger = logger
 	session.subID = subID
 
 	b.streamMu.Lock()
 	b.streams[streamID] = session
 	b.streamMu.Unlock()
 
-	b.streamWG.Add(1)
-	go func() {
-		defer b.streamWG.Done()
+	b.streamWG.Go(func() {
 		defer close(session.done)
 		for {
 			select {
@@ -925,7 +1016,7 @@ func (b *Backend) StartLogStream(sessionID string) (string, error) {
 				return
 			}
 		}
-	}()
+	})
 
 	return streamID, nil
 }
@@ -968,28 +1059,29 @@ func (b *Backend) StopSessionLogStreams(sessionID string) {
 	}
 }
 
-func (b *Backend) buildRunOptions(debug bool, runLogLevel string) (runOptions, error) {
+func (b *Backend) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (runOptions, error) {
 	if strings.TrimSpace(runLogLevel) == "" {
-		return runOptions{Debug: debug}, nil
+		return runOptions{Debug: debug, NoSeed: noSeed}, nil
 	}
 	normalized, err := api.ParseLogLevel(runLogLevel)
 	if err != nil {
-		return runOptions{}, err
+		return runOptions{}, fmt.Errorf("web: %w", err)
 	}
-	return runOptions{Debug: debug, RunLogLevel: normalized}, nil
+	return runOptions{Debug: debug, NoSeed: noSeed, RunLogLevel: normalized}, nil
 }
 
 func (b *Backend) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
-	if err := b.requireCore(); err != nil {
-		return nil, nil, err
-	}
-	effectiveLogLevel := logging.ResolveEffectiveLevel(b.cfg.Logging.Level, opts.RunLogLevel, opts.Debug)
-	logger, err := logging.NewWithLevel(b.cfg.Logging, b.cfg.MainSettings.DBPath, effectiveLogLevel)
+	rt, err := b.requireRuntime()
 	if err != nil {
 		return nil, nil, err
 	}
+	effectiveLogLevel := logging.ResolveEffectiveLevel(rt.cfg.Logging.Level, opts.RunLogLevel, opts.Debug)
+	logger, err := logging.NewWithLevel(rt.cfg.Logging, rt.cfg.MainSettings.DBPath, effectiveLogLevel)
+	if err != nil {
+		return nil, nil, fmt.Errorf("web: %w", err)
+	}
 	coreSvc, err := core.New(api.CoreDependencies{
-		Config: b.cfg,
+		Config: rt.cfg,
 		Logger: logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
@@ -998,33 +1090,35 @@ func (b *Backend) buildRunCore(opts runOptions) (api.Core, *logging.Logger, erro
 	})
 	if err != nil {
 		_ = logger.Close()
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("web: %w", err)
 	}
 	return coreSvc, logger, nil
 }
 
 func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions {
+	options := buildBaseMetadataOptions(cfg)
+	options.Debug = opts.Debug
+	options.DryRun = opts.Debug
+	options.NoSeed = opts.NoSeed
+	options.RunLogLevel = opts.RunLogLevel
+	return options
+}
+
+func buildBaseMetadataOptions(cfg config.Config) api.UploadOptions {
 	return api.UploadOptions{
-		Debug:       opts.Debug,
-		DryRun:      opts.Debug,
-		RunLogLevel: opts.RunLogLevel,
-		Screens:     cfg.ScreenshotHandling.Screens,
-		OnlyID:      cfg.Metadata.OnlyID,
-		KeepImages:  cfg.Metadata.KeepImages,
+		Screens:         cfg.ScreenshotHandling.Screens,
+		SkipAutoTorrent: cfg.Metadata.SkipAutoTorrent,
+		OnlyID:          cfg.Metadata.OnlyID,
+		KeepImages:      cfg.Metadata.KeepImages,
 	}
 }
 
 func (b *Backend) applyConfig(cfg config.Config) error {
 	rt, err := guishared.BuildRuntime(context.Background(), cfg, b.repo)
 	if err != nil {
-		return err
+		return fmt.Errorf("web: %w", err)
 	}
-	oldCore := b.core
-	oldLogger := b.logger
-	b.core = rt.Core
-	b.coreInitErr = nil
-	b.logger = rt.Logger
-	b.cfg = cfg
+	oldCore, oldLogger := b.replaceRuntime(cfg, rt.Core, rt.Logger)
 	if oldCore != nil {
 		_ = oldCore.Close()
 	}
@@ -1035,12 +1129,12 @@ func (b *Backend) applyConfig(cfg config.Config) error {
 }
 
 func (b *Backend) isPathWithinManagedDirs(candidate string) bool {
-	tmpDir, err := db.Subdir(b.cfg.MainSettings.DBPath, "tmp")
-	if err == nil && pathWithinRoot(tmpDir, candidate) {
+	tmpDir, err := db.Subdir(b.currentConfig().MainSettings.DBPath, "tmp")
+	if err == nil && pathutil.IsWithinRoot(tmpDir, candidate) {
 		return true
 	}
-	logPath, err := logging.LogPath(b.cfg.MainSettings.DBPath)
-	if err == nil && pathWithinRoot(filepath.Dir(logPath), candidate) {
+	logPath, err := logging.LogPath(b.currentConfig().MainSettings.DBPath)
+	if err == nil && pathutil.IsWithinRoot(filepath.Dir(logPath), candidate) {
 		return true
 	}
 	return false
@@ -1059,7 +1153,7 @@ func resolveContentTmpRoot(tmpRoot string, candidate string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if !pathWithinRoot(absTmpRoot, absCandidate) {
+	if !pathutil.IsWithinRoot(absTmpRoot, absCandidate) {
 		return "", false
 	}
 	rel, err := filepath.Rel(absTmpRoot, absCandidate)
@@ -1073,52 +1167,38 @@ func resolveContentTmpRoot(tmpRoot string, candidate string) (string, bool) {
 	return filepath.Join(absTmpRoot, parts[0]), true
 }
 
-func removeIfWithinRoot(root string, target string, recursive bool) (bool, error) {
+func removeIfWithinRoot(root string, target string, recursive bool) error {
 	trimmed := strings.TrimSpace(target)
 	if trimmed == "" {
-		return false, nil
+		return nil
 	}
 	absRoot, err := filepath.Abs(strings.TrimSpace(root))
 	if err != nil {
-		return false, err
+		return fmt.Errorf("cleanup path: resolve root path: %w", err)
 	}
 	absTarget, err := filepath.Abs(trimmed)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("cleanup path: resolve target path: %w", err)
 	}
-	if absTarget == absRoot || !pathWithinRoot(absRoot, absTarget) {
-		return false, nil
+	if pathutil.SamePath(absRoot, absTarget) || !pathutil.IsWithinRoot(absRoot, absTarget) {
+		return nil
 	}
 	if recursive {
 		if _, err := os.Stat(absTarget); err != nil {
 			if os.IsNotExist(err) {
-				return false, nil
+				return nil
 			}
-			return false, err
+			return fmt.Errorf("cleanup path: stat target: %w", err)
 		}
 		if err := os.RemoveAll(absTarget); err != nil {
-			return false, err
+			return fmt.Errorf("cleanup path: remove target tree: %w", err)
 		}
-		return true, nil
+		return nil
 	}
 	if err := os.Remove(absTarget); err != nil && !os.IsNotExist(err) {
-		return false, err
+		return fmt.Errorf("cleanup path: remove target: %w", err)
 	}
-	if _, err := os.Stat(absTarget); err == nil {
-		return false, nil
-	}
-	return true, nil
-}
-
-func pathWithinRoot(root string, target string) bool {
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return false
-	}
-	if rel == "." {
-		return true
-	}
-	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel)
+	return nil
 }
 
 func errorsIsNotFound(err error) bool {
@@ -1153,7 +1233,7 @@ func historyOverviewFromRepo(repo *db.SQLiteRepository, sourcePath string) (api.
 	ctx := context.Background()
 	metadata, err := repo.GetByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("web: %w", err)
 	}
 	overview := api.HistoryOverview{
 		SourcePath:        metadata.Path,
@@ -1181,32 +1261,32 @@ func historyOverviewFromRepo(repo *db.SQLiteRepository, sourcePath string) (api.
 	}
 	trackerMetadata, err := repo.ListTrackerMetadataByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("web: %w", err)
 	}
 	overview.TrackerMetadata = trackerMetadata
 	ruleFailures, err := repo.ListTrackerRuleFailuresByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("web: %w", err)
 	}
 	overview.TrackerRuleFailures = ruleFailures
 	screenshots, err := repo.ListScreenshotsByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("web: %w", err)
 	}
 	overview.Screenshots = screenshots
 	finalSelections, err := repo.ListFinalSelections(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("web: %w", err)
 	}
 	overview.FinalSelections = finalSelections
 	uploadedImages, err := repo.ListUploadedImagesByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("web: %w", err)
 	}
 	overview.UploadedImages = uploadedImages
 	uploadHistory, err := repo.ListUploadHistoryByPath(ctx, trimmed)
 	if err != nil {
-		return api.HistoryOverview{}, err
+		return api.HistoryOverview{}, fmt.Errorf("web: %w", err)
 	}
 	overview.UploadHistory = uploadHistory
 	if len(uploadHistory) > 0 {

@@ -49,7 +49,6 @@ func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uplo
 		"imgbb":        &imgbbUploader{apiKey: cfg.ImageHosting.ImgBBAPI, client: client},
 		"imgbox":       &imgboxUploader{client: client},
 		"hdb":          &hdbUploader{username: cfg.Trackers.Trackers["HDB"].Username, passkey: cfg.Trackers.Trackers["HDB"].Passkey, client: client},
-		"ptpimg":       &ptpImgUploader{apiKey: cfg.ImageHosting.PTPImgAPI, client: client},
 		"pixhost":      &pixhostUploader{client: client},
 		"lensdump":     &lensdumpUploader{apiKey: cfg.ImageHosting.LensdumpAPI, client: client},
 		"ptscreens":    &ptScreensUploader{apiKey: cfg.ImageHosting.PTScreensAPI, client: client},
@@ -59,6 +58,7 @@ func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uplo
 		"passtheimage": &passTheImageUploader{apiKey: cfg.ImageHosting.PassTheImageAPI, client: client},
 		"seedpool_cdn": &seedpoolUploader{apiKey: cfg.ImageHosting.SeedpoolCDNAPI, client: client},
 		"sharex":       &shareXUploader{apiKey: cfg.ImageHosting.ShareXAPIKey, url: cfg.ImageHosting.ShareXURL, client: client},
+		"thr":          &thrUploader{apiKey: cfg.Trackers.Trackers["THR"].ImgAPI, client: client},
 		"utppm":        &utppmUploader{apiKey: cfg.ImageHosting.UTPPMAPI, client: client},
 	}
 }
@@ -142,7 +142,7 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 		"gallery_id":       uploadToken.GalleryID,
 		"gallery_secret":   uploadToken.GallerySecret,
 		"content_type":     "1",
-		"thumbnail_size":   "350c",
+		"thumbnail_size":   "350r",
 		"comments_enabled": "0",
 	}
 	headers := imgboxHeaders(cookie, map[string]string{"X-CSRF-Token": csrfToken})
@@ -222,6 +222,8 @@ type hdbUploader struct {
 
 var hdbUploadResultPattern = regexp.MustCompile(`\[url=([^\]]+)\]\[img\]([^\[]+)\[/img\]\[/url\]`)
 
+const hdbMaxBatchUploadImages = 9
+
 func (u *hdbUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
 	results, err := u.uploadBatchWithGalleryName(ctx, []string{imagePath}, filepath.Base(imagePath))
 	if err != nil {
@@ -246,7 +248,22 @@ func (u *hdbUploader) UploadBatchWithName(ctx context.Context, imagePaths []stri
 	if galleryName == "" {
 		galleryName = buildHDBGalleryName(imagePaths)
 	}
-	return u.uploadBatchWithGalleryName(ctx, imagePaths, galleryName)
+	if len(imagePaths) <= hdbMaxBatchUploadImages {
+		return u.uploadBatchWithGalleryName(ctx, imagePaths, galleryName)
+	}
+	results := make([]uploadResult, 0, len(imagePaths))
+	for start := 0; start < len(imagePaths); start += hdbMaxBatchUploadImages {
+		end := start + hdbMaxBatchUploadImages
+		if end > len(imagePaths) {
+			end = len(imagePaths)
+		}
+		chunk, err := u.uploadBatchWithGalleryName(ctx, imagePaths[start:end], galleryName)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, chunk...)
+	}
+	return results, nil
 }
 
 func (u *hdbUploader) uploadBatchWithGalleryName(ctx context.Context, imagePaths []string, galleryName string) ([]uploadResult, error) {
@@ -318,7 +335,7 @@ func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, s
 	client = httpclient.CloneWithTimeout(client, httpclient.UploadTimeout)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://imgbox.com/", nil)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("imgbox create csrf request: %w", err)
 	}
 	for key, value := range imgboxHeaders("", nil) {
 		req.Header.Set(key, value)
@@ -326,7 +343,7 @@ func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, s
 	resp, err := client.Do(req)
 	if err != nil {
 		closeResponseBody(resp)
-		return "", "", err
+		return "", "", fmt.Errorf("imgbox send csrf request: %w", err)
 	}
 	body, err := readAndCloseResponseBody(resp)
 	if err != nil {
@@ -353,7 +370,7 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 	client = httpclient.CloneWithTimeout(client, httpclient.UploadTimeout)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://imgbox.com/ajax/token/generate", nil)
 	if err != nil {
-		return imgboxUploadToken{}, err
+		return imgboxUploadToken{}, fmt.Errorf("imgbox create token request: %w", err)
 	}
 	headers := imgboxHeaders(cookie, map[string]string{"X-CSRF-Token": csrfToken})
 	for key, value := range headers {
@@ -362,7 +379,7 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 	resp, err := client.Do(req)
 	if err != nil {
 		closeResponseBody(resp)
-		return imgboxUploadToken{}, err
+		return imgboxUploadToken{}, fmt.Errorf("imgbox send token request: %w", err)
 	}
 	body, err := readAndCloseResponseBody(resp)
 	if err != nil {
@@ -717,45 +734,45 @@ func (u *utppmUploader) Upload(ctx context.Context, imagePath string) (uploadRes
 	}, nil
 }
 
-type ptpImgUploader struct {
+type thrUploader struct {
 	apiKey string
 	client *http.Client
 }
 
-func (u *ptpImgUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
+func (u *thrUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
 	if strings.TrimSpace(u.apiKey) == "" {
-		return uploadResult{}, errors.New("image hosting: ptpimg api key missing")
+		return uploadResult{}, errors.New("image hosting: thr api key missing")
 	}
-	fields := map[string]string{
-		"format":  "json",
-		"api_key": strings.TrimSpace(u.apiKey),
-	}
-	body, status, err := postMultipart(ctx, u.client, "https://ptpimg.me/upload.php", fields, "file-upload[0]", imagePath, map[string]string{"referer": "https://ptpimg.me/index.php"})
+	body, status, err := postMultipart(ctx, u.client, "https://img2.torrenthr.org/api/1/upload", map[string]string{
+		"key": strings.TrimSpace(u.apiKey),
+	}, "source", imagePath, nil)
 	if err != nil {
 		return uploadResult{}, err
 	}
 	if status != http.StatusOK {
-		return uploadResult{}, fmt.Errorf("ptpimg upload failed with status %d", status)
+		return uploadResult{}, fmt.Errorf("thr upload failed with status %d", status)
 	}
 
-	var response []struct {
-		Code interface{} `json:"code"`
-		Ext  string      `json:"ext"`
+	var response struct {
+		Image struct {
+			URL string `json:"url"`
+		} `json:"image"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
-		return uploadResult{}, fmt.Errorf("ptpimg invalid response: %w", err)
+		return uploadResult{}, fmt.Errorf("thr invalid response: %w", err)
 	}
-	if len(response) == 0 {
-		return uploadResult{}, errors.New("ptpimg upload failed")
+	imageURL := strings.TrimSpace(response.Image.URL)
+	if imageURL == "" {
+		message := strings.TrimSpace(response.Error.Message)
+		if message == "" {
+			message = "thr upload failed"
+		}
+		return uploadResult{}, fmt.Errorf("thr upload failed: %s", message)
 	}
-	code := strings.TrimSpace(fmt.Sprint(response[0].Code))
-	ext := strings.TrimSpace(response[0].Ext)
-	if code == "" || ext == "" {
-		return uploadResult{}, errors.New("ptpimg upload failed")
-	}
-	urlValue := fmt.Sprintf("https://ptpimg.me/%s.%s", code, ext)
-
-	return uploadResult{ImgURL: urlValue, RawURL: urlValue, WebURL: urlValue}, nil
+	return uploadResult{ImgURL: imageURL, RawURL: imageURL, WebURL: imageURL}, nil
 }
 
 type pixhostUploader struct {
@@ -991,7 +1008,7 @@ func (u *shareXUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 func postForm(ctx context.Context, client *http.Client, target string, data url.Values, headers map[string]string) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: create form request for %s: %w", target, err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	for key, value := range headers {
@@ -1000,7 +1017,7 @@ func postForm(ctx context.Context, client *http.Client, target string, data url.
 	resp, err := client.Do(req)
 	if err != nil {
 		closeResponseBody(resp)
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: send form request to %s: %w", target, err)
 	}
 	body, err := readAndCloseResponseBody(resp)
 	if err != nil {
@@ -1024,7 +1041,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 	for _, key := range fieldKeys {
 		value := fields[key]
 		if err := writer.WriteField(key, value); err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: write multipart field %q: %w", key, err)
 		}
 	}
 	fileFieldKeys := make([]string, 0, len(fileFields))
@@ -1036,28 +1053,28 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 		filePath := fileFields[fileField]
 		file, err := os.Open(filePath)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: open multipart file: %w", err)
 		}
 		part, err := writer.CreateFormFile(fileField, filepath.Base(filePath))
 		if err != nil {
 			_ = file.Close()
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: create multipart file %q: %w", fileField, err)
 		}
 		if _, err := io.Copy(part, file); err != nil {
 			_ = file.Close()
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: copy multipart file: %w", err)
 		}
 		if err := file.Close(); err != nil {
-			return nil, 0, err
+			return nil, 0, fmt.Errorf("image hosting: close multipart file: %w", err)
 		}
 	}
 	if err := writer.Close(); err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: close multipart writer: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: create multipart request for %s: %w", target, err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	for key, value := range headers {
@@ -1067,7 +1084,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 	resp, err := client.Do(req)
 	if err != nil {
 		closeResponseBody(resp)
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("image hosting: send multipart request to %s: %w", target, err)
 	}
 	bodyBytes, err := readAndCloseResponseBody(resp)
 	if err != nil {
@@ -1081,7 +1098,11 @@ func readAndCloseResponseBody(resp *http.Response) ([]byte, error) {
 		return nil, nil
 	}
 	defer closeResponseBody(resp)
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("image hosting: read response body: %w", err)
+	}
+	return body, nil
 }
 
 func closeResponseBody(resp *http.Response) {
@@ -1095,7 +1116,7 @@ func closeResponseBody(resp *http.Response) {
 func readBase64(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("image hosting: read base64 file: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(data), nil
 }

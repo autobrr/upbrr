@@ -7,6 +7,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -15,7 +16,7 @@ type stubFilesystem struct {
 	err   error
 }
 
-func (s stubFilesystem) ValidatePaths(ctx context.Context, paths []string) ([]string, error) {
+func (s stubFilesystem) ValidatePaths(_ context.Context, paths []string) ([]string, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -129,5 +130,57 @@ func TestFetchPreparationPreviewUsesBlockedTrackersFromCache(t *testing.T) {
 	}
 	if got := trackerSvc.meta.BlockedTrackers["HDB"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
 		t.Fatalf("expected blocked tracker metadata to be forwarded, got %#v", trackerSvc.meta.BlockedTrackers)
+	}
+}
+
+func TestFetchPreparationPreviewCachesMergedExternalIDSelections(t *testing.T) {
+	t.Parallel()
+
+	trackerSvc := &stubPreparationTrackers{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata: &stubMeta{prepared: api.PreparedMetadata{
+				SourcePath: "/tmp/source",
+				Release: api.ReleaseInfo{
+					Title: "Example",
+				},
+			}},
+			Trackers: trackerSvc,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	tmdbID := 321
+	req := api.Request{
+		Paths: []string{"/tmp/source"},
+		Mode:  api.ModeGUI,
+		ExternalIDSelections: map[string]api.ExternalIDSelection{
+			"/tmp/source": {
+				TMDBID: &tmdbID,
+			},
+		},
+	}
+
+	if _, err := core.FetchPreparationPreview(context.Background(), req); err != nil {
+		t.Fatalf("fetch preparation preview: %v", err)
+	}
+
+	exported, ok, err := core.ExportGUICachedPreparedMeta(context.Background(), req)
+	if err != nil {
+		t.Fatalf("export gui cached prepared meta: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected preparation preview to cache merged external ID selection")
+	}
+	if exported.ExternalIDOverrides.TMDBID == nil || *exported.ExternalIDOverrides.TMDBID != tmdbID {
+		t.Fatalf("expected exported cached metadata to preserve merged TMDB selection, got %#v", exported.ExternalIDOverrides)
 	}
 }

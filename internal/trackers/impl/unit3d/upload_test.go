@@ -423,13 +423,6 @@ func TestResolveUnit3DTypeIDForTrackerA4K(t *testing.T) {
 	}
 }
 
-func TestResolveUnit3DResolutionIDForTrackerFNP(t *testing.T) {
-	meta := api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "1080i"}}
-	if got := resolveUnit3DResolutionIDForTracker("FNP", meta); got != "11" {
-		t.Fatalf("expected FNP 1080i to resolve to 11, got %q", got)
-	}
-}
-
 func TestResolveUnit3DTypeIDForTrackerPT(t *testing.T) {
 	meta := api.PreparedMetadata{Type: "WEBRIP"}
 	got, err := resolveUnit3DTypeIDForTracker("PT", meta)
@@ -570,7 +563,7 @@ func TestResolveUnit3DResolutionIDForTrackerUTPDefaultOther(t *testing.T) {
 	}
 }
 
-func TestBuildUnit3DDataAddsModQAliasForA4K(t *testing.T) {
+func TestBuildUnit3DDataOmitsLegacyModQAliasForA4K(t *testing.T) {
 	req := trackers.UploadRequest{
 		Tracker: "A4K",
 		TrackerConfig: config.TrackerConfig{
@@ -590,8 +583,8 @@ func TestBuildUnit3DDataAddsModQAliasForA4K(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got := data["modq"]; got != "1" {
-		t.Fatalf("expected modq alias=1 for A4K, got %q", got)
+	if _, ok := data["modq"]; ok {
+		t.Fatalf("did not expect legacy modq alias for A4K")
 	}
 }
 
@@ -753,6 +746,21 @@ func TestBuildUnit3DNameACM(t *testing.T) {
 	}
 	if !strings.Contains(got, "[Jpn subs only]") {
 		t.Fatalf("expected ACM subtitle suffix, got %q", got)
+	}
+}
+
+func TestBuildUnit3DNameULCXRemovesHybridFromWebDV(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName: "Movie 2026 Hybrid 1080p WEB-DL DDP5.1 DV H.265-GRP",
+		Type:        "WEBDL",
+		Edition:     "Hybrid",
+		WebDV:       true,
+	}
+	got := buildUnit3DName("ULCX", meta)
+	if strings.Contains(got, "Hybrid") {
+		t.Fatalf("expected Hybrid removed for ULCX WEB-DL WebDV, got %q", got)
 	}
 }
 

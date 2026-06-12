@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type ServiceSet struct {
 
 type MetadataService interface {
 	Prepare(ctx context.Context, req Request) (PreparedMetadata, error)
+	RefreshPreparedMetadata(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
 	EnrichTrackerData(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
 	ApplyMediaInfoIDs(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
 	ApplyArrData(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
@@ -69,6 +71,7 @@ type TrackerBlockReason string
 const (
 	TrackerBlockReasonDupe  TrackerBlockReason = "dupe"
 	TrackerBlockReasonClaim TrackerBlockReason = "claim"
+	TrackerBlockReasonAudio TrackerBlockReason = "audio"
 )
 
 type PreparedMetadata struct {
@@ -94,7 +97,11 @@ type PreparedMetadata struct {
 	MediaInfoUniqueID           string
 	Scene                       bool
 	SceneName                   string
+	SceneTMDBID                 int
 	SceneIMDB                   int
+	SceneTVDBID                 int
+	SceneTVmazeID               int
+	SceneMALID                  int
 	SceneNFOPath                string
 	SceneNFONew                 bool
 	Mode                        Mode
@@ -123,9 +130,10 @@ type PreparedMetadata struct {
 	PieceSizeConstraint         string
 	FoundPreferredPiece         string
 	StoredInfoHash              string
-	StoredUpdatedAt             time.Time
+	StoredUpdatedAt             time.Time `ts_type:"string"`
 	StoredDataFresh             bool
 	TrackerData                 []TrackerMetadata
+	CrossSeedTorrents           []UploadedTorrent
 	ClientTorrentPath           string
 	TorrentPath                 string
 	MediaInfoCategory           string
@@ -200,7 +208,7 @@ type PreparedMetadata struct {
 	BlockedTrackers             map[string][]TrackerBlockReason
 	IgnoreTrackerRuleFailures   bool
 	TrackerRuleFailures         map[string][]RuleFailure
-	BDInfo                      map[string]interface{}
+	BDInfo                      map[string]any
 }
 
 type MetadataOverrides struct {
@@ -276,7 +284,7 @@ type ExternalIDs struct {
 	SourceIMDB   string
 	SourceTVDB   string
 	SourceTVmaze string
-	UpdatedAt    time.Time
+	UpdatedAt    time.Time `ts_type:"string"`
 }
 
 type ExternalMetadata struct {
@@ -285,7 +293,114 @@ type ExternalMetadata struct {
 	IMDB       *IMDBMetadata
 	TVDB       *TVDBMetadata
 	TVmaze     *TVmazeMetadata
-	UpdatedAt  time.Time
+	Bluray     *BlurayMetadata
+	UpdatedAt  time.Time `ts_type:"string"`
+}
+
+type BlurayMetadata struct {
+	SourcePath        string
+	IMDBID            int
+	SearchURL         string
+	SelectedReleaseID string
+	SelectedURL       string
+	AutoSelected      bool
+	SelectionReason   string
+	BestScore         float64
+	Threshold         float64
+	Candidates        []BlurayReleaseCandidate
+	UpdatedAt         time.Time `ts_type:"string"`
+}
+
+type BlurayReleaseCandidate struct {
+	ReleaseID    string
+	ProductID    string
+	MovieTitle   string
+	MovieYear    string
+	Title        string
+	URL          string
+	Price        string
+	Publisher    string
+	Country      string
+	Region       string
+	Score        float64
+	Accepted     bool
+	Warnings     []string
+	MatchNotes   []string
+	Specs        BluraySpecs
+	CoverImages  []BlurayImage
+	GenericDisc  bool
+	SpecsMissing bool
+}
+
+type BluraySpecs struct {
+	Video     BlurayVideoSpec
+	Audio     []string
+	Subtitles []string
+	Discs     BlurayDiscSpec
+	Playback  BlurayPlaybackSpec
+}
+
+type BlurayVideoSpec struct {
+	Codec      string
+	Resolution string
+}
+
+type BlurayDiscSpec struct {
+	Type   string
+	Count  int
+	Format string
+}
+
+type BlurayPlaybackSpec struct {
+	Region      string
+	RegionNotes string
+}
+
+type BlurayImage struct {
+	Kind string
+	URL  string
+}
+
+func (m *BlurayMetadata) CandidateByID(releaseID string) *BlurayReleaseCandidate {
+	if m == nil {
+		return nil
+	}
+	trimmedID := strings.TrimSpace(releaseID)
+	if trimmedID == "" {
+		return nil
+	}
+	for idx := range m.Candidates {
+		if strings.EqualFold(strings.TrimSpace(m.Candidates[idx].ReleaseID), trimmedID) {
+			return &m.Candidates[idx]
+		}
+	}
+	return nil
+}
+
+func (m *BlurayMetadata) SelectedCandidate() *BlurayReleaseCandidate {
+	if m == nil {
+		return nil
+	}
+	return m.CandidateByID(m.SelectedReleaseID)
+}
+
+func (m *BlurayMetadata) SelectCandidate(releaseID string, auto bool, reason string) bool {
+	if m == nil {
+		return false
+	}
+	candidate := m.CandidateByID(releaseID)
+	if candidate == nil {
+		return false
+	}
+	m.SelectedReleaseID = strings.TrimSpace(candidate.ReleaseID)
+	m.SelectedURL = strings.TrimSpace(candidate.URL)
+	m.AutoSelected = auto
+	m.SelectionReason = strings.TrimSpace(reason)
+	for idx := range m.Candidates {
+		trimmedCandidate := strings.TrimSpace(m.Candidates[idx].ReleaseID)
+		m.Candidates[idx].Accepted = strings.EqualFold(trimmedCandidate, m.SelectedReleaseID)
+	}
+	return true
 }
 
 type TMDBMetadata struct {
@@ -510,6 +625,7 @@ type TrackerMatch struct {
 }
 
 type ReleaseInfo struct {
+	Category   string
 	Type       string
 	Artist     string
 	Title      string
@@ -576,8 +692,9 @@ type TrackerQuestionnaireField struct {
 }
 
 type TorrentResult struct {
-	Path     string
-	InfoHash string
-	URL      string
-	Tracker  string
+	Path      string
+	InfoHash  string
+	URL       string
+	Tracker   string
+	CrossSeed bool
 }

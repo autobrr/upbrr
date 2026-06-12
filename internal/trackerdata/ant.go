@@ -28,7 +28,6 @@ func (c *Client) lookupANT(ctx context.Context, meta api.PreparedMetadata, searc
 	}
 
 	params := url.Values{}
-	params.Set("apikey", strings.TrimSpace(cfg.APIKey))
 	params.Set("t", "search")
 	params.Set("filename", fileName)
 	params.Set("o", "json")
@@ -38,6 +37,8 @@ func (c *Client) lookupANT(ctx context.Context, meta api.PreparedMetadata, searc
 		return Result{}, fmt.Errorf("trackerdata: ant request: %w", err)
 	}
 	req.URL.RawQuery = params.Encode()
+	req.Header.Set("User-Agent", "upbrr")
+	req.Header.Set("X-Api-Key", strings.TrimSpace(cfg.APIKey))
 
 	resp, err := c.http.Do(req)
 	if err != nil {

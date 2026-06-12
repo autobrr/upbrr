@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { Dispatch, SetStateAction } from "react";
+import { Switch } from "../../components/ui/switch";
 import type {
   ConfigMap,
   ConfigValue,
@@ -9,7 +10,7 @@ import type {
   ScreenshotPlan,
   ScreenshotPreviewImage,
   ScreenshotResult,
-  ScreenshotSelection
+  ScreenshotSelection,
 } from "../../types";
 
 type Props = Readonly<{
@@ -17,8 +18,6 @@ type Props = Readonly<{
   screenshotPlan: ScreenshotPlan | null;
   screenshotsLoading: boolean;
   screenshotsError: string;
-  screenshotsEnabled: boolean;
-  setScreenshotsEnabled: Dispatch<SetStateAction<boolean>>;
   loadScreenshotPlan: (revealSelections?: boolean) => void;
   handleGenerateScreenshots: () => void;
   screenshotConfig: ConfigMap | null;
@@ -76,8 +75,6 @@ export default function ScreenshotsPage(props: Props) {
     screenshotPlan,
     screenshotsLoading,
     screenshotsError,
-    screenshotsEnabled,
-    setScreenshotsEnabled,
     loadScreenshotPlan,
     handleGenerateScreenshots,
     screenshotConfig,
@@ -126,8 +123,9 @@ export default function ScreenshotsPage(props: Props) {
     setFinalDragIndex,
     reorderFinalSelections,
     finalResult,
-    handleDeleteAllFinalImages
+    handleDeleteAllFinalImages,
   } = props;
+  const previewTimingDisabled = previewDuration <= 0 || previewFrameRate <= 0;
 
   return (
     <section className="screens-panel">
@@ -154,14 +152,6 @@ export default function ScreenshotsPage(props: Props) {
           ) : null}
         </div>
         <div className="screens-actions__buttons">
-          <label className="screens-toggle">
-            <input
-              type="checkbox"
-              checked={screenshotsEnabled}
-              onChange={(event) => setScreenshotsEnabled(event.target.checked)}
-            />
-            <span>Enable capture</span>
-          </label>
           <button
             className="ghost"
             type="button"
@@ -174,7 +164,7 @@ export default function ScreenshotsPage(props: Props) {
             className="primary"
             type="button"
             onClick={handleGenerateScreenshots}
-            disabled={screenshotsLoading || !path.trim() || !screenshotsEnabled}
+            disabled={screenshotsLoading || !path.trim()}
           >
             {screenshotsLoading ? "Capturing..." : "Generate screenshots"}
           </button>
@@ -190,59 +180,82 @@ export default function ScreenshotsPage(props: Props) {
                 <span>Screenshot count</span>
                 <input
                   type="number"
-                  value={typeof screenshotConfig.Screens === "number" ? screenshotConfig.Screens : 0}
-                  onChange={(event) => updateScreenshotConfigValue("Screens", Number(event.target.value))}
+                  value={
+                    typeof screenshotConfig.Screens === "number" ? screenshotConfig.Screens : 0
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("Screens", Number(event.target.value))
+                  }
                 />
               </label>
-              <label className="settings-toggle">
+              <div className="settings-toggle">
                 <span>Tonemap HDR</span>
-                <input
-                  type="checkbox"
+                <Switch
+                  aria-label="Tonemap HDR"
                   checked={Boolean(screenshotConfig.ToneMap)}
                   onChange={(event) => updateScreenshotConfigValue("ToneMap", event.target.checked)}
                 />
-                <span className="settings-toggle__pill" />
-              </label>
-              <label className="settings-toggle">
+              </div>
+              <div className="settings-toggle">
                 <span>Use libplacebo</span>
-                <input
-                  type="checkbox"
+                <Switch
+                  aria-label="Use libplacebo"
                   checked={Boolean(screenshotConfig.UseLibplacebo)}
-                  onChange={(event) => updateScreenshotConfigValue("UseLibplacebo", event.target.checked)}
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("UseLibplacebo", event.target.checked)
+                  }
                 />
-                <span className="settings-toggle__pill" />
-              </label>
-              <label className="settings-toggle">
+              </div>
+              <div className="settings-toggle">
                 <span>Frame overlay</span>
-                <input
-                  type="checkbox"
+                <Switch
+                  aria-label="Frame overlay"
                   checked={Boolean(screenshotConfig.FrameOverlay)}
-                  onChange={(event) => updateScreenshotConfigValue("FrameOverlay", event.target.checked)}
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("FrameOverlay", event.target.checked)
+                  }
                 />
-                <span className="settings-toggle__pill" />
-              </label>
+              </div>
               <label className="settings-field">
                 <span>Overlay text size</span>
                 <input
                   type="number"
-                  value={typeof screenshotConfig.OverlayTextSize === "number" ? screenshotConfig.OverlayTextSize : 0}
-                  onChange={(event) => updateScreenshotConfigValue("OverlayTextSize", Number(event.target.value))}
+                  value={
+                    typeof screenshotConfig.OverlayTextSize === "number"
+                      ? screenshotConfig.OverlayTextSize
+                      : 0
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("OverlayTextSize", Number(event.target.value))
+                  }
                 />
               </label>
               <label className="settings-field">
                 <span>FFmpeg compression</span>
                 <input
                   type="number"
-                  value={typeof screenshotConfig.FFmpegCompression === "number" ? screenshotConfig.FFmpegCompression : 0}
-                  onChange={(event) => updateScreenshotConfigValue("FFmpegCompression", Number(event.target.value))}
+                  value={
+                    typeof screenshotConfig.FFmpegCompression === "number"
+                      ? screenshotConfig.FFmpegCompression
+                      : 0
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("FFmpegCompression", Number(event.target.value))
+                  }
                 />
               </label>
               <label className="settings-field">
                 <span>Tonemap algorithm</span>
                 <input
                   type="text"
-                  value={typeof screenshotConfig.TonemapAlgorithm === "string" ? screenshotConfig.TonemapAlgorithm : ""}
-                  onChange={(event) => updateScreenshotConfigValue("TonemapAlgorithm", event.target.value)}
+                  value={
+                    typeof screenshotConfig.TonemapAlgorithm === "string"
+                      ? screenshotConfig.TonemapAlgorithm
+                      : ""
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("TonemapAlgorithm", event.target.value)
+                  }
                 />
               </label>
               <label className="settings-field">
@@ -251,24 +264,33 @@ export default function ScreenshotsPage(props: Props) {
                   type="number"
                   step="0.01"
                   value={typeof screenshotConfig.Desat === "number" ? screenshotConfig.Desat : 0}
-                  onChange={(event) => updateScreenshotConfigValue("Desat", Number(event.target.value))}
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("Desat", Number(event.target.value))
+                  }
                 />
               </label>
-              <label className="settings-toggle">
+              <div className="settings-toggle">
                 <span>Limit ffmpeg concurrency</span>
-                <input
-                  type="checkbox"
+                <Switch
+                  aria-label="Limit ffmpeg concurrency"
                   checked={Boolean(screenshotConfig.FFmpegLimit)}
-                  onChange={(event) => updateScreenshotConfigValue("FFmpegLimit", event.target.checked)}
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("FFmpegLimit", event.target.checked)
+                  }
                 />
-                <span className="settings-toggle__pill" />
-              </label>
+              </div>
               <label className="settings-field">
                 <span>FFmpeg concurrency</span>
                 <input
                   type="number"
-                  value={typeof screenshotConfig.ProcessLimit === "number" ? screenshotConfig.ProcessLimit : 1}
-                  onChange={(event) => updateScreenshotConfigValue("ProcessLimit", Number(event.target.value))}
+                  value={
+                    typeof screenshotConfig.ProcessLimit === "number"
+                      ? screenshotConfig.ProcessLimit
+                      : 1
+                  }
+                  onChange={(event) =>
+                    updateScreenshotConfigValue("ProcessLimit", Number(event.target.value))
+                  }
                 />
               </label>
             </div>
@@ -321,7 +343,6 @@ export default function ScreenshotsPage(props: Props) {
                   onChange={(event) =>
                     setLivePreviewSeconds(clampPreviewSeconds(Number(event.target.value)))
                   }
-                  disabled={!screenshotsEnabled}
                 />
               </label>
               <label className="screens-field">
@@ -338,7 +359,6 @@ export default function ScreenshotsPage(props: Props) {
                       setLivePreviewSeconds(0);
                     }
                   }}
-                  disabled={!screenshotsEnabled}
                 />
               </label>
               <div className="screens-preview__slider">
@@ -351,7 +371,7 @@ export default function ScreenshotsPage(props: Props) {
                   onChange={(event) =>
                     setLivePreviewSeconds(clampPreviewSeconds(Number(event.target.value)))
                   }
-                  disabled={!screenshotsEnabled || previewDuration <= 0}
+                  disabled={previewTimingDisabled}
                 />
                 <div className="screens-preview__meta">
                   <span className="muted">Duration: {previewDuration.toFixed(1)}s</span>
@@ -363,7 +383,7 @@ export default function ScreenshotsPage(props: Props) {
                   className="ghost"
                   type="button"
                   onClick={() => stepLivePreview(-1)}
-                  disabled={!screenshotsEnabled}
+                  disabled={previewTimingDisabled}
                 >
                   Prev frame
                 </button>
@@ -371,7 +391,7 @@ export default function ScreenshotsPage(props: Props) {
                   className="ghost"
                   type="button"
                   onClick={() => stepLivePreview(1)}
-                  disabled={!screenshotsEnabled}
+                  disabled={previewTimingDisabled}
                 >
                   Next frame
                 </button>
@@ -379,7 +399,7 @@ export default function ScreenshotsPage(props: Props) {
                   className="ghost"
                   type="button"
                   onClick={runLivePreview}
-                  disabled={!screenshotsEnabled || livePreviewLoading}
+                  disabled={previewTimingDisabled || livePreviewLoading}
                 >
                   {livePreviewLoading ? "Loading..." : "Run preview"}
                 </button>
@@ -387,7 +407,7 @@ export default function ScreenshotsPage(props: Props) {
                   className="primary"
                   type="button"
                   onClick={handleCapturePreviewFrame}
-                  disabled={!screenshotsEnabled || liveCaptureLoading}
+                  disabled={previewTimingDisabled || liveCaptureLoading}
                 >
                   {liveCaptureLoading ? "Capturing..." : "Capture preview"}
                 </button>
@@ -418,7 +438,7 @@ export default function ScreenshotsPage(props: Props) {
                         pointerEvents: "none",
                         color: "white",
                         textShadow: "0 0 4px black",
-                        fontWeight: "bold"
+                        fontWeight: "bold",
                       }}
                     >
                       Loading...
@@ -442,11 +462,7 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Tracker Images</h2>
             <p className="muted">Already available from tracker data.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllTrackerImageURLs}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllTrackerImageURLs}>
               Delete all
             </button>
           </div>
@@ -481,17 +497,16 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Existing Captures</h2>
             <p className="muted">Previously generated screenshots in the temp folder.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllExistingImages}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllExistingImages}>
               Delete all
             </button>
           </div>
           <div className="screens-grid">
             {existingImages.map((item) => (
-              <div className="screens-thumb-card" key={`existing-${item.image.Path || item.image.Index}`}>
+              <div
+                className="screens-thumb-card"
+                key={`existing-${item.image.Path || item.image.Index}`}
+              >
                 <button
                   className="screens-thumb"
                   type="button"
@@ -528,17 +543,16 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Tracker Temp Images</h2>
             <p className="muted">Images stored in tracker temp folders.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllTrackerImages}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllTrackerImages}>
               Delete all
             </button>
           </div>
           <div className="screens-grid">
             {existingTrackerImages.map((item) => (
-              <div className="screens-thumb-card" key={`tracker-${item.image.Path || item.image.Index}`}>
+              <div
+                className="screens-thumb-card"
+                key={`tracker-${item.image.Path || item.image.Index}`}
+              >
                 <button
                   className="screens-thumb"
                   type="button"
@@ -592,7 +606,9 @@ export default function ScreenshotsPage(props: Props) {
                   <input
                     type="number"
                     step="0.1"
-                    value={Number.isFinite(selection.TimestampSeconds) ? selection.TimestampSeconds : 0}
+                    value={
+                      Number.isFinite(selection.TimestampSeconds) ? selection.TimestampSeconds : 0
+                    }
                     onChange={(event) => updateSelectionTime(selection.Index, event.target.value)}
                   />
                 </label>
@@ -609,7 +625,7 @@ export default function ScreenshotsPage(props: Props) {
                   className="ghost"
                   type="button"
                   onClick={() => handlePreviewSelection(selection)}
-                  disabled={!screenshotsEnabled || previewLoadingIndex === selection.Index}
+                  disabled={previewLoadingIndex === selection.Index}
                 >
                   {previewLoadingIndex === selection.Index ? "Previewing..." : "Preview"}
                 </button>
@@ -624,11 +640,7 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Preview Captures</h2>
             <p className="muted">Click any image to view full size.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllPreviewImages}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllPreviewImages}>
               Delete all
             </button>
           </div>
@@ -655,11 +667,7 @@ export default function ScreenshotsPage(props: Props) {
           <div className="screens-gallery__header">
             <h2>Final Captures</h2>
             <p className="muted">Generated screenshots ready for upload.</p>
-            <button
-              className="ghost"
-              type="button"
-              onClick={handleDeleteAllFinalImages}
-            >
+            <button className="ghost" type="button" onClick={handleDeleteAllFinalImages}>
               Delete all
             </button>
           </div>
@@ -709,7 +717,9 @@ export default function ScreenshotsPage(props: Props) {
           </div>
           <ul>
             {finalResult.Errors.map((entry, index) => (
-              <li key={`err-${entry.Index}-${index}`}>Shot {entry.Index + 1}: {entry.Message}</li>
+              <li key={`err-${entry.Index}-${index}`}>
+                Shot {entry.Index + 1}: {entry.Message}
+              </li>
             ))}
           </ul>
         </section>

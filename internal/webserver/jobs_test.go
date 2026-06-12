@@ -19,6 +19,7 @@ type preparedMetaTestCore struct {
 	exportErr    error
 	importedMeta api.PreparedMetadata
 	importedReq  api.Request
+	fetchReq     api.Request
 }
 
 func (c *preparedMetaTestCore) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -29,7 +30,8 @@ func (c *preparedMetaTestCore) RunUploadPrepared(context.Context, api.Request) (
 	return api.Result{}, nil
 }
 
-func (c *preparedMetaTestCore) FetchMetadataPreview(context.Context, api.Request) (api.MetadataPreview, error) {
+func (c *preparedMetaTestCore) FetchMetadataPreview(_ context.Context, req api.Request) (api.MetadataPreview, error) {
+	c.fetchReq = req
 	return api.MetadataPreview{}, nil
 }
 
@@ -77,6 +79,10 @@ func (c *preparedMetaTestCore) SaveFinalScreenshotSelections(context.Context, ap
 	return nil
 }
 
+func (c *preparedMetaTestCore) ImportMenuImages(context.Context, api.Request, []string) error {
+	return nil
+}
+
 func (c *preparedMetaTestCore) ListUploadCandidates(context.Context, api.Request) ([]api.ScreenshotImage, error) {
 	return nil, nil
 }
@@ -85,8 +91,8 @@ func (c *preparedMetaTestCore) ListUploadedImages(context.Context, api.Request) 
 	return nil, nil
 }
 
-func (c *preparedMetaTestCore) UploadImages(context.Context, api.Request, string, []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
-	return nil, nil
+func (c *preparedMetaTestCore) UploadImages(context.Context, api.Request, string, []api.ScreenshotImage) (api.UploadImagesResult, error) {
+	return api.UploadImagesResult{}, nil
 }
 
 func (c *preparedMetaTestCore) DeleteUploadedImage(context.Context, api.Request, string, string) error {
@@ -156,7 +162,7 @@ func TestPruneCompletedDupeJobsLockedKeepsNewestCompleted(t *testing.T) {
 	backend.dupes[active.id] = active
 
 	now := time.Now().UTC()
-	for idx := 0; idx < 3; idx++ {
+	for idx := range 3 {
 		id := fmt.Sprintf("dupe-%d", idx)
 		backend.dupes[id] = &dupeCheckJob{
 			id:         id,
@@ -190,7 +196,7 @@ func TestPruneCompletedUploadJobsLockedKeepsNewestCompleted(t *testing.T) {
 	backend.uploads[active.id] = active
 
 	now := time.Now().UTC()
-	for idx := 0; idx < 3; idx++ {
+	for idx := range 3 {
 		id := fmt.Sprintf("upload-%d", idx)
 		backend.uploads[id] = &trackerUploadJob{
 			id:         id,
@@ -212,6 +218,139 @@ func TestPruneCompletedUploadJobsLockedKeepsNewestCompleted(t *testing.T) {
 	}
 	if _, ok := backend.uploads[active.id]; !ok {
 		t.Fatal("expected active upload job to remain")
+	}
+}
+
+func TestApplyTrackerUploadProgressThrottlesSmallHashRateBurst(t *testing.T) {
+	hub := newEventHub()
+	ch, unsubscribe := hub.Subscribe("session")
+	defer unsubscribe()
+	backend := &Backend{hub: hub}
+	job := newTrackerUploadProgressTestJob()
+	job.lastSnapshotEmit = time.Now()
+	job.snapshotThrottle = time.Hour
+	job.currentTaskStatus = "running"
+	job.currentPercent = 40
+	job.currentHashRateMiB = 10
+
+	backend.applyTrackerUploadProgress(job, api.UploadProgressUpdate{
+		Tracker:     "BLU",
+		Status:      "running",
+		Percent:     40,
+		HashRateMiB: 10.25,
+	})
+
+	select {
+	case event := <-ch:
+		t.Fatalf("expected throttled hash-rate-only update, got event %q", event.Name)
+	default:
+	}
+}
+
+func TestApplyTrackerUploadProgressEmitsMeaningfulChangeWithinThrottle(t *testing.T) {
+	tests := []struct {
+		name   string
+		update api.UploadProgressUpdate
+	}{
+		{
+			name: "percent changed",
+			update: api.UploadProgressUpdate{
+				Tracker: "BLU",
+				Status:  "running",
+				Percent: 41,
+			},
+		},
+		{
+			name: "status changed",
+			update: api.UploadProgressUpdate{
+				Tracker: "BLU",
+				Status:  "completed",
+				Percent: 40,
+			},
+		},
+		{
+			name: "hash rate changed beyond threshold",
+			update: api.UploadProgressUpdate{
+				Tracker:     "BLU",
+				Status:      "running",
+				Percent:     40,
+				HashRateMiB: 12,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hub := newEventHub()
+			ch, unsubscribe := hub.Subscribe("session")
+			defer unsubscribe()
+			backend := &Backend{hub: hub}
+			job := newTrackerUploadProgressTestJob()
+			job.lastSnapshotEmit = time.Now()
+			job.snapshotThrottle = time.Hour
+			job.currentTaskStatus = "running"
+			job.currentPercent = 40
+			job.currentHashRateMiB = 10
+
+			backend.applyTrackerUploadProgress(job, tt.update)
+
+			select {
+			case event := <-ch:
+				if event.Name != "upload:job:job" {
+					t.Fatalf("unexpected event name: %q", event.Name)
+				}
+			default:
+				t.Fatal("expected meaningful progress change to emit immediately")
+			}
+		})
+	}
+}
+
+func TestApplyTrackerUploadProgressUpdatesOnlyNamedTrackerForMultiTrackerJobs(t *testing.T) {
+	hub := newEventHub()
+	backend := &Backend{hub: hub}
+	job := &trackerUploadJob{
+		sessionID: "session",
+		id:        "job",
+		trackers:  []string{"BLU", "AITHER"},
+		states: map[string]TrackerUploadTrackerState{
+			"BLU":    {Tracker: "BLU", Status: "running", Message: "queued"},
+			"AITHER": {Tracker: "AITHER", Status: "running", Message: "queued"},
+		},
+		startedAt: time.Now().UTC(),
+	}
+
+	backend.applyTrackerUploadProgress(job, api.UploadProgressUpdate{
+		Tracker: "BLU",
+		Task:    "tracker_upload",
+		Status:  "running",
+		Message: "Uploading to tracker",
+		Percent: 40,
+	})
+
+	if got := job.states["BLU"].Task; got != "tracker_upload" {
+		t.Fatalf("expected BLU task to update, got %q", got)
+	}
+	if got := job.states["BLU"].Message; got != "Uploading to tracker" {
+		t.Fatalf("expected BLU message to update, got %q", got)
+	}
+	if got := job.states["AITHER"].Task; got != "" {
+		t.Fatalf("expected AITHER task to remain untouched, got %q", got)
+	}
+	if got := job.states["AITHER"].Message; got != "queued" {
+		t.Fatalf("expected AITHER message to remain queued, got %q", got)
+	}
+}
+
+func newTrackerUploadProgressTestJob() *trackerUploadJob {
+	return &trackerUploadJob{
+		sessionID: "session",
+		id:        "job",
+		trackers:  []string{"BLU"},
+		states: map[string]TrackerUploadTrackerState{
+			"BLU": {Tracker: "BLU", Status: "running", Message: "uploading"},
+		},
+		startedAt: time.Now().UTC(),
 	}
 }
 

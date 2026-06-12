@@ -4,6 +4,7 @@
 package description
 
 import (
+	"html"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,7 +25,8 @@ func renderBBCode(value string) string {
 	compiler.SetTag("center", compileAlign)
 	compiler.SetTag("align", compileAlign)
 	compiler.SetTag("comparison", compileComparison)
-	return compiler.Compile(normalizeBBCode(value))
+	normalized, codeBlocks := extractCodeBlocks(normalizeBBCode(value))
+	return replaceCodeBlockPlaceholders(compiler.Compile(normalized), codeBlocks)
 }
 
 func normalizeBBCode(value string) string {
@@ -59,6 +61,88 @@ func compileImg(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	return img, true
 }
 
+func renderCodeBBCode(value string) string {
+	escaped := html.EscapeString(value)
+	escaped = renderCodeColorTags(escaped)
+	escaped = renderCodeSimplePairTag(escaped, "b", "b")
+	escaped = renderCodeSimplePairTag(escaped, "i", "i")
+	escaped = renderCodeSimplePairTag(escaped, "u", "u")
+	escaped = renderCodeSimplePairTag(escaped, "s", "s")
+	return escaped
+}
+
+var codeBlockPattern = regexp.MustCompile(`(?is)\[code\]([\s\S]*?)\[/code\]`)
+
+type codeBlockPlaceholder struct {
+	token string
+	value string
+}
+
+func extractCodeBlocks(value string) (string, []codeBlockPlaceholder) {
+	placeholderPrefix := nextCodeBlockPlaceholderPrefix(value)
+	blocks := make([]codeBlockPlaceholder, 0)
+	index := 0
+	normalized := codeBlockPattern.ReplaceAllStringFunc(value, func(match string) string {
+		parts := codeBlockPattern.FindStringSubmatch(match)
+		if len(parts) != 2 {
+			return match
+		}
+		token := placeholderPrefix + strconv.Itoa(index) + "_END"
+		index++
+		blocks = append(blocks, codeBlockPlaceholder{
+			token: token,
+			value: parts[1],
+		})
+		return token
+	})
+	return normalized, blocks
+}
+
+func nextCodeBlockPlaceholderPrefix(value string) string {
+	for attempt := 0; ; attempt++ {
+		prefix := "UPBRR_CODE_BLOCK_PLACEHOLDER_" + strconv.Itoa(attempt) + "_"
+		if !strings.Contains(value, prefix) {
+			return prefix
+		}
+	}
+}
+
+func replaceCodeBlockPlaceholders(value string, blocks []codeBlockPlaceholder) string {
+	if len(blocks) == 0 {
+		return value
+	}
+	replacements := make([]string, 0, len(blocks)*2)
+	for _, block := range blocks {
+		replacements = append(replacements, block.token, renderCodeBlockHTML(block.value))
+	}
+	return strings.NewReplacer(replacements...).Replace(value)
+}
+
+func renderCodeBlockHTML(value string) string {
+	return "<pre><code>" + renderCodeBBCode(value) + "</code></pre>"
+}
+
+var codeColorTagPattern = regexp.MustCompile(`(?is)\[color=([#a-z0-9(),.%\s]+)\]([\s\S]*?)\[/color\]`)
+
+func renderCodeColorTags(value string) string {
+	return codeColorTagPattern.ReplaceAllStringFunc(value, func(match string) string {
+		parts := codeColorTagPattern.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match
+		}
+		color := sanitizeColor(parts[1])
+		if color == "" {
+			return parts[2]
+		}
+		return `<span style="color: ` + color + `">` + parts[2] + `</span>`
+	})
+}
+
+func renderCodeSimplePairTag(value string, bbcodeTag string, htmlTag string) string {
+	pattern := regexp.MustCompile(`(?is)\[` + regexp.QuoteMeta(bbcodeTag) + `\]([\s\S]*?)\[/` + regexp.QuoteMeta(bbcodeTag) + `\]`)
+	return pattern.ReplaceAllString(value, "<"+htmlTag+">$1</"+htmlTag+">")
+}
+
 var imgTagPattern = regexp.MustCompile(`(?is)\[img([^\]]*)\]([\s\S]*?)\[/img\]`)
 var imgWidthPattern = regexp.MustCompile(`(?i)\bwidth\s*=\s*(\d+)`)
 
@@ -85,8 +169,8 @@ func parseImageWidth(attrs string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if strings.HasPrefix(trimmed, "=") {
-		return strings.TrimSpace(strings.TrimPrefix(trimmed, "="))
+	if after, ok := strings.CutPrefix(trimmed, "="); ok {
+		return strings.TrimSpace(after)
 	}
 	match := imgWidthPattern.FindStringSubmatch(trimmed)
 	if len(match) == 2 {
@@ -132,7 +216,7 @@ func compileList(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	return out, true
 }
 
-func compileListItem(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
+func compileListItem(_ *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	out := bbcode.NewHTMLTag("")
 	out.Name = "li"
 	return out, true
@@ -241,10 +325,7 @@ func compileComparison(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 		columns = 1
 	}
 	for start := 0; start < len(images); start += columns {
-		end := start + columns
-		if end > len(images) {
-			end = len(images)
-		}
+		end := min(start+columns, len(images))
 		rowItem := bbcode.NewHTMLTag("")
 		rowItem.Name = "li"
 

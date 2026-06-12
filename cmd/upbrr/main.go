@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +24,6 @@ import (
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
-	"github.com/autobrr/upbrr/internal/guiapp"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/webserver"
@@ -74,8 +75,15 @@ func exitError(code int, err error) error {
 }
 
 func run() error {
+	api.SetApplicationBuild(version, "")
+
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		if err := runServe(os.Args[2:]); err != nil {
+			var helpErr *cliHelpError
+			if errors.As(err, &helpErr) {
+				fmt.Fprint(os.Stdout, helpErr.Usage())
+				return nil
+			}
 			return exitError(1, err)
 		}
 		return nil
@@ -83,6 +91,11 @@ func run() error {
 
 	opts, visitedFlags, paths, err := parseCLIOptions(os.Args[1:])
 	if err != nil {
+		var helpErr *cliHelpError
+		if errors.As(err, &helpErr) {
+			fmt.Fprint(os.Stdout, helpErr.Usage())
+			return nil
+		}
 		return exitError(2, err)
 	}
 
@@ -93,15 +106,6 @@ func run() error {
 		return nil
 	}
 
-	if opts.GUI && strings.TrimSpace(opts.ExportConfigPath) != "" {
-		return exitError(2, errors.New("--gui and --export-config cannot be used together"))
-	}
-	if opts.GUI && strings.TrimSpace(opts.ImportConfigPath) != "" {
-		return exitError(2, errors.New("--gui and --import-config cannot be used together"))
-	}
-	if opts.GUI && opts.CreateAuth {
-		return exitError(2, errors.New("--gui and --create-auth cannot be used together"))
-	}
 	if strings.TrimSpace(opts.ExportConfigPath) != "" && strings.TrimSpace(opts.ImportConfigPath) != "" {
 		return exitError(2, errors.New("--export-config and --import-config cannot be used together"))
 	}
@@ -110,20 +114,6 @@ func run() error {
 	}
 	if opts.CreateAuth && strings.TrimSpace(opts.ImportConfigPath) != "" {
 		return exitError(2, errors.New("--create-auth and --import-config cannot be used together"))
-	}
-
-	if opts.GUI {
-		resolvedConfigPath := ""
-		if configFlagProvided {
-			resolvedConfigPath, err = configstore.ResolveYAMLPath(opts.ConfigPath, configFlagProvided)
-			if err != nil {
-				return exitError(1, err)
-			}
-		}
-		if err := guiapp.Run(guiapp.RunOptions{ConfigPath: resolvedConfigPath, ConfigProvided: configFlagProvided}); err != nil {
-			return exitError(1, err)
-		}
-		return nil
 	}
 
 	if opts.CreateAuth {
@@ -196,10 +186,10 @@ func run() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	coreSvc, err := core.New(api.CoreDependencies{
-		Context: ctx,
-		Config:  cfg,
-		Logger:  logger,
+	ctx = withCLIUploadProgressLogger(ctx, logger)
+	coreSvc, err := core.NewWithContext(ctx, api.CoreDependencies{
+		Config: cfg,
+		Logger: logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
@@ -222,16 +212,6 @@ func run() error {
 		return nil
 	}
 
-	if opts.DeleteTmp {
-		paths, err = normalizeCLIPaths(ctx, paths)
-		if err != nil {
-			return exitError(1, err)
-		}
-		if err := deleteCLIStoredReleases(ctx, coreSvc, paths); err != nil {
-			return exitError(1, err)
-		}
-	}
-
 	if strings.TrimSpace(opts.QueueName) != "" {
 		if len(paths) != 1 {
 			return exitError(2, errors.New("--queue requires exactly one queue root path"))
@@ -246,8 +226,18 @@ func run() error {
 		}
 	}
 
+	if opts.DeleteTmp {
+		paths, err = normalizeCLIPaths(ctx, paths)
+		if err != nil {
+			return exitError(1, err)
+		}
+		if err := deleteCLIStoredReleases(ctx, coreSvc, paths); err != nil {
+			return exitError(1, err)
+		}
+	}
+
 	// Handle BDMV playlist selection before upload
-	if err := handleBDMVPlaylistSelection(ctx, paths, coreSvc, cfg, logger); err != nil {
+	if err := handleBDMVPlaylistSelection(ctx, paths, coreSvc, cfg, logger, opts); err != nil {
 		return exitError(1, err)
 	}
 
@@ -256,14 +246,16 @@ func run() error {
 		if err != nil {
 			return exitError(1, err)
 		}
+		uploadReq, err = prepareCLIUploadMetadata(ctx, coreSvc, uploadReq)
+		if err != nil {
+			return exitError(1, err)
+		}
 		if opts.Debug {
-			for _, sourcePath := range paths {
-				debugReq := uploadReq
-				debugReq.Paths = []string{sourcePath}
-				review, err := coreSvc.BuildUploadReview(ctx, debugReq)
-				if err != nil {
-					return exitError(1, err)
-				}
+			reviews, err := buildCLIUploadDebugReviews(ctx, coreSvc, paths, uploadReq)
+			if err != nil {
+				return exitError(1, err)
+			}
+			for _, review := range reviews {
 				printDebugUploadReview(review)
 			}
 		}
@@ -280,7 +272,7 @@ func run() error {
 			}
 			continue
 		}
-		if err := runInteractiveCLIPath(ctx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens); err != nil {
+		if err := runInteractiveCLIPath(ctx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens, cfg); err != nil {
 			return exitError(1, err)
 		}
 	}
@@ -316,7 +308,7 @@ func createCLIAuthFile(stdin io.Reader, stdout io.Writer, dbPath string) error {
 		return fmt.Errorf("create auth: password too short (minimum %d characters)", webserver.AuthPasswordMinLength)
 	}
 	if err := webserver.BootstrapAuthFile(dbPath, username, password); err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	return nil
 }
@@ -340,19 +332,22 @@ func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer,
 	if _, err := fmt.Fprint(stdout, label); err != nil {
 		return "", fmt.Errorf("create auth: write password prompt: %w", err)
 	}
-	if file, ok := stdin.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		raw, err := term.ReadPassword(int(file.Fd()))
-		if err != nil {
-			return "", fmt.Errorf("create auth: read password: %w", err)
+	if file, ok := stdin.(*os.File); ok {
+		fd, ok := terminalFileDescriptor(file)
+		if ok && term.IsTerminal(fd) {
+			raw, err := term.ReadPassword(fd)
+			if err != nil {
+				return "", fmt.Errorf("create auth: read password: %w", err)
+			}
+			if _, err := fmt.Fprintln(stdout); err != nil {
+				return "", fmt.Errorf("create auth: finish password prompt: %w", err)
+			}
+			value := strings.TrimSpace(string(raw))
+			if value == "" {
+				return "", errors.New("create auth: password cannot be empty")
+			}
+			return value, nil
 		}
-		if _, err := fmt.Fprintln(stdout); err != nil {
-			return "", fmt.Errorf("create auth: finish password prompt: %w", err)
-		}
-		value := strings.TrimSpace(string(raw))
-		if value == "" {
-			return "", errors.New("create auth: password cannot be empty")
-		}
-		return value, nil
 	}
 
 	line, err := reader.ReadString('\n')
@@ -366,6 +361,14 @@ func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer,
 	return value, nil
 }
 
+func terminalFileDescriptor(file *os.File) (int, bool) {
+	fd, err := strconv.Atoi(fmt.Sprint(file.Fd()))
+	if err != nil {
+		return 0, false
+	}
+	return fd, true
+}
+
 func runServe(args []string) error {
 	opts, visitedFlags, err := parseServeOptions(args)
 	if err != nil {
@@ -375,7 +378,7 @@ func runServe(args []string) error {
 	configFlagProvided := visitedFlags["config"]
 	resolvedConfigPath, err := configstore.ResolveYAMLPath(opts.ConfigPath, configFlagProvided)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 
 	cfg, dbPath, err := loadServeConfig(resolvedConfigPath, configFlagProvided)
@@ -385,32 +388,35 @@ func runServe(args []string) error {
 
 	webCfg, err := webserver.LoadCLIConfig(dbPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	if err := webserver.SaveCLIConfig(dbPath, webCfg); err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
+	}
+	if opts.DevNoAuth {
+		webCfg.OpenBrowser = false
 	}
 
 	server, err := webserver.New(webserver.Options{
-		StartupContext: context.Background(),
-		Config:         cfg,
-		CLIConfig:      webCfg,
+		Config:            cfg,
+		CLIConfig:         webCfg,
+		DevelopmentNoAuth: opts.DevNoAuth,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 	defer server.Close()
 
-	return server.Run(context.Background())
+	return wrapUpbrrError(server.Run(context.Background()))
 }
 
 func loadCLIConfig(configPath string, configProvided bool) (config.Config, string, error) {
 	cfg, dbPath, err := configstore.Bootstrap(context.Background(), configPath, configProvided, true)
 	if err != nil {
-		return config.Config{}, "", err
+		return config.Config{}, "", fmt.Errorf("upbrr: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {
-		return config.Config{}, "", err
+		return config.Config{}, "", fmt.Errorf("upbrr: %w", err)
 	}
 	return cfg, dbPath, nil
 }
@@ -419,7 +425,7 @@ func loadCLIConfig(configPath string, configProvided bool) (config.Config, strin
 // valid config (e.g. tmdb_api). The web UI handles initial setup, so the
 // server must be able to start even on a fresh install with no config yet.
 func loadServeConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	return configstore.Bootstrap(context.Background(), configPath, configProvided, false)
+	return wrapUpbrrResult2(configstore.Bootstrap(context.Background(), configPath, configProvided, false))
 }
 
 func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string, plaintext bool) error {
@@ -428,7 +434,7 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 		return err
 	}
 
-	repo, err := db.Open(dbPath)
+	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
 		return fmt.Errorf("open config database: %w", err)
 	}
@@ -440,13 +446,13 @@ func exportConfigToYAML(ctx context.Context, configPath string, configProvided b
 
 	if plaintext {
 		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, outputPath, repo); err != nil {
-			return err
+			return fmt.Errorf("upbrr: %w", err)
 		}
 		return nil
 	}
 
 	if err := config.ExportFromDatabaseToYAML(ctx, outputPath, repo); err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 
 	return nil
@@ -456,7 +462,7 @@ func resolveExportDBPath(configPath string, configProvided bool) (string, error)
 	if configProvided {
 		resolvedConfigPath, err := configstore.ResolveYAMLPath(configPath, configProvided)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("upbrr: %w", err)
 		}
 
 		loaded, err := config.ImportFromYAML(resolvedConfigPath)
@@ -571,18 +577,18 @@ func buildReleaseNameOverrides(visited map[string]bool, input releaseOverrideInp
 }
 
 func stringPtr(value string) *string {
-	copy := value
-	return &copy
+	ptrValue := value
+	return &ptrValue
 }
 
 func intPtr(value int) *int {
-	copy := value
-	return &copy
+	ptrValue := value
+	return &ptrValue
 }
 
 func boolPtr(value bool) *bool {
-	copy := value
-	return &copy
+	ptrValue := value
+	return &ptrValue
 }
 
 func splitCSV(value string) []string {
@@ -604,7 +610,7 @@ func normalizeCLIPaths(ctx context.Context, paths []string) ([]string, error) {
 	validator := filesystem.NewValidator()
 	normalized, err := validator.ValidatePaths(ctx, paths)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upbrr: %w", err)
 	}
 	return normalized, nil
 }
@@ -618,7 +624,130 @@ func deleteCLIStoredReleases(ctx context.Context, coreSvc api.Core, paths []stri
 	}
 	return nil
 }
-func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc api.Core, cfg config.Config, logger api.Logger) error {
+
+func prepareCLIUploadMetadata(ctx context.Context, coreSvc api.Core, req api.Request) (api.Request, error) {
+	resolvedReq := req
+	resolvedPaths := make([]string, 0, len(req.Paths))
+	resolvedSelections := req.ExternalIDSelections
+	for _, sourcePath := range req.Paths {
+		singleReq := req
+		singleReq.Paths = []string{sourcePath}
+		singleReq.ExternalIDSelections = resolvedSelections
+		preview, err := coreSvc.FetchMetadataPreview(ctx, singleReq)
+		if err != nil {
+			return api.Request{}, fmt.Errorf("upbrr: %w", err)
+		}
+		resolvedPath := resolvedCLIMetadataSourcePath(sourcePath, preview)
+		resolvedSelections = cloneCLIExternalIDSelectionsForResolvedPath(resolvedSelections, sourcePath, resolvedPath)
+		if shouldRefreshCLIResolvedMetadataPreview(singleReq, sourcePath, resolvedPath) {
+			resolvedReq := singleReq
+			resolvedReq.Paths = []string{resolvedPath}
+			resolvedReq.ExternalIDSelections = resolvedSelections
+			preview, err = coreSvc.FetchMetadataPreview(ctx, resolvedReq)
+			if err != nil {
+				return api.Request{}, fmt.Errorf("upbrr: %w", err)
+			}
+			resolvedPath = resolvedCLIMetadataSourcePath(resolvedPath, preview)
+			resolvedSelections = cloneCLIExternalIDSelectionsForResolvedPath(resolvedSelections, sourcePath, resolvedPath)
+		}
+		resolvedPaths = append(resolvedPaths, resolvedPath)
+	}
+	resolvedReq.Paths = resolvedPaths
+	resolvedReq.ExternalIDSelections = resolvedSelections
+	return resolvedReq, nil
+}
+
+func shouldRefreshCLIResolvedMetadataPreview(req api.Request, sourcePath string, resolvedPath string) bool {
+	trimmedSourcePath := strings.TrimSpace(sourcePath)
+	trimmedResolvedPath := strings.TrimSpace(resolvedPath)
+	if trimmedSourcePath == "" || trimmedResolvedPath == "" {
+		return false
+	}
+	if filepath.Clean(trimmedSourcePath) == filepath.Clean(trimmedResolvedPath) {
+		return false
+	}
+	if cliHasExternalIDOverrides(req.ExternalIDOverrides) {
+		return true
+	}
+	_, ok := resolveCLIExternalIDSelection(req.ExternalIDSelections, sourcePath)
+	return ok
+}
+
+func cliHasExternalIDOverrides(overrides api.ExternalIDOverrides) bool {
+	return overrides.TMDBID != nil ||
+		overrides.IMDBID != nil ||
+		overrides.TVDBID != nil ||
+		overrides.TVmazeID != nil ||
+		overrides.MALID != nil
+}
+
+func buildCLIUploadDebugReviews(ctx context.Context, coreSvc api.Core, sourcePaths []string, uploadReq api.Request) ([]api.UploadReview, error) {
+	reviews := make([]api.UploadReview, 0, len(sourcePaths))
+	for idx, sourcePath := range sourcePaths {
+		resolvedPath := sourcePath
+		if idx < len(uploadReq.Paths) && strings.TrimSpace(uploadReq.Paths[idx]) != "" {
+			resolvedPath = uploadReq.Paths[idx]
+		}
+		debugReq := uploadReq
+		debugReq.Paths = []string{resolvedPath}
+		debugReq.ExternalIDSelections = cloneCLIExternalIDSelectionsForResolvedPath(uploadReq.ExternalIDSelections, sourcePath, resolvedPath)
+		review, err := coreSvc.BuildUploadReview(ctx, debugReq)
+		if err != nil {
+			return nil, fmt.Errorf("build upload review for %q: %w", resolvedPath, err)
+		}
+		if strings.TrimSpace(sourcePath) != "" {
+			review.SourcePath = sourcePath
+		}
+		reviews = append(reviews, review)
+	}
+	return reviews, nil
+}
+
+func cloneCLIExternalIDSelectionsForResolvedPath(selections map[string]api.ExternalIDSelection, sourcePath string, resolvedPath string) map[string]api.ExternalIDSelection {
+	if len(selections) == 0 {
+		return selections
+	}
+	trimmedSourcePath := strings.TrimSpace(sourcePath)
+	trimmedResolvedPath := strings.TrimSpace(resolvedPath)
+	if trimmedResolvedPath == "" || trimmedSourcePath == "" {
+		return selections
+	}
+	if filepath.Clean(trimmedSourcePath) == filepath.Clean(trimmedResolvedPath) {
+		return selections
+	}
+	selected, ok := resolveCLIExternalIDSelection(selections, sourcePath)
+	if !ok {
+		return selections
+	}
+	if _, ok := resolveCLIExternalIDSelection(selections, trimmedResolvedPath); ok {
+		return selections
+	}
+	cloned := make(map[string]api.ExternalIDSelection, len(selections)+1)
+	maps.Copy(cloned, selections)
+	cloned[trimmedResolvedPath] = selected
+	return cloned
+}
+
+func resolveCLIExternalIDSelection(selections map[string]api.ExternalIDSelection, sourcePath string) (api.ExternalIDSelection, bool) {
+	if len(selections) == 0 {
+		return api.ExternalIDSelection{}, false
+	}
+	if selected, ok := selections[sourcePath]; ok {
+		return selected, true
+	}
+	cleanedSourcePath := filepath.Clean(sourcePath)
+	if selected, ok := selections[cleanedSourcePath]; ok {
+		return selected, true
+	}
+	for key, selected := range selections {
+		if filepath.Clean(key) == cleanedSourcePath {
+			return selected, true
+		}
+	}
+	return api.ExternalIDSelection{}, false
+}
+
+func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc api.Core, cfg config.Config, logger api.Logger, opts cliOptions) error {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -661,18 +790,28 @@ func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc ap
 
 			playlists, err := coreSvc.DiscoverPlaylists(ctx, absPath)
 			if err != nil {
+				if opts.Unattended && !opts.UnattendedConfirm {
+					return fmt.Errorf("upbrr: unattended BDMV playlist discovery failed for %s: %w", absPath, err)
+				}
 				logger.Warnf("cli: discover playlists: %v", err)
 				continue
 			}
 
-			if len(playlists) > 0 {
-				// Save the best (highest-scoring) playlist
-				selected := []string{playlists[0].File}
-				if err := coreSvc.SavePlaylistSelection(ctx, absPath, selected, false); err != nil {
-					logger.Warnf("cli: save playlist selection: %v", err)
-				} else {
-					logger.Infof("cli: auto-selected playlist %s (score: %.2f)", playlists[0].File, playlists[0].Score)
+			if len(playlists) == 0 {
+				if opts.Unattended && !opts.UnattendedConfirm {
+					return fmt.Errorf("upbrr: unattended BDMV upload found no playlists for %s", absPath)
 				}
+				continue
+			}
+			// Save the best (highest-scoring) playlist
+			selected := []string{playlists[0].File}
+			if err := coreSvc.SavePlaylistSelection(ctx, absPath, selected, false); err != nil {
+				if opts.Unattended && !opts.UnattendedConfirm {
+					return fmt.Errorf("upbrr: unattended BDMV playlist selection save failed for %s: %w", absPath, err)
+				}
+				logger.Warnf("cli: save playlist selection: %v", err)
+			} else {
+				logger.Infof("cli: auto-selected playlist %s (score: %.2f)", playlists[0].File, playlists[0].Score)
 			}
 			continue
 		}
@@ -681,33 +820,42 @@ func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc ap
 		logger.Infof("cli: discovering playlists for %s", absPath)
 		playlists, err := coreSvc.DiscoverPlaylists(ctx, absPath)
 		if err != nil {
+			if opts.Unattended && !opts.UnattendedConfirm {
+				return fmt.Errorf("upbrr: unattended BDMV playlist discovery failed for %s: %w", absPath, err)
+			}
 			logger.Warnf("cli: discover playlists: %v", err)
 			continue
 		}
 
 		if len(playlists) == 0 {
+			if opts.Unattended && !opts.UnattendedConfirm {
+				return fmt.Errorf("upbrr: unattended BDMV upload found no playlists for %s", absPath)
+			}
 			logger.Warnf("cli: no playlists found for %s", absPath)
 			continue
 		}
 
 		logger.Infof("cli: found %d playlists", len(playlists))
+		if opts.Unattended && !opts.UnattendedConfirm && len(playlists) > 1 {
+			return fmt.Errorf("upbrr: unattended BDMV upload requires a saved playlist selection or use_largest_playlist for %s", absPath)
+		}
 
 		// Display top playlists and prompt user
 		if len(playlists) == 1 {
 			fmt.Printf("[*] Only one playlist found: %s (%.0fs, score: %.2f)\n", playlists[0].File, playlists[0].Duration, playlists[0].Score)
 			fmt.Printf("[*] Auto-selecting...\n")
 			if err := coreSvc.SavePlaylistSelection(ctx, absPath, []string{playlists[0].File}, false); err != nil {
+				if opts.Unattended && !opts.UnattendedConfirm {
+					return fmt.Errorf("upbrr: unattended BDMV playlist selection save failed for %s: %w", absPath, err)
+				}
 				logger.Warnf("cli: save playlist selection: %v", err)
 			}
 		} else {
 			// Display top 5 playlists
-			topCount := len(playlists)
-			if topCount > 5 {
-				topCount = 5
-			}
+			topCount := min(len(playlists), 5)
 
 			fmt.Printf("\nAvailable playlists for %s:\n", absPath)
-			for i := 0; i < topCount; i++ {
+			for i := range topCount {
 				p := playlists[i]
 				durationStr := formatDuration(p.Duration)
 				fmt.Printf("[%d] %s (%s, score: %.2f)\n", i, p.File, durationStr, p.Score)
@@ -735,7 +883,7 @@ func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc ap
 				input = strings.TrimSpace(input)
 				if strings.ToLower(input) == "all" {
 					var selected []string
-					for i := 0; i < topCount; i++ {
+					for i := range topCount {
 						selected = append(selected, playlists[i].File)
 					}
 					if err := coreSvc.SavePlaylistSelection(ctx, absPath, selected, true); err != nil {
@@ -775,7 +923,6 @@ func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc ap
 			}
 		}
 	}
-
 	return nil
 }
 
@@ -795,7 +942,7 @@ func formatDuration(seconds float64) string {
 func importConfig(ctx context.Context, importPath, configPath string, configProvided bool) error {
 	cfg, warnings, err := importer.ImportFromFile(importPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("upbrr: %w", err)
 	}
 
 	for _, w := range warnings {

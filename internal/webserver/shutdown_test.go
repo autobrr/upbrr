@@ -4,6 +4,10 @@
 package webserver
 
 import (
+	"context"
+	"io"
+	"net"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -146,12 +150,10 @@ func TestStopSessionLogStreamsStopsMatchingStreams(t *testing.T) {
 			stop:      make(chan struct{}),
 			done:      make(chan struct{}),
 		}
-		backend.streamWG.Add(1)
-		go func() {
-			defer backend.streamWG.Done()
+		backend.streamWG.Go(func() {
 			<-stream.stop
 			close(stream.done)
-		}()
+		})
 		return stream
 	}
 
@@ -175,4 +177,101 @@ func TestStopSessionLogStreamsStopsMatchingStreams(t *testing.T) {
 	}
 
 	_ = backend.StopLogStream("stream-3")
+}
+
+func TestServeCancelsOpenEventStreamOnContextDone(t *testing.T) {
+	hub := newEventHub()
+	server := &Server{
+		backend: &Backend{
+			streams: make(map[string]*backendLogStream),
+		},
+		hub:            hub,
+		generalLimiter: newFixedWindowLimiter(300, time.Minute),
+		server: &http.Server{
+			ReadHeaderTimeout: 10 * time.Second,
+		},
+		developmentNoAuth: true,
+		developmentSession: session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: "csrf",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/events", server.requireSession(server.handleEvents))
+	server.server.Handler = mux
+
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- server.serve(ctx, listener)
+	}()
+
+	req, err := http.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		"http://"+listener.Addr().String()+"/api/events",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	clientDone := make(chan error, 1)
+	go func() {
+		resp, err := client.Do(req)
+		if resp != nil {
+			defer resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+		}
+		clientDone <- err
+	}()
+
+	waitForEventSubscriber(t, hub, "dev-no-auth")
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serve returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected serve to return after context cancellation")
+	}
+
+	select {
+	case <-clientDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected event stream client to finish after shutdown")
+	}
+}
+
+func waitForEventSubscriber(t *testing.T, hub *eventHub, sessionID string) {
+	t.Helper()
+
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		hub.mu.Lock()
+		subscribers := len(hub.subscribers[sessionID])
+		hub.mu.Unlock()
+		if subscribers > 0 {
+			return
+		}
+
+		select {
+		case <-deadline:
+			t.Fatal("expected event stream subscriber")
+		case <-ticker.C:
+		}
+	}
 }

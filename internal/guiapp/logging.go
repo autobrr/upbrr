@@ -4,7 +4,6 @@
 package guiapp
 
 import (
-	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -41,18 +40,19 @@ func (a *App) GetLogPath() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
 	}
-	return logging.LogPath(a.cfg.MainSettings.DBPath)
+	return wrapGUIResult(logging.LogPath(a.currentConfig().MainSettings.DBPath))
 }
 
 func (a *App) GetRecentLogs(limit int) ([]logging.Entry, error) {
-	if a == nil || a.logger == nil {
+	logger := a.currentLogger()
+	if logger == nil {
 		return nil, errors.New("logger not initialized")
 	}
-	return a.logger.Recent(limit), nil
+	return logger.Recent(limit), nil
 }
 
 func (a *App) StartLogStream() (string, error) {
-	if a == nil || a.logger == nil {
+	if a == nil || a.currentLogger() == nil {
 		return "", errors.New("logger not initialized")
 	}
 
@@ -95,17 +95,14 @@ func (a *App) GetLogExclusions() ([]string, error) {
 		return nil, errors.New("config repository not initialized")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 
 	var exclusions LogExclusions
 	if err := config.LoadSectionFromDatabase(ctx, logExclusionsSection, &exclusions, a.repo); err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
-			return nil, nil
+			return []string{}, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("gui: %w", err)
 	}
 
 	return normalizePatterns(exclusions.Patterns), nil
@@ -119,32 +116,27 @@ func (a *App) UpdateLogExclusions(patterns []string) error {
 		return errors.New("config repository not initialized")
 	}
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 
 	exclusions := LogExclusions{Patterns: normalizePatterns(patterns)}
 	if err := config.SaveSectionToDatabase(ctx, logExclusionsSection, exclusions, a.repo); err != nil {
-		return err
+		return fmt.Errorf("gui: %w", err)
 	}
 
 	return nil
 }
 
 func (a *App) startStreamLocked(session *logStreamSession) {
-	if session == nil || a.logger == nil {
+	logger := a.currentLogger()
+	if session == nil || logger == nil {
 		return
 	}
 
-	subID, ch := a.logger.Subscribe(0)
-	session.logger = a.logger
+	subID, ch := logger.Subscribe(0)
+	session.logger = logger
 	session.subID = subID
 
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.runtimeContext()
 
 	stop := session.stop
 	done := session.done
@@ -217,7 +209,7 @@ func (a *App) rebindLogStreams(oldLogger *logging.Logger, newLogger *logging.Log
 
 func normalizePatterns(patterns []string) []string {
 	seen := make(map[string]struct{})
-	var normalized []string
+	normalized := make([]string, 0, len(patterns))
 	for _, pattern := range patterns {
 		trimmed := strings.TrimSpace(pattern)
 		if trimmed == "" {

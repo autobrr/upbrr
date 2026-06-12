@@ -4,27 +4,44 @@
 package webserver
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type stubNativePicker struct {
-	filePath    string
-	folderPath  string
-	fileErr     error
-	folderErr   error
-	fileCalls   int
-	folderCalls int
+	filePath        string
+	imageFilePaths  []string
+	folderPath      string
+	fileErr         error
+	imageFilesErr   error
+	folderErr       error
+	fileCalls       int
+	imageFilesCalls int
+	folderCalls     int
 }
 
 func (s *stubNativePicker) BrowseFile() (string, error) {
 	s.fileCalls++
 	return s.filePath, s.fileErr
+}
+
+func (s *stubNativePicker) BrowseImageFiles() ([]string, error) {
+	s.imageFilesCalls++
+	return s.imageFilePaths, s.imageFilesErr
 }
 
 func (s *stubNativePicker) BrowseFolder() (string, error) {
@@ -57,13 +74,67 @@ func testServerWithPicker(picker nativePicker) *Server {
 	}
 }
 
+func testServerWithBackend(t *testing.T, repo *db.SQLiteRepository, cfg config.Config) *Server {
+	t.Helper()
+	manager := testSessionManager()
+	manager.sessions["test-session"] = session{
+		ID:        "test-session",
+		Username:  "tester",
+		CSRFToken: "test-csrf",
+		ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}
+	return &Server{
+		backend:        &Backend{repo: repo, cfg: cfg},
+		sessions:       manager,
+		generalLimiter: newFixedWindowLimiter(100, time.Minute),
+		authLimiter:    newFixedWindowLimiter(100, time.Minute),
+	}
+}
+
+func openBrowseTestRepo(t *testing.T) (*db.SQLiteRepository, string) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	repo, err := db.OpenWithLogger(dbPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+	return repo, dbPath
+}
+
+func setTestBrowsePolicy(t *testing.T, server *Server, dbPath string, root string, allowUnrestricted bool) {
+	t.Helper()
+	store, err := newAuthStore(dbPath)
+	if err != nil {
+		t.Fatalf("new auth store: %v", err)
+	}
+	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
+		t.Fatalf("bootstrap auth: %v", err)
+	}
+	record, err := store.Load()
+	if err != nil {
+		t.Fatalf("load auth: %v", err)
+	}
+	record.BrowseRoot = root
+	record.AllowUnrestrictedBrowse = allowUnrestricted
+	if err := store.UpdateRecord(record); err != nil {
+		t.Fatalf("update auth: %v", err)
+	}
+	server.auth = store
+}
+
 func newBrowseRequest(path string, host string, remoteAddr string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(`{}`))
 	req.Host = host
 	req.RemoteAddr = remoteAddr
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://"+host)
-	req.Header.Set("X-CSRF-Token", "test-csrf")
+	req.Header.Set("X-Csrf-Token", "test-csrf")
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
 	return req
 }
@@ -103,7 +174,7 @@ func TestHandleAuthStatusIncludesNativeBrowseCapability(t *testing.T) {
 		picker: &stubNativePicker{},
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
 	req.Host = "127.0.0.1:8080"
 	req.RemoteAddr = "127.0.0.1:5050"
 
@@ -146,6 +217,27 @@ func TestBrowseFileRouteAllowsLocalhostSessions(t *testing.T) {
 	}
 }
 
+func TestBrowseImageFilesRouteAllowsLocalhostSessions(t *testing.T) {
+	picker := &stubNativePicker{imageFilePaths: []string{`C:\Menus\menu1.png`, `C:\Menus\menu2.webp`}}
+	server := testServerWithPicker(picker)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	recorder := httptest.NewRecorder()
+	req := newBrowseRequest("/api/app/BrowseImageFiles", "127.0.0.1:8080", "127.0.0.1:5050")
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse image files route returned %d", recorder.Code)
+	}
+	if picker.imageFilesCalls != 1 {
+		t.Fatalf("expected image picker to be called once, got %d", picker.imageFilesCalls)
+	}
+	if got := strings.TrimSpace(recorder.Body.String()); !strings.Contains(got, `C:\\Menus\\menu1.png`) || !strings.Contains(got, `C:\\Menus\\menu2.webp`) {
+		t.Fatalf("expected response to include selected image paths, got %q", got)
+	}
+}
+
 func TestBrowseFileRouteRejectsRemoteSessions(t *testing.T) {
 	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
 	server := testServerWithPicker(picker)
@@ -164,5 +256,587 @@ func TestBrowseFileRouteRejectsRemoteSessions(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "localhost web sessions") {
 		t.Fatalf("expected remote browse error message, got %q", recorder.Body.String())
+	}
+}
+
+func TestDevelopmentNoAuthAppRouteAllowsLoopbackWithCSRF(t *testing.T) {
+	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
+	server := &Server{
+		picker:            picker,
+		generalLimiter:    newFixedWindowLimiter(100, time.Minute),
+		developmentNoAuth: true,
+		developmentSession: session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: "dev-csrf",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		},
+	}
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5050"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("X-Csrf-Token", "dev-csrf")
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse file route returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if picker.fileCalls != 1 {
+		t.Fatalf("expected picker to be called once, got %d", picker.fileCalls)
+	}
+}
+
+func TestDevelopmentNoAuthAppRouteRejectsMissingCSRF(t *testing.T) {
+	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
+	server := &Server{
+		picker:            picker,
+		generalLimiter:    newFixedWindowLimiter(100, time.Minute),
+		developmentNoAuth: true,
+		developmentSession: session{
+			ID:        "dev-no-auth",
+			Username:  "dev",
+			CSRFToken: "dev-csrf",
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		},
+	}
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:8080"
+	req.RemoteAddr = "127.0.0.1:5050"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://127.0.0.1:8080")
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden status, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if picker.fileCalls != 0 {
+		t.Fatalf("expected picker not to be called, got %d calls", picker.fileCalls)
+	}
+}
+
+func TestUIStateRoutePersistsSharedState(t *testing.T) {
+	repo, dbPath := openBrowseTestRepo(t)
+	server := testServerWithBackend(t, repo, config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	})
+	setTestBrowsePolicy(t, server, dbPath, "", true)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	post := newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
+	post.Body = io.NopCloser(strings.NewReader(`{"id":"state-a","label":"Dupes","state":{"path":"/media/release","activeTab":"dupes"}}`))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, post)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("save ui state returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	get := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState?id=state-a", nil)
+	get.Host = "example.com:8080"
+	get.RemoteAddr = "192.168.1.25:5050"
+	get.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, get)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("get ui state returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var payload api.UIStateRecord
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal ui state: %v", err)
+	}
+	if payload.ID != "state-a" || payload.Label != "Dupes" || payload.State["path"] != "/media/release" || payload.State["activeTab"] != "dupes" {
+		t.Fatalf("unexpected ui state payload: %#v", payload)
+	}
+
+	post = newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
+	post.Body = io.NopCloser(strings.NewReader(`{"id":"state-b","label":"Upload","state":{"path":"/media/other","activeTab":"upload"}}`))
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, post)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("save second ui state returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	list := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState", nil)
+	list.Host = "example.com:8080"
+	list.RemoteAddr = "192.168.1.25:5050"
+	list.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, list)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("list ui states returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var stateList api.UIStateList
+	if err := json.Unmarshal(recorder.Body.Bytes(), &stateList); err != nil {
+		t.Fatalf("unmarshal ui state list: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, record := range stateList.States {
+		seen[record.ID] = true
+	}
+	if len(stateList.States) != 2 || !seen["state-a"] || !seen["state-b"] {
+		t.Fatalf("expected both live ui states, got %#v", stateList.States)
+	}
+	if stateList.States[0].ID != "state-a" || stateList.States[1].ID != "state-b" {
+		t.Fatalf("expected stable live ui state order, got %#v", stateList.States)
+	}
+}
+
+func TestUIStateRouteRejectsUnauthenticatedAndBadCSRF(t *testing.T) {
+	repo, dbPath := openBrowseTestRepo(t)
+	server := testServerWithBackend(t, repo, config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	})
+	setTestBrowsePolicy(t, server, dbPath, "", true)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	cases := []struct {
+		name           string
+		request        func() *http.Request
+		expectedStatus int
+	}{
+		{
+			name: "unauthenticated",
+			request: func() *http.Request {
+				return httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState", nil)
+			},
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name: "bad csrf",
+			request: func() *http.Request {
+				req := newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
+				req.Header.Del("X-Csrf-Token")
+				return req
+			},
+			expectedStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			mux.ServeHTTP(recorder, tc.request())
+			if recorder.Code != tc.expectedStatus {
+				t.Fatalf("expected status %d, got %d", tc.expectedStatus, recorder.Code)
+			}
+		})
+	}
+}
+
+func TestUIStateRouteRejectsBlankPostID(t *testing.T) {
+	repo, dbPath := openBrowseTestRepo(t)
+	server := testServerWithBackend(t, repo, config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	})
+	setTestBrowsePolicy(t, server, dbPath, "", true)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
+	req.Body = io.NopCloser(strings.NewReader(`{"id":"   ","label":"Blank","state":{}}`))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected blank id to return 400, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "id is required") {
+		t.Fatalf("expected id validation error, got %s", recorder.Body.String())
+	}
+}
+
+func TestBrowseDirectoryRouteAllowsRemoteSessionsAndSortsEntries(t *testing.T) {
+	repo, dbPath := openBrowseTestRepo(t)
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "b-folder"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a-file.txt"), []byte("hello"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "c-video.mkv"), []byte("video"), 0o600); err != nil {
+		t.Fatalf("write video: %v", err)
+	}
+	server := testServerWithBackend(t, repo, config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	})
+	setTestBrowsePolicy(t, server, dbPath, "", true)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(root) + `,"mode":"file"}`))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse directory returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var payload api.BrowseDirectoryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal browse directory: %v", err)
+	}
+	if len(payload.Entries) < 2 {
+		t.Fatalf("expected at least two entries, got %#v", payload.Entries)
+	}
+	if payload.Entries[0].Name != "b-folder" || !payload.Entries[0].IsDir {
+		t.Fatalf("expected folder first, got %#v", payload.Entries)
+	}
+	if payload.Entries[1].Name != "c-video.mkv" || payload.Entries[1].IsDir {
+		t.Fatalf("expected file second, got %#v", payload.Entries)
+	}
+	for _, entry := range payload.Entries {
+		if entry.Name == "a-file.txt" {
+			t.Fatalf("expected non-video file to be hidden, got %#v", payload.Entries)
+		}
+	}
+}
+
+func TestBrowseDirectoryRouteRequiresWebBrowsePolicy(t *testing.T) {
+	repo, dbPath := openBrowseTestRepo(t)
+	root := t.TempDir()
+	server := testServerWithBackend(t, repo, config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	})
+	store, err := newAuthStore(dbPath)
+	if err != nil {
+		t.Fatalf("new auth store: %v", err)
+	}
+	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
+		t.Fatalf("bootstrap auth: %v", err)
+	}
+	server.auth = store
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(root) + `,"mode":"folder"}`))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected missing browse policy to return 403, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "web browse root is not configured") {
+		t.Fatalf("expected browse policy error, got %s", recorder.Body.String())
+	}
+}
+
+func TestMenuImportPathsWithinBrowsePolicyRejectsOutsideRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "menu.png")
+	if err := os.WriteFile(outside, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write outside image: %v", err)
+	}
+
+	_, err := menuImportPathsWithinBrowsePolicy([]string{outside}, webBrowsePolicy{Roots: []string{root}})
+	if err == nil {
+		t.Fatal("expected outside browse root error")
+	}
+	if !strings.Contains(err.Error(), "outside configured web browse roots") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMenuImportPathsWithinBrowsePolicyAllowsInsideRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	inside := filepath.Join(root, "menu.png")
+	if err := os.WriteFile(inside, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write inside image: %v", err)
+	}
+
+	paths, err := menuImportPathsWithinBrowsePolicy([]string{inside}, webBrowsePolicy{Roots: []string{root}})
+	if err != nil {
+		t.Fatalf("menuImportPathsWithinBrowsePolicy: %v", err)
+	}
+	if len(paths) != 1 || filepath.Clean(paths[0]) != filepath.Clean(inside) {
+		t.Fatalf("unexpected import paths: %#v", paths)
+	}
+}
+
+func TestMenuImportPathsWithinBrowsePolicyAdditionalScenarios(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		name      string
+		setup     func(t *testing.T) ([]string, webBrowsePolicy, []string)
+		wantErr   string
+		exactPath bool
+	}
+
+	toWindowsPath := func(t *testing.T, path string) string {
+		t.Helper()
+		if runtime.GOOS != "windows" {
+			t.Skip("Windows-style local paths are only valid on Windows")
+		}
+		return strings.ReplaceAll(filepath.ToSlash(path), "/", `\`)
+	}
+
+	tests := []testCase{
+		{
+			name: "directory import posix path",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				root := t.TempDir()
+				dir := filepath.Join(root, "menus")
+				if err := os.Mkdir(dir, 0o755); err != nil {
+					t.Fatalf("mkdir menu dir: %v", err)
+				}
+				first := filepath.Join(dir, "one.png")
+				second := filepath.Join(dir, "two.jpg")
+				subdir := filepath.Join(dir, "nested")
+				if err := os.WriteFile(first, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write first image: %v", err)
+				}
+				if err := os.WriteFile(second, []byte("jpg"), 0o600); err != nil {
+					t.Fatalf("write second image: %v", err)
+				}
+				if err := os.Mkdir(subdir, 0o755); err != nil {
+					t.Fatalf("mkdir nested dir: %v", err)
+				}
+				return []string{filepath.ToSlash(dir)}, webBrowsePolicy{Roots: []string{root}}, []string{first, second}
+			},
+		},
+		{
+			name: "directory import windows path",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				root := t.TempDir()
+				dir := filepath.Join(root, "menus")
+				if err := os.Mkdir(dir, 0o755); err != nil {
+					t.Fatalf("mkdir menu dir: %v", err)
+				}
+				image := filepath.Join(dir, "one.png")
+				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write image: %v", err)
+				}
+				return []string{toWindowsPath(t, dir)}, webBrowsePolicy{Roots: []string{root}}, []string{image}
+			},
+		},
+		{
+			name: "symlink inside root points outside",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				root := t.TempDir()
+				outside := filepath.Join(t.TempDir(), "menu.png")
+				if err := os.WriteFile(outside, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write outside image: %v", err)
+				}
+				link := filepath.Join(root, "linked.png")
+				if err := os.Symlink(outside, link); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+				return []string{link}, webBrowsePolicy{Roots: []string{root}}, nil
+			},
+			wantErr: "outside configured web browse roots",
+		},
+		{
+			name: "allow unrestricted returns original paths",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				path := filepath.Join(t.TempDir(), "missing.png")
+				return []string{path}, webBrowsePolicy{AllowUnrestricted: true}, []string{path}
+			},
+			exactPath: true,
+		},
+		{
+			name: "multiple roots accepts second root posix path",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				firstRoot := t.TempDir()
+				secondRoot := t.TempDir()
+				image := filepath.Join(secondRoot, "menu.png")
+				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write image: %v", err)
+				}
+				return []string{filepath.ToSlash(image)}, webBrowsePolicy{Roots: []string{firstRoot, secondRoot}}, []string{image}
+			},
+		},
+		{
+			name: "multiple roots accepts second root windows path",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				firstRoot := t.TempDir()
+				secondRoot := t.TempDir()
+				image := filepath.Join(secondRoot, "menu.png")
+				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write image: %v", err)
+				}
+				return []string{toWindowsPath(t, image)}, webBrowsePolicy{Roots: []string{firstRoot, secondRoot}}, []string{image}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paths, policy, want := tt.setup(t)
+			got, err := menuImportPathsWithinBrowsePolicy(paths, policy)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("menuImportPathsWithinBrowsePolicy: %v", err)
+			}
+			if len(got) != len(want) {
+				t.Fatalf("expected %d paths, got %#v", len(want), got)
+			}
+			for i := range want {
+				if tt.exactPath {
+					if got[i] != want[i] {
+						t.Fatalf("expected path %q at index %d, got %q", want[i], i, got[i])
+					}
+					continue
+				}
+				if filepath.Clean(got[i]) != filepath.Clean(want[i]) {
+					t.Fatalf("expected path %q at index %d, got %q", want[i], i, got[i])
+				}
+			}
+		})
+	}
+}
+
+func TestBrowseDirectoryRouteHonorsWebAuthBrowseRoot(t *testing.T) {
+	repo, dbPath := openBrowseTestRepo(t)
+	root := t.TempDir()
+	allowed := filepath.Join(root, "allowed")
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.Mkdir(allowed, 0o755); err != nil {
+		t.Fatalf("mkdir allowed: %v", err)
+	}
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+
+	server := testServerWithBackend(t, repo, config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	})
+	setTestBrowsePolicy(t, server, dbPath, root, false)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req.Body = io.NopCloser(strings.NewReader(`{"path":"","mode":"folder"}`))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse root returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var payload api.BrowseDirectoryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal browse root: %v", err)
+	}
+	if payload.CurrentPath != root {
+		t.Fatalf("expected constrained root %q, got %q", root, payload.CurrentPath)
+	}
+	if payload.ParentPath != "" {
+		t.Fatalf("expected no parent above constrained root, got %q", payload.ParentPath)
+	}
+
+	req = newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(outside) + `,"mode":"folder"}`))
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected outside browse root to return 400, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "outside configured web browse root") {
+		t.Fatalf("expected browse root error, got %s", recorder.Body.String())
+	}
+}
+
+func TestBrowseDirectoryRouteHonorsMultipleWebAuthBrowseRoots(t *testing.T) {
+	repo, dbPath := openBrowseTestRepo(t)
+	first := filepath.Join(t.TempDir(), "first")
+	second := filepath.Join(t.TempDir(), "second")
+	outside := filepath.Join(t.TempDir(), "outside")
+	for _, dir := range []string{first, second, outside} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	server := testServerWithBackend(t, repo, config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	})
+	setTestBrowsePolicy(t, server, dbPath, first+", "+second, false)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req.Body = io.NopCloser(strings.NewReader(`{"path":"","mode":"folder"}`))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse roots returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var payload api.BrowseDirectoryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal browse roots: %v", err)
+	}
+	if payload.CurrentPath != "" || len(payload.Entries) != 2 {
+		t.Fatalf("expected virtual root with two entries, got %#v", payload)
+	}
+	if payload.Entries[0].Path != first || payload.Entries[1].Path != second {
+		t.Fatalf("expected both configured roots, got %#v", payload.Entries)
+	}
+
+	req = newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(second) + `,"mode":"folder"}`))
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("browse second root returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal second root: %v", err)
+	}
+	if payload.CurrentPath != second || payload.ParentPath != "" {
+		t.Fatalf("expected constrained second root, got %#v", payload)
+	}
+
+	req = newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(outside) + `,"mode":"folder"}`))
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected outside browse roots to return 400, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestBrowseDirectoryRouteRejectsInvalidPath(t *testing.T) {
+	repo, dbPath := openBrowseTestRepo(t)
+	server := testServerWithBackend(t, repo, config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	})
+	setTestBrowsePolicy(t, server, dbPath, "", true)
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(filepath.Join(t.TempDir(), "missing")) + `,"mode":"folder"}`))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid path to return 400, got %d", recorder.Code)
 	}
 }

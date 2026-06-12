@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -177,15 +178,15 @@ func decryptConfigSecretsWithHelperFrom(cfg *Config, helper string, assumeCloned
 }
 
 func RewrapSecretsInDatabase(ctx context.Context, repo interface {
-	LoadFullConfig(ctx context.Context, dest interface{}) error
-	SaveFullConfig(ctx context.Context, cfg interface{}) error
+	LoadFullConfig(ctx context.Context, dest any) error
+	SaveFullConfig(ctx context.Context, cfg any) error
 }, oldMaterial, newMaterial authmaterial.Material) error {
 	return RewrapSecretsInDatabaseWithFallback(ctx, repo, []authmaterial.Material{oldMaterial}, newMaterial)
 }
 
 func RewrapSecretsInDatabaseWithFallback(ctx context.Context, repo interface {
-	LoadFullConfig(ctx context.Context, dest interface{}) error
-	SaveFullConfig(ctx context.Context, cfg interface{}) error
+	LoadFullConfig(ctx context.Context, dest any) error
+	SaveFullConfig(ctx context.Context, cfg any) error
 }, sourceMaterials []authmaterial.Material, newMaterial authmaterial.Material) error {
 	if repo == nil {
 		return errors.New("config secret rewrap: nil repository")
@@ -255,13 +256,7 @@ func decryptConfigSecretsWithHelpersFrom(cfg *Config, helpers []string, assumeCl
 		if helper == "" {
 			continue
 		}
-		duplicate := false
-		for _, existing := range cleanHelpers {
-			if existing == helper {
-				duplicate = true
-				break
-			}
-		}
+		duplicate := slices.Contains(cleanHelpers, helper)
 		if !duplicate {
 			cleanHelpers = append(cleanHelpers, helper)
 		}
@@ -345,7 +340,6 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 
 	imageSecrets := []*string{
 		&cfg.ImageHosting.ImgBBAPI,
-		&cfg.ImageHosting.PTPImgAPI,
 		&cfg.ImageHosting.LensdumpAPI,
 		&cfg.ImageHosting.PTScreensAPI,
 		&cfg.ImageHosting.OnlyImageAPI,
@@ -397,8 +391,8 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 			field *string
 		}{
 			{name: "APIKey", field: &entry.APIKey},
-			{name: "ApiKey", field: &entry.ApiKey},
-			{name: "ApiUser", field: &entry.ApiUser},
+			{name: "ApiKey", field: &entry.PTPAPIKey},
+			{name: "ApiUser", field: &entry.PTPAPIUser},
 			{name: "Username", field: &entry.Username},
 			{name: "Password", field: &entry.Password},
 			{name: "Passkey", field: &entry.Passkey},
@@ -413,6 +407,12 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 			{name: "LoginQuestion", field: &entry.LoginQuestion},
 			{name: "LoginAnswer", field: &entry.LoginAnswer},
 			{name: "Filebrowser", field: &entry.Filebrowser},
+		}
+		if strings.EqualFold(strings.TrimSpace(name), "BTN") {
+			trackerSecrets = append(trackerSecrets, struct {
+				name  string
+				field *string
+			}{name: "URL", field: &entry.URL})
 		}
 		for _, item := range trackerSecrets {
 			if err := visit("Trackers."+name+"."+item.name, item.field); err != nil {
@@ -528,7 +528,7 @@ func encryptSecretString(plaintext string, helper string) (string, error) {
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: marshal envelope: %w", err)
 	}
 
 	return encryptedEnvelopePrefix + base64.StdEncoding.EncodeToString(payload), nil
@@ -552,15 +552,15 @@ func decryptSecretString(value string, helper string) (string, error) {
 
 	ciphertext, err := base64.StdEncoding.DecodeString(envelope.C)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: decode ciphertext: %w", err)
 	}
 	nonce, err := base64.StdEncoding.DecodeString(envelope.N)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: decode nonce: %w", err)
 	}
 	authTag, err := base64.StdEncoding.DecodeString(envelope.T)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: decode auth tag: %w", err)
 	}
 
 	return decryptSecretValue(secretPayload{ciphertext: ciphertext, nonce: nonce, authTag: authTag}, key)
@@ -651,11 +651,11 @@ func encryptSecretValue(plaintext string, key []byte) (secretPayload, error) {
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return secretPayload{}, err
+		return secretPayload{}, fmt.Errorf("secrets: create AES cipher: %w", err)
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return secretPayload{}, err
+		return secretPayload{}, fmt.Errorf("secrets: create GCM cipher: %w", err)
 	}
 	nonce, err := generateRandomBytes(12)
 	if err != nil {
@@ -685,16 +685,16 @@ func decryptSecretValue(payload secretPayload, key []byte) (string, error) {
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: create AES cipher: %w", err)
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: create GCM cipher: %w", err)
 	}
 	sealed := append(append([]byte{}, payload.ciphertext...), payload.authTag...)
 	plaintext, err := gcm.Open(nil, payload.nonce, sealed, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("secrets: decrypt value: %w", err)
 	}
 	return string(plaintext), nil
 }
