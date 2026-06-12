@@ -457,6 +457,8 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
           call("RetryFailedTrackerUpload", { JobID: jobID }),
         GetTrackerUploadSnapshot: (jobID: string) =>
           call("GetTrackerUploadSnapshot", { JobID: jobID }),
+        GetTrackerIcon: (domain: string, url: string) =>
+          call<string>("GetTrackerIcon", { Domain: domain, URL: url }),
       },
     },
   };

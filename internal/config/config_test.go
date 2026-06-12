@@ -319,6 +319,7 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 					AnnounceURL: "https://should-not-be-here",
 					Username:    "should-not-be-here",
 					ImageHost:   "pixhost",
+					FaviconURL:  "https://icons.example/a4k.png",
 					Anon:        true,
 					Unknown: map[string]any{
 						"CustomFlag": "keep",
@@ -367,6 +368,9 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 	if got := a4k["ImageHost"]; got != "pixhost" {
 		t.Fatalf("A4K should include ImageHost, got %v", got)
 	}
+	if got := a4k["FaviconURL"]; got != "https://icons.example/a4k.png" {
+		t.Fatalf("A4K should include FaviconURL, got %v", got)
+	}
 	if got := a4k["CustomFlag"]; got != "keep" {
 		t.Fatalf("custom key not preserved, got %v", got)
 	}
@@ -385,6 +389,7 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 					APIKey:      "abc",
 					AnnounceURL: "https://should-not-be-here",
 					ImageHost:   "pixhost",
+					FaviconURL:  "https://icons.example/a4k.png",
 					Anon:        true,
 					Unknown: map[string]any{
 						"custom_yaml": "keep",
@@ -415,6 +420,9 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	}
 	if !strings.Contains(text, "image_host: pixhost") {
 		t.Fatalf("A4K should include image_host in yaml export")
+	}
+	if !strings.Contains(text, "favicon_url: https://icons.example/a4k.png") {
+		t.Fatalf("A4K should include favicon_url in yaml export")
 	}
 	if !strings.Contains(text, "custom_yaml: keep") {
 		t.Fatalf("unknown custom key should be preserved in yaml export")
@@ -528,6 +536,9 @@ func TestMergeMissingTrackerDefaults(t *testing.T) {
 	}
 	if got := cfg.Trackers.Trackers["AITHER"].APIKey; got != "existing" {
 		t.Fatalf("expected existing tracker config to be preserved, got %q", got)
+	}
+	if got := cfg.Trackers.Trackers["AITHER"].URL; got != "https://aither.cc" {
+		t.Fatalf("expected AITHER URL to be backfilled, got %q", got)
 	}
 }
 
@@ -682,5 +693,69 @@ func TestDisableUnsupportedTrackerImageRehosts(t *testing.T) {
 	}
 	if !cfg.Trackers.Trackers["HDB"].ImgRehost {
 		t.Fatal("expected HDB img_rehost to remain enabled")
+	}
+}
+
+func TestResolveTrackerDomain(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"AITHER": {URL: "https://aither.cc"},
+				"BLU":    {URL: "blutopia.cc"}, // no scheme
+			},
+		},
+	}
+
+	cases := []struct {
+		name         string
+		input        string
+		expectedHost string
+		expectedURL  string
+	}{
+		{
+			name:         "exact match with scheme",
+			input:        "AITHER",
+			expectedHost: "aither.cc",
+			expectedURL:  "https://aither.cc",
+		},
+		{
+			name:         "case-insensitive match",
+			input:        "aither",
+			expectedHost: "aither.cc",
+			expectedURL:  "https://aither.cc",
+		},
+		{
+			name:         "match without scheme",
+			input:        "BLU",
+			expectedHost: "blutopia.cc",
+			expectedURL:  "blutopia.cc",
+		},
+		{
+			name:         "unconfigured tracker is treated as raw domain",
+			input:        "my-random-domain.com",
+			expectedHost: "my-random-domain.com",
+			expectedURL:  "",
+		},
+		{
+			name:         "empty input",
+			input:        "",
+			expectedHost: "",
+			expectedURL:  "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gotHost, gotURL := ResolveTrackerDomain(cfg, tc.input)
+			if gotHost != tc.expectedHost {
+				t.Errorf("expected host %q, got %q", tc.expectedHost, gotHost)
+			}
+			if gotURL != tc.expectedURL {
+				t.Errorf("expected URL %q, got %q", tc.expectedURL, gotURL)
+			}
+		})
 	}
 }

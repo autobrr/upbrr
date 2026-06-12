@@ -22,6 +22,7 @@ import UploadImagesPage from "./pages/upload_images";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useUploadImages } from "./hooks/useUploadImages";
+import { useTrackerIcons } from "./hooks/useTrackerIcons";
 import { cn } from "./utils/cn";
 import type {
   ConfigMap,
@@ -445,6 +446,7 @@ declare global {
             CancelTrackerUpload: (jobID: string) => Promise<void>;
             RetryFailedTrackerUpload: (jobID: string) => Promise<string>;
             GetTrackerUploadSnapshot: (jobID: string) => Promise<TrackerUploadSnapshot>;
+            GetTrackerIcon?: (domain: string, customURL: string) => Promise<string>;
           };
         };
       }
@@ -752,6 +754,16 @@ export default function App() {
     const mainSettings = ((configData as ConfigMap | null)?.MainSettings ??
       null) as ConfigMap | null;
     return resolveInputHistoryLimit(mainSettings?.InputHistoryLimit);
+  }, [configData]);
+  const useFavicons = useMemo(() => {
+    const mainSettings = ((configData as ConfigMap | null)?.MainSettings ??
+      null) as ConfigMap | null;
+    return typeof mainSettings?.UseFavicons === "boolean" ? mainSettings.UseFavicons : true;
+  }, [configData]);
+  const faviconOnly = useMemo(() => {
+    const mainSettings = ((configData as ConfigMap | null)?.MainSettings ??
+      null) as ConfigMap | null;
+    return typeof mainSettings?.FaviconOnly === "boolean" ? mainSettings.FaviconOnly : false;
   }, [configData]);
 
   const persistSourcePathHistory = useCallback((entries: SourcePathHistoryEntry[]) => {
@@ -1080,6 +1092,7 @@ export default function App() {
       .map(([name, config]) => ({ name, config }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [configData, trackerSelectionNames]);
+  const trackerIconSrcByName = useTrackerIcons(trackerUploadItems, useFavicons);
 
   const defaultTrackerSet = useMemo(() => {
     if (!configData || !configData.Trackers || typeof configData.Trackers !== "object") {
@@ -4401,6 +4414,9 @@ export default function App() {
               dupeProgressStatus={dupeProgressStatus}
               dupeCompletedCount={dupeCompletedCount}
               dupeTotalCount={dupeTotalCount}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
               handleDupeCheck={handleDupeCheck}
               setDupeIgnore={setDupeIgnore}
             />
@@ -4519,6 +4535,9 @@ export default function App() {
               builderProgressMessage={builderProgressMessage}
               builderError={builderError}
               builderSaved={builderSaved}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
               refreshDescriptionBuilder={refreshDescriptionBuilder}
               setBuilderRawByGroup={setBuilderRawByGroup}
               setBuilderDirtyByGroup={setBuilderDirtyByGroup}
@@ -4556,6 +4575,9 @@ export default function App() {
               dryRunProgress={trackerDryRunProgress}
               dryRunPreview={trackerDryRunPreview}
               trackerQuestionnaireAnswers={trackerQuestionnaireAnswers}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
               onQuestionnaireAnswerChange={updateTrackerQuestionnaireAnswer}
               onRunDryRun={handleRunTrackerDryRun}
               onStartUpload={handleStartTrackerUpload}
@@ -4569,6 +4591,9 @@ export default function App() {
               setRenderedDescriptions={setRenderedDescriptions}
               setLightboxImage={setLightboxImage}
               setLightboxAlt={setLightboxAlt}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
             />
           ) : (
             <InputPage
@@ -4612,6 +4637,9 @@ export default function App() {
               setRunLogLevel={setRunLogLevel}
               runLogLevelTouched={runLogLevelTouched}
               setRunLogLevelTouched={setRunLogLevelTouched}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
             />
           )}
         </main>

@@ -29,6 +29,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/logout", s.requireSession(s.handleLogout))
 	mux.HandleFunc("/api/auth/browse-policy", s.requireSession(s.handleBrowsePolicy))
 	mux.HandleFunc("/api/events", s.requireSession(s.handleEvents))
+	mux.HandleFunc("/api/app/TrackerIcon", s.requireSession(s.handleTrackerIcon))
 
 	s.registerAppRoutes(mux)
 

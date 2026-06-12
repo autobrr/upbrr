@@ -172,6 +172,7 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
     advanced: true,
   }),
   URL: stringField("URL", { label: "URL", advanced: true }),
+  FaviconURL: stringField("FaviconURL", { label: "Favicon URL", advanced: true }),
   UploaderName: stringField("UploaderName", { label: "Uploader name" }),
   UploaderStatus: boolField("UploaderStatus", { label: "Uploader status", advanced: true }),
   CustomLayout: stringField("CustomLayout", { label: "Custom layout", advanced: true }),
@@ -229,48 +230,56 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
 
 const trackerSchemas: Record<string, FieldMeta[]> = {
   A4K: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.ModQ,
   ],
   ACM: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.Anon,
   ],
   AITHER: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.ModQ,
   ],
   ANT: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.Anon,
   ],
   AR: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.Username,
     trackerFieldMeta.Password,
     trackerFieldMeta.AnnounceURL,
   ],
   ASC: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.UploaderStatus,
     trackerFieldMeta.CustomLayout,
     trackerFieldMeta.AnnounceURL,
   ],
   AZ: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.Anon,
     trackerFieldMeta.CheckForRules,
   ],
   BHD: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.BhdRSSKey,
@@ -279,6 +288,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
   ],
   BHDTV: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.AnnounceURL,
@@ -286,14 +296,26 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
   ],
   BJS: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.Anon,
     trackerFieldMeta.ShowGroupIfAnon,
   ],
-  BLU: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  BT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
+  BLU: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
+  BT: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
   BTN: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Username,
@@ -302,6 +324,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.OTPURI,
   ],
   CBR: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
@@ -309,25 +332,34 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.TagForCustomRelease,
   ],
   CZ: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.Anon,
     trackerFieldMeta.CheckForRules,
   ],
-  DC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  DC: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   DP: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.ModQ,
   ],
   EMUW: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.UseSpanishTitle,
   ],
   FF: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.Username,
     trackerFieldMeta.Password,
@@ -336,15 +368,22 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.FullMediainfo,
   ],
   FL: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.Username,
     trackerFieldMeta.Passkey,
     trackerFieldMeta.UploaderName,
     trackerFieldMeta.Anon,
   ],
-  FRIKI: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
-  GPW: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL],
+  FRIKI: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
+  GPW: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+  ],
   HDB: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.Username,
     trackerFieldMeta.Passkey,
@@ -352,25 +391,58 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.ImgRehost,
   ],
   HDS: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.Anon,
     trackerFieldMeta.FullMediainfo,
   ],
   HDT: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.URL,
     trackerFieldMeta.Anon,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.FullMediainfo,
   ],
-  HHD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  IHD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  IS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL, trackerFieldMeta.Anon],
-  ITT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  LCD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  LDU: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  HHD: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
+  IHD: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
+  IS: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
+  ITT: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
+  LCD: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
+  LDU: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   LST: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
@@ -378,18 +450,21 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Draft,
   ],
   LT: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.ModQ,
   ],
   LUME: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.ModQ,
   ],
   MTV: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Username,
@@ -400,22 +475,40 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.SkipIfRehash,
     trackerFieldMeta.PreferMTV,
   ],
-  NBL: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.AnnounceURL],
-  OE: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  NBL: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+  ],
+  OE: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   OTW: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.ModQ,
     trackerFieldMeta.Anon,
   ],
   PHD: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.Anon,
     trackerFieldMeta.CheckForRules,
   ],
-  PT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  PT: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   PTP: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.AddWebSourceToDesc,
     trackerFieldMeta.ApiUser,
@@ -424,22 +517,35 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Password,
     trackerFieldMeta.AnnounceURL,
   ],
-  PTS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL],
-  PTT: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  PTS: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL],
+  PTT: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   R4E: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.Anon,
   ],
-  RAS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  RAS: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   RF: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.ImgAPI,
     trackerFieldMeta.Anon,
   ],
   RTF: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.Username,
     trackerFieldMeta.Password,
@@ -448,21 +554,34 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
   ],
   SAM: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.TagForCustomRelease,
   ],
   SHRI: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.UseItalianTitle,
   ],
-  SP: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
-  SPD: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Channel],
-  STC: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  SP: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
+  SPD: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Channel,
+  ],
+  STC: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   THR: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.Username,
     trackerFieldMeta.Password,
@@ -473,8 +592,14 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.PronfoRAPIID,
     trackerFieldMeta.Anon,
   ],
-  TIK: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  TIK: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   TL: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIUpload,
     trackerFieldMeta.Passkey,
@@ -482,8 +607,14 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.ImgRehost,
     trackerFieldMeta.FullMediainfo,
   ],
-  TLZ: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
+  TLZ: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   TOS: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.AnnounceURL,
@@ -491,12 +622,14 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Exclusive,
   ],
   TTR: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.ModQ,
   ],
   TVC: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.ImageCount,
     trackerFieldMeta.APIKey,
@@ -504,14 +637,25 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
   ],
   ULCX: [
+    trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
     trackerFieldMeta.ModQ,
   ],
-  UTP: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  YUS: [trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey, trackerFieldMeta.Anon],
-  MANUAL: [trackerFieldMeta.Filebrowser],
+  UTP: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
+  YUS: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
+  MANUAL: [trackerFieldMeta.FaviconURL, trackerFieldMeta.Filebrowser],
 };
 
 const trackerHasAdvancedFields = Object.values(trackerSchemas).some((fields) =>
@@ -519,6 +663,69 @@ const trackerHasAdvancedFields = Object.values(trackerSchemas).some((fields) =>
 );
 
 const REDACTED_VALUE = "[REDACTED]";
+const trackerActivationKeys = new Set([
+  "APIKey",
+  "ApiUser",
+  "ApiKey",
+  "Username",
+  "Password",
+  "Passkey",
+  "AnnounceURL",
+  "MyAnnounceURL",
+  "BhdRSSKey",
+  "OTPURI",
+  "PTGenAPI",
+  "ImageHost",
+  "ImgAPI",
+  "TorrentClient",
+  "PronfoAPIKey",
+  "LoginQuestion",
+  "LoginAnswer",
+  "UserID",
+  "Filebrowser",
+]);
+
+function hasConfiguredTrackerValue(
+  value: ConfigValue | undefined,
+  baseline: ConfigValue | undefined,
+): boolean {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return false;
+    }
+    return baseline !== value;
+  }
+  if (typeof value === "number") {
+    return value !== 0 && baseline !== value;
+  }
+  if (typeof value === "boolean") {
+    return value && baseline !== value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return false;
+    }
+    if (Array.isArray(baseline) && JSON.stringify(value) === JSON.stringify(baseline)) {
+      return false;
+    }
+    return true;
+  }
+  if (value && typeof value === "object") {
+    if (Object.keys(value).length === 0) {
+      return false;
+    }
+    if (
+      baseline &&
+      typeof baseline === "object" &&
+      JSON.stringify(value) === JSON.stringify(baseline)
+    ) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
 const sensitiveKeyHints = [
   "password",
   "passkey",
@@ -540,6 +747,8 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   MainSettings: {
     TrackerPassChecks: { key: "TrackerPassChecks", advanced: true },
     InputHistoryLimit: { key: "InputHistoryLimit", label: "Input history limit", type: "number" },
+    UseFavicons: { key: "UseFavicons", label: "Use favicons" },
+    FaviconOnly: { key: "FaviconOnly", label: "Favicon only" },
     DBPath: { key: "DBPath", advanced: true },
   },
   Metadata: {
@@ -1215,6 +1424,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (
       (activeTab === "input" ||
         activeTab === "tracker" ||
+        activeTab === "dupes" ||
         activeTab === "settings" ||
         activeTab === "logging" ||
         activeTab === "upload" ||
@@ -1783,16 +1993,16 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   /**
-   * Check if a tracker is configured by comparing it to the baseline default config.
-   * A tracker is considered configured if:
-   * - It has any field different from the baseline
-   * - The baseline doesn't have the tracker
-   * - It has Unknown keys (custom fields not in the schema)
+   * Check if a tracker has user-supplied upload/auth config. Catalog defaults
+   * include every tracker and URL, so entry presence or default_tracker membership
+   * cannot mean the tracker is enabled.
    */
   const isTrackerConfigured = useCallback(
     (trackerName: string, trackerValue: ConfigMap): boolean => {
       if (!defaultConfig || typeof defaultConfig !== "object" || Array.isArray(defaultConfig)) {
-        return true; // If we can't load defaults, assume it's configured
+        return Object.entries(trackerValue).some(([key, value]) =>
+          trackerActivationKeys.has(key) ? hasConfiguredTrackerValue(value, undefined) : false,
+        );
       }
 
       const defaultTrackersCfg = defaultConfig.Trackers;
@@ -1801,7 +2011,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         typeof defaultTrackersCfg !== "object" ||
         Array.isArray(defaultTrackersCfg)
       ) {
-        return true; // If defaults don't have Trackers section, assume all are configured
+        return Object.entries(trackerValue).some(([key, value]) =>
+          trackerActivationKeys.has(key) ? hasConfiguredTrackerValue(value, undefined) : false,
+        );
       }
 
       const defaultTrackersMap = defaultTrackersCfg.Trackers;
@@ -1810,53 +2022,26 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         typeof defaultTrackersMap !== "object" ||
         Array.isArray(defaultTrackersMap)
       ) {
-        return true; // If defaults don't have tracker entries, assume all are configured
+        return Object.entries(trackerValue).some(([key, value]) =>
+          trackerActivationKeys.has(key) ? hasConfiguredTrackerValue(value, undefined) : false,
+        );
       }
 
       const baselineTracker = (defaultTrackersMap as ConfigMap)[trackerName];
-      if (baselineTracker === undefined) {
-        // Not in baseline = configured (user added this tracker)
-        return true;
-      }
+      const baseline =
+        baselineTracker && typeof baselineTracker === "object" && !Array.isArray(baselineTracker)
+          ? (baselineTracker as ConfigMap)
+          : {};
 
-      if (typeof baselineTracker !== "object" || Array.isArray(baselineTracker)) {
-        // Baseline has invalid type = configured
-        return true;
-      }
-
-      // Compare field-by-field
-      const currentKeys = new Set(Object.keys(trackerValue));
-      const baselineKeys = new Set(Object.keys(baselineTracker as ConfigMap));
-
-      // Check if any current key differs from baseline
-      for (const key of currentKeys) {
-        const currentValue = trackerValue[key];
-        const baselineValue = (baselineTracker as ConfigMap)[key];
-
-        // If key not in baseline, or values differ, it's configured
-        if (baselineValue === undefined) {
-          return true; // User added a new field
+      for (const [key, currentValue] of Object.entries(trackerValue)) {
+        if (!trackerActivationKeys.has(key)) {
+          continue;
         }
-
-        // Deep comparison for objects, shallow for primitives
-        if (typeof currentValue === "object" && typeof baselineValue === "object") {
-          if (JSON.stringify(currentValue) !== JSON.stringify(baselineValue)) {
-            return true;
-          }
-        } else if (currentValue !== baselineValue) {
+        if (hasConfiguredTrackerValue(currentValue, baseline[key])) {
           return true;
         }
       }
 
-      // Check if baseline has keys not in current (field was removed from baseline template)
-      for (const key of baselineKeys) {
-        if (!currentKeys.has(key)) {
-          // User may have intentionally removed a field; this is also a configuration
-          return true;
-        }
-      }
-
-      // All fields match baseline exactly
       return false;
     },
     [defaultConfig],

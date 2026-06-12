@@ -144,6 +144,58 @@ describe("DescriptionBuilderPage", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("renders each tracker favicon for multi-tracker groups", () => {
+    const builderPreview = {
+      SourcePath: "C:/media/Movie.mkv",
+      Groups: [
+        {
+          GroupKey: "unit3d|aither+blutopia|global",
+          Trackers: ["AITHER", "BLUTOPIA"],
+          Description: "",
+          DescriptionHTML: "",
+          RawDescription: "raw",
+          RawDescriptionHTML: "",
+          HasOverride: false,
+          ImageHost: { Status: "", SelectedHost: "", AllowedHosts: [], Warnings: [] },
+        },
+      ],
+    } as unknown as DescriptionBuilderPreview;
+
+    const { container } = render(
+      <DescriptionBuilderPage
+        path="C:/media/Movie.mkv"
+        builderPreview={builderPreview}
+        builderRawByGroup={{}}
+        builderRenderedByGroup={{}}
+        builderExpandedGroups={{}}
+        builderLoading={false}
+        builderSaving={false}
+        builderRenderLoading={false}
+        builderRefreshing={false}
+        builderProgressMessage=""
+        builderError=""
+        builderSaved=""
+        useFavicons={true}
+        faviconOnly={true}
+        trackerIconSrcByName={{
+          aither: "data:image/png;base64,iVBORw0KGgo=",
+          blutopia: "data:image/png;base64,iVBORw0KGgo=",
+        }}
+        refreshDescriptionBuilder={vi.fn()}
+        setBuilderRawByGroup={vi.fn()}
+        setBuilderDirtyByGroup={vi.fn()}
+        setBuilderExpandedGroups={vi.fn()}
+        resetBuilderDescription={vi.fn()}
+        renderBuilderDescription={vi.fn()}
+        saveBuilderDescription={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("AITHER, BLUTOPIA")).toBeTruthy();
+    expect(screen.queryByText("AITHER, BLUTOPIA")).toBeNull();
+    expect(container.querySelectorAll("img")).toHaveLength(2);
+  });
+
   it("initializes rendered comparison controls in the builder preview", async () => {
     const builderPreview = {
       SourcePath: "C:/media/Movie.mkv",

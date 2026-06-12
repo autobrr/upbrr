@@ -6,6 +6,9 @@ import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
 import { PillCheckbox } from "../../components/ui/checkbox";
 import { Switch } from "../../components/ui/switch";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
+import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
+import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type {
   DetailBlock,
   DetailItem,
@@ -601,6 +604,9 @@ type Props = Readonly<{
   setRunLogLevel: Dispatch<SetStateAction<string>>;
   runLogLevelTouched: boolean;
   setRunLogLevelTouched: Dispatch<SetStateAction<boolean>>;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
+  trackerIconSrcByName: TrackerIconCache;
 }>;
 
 export default function InputPage(props: Props) {
@@ -645,6 +651,9 @@ export default function InputPage(props: Props) {
     setRunLogLevel,
     runLogLevelTouched,
     setRunLogLevelTouched,
+    useFavicons = true,
+    faviconOnly = false,
+    trackerIconSrcByName,
   } = props;
 
   const [sourcePathHistoryOpen, setSourcePathHistoryOpen] = useState(false);
@@ -1214,20 +1223,31 @@ export default function InputPage(props: Props) {
                     <p className="muted">No configured tracker entries found.</p>
                   ) : (
                     <div className="tracker-pills">
-                      {trackerUploadItems.map((tracker) => (
-                        <PillCheckbox
-                          key={tracker.name}
-                          checked={Boolean(releasePageTrackerSelection[tracker.name])}
-                          onCheckedChange={(checked) =>
-                            setReleasePageTrackerSelection((prev) => ({
-                              ...prev,
-                              [tracker.name]: checked,
-                            }))
-                          }
-                        >
-                          {tracker.name}
-                        </PillCheckbox>
-                      ))}
+                      {trackerUploadItems.map((tracker) => {
+                        const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
+                        return (
+                          <PillCheckbox
+                            aria-label={tracker.name}
+                            key={tracker.name}
+                            checked={Boolean(releasePageTrackerSelection[tracker.name])}
+                            onCheckedChange={(checked) =>
+                              setReleasePageTrackerSelection((prev) => ({
+                                ...prev,
+                                [tracker.name]: checked,
+                              }))
+                            }
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <TrackerIconImage
+                                tracker={tracker.name}
+                                iconSrc={iconSrc}
+                                enabled={useFavicons}
+                              />
+                              {faviconOnly && useFavicons ? null : tracker.name}
+                            </span>
+                          </PillCheckbox>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

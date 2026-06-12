@@ -445,6 +445,77 @@ describe("Tracker client selectors", () => {
     expect(payload.Trackers?.Trackers?.AITHER?.TorrentClient).toBe("watcher");
   });
 
+  it("does not treat catalog tracker entries or default tracker membership as enabled config", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: ["AITHER", "BLU", "BHD"],
+                PreferredTracker: "",
+                Trackers: {
+                  AITHER: {
+                    URL: "https://aither.cc",
+                    APIKey: "",
+                    Anon: false,
+                  },
+                  BLU: {
+                    URL: "https://blutopia.cc",
+                    APIKey: "",
+                    Anon: false,
+                  },
+                  BHD: {
+                    URL: "https://beyond-hd.me",
+                    APIKey: "tracker-token",
+                    Anon: false,
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: ["AITHER", "BLU", "BHD"],
+                PreferredTracker: "",
+                Trackers: {
+                  AITHER: {
+                    URL: "https://aither.cc",
+                    APIKey: "",
+                    Anon: false,
+                  },
+                  BLU: {
+                    URL: "https://blutopia.cc",
+                    APIKey: "",
+                    Anon: false,
+                  },
+                  BHD: {
+                    URL: "https://beyond-hd.me",
+                    APIKey: "",
+                    Anon: false,
+                  },
+                },
+              },
+            }),
+          ListKnownTrackers: async () => ["AITHER", "BLU", "BHD"],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("BHD", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+
+    expect(screen.queryByText("AITHER", { selector: ".settings-card__summary-name" })).toBeNull();
+    expect(screen.queryByText("BLU", { selector: ".settings-card__summary-name" })).toBeNull();
+    expect(screen.getByText("1/1")).toBeInTheDocument();
+  });
+
   it("shows Lostimg as an LST image host only when configured in image hosting", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
       guiapp: {
@@ -461,7 +532,7 @@ describe("Tracker client selectors", () => {
                 Trackers: {
                   LST: {
                     LinkDirName: "",
-                    APIKey: "",
+                    APIKey: "tracker-token",
                     ImageHost: "",
                     Anon: false,
                   },
@@ -508,7 +579,7 @@ describe("Tracker client selectors", () => {
                 Trackers: {
                   LST: {
                     LinkDirName: "",
-                    APIKey: "",
+                    APIKey: "tracker-token",
                     ImageHost: "",
                     Anon: false,
                   },
@@ -611,7 +682,7 @@ describe("Tracker client selectors", () => {
                 Trackers: {
                   RF: {
                     LinkDirName: "",
-                    APIKey: "",
+                    APIKey: "tracker-token",
                     ImgAPI: "",
                     ImageHost: "",
                     Anon: false,

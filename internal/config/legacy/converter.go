@@ -562,7 +562,7 @@ func convertToFieldType(value any, targetType reflect.Type) reflect.Value {
 	}
 
 	// Handle pointer types.
-	if targetType.Kind() == reflect.Ptr {
+	if targetType.Kind() == reflect.Pointer {
 		elemType := targetType.Elem()
 		inner := convertToFieldType(value, elemType)
 		if !inner.IsValid() {
