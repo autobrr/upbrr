@@ -23,6 +23,9 @@ type recordingRepo struct {
 	savedHost   string
 	savedPath   string
 	savedImages []api.UploadedImageLink
+	screens     []api.Screenshot
+	selections  []api.ScreenshotFinalSelection
+	uploads     []api.UploadedImageLink
 }
 
 func (r *recordingRepo) SaveUploadedImages(_ context.Context, path string, host string, images []api.UploadedImageLink) error {
@@ -84,14 +87,14 @@ func (r *recordingRepo) ListTrackerMetadataByPath(context.Context, string) ([]ap
 }
 func (r *recordingRepo) SaveScreenshot(context.Context, api.Screenshot) error { return nil }
 func (r *recordingRepo) ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error) {
-	return nil, nil
+	return append([]api.Screenshot(nil), r.screens...), nil
 }
 func (r *recordingRepo) DeleteScreenshot(context.Context, string) error { return nil }
 func (r *recordingRepo) SaveFinalSelections(context.Context, string, []api.ScreenshotFinalSelection) error {
 	return nil
 }
 func (r *recordingRepo) ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error) {
-	return nil, nil
+	return append([]api.ScreenshotFinalSelection(nil), r.selections...), nil
 }
 func (r *recordingRepo) DeleteFinalSelection(context.Context, string) error { return nil }
 func (r *recordingRepo) ReplaceScreenshotSlots(context.Context, string, []api.ScreenshotSlot) error {
@@ -104,7 +107,7 @@ func (r *recordingRepo) UpsertScreenshotSlotVariants(context.Context, string, []
 	return nil
 }
 func (r *recordingRepo) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
-	return nil, nil
+	return append([]api.UploadedImageLink(nil), r.uploads...), nil
 }
 func (r *recordingRepo) DeleteUploadedImage(context.Context, string, string, string) error {
 	return nil
@@ -278,6 +281,42 @@ func TestUploadImagesSuccess(t *testing.T) {
 	}
 	if repo.savedImages[0].UsageScope != "tracker:HDB" {
 		t.Fatalf("expected repo usage scope tracker:HDB, got %q", repo.savedImages[0].UsageScope)
+	}
+}
+
+func TestListCandidatesIncludesUploadedOnlyImages(t *testing.T) {
+	imagePath := filepath.Join(t.TempDir(), "tracker-artifact.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	uploadedAt := time.Now().UTC()
+	repo := &recordingRepo{
+		uploads: []api.UploadedImageLink{{
+			SourcePath: "/tmp/source",
+			ImagePath:  imagePath,
+			Host:       "pixhost",
+			UsageScope: "global",
+			ImgURL:     "https://pixhost/img.png",
+			RawURL:     "https://pixhost/raw.png",
+			WebURL:     "https://pixhost/view",
+			UploadedAt: uploadedAt,
+			SizeBytes:  8,
+		}},
+	}
+	service := &Service{logger: api.NopLogger{}, repo: repo}
+
+	images, err := service.ListCandidates(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"})
+	if err != nil {
+		t.Fatalf("ListCandidates returned error: %v", err)
+	}
+	if len(images) != 1 {
+		t.Fatalf("expected uploaded-only image candidate, got %d", len(images))
+	}
+	if images[0].Path != imagePath || images[0].Host != "pixhost" || images[0].RawURL != "https://pixhost/raw.png" {
+		t.Fatalf("expected uploaded-only candidate details, got %#v", images[0])
+	}
+	if !images[0].UploadedAt.Equal(uploadedAt) {
+		t.Fatalf("expected uploaded timestamp, got %v", images[0].UploadedAt)
 	}
 }
 

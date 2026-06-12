@@ -232,7 +232,7 @@ func validateUpload(meta api.PreparedMetadata, cfg config.TrackerConfig, assets 
 	for _, image := range assets.Screenshots {
 		host := strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(metautil.FirstNonEmptyTrimmed(image.WebURL, image.ImgURL, image.RawURL))))
 		switch host {
-		case "imgbb", "ptpimg", "imgbox", "pixhost", "bam", "onlyimage":
+		case "imgbb", "imgbox", "pixhost", "bam", "onlyimage":
 		default:
 			return "TVC screenshots must use an approved image host"
 		}

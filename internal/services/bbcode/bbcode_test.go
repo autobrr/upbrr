@@ -12,14 +12,28 @@ func TestCleanUnit3DDescription(t *testing.T) {
 	desc := "[url=https://blutopia.xyz/torrents/123]Title[/url]\n[img]https://example.com/a.jpg[/img]\n[img]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img]"
 	report := CleanUnit3DDescription(desc, "https://blutopia.xyz")
 
-	if report.Description != "" {
-		t.Fatalf("expected description to be discarded, got %q", report.Description)
+	if report.Description != "Title" {
+		t.Fatalf("expected description text to be preserved, got %q", report.Description)
 	}
 	if len(report.Images) != 1 {
 		t.Fatalf("expected 1 image, got %d", len(report.Images))
 	}
 	if report.Images[0].ImgURL != "https://example.com/a.jpg" {
 		t.Fatalf("unexpected image url %q", report.Images[0].ImgURL)
+	}
+}
+
+func TestCleanUnit3DDescriptionPreservesFetchedTextWithoutScreenshotBlocks(t *testing.T) {
+	desc := "[center]Existing tracker description[/center]\n\n" +
+		"[center][url=https://img.example/a.jpg][img]https://img.example/a.jpg[/img][/url][/center]\n\n" +
+		"[right][url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url][/right]"
+	report := CleanUnit3DDescription(desc, "https://example.org")
+
+	if report.Description != "[center]Existing tracker description[/center]\n\n[right][url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url][/right]" {
+		t.Fatalf("expected text body without screenshot block, got %q", report.Description)
+	}
+	if len(report.Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(report.Images))
 	}
 }
 
@@ -40,7 +54,7 @@ func TestCleanUnit3DDescriptionRemovesOrphanedTonemapAndEmptyAlign(t *testing.T)
 	report := CleanUnit3DDescription(desc, "https://example.org")
 
 	if report.Description != "" {
-		t.Fatalf("expected description to be discarded, got %q", report.Description)
+		t.Fatalf("expected orphaned tonemap note to be discarded, got %q", report.Description)
 	}
 	if len(report.Images) != 1 {
 		t.Fatalf("expected 1 image, got %d", len(report.Images))
@@ -64,8 +78,8 @@ func TestCleanUnit3DDescriptionKeepsFirstScreenshotSetAfterTMDBPoster(t *testing
 
 	report := CleanUnit3DDescription(desc, "https://example.org")
 
-	if report.Description != "" {
-		t.Fatalf("expected description to be discarded, got %q", report.Description)
+	if report.Description != "[center]Stranger.Things.S05E01[/center]" {
+		t.Fatalf("expected non-screenshot text to be preserved, got %q", report.Description)
 	}
 	if len(report.Images) != 3 {
 		t.Fatalf("expected first screenshot set only (3 images), got %d", len(report.Images))
@@ -143,6 +157,83 @@ func TestCleanBHDDescriptionRemovesOrphanedEmptyAlign(t *testing.T) {
 	}
 }
 
+func TestCleanBHDDescriptionRemovesKnownBotSignatures(t *testing.T) {
+	desc := strings.Join([]string{
+		"Body",
+		"[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+		"[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
+		"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
+		"[right]Created by Upload Assistant[/right]",
+	}, "\n")
+	report := CleanBHDDescription(desc, BHDOptions{})
+
+	if report.Description != "Body" {
+		t.Fatalf("expected bot signatures removed, got %q", report.Description)
+	}
+	if len(report.Images) != 0 {
+		t.Fatalf("expected bot images removed with signatures, got %d", len(report.Images))
+	}
+}
+
+func TestCleanBHDDescriptionKeepsCenteredScreenshotBeforeAitherFooter(t *testing.T) {
+	desc := strings.Join([]string{
+		"Body",
+		"[center][url=https://web.example/1][img=350]https://raw.example/1.png[/img][/url][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+	}, "\n\n")
+	report := CleanBHDDescription(desc, BHDOptions{})
+
+	if report.Description != "Body" {
+		t.Fatalf("expected body preserved and footer stripped, got %q", report.Description)
+	}
+	if len(report.Images) != 1 {
+		t.Fatalf("expected 1 image retained, got %d", len(report.Images))
+	}
+	if report.Images[0].ImgURL != "https://raw.example/1.png" {
+		t.Fatalf("unexpected image url %q", report.Images[0].ImgURL)
+	}
+}
+
+func TestCleanPTPDescriptionRemovesKnownBotSignatures(t *testing.T) {
+	desc := strings.Join([]string{
+		"Body",
+		"[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+		"[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
+		"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+		"[right]Created by Upload Assistant[/right]",
+	}, "\n")
+	report := CleanPTPDescription(desc, "")
+
+	if report.Description != "Body" {
+		t.Fatalf("expected bot signatures removed, got %q", report.Description)
+	}
+	if len(report.Images) != 0 {
+		t.Fatalf("expected bot images removed with signatures, got %d", len(report.Images))
+	}
+}
+
+func TestCleanPTPDescriptionKeepsCenteredScreenshotBeforeAitherFooter(t *testing.T) {
+	desc := strings.Join([]string{
+		"Body",
+		"[center][img]https://raw.example/1.png[/img][/center]",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+	}, "\n\n")
+	report := CleanPTPDescription(desc, "")
+
+	if report.Description != "Body" {
+		t.Fatalf("expected body preserved and footer stripped, got %q", report.Description)
+	}
+	if len(report.Images) != 1 {
+		t.Fatalf("expected 1 image retained, got %d", len(report.Images))
+	}
+	if report.Images[0].ImgURL != "https://raw.example/1.png" {
+		t.Fatalf("unexpected image url %q", report.Images[0].ImgURL)
+	}
+}
+
 func TestCleanPTPDescription(t *testing.T) {
 	desc := "&bull; item\n[quote]x[/quote]\nhttps://example.com/test.jpg"
 	report := CleanPTPDescription(desc, "")
@@ -160,7 +251,7 @@ func TestCleanPTPDescription(t *testing.T) {
 
 func TestCleanPTPDescriptionRemovesWidthStyledImageBlocks(t *testing.T) {
 	desc := `[align=center]
-[url=https://ptpimg.me/fv71hr.png][img width=350]https://ptpimg.me/fv71hr.png[/img][/url]
+[url=https://pixhost.to/fv71hr.png][img width=350]https://pixhost.to/fv71hr.png[/img][/url]
 [/align]`
 	report := CleanPTPDescription(desc, "")
 

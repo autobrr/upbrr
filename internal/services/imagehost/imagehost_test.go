@@ -13,7 +13,7 @@ func TestExtractHost(t *testing.T) {
 	}{
 		{"imgbb standard", "https://ibb.co/abc123", "imgbb"},
 		{"imgbb with i subdomain", "https://i.ibb.co/image.png", "imgbb"},
-		{"ptpimg standard", "https://ptpimg.me/abc123.png", "ptpimg"},
+		{"pixhost standard", "https://pixhost.to/abc123.png", "pixhost"},
 		{"pixhost", "https://pixhost.to/show/123/456.png", "pixhost"},
 		{"imgbox", "https://imgbox.com/g/abc", "imgbox"},
 		{"imgbox cdn", "https://cdn.imgbox.com/image.png", "imgbox"},

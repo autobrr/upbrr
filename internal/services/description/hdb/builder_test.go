@@ -56,8 +56,8 @@ func TestBuildDescriptionReplacesExistingScreenshotBlock(t *testing.T) {
 		Options: api.UploadOptions{Screens: 4},
 	}
 	base := `[align=center]
-[url=https://ptpimg.me/8ca234.png][img width=350]https://ptpimg.me/8ca234.png[/img][/url]
-[url=https://ptpimg.me/4oh0bz.png][img width=350]https://ptpimg.me/4oh0bz.png[/img][/url]
+[url=https://pixhost.to/8ca234.png][img width=350]https://pixhost.to/8ca234.png[/img][/url]
+[url=https://pixhost.to/4oh0bz.png][img width=350]https://pixhost.to/4oh0bz.png[/img][/url]
 [/align]
 
 [align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`
@@ -70,7 +70,7 @@ func TestBuildDescriptionReplacesExistingScreenshotBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(description, "ptpimg.me/8ca234.png") || strings.Contains(description, "ptpimg.me/4oh0bz.png") {
+	if strings.Contains(description, "pixhost.to/8ca234.png") || strings.Contains(description, "pixhost.to/4oh0bz.png") {
 		t.Fatalf("expected old screenshot block to be removed, got %q", description)
 	}
 	if count := strings.Count(description, "[center][url=https://img.hdbits.org/"); count != 1 {
@@ -86,8 +86,8 @@ func TestBuildDescriptionPreservesExistingScreensWhenNoNewScreensProvided(t *tes
 		Options: api.UploadOptions{Screens: 4},
 	}
 	base := `[align=center]
-[url=https://ptpimg.me/8ca234.png][img width=350]https://ptpimg.me/8ca234.png[/img][/url]
-[url=https://ptpimg.me/4oh0bz.png][img width=350]https://ptpimg.me/4oh0bz.png[/img][/url]
+[url=https://pixhost.to/8ca234.png][img width=350]https://pixhost.to/8ca234.png[/img][/url]
+[url=https://pixhost.to/4oh0bz.png][img width=350]https://pixhost.to/4oh0bz.png[/img][/url]
 [/align]
 
 [align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`
@@ -96,7 +96,7 @@ func TestBuildDescriptionPreservesExistingScreensWhenNoNewScreensProvided(t *tes
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(description, "ptpimg.me/8ca234.png") || !strings.Contains(description, "ptpimg.me/4oh0bz.png") {
+	if !strings.Contains(description, "pixhost.to/8ca234.png") || !strings.Contains(description, "pixhost.to/4oh0bz.png") {
 		t.Fatalf("expected existing screenshot block preserved, got %q", description)
 	}
 	if strings.Contains(description, "upbrr") {

@@ -27,6 +27,7 @@ type cleanupRepo struct {
 	getByPathErr error
 	purgedPaths  []string
 	purgeCalls   int
+	purgeErr     error
 }
 
 func (r *cleanupRepo) GetByPath(context.Context, string) (api.FileMetadata, error) {
@@ -62,7 +63,7 @@ func (r *cleanupRepo) ListStoredReleasePaths(context.Context) ([]string, error) 
 func (r *cleanupRepo) PurgeContentData(_ context.Context, path string) error {
 	r.purgeCalls++
 	r.purgedPaths = append(r.purgedPaths, path)
-	return nil
+	return r.purgeErr
 }
 
 func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
@@ -127,6 +128,98 @@ func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmpRoot, filepath.Base(sourcePath))); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected tmp content dir removed, got err=%v", err)
+	}
+}
+
+func TestCoreDeleteHistoryReleaseRemovesDirectoryChildArtifacts(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	dbPath := filepath.Join(baseDir, "ua.db")
+	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+
+	sourceDir := filepath.Join(baseDir, "Example.Movie.2024")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("mkdir source dir: %v", err)
+	}
+	childPath := filepath.Join(sourceDir, "Example.Movie.2024.mkv")
+	if err := os.WriteFile(childPath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write child source: %v", err)
+	}
+
+	sourceTmpDir := filepath.Join(tmpRoot, filepath.Base(sourceDir))
+	childTmpDir := filepath.Join(tmpRoot, filepath.Base(childPath))
+	for _, dir := range []string{sourceTmpDir, childTmpDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir tmp dir %s: %v", dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "mediainfo.txt"), []byte("test"), 0o600); err != nil {
+			t.Fatalf("write tmp artifact: %v", err)
+		}
+	}
+
+	repo := &cleanupRepo{
+		storedPaths:  []string{childPath},
+		getByPathErr: internalerrors.ErrNotFound,
+	}
+	coreSvc := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		logger: api.NopLogger{},
+		repo:   repo,
+	}
+
+	if err := coreSvc.DeleteHistoryRelease(context.Background(), sourceDir); err != nil {
+		t.Fatalf("delete history release: %v", err)
+	}
+	if len(repo.purgedPaths) != 2 || repo.purgedPaths[0] != sourceDir || repo.purgedPaths[1] != childPath {
+		t.Fatalf("expected source and child DB purge, got %#v", repo.purgedPaths)
+	}
+	for _, dir := range []string{sourceTmpDir, childTmpDir} {
+		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected tmp dir %s removed, got err=%v", dir, err)
+		}
+	}
+}
+
+func TestCoreDeleteHistoryReleaseKeepsDBRowsWhenArtifactRemovalFails(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	dbPath := filepath.Join(baseDir, "ua.db")
+	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("tmp root: %v", err)
+	}
+
+	sourcePath := filepath.Join(baseDir, "Example.Movie.2024.mkv")
+	blockedPath := filepath.Join(tmpRoot, filepath.Base(sourcePath), "blocked.png")
+	if err := os.MkdirAll(blockedPath, 0o755); err != nil {
+		t.Fatalf("mkdir blocked artifact dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(blockedPath, "nested.txt"), []byte("test"), 0o600); err != nil {
+		t.Fatalf("write nested artifact: %v", err)
+	}
+
+	repo := &cleanupRepo{
+		screenshots: []api.Screenshot{{SourcePath: sourcePath, ImagePath: blockedPath}},
+	}
+	coreSvc := &Core{
+		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		logger: api.NopLogger{},
+		repo:   repo,
+	}
+
+	if err := coreSvc.DeleteHistoryRelease(context.Background(), sourcePath); err == nil {
+		t.Fatal("expected artifact removal failure")
+	}
+	if repo.purgeCalls != 0 {
+		t.Fatalf("expected DB rows kept on artifact removal failure, got purge calls %#v", repo.purgedPaths)
+	}
+	if _, err := os.Stat(blockedPath); err != nil {
+		t.Fatalf("expected blocked artifact path to remain, got %v", err)
 	}
 }
 

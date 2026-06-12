@@ -32,6 +32,7 @@ import (
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/trackericon"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -674,7 +675,7 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 	return wrapGUIResult(a.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
-func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	if err := a.requireCore(); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -689,9 +690,12 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		return api.TrackerDryRunPreview{}, fmt.Errorf("gui: tracker dry-run preview canceled: %w", err)
 	}
 	trimmedPath := strings.TrimSpace(path)
-	runOpts, err := a.buildRunOptions(debug, runLogLevel)
+	runOpts, err := a.buildRunOptions(debug, noSeed, runLogLevel)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
+	}
+	if logger := a.currentLogger(); logger != nil {
+		logger.Debugf("gui: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", trimmedPath, debug, noSeed, runOpts.RunLogLevel)
 	}
 	runCore, runLogger, err := a.buildRunCore(runOpts)
 	if err != nil {
@@ -1221,6 +1225,13 @@ func (a *App) GetConfig() (string, error) {
 	return wrapGUIResult(config.ExportToJSON(cfg))
 }
 
+func (a *App) GetApplicationInfo() (api.ApplicationInfo, error) {
+	if a == nil {
+		return api.ApplicationInfo{}, errors.New("app not initialized")
+	}
+	return api.CurrentApplicationInfo(), nil
+}
+
 func (a *App) GetDefaultConfig() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
@@ -1565,4 +1576,24 @@ func (a *App) requireHistoryRepo() error {
 		return errors.New("history repository not initialized")
 	}
 	return nil
+}
+
+func (a *App) GetTrackerIcon(trackerNameOrDomain string, customURL string) (string, error) {
+	if a == nil {
+		return "", errors.New("app not initialized")
+	}
+	ctx := a.runtimeContext()
+	cfg := a.currentConfig()
+
+	domain, resolvedURL := config.ResolveTrackerDomain(&cfg, trackerNameOrDomain)
+	urlToUse := customURL
+	if urlToUse == "" {
+		urlToUse = resolvedURL
+	}
+
+	res, err := trackericon.GetTrackerIcon(ctx, cfg.MainSettings.DBPath, domain, urlToUse)
+	if err != nil {
+		return "", fmt.Errorf("gui: %w", err)
+	}
+	return res, nil
 }

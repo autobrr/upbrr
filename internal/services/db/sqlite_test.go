@@ -1755,9 +1755,9 @@ func TestSQLiteRepositoryScreenshotSlotsRoundTrip(t *testing.T) {
 			SourcePath:          "/tmp/source",
 			SlotOrder:           1,
 			SourceKind:          "description",
-			OriginalKey:         "https://ptpimg.me/original-b.png",
-			OriginalURL:         "https://ptpimg.me/original-b.png",
-			OriginalHost:        "ptpimg",
+			OriginalKey:         "https://pixhost.to/original-b.png",
+			OriginalURL:         "https://pixhost.to/original-b.png",
+			OriginalHost:        "pixhost",
 			SectionKind:         "comparison",
 			RenderInScreenshots: true,
 		},
@@ -1786,7 +1786,7 @@ func TestSQLiteRepositoryScreenshotSlotsRoundTrip(t *testing.T) {
 	if len(loaded) != 2 {
 		t.Fatalf("expected 2 slots, got %d", len(loaded))
 	}
-	if loaded[0].OriginalURL != "https://imgbb.com/original-a.png" || loaded[1].OriginalHost != "ptpimg" {
+	if loaded[0].OriginalURL != "https://imgbb.com/original-a.png" || loaded[1].OriginalHost != "pixhost" {
 		t.Fatalf("unexpected loaded slots: %#v", loaded)
 	}
 	if len(loaded[0].Variants) != 1 || loaded[0].Variants[0].UsageScope != "global" {

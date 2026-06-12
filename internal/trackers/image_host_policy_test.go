@@ -27,11 +27,11 @@ func TestResolveImageHostPolicy(t *testing.T) {
 		{
 			name:    "tracker host prefers over cli host",
 			tracker: "OE",
-			cfg:     config.TrackerConfig{ImageHost: "ptpimg"},
+			cfg:     config.TrackerConfig{ImageHost: "imgbox"},
 			overrides: api.ImageHostOverrides{
 				PreferredHost: &preferredImgBB,
 			},
-			wantPreferred:    "ptpimg",
+			wantPreferred:    "imgbox",
 			wantAllowedCount: -1,
 		},
 		{
@@ -159,7 +159,7 @@ func TestNeededImageUploadTargetsUsesConfiguredHostPriority(t *testing.T) {
 			Host2: "imgbox",
 			Host3: "imgbb",
 		},
-	}, []string{"OE"}, "ptpimg")
+	}, []string{"OE"}, "pixhost")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -182,8 +182,24 @@ func TestNeededImageUploadTargetsDoesNotUseUnconfiguredPolicyHost(t *testing.T) 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if len(targets) != 0 {
-		t.Fatalf("expected no target when no configured host is PTP-approved, got %#v", targets)
+	if len(targets) != 1 {
+		t.Fatalf("expected one configured approved host, got %#v", targets)
+	}
+	if targets[0].Host != "imgbb" {
+		t.Fatalf("expected configured approved host imgbb instead of unconfigured policy host, got %#v", targets[0])
+	}
+}
+
+func TestCandidateImageUploadTargetHostsUsesTrackerPolicyPreference(t *testing.T) {
+	t.Parallel()
+
+	policy := policyForTracker("PTP", config.TrackerConfig{})
+	hosts := candidateImageUploadTargetHosts("PTP", policy, []string{"imgbb", "pixhost"}, map[string]struct{}{})
+	if got, want := len(hosts), 2; got != want {
+		t.Fatalf("expected %d hosts, got %#v", want, hosts)
+	}
+	if hosts[0] != "pixhost" || hosts[1] != "imgbb" {
+		t.Fatalf("expected tracker policy order [pixhost imgbb], got %#v", hosts)
 	}
 }
 

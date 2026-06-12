@@ -14,6 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/webserver"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestParseCLIOptionsCreateAuth(t *testing.T) {
@@ -163,6 +164,115 @@ func TestRunRejectsCreateAuthConflicts(t *testing.T) {
 	}
 }
 
+func TestRunHelpFlagsPrintUsageAndSucceed(t *testing.T) {
+	oldArgs := os.Args
+	defer func() {
+		os.Args = oldArgs
+	}()
+
+	for _, helpFlag := range []string{"-help", "--help", "-h", "--h"} {
+		t.Run(helpFlag, func(t *testing.T) {
+			os.Args = []string{"upbrr", helpFlag}
+			output := captureRunStdout(t, func() {
+				if err := run(); err != nil {
+					t.Fatalf("run: %v", err)
+				}
+			})
+			if !strings.Contains(output, "Usage: upbrr [options] <input path>...") {
+				t.Fatalf("expected top-level usage in output, got %q", output)
+			}
+			for _, expected := range []string{
+				"Commands:",
+				"  serve",
+				"Start the embedded web UI server",
+				"Config:",
+				"Execution:",
+				"Tracker Selection:",
+				"Release Overrides:",
+				"Screenshots and Images:",
+				"-config, --config string",
+				"-limit-queue, --limit-queue, -lq int",
+				"-version, --version",
+			} {
+				if !strings.Contains(output, expected) {
+					t.Fatalf("expected output to contain %q, got %q", expected, output)
+				}
+			}
+			if strings.Contains(output, "-gui") {
+				t.Fatalf("expected GUI flag to be absent from help, got %q", output)
+			}
+		})
+	}
+}
+
+func TestRunServeHelpPrintsUsageAndSucceeds(t *testing.T) {
+	oldArgs := os.Args
+	defer func() {
+		os.Args = oldArgs
+	}()
+
+	os.Args = []string{"upbrr", "serve", "--help"}
+	output := captureRunStdout(t, func() {
+		if err := run(); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	})
+	if !strings.Contains(output, "Usage: upbrr serve [options]") {
+		t.Fatalf("expected serve usage in output, got %q", output)
+	}
+	for _, expected := range []string{"Config:", "Development:", "-config, --config string", "-dev-no-auth, --dev-no-auth"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected output to contain %q, got %q", expected, output)
+		}
+	}
+}
+
+func captureRunStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	original := os.Stdout
+	stdoutPath := filepath.Join(t.TempDir(), "stdout.txt")
+	stdoutFile, err := os.Create(stdoutPath)
+	if err != nil {
+		t.Fatalf("create stdout fixture: %v", err)
+	}
+	os.Stdout = stdoutFile
+	defer func() {
+		os.Stdout = original
+	}()
+
+	fn()
+
+	if err := stdoutFile.Close(); err != nil {
+		t.Fatalf("close stdout fixture: %v", err)
+	}
+	raw, err := os.ReadFile(stdoutPath)
+	if err != nil {
+		t.Fatalf("read stdout fixture: %v", err)
+	}
+	return string(raw)
+}
+
+func TestRunWithoutArgsStillRequiresInputPath(t *testing.T) {
+	oldArgs := os.Args
+	defer func() {
+		os.Args = oldArgs
+	}()
+
+	os.Args = []string{"upbrr"}
+	err := run()
+	var cliErr *cliExitError
+	if !errors.As(err, &cliErr) {
+		t.Fatalf("expected cliExitError, got %v", err)
+	}
+	if cliErr.code != 2 {
+		t.Fatalf("expected exit code 2, got %d", cliErr.code)
+	}
+	if !strings.Contains(cliErr.Error(), "at least one input path is required") {
+		t.Fatalf("unexpected error: %v", cliErr)
+	}
+}
+
 func TestRunExportConfigPlaintextExportsPlainSecrets(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state", "upbrr.db")
@@ -216,5 +326,88 @@ func TestRunExportConfigPlaintextExportsPlainSecrets(t *testing.T) {
 	}
 	if strings.Contains(exported, "upbrr-enc:v1:") {
 		t.Fatalf("expected plaintext export without encrypted envelopes, got %s", exported)
+	}
+}
+
+func TestPrepareCLIUploadMetadataRefreshesResolvedPathForExternalSelections(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := "folder"
+	resolvedPath := filepath.Join("folder", "movie.mkv")
+	tmdbID := 12345
+
+	coreSvc := &cliCoreForTest{
+		previewResponses: []api.MetadataPreview{
+			{SourcePath: resolvedPath},
+			{SourcePath: resolvedPath},
+		},
+	}
+	req := api.Request{
+		Paths: []string{sourcePath},
+		ExternalIDSelections: map[string]api.ExternalIDSelection{
+			sourcePath: {TMDBID: &tmdbID},
+		},
+	}
+
+	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
+	if err != nil {
+		t.Fatalf("prepareCLIUploadMetadata: %v", err)
+	}
+	if len(coreSvc.requests) != 2 {
+		t.Fatalf("expected 2 preview requests, got %#v", coreSvc.requests)
+	}
+	if len(coreSvc.requests[0].req.Paths) != 1 || coreSvc.requests[0].req.Paths[0] != sourcePath {
+		t.Fatalf("expected first preview for source path, got %#v", coreSvc.requests[0].req.Paths)
+	}
+	if len(coreSvc.requests[1].req.Paths) != 1 || coreSvc.requests[1].req.Paths[0] != resolvedPath {
+		t.Fatalf("expected second preview for resolved path, got %#v", coreSvc.requests[1].req.Paths)
+	}
+	if len(resolvedReq.Paths) != 1 || resolvedReq.Paths[0] != resolvedPath {
+		t.Fatalf("expected resolved upload path, got %#v", resolvedReq.Paths)
+	}
+	selected, ok := resolveCLIExternalIDSelection(resolvedReq.ExternalIDSelections, resolvedPath)
+	if !ok || selected.TMDBID == nil || *selected.TMDBID != tmdbID {
+		t.Fatalf("expected resolved-path external selection, got %#v", resolvedReq.ExternalIDSelections)
+	}
+	secondSelected, ok := coreSvc.requests[1].req.ExternalIDSelections[resolvedPath]
+	if !ok || secondSelected.TMDBID == nil || *secondSelected.TMDBID != tmdbID {
+		t.Fatalf("expected resolved-path selection on second preview, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
+	}
+}
+
+func TestPrepareCLIUploadMetadataPreservesResolvedPathExternalSelections(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := "folder"
+	resolvedPath := filepath.Join("folder", "movie.mkv")
+	currentTMDBID := 12345
+	staleTMDBID := 99999
+
+	coreSvc := &cliCoreForTest{
+		previewResponses: []api.MetadataPreview{
+			{SourcePath: resolvedPath},
+			{SourcePath: resolvedPath},
+		},
+	}
+	req := api.Request{
+		Paths: []string{sourcePath},
+		ExternalIDSelections: map[string]api.ExternalIDSelection{
+			sourcePath:   {TMDBID: &currentTMDBID},
+			resolvedPath: {TMDBID: &staleTMDBID},
+		},
+	}
+
+	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
+	if err != nil {
+		t.Fatalf("prepareCLIUploadMetadata: %v", err)
+	}
+
+	selected, ok := resolvedReq.ExternalIDSelections[resolvedPath]
+	if !ok || selected.TMDBID == nil || *selected.TMDBID != staleTMDBID {
+		t.Fatalf("expected resolved upload selection to preserve resolved TMDB ID, got %#v", resolvedReq.ExternalIDSelections)
+	}
+	secondSelected, ok := coreSvc.requests[1].req.ExternalIDSelections[resolvedPath]
+	if !ok || secondSelected.TMDBID == nil || *secondSelected.TMDBID != staleTMDBID {
+		t.Fatalf("expected second preview to preserve resolved TMDB ID, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
 	}
 }

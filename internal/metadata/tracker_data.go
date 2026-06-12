@@ -197,10 +197,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 	jobs := make(chan string, len(eligible))
 	results := make(chan trackerLookupOutcome, len(eligible))
 
-	workerCount := trackerLookupWorkers
-	if workerCount > len(eligible) {
-		workerCount = len(eligible)
-	}
+	workerCount := min(trackerLookupWorkers, len(eligible))
 	if workerCount <= 0 {
 		workerCount = 1
 	}
@@ -208,9 +205,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 	lookupMeta := meta
 	var workers sync.WaitGroup
 	for idx := 0; idx < workerCount; idx++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			for tracker := range jobs {
 				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, lookupMeta, tracker, now, unit3dClient)
 				results <- trackerLookupOutcome{
@@ -221,7 +216,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 					err:         err,
 				}
 			}
-		}()
+		})
 	}
 
 	for _, tracker := range eligible {
@@ -231,7 +226,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 
 	winnerResolved := false
 	assetSourceTracker := ""
-	for idx := 0; idx < len(eligible); idx++ {
+	for range eligible {
 		outcome := <-results
 		if outcome.err != nil {
 			if s.logger != nil {
@@ -354,7 +349,7 @@ func (s *Service) lookupTrackerData(
 		record.Category = normalizeUnit3DCategory(result.Category)
 		record.InfoHash = metautil.FirstNonEmptyTrimmed(record.InfoHash, result.InfoHash)
 		record.Description = result.Description
-		record.ImageURLs = downloadedImages
+		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Options.KeepImages)
 		record.Filename = result.FileName
 		record.Matched = true
 		if s.logger != nil {
@@ -418,14 +413,14 @@ func (s *Service) lookupTrackerData(
 
 	applyTrackerDataResult(&record, result)
 	if strings.TrimSpace(result.Description) != "" || len(result.Images) > 0 {
-		downloaded := s.persistUnit3DArtifacts(
+		downloadedImages := s.persistUnit3DArtifacts(
 			ctx,
 			meta,
 			tracker,
 			trackerdata.Result{Description: result.Description, Validated: result.Images},
 			meta.Options.KeepImages,
 		)
-		record.ImageURLs = downloaded
+		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Options.KeepImages)
 	}
 	if s.logger != nil {
 		s.logger.Debugf(
@@ -448,6 +443,26 @@ func (s *Service) lookupTrackerData(
 		return api.TrackerMetadata{}, false, false, nil
 	}
 	return record, true, hasTrackerMetadataIDs(record), nil
+}
+
+func trackerImageURLsFromResult(_ trackerdata.Result, downloadedImages []string, keepImages bool) []string {
+	if !keepImages || len(downloadedImages) == 0 {
+		return nil
+	}
+	urls := make([]string, len(downloadedImages))
+	hasUsable := false
+	for idx, imageURL := range downloadedImages {
+		trimmed := strings.TrimSpace(imageURL)
+		if trimmed == "" {
+			continue
+		}
+		urls[idx] = trimmed
+		hasUsable = true
+	}
+	if !hasUsable {
+		return nil
+	}
+	return urls
 }
 
 func trackerRecordHasPathedData(record api.TrackerMetadata) bool {

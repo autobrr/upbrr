@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -528,6 +529,189 @@ func TestBrowseDirectoryRouteRequiresWebBrowsePolicy(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "web browse root is not configured") {
 		t.Fatalf("expected browse policy error, got %s", recorder.Body.String())
+	}
+}
+
+func TestMenuImportPathsWithinBrowsePolicyRejectsOutsideRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "menu.png")
+	if err := os.WriteFile(outside, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write outside image: %v", err)
+	}
+
+	_, err := menuImportPathsWithinBrowsePolicy([]string{outside}, webBrowsePolicy{Roots: []string{root}})
+	if err == nil {
+		t.Fatal("expected outside browse root error")
+	}
+	if !strings.Contains(err.Error(), "outside configured web browse roots") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMenuImportPathsWithinBrowsePolicyAllowsInsideRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	inside := filepath.Join(root, "menu.png")
+	if err := os.WriteFile(inside, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write inside image: %v", err)
+	}
+
+	paths, err := menuImportPathsWithinBrowsePolicy([]string{inside}, webBrowsePolicy{Roots: []string{root}})
+	if err != nil {
+		t.Fatalf("menuImportPathsWithinBrowsePolicy: %v", err)
+	}
+	if len(paths) != 1 || filepath.Clean(paths[0]) != filepath.Clean(inside) {
+		t.Fatalf("unexpected import paths: %#v", paths)
+	}
+}
+
+func TestMenuImportPathsWithinBrowsePolicyAdditionalScenarios(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		name      string
+		setup     func(t *testing.T) ([]string, webBrowsePolicy, []string)
+		wantErr   string
+		exactPath bool
+	}
+
+	toWindowsPath := func(t *testing.T, path string) string {
+		t.Helper()
+		if runtime.GOOS != "windows" {
+			t.Skip("Windows-style local paths are only valid on Windows")
+		}
+		return strings.ReplaceAll(filepath.ToSlash(path), "/", `\`)
+	}
+
+	tests := []testCase{
+		{
+			name: "directory import posix path",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				root := t.TempDir()
+				dir := filepath.Join(root, "menus")
+				if err := os.Mkdir(dir, 0o755); err != nil {
+					t.Fatalf("mkdir menu dir: %v", err)
+				}
+				first := filepath.Join(dir, "one.png")
+				second := filepath.Join(dir, "two.jpg")
+				subdir := filepath.Join(dir, "nested")
+				if err := os.WriteFile(first, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write first image: %v", err)
+				}
+				if err := os.WriteFile(second, []byte("jpg"), 0o600); err != nil {
+					t.Fatalf("write second image: %v", err)
+				}
+				if err := os.Mkdir(subdir, 0o755); err != nil {
+					t.Fatalf("mkdir nested dir: %v", err)
+				}
+				return []string{filepath.ToSlash(dir)}, webBrowsePolicy{Roots: []string{root}}, []string{first, second}
+			},
+		},
+		{
+			name: "directory import windows path",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				root := t.TempDir()
+				dir := filepath.Join(root, "menus")
+				if err := os.Mkdir(dir, 0o755); err != nil {
+					t.Fatalf("mkdir menu dir: %v", err)
+				}
+				image := filepath.Join(dir, "one.png")
+				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write image: %v", err)
+				}
+				return []string{toWindowsPath(t, dir)}, webBrowsePolicy{Roots: []string{root}}, []string{image}
+			},
+		},
+		{
+			name: "symlink inside root points outside",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				root := t.TempDir()
+				outside := filepath.Join(t.TempDir(), "menu.png")
+				if err := os.WriteFile(outside, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write outside image: %v", err)
+				}
+				link := filepath.Join(root, "linked.png")
+				if err := os.Symlink(outside, link); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+				return []string{link}, webBrowsePolicy{Roots: []string{root}}, nil
+			},
+			wantErr: "outside configured web browse roots",
+		},
+		{
+			name: "allow unrestricted returns original paths",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				path := filepath.Join(t.TempDir(), "missing.png")
+				return []string{path}, webBrowsePolicy{AllowUnrestricted: true}, []string{path}
+			},
+			exactPath: true,
+		},
+		{
+			name: "multiple roots accepts second root posix path",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				firstRoot := t.TempDir()
+				secondRoot := t.TempDir()
+				image := filepath.Join(secondRoot, "menu.png")
+				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write image: %v", err)
+				}
+				return []string{filepath.ToSlash(image)}, webBrowsePolicy{Roots: []string{firstRoot, secondRoot}}, []string{image}
+			},
+		},
+		{
+			name: "multiple roots accepts second root windows path",
+			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
+				t.Helper()
+				firstRoot := t.TempDir()
+				secondRoot := t.TempDir()
+				image := filepath.Join(secondRoot, "menu.png")
+				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
+					t.Fatalf("write image: %v", err)
+				}
+				return []string{toWindowsPath(t, image)}, webBrowsePolicy{Roots: []string{firstRoot, secondRoot}}, []string{image}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paths, policy, want := tt.setup(t)
+			got, err := menuImportPathsWithinBrowsePolicy(paths, policy)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("menuImportPathsWithinBrowsePolicy: %v", err)
+			}
+			if len(got) != len(want) {
+				t.Fatalf("expected %d paths, got %#v", len(want), got)
+			}
+			for i := range want {
+				if tt.exactPath {
+					if got[i] != want[i] {
+						t.Fatalf("expected path %q at index %d, got %q", want[i], i, got[i])
+					}
+					continue
+				}
+				if filepath.Clean(got[i]) != filepath.Clean(want[i]) {
+					t.Fatalf("expected path %q at index %d, got %q", want[i], i, got[i])
+				}
+			}
+		})
 	}
 }
 
