@@ -281,6 +281,9 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 				if uploadedMeta.Comment != "upbrr" {
 					t.Fatalf("expected cleaned upload torrent comment, got %q", uploadedMeta.Comment)
 				}
+				if uploadedMeta.CreatedBy != "uploaded with upbrr" {
+					t.Fatalf("expected cleaned upload torrent created-by, got %q", uploadedMeta.CreatedBy)
+				}
 				if uploadedMeta.Announce != "" {
 					t.Fatalf("expected upload torrent announce stripped, got %q", uploadedMeta.Announce)
 				}

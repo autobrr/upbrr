@@ -71,8 +71,8 @@ func TestResolveUploadTorrentPathWritesCleanBaseCopy(t *testing.T) {
 	if cleaned.Comment != "upbrr" {
 		t.Fatalf("expected upbrr comment, got %q", cleaned.Comment)
 	}
-	if cleaned.CreatedBy != "upbrr" {
-		t.Fatalf("expected created-by scrubbed, got %q", cleaned.CreatedBy)
+	if cleaned.CreatedBy != "uploaded with upbrr" {
+		t.Fatalf("expected upbrr created-by, got %q", cleaned.CreatedBy)
 	}
 
 	original := readTestMetaInfo(t, dirtyTorrentPath)
@@ -262,6 +262,9 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 	}
 	if updated.Comment != "https://tracker.example/torrents/123" {
 		t.Fatalf("expected tracker comment, got %q", updated.Comment)
+	}
+	if updated.CreatedBy != "uploaded with upbrr" {
+		t.Fatalf("expected upbrr created-by, got %q", updated.CreatedBy)
 	}
 	if len(updated.UrlList) != 0 {
 		t.Fatalf("expected url-list cleared, got %#v", updated.UrlList)

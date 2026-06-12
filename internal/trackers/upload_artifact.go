@@ -16,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/torrentmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -222,10 +223,11 @@ func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL 
 		torrentMeta.Announce = trimmedAnnounce
 		torrentMeta.AnnounceList = metainfo.AnnounceList{{trimmedAnnounce}}
 	}
-	torrentMeta.Comment = "upbrr"
+	torrentMeta.Comment = torrentmeta.UploadCommentFallback
 	if trimmedComment := strings.TrimSpace(comment); trimmedComment != "" {
 		torrentMeta.Comment = trimmedComment
 	}
+	torrentMeta.CreatedBy = torrentmeta.UploadCreatedBy
 
 	return writeTorrentMeta(*torrentMeta, outputPath, "torrent artifact")
 }
@@ -249,10 +251,8 @@ func cleanTorrentMeta(torrentMeta *metainfo.MetaInfo) {
 	torrentMeta.AnnounceList = nil
 	torrentMeta.Nodes = nil
 	torrentMeta.UrlList = nil
-	torrentMeta.Comment = "upbrr"
-	if strings.Contains(strings.ToLower(torrentMeta.CreatedBy), "upload assistant") {
-		torrentMeta.CreatedBy = "upbrr"
-	}
+	torrentMeta.Comment = torrentmeta.UploadCommentFallback
+	torrentMeta.CreatedBy = torrentmeta.UploadCreatedBy
 }
 
 func writeTorrentMeta(torrentMeta metainfo.MetaInfo, outputPath string, context string) error {

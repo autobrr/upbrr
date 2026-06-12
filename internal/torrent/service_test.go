@@ -121,6 +121,16 @@ func TestCreateNewTorrent(t *testing.T) {
 	if result.InfoHash == "" {
 		t.Fatalf("expected info hash to be populated")
 	}
+	torrentMeta, err := metainfo.LoadFromFile(result.Path)
+	if err != nil {
+		t.Fatalf("load torrent: %v", err)
+	}
+	if torrentMeta.CreatedBy != "uploaded with upbrr using mkbrr" {
+		t.Fatalf("expected mkbrr created-by, got %q", torrentMeta.CreatedBy)
+	}
+	if torrentMeta.Comment != "" {
+		t.Fatalf("expected mkbrr comment to be empty, got %q", torrentMeta.Comment)
+	}
 }
 
 func TestCreateHonorsMaxPieceSizeOverride(t *testing.T) {
