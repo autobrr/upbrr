@@ -2405,6 +2405,132 @@ func TestRunUploadPreparedForwardsTrackerTorrentPath(t *testing.T) {
 	if client.injected[0].URL != "https://hdbits.org/download.php/file?id=333&passkey=abc" {
 		t.Fatalf("expected download URL to be forwarded, got %q", client.injected[0].URL)
 	}
+	if client.injected[0].CrossSeed {
+		t.Fatalf("expected uploaded tracker torrent injection to not be marked cross-seed")
+	}
+}
+
+func TestRunUploadPreparedInjectsDupeMatchedCrossSeedTorrents(t *testing.T) {
+	t.Parallel()
+
+	meta := &stubMeta{}
+	tracker := &stubTrackers{summary: api.UploadSummary{Uploaded: 1}}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			PostUpload:         config.PostUploadConfig{CrossSeeding: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   meta,
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Trackers:   []string{"AITHER"},
+		CrossSeedTorrents: []api.UploadedTorrent{{
+			Tracker:     "HDB",
+			DownloadURL: "https://hdbits.org/download.php/file?id=333&passkey=abc",
+		}},
+	}
+	core.storeDupeCache("/tmp/a", "", prepared)
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if result.UploadedCount != 1 {
+		t.Fatalf("expected 1 upload, got %d", result.UploadedCount)
+	}
+	if len(client.injected) != 1 {
+		t.Fatalf("expected one cross-seed injection, got %#v", client.injected)
+	}
+	injected := client.injected[0]
+	if !injected.CrossSeed {
+		t.Fatalf("expected cross-seed injection")
+	}
+	if injected.Tracker != "HDB" {
+		t.Fatalf("expected HDB tracker, got %q", injected.Tracker)
+	}
+	if injected.URL != "https://hdbits.org/download.php/file?id=333&passkey=abc" {
+		t.Fatalf("expected cross-seed download URL, got %q", injected.URL)
+	}
+}
+
+func TestRunUploadPreparedSkipsTrackerInjectionAfterFailedUploadButInjectsCrossSeed(t *testing.T) {
+	t.Parallel()
+
+	meta := &stubMeta{}
+	tracker := &stubTrackers{summary: api.UploadSummary{
+		Uploaded: -1,
+		UploadedTorrents: []api.UploadedTorrent{{
+			Tracker:     "AITHER",
+			DownloadURL: "https://aither.cc/torrent/download/1234",
+		}},
+	}}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			PostUpload:         config.PostUploadConfig{CrossSeeding: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   meta,
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Trackers:   []string{"AITHER"},
+		CrossSeedTorrents: []api.UploadedTorrent{{
+			Tracker:     "HDB",
+			DownloadURL: "https://hdbits.org/download.php/file?id=333&passkey=abc",
+		}},
+	}
+	core.storeDupeCache("/tmp/a", "", prepared)
+
+	_, err = core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err == nil || !strings.Contains(err.Error(), "upload summary invalid: -1") {
+		t.Fatalf("expected invalid upload summary error, got %v", err)
+	}
+	if len(client.injected) != 1 {
+		t.Fatalf("expected only cross-seed injection, got %#v", client.injected)
+	}
+	injected := client.injected[0]
+	if !injected.CrossSeed {
+		t.Fatalf("expected cross-seed injection")
+	}
+	if injected.Tracker != "HDB" {
+		t.Fatalf("expected HDB cross-seed injection, got %q", injected.Tracker)
+	}
+	if injected.URL != "https://hdbits.org/download.php/file?id=333&passkey=abc" {
+		t.Fatalf("expected cross-seed download URL, got %q", injected.URL)
+	}
 }
 
 func TestRunUploadPreparedRequiresCachedMetadata(t *testing.T) {

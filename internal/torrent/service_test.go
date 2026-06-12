@@ -473,6 +473,9 @@ func TestCreateNoHashReusesExactCaseClientTorrent(t *testing.T) {
 	if result.Path != clientTorrentPath {
 		t.Fatalf("expected exact-case client torrent path %s, got %s", clientTorrentPath, result.Path)
 	}
+	if result.CrossSeed {
+		t.Fatalf("expected client torrent reuse to not be marked cross-seed")
+	}
 }
 
 func TestCreateNoHashRejectsCaseOnlySingleFileClientTorrent(t *testing.T) {

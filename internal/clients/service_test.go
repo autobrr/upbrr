@@ -290,7 +290,7 @@ func TestInjectQbitClientUsesRequestOverrides(t *testing.T) {
 	}
 }
 
-func TestInjectQbitClientUsesCrossFieldsWhenConfigured(t *testing.T) {
+func TestInjectQbitClientIgnoresCrossFieldsForNormalTorrent(t *testing.T) {
 	t.Parallel()
 
 	server, capture := newQbitAddCaptureServer(t)
@@ -316,6 +316,51 @@ func TestInjectQbitClientUsesCrossFieldsWhenConfigured(t *testing.T) {
 	}, nil)
 
 	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{Path: torrentPath, Tracker: "AITHER"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.category != "config-cat" {
+		t.Fatalf("expected config category, got %q", capture.category)
+	}
+	if capture.tags != "config1,config2" {
+		t.Fatalf("expected config tags, got %q", capture.tags)
+	}
+}
+
+func TestInjectQbitClientUsesCrossFieldsForCrossSeedTorrent(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddCaptureServer(t)
+	root := t.TempDir()
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:              "qbit",
+				URL:               server.URL,
+				Username:          "user",
+				Password:          "pass",
+				Category:          "config-cat",
+				Tags:              []string{"config1", "config2"},
+				QbitCrossCategory: "cross-cat",
+				QbitCrossTag:      "cross-tag",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{Path: torrentPath, Tracker: "AITHER", CrossSeed: true}); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
 

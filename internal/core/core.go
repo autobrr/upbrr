@@ -318,6 +318,18 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "completed", "Tracker upload complete")
 
 	if !meta.Options.NoSeed {
+		// Cross-seed torrents come from dupe matches and should be injected even when
+		// the tracker upload summary later reports no successful uploads.
+		if err := c.injectCrossSeedTorrents(ctx, req, meta); err != nil {
+			return 0, err
+		}
+	}
+
+	if summary.Uploaded < 0 {
+		return 0, fmt.Errorf("upload summary invalid: %d", summary.Uploaded)
+	}
+
+	if !meta.Options.NoSeed {
 		if len(summary.UploadedTorrents) == 0 {
 			c.logger.Warnf("core: no tracker torrent artifacts available for injection for %s", meta.SourcePath)
 		} else {
@@ -342,11 +354,37 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 		}
 	}
 
-	if summary.Uploaded < 0 {
-		return 0, fmt.Errorf("upload summary invalid: %d", summary.Uploaded)
-	}
-
 	return summary.Uploaded, nil
+}
+
+func (c *Core) injectCrossSeedTorrents(ctx context.Context, req api.Request, meta api.PreparedMetadata) error {
+	if !c.cfg.PostUpload.CrossSeeding || len(meta.CrossSeedTorrents) == 0 {
+		return nil
+	}
+	if c.services.Clients == nil {
+		return errors.New("core: client service not configured")
+	}
+	for _, crossSeed := range meta.CrossSeedTorrents {
+		torrentPath := strings.TrimSpace(crossSeed.TorrentPath)
+		torrentURL := strings.TrimSpace(crossSeed.DownloadURL)
+		if torrentPath == "" && torrentURL == "" {
+			continue
+		}
+		tracker := strings.ToUpper(strings.TrimSpace(crossSeed.Tracker))
+		c.logger.Debugf("core: injecting cross-seed torrent for %s from %s", meta.SourcePath, tracker)
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, tracker, "client_injection", "running", "Injecting cross-seed torrent into client")
+		if err := c.services.Clients.Inject(ctx, meta, api.TorrentResult{
+			Path:      torrentPath,
+			URL:       torrentURL,
+			Tracker:   tracker,
+			CrossSeed: true,
+		}); err != nil {
+			emitPreparedUploadProgress(ctx, req, meta.SourcePath, tracker, "client_injection", "failed", "Cross-seed client injection failed")
+			return fmt.Errorf("core: %w", err)
+		}
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, tracker, "client_injection", "completed", "Cross-seed client injection complete")
+	}
+	return nil
 }
 
 func (c *Core) injectPreparedTorrent(ctx context.Context, req api.Request, meta api.PreparedMetadata, torrent api.TorrentResult) error {
@@ -3002,6 +3040,7 @@ func deepCopyPreparedMetadata(meta api.PreparedMetadata) api.PreparedMetadata {
 	copyMeta.TrackerIDs = cloneStringMap(meta.TrackerIDs)
 	copyMeta.TorrentComments = deepCopyTorrentMatches(meta.TorrentComments)
 	copyMeta.TrackerData = deepCopyTrackerMetadata(meta.TrackerData)
+	copyMeta.CrossSeedTorrents = append([]api.UploadedTorrent(nil), meta.CrossSeedTorrents...)
 	copyMeta.ArrGenres = append([]string(nil), meta.ArrGenres...)
 	copyMeta.ExternalIDOverrides = deepCopyExternalIDOverrides(meta.ExternalIDOverrides)
 	copyMeta.ReleaseNameOverrides = deepCopyReleaseNameOverrides(meta.ReleaseNameOverrides)

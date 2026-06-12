@@ -225,12 +225,12 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 		options.SavePath = staging.SavePath
 		s.logger.Debugf("clients: qbit link staging ready client=%s tracker=%s save_path=%s", name, strings.TrimSpace(torrent.Tracker), staging.SavePath)
 	}
-	if category := strings.TrimSpace(client.QbitCrossCategory); category != "" {
+	if category := strings.TrimSpace(client.QbitCrossCategory); torrent.CrossSeed && category != "" {
 		options.Category = category
 	} else if category := strings.TrimSpace(client.QbitCategory()); category != "" {
 		options.Category = category
 	}
-	if tags := strings.TrimSpace(client.QbitCrossTag); tags != "" {
+	if tags := strings.TrimSpace(client.QbitCrossTag); torrent.CrossSeed && tags != "" {
 		options.Tags = tags
 	} else if tags := strings.TrimSpace(client.QbitTags()); tags != "" {
 		options.Tags = tags

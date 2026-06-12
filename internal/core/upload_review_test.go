@@ -143,6 +143,40 @@ func TestApplyDupeSummaryBlocksSkippedAndFailedTrackers(t *testing.T) {
 	}
 }
 
+func TestApplyDupeSummaryStoresMatchedDownloadsForCrossSeedInjection(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{}
+	applyDupeSummaryToPreparedMeta(&meta, api.DupeCheckSummary{
+		Results: []api.DupeCheckResult{
+			{
+				Tracker:  "HDB",
+				HasDupes: true,
+				Match: api.DupeMatch{
+					MatchedID:       "123",
+					MatchedLink:     "https://hdbits.org/details.php?id=123",
+					MatchedDownload: "https://hdbits.org/download.php/file?id=123&passkey=abc",
+				},
+			},
+			{Tracker: "BTN", Skipped: true},
+		},
+	})
+
+	if len(meta.CrossSeedTorrents) != 1 {
+		t.Fatalf("expected one cross-seed torrent, got %#v", meta.CrossSeedTorrents)
+	}
+	crossSeed := meta.CrossSeedTorrents[0]
+	if crossSeed.Tracker != "HDB" {
+		t.Fatalf("expected HDB cross-seed tracker, got %q", crossSeed.Tracker)
+	}
+	if crossSeed.DownloadURL != "https://hdbits.org/download.php/file?id=123&passkey=abc" {
+		t.Fatalf("expected matched download URL, got %q", crossSeed.DownloadURL)
+	}
+	if crossSeed.TorrentID != "123" || crossSeed.TorrentURL != "https://hdbits.org/details.php?id=123" {
+		t.Fatalf("expected matched metadata to be preserved, got %#v", crossSeed)
+	}
+}
+
 func TestApplyRequestToPreparedMetaPreservesCachedDescriptionGroupsWhenRequestOmitted(t *testing.T) {
 	t.Parallel()
 
