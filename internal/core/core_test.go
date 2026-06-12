@@ -54,6 +54,42 @@ func TestFirstRequestedTracker(t *testing.T) {
 	}
 }
 
+func TestEmitPreparedUploadProgressKeepsAggregateTrackerBlank(t *testing.T) {
+	t.Parallel()
+
+	var updates []api.UploadProgressUpdate
+	ctx := api.WithUploadProgressReporter(context.Background(), func(update api.UploadProgressUpdate) {
+		updates = append(updates, update)
+	})
+
+	emitPreparedUploadProgress(ctx, api.Request{Trackers: []string{"AITHER", "BLU"}}, "/tmp/source", "", "tracker_upload", "running", "Uploading to tracker")
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 progress update, got %d", len(updates))
+	}
+	if updates[0].Tracker != "" {
+		t.Fatalf("expected aggregate tracker to stay blank, got %q", updates[0].Tracker)
+	}
+}
+
+func TestEmitPreparedUploadProgressUsesSingleRequestedTracker(t *testing.T) {
+	t.Parallel()
+
+	var updates []api.UploadProgressUpdate
+	ctx := api.WithUploadProgressReporter(context.Background(), func(update api.UploadProgressUpdate) {
+		updates = append(updates, update)
+	})
+
+	emitPreparedUploadProgress(ctx, api.Request{Trackers: []string{"BLU"}}, "/tmp/source", "", "tracker_upload", "running", "Uploading to tracker")
+
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 progress update, got %d", len(updates))
+	}
+	if updates[0].Tracker != "BLU" {
+		t.Fatalf("expected single tracker progress to carry BLU, got %q", updates[0].Tracker)
+	}
+}
+
 func TestLoadPlaylistSelectionUsesNormalizedSourcePath(t *testing.T) {
 	t.Parallel()
 
@@ -2502,6 +2538,66 @@ func TestFetchTrackerDryRunPreviewNoSeedSkipsClient(t *testing.T) {
 	}
 	if client.calls != 0 {
 		t.Fatalf("expected no client injection with no-seed, got %d", client.calls)
+	}
+}
+
+func TestFetchTrackerDryRunPreviewEmitsInjectedTrackerProgress(t *testing.T) {
+	t.Parallel()
+
+	client := &stubClient{}
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{
+		{
+			Tracker: "AITHER",
+			Status:  "ready",
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent",
+				Path:    "/tmp/aither.torrent",
+				Present: true,
+			}},
+		},
+		{
+			Tracker: "BLU",
+			Status:  "ready",
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent",
+				Path:    "/tmp/blu.torrent",
+				Present: true,
+			}},
+		},
+	}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	var completedTrackers []string
+	ctx := api.WithUploadProgressReporter(context.Background(), func(update api.UploadProgressUpdate) {
+		if update.Task == "client_injection" && update.Status == "completed" {
+			completedTrackers = append(completedTrackers, update.Tracker)
+		}
+	})
+	_, err = core.FetchTrackerDryRunPreview(ctx, api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER", "BLU"},
+	})
+	if err != nil {
+		t.Fatalf("fetch tracker dry-run preview: %v", err)
+	}
+	if got, want := completedTrackers, []string{"AITHER", "BLU"}; !slices.Equal(got, want) {
+		t.Fatalf("expected injected tracker progress %v, got %v", want, got)
 	}
 }
 

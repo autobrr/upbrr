@@ -297,6 +297,24 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 		return results, nil
 	}
 
+	trackerConfigs := make([]config.TrackerConfig, len(trackers))
+	trackerMetas := make([]api.PreparedMetadata, len(trackers))
+	prepErrors := make([]error, len(trackers))
+	for idx, tracker := range trackers {
+		trackerCfg := trackerConfigFor(s.cfg, tracker)
+		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
+		trackerConfigs[idx] = trackerCfg
+		if _, ok := s.registry.Lookup(tracker); !ok {
+			continue
+		}
+		trackerMeta, err := PrepareTrackerUploadTorrent(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg)
+		if err != nil {
+			prepErrors[idx] = fmt.Errorf("trackers: %s upload torrent artifact: %w", tracker, err)
+			continue
+		}
+		trackerMetas[idx] = trackerMeta
+	}
+
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 
@@ -319,11 +337,10 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 				continue
 			}
 
-			trackerCfg := trackerConfigFor(s.cfg, tracker)
-			trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
-			trackerMeta, err := PrepareTrackerUploadTorrent(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg)
-			if err != nil {
-				result.err = fmt.Errorf("trackers: %s upload torrent artifact: %w", tracker, err)
+			trackerCfg := trackerConfigs[idx]
+			trackerMeta := trackerMetas[idx]
+			if prepErrors[idx] != nil {
+				result.err = prepErrors[idx]
 				results[idx] = result
 				continue
 			}

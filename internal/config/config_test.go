@@ -153,7 +153,7 @@ func TestValidate(t *testing.T) {
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				Trackers: TrackersConfig{
 					Trackers: map[string]TrackerConfig{
-						"PTP": {ImageHost: "imgbb"},
+						"PTP": {ImageHost: "imgbox"},
 					},
 				},
 			},
@@ -243,7 +243,7 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 					Username:    "should-not-be-here",
 					ImageHost:   "pixhost",
 					Anon:        true,
-					Unknown: map[string]interface{}{
+					Unknown: map[string]any{
 						"CustomFlag": "keep",
 					},
 				},
@@ -257,20 +257,20 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 		t.Fatalf("export json: %v", err)
 	}
 
-	var root map[string]interface{}
+	var root map[string]any
 	if err := json.Unmarshal([]byte(payload), &root); err != nil {
 		t.Fatalf("unmarshal json: %v", err)
 	}
 
-	trackersRoot, ok := root["Trackers"].(map[string]interface{})
+	trackersRoot, ok := root["Trackers"].(map[string]any)
 	if !ok {
 		t.Fatalf("trackers root missing")
 	}
-	a4kRaw, ok := trackersRoot["Trackers"].(map[string]interface{})
+	a4kRaw, ok := trackersRoot["Trackers"].(map[string]any)
 	if !ok {
 		t.Fatalf("nested trackers missing")
 	}
-	a4k, ok := a4kRaw["A4K"].(map[string]interface{})
+	a4k, ok := a4kRaw["A4K"].(map[string]any)
 	if !ok {
 		t.Fatalf("A4K tracker missing")
 	}
@@ -309,7 +309,7 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 					AnnounceURL: "https://should-not-be-here",
 					ImageHost:   "pixhost",
 					Anon:        true,
-					Unknown: map[string]interface{}{
+					Unknown: map[string]any{
 						"custom_yaml": "keep",
 					},
 				},
@@ -490,7 +490,7 @@ func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *te
 	}
 }
 
-func TestTorrentClientConfigExportUsesQbitSettingsOnly(t *testing.T) {
+func TestTorrentClientConfigExportUsesCanonicalTypeAndQbitSettings(t *testing.T) {
 	t.Parallel()
 
 	allowFallback := true
@@ -525,15 +525,62 @@ func TestTorrentClientConfigExportUsesQbitSettingsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportToPlaintextJSON failed: %v", err)
 	}
-	for _, key := range []string{"Type", "TorrentClient", "URL", "WatchFolder", "Username", "Password", "Category", "Tags"} {
+	for _, key := range []string{"TorrentClient", "URL", "WatchFolder", "Username", "Password", "Category", "Tags"} {
 		if strings.Contains(exported, `"`+key+`"`) {
 			t.Fatalf("exported torrent client should not contain legacy key %s: %s", key, exported)
 		}
 	}
-	for _, key := range []string{"QbitURL", "QbitUser", "QbitPass", "QbitCategoryValue", "QbitTag", "QbitCrossCategory", "QbitCrossTag"} {
+	for _, key := range []string{"Type", "QbitURL", "QbitUser", "QbitPass", "QbitCategoryValue", "QbitTag", "QbitCrossCategory", "QbitCrossTag"} {
 		if !strings.Contains(exported, `"`+key+`"`) {
 			t.Fatalf("exported torrent client missing qbit key %s: %s", key, exported)
 		}
+	}
+}
+
+func TestTorrentClientConfigQbitHostPrecedence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		client TorrentClientConfig
+		want   string
+	}{
+		{
+			name: "qui proxy stays highest precedence",
+			client: TorrentClientConfig{
+				QuiProxyURL: "http://proxy.local:7476/proxy/abc",
+				QbitURL:     "http://qbit.local",
+				URL:         "http://legacy.local",
+			},
+			want: "http://proxy.local:7476/proxy/abc",
+		},
+		{
+			name: "canonical qbit url beats legacy url",
+			client: TorrentClientConfig{
+				QbitURL:  "http://qbit.local",
+				URL:      "http://legacy.local",
+				QbitPort: 8080,
+			},
+			want: "http://qbit.local:8080",
+		},
+		{
+			name: "legacy url remains fallback",
+			client: TorrentClientConfig{
+				URL:      "http://legacy.local",
+				QbitPort: 8080,
+			},
+			want: "http://legacy.local:8080",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tt.client.QbitHost(); got != tt.want {
+				t.Fatalf("QbitHost() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

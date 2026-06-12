@@ -278,7 +278,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 	meta.DescriptionGroups = descriptionGroups
 
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "torrent", "running", "Preparing torrent")
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "torrent", "running", "Preparing torrent")
 	torrent, err := c.services.Torrents.Create(ctx, meta)
 	if err != nil {
 		return 0, fmt.Errorf("core: %w", err)
@@ -304,18 +304,18 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 			}
 		}
 		c.logger.Debugf("core: dry-run or debug enabled, skipping tracker upload")
-		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "upload", "completed", "Dry run complete")
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "upload", "completed", "Dry run complete")
 		return 0, nil
 	}
 
 	c.logger.Debugf("core: uploading to trackers for %s", meta.SourcePath)
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "running", "Uploading to tracker")
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "running", "Uploading to tracker")
 	summary, err := c.services.Trackers.Upload(ctx, meta)
 	if err != nil {
-		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "failed", "Tracker upload failed")
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
 		return 0, fmt.Errorf("core: %w", err)
 	}
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "tracker_upload", "completed", "Tracker upload complete")
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "completed", "Tracker upload complete")
 
 	if !meta.Options.NoSeed {
 		if len(summary.UploadedTorrents) == 0 {
@@ -328,16 +328,16 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 					continue
 				}
 				c.logger.Debugf("core: injecting tracker torrent for %s from %s", meta.SourcePath, uploaded.Tracker)
-				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "running", "Injecting torrent into client")
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "running", "Injecting torrent into client")
 				if err := c.services.Clients.Inject(ctx, meta, api.TorrentResult{
 					Path:    torrentPath,
 					URL:     torrentURL,
 					Tracker: uploaded.Tracker,
 				}); err != nil {
-					emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "failed", "Client injection failed")
+					emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "failed", "Client injection failed")
 					return 0, fmt.Errorf("core: %w", err)
 				}
-				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "completed", "Client injection complete")
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "completed", "Client injection complete")
 			}
 		}
 	}
@@ -354,19 +354,23 @@ func (c *Core) injectPreparedTorrent(ctx context.Context, req api.Request, meta 
 		return errors.New("core: client service not configured")
 	}
 	c.logger.Debugf("core: dry-run or debug enabled, injecting prepared torrent for %s", meta.SourcePath)
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "running", "Injecting torrent into client")
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, torrent.Tracker, "client_injection", "running", "Injecting torrent into client")
 	if err := c.services.Clients.Inject(ctx, meta, torrent); err != nil {
-		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "failed", "Client injection failed")
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, torrent.Tracker, "client_injection", "failed", "Client injection failed")
 		return fmt.Errorf("core: %w", err)
 	}
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "client_injection", "completed", "Client injection complete")
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, torrent.Tracker, "client_injection", "completed", "Client injection complete")
 	return nil
 }
 
-func emitPreparedUploadProgress(ctx context.Context, req api.Request, sourcePath string, task string, status string, message string) {
+func emitPreparedUploadProgress(ctx context.Context, req api.Request, sourcePath string, tracker string, task string, status string, message string) {
+	normalizedTracker := strings.TrimSpace(tracker)
+	if normalizedTracker == "" && len(req.Trackers) == 1 {
+		normalizedTracker = firstRequestedTracker(req.Trackers)
+	}
 	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
 		SourcePath: sourcePath,
-		Tracker:    firstRequestedTracker(req.Trackers),
+		Tracker:    normalizedTracker,
 		Task:       task,
 		Status:     status,
 		Message:    message,

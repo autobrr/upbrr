@@ -94,6 +94,10 @@ const imageHostOptions = [
 ];
 
 const trackerImageHostOptions = [...imageHostOptions, { value: "hdb", label: "HDB" }];
+const torrentClientTypeOptions = [
+  { value: "qbit", label: "qBit" },
+  { value: "watch", label: "Watch" },
+];
 const torrentClientLinkingOptions = [
   { value: "", label: "None" },
   { value: "hardlink", label: "Hardlink" },
@@ -582,6 +586,9 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     MaxFiles: { key: "MaxFiles", advanced: true },
   },
   TorrentClients: {
+    Type: stringField("Type", { label: "Type", options: torrentClientTypeOptions }),
+    WatchFolder: stringField("WatchFolder", { label: "Watch folder" }),
+    StorageDir: stringField("StorageDir", { label: "Storage directory" }),
     QuiProxyURL: stringField("QuiProxyURL", { label: "Qui proxy URL", sensitive: true }),
     QbitURL: stringField("QbitURL", { label: "qBit URL" }),
     QbitPort: numberField("QbitPort", { label: "qBit port" }),
@@ -685,6 +692,7 @@ const legacyTorrentClientKeys = [
 ];
 
 const qbitDefaultClient = (): ConfigMap => ({
+  Type: "qbit",
   QuiProxyURL: "",
   QbitCategoryValue: "",
   QbitTag: "",
@@ -699,6 +707,17 @@ const qbitDefaultClient = (): ConfigMap => ({
   VerifyWebUICertificate: true,
 });
 
+const qbitDirectDisabledValues: Readonly<Record<string, ConfigValue>> = {
+  QbitURL: "",
+  QbitPort: 0,
+  QbitUser: "",
+  QbitPass: "",
+  URL: "",
+  Username: "",
+  Password: "",
+  QuiProxyURL: "",
+};
+
 const normalizeStringArray = (value: ConfigValue) => {
   if (Array.isArray(value)) {
     return value.map((entry) => String(entry ?? "").trim()).filter(Boolean);
@@ -712,8 +731,23 @@ const normalizeStringArray = (value: ConfigValue) => {
   return [];
 };
 
-const normalizeTorrentClientForSave = (client: ConfigMap) => {
+const normalizeTorrentClientType = (client: ConfigMap) => {
+  const directType = typeof client.Type === "string" ? client.Type.trim() : "";
+  if (directType) {
+    return directType.toLowerCase();
+  }
+  const legacyType = typeof client.TorrentClient === "string" ? client.TorrentClient.trim() : "";
+  if (legacyType) {
+    return legacyType.toLowerCase();
+  }
+  return "qbit";
+};
+
+export const normalizeTorrentClientForSave = (client: ConfigMap) => {
   const next = { ...client };
+  if (normalizeTorrentClientType(next) !== "qbit") {
+    return next;
+  }
 
   if (!next.QbitURL && typeof next.URL === "string") next.QbitURL = next.URL;
   if (!next.QbitUser && typeof next.Username === "string") next.QbitUser = next.Username;
@@ -728,6 +762,9 @@ const normalizeTorrentClientForSave = (client: ConfigMap) => {
       next.QbitTag = normalizeStringArray(next.QbitTagsValue).join(",");
     }
   }
+  if (next.VerifyWebUICertificate === undefined && typeof next.TLSSkipVerify === "boolean") {
+    next.VerifyWebUICertificate = !next.TLSSkipVerify;
+  }
 
   legacyTorrentClientKeys.forEach((key) => {
     delete next[key];
@@ -736,7 +773,21 @@ const normalizeTorrentClientForSave = (client: ConfigMap) => {
   return next;
 };
 
-const normalizeTorrentClientsForSave = (input: ConfigMap) => {
+export const nextQbitDirectState = (client: ConfigMap, enabled: boolean): ConfigMap => {
+  if (enabled) {
+    return {
+      ...client,
+      QbitURL:
+        typeof client.QbitURL === "string" && client.QbitURL.trim() !== ""
+          ? client.QbitURL
+          : "http://127.0.0.1",
+      QbitPort: typeof client.QbitPort === "number" && client.QbitPort > 0 ? client.QbitPort : 8080,
+    };
+  }
+  return { ...client, ...qbitDirectDisabledValues };
+};
+
+export const normalizeTorrentClientsForSave = (input: ConfigMap) => {
   const clients = input.TorrentClients;
   if (!clients || typeof clients !== "object" || Array.isArray(clients)) {
     return input;
@@ -1347,18 +1398,26 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         return typeof value === "string" && value.trim() !== "";
       });
     const setQbitDirect = (name: string, enabled: boolean) => {
-      if (enabled) {
-        updateConfigValue(["TorrentClients", name, "QbitURL"], "http://127.0.0.1");
-        updateConfigValue(["TorrentClients", name, "QbitPort"], 8080);
+      const client = clients.find(([clientName]) => clientName === name)?.[1];
+      if (!client) {
         return;
       }
-      updateConfigValue(["TorrentClients", name, "QbitURL"], "");
-      updateConfigValue(["TorrentClients", name, "QbitPort"], 0);
-      updateConfigValue(["TorrentClients", name, "QbitUser"], "");
-      updateConfigValue(["TorrentClients", name, "QbitPass"], "");
-      updateConfigValue(["TorrentClients", name, "URL"], "");
-      updateConfigValue(["TorrentClients", name, "Username"], "");
-      updateConfigValue(["TorrentClients", name, "Password"], "");
+      const nextClient = nextQbitDirectState(client, enabled);
+      for (const key of [
+        "QbitURL",
+        "QbitPort",
+        "QbitUser",
+        "QbitPass",
+        "URL",
+        "Username",
+        "Password",
+        "QuiProxyURL",
+      ]) {
+        if (client[key] === nextClient[key]) {
+          continue;
+        }
+        updateConfigValue(["TorrentClients", name, key], nextClient[key]);
+      }
     };
 
     return (
@@ -1382,7 +1441,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             <p className="muted">No entries yet.</p>
           ) : (
             clients.map(([name, client]) => {
-              const directEnabled = hasDirectConfig(client);
+              const clientType = normalizeTorrentClientType(client);
+              const watchClient = clientType === "watch";
+              const directEnabled = !watchClient && hasDirectConfig(client);
               return (
                 <div className="settings-card" key={`TorrentClients-${name}`}>
                   <div className="settings-card__header">
@@ -1393,70 +1454,110 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                   </div>
                   <div className="settings-grid">
                     {renderField(
-                      "QuiProxyURL",
-                      client.QuiProxyURL ?? "",
-                      ["TorrentClients", name, "QuiProxyURL"],
-                      meta.QuiProxyURL,
+                      "Type",
+                      valueFor(client, "Type", "TorrentClient") ?? "qbit",
+                      ["TorrentClients", name, "Type"],
+                      meta.Type,
                     )}
-                    {renderField(
-                      "QbitCategoryValue",
-                      valueFor(client, "QbitCategoryValue", "Category") ?? "",
-                      ["TorrentClients", name, "QbitCategoryValue"],
-                      meta.QbitCategoryValue,
-                    )}
-                    {renderField(
-                      "QbitTag",
-                      qbitTagFor(client),
-                      ["TorrentClients", name, "QbitTag"],
-                      meta.QbitTag,
-                    )}
-                    {renderField(
-                      "QbitCrossCategory",
-                      client.QbitCrossCategory ?? "",
-                      ["TorrentClients", name, "QbitCrossCategory"],
-                      meta.QbitCrossCategory,
-                    )}
-                    {renderField(
-                      "QbitCrossTag",
-                      client.QbitCrossTag ?? "",
-                      ["TorrentClients", name, "QbitCrossTag"],
-                      meta.QbitCrossTag,
-                    )}
-                    {renderField(
-                      "UseTrackerAsTag",
-                      client.UseTrackerAsTag ?? false,
-                      ["TorrentClients", name, "UseTrackerAsTag"],
-                      meta.UseTrackerAsTag,
-                    )}
-                    {renderField(
-                      "Linking",
-                      client.Linking ?? "",
-                      ["TorrentClients", name, "Linking"],
-                      meta.Linking,
-                    )}
-                    <div
-                      className="settings-switch-row"
-                      key={`TorrentClients-${name}-AllowFallback`}
-                    >
-                      <span>Allow link fallback</span>
-                      <Switch
-                        aria-label="Allow link fallback"
-                        checked={Boolean(client.AllowFallback ?? true)}
-                        onChange={(event) =>
-                          updateConfigValue(
-                            ["TorrentClients", name, "AllowFallback"],
-                            event.target.checked,
-                          )
-                        }
-                      />
-                    </div>
-                    {renderField(
-                      "LinkedFolder",
-                      arrayFor(client, "LinkedFolder"),
-                      ["TorrentClients", name, "LinkedFolder"],
-                      meta.LinkedFolder,
-                    )}
-                    {advancedOpen
+                    {watchClient
+                      ? renderField(
+                          "WatchFolder",
+                          client.WatchFolder ?? "",
+                          ["TorrentClients", name, "WatchFolder"],
+                          meta.WatchFolder,
+                        )
+                      : null}
+                    {watchClient
+                      ? renderField(
+                          "StorageDir",
+                          client.StorageDir ?? "",
+                          ["TorrentClients", name, "StorageDir"],
+                          meta.StorageDir,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QuiProxyURL",
+                          client.QuiProxyURL ?? "",
+                          ["TorrentClients", name, "QuiProxyURL"],
+                          meta.QuiProxyURL,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QbitCategoryValue",
+                          valueFor(client, "QbitCategoryValue", "Category") ?? "",
+                          ["TorrentClients", name, "QbitCategoryValue"],
+                          meta.QbitCategoryValue,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QbitTag",
+                          qbitTagFor(client),
+                          ["TorrentClients", name, "QbitTag"],
+                          meta.QbitTag,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QbitCrossCategory",
+                          client.QbitCrossCategory ?? "",
+                          ["TorrentClients", name, "QbitCrossCategory"],
+                          meta.QbitCrossCategory,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "QbitCrossTag",
+                          client.QbitCrossTag ?? "",
+                          ["TorrentClients", name, "QbitCrossTag"],
+                          meta.QbitCrossTag,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "UseTrackerAsTag",
+                          client.UseTrackerAsTag ?? false,
+                          ["TorrentClients", name, "UseTrackerAsTag"],
+                          meta.UseTrackerAsTag,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "Linking",
+                          client.Linking ?? "",
+                          ["TorrentClients", name, "Linking"],
+                          meta.Linking,
+                        )
+                      : null}
+                    {!watchClient ? (
+                      <div
+                        className="settings-switch-row"
+                        key={`TorrentClients-${name}-AllowFallback`}
+                      >
+                        <span>Allow link fallback</span>
+                        <Switch
+                          aria-label="Allow link fallback"
+                          checked={Boolean(client.AllowFallback ?? true)}
+                          onChange={(event) =>
+                            updateConfigValue(
+                              ["TorrentClients", name, "AllowFallback"],
+                              event.target.checked,
+                            )
+                          }
+                        />
+                      </div>
+                    ) : null}
+                    {!watchClient
+                      ? renderField(
+                          "LinkedFolder",
+                          arrayFor(client, "LinkedFolder"),
+                          ["TorrentClients", name, "LinkedFolder"],
+                          meta.LinkedFolder,
+                        )
+                      : null}
+                    {!watchClient && advancedOpen
                       ? renderField(
                           "LocalPath",
                           arrayFor(client, "LocalPath"),
@@ -1464,7 +1565,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                           meta.LocalPath,
                         )
                       : null}
-                    {advancedOpen
+                    {!watchClient && advancedOpen
                       ? renderField(
                           "RemotePath",
                           arrayFor(client, "RemotePath"),
@@ -1472,7 +1573,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                           meta.RemotePath,
                         )
                       : null}
-                    {advancedOpen
+                    {!watchClient && advancedOpen
                       ? renderField(
                           "VerifyWebUICertificate",
                           client.VerifyWebUICertificate ?? true,
@@ -1482,16 +1583,18 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                       : null}
                   </div>
 
-                  <div className="settings-switch-row">
-                    <span>qBit direct</span>
-                    <Switch
-                      aria-label="qBit direct"
-                      checked={directEnabled}
-                      onChange={(event) => setQbitDirect(name, event.target.checked)}
-                    />
-                  </div>
+                  {!watchClient ? (
+                    <div className="settings-switch-row">
+                      <span>qBit direct</span>
+                      <Switch
+                        aria-label="qBit direct"
+                        checked={directEnabled}
+                        onChange={(event) => setQbitDirect(name, event.target.checked)}
+                      />
+                    </div>
+                  ) : null}
 
-                  {directEnabled ? (
+                  {!watchClient && directEnabled ? (
                     <div className="settings-grid">
                       {renderField(
                         "QbitURL",

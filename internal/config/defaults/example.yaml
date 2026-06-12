@@ -451,6 +451,8 @@ torrent_clients:
     use_tracker_as_tag: false
     qbit_tag: ""
     qbit_cat: ""
+    # Optional cross-seed overrides for upbrr qBittorrent injection. When set,
+    # these take precedence over qbit_tag/qbit_cat for injected tracker torrents.
     qbit_cross_tag: ""
     qbit_cross_cat: ""
     # Optional qBittorrent staging mode: "", "hardlink", "reflink", or "symlink".
