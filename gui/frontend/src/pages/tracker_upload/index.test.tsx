@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import TrackerUploadPage from "./index";
 import type { MetadataPreview, TrackerDryRunPreview } from "../../types";
@@ -92,6 +92,7 @@ describe("TrackerUploadPage", () => {
     dryRunProgress: null,
     dryRunPreview,
     trackerQuestionnaireAnswers: {},
+    trackerIconSrcByName: {},
     onQuestionnaireAnswerChange: vi.fn(),
     onRunDryRun: vi.fn(),
     onStartUpload: vi.fn(),
@@ -116,65 +117,32 @@ describe("TrackerUploadPage", () => {
     expect(screen.queryByText(/Upload:/)).toBeNull();
   });
 
-  it("uses configured FaviconURL for available tracker icons", async () => {
+  it("renders cached tracker icons without fetching from the page", () => {
     const getTrackerIcon = vi.fn().mockResolvedValue("");
     vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });
 
-    render(
+    const { container } = render(
       <TrackerUploadPage
         {...baseProps}
-        trackerUploadItems={[
-          {
-            name: "AITHER",
-            config: {
-              URL: "https://tracker.example",
-              FaviconURL: "https://icons.example/aither.png",
-            },
-          },
-        ]}
+        trackerIconSrcByName={{ aither: "data:image/png;base64,iVBORw0KGgo=" }}
       />,
     );
 
-    await waitFor(() =>
-      expect(getTrackerIcon).toHaveBeenCalledWith(
-        "icons.example",
-        "https://icons.example/aither.png",
-      ),
-    );
+    expect(container.querySelector("img")).toBeInstanceOf(HTMLImageElement);
+    expect(getTrackerIcon).not.toHaveBeenCalled();
   });
 
-  it("uses configured FaviconURL for blocked tracker icons", async () => {
-    const getTrackerIcon = vi.fn().mockResolvedValue("");
-    vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });
+  it("uses abbreviation fallback for blocked tracker icons without cached icons", () => {
+    render(<TrackerUploadPage {...baseProps} failedDupeTrackerSet={new Set(["aither"])} />);
 
-    render(
-      <TrackerUploadPage
-        {...baseProps}
-        failedDupeTrackerSet={new Set(["aither"])}
-        trackerUploadItems={[
-          {
-            name: "AITHER",
-            config: {
-              URL: "https://tracker.example",
-              FaviconURL: "https://icons.example/aither-blocked.png",
-            },
-          },
-        ]}
-      />,
-    );
-
-    await waitFor(() =>
-      expect(getTrackerIcon).toHaveBeenCalledWith(
-        "icons.example",
-        "https://icons.example/aither-blocked.png",
-      ),
-    );
+    expect(screen.getByText("AIT")).toBeTruthy();
   });
 
-  it("hides tracker names when favicon-only mode is enabled", () => {
+  it("hides full tracker names when favicon-only mode is enabled", () => {
     render(<TrackerUploadPage {...baseProps} faviconOnly={true} useFavicons={true} />);
 
     expect(screen.queryByText("AITHER")).toBeNull();
+    expect(screen.getAllByText("AIT").length).toBeGreaterThan(0);
   });
 
   it("does not lose a pending live dry-run refresh when the timer is cleaned up", () => {

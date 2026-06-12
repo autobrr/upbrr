@@ -39,11 +39,11 @@ describe("TrackerDataPage", () => {
     const { container } = render(
       <TrackerDataPage
         preview={preview}
-        trackerUploadItems={[]}
         renderedDescriptions={{ "BLU-0": true }}
         setRenderedDescriptions={vi.fn()}
         setLightboxImage={vi.fn()}
         setLightboxAlt={vi.fn()}
+        trackerIconSrcByName={{}}
       />,
     );
 
@@ -56,7 +56,7 @@ describe("TrackerDataPage", () => {
     const preview = {
       TrackerData: [
         {
-          Tracker: "BLU",
+          Tracker: "BLUTOPIA",
           TrackerID: "1",
           TorrentURL: "",
           InfoHash: "",
@@ -78,20 +78,21 @@ describe("TrackerDataPage", () => {
     render(
       <TrackerDataPage
         preview={preview}
-        trackerUploadItems={[{ name: "BLU", config: {} }]}
         renderedDescriptions={{}}
         setRenderedDescriptions={vi.fn()}
         setLightboxImage={vi.fn()}
         setLightboxAlt={vi.fn()}
         useFavicons={true}
         faviconOnly={true}
+        trackerIconSrcByName={{}}
       />,
     );
 
-    expect(screen.queryByText("BLU")).toBeNull();
+    expect(screen.queryByText("BLUTOPIA")).toBeNull();
+    expect(screen.getAllByText("BLU").length).toBeGreaterThan(0);
   });
 
-  it("uses configured tracker favicon URLs", async () => {
+  it("renders cached tracker icons without fetching from the page", () => {
     const getTrackerIcon = vi.fn().mockResolvedValue("");
     vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });
     const preview = {
@@ -116,25 +117,24 @@ describe("TrackerDataPage", () => {
       ],
     } as unknown as MetadataPreview;
 
-    render(
+    const { container } = render(
       <TrackerDataPage
         preview={preview}
-        trackerUploadItems={[
-          { name: "BLU", config: { FaviconURL: "https://icons.example/blu.png" } },
-        ]}
         renderedDescriptions={{}}
         setRenderedDescriptions={vi.fn()}
         setLightboxImage={vi.fn()}
         setLightboxAlt={vi.fn()}
         useFavicons={true}
+        trackerIconSrcByName={{ blu: "data:image/png;base64,iVBORw0KGgo=" }}
       />,
     );
 
-    await screen.findByText("Torrent ID: 1");
-    expect(getTrackerIcon).toHaveBeenCalledWith("icons.example", "https://icons.example/blu.png");
+    expect(screen.getByText("Torrent ID: 1")).toBeTruthy();
+    expect(container.querySelector("img")).toBeInstanceOf(HTMLImageElement);
+    expect(getTrackerIcon).not.toHaveBeenCalled();
   });
 
-  it("does not fetch favicons for trackers missing from config", () => {
+  it("does not fetch favicons for trackers missing from the cache", () => {
     const getTrackerIcon = vi.fn().mockResolvedValue("");
     vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });
     const preview = {
@@ -162,17 +162,18 @@ describe("TrackerDataPage", () => {
     render(
       <TrackerDataPage
         preview={preview}
-        trackerUploadItems={[]}
         renderedDescriptions={{}}
         setRenderedDescriptions={vi.fn()}
         setLightboxImage={vi.fn()}
         setLightboxAlt={vi.fn()}
         useFavicons={true}
         faviconOnly={true}
+        trackerIconSrcByName={{}}
       />,
     );
 
-    expect(screen.getAllByText("UNCONFIGURED").length).toBeGreaterThan(0);
+    expect(screen.queryByText("UNCONFIGURED")).toBeNull();
+    expect(screen.getAllByText("UNC").length).toBeGreaterThan(0);
     expect(getTrackerIcon).not.toHaveBeenCalled();
   });
 });

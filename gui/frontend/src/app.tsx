@@ -22,6 +22,7 @@ import UploadImagesPage from "./pages/upload_images";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useUploadImages } from "./hooks/useUploadImages";
+import { useTrackerIcons } from "./hooks/useTrackerIcons";
 import { cn } from "./utils/cn";
 import type {
   ConfigMap,
@@ -1091,6 +1092,7 @@ export default function App() {
       .map(([name, config]) => ({ name, config }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [configData, trackerSelectionNames]);
+  const trackerIconSrcByName = useTrackerIcons(trackerUploadItems, useFavicons);
 
   const defaultTrackerSet = useMemo(() => {
     if (!configData || !configData.Trackers || typeof configData.Trackers !== "object") {
@@ -4405,7 +4407,6 @@ export default function App() {
               dupeLoading={dupeLoading}
               dupeError={dupeError}
               dupeSummary={dupeSummary}
-              trackerUploadItems={trackerUploadItems}
               dupeTrackerFlags={dupeTrackerFlags}
               dupeIgnore={dupeIgnore}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
@@ -4415,6 +4416,7 @@ export default function App() {
               dupeTotalCount={dupeTotalCount}
               useFavicons={useFavicons}
               faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
               handleDupeCheck={handleDupeCheck}
               setDupeIgnore={setDupeIgnore}
             />
@@ -4572,6 +4574,7 @@ export default function App() {
               trackerQuestionnaireAnswers={trackerQuestionnaireAnswers}
               useFavicons={useFavicons}
               faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
               onQuestionnaireAnswerChange={updateTrackerQuestionnaireAnswer}
               onRunDryRun={handleRunTrackerDryRun}
               onStartUpload={handleStartTrackerUpload}
@@ -4581,13 +4584,13 @@ export default function App() {
           ) : activeTab === "tracker" && hasTrackerData ? (
             <TrackerDataPage
               preview={preview}
-              trackerUploadItems={trackerUploadItems}
               renderedDescriptions={renderedDescriptions}
               setRenderedDescriptions={setRenderedDescriptions}
               setLightboxImage={setLightboxImage}
               setLightboxAlt={setLightboxAlt}
               useFavicons={useFavicons}
               faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
             />
           ) : (
             <InputPage
@@ -4633,6 +4636,7 @@ export default function App() {
               setRunLogLevelTouched={setRunLogLevelTouched}
               useFavicons={useFavicons}
               faviconOnly={faviconOnly}
+              trackerIconSrcByName={trackerIconSrcByName}
             />
           )}
         </main>

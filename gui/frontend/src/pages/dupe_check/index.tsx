@@ -1,13 +1,14 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
-import type { DupeCheckSummary, TrackerUploadItem } from "../../types";
+import type { DupeCheckSummary } from "../../types";
+import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
+import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import { cn } from "../../utils/cn";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 
@@ -16,7 +17,6 @@ type Props = {
   dupeLoading: boolean;
   dupeError: string;
   dupeSummary: DupeCheckSummary;
-  trackerUploadItems: TrackerUploadItem[];
   dupeTrackerFlags: Record<string, boolean>;
   dupeIgnore: Record<string, boolean>;
   ruleSkippedTrackerSet: Set<string>;
@@ -26,6 +26,7 @@ type Props = {
   dupeTotalCount: number;
   useFavicons?: boolean;
   faviconOnly?: boolean;
+  trackerIconSrcByName: TrackerIconCache;
   handleDupeCheck: () => void;
   setDupeIgnore: Dispatch<SetStateAction<Record<string, boolean>>>;
 };
@@ -38,7 +39,6 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     dupeLoading,
     dupeError,
     dupeSummary,
-    trackerUploadItems,
     dupeTrackerFlags,
     dupeIgnore,
     ruleSkippedTrackerSet,
@@ -48,19 +48,12 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     dupeTotalCount,
     useFavicons = true,
     faviconOnly = false,
+    trackerIconSrcByName,
     handleDupeCheck,
     setDupeIgnore,
   } = props;
 
   const dupeSummaryNotes = dupeSummary.Notes || [];
-  const configuredTrackerConfigByName = useMemo(() => {
-    const next = new Map<string, TrackerUploadItem["config"]>();
-    trackerUploadItems.forEach((tracker) => {
-      const name = tracker.name.toLowerCase().trim();
-      if (name) next.set(name, tracker.config);
-    });
-    return next;
-  }, [trackerUploadItems]);
   const hasDupeNotes = dupeSummaryNotes.length > 0;
   const hasDupeResults = dupeSummary.Results && dupeSummary.Results.length > 0;
   const dupeEmptyMessage = hasDupeNotes ? dupeSummaryNotes.join(" ") : "No dupe results yet.";
@@ -110,6 +103,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     })
     .map((result) => result.Tracker);
   const unavailableCount = Math.max(sortedResults.length - availableTrackers.length, 0);
+  const hideTrackerNames = faviconOnly && useFavicons;
 
   return (
     <section className="flex flex-col gap-3">
@@ -130,15 +124,10 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               </span>
               {availableTrackers.length ? (
                 availableTrackers.map((tracker) => {
-                  const iconConfig = configuredTrackerConfigByName.get(
-                    tracker.toLowerCase().trim(),
-                  );
-                  const iconEnabled = useFavicons && Boolean(iconConfig);
-                  const faviconURL =
-                    typeof iconConfig?.FaviconURL === "string" ? iconConfig.FaviconURL : undefined;
+                  const iconSrc = trackerIconFor(trackerIconSrcByName, tracker);
                   return (
                     <Badge
-                      aria-label={faviconOnly && iconEnabled ? tracker : undefined}
+                      aria-label={hideTrackerNames ? tracker : undefined}
                       className="text-[var(--text)] flex items-center gap-1"
                       style={{
                         backgroundColor: "color-mix(in srgb, var(--accent-2) 14%, transparent)",
@@ -146,12 +135,8 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                       }}
                       key={`available-${tracker}`}
                     >
-                      <TrackerIconImage
-                        tracker={tracker}
-                        customUrl={faviconURL}
-                        enabled={iconEnabled}
-                      />
-                      {faviconOnly && iconEnabled ? null : tracker}
+                      <TrackerIconImage tracker={tracker} iconSrc={iconSrc} enabled={useFavicons} />
+                      {hideTrackerNames ? null : tracker}
                     </Badge>
                   );
                 })
@@ -222,10 +207,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               const showIgnoreToggle = !hasPathedNote && (hasDupes || dupeCount > 0);
               const displayDupeCount =
                 (dupeTrackerFlags[result.Tracker] ?? hasDupes) ? dupeCount : 0;
-              const iconConfig = configuredTrackerConfigByName.get(normalizedTracker);
-              const iconEnabled = useFavicons && Boolean(iconConfig);
-              const faviconURL =
-                typeof iconConfig?.FaviconURL === "string" ? iconConfig.FaviconURL : undefined;
+              const iconSrc = trackerIconFor(trackerIconSrcByName, result.Tracker);
 
               return (
                 <article
@@ -235,10 +217,10 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                   <div className="min-w-0 flex items-center gap-2">
                     <TrackerIconImage
                       tracker={result.Tracker}
-                      customUrl={faviconURL}
-                      enabled={iconEnabled}
+                      iconSrc={iconSrc}
+                      enabled={useFavicons}
                     />
-                    {faviconOnly && iconEnabled ? null : (
+                    {hideTrackerNames ? null : (
                       <p className="font-bold text-[var(--text)]">{result.Tracker}</p>
                     )}
                   </div>
