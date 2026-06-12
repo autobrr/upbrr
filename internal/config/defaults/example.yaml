@@ -461,6 +461,8 @@ torrent_clients:
     qbit_cross_tag: ""
     qbit_cross_cat: ""
     content_layout: "Original"
+    # Optional qBittorrent staging mode: "", "hardlink", "reflink", or "symlink".
+    # Reflink uses Linux FICLONE or Windows ReFS block cloning and requires source and linked_folder on the same supported filesystem.
     linking: ""
     allow_fallback: true
     linked_folder:

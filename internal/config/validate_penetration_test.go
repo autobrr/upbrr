@@ -222,6 +222,15 @@ func TestValidateQbitLinking(t *testing.T) {
 			client: TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "symlink", LinkedFolder: StringList{"D:\\Links"}},
 		},
 		{
+			name:   "reflink accepts linked folder",
+			client: TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "reflink", LinkedFolder: StringList{"D:\\Links"}},
+		},
+		{
+			name:    "reflink requires linked folder",
+			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "reflink"},
+			wantErr: "linked_folder",
+		},
+		{
 			name:    "invalid mode rejected",
 			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "copy"},
 			wantErr: "linking",

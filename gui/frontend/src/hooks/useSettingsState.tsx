@@ -96,6 +96,7 @@ const trackerImageHostOptions = [...imageHostOptions, { value: "hdb", label: "HD
 const torrentClientLinkingOptions = [
   { value: "", label: "None" },
   { value: "hardlink", label: "Hardlink" },
+  { value: "reflink", label: "Reflink" },
   { value: "symlink", label: "Symlink" },
 ];
 const imageHostOptionLabels = new Map(

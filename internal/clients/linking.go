@@ -23,13 +23,15 @@ type linkStagingResult struct {
 	Linked   bool
 }
 
+var createReflink = reflinkFile
+
 func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, client config.TorrentClientConfig, meta api.PreparedMetadata, tracker string) (linkStagingResult, error) {
 	mode := client.LinkingMode()
 	if mode == "" {
 		return linkStagingResult{}, nil
 	}
-	if mode != "symlink" && mode != "hardlink" {
-		return linkStagingResult{}, fmt.Errorf("clients: %s linking must be symlink, hardlink, or empty", clientName)
+	if mode != "symlink" && mode != "hardlink" && mode != "reflink" {
+		return linkStagingResult{}, fmt.Errorf("clients: %s linking must be symlink, hardlink, reflink, or empty", clientName)
 	}
 
 	source, err := sourcePathForLinking(meta)
@@ -117,7 +119,7 @@ func selectLinkedFolder[S ~[]string](source string, folders S, mode string) (str
 		return "", err
 	}
 	sourceVolume := filepath.VolumeName(sourceAbs)
-	if runtime.GOOS == "windows" || mode == "hardlink" {
+	if runtime.GOOS == "windows" || mode == "hardlink" || mode == "reflink" {
 		for _, folder := range candidates {
 			folderAbs, err := filepath.Abs(folder)
 			if err != nil {
@@ -158,6 +160,15 @@ func createLinkTree(ctx context.Context, source string, dest string, mode string
 	if mode == "symlink" {
 		return symlink(source, dest, sourceInfo.IsDir())
 	}
+	if mode == "reflink" {
+		if !sourceInfo.IsDir() {
+			if err := createReflink(source, dest); err != nil {
+				return fmt.Errorf("create reflink: %w", err)
+			}
+			return nil
+		}
+		return reflinkDirectory(ctx, source, dest)
+	}
 	if !sourceInfo.IsDir() {
 		if err := os.Link(source, dest); err != nil {
 			return fmt.Errorf("create hardlink: %w", err)
@@ -165,6 +176,53 @@ func createLinkTree(ctx context.Context, source string, dest string, mode string
 		return nil
 	}
 	return hardlinkDirectory(ctx, source, dest)
+}
+
+func reflinkDirectory(ctx context.Context, source string, dest string) error {
+	if err := os.MkdirAll(dest, 0o700); err != nil {
+		return fmt.Errorf("create reflink destination root: %w", err)
+	}
+	if err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk reflink source: %w", walkErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context canceled: %w", err)
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return fmt.Errorf("relative reflink path: %w", err)
+		}
+		target := filepath.Join(dest, rel)
+		if !pathutil.IsWithinRoot(dest, target) {
+			return fmt.Errorf("reflink target escapes destination: %w", internalerrors.ErrInvalidInput)
+		}
+		if entry.IsDir() {
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return fmt.Errorf("create reflink subdirectory: %w", err)
+			}
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect reflink source entry: %w", err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		if _, err := os.Lstat(target); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat reflink target: %w", err)
+		}
+		if err := createReflink(path, target); err != nil {
+			return fmt.Errorf("create reflink for directory entry: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("walk reflink source tree: %w", err)
+	}
+	return nil
 }
 
 func hardlinkDirectory(ctx context.Context, source string, dest string) error {

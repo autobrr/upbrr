@@ -352,6 +352,111 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientReflinksSourceAndUsesLinkedSavePath(t *testing.T) {
+	var mu sync.Mutex
+	var addSavePath string
+	errCh := make(chan error, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			if err := r.ParseMultipartForm(10 << 20); err != nil {
+				errCh <- err
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			addSavePath = r.FormValue("savepath")
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "release")
+	nested := filepath.Join(source, "disc")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	sourceFile := filepath.Join(nested, "movie.mkv")
+	if err := os.WriteFile(sourceFile, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	linkRoot := filepath.Join(root, "reflinks")
+	if err := os.MkdirAll(linkRoot, 0o700); err != nil {
+		t.Fatalf("mkdir links: %v", err)
+	}
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	originalCreateReflink := createReflink
+	var cloneCalls []string
+	createReflink = func(src, dst string) error {
+		cloneCalls = append(cloneCalls, src+"->"+dst)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, 0o600)
+	}
+	t.Cleanup(func() { createReflink = originalCreateReflink })
+
+	svc := NewService(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"AITHER": {LinkDirName: "aither-reflinks"},
+		}},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:         "qbit",
+				URL:          server.URL,
+				Username:     "user",
+				Password:     "pass",
+				Linking:      "reflink",
+				LinkedFolder: config.StringList{linkRoot},
+			},
+		},
+	}, nil)
+
+	meta := api.PreparedMetadata{SourcePath: source}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath, Tracker: "AITHER"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	linkedFile := filepath.Join(linkRoot, "aither-reflinks", filepath.Base(source), "disc", filepath.Base(sourceFile))
+	if _, err := os.Stat(linkedFile); err != nil {
+		t.Fatalf("expected reflinked source file: %v", err)
+	}
+	if len(cloneCalls) != 1 {
+		t.Fatalf("expected 1 reflink call, got %d (%v)", len(cloneCalls), cloneCalls)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	wantSavePath := filepath.ToSlash(filepath.Join(linkRoot, "aither-reflinks")) + "/"
+	if addSavePath != wantSavePath {
+		t.Fatalf("expected savepath %q, got %q", wantSavePath, addSavePath)
+	}
+}
+
 func TestInjectUsesSelectedClientOverride(t *testing.T) {
 	t.Parallel()
 

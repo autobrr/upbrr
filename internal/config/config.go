@@ -744,11 +744,12 @@ func (c Config) Validate() error {
 				}
 			}
 			switch strings.ToLower(strings.TrimSpace(client.Linking)) {
-			case "", "none", "disabled", "symlink", "hardlink":
+			case "", "none", "disabled", "symlink", "hardlink", "reflink":
 			default:
-				return fmt.Errorf("config: torrent_clients.%s.linking must be symlink, hardlink, or empty", name)
+				return fmt.Errorf("config: torrent_clients.%s.linking must be symlink, hardlink, reflink, or empty", name)
 			}
-			if strings.EqualFold(strings.TrimSpace(client.Linking), "symlink") || strings.EqualFold(strings.TrimSpace(client.Linking), "hardlink") {
+			linkMode := strings.ToLower(strings.TrimSpace(client.Linking))
+			if linkMode == "symlink" || linkMode == "hardlink" || linkMode == "reflink" {
 				if len(nonEmptyStrings(client.LinkedFolder)) == 0 {
 					return fmt.Errorf("config: torrent_clients.%s.linked_folder is required when linking is enabled", name)
 				}
