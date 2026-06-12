@@ -4300,7 +4300,7 @@ export default function App() {
                   </span>
                 ) : null}
                 <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                  Copyright (c) 2026 autobrr
+                  © 2026 autobrr
                 </span>
               </div>
               <a

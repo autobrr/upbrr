@@ -18,6 +18,11 @@ import type {
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
 
+const applicationDetailsSection = {
+  key: "application_details",
+  label: "Application Details",
+};
+
 const settingsInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
 
@@ -178,6 +183,64 @@ export default function SettingsPage(props: Props) {
         Math.max(0, Math.floor((uptimeTick - applicationInfoFetchedAt) / 1000))
       : 0;
   const uptimeValue = applicationInfo ? formatApplicationUptime(uptimeSeconds) : "";
+  const applicationDetailsPanel = (
+    <div className="settings-subgroup settings-subgroup--application">
+      <p className="helper">
+        Read-only build and runtime details for this install. Auth, bind, and storage paths are
+        intentionally excluded.
+      </p>
+      <div className="settings-details-grid">
+        <div className="settings-detail-card">
+          <p className="settings-detail-card__label">Project</p>
+          <p className="settings-detail-card__value">
+            <a
+              href="https://github.com/autobrr/upbrr"
+              target="_blank"
+              rel="noreferrer"
+              onAuxClick={handleExternalLinkClick}
+              onClick={handleExternalLinkClick}
+            >
+              autobrr/upbrr
+            </a>
+          </p>
+        </div>
+        {applicationInfo ? (
+          <>
+            <div className="settings-detail-card">
+              <p className="settings-detail-card__label">Version</p>
+              <p className="settings-detail-card__value mono">
+                {applicationInfo.version || "Unavailable"}
+              </p>
+            </div>
+            <div className="settings-detail-card">
+              <p className="settings-detail-card__label">Build</p>
+              <p className="settings-detail-card__value mono">
+                {applicationInfo.buildIdentifier || "Unavailable"}
+              </p>
+            </div>
+            <div className="settings-detail-card">
+              <p className="settings-detail-card__label">Go Runtime</p>
+              <p className="settings-detail-card__value mono">{applicationInfo.goVersion}</p>
+            </div>
+            <div className="settings-detail-card">
+              <p className="settings-detail-card__label">Platform</p>
+              <p className="settings-detail-card__value mono">
+                {applicationInfo.goos}/{applicationInfo.goarch}
+              </p>
+            </div>
+            <div className="settings-detail-card">
+              <p className="settings-detail-card__label">Uptime</p>
+              <p className="settings-detail-card__value mono">
+                {uptimeValue || applicationInfo.uptime}
+              </p>
+            </div>
+          </>
+        ) : null}
+      </div>
+      {applicationInfoLoading ? <p className="muted">Loading application details...</p> : null}
+      {applicationInfoError ? <p className="error">{applicationInfoError}</p> : null}
+    </div>
+  );
 
   return (
     <div className="content-stack">
@@ -329,80 +392,24 @@ export default function SettingsPage(props: Props) {
                 {section.label}
               </button>
             ))}
+            <button
+              key={applicationDetailsSection.key}
+              type="button"
+              className={cn(
+                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
+                settingsSection === applicationDetailsSection.key
+                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
+                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
+              )}
+              onClick={() => setSettingsSection(applicationDetailsSection.key)}
+            >
+              {applicationDetailsSection.label}
+            </button>
           </div>
 
           <div className="settings-body">
-            <details
-              className="settings-subgroup settings-subgroup--collapsible settings-subgroup--application"
-              open
-            >
-              <summary>Application Details</summary>
-              <div>
-                <p className="helper">
-                  Read-only build and runtime details for this install. Auth, bind, and storage
-                  paths are intentionally excluded.
-                </p>
-                <div className="settings-details-grid">
-                  <div className="settings-detail-card">
-                    <p className="settings-detail-card__label">Project</p>
-                    <p className="settings-detail-card__value">
-                      <a
-                        href="https://github.com/autobrr/upbrr"
-                        target="_blank"
-                        rel="noreferrer"
-                        onAuxClick={handleExternalLinkClick}
-                        onClick={handleExternalLinkClick}
-                      >
-                        autobrr/upbrr
-                      </a>
-                    </p>
-                  </div>
-                  <div className="settings-detail-card">
-                    <p className="settings-detail-card__label">Copyright</p>
-                    <p className="settings-detail-card__value">Copyright (c) 2026 autobrr</p>
-                  </div>
-                  {applicationInfo ? (
-                    <>
-                      <div className="settings-detail-card">
-                        <p className="settings-detail-card__label">Version</p>
-                        <p className="settings-detail-card__value mono">
-                          {applicationInfo.version || "Unavailable"}
-                        </p>
-                      </div>
-                      <div className="settings-detail-card">
-                        <p className="settings-detail-card__label">Build</p>
-                        <p className="settings-detail-card__value mono">
-                          {applicationInfo.buildIdentifier || "Unavailable"}
-                        </p>
-                      </div>
-                      <div className="settings-detail-card">
-                        <p className="settings-detail-card__label">Go Runtime</p>
-                        <p className="settings-detail-card__value mono">
-                          {applicationInfo.goVersion}
-                        </p>
-                      </div>
-                      <div className="settings-detail-card">
-                        <p className="settings-detail-card__label">Platform</p>
-                        <p className="settings-detail-card__value mono">
-                          {applicationInfo.goos}/{applicationInfo.goarch}
-                        </p>
-                      </div>
-                      <div className="settings-detail-card">
-                        <p className="settings-detail-card__label">Uptime</p>
-                        <p className="settings-detail-card__value mono">
-                          {uptimeValue || applicationInfo.uptime}
-                        </p>
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-                {applicationInfoLoading ? (
-                  <p className="muted">Loading application details...</p>
-                ) : null}
-                {applicationInfoError ? <p className="error">{applicationInfoError}</p> : null}
-              </div>
-            </details>
-            {webAuthAvailable ? (
+            {settingsSection === applicationDetailsSection.key ? applicationDetailsPanel : null}
+            {settingsSection !== applicationDetailsSection.key && webAuthAvailable ? (
               <details className="settings-subgroup settings-subgroup--collapsible settings-subgroup--auth">
                 <summary>Secret Encryption</summary>
                 <div>
@@ -493,7 +500,7 @@ export default function SettingsPage(props: Props) {
                 </div>
               </details>
             ) : null}
-            {configData ? (
+            {settingsSection === applicationDetailsSection.key ? null : configData ? (
               <div className="settings-form">
                 {showAdvancedToggle ? (
                   <div className="settings-switch-row">
