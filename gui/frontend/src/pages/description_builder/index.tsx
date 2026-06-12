@@ -3,6 +3,9 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import RenderedDescription from "../../components/RenderedDescription";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
+import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
+import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { DescriptionBuilderPreview } from "../../types";
 
 type Props = {
@@ -18,6 +21,9 @@ type Props = {
   builderProgressMessage: string;
   builderError: string;
   builderSaved: string;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
+  trackerIconSrcByName?: TrackerIconCache;
   refreshDescriptionBuilder: () => void;
   setBuilderRawByGroup: Dispatch<SetStateAction<Record<string, string>>>;
   setBuilderDirtyByGroup: Dispatch<SetStateAction<Record<string, boolean>>>;
@@ -47,6 +53,9 @@ export default function DescriptionBuilderPage(props: Props) {
     builderProgressMessage,
     builderError,
     builderSaved,
+    useFavicons = true,
+    faviconOnly = false,
+    trackerIconSrcByName = {},
     refreshDescriptionBuilder,
     setBuilderRawByGroup,
     setBuilderDirtyByGroup,
@@ -115,14 +124,31 @@ export default function DescriptionBuilderPage(props: Props) {
           const seededRendered = group.RawDescriptionHTML || "";
           const renderedHTML = builderRenderedByGroup[groupKey] ?? seededRendered;
           const expanded = builderExpandedGroups[groupKey] ?? false;
-          const label = groupLabel(groupKey, group.Trackers || []);
+          const trackers = (group.Trackers || []).map((tracker) => tracker.trim()).filter(Boolean);
+          const label = groupLabel(groupKey, trackers);
+          const hideTrackerNames = faviconOnly && useFavicons && trackers.length > 0;
           const imageHostWarnings = group.ImageHost?.Warnings || [];
 
           return (
             <section className="panel grid gap-3" key={reactKey}>
               <div className="mb-1 flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h2>{label}</h2>
+                  <h2>
+                    <span
+                      aria-label={hideTrackerNames ? label : undefined}
+                      className="inline-flex flex-wrap items-center gap-1.5"
+                    >
+                      {trackers.map((tracker) => (
+                        <TrackerIconImage
+                          tracker={tracker}
+                          iconSrc={trackerIconFor(trackerIconSrcByName, tracker)}
+                          enabled={useFavicons}
+                          key={`${groupKey}-${tracker}`}
+                        />
+                      ))}
+                      {hideTrackerNames ? null : label}
+                    </span>
+                  </h2>
                   <p className="muted">
                     {group.HasOverride
                       ? "Saved override active for this group."
@@ -198,7 +224,8 @@ export default function DescriptionBuilderPage(props: Props) {
                     <div className="mb-2 flex flex-col gap-1">
                       <h2>Raw Description</h2>
                       <p className="muted">
-                        This final raw description is the upload source of truth for {label}.
+                        This final raw description is the upload source of truth for{" "}
+                        {hideTrackerNames ? "this group" : label}.
                       </p>
                     </div>
                     <textarea

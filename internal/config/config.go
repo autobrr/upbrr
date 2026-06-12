@@ -44,6 +44,8 @@ type MainSettingsConfig struct {
 	TrackerPassChecks   int    `yaml:"tracker_pass_checks"`
 	InputHistoryLimit   int    `yaml:"input_history_limit"`
 	DBPath              string `yaml:"db_path"`
+	UseFavicons         bool   `yaml:"use_favicons"`
+	FaviconOnly         bool   `yaml:"favicon_only"`
 }
 
 type mainSettingsConfigAlias MainSettingsConfig
@@ -51,6 +53,7 @@ type mainSettingsConfigAlias MainSettingsConfig
 func (c *MainSettingsConfig) UnmarshalYAML(value *yaml.Node) error {
 	var raw mainSettingsConfigAlias
 	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	raw.UseFavicons = true
 	if err := value.Decode(&raw); err != nil {
 		return fmt.Errorf("config: decode main settings yaml: %w", err)
 	}
@@ -61,6 +64,7 @@ func (c *MainSettingsConfig) UnmarshalYAML(value *yaml.Node) error {
 func (c *MainSettingsConfig) UnmarshalJSON(data []byte) error {
 	var raw mainSettingsConfigAlias
 	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	raw.UseFavicons = true
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("config: decode main settings json: %w", err)
 	}
@@ -212,6 +216,7 @@ type TrackerConfig struct {
 	AnnounceURL         string         `yaml:"announce_url" json:"AnnounceURL"`
 	MyAnnounceURL       string         `yaml:"my_announce_url" json:"MyAnnounceURL"`
 	URL                 string         `yaml:"url" json:"URL"`
+	FaviconURL          string         `yaml:"favicon_url" json:"FaviconURL"`
 	UploaderStatus      bool           `yaml:"uploader_status" json:"UploaderStatus"`
 	CustomLayout        string         `yaml:"custom_layout" json:"CustomLayout"`
 	TagForCustomRelease string         `yaml:"tag_for_custom_release" json:"TagForCustomRelease"`
@@ -320,6 +325,7 @@ func initTrackerSchema() {
 func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 	initTrackerSchema()
 	addGlobal := func(keys map[string]struct{}) map[string]struct{} {
+		keys["favicon_url"] = struct{}{}
 		keys["image_host"] = struct{}{}
 		return keys
 	}
@@ -963,10 +969,15 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 		return errors.New("load embedded tracker defaults: embedded default trackers missing")
 	}
 	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
-		if _, ok := cfg.Trackers.Trackers[trackerName]; ok {
+		existing, ok := cfg.Trackers.Trackers[trackerName]
+		if !ok {
+			cfg.Trackers.Trackers[trackerName] = trackerCfg
 			continue
 		}
-		cfg.Trackers.Trackers[trackerName] = trackerCfg
+		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
+			existing.URL = trackerCfg.URL
+			cfg.Trackers.Trackers[trackerName] = existing
+		}
 	}
 	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" {
 		btnCfg := cfg.Trackers.Trackers["BTN"]
@@ -1092,6 +1103,35 @@ func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
 
 func (c TorrentClientConfig) UsesQuiProxy() bool {
 	return strings.TrimSpace(c.QuiProxyURL) != ""
+}
+
+// ResolveTrackerDomain resolves a tracker name or raw domain into a domain name and its configured URL.
+func ResolveTrackerDomain(cfg *Config, trackerNameOrDomain string) (string, string) {
+	name := strings.TrimSpace(trackerNameOrDomain)
+	if name == "" {
+		return "", ""
+	}
+
+	if cfg != nil && cfg.Trackers.Trackers != nil {
+		for k, v := range cfg.Trackers.Trackers {
+			if strings.EqualFold(k, name) {
+				u := strings.TrimSpace(v.URL)
+				if u != "" {
+					// Prepend scheme if missing to allow url.Parse to extract hostname
+					urlString := u
+					if !strings.Contains(urlString, "://") {
+						urlString = "http://" + urlString
+					}
+					if parsed, err := url.Parse(urlString); err == nil && parsed.Hostname() != "" {
+						return parsed.Hostname(), u
+					}
+					return "", u
+				}
+			}
+		}
+	}
+
+	return name, ""
 }
 
 func nonEmptyStrings[S ~[]string](values S) []string {

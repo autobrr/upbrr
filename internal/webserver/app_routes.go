@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/services/trackericon"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -897,6 +899,36 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			return
 		}
 		value, err := s.backend.GetTrackerUploadSnapshot(req.JobID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
+	mux.HandleFunc("/api/app/GetTrackerIcon", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			Domain string
+			URL    string
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		cfg := s.cfg
+		if s.backend != nil {
+			cfg = s.backend.currentConfig()
+		}
+		domain, resolvedURL := config.ResolveTrackerDomain(&cfg, req.Domain)
+		urlToUse := req.URL
+		if urlToUse == "" {
+			urlToUse = resolvedURL
+		}
+		value, err := trackericon.GetTrackerIcon(r.Context(), cfg.MainSettings.DBPath, domain, urlToUse)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

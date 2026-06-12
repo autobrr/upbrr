@@ -171,7 +171,6 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
 	}
 
-	//nolint:gosec // The cancel func is stored on the job and invoked on completion/cancel paths.
 	jobCtx, cancel := context.WithCancel(baseCtx)
 	job.cancel = cancel
 
@@ -180,7 +179,10 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	a.uploadMu.Unlock()
 
 	a.emitTrackerUploadSnapshot(baseCtx, job)
-	go a.runTrackerUploadJob(jobCtx, baseCtx, job)
+	go func() {
+		defer cancel()
+		a.runTrackerUploadJob(jobCtx, baseCtx, job)
+	}()
 
 	return jobID, nil
 }
