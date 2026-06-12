@@ -1296,6 +1296,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (
       (activeTab === "input" ||
         activeTab === "tracker" ||
+        activeTab === "dupes" ||
         activeTab === "settings" ||
         activeTab === "logging" ||
         activeTab === "upload" ||

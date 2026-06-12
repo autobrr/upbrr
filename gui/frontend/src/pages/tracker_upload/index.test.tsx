@@ -1,13 +1,14 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import TrackerUploadPage from "./index";
 import type { MetadataPreview, TrackerDryRunPreview } from "../../types";
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   cleanup();
 });
 
@@ -113,6 +114,67 @@ describe("TrackerUploadPage", () => {
 
     expect(screen.queryByText("Name changed")).toBeNull();
     expect(screen.queryByText(/Upload:/)).toBeNull();
+  });
+
+  it("uses configured FaviconURL for available tracker icons", async () => {
+    const getTrackerIcon = vi.fn().mockResolvedValue("");
+    vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });
+
+    render(
+      <TrackerUploadPage
+        {...baseProps}
+        trackerUploadItems={[
+          {
+            name: "AITHER",
+            config: {
+              URL: "https://tracker.example",
+              FaviconURL: "https://icons.example/aither.png",
+            },
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(getTrackerIcon).toHaveBeenCalledWith(
+        "icons.example",
+        "https://icons.example/aither.png",
+      ),
+    );
+  });
+
+  it("uses configured FaviconURL for blocked tracker icons", async () => {
+    const getTrackerIcon = vi.fn().mockResolvedValue("");
+    vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });
+
+    render(
+      <TrackerUploadPage
+        {...baseProps}
+        failedDupeTrackerSet={new Set(["aither"])}
+        trackerUploadItems={[
+          {
+            name: "AITHER",
+            config: {
+              URL: "https://tracker.example",
+              FaviconURL: "https://icons.example/aither-blocked.png",
+            },
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(getTrackerIcon).toHaveBeenCalledWith(
+        "icons.example",
+        "https://icons.example/aither-blocked.png",
+      ),
+    );
+  });
+
+  it("hides tracker names when favicon-only mode is enabled", () => {
+    render(<TrackerUploadPage {...baseProps} faviconOnly={true} useFavicons={true} />);
+
+    expect(screen.queryByText("AITHER")).toBeNull();
   });
 
   it("does not lose a pending live dry-run refresh when the timer is cleaned up", () => {

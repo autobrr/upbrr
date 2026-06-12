@@ -754,6 +754,16 @@ export default function App() {
       null) as ConfigMap | null;
     return resolveInputHistoryLimit(mainSettings?.InputHistoryLimit);
   }, [configData]);
+  const useFavicons = useMemo(() => {
+    const mainSettings = ((configData as ConfigMap | null)?.MainSettings ??
+      null) as ConfigMap | null;
+    return typeof mainSettings?.UseFavicons === "boolean" ? mainSettings.UseFavicons : true;
+  }, [configData]);
+  const faviconOnly = useMemo(() => {
+    const mainSettings = ((configData as ConfigMap | null)?.MainSettings ??
+      null) as ConfigMap | null;
+    return typeof mainSettings?.FaviconOnly === "boolean" ? mainSettings.FaviconOnly : false;
+  }, [configData]);
 
   const persistSourcePathHistory = useCallback((entries: SourcePathHistoryEntry[]) => {
     try {
@@ -4402,6 +4412,8 @@ export default function App() {
               dupeProgressStatus={dupeProgressStatus}
               dupeCompletedCount={dupeCompletedCount}
               dupeTotalCount={dupeTotalCount}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
               handleDupeCheck={handleDupeCheck}
               setDupeIgnore={setDupeIgnore}
             />
@@ -4557,6 +4569,8 @@ export default function App() {
               dryRunProgress={trackerDryRunProgress}
               dryRunPreview={trackerDryRunPreview}
               trackerQuestionnaireAnswers={trackerQuestionnaireAnswers}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
               onQuestionnaireAnswerChange={updateTrackerQuestionnaireAnswer}
               onRunDryRun={handleRunTrackerDryRun}
               onStartUpload={handleStartTrackerUpload}
@@ -4570,6 +4584,8 @@ export default function App() {
               setRenderedDescriptions={setRenderedDescriptions}
               setLightboxImage={setLightboxImage}
               setLightboxAlt={setLightboxAlt}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
             />
           ) : (
             <InputPage
@@ -4613,6 +4629,8 @@ export default function App() {
               setRunLogLevel={setRunLogLevel}
               runLogLevelTouched={runLogLevelTouched}
               setRunLogLevelTouched={setRunLogLevelTouched}
+              useFavicons={useFavicons}
+              faviconOnly={faviconOnly}
             />
           )}
         </main>

@@ -602,6 +602,8 @@ type Props = Readonly<{
   setRunLogLevel: Dispatch<SetStateAction<string>>;
   runLogLevelTouched: boolean;
   setRunLogLevelTouched: Dispatch<SetStateAction<boolean>>;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
 }>;
 
 export default function InputPage(props: Props) {
@@ -646,39 +648,9 @@ export default function InputPage(props: Props) {
     setRunLogLevel,
     runLogLevelTouched,
     setRunLogLevelTouched,
+    useFavicons = true,
+    faviconOnly = false,
   } = props;
-
-  const [useFavicons, setUseFavicons] = useState(true);
-  const [faviconOnly, setFaviconOnly] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    const fetchConfig = async () => {
-      try {
-        const getConfig = globalThis.go?.guiapp?.App?.GetConfig;
-        if (getConfig) {
-          const raw = await getConfig();
-          if (active && raw) {
-            const data = JSON.parse(raw);
-            if (data?.MainSettings) {
-              if (typeof data.MainSettings.UseFavicons === "boolean") {
-                setUseFavicons(data.MainSettings.UseFavicons);
-              }
-              if (typeof data.MainSettings.FaviconOnly === "boolean") {
-                setFaviconOnly(data.MainSettings.FaviconOnly);
-              }
-            }
-          }
-        }
-      } catch (_err) {
-        // ignore
-      }
-    };
-    fetchConfig();
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const [sourcePathHistoryOpen, setSourcePathHistoryOpen] = useState(false);
   const sourcePathHistoryRef = useRef<HTMLDivElement | null>(null);
@@ -1249,6 +1221,7 @@ export default function InputPage(props: Props) {
                     <div className="tracker-pills">
                       {trackerUploadItems.map((tracker) => (
                         <PillCheckbox
+                          aria-label={tracker.name}
                           key={tracker.name}
                           checked={Boolean(releasePageTrackerSelection[tracker.name])}
                           onCheckedChange={(checked) =>
@@ -1262,6 +1235,7 @@ export default function InputPage(props: Props) {
                             {useFavicons ? (
                               <TrackerIconImage
                                 tracker={tracker.name}
+                                enabled={useFavicons}
                                 customUrl={
                                   typeof tracker.config?.FaviconURL === "string"
                                     ? tracker.config.FaviconURL

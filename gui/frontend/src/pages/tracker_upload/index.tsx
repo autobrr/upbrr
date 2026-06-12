@@ -38,6 +38,8 @@ type Props = {
   dryRunProgress: UploadProgressUpdate | null;
   dryRunPreview: TrackerDryRunPreview;
   trackerQuestionnaireAnswers: Record<string, Record<string, string>>;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
   onQuestionnaireAnswerChange: (tracker: string, key: string, value: string) => void;
   onRunDryRun: () => void;
   onStartUpload: () => void;
@@ -88,6 +90,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     dryRunProgress,
     dryRunPreview,
     trackerQuestionnaireAnswers,
+    useFavicons = true,
+    faviconOnly = false,
     onQuestionnaireAnswerChange,
     onRunDryRun,
     onStartUpload,
@@ -429,6 +433,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
               <div className="mt-2 grid gap-1">
                 {blockedTrackers.map((tracker) => {
                   const state = trackerBlockState[tracker.name];
+                  const faviconURL =
+                    typeof tracker.config?.FaviconURL === "string" ? tracker.config.FaviconURL : "";
                   return (
                     <div
                       className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1.5"
@@ -437,9 +443,10 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                       <span className="value text-sm leading-5 flex items-center gap-1.5">
                         <TrackerIconImage
                           tracker={tracker.name}
-                          customUrl={tracker.config?.URL as string}
+                          customUrl={faviconURL}
+                          enabled={useFavicons}
                         />
-                        {tracker.name}
+                        {faviconOnly && useFavicons ? null : tracker.name}
                       </span>
                       <div className="flex flex-wrap items-center justify-end gap-1">
                         {state?.reasons.map((reason) => (
@@ -466,6 +473,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
             const dryRun = selected ? dryRunMap[normalizedTrackerName] : undefined;
             const imageHost = dryRun?.ImageHost;
             const imageHostWarnings = imageHost?.Warnings || [];
+            const faviconURL =
+              typeof tracker.config?.FaviconURL === "string" ? tracker.config.FaviconURL : "";
             const imageHostStatus = String(imageHost?.Status || "").toLowerCase();
             const questionnaire = dryRun?.Questionnaire;
             const questionnaireAnswers =
@@ -493,9 +502,12 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                   <div className="flex flex-wrap items-center gap-2">
                     <TrackerIconImage
                       tracker={tracker.name}
-                      customUrl={tracker.config?.URL as string}
+                      customUrl={faviconURL}
+                      enabled={useFavicons}
                     />
-                    <p className="value text-base leading-5">{tracker.name}</p>
+                    {faviconOnly && useFavicons ? null : (
+                      <p className="value text-base leading-5">{tracker.name}</p>
+                    )}
                     <span
                       className={cn(
                         "inline-flex items-center rounded-full border px-2 py-0.5 text-xs capitalize",

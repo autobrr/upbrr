@@ -22,6 +22,8 @@ type Props = {
   dupeProgressStatus: string;
   dupeCompletedCount: number;
   dupeTotalCount: number;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
   handleDupeCheck: () => void;
   setDupeIgnore: Dispatch<SetStateAction<Record<string, boolean>>>;
 };
@@ -41,6 +43,8 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     dupeProgressStatus,
     dupeCompletedCount,
     dupeTotalCount,
+    useFavicons = true,
+    faviconOnly = false,
     handleDupeCheck,
     setDupeIgnore,
   } = props;
@@ -116,6 +120,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               {availableTrackers.length ? (
                 availableTrackers.map((tracker) => (
                   <Badge
+                    aria-label={faviconOnly && useFavicons ? tracker : undefined}
                     className="text-[var(--text)] flex items-center gap-1"
                     style={{
                       backgroundColor: "color-mix(in srgb, var(--accent-2) 14%, transparent)",
@@ -123,8 +128,8 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                     }}
                     key={`available-${tracker}`}
                   >
-                    <TrackerIconImage tracker={tracker} />
-                    {tracker}
+                    <TrackerIconImage tracker={tracker} enabled={useFavicons} />
+                    {faviconOnly && useFavicons ? null : tracker}
                   </Badge>
                 ))
               ) : (
@@ -201,8 +206,10 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                   key={result.Tracker}
                 >
                   <div className="min-w-0 flex items-center gap-2">
-                    <TrackerIconImage tracker={result.Tracker} />
-                    <p className="font-bold text-[var(--text)]">{result.Tracker}</p>
+                    <TrackerIconImage tracker={result.Tracker} enabled={useFavicons} />
+                    {faviconOnly && useFavicons ? null : (
+                      <p className="font-bold text-[var(--text)]">{result.Tracker}</p>
+                    )}
                   </div>
 
                   <p

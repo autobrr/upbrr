@@ -325,6 +325,7 @@ func initTrackerSchema() {
 func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 	initTrackerSchema()
 	addGlobal := func(keys map[string]struct{}) map[string]struct{} {
+		keys["favicon_url"] = struct{}{}
 		keys["image_host"] = struct{}{}
 		return keys
 	}

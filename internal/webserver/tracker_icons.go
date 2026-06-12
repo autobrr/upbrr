@@ -13,11 +13,26 @@ import (
 )
 
 func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ session) {
-	trackerNameOrDomain := strings.TrimSpace(r.URL.Query().Get("domain"))
-	customURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-	domain, resolvedURL := config.ResolveTrackerDomain(&s.cfg, trackerNameOrDomain)
-	urlToUse := customURL
+	var req struct {
+		Domain string
+		URL    string
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	cfg := s.cfg
+	if s.backend != nil {
+		cfg = s.backend.currentConfig()
+	}
+	domain, resolvedURL := config.ResolveTrackerDomain(&cfg, strings.TrimSpace(req.Domain))
+	urlToUse := strings.TrimSpace(req.URL)
 	if urlToUse == "" {
 		urlToUse = resolvedURL
 	}
@@ -28,13 +43,17 @@ func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ ses
 		return
 	}
 
-	dataURL, err := trackericon.GetTrackerIcon(r.Context(), s.cfg.MainSettings.DBPath, domain, urlToUse)
+	dataURL, err := trackericon.GetTrackerIcon(r.Context(), cfg.MainSettings.DBPath, domain, urlToUse)
 	if err != nil {
 		if strings.Contains(err.Error(), "negative cached") || strings.Contains(err.Error(), "failed to fetch") {
 			http.NotFound(w, r)
 			return
 		}
-		s.backend.logger.Errorf("trackericon: get tracker icon %s: %v", sanitized, err)
+		if s.backend != nil {
+			if logger := s.backend.currentLogger(); logger != nil {
+				logger.Errorf("trackericon: get tracker icon %s: %v", sanitized, err)
+			}
+		}
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -73,6 +92,5 @@ func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ ses
 	w.Header().Set("Cache-Control", "public, max-age=604800") // 7 days browser cache
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", mime)
-	//nolint:gosec // Tainted icon data is safe to serve with explicit image content-type and nosniff
 	_, _ = w.Write(data)
 }

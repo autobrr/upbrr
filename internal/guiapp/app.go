@@ -1583,14 +1583,15 @@ func (a *App) GetTrackerIcon(trackerNameOrDomain string, customURL string) (stri
 		return "", errors.New("app not initialized")
 	}
 	ctx := a.runtimeContext()
+	cfg := a.currentConfig()
 
-	domain, resolvedURL := config.ResolveTrackerDomain(&a.cfg, trackerNameOrDomain)
+	domain, resolvedURL := config.ResolveTrackerDomain(&cfg, trackerNameOrDomain)
 	urlToUse := customURL
 	if urlToUse == "" {
 		urlToUse = resolvedURL
 	}
 
-	res, err := trackericon.GetTrackerIcon(ctx, a.cfg.MainSettings.DBPath, domain, urlToUse)
+	res, err := trackericon.GetTrackerIcon(ctx, cfg.MainSettings.DBPath, domain, urlToUse)
 	if err != nil {
 		return "", fmt.Errorf("gui: %w", err)
 	}

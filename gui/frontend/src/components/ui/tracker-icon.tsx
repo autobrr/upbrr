@@ -8,12 +8,14 @@ interface TrackerIconImageProps {
   tracker: string;
   customUrl?: string;
   className?: string;
+  enabled?: boolean;
 }
 
 export const TrackerIconImage: React.FC<TrackerIconImageProps> = ({
   tracker,
   customUrl,
   className = "",
+  enabled = true,
 }) => {
   const [iconSrc, setIconSrc] = useState<string | null>(null);
   const [hasError, setHasError] = useState(false);
@@ -26,7 +28,7 @@ export const TrackerIconImage: React.FC<TrackerIconImageProps> = ({
     setIconSrc(null);
     setHasError(false);
 
-    if (!domain) {
+    if (!enabled || !domain) {
       return;
     }
 
@@ -60,7 +62,7 @@ export const TrackerIconImage: React.FC<TrackerIconImageProps> = ({
     return () => {
       active = false;
     };
-  }, [domain, customUrl]);
+  }, [domain, customUrl, enabled]);
 
   // Generate an aesthetically pleasing dynamic HSL gradient based on the first letter of the tracker name
   const getGradient = (letter: string) => {
@@ -69,6 +71,10 @@ export const TrackerIconImage: React.FC<TrackerIconImageProps> = ({
     const hue2 = (hue1 + 40) % 360;
     return `linear-gradient(135deg, hsl(${hue1}, 75%, 45%), hsl(${hue2}, 70%, 35%))`;
   };
+
+  if (!enabled) {
+    return null;
+  }
 
   return (
     <div

@@ -919,12 +919,16 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		domain, resolvedURL := config.ResolveTrackerDomain(&s.cfg, req.Domain)
+		cfg := s.cfg
+		if s.backend != nil {
+			cfg = s.backend.currentConfig()
+		}
+		domain, resolvedURL := config.ResolveTrackerDomain(&cfg, req.Domain)
 		urlToUse := req.URL
 		if urlToUse == "" {
 			urlToUse = resolvedURL
 		}
-		value, err := trackericon.GetTrackerIcon(r.Context(), s.cfg.MainSettings.DBPath, domain, urlToUse)
+		value, err := trackericon.GetTrackerIcon(r.Context(), cfg.MainSettings.DBPath, domain, urlToUse)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
