@@ -42,6 +42,68 @@ func TestCleanDescriptionUsesLinkedImageURLAsRawSource(t *testing.T) {
 	}
 }
 
+func TestCleanDescriptionConvertsPixhostCurrentDomainThumbURL(t *testing.T) {
+	report := CleanDescription(
+		`[center][url=https://pixhost.cc/show/11645/shot.png][img]https://t1.pixhost.cc/thumbs/11645/shot.png[/img][/url][/center]`,
+		"https://example.com",
+	)
+
+	if len(report.Images) != 1 {
+		t.Fatalf("expected one image, got %d: %+v", len(report.Images), report.Images)
+	}
+	if report.Images[0].RawURL != "https://img1.pixhost.cc/images/11645/shot.png" {
+		t.Fatalf("expected pixhost raw URL conversion, got %q", report.Images[0].RawURL)
+	}
+}
+
+func TestNormalizeRawImageURLRejectsPixhostSuffixHosts(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "current suffix host",
+			in:   "https://t1.evilpixhost.cc/thumbs/11645/shot.png",
+			want: "https://t1.evilpixhost.cc/thumbs/11645/shot.png",
+		},
+		{
+			name: "legacy suffix host",
+			in:   "https://t1.evilpixhost.to/thumbs/11645/shot.png",
+			want: "https://t1.evilpixhost.to/thumbs/11645/shot.png",
+		},
+		{
+			name: "current exact host",
+			in:   "https://pixhost.cc/thumbs/11645/shot.png",
+			want: "https://pixhost.cc/images/11645/shot.png",
+		},
+		{
+			name: "current subdomain",
+			in:   "https://t1.pixhost.cc/thumbs/11645/shot.png",
+			want: "https://img1.pixhost.cc/images/11645/shot.png",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeRawImageURL(tt.in)
+			if got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestNormalizeLinkedRawImageURLPreservesPixhostSuffixShowURL(t *testing.T) {
+	got, ok := normalizeLinkedRawImageURL("https://evilpixhost.cc/show/11645/shot.png")
+	if !ok {
+		t.Fatal("expected foreign suffix host to remain usable")
+	}
+	if got != "https://evilpixhost.cc/show/11645/shot.png" {
+		t.Fatalf("expected foreign suffix host preserved, got %q", got)
+	}
+}
+
 func TestReplaceSiteHostSkipsURLs(t *testing.T) {
 	result := replaceSiteHost(
 		"Visit www.example.com or https://www.example.com/path or HTTPS://www.example.com/full.png for details",

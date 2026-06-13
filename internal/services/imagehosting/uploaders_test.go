@@ -396,6 +396,75 @@ func TestLostimgUploaderAcceptsSingleURLResponse(t *testing.T) {
 	}
 }
 
+func TestPixhostUploaderPostsCurrentDomain(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != pixhostUploadURL {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			fields := map[string]string{}
+			fileFields := []string{}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read multipart part: %v", err)
+				}
+				body, err := io.ReadAll(part)
+				if err != nil {
+					t.Fatalf("read part body: %v", err)
+				}
+				if part.FileName() == "" {
+					fields[part.FormName()] = string(body)
+					continue
+				}
+				fileFields = append(fileFields, part.FormName())
+			}
+			if fields["content_type"] != "0" || fields["max_th_size"] != "350" {
+				t.Fatalf("unexpected pixhost fields: %v", fields)
+			}
+			if len(fileFields) != 1 || fileFields[0] != "img" {
+				t.Fatalf("expected img file field, got %v", fileFields)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"th_url":"https://t1.pixhost.cc/thumbs/11645/shot.png","show_url":"https://pixhost.cc/show/11645/shot.png"}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&pixhostUploader{client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.ImgURL != "https://t1.pixhost.cc/thumbs/11645/shot.png" {
+		t.Fatalf("unexpected img URL: %q", result.ImgURL)
+	}
+	if result.RawURL != "https://img1.pixhost.cc/images/11645/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+	if result.WebURL != "https://pixhost.cc/show/11645/shot.png" {
+		t.Fatalf("unexpected web URL: %q", result.WebURL)
+	}
+}
+
 func TestReelflixUploaderPostsSourceWithAPIKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	imagePath := filepath.Join(tmpDir, "shot.png")

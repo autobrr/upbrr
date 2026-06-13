@@ -851,12 +851,14 @@ type pixhostUploader struct {
 	client *http.Client
 }
 
+const pixhostUploadURL = "https://api.pixhost.cc/images"
+
 func (u *pixhostUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
 	fields := map[string]string{
 		"content_type": "0",
 		"max_th_size":  "350",
 	}
-	body, status, err := postMultipart(ctx, u.client, "https://api.pixhost.to/images", fields, "img", imagePath, nil)
+	body, status, err := postMultipart(ctx, u.client, pixhostUploadURL, fields, "img", imagePath, nil)
 	if err != nil {
 		return uploadResult{}, err
 	}

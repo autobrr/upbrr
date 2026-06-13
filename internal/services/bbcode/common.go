@@ -287,7 +287,7 @@ func convertPixhostThumbURL(value string) string {
 	}
 	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
 	pathValue := strings.TrimSpace(parsed.Path)
-	if !strings.HasSuffix(host, "pixhost.to") || !strings.HasPrefix(pathValue, "/thumbs/") {
+	if !isPixhostHost(host) || !strings.HasPrefix(pathValue, "/thumbs/") {
 		return value
 	}
 	if strings.HasPrefix(host, "t") {
@@ -298,4 +298,11 @@ func convertPixhostThumbURL(value string) string {
 	}
 	parsed.Path = strings.Replace(pathValue, "/thumbs/", "/images/", 1)
 	return parsed.String()
+}
+
+func isPixhostHost(host string) bool {
+	return host == "pixhost.cc" ||
+		host == "pixhost.to" ||
+		strings.HasSuffix(host, ".pixhost.cc") ||
+		strings.HasSuffix(host, ".pixhost.to")
 }
