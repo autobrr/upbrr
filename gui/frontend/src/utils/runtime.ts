@@ -6,6 +6,7 @@ import { EventsOn as wailsEventsOn } from "../../wailsjs/runtime/runtime";
 type EventCallback = (payload: unknown) => void;
 
 const callbackMap = new Map<string, Set<EventCallback>>();
+const nativeBrowseAvailabilityListeners = new Set<() => void>();
 let eventSource: EventSource | null = null;
 let browserMode = false;
 let csrfToken = "";
@@ -24,6 +25,37 @@ const parseJSONResponse = async <T>(response: Response): Promise<T | null> => {
     return null;
   }
   return JSON.parse(text) as T;
+};
+
+const isAuthFailureStatus = (status: number) => status === 401 || status === 403;
+
+const setNativeBrowseEnabled = (enabled: boolean) => {
+  if (nativeBrowseEnabled === enabled) {
+    return;
+  }
+  nativeBrowseEnabled = enabled;
+  nativeBrowseAvailabilityListeners.forEach((listener) => listener());
+};
+
+const refreshBrowserAuthState = async () => {
+  if (!browserMode) {
+    return false;
+  }
+  const response = await fetch("/api/auth/status", { credentials: "include" });
+  const payload = await parseJSONResponse<
+    Record<string, unknown> & {
+      authenticated?: boolean;
+      csrfToken?: string;
+      nativeBrowseEnabled?: boolean;
+    }
+  >(response);
+  if (!response.ok || !payload?.authenticated) {
+    return false;
+  }
+  csrfToken = String(payload.csrfToken || "");
+  setNativeBrowseEnabled(Boolean(payload.nativeBrowseEnabled));
+  recreateEventSource();
+  return csrfToken !== "";
 };
 
 const addBrowserListener = (eventName: string, callback: EventCallback) => {
@@ -69,7 +101,7 @@ const recreateEventSource = () => {
 };
 
 const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
-  const response = await fetch(path, {
+  const requestInit = (): RequestInit => ({
     method: "POST",
     credentials: "include",
     headers: {
@@ -78,7 +110,12 @@ const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const payload = await parseJSONResponse<T & { error?: string }>(response);
+  let response = await fetch(path, requestInit());
+  let payload = await parseJSONResponse<T & { error?: string }>(response);
+  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshBrowserAuthState())) {
+    response = await fetch(path, requestInit());
+    payload = await parseJSONResponse<T & { error?: string }>(response);
+  }
   if (!response.ok) {
     throw new Error(String(payload?.error || response.statusText || "Request failed"));
   }
@@ -105,7 +142,7 @@ const getJSON = async <T>(path: string): Promise<T> => {
 
 export const initializeBrowserBridge = (token: string, browseEnabled = false) => {
   browserMode = isWebUIRuntime();
-  nativeBrowseEnabled = browseEnabled;
+  setNativeBrowseEnabled(browseEnabled);
   if (!browserMode) {
     return;
   }
@@ -475,6 +512,13 @@ export const isBrowserNativeBrowseAvailable = () => {
     return true;
   }
   return nativeBrowseEnabled;
+};
+
+export const subscribeBrowserNativeBrowseAvailability = (listener: () => void) => {
+  nativeBrowseAvailabilityListeners.add(listener);
+  return () => {
+    nativeBrowseAvailabilityListeners.delete(listener);
+  };
 };
 
 export const updateBrowserCSRFToken = (token: string) => {

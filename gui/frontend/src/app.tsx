@@ -2,10 +2,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
-import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
+import {
+  EventsOn,
+  isBrowserMode,
+  isBrowserNativeBrowseAvailable,
+  subscribeBrowserNativeBrowseAvailability,
+} from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
 import BlurayCandidatesPage from "./pages/bluray_candidates";
 import DupeCheckPage from "./pages/dupe_check";
@@ -576,7 +581,11 @@ const emptyWebAuthStatus: WebAuthStatus = {
 
 export default function App() {
   const browserMode = isBrowserMode();
-  const browserNativeBrowseAvailable = !browserMode || isBrowserNativeBrowseAvailable();
+  const browserNativeBrowseAvailable = useSyncExternalStore(
+    subscribeBrowserNativeBrowseAvailability,
+    isBrowserNativeBrowseAvailable,
+    () => true,
+  );
   const [path, setPath] = useState("");
   const [sourcePathHistory, setSourcePathHistory] = useState<SourcePathHistoryEntry[]>(() => {
     try {
@@ -2608,7 +2617,7 @@ export default function App() {
     overrides: ExternalIDOverrides,
     nameOverrides: ReleaseNameOverrides,
     hideExternalIDInputUIOnSuccess = false,
-    options: { targetPath?: string; targetMode?: SourcePathMode } = {},
+    options: { targetPath?: string; targetMode?: SourcePathMode; switchToInput?: boolean } = {},
   ) => {
     setError("");
     setDupeChecked(false);
@@ -2643,7 +2652,7 @@ export default function App() {
         normalizeReleaseOverrides(nameOverrides),
         getSelectedTrackers(),
       );
-      applyPreviewResult(result);
+      applyPreviewResult(result, { switchToInput: options.switchToInput });
       rememberSourcePath(
         targetPath,
         options.targetMode ?? sourcePathMode ?? inferSourcePathMode(targetPath),

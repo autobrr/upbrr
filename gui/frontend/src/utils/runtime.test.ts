@@ -73,4 +73,82 @@ describe("browser runtime bridge", () => {
 
     await expect(browserAuth.status()).rejects.toThrow("login required");
   });
+
+  it("refreshes browser auth state and retries app calls once", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "csrf validation failed" }, { status: 403 }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          authenticated: true,
+          csrfToken: "fresh-csrf",
+          nativeBrowseEnabled: true,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse("job-1"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeBrowserBridge } = await import("./runtime");
+    initializeBrowserBridge("stale-csrf", false);
+
+    const result = await (globalThis as any).go.guiapp.App.StartDupeCheck(
+      "C:/media/movie.mkv",
+      {},
+      {},
+      ["AITHER"],
+    );
+
+    expect(result).toBe("job-1");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/app/StartDupeCheck",
+      expect.objectContaining({
+        credentials: "include",
+        headers: expect.objectContaining({ "X-CSRF-Token": "stale-csrf" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/auth/status", {
+      credentials: "include",
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/app/StartDupeCheck",
+      expect.objectContaining({
+        credentials: "include",
+        headers: expect.objectContaining({ "X-CSRF-Token": "fresh-csrf" }),
+      }),
+    );
+  });
+
+  it("notifies listeners when auth refresh changes native browse availability", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "csrf validation failed" }, { status: 403 }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          authenticated: true,
+          csrfToken: "fresh-csrf",
+          nativeBrowseEnabled: true,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse("job-1"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const {
+      initializeBrowserBridge,
+      isBrowserNativeBrowseAvailable,
+      subscribeBrowserNativeBrowseAvailability,
+    } = await import("./runtime");
+    initializeBrowserBridge("stale-csrf", false);
+    const listener = vi.fn();
+    const unsubscribe = subscribeBrowserNativeBrowseAvailability(listener);
+
+    await (globalThis as any).go.guiapp.App.StartDupeCheck("C:/media/movie.mkv", {}, {}, [
+      "AITHER",
+    ]);
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(isBrowserNativeBrowseAvailable()).toBe(true);
+    unsubscribe();
+  });
 });
