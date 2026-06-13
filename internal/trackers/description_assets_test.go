@@ -277,6 +277,24 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsDedupesAfterSanitizingBotSignatures(t *testing.T) {
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "AITHER", Description: "Body\n\n[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]"},
+			{Tracker: "AITHER", Description: "Body"},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "Body" {
+		t.Fatalf("expected sanitized duplicate removed, got %q", assets.Description)
+	}
+}
+
 func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T) {
 	t.Parallel()
 
@@ -367,6 +385,26 @@ func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsClearsOverrideWhenSanitizedDescriptionIsEmpty(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		overrideGroupKey:    "unit3d",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "" {
+		t.Fatalf("expected empty sanitized description, got %q", assets.Description)
+	}
+	if assets.Override {
+		t.Fatalf("expected empty sanitized override to clear override flag")
+	}
+}
+
 func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "override desc",
@@ -394,6 +432,41 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 	}
 	if !assets.Final {
 		t.Fatal("expected prepared composite group description to be final")
+	}
+}
+
+func TestResolveDescriptionAssetsClearsFinalWhenSanitizedDescriptionIsEmpty(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	meta := api.PreparedMetadata{
+		SourcePath: sourcePath,
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: "[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "" {
+		t.Fatalf("expected empty sanitized description, got %q", assets.Description)
+	}
+	if assets.Final {
+		t.Fatalf("expected empty sanitized final description to clear final flag")
+	}
+	if assets.Override {
+		t.Fatalf("expected empty sanitized final description to clear override flag")
+	}
+
+	applyResolvedDescriptionScreenshots(context.Background(), meta, nil, nil, &assets, []api.ScreenshotImage{{
+		ImgURL: "https://pixhost.example/1.png",
+		RawURL: "https://pixhost.example/raw-1.png",
+		Host:   "pixhost",
+	}})
+	if len(assets.Screenshots) != 1 {
+		t.Fatalf("expected screenshots preserved for empty final description, got %#v", assets.Screenshots)
 	}
 }
 
@@ -916,6 +989,62 @@ func TestResolveDescriptionAssetsStripsDefaultSignatureForNBL(t *testing.T) {
 	}
 	if assets.Description != "Body" {
 		t.Fatalf("expected cleaned NBL description, got %q", assets.Description)
+	}
+}
+
+func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromTrackerDescriptions(t *testing.T) {
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "AITHER", Description: strings.Join([]string{
+				"Body",
+				"[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+				"[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+				"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
+				"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
+				"[right]Created by Upload Assistant[/right]",
+				"[right][url=https://github.com/Audionut/Upload-Assistant][size=4]Created by Upload Assistant v7.0.2[/size][/url][/right]",
+				"[center][url=https://aither.cc/forums/topics/1349]Created by L4G's Upload Assistant[/url][/center]",
+				"[center]Created by L4G's Upload Assistant[/center]",
+				"[center] Uploaded with [color=red]\u2764[/color] using GG-BOT Upload Assistant[/center]",
+				"[center] Uploaded with [color=red]\u2764[/color] using GG-BOT Upload Assistant[/center]",
+				"[img=500]https://files.catbox.moe/5izwmx.svg[/img]",
+				"[center]Find our uploads [url=https://aither.cc/torrents?name=Kitsune]here[/url][/center]",
+			}, "\n")},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "Body" {
+		t.Fatalf("expected bot signatures removed, got %q", assets.Description)
+	}
+	if strings.Contains(assets.Description, "uploadrr") || strings.Contains(assets.Description, "Upload Assistant") || strings.Contains(assets.Description, "UNIT3D") || strings.Contains(assets.Description, "GG-BOT") || strings.Contains(assets.Description, "Find our uploads") || strings.Contains(assets.Description, "5izwmx.svg") {
+		t.Fatalf("expected all bot text removed, got %q", assets.Description)
+	}
+}
+
+func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromDescriptionGroups(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey: "unit3d",
+			Trackers: []string{"AITHER"},
+			RawDescription: strings.Join([]string{
+				"Body",
+				"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+				"[right]Created by Upload Assistant[/right]",
+			}, "\n\n"),
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "Body" {
+		t.Fatalf("expected bot signatures removed from prepared group, got %q", assets.Description)
 	}
 }
 
