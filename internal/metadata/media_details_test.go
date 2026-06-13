@@ -29,7 +29,7 @@ func TestEditionFromMetaMultiPlaylistAggregatesIMDbMatches(t *testing.T) {
 		},
 	}
 
-	edition, repack := editionFromMeta(meta)
+	edition, repack := editionFromMeta(meta, mediaInfoDoc{})
 	if edition != "2in1 Theatrical / Extended" {
 		t.Fatalf("expected aggregated edition, got %q", edition)
 	}
@@ -54,9 +54,32 @@ func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
 		},
 	}
 
-	edition, _ := editionFromMeta(meta)
+	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
 	if edition != "Director's Cut" {
 		t.Fatalf("expected deduped edition, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaMultiPlaylistTieBreaksEqualRuntimeMatches(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DiscType: "BDMV",
+		SelectedBDMVPlaylists: []api.PlaylistInfo{
+			{File: "00001.MPLS", Duration: 7500},
+			{File: "00002.MPLS", Duration: 7500},
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"124": {DisplayName: "2h 4m 50s", Seconds: 7490, Minutes: 124, Attributes: []string{"extended cut"}},
+					"125": {DisplayName: "2h 5m 10s", Seconds: 7510, Minutes: 125, Attributes: []string{"director's cut"}},
+				},
+			},
+		},
+	}
+
+	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
+	if edition != "Director's Cut" {
+		t.Fatalf("expected deterministic tie-broken edition, got %q", edition)
 	}
 }
 
@@ -79,9 +102,157 @@ func TestEditionFromMetaMultiPlaylistFallsBackWhenNoIMDbMatch(t *testing.T) {
 		},
 	}
 
-	edition, _ := editionFromMeta(meta)
-	if edition != "Collector's Edition" {
+	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
+	if edition != "Collector's" {
 		t.Fatalf("expected fallback edition, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaMatchesIMDbRuntimeForSingleFile(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
+					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended edition"}},
+				},
+			},
+		},
+	}
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7502.000"}]}}`)
+
+	edition, repack := editionFromMeta(meta, doc)
+	if edition != "Extended" {
+		t.Fatalf("expected IMDb runtime edition, got %q", edition)
+	}
+	if repack != "" {
+		t.Fatalf("expected no repack, got %q", repack)
+	}
+}
+
+func TestEditionFromMetaIgnoresIMDbRuntimeTheatricalOnlyForSingleFile(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
+					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125},
+				},
+			},
+		},
+	}
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7502.000"}]}}`)
+
+	edition, _ := editionFromMeta(meta, doc)
+	if edition != "" {
+		t.Fatalf("expected theatrical-only IMDb runtime match to be ignored, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaChoosesClosestIMDbRuntimeForSingleFile(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"124": {DisplayName: "2h 4m", Seconds: 7440, Minutes: 124, Attributes: []string{"director's cut"}},
+					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended cut"}},
+				},
+			},
+		},
+	}
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7478.000"}]}}`)
+
+	edition, _ := editionFromMeta(meta, doc)
+	if edition != "Extended" {
+		t.Fatalf("expected closest IMDb runtime edition, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaSuppressesEditionWhenCloserIMDbRuntimeIsTheatrical(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"124": {DisplayName: "2h 4m", Seconds: 7440, Minutes: 124, Attributes: []string{"director's cut"}},
+					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125},
+				},
+			},
+		},
+	}
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7498.000"}]}}`)
+
+	edition, _ := editionFromMeta(meta, doc)
+	if edition != "" {
+		t.Fatalf("expected closer theatrical match to suppress edition, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaSkipsIMDbRuntimeWhenManualEditionOverridePresent(t *testing.T) {
+	manual := "Hybrid"
+	meta := api.PreparedMetadata{
+		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: &manual},
+		Release:              api.ReleaseInfo{Edition: []string{"Collector's", "Edition"}},
+		ExternalIDs:          api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
+					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended"}},
+				},
+			},
+		},
+	}
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7500.000"}]}}`)
+
+	edition, _ := editionFromMeta(meta, doc)
+	if edition != "Collector's" {
+		t.Fatalf("expected parsed release edition when manual override skips IMDb auto edition, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaSkipsIMDbRuntimeWhenNoEditionOverridePresent(t *testing.T) {
+	noEdition := true
+	meta := api.PreparedMetadata{
+		ReleaseNameOverrides: api.ReleaseNameOverrides{NoEdition: &noEdition},
+		ExternalIDs:          api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
+					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended"}},
+				},
+			},
+		},
+	}
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7500.000"}]}}`)
+
+	edition, _ := editionFromMeta(meta, doc)
+	if edition != "" {
+		t.Fatalf("expected no IMDb auto edition when no-edition override is present, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Edition: []string{"Limited", "Extended", "Edition", "REPACK2"}},
+	}
+
+	edition, repack := editionFromMeta(meta, mediaInfoDoc{})
+	if edition != "Extended" {
+		t.Fatalf("expected cleaned edition, got %q", edition)
+	}
+	if repack != "REPACK2" {
+		t.Fatalf("expected repack extraction, got %q", repack)
+	}
+}
+
+func TestSmartEditionWordHandlesUnicodeFirstRune(t *testing.T) {
+	if got := smartEditionWord("édition"); got != "Édition" {
+		t.Fatalf("expected unicode-safe titlecase, got %q", got)
 	}
 }
 
