@@ -879,7 +879,11 @@ export default function InputPage(props: Props) {
         </p>
       </header>
 
-      <section className="panel">
+      <section
+        className={`panel input-source-panel${
+          sourcePathHistoryOpen ? " input-source-panel--history-open" : ""
+        }`}
+      >
         <div className="grid gap-3">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 max-[1100px]:grid-cols-1">
             <div className="grid grid-cols-2 gap-3 max-[900px]:grid-cols-1">
