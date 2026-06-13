@@ -1021,6 +1021,7 @@ func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromTrackerDescriptions
 				"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
 				"[right]Created by Upload Assistant[/right]",
 				"[right][url=https://github.com/Audionut/Upload-Assistant][size=4]Created by Upload Assistant v7.0.2[/size][/url][/right]",
+				"[center][url=https://github.com/Audionut/Upload-Assistant]Created by Audionut's Upload Assistant[/url][/center]",
 				"[center][url=https://aither.cc/forums/topics/1349]Created by L4G's Upload Assistant[/url][/center]",
 				"[center]Created by L4G's Upload Assistant[/center]",
 				"[center] Uploaded with [color=red]\u2764[/color] using GG-BOT Upload Assistant[/center]",
