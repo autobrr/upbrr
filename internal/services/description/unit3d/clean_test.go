@@ -56,6 +56,20 @@ func TestCleanDescriptionConvertsPixhostCurrentDomainThumbURL(t *testing.T) {
 	}
 }
 
+func TestCleanDescriptionConvertsMixedCasePixhostThumbURL(t *testing.T) {
+	report := CleanDescription(
+		`[center][url=https://pixhost.cc/show/11645/shot.png][img]https://T1.PixHost.Cc/thumbs/11645/shot.png[/img][/url][/center]`,
+		"https://example.com",
+	)
+
+	if len(report.Images) != 1 {
+		t.Fatalf("expected one image, got %d: %+v", len(report.Images), report.Images)
+	}
+	if report.Images[0].RawURL != "https://img1.pixhost.cc/images/11645/shot.png" {
+		t.Fatalf("expected pixhost raw URL conversion, got %q", report.Images[0].RawURL)
+	}
+}
+
 func TestNormalizeRawImageURLRejectsPixhostSuffixHosts(t *testing.T) {
 	tests := []struct {
 		name string
@@ -80,6 +94,11 @@ func TestNormalizeRawImageURLRejectsPixhostSuffixHosts(t *testing.T) {
 		{
 			name: "current subdomain",
 			in:   "https://t1.pixhost.cc/thumbs/11645/shot.png",
+			want: "https://img1.pixhost.cc/images/11645/shot.png",
+		},
+		{
+			name: "mixed case current subdomain",
+			in:   "https://T1.PixHost.Cc/thumbs/11645/shot.png",
 			want: "https://img1.pixhost.cc/images/11645/shot.png",
 		},
 	}

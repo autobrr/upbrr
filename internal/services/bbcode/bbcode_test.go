@@ -275,6 +275,11 @@ func TestNormalizeImageRawURLConvertsPixhostThumbURL(t *testing.T) {
 			want: "https://img1.pixhost.cc/images/11645/685417513_file-upload-0.png",
 		},
 		{
+			name: "mixed case current domain",
+			in:   "https://T1.PixHost.Cc/thumbs/11645/685417513_file-upload-0.png",
+			want: "https://img1.pixhost.cc/images/11645/685417513_file-upload-0.png",
+		},
+		{
 			name: "legacy domain",
 			in:   "https://t1.pixhost.to/thumbs/11645/685417513_file-upload-0.png",
 			want: "https://img1.pixhost.to/images/11645/685417513_file-upload-0.png",
