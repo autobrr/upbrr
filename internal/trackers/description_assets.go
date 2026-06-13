@@ -33,7 +33,8 @@ var embeddedNFOBlockPatterns = []*regexp.Regexp{
 
 var descriptionSpacingPattern = regexp.MustCompile(`\n{3,}`)
 var defaultSignaturePattern = regexp.MustCompile(`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/(?:Audionut|autobrr)/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`)
-var knownBotSignaturePattern = regexp.MustCompile(`(?is)(?:\[(?:center|right|align=right)\]\s*(?:\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\]\s*)?\[b\]?Uploaded\s+Using\s+\[url=https://github\.com/HDInnovations/UNIT3D\]UNIT3D\[/url\]\s+Auto\s+Uploader\[/b\]?(?:\s*\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\])?\s*\[/(?:center|right|align)\])|(?:\[center\]\s*\[url=https://github\.com/z-ink/uploadrr\]\[img=\d+\]https://i\.ibb\.co/2NVWb0c/uploadrr\.webp\[/img\]\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=https://github\.com/edge20200/Only-Uploader\]Powered\s+by\s+Only-Uploader\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=/torrents\?perPage=\d+&name=[^\]]*\]\s*\[/url\]\s*\[/center\])|(?:\[center\]\s*Find\s+our\s+uploads\s+\[url=https?://[^\]]*/torrents\?name=[^\]]+\].*?here.*?\[/url\]\s*\[/center\])|(?:\[center\]\s*(?:\[b\]\s*(?:\[size=\d+\])?brush(?:\[/size\])?\s*\[/b\]\s*)?This is an internal release which was first released exclusively on Aither\.\s*Cheers to all the Aither(?:\s+users)?\s*\[/center\])|(?:\[(?:center|right|align=right)\]\s*(?:\[url=[^\]]+\]\s*)?(?:\[size=[^\]]+\]\s*)?Created by(?:\s+[^[]*?)?\s*Upload Assistant(?:\s+v?\d+(?:\.\d+)*)?(?:\s*\[/size\])?(?:\s*\[/url\])?\s*\[/(?:center|right|align)\])|(?:\[(?:center|right|align=right)\]\s*Uploaded\s+with\s+(?:\[color=[^\]]+\]\s*)?\x{2764}(?:\s*\[/color\])?\s+using\s+GG-BOT\s+Upload\s+Assistant\s*\[/(?:center|right|align)\])`)
+var unit3DBotSignaturePattern = regexp.MustCompile(`(?is)\[(?:center|right|align=right)\]\s*(?:\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\]\s*)?(?:\[b\]\s*Uploaded\s+Using\s+\[url=https://github\.com/HDInnovations/UNIT3D\]UNIT3D\[/url\]\s+Auto\s+Uploader\s*\[/b\]|Uploaded\s+Using\s+\[url=https://github\.com/HDInnovations/UNIT3D\]UNIT3D\[/url\]\s+Auto\s+Uploader)(?:\s*\[img=\d+\]https://blutopia\.xyz/favicon\.ico\[/img\])?\s*\[/(?:center|right|align)\]`)
+var knownBotSignaturePattern = regexp.MustCompile(`(?is)(?:\[center\]\s*\[url=https://github\.com/z-ink/uploadrr\]\[img=\d+\]https://i\.ibb\.co/2NVWb0c/uploadrr\.webp\[/img\]\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=https://github\.com/edge20200/Only-Uploader\]Powered\s+by\s+Only-Uploader\[/url\]\s*\[/center\])|(?:\[center\]\s*\[url=/torrents\?perPage=\d+&name=[^\]]*\]\s*\[/url\]\s*\[/center\])|(?:\[center\]\s*Find\s+our\s+uploads\s+\[url=https?://[^\]]*/torrents\?name=[^\]]+\].*?here.*?\[/url\]\s*\[/center\])|(?:\[center\]\s*(?:\[b\]\s*(?:\[size=\d+\])?brush(?:\[/size\])?\s*\[/b\]\s*)?This is an internal release which was first released exclusively on Aither\.\s*Cheers to all the Aither(?:\s+users)?\s*\[/center\])|(?:\[(?:center|right|align=right)\]\s*(?:\[url=[^\]]+\]\s*)?(?:\[size=[^\]]+\]\s*)?Created by(?:\s+[^[]*?)?\s*Upload Assistant(?:\s+v?\d+(?:\.\d+)*)?(?:\s*\[/size\])?(?:\s*\[/url\])?\s*\[/(?:center|right|align)\])|(?:\[(?:center|right|align=right)\]\s*Uploaded\s+with\s+(?:\[color=[^\]]+\]\s*)?\x{2764}(?:\s*\[/color\])?\s+using\s+GG-BOT\s+Upload\s+Assistant\s*\[/(?:center|right|align)\])`)
 var knownBotImagePattern = regexp.MustCompile(`(?is)\[img(?:=[^\]]*)?\]\s*https://files\.catbox\.moe/5izwmx\.svg\s*\[/img\]`)
 var emptyCenterPattern = regexp.MustCompile(`(?is)\[center\]\s*\[/center\]`)
 
@@ -887,7 +888,11 @@ func combineDescriptions(tracker string, records []api.TrackerMetadata) string {
 	seen := make(map[string]struct{})
 	parts := make([]string, 0, len(ordered))
 	for _, record := range ordered {
-		trimmed := sanitizeTrackerDescription(tracker, record.Description)
+		recordTracker := strings.TrimSpace(record.Tracker)
+		if recordTracker == "" {
+			recordTracker = tracker
+		}
+		trimmed := sanitizeTrackerDescription(recordTracker, record.Description)
 		if trimmed == "" {
 			continue
 		}
@@ -916,6 +921,7 @@ func stripEmbeddedNFOBlocks(value string) string {
 
 func sanitizeTrackerDescription(tracker string, value string) string {
 	cleaned := stripEmbeddedNFOBlocks(value)
+	cleaned = unit3DBotSignaturePattern.ReplaceAllString(cleaned, "")
 	cleaned = knownBotSignaturePattern.ReplaceAllString(cleaned, "")
 	cleaned = knownBotImagePattern.ReplaceAllString(cleaned, "")
 	cleaned = emptyCenterPattern.ReplaceAllString(cleaned, "")

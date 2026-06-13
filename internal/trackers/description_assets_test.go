@@ -914,6 +914,23 @@ func TestResolveDescriptionAssetsFallbackOtherTrackerDescription(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsFallbackSanitizesByRecordTracker(t *testing.T) {
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "ANT", Description: "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "Body" {
+		t.Fatalf("expected fallback description sanitized by source tracker, got %q", assets.Description)
+	}
+}
+
 func TestResolveDescriptionAssetsPrefersMatchingTrackerDescription(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{
@@ -998,6 +1015,7 @@ func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromTrackerDescriptions
 			{Tracker: "AITHER", Description: strings.Join([]string{
 				"Body",
 				"[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+				"[center]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/center]",
 				"[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
 				"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
 				"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
@@ -1023,6 +1041,20 @@ func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromTrackerDescriptions
 	}
 	if strings.Contains(assets.Description, "uploadrr") || strings.Contains(assets.Description, "Upload Assistant") || strings.Contains(assets.Description, "UNIT3D") || strings.Contains(assets.Description, "GG-BOT") || strings.Contains(assets.Description, "Find our uploads") || strings.Contains(assets.Description, "5izwmx.svg") {
 		t.Fatalf("expected all bot text removed, got %q", assets.Description)
+	}
+}
+
+func TestSanitizeTrackerDescriptionKeepsMalformedUNIT3DBoldTags(t *testing.T) {
+	cases := []string{
+		"Body\n[center][bUploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+		"Body\n[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/center]",
+	}
+
+	for _, value := range cases {
+		cleaned := sanitizeTrackerDescription("AITHER", value)
+		if !strings.Contains(cleaned, "UNIT3D") {
+			t.Fatalf("expected malformed UNIT3D bold tag to remain, got %q", cleaned)
+		}
 	}
 }
 
