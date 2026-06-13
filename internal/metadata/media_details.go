@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/languageutil"
@@ -24,7 +25,11 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var repackPattern = regexp.MustCompile(`REPACK\d?`)
+var repackPattern = regexp.MustCompile(`(?i)\b(?:REPACK\d?|RERIP|PROPER\d?)\b`)
+var editionWordPattern = regexp.MustCompile(`(?i)\bedition\b`)
+var editionBadTokenPattern = regexp.MustCompile(`(?i)\b(?:internal|limited|retail|version|remastered)\b`)
+var editionWhitespacePattern = regexp.MustCompile(`\s+`)
+var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 var numericPattern = regexp.MustCompile(`\d+`)
 
 func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
@@ -138,7 +143,7 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		s.logger.Debugf("metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q", meta.Region, meta.VideoEncode, meta.VideoCodec, meta.BitDepth)
 	}
 
-	meta.Edition, meta.Repack = editionFromMeta(meta)
+	meta.Edition, meta.Repack = editionFromMeta(meta, miDoc)
 	meta.WebDV = false
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
@@ -1420,8 +1425,21 @@ func videoEncodeFromMedia(doc mediaInfoDoc, typeValue string) (string, string, b
 	return videoEncode, videoCodec, encodedSettings != "", bitDepth
 }
 
-func editionFromMeta(meta api.PreparedMetadata) (string, string) {
-	edition := strings.TrimSpace(resolveMultiPlaylistEdition(meta))
+func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, string) {
+	edition := ""
+	isIMDbEdition := false
+	applyAnimeOverride(&meta)
+	if hasNoEditionOverride(meta.ReleaseNameOverrides) {
+		return "", ""
+	}
+	if !hasManualEditionOverride(meta.ReleaseNameOverrides) {
+		edition = strings.TrimSpace(resolveIMDbEditionFromMediaDuration(meta, doc))
+		isIMDbEdition = edition != ""
+		if edition == "" {
+			edition = strings.TrimSpace(resolveMultiPlaylistEdition(meta))
+			isIMDbEdition = edition != ""
+		}
+	}
 	if edition == "" {
 		edition = strings.TrimSpace(meta.Edition)
 	}
@@ -1435,9 +1453,11 @@ func editionFromMeta(meta api.PreparedMetadata) (string, string) {
 	if repackPattern.MatchString(edition) {
 		repack = repackPattern.FindString(edition)
 		edition = strings.TrimSpace(repackPattern.ReplaceAllString(edition, ""))
-		edition = strings.ReplaceAll(edition, "  ", " ")
 	}
-	return edition, repack
+	if isIMDbEdition {
+		return cleanIMDbEditionText(edition), strings.ToUpper(repack)
+	}
+	return cleanEditionText(edition), strings.ToUpper(repack)
 }
 
 func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
@@ -1448,7 +1468,6 @@ func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
 		return ""
 	}
 
-	const leewaySeconds = 50.0
 	withAttributes := make(map[string]struct{})
 	withoutAttributes := false
 
@@ -1457,27 +1476,13 @@ func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
 			continue
 		}
 
-		var best *api.IMDBEditionDetail
-		bestDiff := leewaySeconds + 1
-		for _, detail := range meta.ExternalMetadata.IMDB.EditionDetails {
-			diff := absFloat(playlist.Duration - float64(detail.Seconds))
-			if diff > leewaySeconds {
-				continue
-			}
-			if best == nil || diff < bestDiff {
-				detailCopy := detail
-				best = &detailCopy
-				bestDiff = diff
-			}
-		}
-		if best == nil {
+		matches := imdbEditionMatches(playlist.Duration, meta.ExternalMetadata.IMDB.EditionDetails, true)
+		if len(matches) == 0 {
 			continue
 		}
-		if len(best.Attributes) > 0 {
-			name := strings.TrimSpace(strings.Join(best.Attributes, " "))
-			if name != "" {
-				withAttributes[name] = struct{}{}
-			}
+		best := matches[0]
+		if best.hasAttribute {
+			withAttributes[best.name] = struct{}{}
 			continue
 		}
 		withoutAttributes = true
@@ -1502,6 +1507,276 @@ func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
 		return editions[0]
 	}
 	return fmt.Sprintf("%din1 %s", len(editions), strings.Join(editions, " / "))
+}
+
+type imdbEditionMatch struct {
+	name          string
+	differenceSec float64
+	hasAttribute  bool
+	minutes       int
+}
+
+func resolveIMDbEditionFromMediaDuration(meta api.PreparedMetadata, doc mediaInfoDoc) string {
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") || !isMovieMetadata(meta) || meta.Anime {
+		return ""
+	}
+	if meta.ExternalMetadata.IMDB == nil || len(meta.ExternalMetadata.IMDB.EditionDetails) <= 1 {
+		return ""
+	}
+	duration := mediaDurationSeconds(doc)
+	if duration <= 0 {
+		return ""
+	}
+	matches := imdbEditionMatches(duration, meta.ExternalMetadata.IMDB.EditionDetails, true)
+	if len(matches) == 0 || !matches[0].hasAttribute {
+		return ""
+	}
+	return matches[0].name
+}
+
+func mediaDurationSeconds(doc mediaInfoDoc) float64 {
+	generalTracks, _, _ := splitMediaInfoTracks(doc)
+	for _, track := range generalTracks {
+		if value := trackString(track, "Duration"); value != "" {
+			if seconds := parseMediaDurationValue(value); seconds > 0 {
+				return seconds
+			}
+		}
+		if value := trackString(track, "Duration/String3", "Duration/String2", "Duration/String"); value != "" {
+			if seconds := parseMediaDurationValue(value); seconds > 0 {
+				return seconds
+			}
+		}
+	}
+	return 0
+}
+
+func parseMediaDurationValue(value string) float64 {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0
+	}
+	if strings.Contains(trimmed, ":") {
+		return parseMediaDurationColonValue(trimmed)
+	}
+	if seconds := parseMediaDurationTokens(trimmed); seconds > 0 {
+		return seconds
+	}
+	parsed, err := strconv.ParseFloat(strings.ReplaceAll(trimmed, ",", ""), 64)
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
+}
+
+func parseMediaDurationTokens(value string) float64 {
+	var total float64
+	for _, match := range durationTokenPattern.FindAllStringSubmatch(value, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(match[1], ",", ""), 64)
+		if err != nil || amount <= 0 {
+			continue
+		}
+		switch strings.ToLower(match[2]) {
+		case "h", "hr", "hrs", "hour", "hours":
+			total += amount * 3600
+		case "m", "min", "mins", "minute", "minutes":
+			total += amount * 60
+		case "s", "sec", "secs", "second", "seconds":
+			total += amount
+		case "ms", "msec", "msecs", "millisecond", "milliseconds":
+			total += amount / 1000
+		}
+	}
+	return total
+}
+
+func parseMediaDurationColonValue(value string) float64 {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) < 2 {
+		parsed, err := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(value), ",", ""), 64)
+		if err != nil || parsed <= 0 {
+			return 0
+		}
+		return parsed
+	}
+	var seconds float64
+	multiplier := 1.0
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
+		if part == "" {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(part, ",", ""), 64)
+		if err != nil {
+			return 0
+		}
+		seconds += amount * multiplier
+		multiplier *= 60
+	}
+	return seconds
+}
+
+func imdbEditionMatches(duration float64, details map[string]api.IMDBEditionDetail, includeTheatrical bool) []imdbEditionMatch {
+	const leewaySeconds = 50.0
+	matches := make([]imdbEditionMatch, 0)
+	for _, detail := range details {
+		if detail.Seconds <= 0 {
+			continue
+		}
+		diff := absFloat(duration - float64(detail.Seconds))
+		if diff > leewaySeconds {
+			continue
+		}
+		name := imdbEditionAttributeName(detail.Attributes)
+		hasAttribute := name != ""
+		if !hasAttribute {
+			if !includeTheatrical {
+				continue
+			}
+			name = fmt.Sprintf("%d Minute Version (Theatrical)", detail.Minutes)
+		}
+		matches = append(matches, imdbEditionMatch{
+			name:          name,
+			differenceSec: diff,
+			hasAttribute:  hasAttribute,
+			minutes:       detail.Minutes,
+		})
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].differenceSec == matches[j].differenceSec {
+			if matches[i].hasAttribute != matches[j].hasAttribute {
+				return matches[i].hasAttribute
+			}
+			if matches[i].name == matches[j].name {
+				return matches[i].minutes < matches[j].minutes
+			}
+			return matches[i].name < matches[j].name
+		}
+		return matches[i].differenceSec < matches[j].differenceSec
+	})
+	return matches
+}
+
+func imdbEditionAttributeName(attributes []string) string {
+	names := make([]string, 0, len(attributes))
+	for _, attr := range attributes {
+		name := smartEditionTitle(attr)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return strings.TrimSpace(strings.Join(names, " "))
+}
+
+func smartEditionTitle(value string) string {
+	fields := strings.Fields(strings.TrimSpace(value))
+	if len(fields) == 0 {
+		return ""
+	}
+	for idx, field := range fields {
+		fields[idx] = smartEditionWord(field)
+	}
+	return strings.Join(fields, " ")
+}
+
+func smartEditionWord(value string) string {
+	if value == "" {
+		return ""
+	}
+	if isAllUpperEditionWord(value) {
+		return value
+	}
+	lower := strings.ToLower(value)
+	runes := []rune(lower)
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
+}
+
+func isAllUpperEditionWord(value string) bool {
+	hasLetter := false
+	for _, r := range value {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		hasLetter = true
+		if unicode.IsLower(r) {
+			return false
+		}
+	}
+	return hasLetter
+}
+
+func cleanEditionText(edition string) string {
+	edition = strings.TrimSpace(strings.ReplaceAll(edition, ",", " "))
+	if edition == "" {
+		return ""
+	}
+	lower := strings.ToLower(edition)
+	if lower == "cut" || lower == "approximate" || len(edition) < 6 {
+		return ""
+	}
+	if strings.Contains(lower, "edition") {
+		edition = editionWordPattern.ReplaceAllString(edition, "")
+	}
+	lower = strings.ToLower(edition)
+	if strings.Contains(lower, "extended") && !strings.Contains(lower, "in1") && !strings.Contains(edition, "/") {
+		edition = "Extended"
+	}
+	edition = editionBadTokenPattern.ReplaceAllString(edition, "")
+	edition = editionWhitespacePattern.ReplaceAllString(edition, " ")
+	return strings.TrimSpace(edition)
+}
+
+func cleanIMDbEditionText(edition string) string {
+	edition = strings.TrimSpace(strings.ReplaceAll(edition, ",", " "))
+	if edition == "" {
+		return ""
+	}
+	lower := strings.ToLower(edition)
+	if lower == "cut" || lower == "approximate" {
+		return ""
+	}
+	if strings.Contains(lower, "edition") {
+		edition = editionWordPattern.ReplaceAllString(edition, "")
+	}
+	lower = strings.ToLower(edition)
+	if strings.Contains(lower, "extended") && !strings.Contains(lower, "in1") && !strings.Contains(edition, "/") {
+		edition = "Extended"
+	}
+	edition = editionWhitespacePattern.ReplaceAllString(edition, " ")
+	return strings.TrimSpace(edition)
+}
+
+func applyAnimeOverride(meta *api.PreparedMetadata) {
+	if meta == nil || meta.MetadataOverrides.Anime == nil {
+		return
+	}
+	meta.Anime = *meta.MetadataOverrides.Anime
+}
+
+func hasManualEditionOverride(overrides api.ReleaseNameOverrides) bool {
+	return overrides.Edition != nil
+}
+
+func hasNoEditionOverride(overrides api.ReleaseNameOverrides) bool {
+	return overrides.NoEdition != nil && *overrides.NoEdition
+}
+
+func isMovieMetadata(meta api.PreparedMetadata) bool {
+	category := normalizeNamingCategory(meta.ExternalIDs.Category)
+	if category == "" {
+		category = normalizeNamingCategory(meta.MediaInfoCategory)
+	}
+	if category == "" {
+		category = normalizeNamingCategory(meta.Release.Category)
+	}
+	if category == "" {
+		category = inferCategoryFromMetadata(meta)
+	}
+	return strings.EqualFold(category, "MOVIE")
 }
 
 func absFloat(value float64) float64 {
