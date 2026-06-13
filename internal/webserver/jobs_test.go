@@ -95,7 +95,7 @@ func (c *preparedMetaTestCore) UploadImages(context.Context, api.Request, string
 	return api.UploadImagesResult{}, nil
 }
 
-func (c *preparedMetaTestCore) DeleteUploadedImage(context.Context, api.Request, string, string) error {
+func (c *preparedMetaTestCore) DeleteUploadedImage(context.Context, api.Request, string, string, string) error {
 	return nil
 }
 
@@ -218,6 +218,63 @@ func TestPruneCompletedUploadJobsLockedKeepsNewestCompleted(t *testing.T) {
 	}
 	if _, ok := backend.uploads[active.id]; !ok {
 		t.Fatal("expected active upload job to remain")
+	}
+}
+
+func TestDupeJobSnapshotRequiresOwningSession(t *testing.T) {
+	backend := &Backend{
+		dupes: map[string]*dupeCheckJob{
+			"dupe-job": {
+				sessionID: "owner-session",
+				id:        "dupe-job",
+				status:    "completed",
+				startedAt: time.Now().UTC(),
+				states:    map[string]DupeCheckTrackerState{},
+			},
+		},
+	}
+
+	if _, err := backend.GetDupeCheckSnapshot("other-session", "dupe-job"); err == nil {
+		t.Fatal("expected dupe snapshot from another session to be denied")
+	}
+	if err := backend.CancelDupeCheck("other-session", "dupe-job"); err == nil {
+		t.Fatal("expected dupe cancel from another session to be denied")
+	}
+	if _, err := backend.GetDupeCheckSnapshot("owner-session", "dupe-job"); err != nil {
+		t.Fatalf("expected owning session to read dupe snapshot: %v", err)
+	}
+}
+
+func TestTrackerUploadJobControlsRequireOwningSession(t *testing.T) {
+	backend := &Backend{
+		uploads: map[string]*trackerUploadJob{
+			"upload-job": {
+				sessionID: "owner-session",
+				id:        "upload-job",
+				status:    "completed_with_errors",
+				trackers:  []string{"BLU"},
+				states: map[string]TrackerUploadTrackerState{
+					"BLU": {Tracker: "BLU", Status: "failed", Message: "failed"},
+				},
+				failedTrackers: []string{"BLU"},
+				startedAt:      time.Now().UTC(),
+			},
+		},
+	}
+
+	if _, err := backend.GetTrackerUploadSnapshot("other-session", "upload-job"); err == nil {
+		t.Fatal("expected upload snapshot from another session to be denied")
+	}
+	if err := backend.CancelTrackerUpload("other-session", "upload-job"); err == nil {
+		t.Fatal("expected upload cancel from another session to be denied")
+	}
+	if _, err := backend.RetryFailedTrackerUpload("other-session", "upload-job"); err == nil {
+		t.Fatal("expected upload retry from another session to be denied")
+	} else if err.Error() != "upload job not found" {
+		t.Fatalf("expected upload retry ownership denial, got %v", err)
+	}
+	if _, err := backend.GetTrackerUploadSnapshot("owner-session", "upload-job"); err != nil {
+		t.Fatalf("expected owning session to read upload snapshot: %v", err)
 	}
 }
 

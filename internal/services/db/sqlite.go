@@ -2393,7 +2393,11 @@ func (r *SQLiteRepository) ListUploadedImagesByPath(ctx context.Context, path st
 	return images, nil
 }
 
-func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error {
+// DeleteUploadedImage deletes a persisted uploaded-image row by its full uniqueness key.
+//
+// Empty usage scope targets the global scope. The method returns an error when no matching row is
+// found so callers do not silently delete the wrong scope or host.
+func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string, usageScope string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -2409,10 +2413,14 @@ func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string,
 	if trimmedHost == "" {
 		return internalerrors.ErrInvalidInput
 	}
+	trimmedUsageScope := strings.TrimSpace(usageScope)
+	if trimmedUsageScope == "" {
+		trimmedUsageScope = "global"
+	}
 	result, err := r.db.ExecContext(ctx, `
 		DELETE FROM uploaded_images
-		WHERE source_path = ? AND host = ? AND image_path = ?
-	`, trimmedPath, trimmedHost, trimmedImagePath)
+		WHERE source_path = ? AND usage_scope = ? AND host = ? AND image_path = ?
+	`, trimmedPath, trimmedUsageScope, trimmedHost, trimmedImagePath)
 	if err != nil {
 		return fmt.Errorf("db delete uploaded image: %w", err)
 	}

@@ -37,7 +37,7 @@ type Props = Readonly<{
   uploadedImageRecords: UploadedImageLink[];
   trackerImageLinks: ScreenshotLinkedImage[];
   trackerImageURLs: string[];
-  handleDeleteUploadedImage: (imagePath: string, host: string) => void;
+  handleDeleteUploadedImage: (imagePath: string, host: string, usageScope?: string) => void;
   handleDeleteTrackerImage: (url: string) => void;
 }>;
 
@@ -397,7 +397,9 @@ export default function UploadImagesPage(props: Props) {
                         <button
                           className="danger justify-self-start"
                           type="button"
-                          onClick={() => handleDeleteUploadedImage(img.ImagePath, img.Host)}
+                          onClick={() =>
+                            handleDeleteUploadedImage(img.ImagePath, img.Host, img.UsageScope)
+                          }
                         >
                           Delete
                         </button>
@@ -475,7 +477,11 @@ export default function UploadImagesPage(props: Props) {
                   className="danger justify-self-start"
                   type="button"
                   onClick={() =>
-                    handleDeleteUploadedImage(image.ImagePath, image.Host || uploadHost)
+                    handleDeleteUploadedImage(
+                      image.ImagePath,
+                      image.Host || uploadHost,
+                      image.UsageScope,
+                    )
                   }
                 >
                   Delete

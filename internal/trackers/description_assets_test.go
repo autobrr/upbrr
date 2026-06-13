@@ -193,7 +193,7 @@ func (s *stubRepo) ListUploadedImagesByPath(context.Context, string) ([]api.Uplo
 	}
 	return append([]api.UploadedImageLink(nil), s.uploads...), nil
 }
-func (s *stubRepo) DeleteUploadedImage(_ context.Context, _ string, imagePath string, host string) error {
+func (s *stubRepo) DeleteUploadedImage(_ context.Context, _ string, imagePath string, host string, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deletedUploads = append(s.deletedUploads, host+":"+imagePath)

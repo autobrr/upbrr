@@ -442,19 +442,24 @@ func cleanupUploadedImages(ctx context.Context, repo api.MetadataRepository, sou
 	if repo == nil || len(uploaded) == 0 || strings.TrimSpace(sourcePath) == "" {
 		return
 	}
+	// Uploaded image identity includes usage scope; rollback must not remove links reused by another scope.
 	seen := make(map[string]struct{}, len(uploaded))
 	for _, image := range uploaded {
 		pathValue := strings.TrimSpace(image.ImagePath)
 		hostValue := strings.TrimSpace(image.Host)
+		usageScope := strings.TrimSpace(image.UsageScope)
+		if usageScope == "" {
+			usageScope = "global"
+		}
 		if pathValue == "" || hostValue == "" {
 			continue
 		}
-		key := hostValue + "\x00" + pathValue
+		key := usageScope + "\x00" + hostValue + "\x00" + pathValue
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		if err := repo.DeleteUploadedImage(ctx, sourcePath, pathValue, hostValue); err != nil && logger != nil {
+		if err := repo.DeleteUploadedImage(ctx, sourcePath, pathValue, hostValue, usageScope); err != nil && logger != nil {
 			logger.Warnf("trackers: failed to roll back uploaded image tracker=%s host=%s path=%s: %v", strings.TrimSpace(sourcePath), hostValue, pathValue, err)
 		}
 	}

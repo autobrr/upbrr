@@ -13,6 +13,7 @@ import type {
   ReleaseNameOverrides,
 } from "../types";
 import { normalizeOverrides, normalizeReleaseOverrides } from "../utils";
+import { sourcePathEquals } from "../utils/workflowState";
 
 interface ScreenshotHookProps {
   path: string;
@@ -25,6 +26,9 @@ export const useScreenshots = ({
   idOverrideState,
   releaseOverrideState,
 }: ScreenshotHookProps) => {
+  const currentPathRef = useRef("");
+  currentPathRef.current = path;
+
   // State: Plan & suggestions
   const [screenshotPlan, setScreenshotPlan] = useState<ScreenshotPlan | null>(null);
   const [screenshotSelections, setScreenshotSelections] = useState<ScreenshotSelection[]>([]);
@@ -55,6 +59,7 @@ export const useScreenshots = ({
 
   // Refs for state sync
   const finalImagesRef = useRef<ScreenshotPreviewImage[]>([]);
+  const screenshotPlanRequestId = useRef(0);
 
   // Memoized tracker image maps
   const trackerImageURLs = useMemo(() => {
@@ -123,18 +128,27 @@ export const useScreenshots = ({
         setScreenshotsError("Screenshot planning is unavailable in this build.");
         return null;
       }
-      if (!path.trim()) {
+      const requestPath = path.trim();
+      if (!requestPath) {
         setScreenshotsError("Please select a file or folder.");
         return null;
       }
 
+      const requestId = ++screenshotPlanRequestId.current;
+      const isCurrentRequest = () =>
+        screenshotPlanRequestId.current === requestId &&
+        sourcePathEquals(currentPathRef.current, requestPath);
+
       setScreenshotsLoading(true);
       try {
         const result = await fetcher(
-          path.trim(),
+          requestPath,
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         );
+        if (!isCurrentRequest()) {
+          return null;
+        }
         setScreenshotPlan(result);
         setScreenshotSelections(result.SuggestedSelections || []);
         setLivePreviewImage("");
@@ -165,6 +179,9 @@ export const useScreenshots = ({
               }
             }),
           );
+          if (!isCurrentRequest()) {
+            return null;
+          }
           setExistingImages(
             previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
           );
@@ -181,6 +198,9 @@ export const useScreenshots = ({
               }
             }),
           );
+          if (!isCurrentRequest()) {
+            return null;
+          }
           setExistingTrackerImages(
             previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
           );
@@ -201,6 +221,9 @@ export const useScreenshots = ({
               }
             }),
           );
+          if (!isCurrentRequest()) {
+            return null;
+          }
           setFinalImages(
             previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
           );
@@ -208,6 +231,9 @@ export const useScreenshots = ({
 
         return result;
       } catch (err) {
+        if (!isCurrentRequest()) {
+          return null;
+        }
         const message = String(err);
         if (message.includes("screenshot plan requires metadata preview")) {
           setScreenshotsError(
@@ -218,7 +244,9 @@ export const useScreenshots = ({
         }
         return null;
       } finally {
-        setScreenshotsLoading(false);
+        if (screenshotPlanRequestId.current === requestId) {
+          setScreenshotsLoading(false);
+        }
       }
     },
     [path, idOverrideState, releaseOverrideState, livePreviewSeconds, readScreenshotImage],

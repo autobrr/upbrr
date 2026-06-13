@@ -92,7 +92,11 @@ export default function DescriptionBuilderPage(props: Props) {
           {builderRefreshing ? "Refreshing..." : "Refresh descriptions"}
         </button>
         {builderProgressMessage ? (
-          <p className="m-0 basis-full text-right text-[0.82rem] text-[var(--muted)]">
+          <p
+            aria-live="polite"
+            className="m-0 basis-full text-right text-[0.82rem] text-[var(--muted)]"
+            role="status"
+          >
             {builderProgressMessage}
           </p>
         ) : null}
@@ -106,7 +110,7 @@ export default function DescriptionBuilderPage(props: Props) {
           <div className="mb-2 flex flex-col gap-1">
             <h2>Building Descriptions</h2>
           </div>
-          <p className="muted">
+          <p aria-live="polite" className="muted" role="status">
             {builderProgressMessage ||
               "Preparing tracker-group descriptions and image-host adjustments..."}
           </p>

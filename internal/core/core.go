@@ -1618,7 +1618,12 @@ func normalizeImageUploadUsageScope(scope string) string {
 	return trimmed
 }
 
-func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePath string, host string) error {
+// DeleteUploadedImage removes a stored image-host link for exactly one validated source path.
+//
+// An empty usage scope is treated as "global"; tracker scopes are normalized before deletion. The
+// call fails when the request does not resolve to exactly one source path, the repository is absent,
+// or the scoped record cannot be deleted.
+func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePath string, host string, usageScope string) error {
 	if len(req.Paths) == 0 {
 		return internalerrors.ErrInvalidInput
 	}
@@ -1631,6 +1636,7 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 	if strings.TrimSpace(host) == "" {
 		return internalerrors.ErrInvalidInput
 	}
+	normalizedUsageScope := normalizeImageUploadUsageScope(usageScope)
 
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
@@ -1649,8 +1655,8 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 		return internalerrors.ErrInvalidInput
 	}
 
-	c.logger.Debugf("core: deleting uploaded image %s (%s)", imagePath, host)
-	return wrapCoreError(c.repo.DeleteUploadedImage(ctx, uniquePaths[0], imagePath, host))
+	c.logger.Debugf("core: deleting uploaded image %s (%s scope=%s)", imagePath, host, normalizedUsageScope)
+	return wrapCoreError(c.repo.DeleteUploadedImage(ctx, uniquePaths[0], imagePath, host, normalizedUsageScope))
 }
 
 func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.MetadataPreview, error) {

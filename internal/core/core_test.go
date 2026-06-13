@@ -3072,7 +3072,7 @@ func (stubRepo) ListUploadedImagesByPath(context.Context, string) ([]db.Uploaded
 	return nil, internalerrors.ErrNotImplemented
 }
 
-func (stubRepo) DeleteUploadedImage(context.Context, string, string, string) error {
+func (stubRepo) DeleteUploadedImage(context.Context, string, string, string, string) error {
 	return internalerrors.ErrNotImplemented
 }
 
@@ -3259,7 +3259,7 @@ func (r *recordingRepo) ListUploadedImagesByPath(context.Context, string) ([]db.
 	return nil, internalerrors.ErrNotImplemented
 }
 
-func (r *recordingRepo) DeleteUploadedImage(context.Context, string, string, string) error {
+func (r *recordingRepo) DeleteUploadedImage(context.Context, string, string, string, string) error {
 	return internalerrors.ErrNotImplemented
 }
 

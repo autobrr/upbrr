@@ -372,8 +372,13 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
             Host: host,
             Images: images,
           }),
-        DeleteUploadedImage: (path: string, imagePath: string, host: string) =>
-          call("DeleteUploadedImage", { Path: path, ImagePath: imagePath, Host: host }),
+        DeleteUploadedImage: (path: string, imagePath: string, host: string, usageScope: string) =>
+          call("DeleteUploadedImage", {
+            Path: path,
+            ImagePath: imagePath,
+            Host: host,
+            UsageScope: usageScope,
+          }),
         DeleteTrackerImageURL: (
           path: string,
           overrides: unknown,

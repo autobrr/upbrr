@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import type {
   ScreenshotPreviewImage,
   UploadedImageLink,
@@ -10,6 +10,7 @@ import type {
   ReleaseNameOverrides,
 } from "../types";
 import { normalizeOverrides, normalizeReleaseOverrides } from "../utils";
+import { sourcePathEquals } from "../utils/workflowState";
 
 interface UploadImagesHookProps {
   path: string;
@@ -20,6 +21,12 @@ interface UploadImagesHookProps {
   selectedTrackers?: string[];
 }
 
+/**
+ * Manages image-host uploads for the current source path.
+ *
+ * The hook calls the active runtime bridge, ignores stale async responses after path changes, and
+ * deletes persisted upload records by image path, host, and usage scope.
+ */
 export const useUploadImages = ({
   path,
   idOverrideState,
@@ -28,6 +35,10 @@ export const useUploadImages = ({
   configuredImageHosts = [],
   selectedTrackers = [],
 }: UploadImagesHookProps) => {
+  const currentPathRef = useRef("");
+  currentPathRef.current = path;
+  const uploadImagesRequestId = useRef(0);
+
   // State: Host & selection
   const [uploadHost, setUploadHost] = useState<string>("");
   const [uploadSelections, setUploadSelections] = useState<Record<string, boolean>>({});
@@ -128,18 +139,25 @@ export const useUploadImages = ({
   const refreshUploadedImages = useCallback(async () => {
     const fetcher = globalThis.go?.guiapp?.App?.ListUploadedImages;
     if (!fetcher) return;
-    if (!path.trim()) {
+    const requestPath = path.trim();
+    if (!requestPath) {
       setUploadedImageRecords([]);
       return;
     }
     try {
       const records = await fetcher(
-        path.trim(),
+        requestPath,
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
       );
+      if (!sourcePathEquals(currentPathRef.current, requestPath)) {
+        return;
+      }
       setUploadedImageRecords(records || []);
     } catch (err) {
+      if (!sourcePathEquals(currentPathRef.current, requestPath)) {
+        return;
+      }
       console.error("Failed to load uploaded images:", err);
     }
   }, [path, idOverrideState, releaseOverrideState]);
@@ -168,17 +186,26 @@ export const useUploadImages = ({
         return;
       }
 
+      const requestPath = path.trim();
+      const requestId = ++uploadImagesRequestId.current;
+      const isCurrentRequest = () =>
+        uploadImagesRequestId.current === requestId &&
+        sourcePathEquals(currentPathRef.current, requestPath);
+
       setUploadImagesLoading(true);
       setUploadProgress({ current: 0, total: selected.length });
       try {
         const result = await uploader(
-          path.trim(),
+          requestPath,
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
           selectedTrackers,
           uploadHost,
           selected.map((entry) => entry.image),
         );
+        if (!isCurrentRequest()) {
+          return;
+        }
         const links = result?.Links || [];
         const failures = result?.Failures || [];
         const uploadedCount = new Set(links.map((link) => link.ImagePath).filter(Boolean)).size;
@@ -207,11 +234,16 @@ export const useUploadImages = ({
         });
         await refreshUploadedImages();
       } catch (err) {
+        if (!isCurrentRequest()) {
+          return;
+        }
         setUploadImagesError(String(err));
         setUploadImageFailures([]);
         setUploadProgress({ current: 0, total: selected.length });
       } finally {
-        setUploadImagesLoading(false);
+        if (uploadImagesRequestId.current === requestId) {
+          setUploadImagesLoading(false);
+        }
       }
     },
     [
@@ -226,42 +258,42 @@ export const useUploadImages = ({
 
   // Delete a single uploaded image record
   const handleDeleteUploadedImage = useCallback(
-    async (imagePath: string, host: string) => {
+    async (imagePath: string, host: string, usageScope = "global") => {
       if (!imagePath || !path.trim() || !host) {
         console.error("Cannot delete uploaded image: missing path, imagePath, or host");
         return;
       }
 
+      const requestPath = path.trim();
+      const requestUsageScope = usageScope.trim() || "global";
       try {
-        await globalThis.go?.guiapp?.App?.DeleteUploadedImage(path.trim(), imagePath, host);
-        // Refresh existing images to reflect deletion
-        const refreshed = await globalThis.go?.guiapp?.App?.ListUploadCandidates(
-          path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        await globalThis.go?.guiapp?.App?.DeleteUploadedImage(
+          requestPath,
+          imagePath,
+          host,
+          requestUsageScope,
         );
-
-        if (!refreshed || refreshed.length === 0) {
-          setUploadedImages((prev) =>
-            prev.filter(
-              (image) => !(image.ImagePath === imagePath && (image.Host || uploadHost) === host),
-            ),
-          );
-          await refreshUploadedImages();
+        if (!sourcePathEquals(currentPathRef.current, requestPath)) {
           return;
         }
 
-        setUploadedImages((prev) =>
-          prev.filter(
-            (image) => !(image.ImagePath === imagePath && (image.Host || uploadHost) === host),
-          ),
-        );
+        const keepLink = (image: Pick<UploadedImageLink, "ImagePath" | "Host" | "UsageScope">) =>
+          !(
+            image.ImagePath === imagePath &&
+            (image.Host || uploadHost) === host &&
+            (image.UsageScope || "global") === requestUsageScope
+          );
+        setUploadedImages((prev) => prev.filter(keepLink));
+        setUploadedImageRecords((prev) => prev.filter(keepLink));
         await refreshUploadedImages();
       } catch (err) {
+        if (!sourcePathEquals(currentPathRef.current, requestPath)) {
+          return;
+        }
         console.error("Failed to delete uploaded image:", err);
       }
     },
-    [path, idOverrideState, releaseOverrideState, uploadHost, refreshUploadedImages],
+    [path, uploadHost, refreshUploadedImages],
   );
 
   // Reset upload state

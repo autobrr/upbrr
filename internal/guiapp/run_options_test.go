@@ -109,7 +109,7 @@ func (c *closeCounterCore) UploadImages(_ context.Context, _ api.Request, _ stri
 	return api.UploadImagesResult{}, nil
 }
 
-func (c *closeCounterCore) DeleteUploadedImage(context.Context, api.Request, string, string) error {
+func (c *closeCounterCore) DeleteUploadedImage(context.Context, api.Request, string, string, string) error {
 	return nil
 }
 

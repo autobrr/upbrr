@@ -977,6 +977,7 @@ export type UIState = {
   dupeCheckJobID?: string;
   dupeCheckSnapshot?: DupeCheckSnapshot | null;
   prepPreview?: PreparationPreview;
+  builderPreview?: DescriptionBuilderPreview;
   screenshotPlan?: ScreenshotPlan | null;
   screenshotSelections?: ScreenshotSelection[];
   showFrameSelections?: boolean;

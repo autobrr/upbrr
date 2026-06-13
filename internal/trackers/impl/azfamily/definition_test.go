@@ -306,6 +306,8 @@ func (a azRepoStub) SaveUploadedImages(context.Context, string, string, []api.Up
 func (a azRepoStub) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
 	return nil, nil
 }
-func (a azRepoStub) DeleteUploadedImage(context.Context, string, string, string) error { return nil }
-func (a azRepoStub) ListStoredReleasePaths(context.Context) ([]string, error)          { return nil, nil }
-func (a azRepoStub) PurgeContentData(context.Context, string) error                    { return nil }
+func (a azRepoStub) DeleteUploadedImage(context.Context, string, string, string, string) error {
+	return nil
+}
+func (a azRepoStub) ListStoredReleasePaths(context.Context) ([]string, error) { return nil, nil }
+func (a azRepoStub) PurgeContentData(context.Context, string) error           { return nil }

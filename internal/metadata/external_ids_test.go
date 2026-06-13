@@ -166,7 +166,7 @@ func (f *fakeRepo) ListUploadedImagesByPath(_ context.Context, _ string) ([]api.
 	return nil, nil
 }
 
-func (f *fakeRepo) DeleteUploadedImage(_ context.Context, _ string, _ string, _ string) error {
+func (f *fakeRepo) DeleteUploadedImage(_ context.Context, _ string, _ string, _ string, _ string) error {
 	return nil
 }
 

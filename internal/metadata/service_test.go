@@ -1156,7 +1156,7 @@ func (s *stubRepo) ListUploadedImagesByPath(context.Context, string) ([]db.Uploa
 	return nil, internalerrors.ErrNotImplemented
 }
 
-func (s *stubRepo) DeleteUploadedImage(context.Context, string, string, string) error {
+func (s *stubRepo) DeleteUploadedImage(context.Context, string, string, string, string) error {
 	return internalerrors.ErrNotImplemented
 }
 

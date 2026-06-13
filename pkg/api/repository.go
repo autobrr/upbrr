@@ -258,7 +258,8 @@ type MetadataRepository interface {
 	UpsertScreenshotSlotVariants(ctx context.Context, path string, variants []ScreenshotSlotVariant) error
 	SaveUploadedImages(ctx context.Context, path string, host string, images []UploadedImageLink) error
 	ListUploadedImagesByPath(ctx context.Context, path string) ([]UploadedImageLink, error)
-	DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error
+	// DeleteUploadedImage removes the uploaded-image record identified by source path, image path, host, and usage scope.
+	DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string, usageScope string) error
 	ListStoredReleasePaths(ctx context.Context) ([]string, error)
 	PurgeContentData(ctx context.Context, path string) error
 }

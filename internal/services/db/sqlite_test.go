@@ -1594,6 +1594,65 @@ func TestSQLiteUploadedImagesPersistUsageScope(t *testing.T) {
 	}
 }
 
+func TestSQLiteDeleteUploadedImageRequiresUsageScope(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	images := []UploadedImageLink{
+		{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/a.png",
+			Host:       "hdb",
+			UsageScope: "global",
+			ImgURL:     "https://hdb/global.png",
+			RawURL:     "https://hdb/global.png",
+			WebURL:     "https://hdb/global",
+			UploadedAt: now,
+		},
+		{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/a.png",
+			Host:       "hdb",
+			UsageScope: "tracker:HDB",
+			ImgURL:     "https://hdb/tracker.png",
+			RawURL:     "https://hdb/tracker.png",
+			WebURL:     "https://hdb/tracker",
+			UploadedAt: now,
+		},
+	}
+	if err := repo.SaveUploadedImages(ctx, "/tmp/source", "hdb", images); err != nil {
+		t.Fatalf("save uploaded images: %v", err)
+	}
+
+	if err := repo.DeleteUploadedImage(ctx, "/tmp/source", "/tmp/a.png", "hdb", "tracker:HDB"); err != nil {
+		t.Fatalf("delete scoped uploaded image: %v", err)
+	}
+
+	remaining, err := repo.ListUploadedImagesByPath(ctx, "/tmp/source")
+	if err != nil {
+		t.Fatalf("list uploaded images: %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Fatalf("expected 1 uploaded image after scoped delete, got %d", len(remaining))
+	}
+	if remaining[0].UsageScope != "global" {
+		t.Fatalf("expected global image to remain, got %q", remaining[0].UsageScope)
+	}
+}
+
 func TestSQLiteMigrationBackfillsUploadedImageUsageScope(t *testing.T) {
 	t.Parallel()
 

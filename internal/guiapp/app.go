@@ -1019,7 +1019,11 @@ func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameO
 	return wrapGUIResult(a.currentCore().UploadImages(ctx, req, host, images))
 }
 
-func (a *App) DeleteUploadedImage(path string, imagePath string, host string) error {
+// DeleteUploadedImage removes a persisted uploaded-image link from the GUI workflow.
+//
+// Frontend callers must pass the source path, image path, image host, and usage scope for the
+// record to remove. Empty usage scope deletes from the global scope.
+func (a *App) DeleteUploadedImage(path string, imagePath string, host string, usageScope string) error {
 	if a == nil || a.currentCore() == nil {
 		return errors.New("app not initialized")
 	}
@@ -1032,6 +1036,9 @@ func (a *App) DeleteUploadedImage(path string, imagePath string, host string) er
 	if strings.TrimSpace(host) == "" {
 		return errors.New("host is required")
 	}
+	if strings.TrimSpace(usageScope) == "" {
+		usageScope = "global"
+	}
 
 	ctx := a.runtimeContext()
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
@@ -1042,7 +1049,7 @@ func (a *App) DeleteUploadedImage(path string, imagePath string, host string) er
 		Mode:  api.ModeGUI,
 	}
 
-	return wrapGUIError(a.currentCore().DeleteUploadedImage(ctx, req, imagePath, host))
+	return wrapGUIError(a.currentCore().DeleteUploadedImage(ctx, req, imagePath, host, usageScope))
 }
 
 func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, timestampSeconds float64) (string, error) {

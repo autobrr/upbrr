@@ -109,7 +109,7 @@ func (r *recordingRepo) UpsertScreenshotSlotVariants(context.Context, string, []
 func (r *recordingRepo) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
 	return append([]api.UploadedImageLink(nil), r.uploads...), nil
 }
-func (r *recordingRepo) DeleteUploadedImage(context.Context, string, string, string) error {
+func (r *recordingRepo) DeleteUploadedImage(context.Context, string, string, string, string) error {
 	return nil
 }
 func (r *recordingRepo) GetDescriptionOverride(context.Context, string, string) (api.DescriptionOverride, error) {

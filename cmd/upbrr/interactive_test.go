@@ -1015,7 +1015,7 @@ func cloneCLIExternalIDSelectionsForTest(input map[string]api.ExternalIDSelectio
 	return cloned
 }
 
-func (c *cliCoreForTest) DeleteUploadedImage(context.Context, api.Request, string, string) error {
+func (c *cliCoreForTest) DeleteUploadedImage(context.Context, api.Request, string, string, string) error {
 	return nil
 }
 

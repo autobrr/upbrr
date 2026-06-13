@@ -82,6 +82,14 @@ import {
   sourcePathHistoryStorageKey,
 } from "./utils/inputHistory";
 import { handleExternalLinkClick } from "./utils/externalLinks";
+import {
+  hasConflictingPreviewSource,
+  normalizeWorkflowSourcePath,
+  sourcePathEquals,
+  sourcePathMatches,
+  workflowStateSourceKey,
+  workflowStateSourcePath,
+} from "./utils/workflowState";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -226,6 +234,44 @@ type SourcePathSelection = {
   path: string;
   mode: SourcePathMode;
   waitsForPlaylistSelection: boolean;
+};
+
+const normalizedJobStatus = (status?: string | null) =>
+  String(status || "")
+    .toLowerCase()
+    .trim();
+
+const isRunningJobStatus = (status?: string | null) => {
+  const normalized = normalizedJobStatus(status);
+  return normalized === "queued" || normalized === "running";
+};
+
+const dupeSnapshotError = (snapshot?: DupeCheckSnapshot | null) => {
+  const status = normalizedJobStatus(snapshot?.status);
+  if (status === "completed_with_errors") {
+    return snapshot?.error || "One or more tracker dupe checks failed.";
+  }
+  if (status === "failed") {
+    return snapshot?.error || "Dupe check failed.";
+  }
+  if (status === "canceled") {
+    return snapshot?.error || "Dupe check canceled.";
+  }
+  return "";
+};
+
+const trackerUploadSnapshotError = (snapshot?: TrackerUploadSnapshot | null) => {
+  const status = normalizedJobStatus(snapshot?.status);
+  if (status === "completed_with_errors") {
+    return snapshot?.error || "Upload finished with errors.";
+  }
+  if (status === "failed") {
+    return snapshot?.error || "Upload failed.";
+  }
+  if (status === "canceled") {
+    return snapshot?.error || "Upload canceled.";
+  }
+  return "";
 };
 
 const progressUpdatePrefixes = new Set([
@@ -401,7 +447,12 @@ declare global {
               host: string,
               images: ScreenshotImage[],
             ) => Promise<UploadImagesResult>;
-            DeleteUploadedImage: (path: string, imagePath: string, host: string) => Promise<void>;
+            DeleteUploadedImage: (
+              path: string,
+              imagePath: string,
+              host: string,
+              usageScope: string,
+            ) => Promise<void>;
             RenderDescription: (raw: string) => Promise<string>;
             SaveDescriptionOverride: (
               path: string,
@@ -587,6 +638,8 @@ export default function App() {
     () => true,
   );
   const [path, setPath] = useState("");
+  const currentPathRef = useRef("");
+  currentPathRef.current = path;
   const [sourcePathHistory, setSourcePathHistory] = useState<SourcePathHistoryEntry[]>(() => {
     try {
       return normalizeSourcePathHistory(
@@ -639,6 +692,8 @@ export default function App() {
   const [dupeError, setDupeError] = useState("");
   const [dupeChecked, setDupeChecked] = useState(false);
   const [dupeCheckJobID, setDupeCheckJobID] = useState("");
+  const dupeCheckJobIDRef = useRef("");
+  dupeCheckJobIDRef.current = dupeCheckJobID;
   const [dupeCheckSnapshot, setDupeCheckSnapshot] = useState<DupeCheckSnapshot | null>(null);
   const [dupeIgnore, setDupeIgnore] = useState<Record<string, boolean>>({});
   const [dupeTrackerFlags, setDupeTrackerFlags] = useState<Record<string, boolean>>({});
@@ -658,12 +713,18 @@ export default function App() {
   const [builderRefreshing, setBuilderRefreshing] = useState(false);
   const [builderProgressMessage, setBuilderProgressMessage] = useState("");
   const builderProgressTimers = useRef<number[]>([]);
+  const clearBuilderProgressTimers = useCallback(() => {
+    builderProgressTimers.current.forEach((timer) => window.clearTimeout(timer));
+    builderProgressTimers.current = [];
+  }, []);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
   const [uploadSkipClientInjection, setUploadSkipClientInjection] = useState(false);
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
   const [trackerUploadError, setTrackerUploadError] = useState("");
   const [trackerUploadJobID, setTrackerUploadJobID] = useState("");
+  const trackerUploadJobIDRef = useRef("");
+  trackerUploadJobIDRef.current = trackerUploadJobID;
   const [trackerUploadSnapshot, setTrackerUploadSnapshot] = useState<TrackerUploadSnapshot | null>(
     null,
   );
@@ -706,9 +767,12 @@ export default function App() {
   const uiStateHydratedRef = useRef(false);
   const uiStateInitialLiveStateCheckedRef = useRef(false);
   const freshUIStateCanPromoteRef = useRef(false);
+  const uiStateAppliedPathKeyRef = useRef("");
+  const releaseStateResetPathKeyRef = useRef("");
   const uiStateSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uiStateResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sourcePathDropHandlerRef = useRef<(paths: string[]) => void>(() => undefined);
+  const hostBrowserRequestIdRef = useRef(0);
   const [hostBrowserMode, setHostBrowserMode] = useState<"file" | "folder" | null>(null);
   const [hostBrowser, setHostBrowser] = useState<BrowseDirectoryResponse | null>(null);
   const [hostBrowserLoading, setHostBrowserLoading] = useState(false);
@@ -802,11 +866,6 @@ export default function App() {
     },
     [inputHistoryLimit, persistSourcePathHistory],
   );
-
-  const handleSourcePathChange = useCallback((value: string) => {
-    setPath(value);
-    setSourcePathMode(undefined);
-  }, []);
 
   useEffect(() => {
     setSourcePathHistory((prev) => {
@@ -1276,9 +1335,13 @@ export default function App() {
     setShowFrameSelections,
     setFinalResult,
     setDeletedTrackerImages,
+    setPreviewImages,
     loadScreenshotPlan,
     readScreenshotImage,
     setExistingImages,
+    setExistingTrackerImages,
+    setFinalImages,
+    finalImagesRef,
     resetScreenshotState: resetScreenshots,
     handleDeleteTrackerImageURL,
   } = screenshots;
@@ -1326,73 +1389,250 @@ export default function App() {
 
   const applyUIState = useCallback(
     (state: UIState) => {
-      if (typeof state.path === "string") {
-        setPath(state.path);
-        setSourcePathMode(undefined);
+      const restoredPath =
+        typeof state.path === "string" && state.path.trim()
+          ? state.path
+          : workflowStateSourcePath(state);
+      uiStateAppliedPathKeyRef.current = normalizeWorkflowSourcePath(restoredPath);
+      currentPathRef.current = restoredPath;
+      setPath(restoredPath);
+      setSourcePathMode(undefined);
+      setCurrentDiscType("");
+      setSourceLookupURL(typeof state.sourceLookupURL === "string" ? state.sourceLookupURL : "");
+      setActiveTab(typeof state.activeTab === "string" ? state.activeTab : "input");
+      setLoading(false);
+      setMetadataResetting(false);
+      setError("");
+      setMetadataProgressTarget("");
+      setMetadataProgressActive(false);
+      setMetadataProgressUpdates([]);
+      setShowPlaylistSelection(false);
+      setPlaylistSelectionPath("");
+      setPlaylistAutoPreparing(false);
+      setPlaylistPreparationError("");
+      setBdinfoProgressLines([]);
+
+      const restoredPreview = state.preview ? { ...emptyPreview, ...state.preview } : emptyPreview;
+      setPreview(restoredPreview);
+      setIdEdits(state.idEdits || buildIDEditState(restoredPreview.ExternalIDs));
+      setReleaseEdits(
+        state.releaseEdits || buildReleaseEditState(restoredPreview.ReleaseNameOverrides || {}),
+      );
+      setReleaseTouched(
+        state.releaseTouched ||
+          buildReleaseTouchedState(restoredPreview.ReleaseNameOverrides || {}),
+      );
+      setShowExternalIDInputUI(
+        typeof state.showExternalIDInputUI === "boolean" ? state.showExternalIDInputUI : true,
+      );
+      if (typeof state.selectedProvider === "string") {
+        setSelectedProvider(state.selectedProvider);
+      } else {
+        const orderedIDs = filterAndOrderExternalIDs(restoredPreview.ExternalIDInfo || []);
+        setSelectedProvider(orderedIDs[0]?.Provider || "");
       }
-      if (typeof state.sourceLookupURL === "string") setSourceLookupURL(state.sourceLookupURL);
-      if (typeof state.activeTab === "string") setActiveTab(state.activeTab);
-      if (state.preview) setPreview({ ...emptyPreview, ...state.preview });
-      if (state.idEdits)
-        setIdEdits({ ...buildIDEditState(emptyPreview.ExternalIDs), ...state.idEdits });
-      if (state.releaseEdits) {
-        setReleaseEdits({ ...buildReleaseEditState({}), ...state.releaseEdits });
+      setRenderedDescriptions({});
+      setLightboxImage("");
+      setLightboxAlt("");
+
+      setReleasePageTrackerSelection(state.releasePageTrackerSelection || {});
+      setUploadToggles(state.uploadToggles || {});
+      setUploadSkipClientInjection(
+        typeof state.uploadSkipClientInjection === "boolean"
+          ? state.uploadSkipClientInjection
+          : false,
+      );
+      setRunDebug(typeof state.runDebug === "boolean" ? state.runDebug : false);
+      setRunLogLevel(
+        typeof state.runLogLevel === "string" ? state.runLogLevel : configuredRunLogLevel,
+      );
+      setRunLogLevelTouched(
+        typeof state.runLogLevelTouched === "boolean" ? state.runLogLevelTouched : false,
+      );
+
+      const restoredDupeSnapshot = state.dupeCheckSnapshot ?? null;
+      const restoredDupeStatus = normalizedJobStatus(restoredDupeSnapshot?.status);
+      const restoredDupeHasRunningSnapshot = isRunningJobStatus(restoredDupeStatus);
+      const restoredDupeJobID =
+        typeof state.dupeCheckJobID === "string" ? state.dupeCheckJobID : "";
+      const shouldRestoreDupeSnapshot =
+        !restoredDupeHasRunningSnapshot || Boolean(restoredDupeJobID);
+      setDupeSummary(
+        shouldRestoreDupeSnapshot && state.dupeSummary
+          ? { ...emptyDupeSummary, ...state.dupeSummary }
+          : emptyDupeSummary,
+      );
+      setDupeChecked(
+        shouldRestoreDupeSnapshot &&
+          (restoredDupeStatus === "completed" || restoredDupeStatus === "completed_with_errors")
+          ? true
+          : shouldRestoreDupeSnapshot &&
+              (restoredDupeStatus === "failed" || restoredDupeStatus === "canceled")
+            ? false
+            : typeof state.dupeChecked === "boolean"
+              ? state.dupeChecked
+              : false,
+      );
+      setDupeLoading(shouldRestoreDupeSnapshot && restoredDupeHasRunningSnapshot);
+      setDupeError(shouldRestoreDupeSnapshot ? dupeSnapshotError(restoredDupeSnapshot) : "");
+      setDupeIgnore(state.dupeIgnore || {});
+      setDupeTrackerFlags(state.dupeTrackerFlags || {});
+      dupeCheckJobIDRef.current = restoredDupeJobID;
+      setDupeCheckJobID(restoredDupeJobID);
+      setDupeCheckSnapshot(shouldRestoreDupeSnapshot ? restoredDupeSnapshot : null);
+      const dupeSnapshotLoader = globalThis.go?.guiapp?.App?.GetDupeCheckSnapshot;
+      if (restoredDupeJobID && dupeSnapshotLoader) {
+        void dupeSnapshotLoader(restoredDupeJobID)
+          .then((snapshot) => {
+            if (dupeCheckJobIDRef.current !== restoredDupeJobID) {
+              return;
+            }
+            if (!sourcePathMatches(currentPathRef.current, snapshot.sourcePath || restoredPath)) {
+              return;
+            }
+            const status = normalizedJobStatus(snapshot.status);
+            setDupeCheckSnapshot(snapshot);
+            setDupeSummary(snapshot.summary || emptyDupeSummary);
+            setDupeLoading(isRunningJobStatus(status));
+            setDupeError(dupeSnapshotError(snapshot));
+            if (status === "completed" || status === "completed_with_errors") {
+              setDupeChecked(true);
+            } else if (status === "failed" || status === "canceled") {
+              setDupeChecked(false);
+              setPrepPreview(emptyPreparation);
+            }
+          })
+          .catch((err) => {
+            if (dupeCheckJobIDRef.current !== restoredDupeJobID) {
+              return;
+            }
+            setDupeCheckJobID("");
+            dupeCheckJobIDRef.current = "";
+            setDupeCheckSnapshot(null);
+            setDupeLoading(false);
+            setDupeError(String(err || "Failed to refresh restored dupe check."));
+          });
       }
-      if (state.releaseTouched) {
-        setReleaseTouched({ ...buildReleaseTouchedState({}), ...state.releaseTouched });
+
+      setPrepPreview(
+        state.prepPreview ? { ...emptyPreparation, ...state.prepPreview } : emptyPreparation,
+      );
+      setPrepError("");
+      const restoredBuilderPreview = state.builderPreview
+        ? { ...emptyDescriptionBuilder, ...state.builderPreview }
+        : emptyDescriptionBuilder;
+      setBuilderPreview(restoredBuilderPreview);
+      setBuilderRawByGroup(
+        Object.fromEntries(
+          (restoredBuilderPreview.Groups || []).map((group) => [
+            group.GroupKey,
+            group.RawDescription || "",
+          ]),
+        ),
+      );
+      setBuilderRenderedByGroup(
+        Object.fromEntries(
+          (restoredBuilderPreview.Groups || []).map((group) => [
+            group.GroupKey,
+            group.RawDescriptionHTML || "",
+          ]),
+        ),
+      );
+      setBuilderExpandedGroups(
+        Object.fromEntries(
+          (restoredBuilderPreview.Groups || []).map((group) => [group.GroupKey, false]),
+        ),
+      );
+      setBuilderLoading(false);
+      setBuilderError("");
+      setBuilderDirtyByGroup({});
+      setBuilderRenderLoading(false);
+      setBuilderSaved("");
+      setBuilderSaving(false);
+      setBuilderRefreshing(false);
+      clearBuilderProgressTimers();
+      setBuilderProgressMessage("");
+      setBuilderAutoRequestKey("");
+
+      setScreenshotPlan(state.screenshotPlan ?? null);
+      setScreenshotSelections(state.screenshotSelections || []);
+      setShowFrameSelections(
+        typeof state.showFrameSelections === "boolean" ? state.showFrameSelections : false,
+      );
+      setPreviewImages(state.previewImages || []);
+      setExistingImages(state.existingImages || []);
+      setExistingTrackerImages(state.existingTrackerImages || []);
+      finalImagesRef.current = state.finalImages || [];
+      setFinalImages(state.finalImages || []);
+      setFinalResult(state.finalResult ?? null);
+      setDeletedTrackerImages(state.deletedTrackerImages || []);
+      setLiveCaptureLoading(false);
+
+      setUploadHost(typeof state.uploadHost === "string" ? state.uploadHost : "");
+      setUploadSelections(state.uploadSelections || {});
+      setUploadedImages(state.uploadedImages || []);
+      setUploadedImageRecords(state.uploadedImageRecords || []);
+
+      const restoredUploadSnapshot = state.trackerUploadSnapshot ?? null;
+      const restoredUploadStatus = normalizedJobStatus(restoredUploadSnapshot?.status);
+      const restoredUploadJobID =
+        typeof state.trackerUploadJobID === "string" ? state.trackerUploadJobID : "";
+      const restoredUploadHasRunningSnapshot = isRunningJobStatus(restoredUploadStatus);
+      const shouldRestoreUploadSnapshot =
+        !restoredUploadHasRunningSnapshot || Boolean(restoredUploadJobID);
+      setTrackerUploadRunning(
+        shouldRestoreUploadSnapshot && isRunningJobStatus(restoredUploadStatus),
+      );
+      setTrackerUploadError(
+        shouldRestoreUploadSnapshot ? trackerUploadSnapshotError(restoredUploadSnapshot) : "",
+      );
+      trackerUploadJobIDRef.current = restoredUploadJobID;
+      setTrackerUploadJobID(restoredUploadJobID);
+      setTrackerUploadSnapshot(shouldRestoreUploadSnapshot ? restoredUploadSnapshot : null);
+      const uploadSnapshotLoader = globalThis.go?.guiapp?.App?.GetTrackerUploadSnapshot;
+      if (restoredUploadJobID && uploadSnapshotLoader) {
+        void uploadSnapshotLoader(restoredUploadJobID)
+          .then((snapshot) => {
+            if (trackerUploadJobIDRef.current !== restoredUploadJobID) {
+              return;
+            }
+            if (!sourcePathMatches(currentPathRef.current, snapshot.sourcePath || restoredPath)) {
+              return;
+            }
+            setTrackerUploadSnapshot(snapshot);
+            setTrackerUploadRunning(isRunningJobStatus(snapshot.status));
+            setTrackerUploadError(trackerUploadSnapshotError(snapshot));
+          })
+          .catch((err) => {
+            if (trackerUploadJobIDRef.current !== restoredUploadJobID) {
+              return;
+            }
+            setTrackerUploadJobID("");
+            trackerUploadJobIDRef.current = "";
+            setTrackerUploadSnapshot(null);
+            setTrackerUploadRunning(false);
+            setTrackerUploadError(String(err || "Failed to refresh restored upload."));
+          });
       }
-      if (typeof state.showExternalIDInputUI === "boolean") {
-        setShowExternalIDInputUI(state.showExternalIDInputUI);
-      }
-      if (typeof state.selectedProvider === "string") setSelectedProvider(state.selectedProvider);
-      if (state.releasePageTrackerSelection) {
-        setReleasePageTrackerSelection(state.releasePageTrackerSelection);
-      }
-      if (state.uploadToggles) setUploadToggles(state.uploadToggles);
-      if (typeof state.uploadSkipClientInjection === "boolean") {
-        setUploadSkipClientInjection(state.uploadSkipClientInjection);
-      }
-      if (typeof state.runDebug === "boolean") setRunDebug(state.runDebug);
-      if (typeof state.runLogLevel === "string") setRunLogLevel(state.runLogLevel);
-      if (typeof state.runLogLevelTouched === "boolean") {
-        setRunLogLevelTouched(state.runLogLevelTouched);
-      }
-      if (state.dupeSummary) setDupeSummary({ ...emptyDupeSummary, ...state.dupeSummary });
-      if (typeof state.dupeChecked === "boolean") setDupeChecked(state.dupeChecked);
-      if (state.dupeIgnore) setDupeIgnore(state.dupeIgnore);
-      if (state.dupeTrackerFlags) setDupeTrackerFlags(state.dupeTrackerFlags);
-      if (typeof state.dupeCheckJobID === "string") setDupeCheckJobID(state.dupeCheckJobID);
-      if (state.dupeCheckSnapshot !== undefined) setDupeCheckSnapshot(state.dupeCheckSnapshot);
-      if (state.prepPreview) setPrepPreview({ ...emptyPreparation, ...state.prepPreview });
-      if (state.screenshotPlan !== undefined) setScreenshotPlan(state.screenshotPlan);
-      if (state.screenshotSelections) setScreenshotSelections(state.screenshotSelections);
-      if (typeof state.showFrameSelections === "boolean") {
-        setShowFrameSelections(state.showFrameSelections);
-      }
-      if (state.finalResult !== undefined) setFinalResult(state.finalResult);
-      if (state.deletedTrackerImages) setDeletedTrackerImages(state.deletedTrackerImages);
-      if (typeof state.uploadHost === "string") setUploadHost(state.uploadHost);
-      if (state.uploadSelections) setUploadSelections(state.uploadSelections);
-      if (state.uploadedImages) setUploadedImages(state.uploadedImages);
-      if (state.uploadedImageRecords) {
-        setUploadedImageRecords(state.uploadedImageRecords);
-      }
-      if (typeof state.trackerUploadJobID === "string") {
-        setTrackerUploadJobID(state.trackerUploadJobID);
-      }
-      if (state.trackerUploadSnapshot !== undefined) {
-        setTrackerUploadSnapshot(state.trackerUploadSnapshot);
-      }
-      if (state.trackerDryRunPreview) {
-        setTrackerDryRunPreview({ ...emptyTrackerDryRun, ...state.trackerDryRunPreview });
-      }
-      if (state.trackerQuestionnaireAnswers) {
-        setTrackerQuestionnaireAnswers(state.trackerQuestionnaireAnswers);
-      }
+      setTrackerDryRunLoading(false);
+      setTrackerDryRunError("");
+      setTrackerDryRunPreview(
+        state.trackerDryRunPreview
+          ? { ...emptyTrackerDryRun, ...state.trackerDryRunPreview }
+          : emptyTrackerDryRun,
+      );
+      setTrackerDryRunProgress(null);
+      setTrackerQuestionnaireAnswers(state.trackerQuestionnaireAnswers || {});
     },
     [
+      configuredRunLogLevel,
+      clearBuilderProgressTimers,
       setDeletedTrackerImages,
+      setExistingImages,
+      setExistingTrackerImages,
+      setFinalImages,
       setFinalResult,
+      setPreviewImages,
       setScreenshotPlan,
       setScreenshotSelections,
       setShowFrameSelections,
@@ -1400,6 +1640,7 @@ export default function App() {
       setUploadSelections,
       setUploadedImageRecords,
       setUploadedImages,
+      finalImagesRef,
     ],
   );
 
@@ -1434,6 +1675,9 @@ export default function App() {
     if (!state) {
       return false;
     }
+    if (!workflowStateSourceKey(state)) {
+      return false;
+    }
     const hasText = (...values: Array<string | undefined>) =>
       values.some((value) => typeof value === "string" && value.trim().length > 0);
     return (
@@ -1451,10 +1695,15 @@ export default function App() {
       Boolean(state.prepPreview?.Descriptions?.length) ||
       Boolean(state.screenshotPlan) ||
       Boolean(state.screenshotSelections?.length) ||
+      Boolean(state.previewImages?.length) ||
+      Boolean(state.existingImages?.length) ||
+      Boolean(state.existingTrackerImages?.length) ||
+      Boolean(state.finalImages?.length) ||
       Boolean(state.finalResult) ||
       Boolean(state.uploadedImages?.length) ||
       Boolean(state.uploadedImageRecords?.length) ||
       Boolean(state.trackerUploadSnapshot) ||
+      Boolean(state.builderPreview?.Groups?.length) ||
       Boolean(state.trackerDryRunPreview?.Trackers?.length) ||
       Boolean(Object.keys(state.releasePageTrackerSelection || {}).length) ||
       Boolean(Object.keys(state.uploadToggles || {}).length)
@@ -1467,17 +1716,7 @@ export default function App() {
     [hasRealUIState],
   );
 
-  const uiStateSourceKey = useCallback((state?: UIState | null) => {
-    const raw =
-      state?.preview?.SourcePath ||
-      state?.dupeSummary?.SourcePath ||
-      state?.dupeCheckSnapshot?.sourcePath ||
-      state?.prepPreview?.SourcePath ||
-      state?.trackerDryRunPreview?.SourcePath ||
-      state?.path ||
-      "";
-    return raw.trim().replaceAll("\\", "/").toLowerCase();
-  }, []);
+  const uiStateSourceKey = useCallback(workflowStateSourceKey, []);
 
   const matchingLiveUIState = useCallback(
     (records: UIStateRecord[], state: UIState) => {
@@ -1485,7 +1724,12 @@ export default function App() {
       if (!key) {
         return null;
       }
-      return records.find((record) => uiStateSourceKey(record.state) === key) || null;
+      return (
+        records.find((record) => {
+          const recordKey = uiStateSourceKey(record.state);
+          return Boolean(recordKey && sourcePathEquals(key, recordKey));
+        }) || null
+      );
     },
     [uiStateSourceKey],
   );
@@ -1595,6 +1839,14 @@ export default function App() {
     if (uiStateSaveTimerRef.current) {
       clearTimeout(uiStateSaveTimerRef.current);
     }
+    const dupeSnapshotForSave = isRunningJobStatus(normalizedJobStatus(dupeCheckSnapshot?.status))
+      ? null
+      : dupeCheckSnapshot;
+    const uploadSnapshotForSave = isRunningJobStatus(
+      normalizedJobStatus(trackerUploadSnapshot?.status),
+    )
+      ? null
+      : trackerUploadSnapshot;
     const state: UIState = {
       path,
       sourceLookupURL,
@@ -1615,24 +1867,32 @@ export default function App() {
       dupeChecked,
       dupeIgnore,
       dupeTrackerFlags,
-      dupeCheckJobID,
-      dupeCheckSnapshot,
+      dupeCheckJobID: "",
+      dupeCheckSnapshot: dupeSnapshotForSave,
       prepPreview,
+      builderPreview,
       screenshotPlan: screenshots.screenshotPlan,
       screenshotSelections: screenshots.screenshotSelections,
       showFrameSelections: screenshots.showFrameSelections,
+      previewImages: screenshots.previewImages,
+      existingImages: screenshots.existingImages,
+      existingTrackerImages: screenshots.existingTrackerImages,
+      finalImages: screenshots.finalImages,
       finalResult: screenshots.finalResult,
       deletedTrackerImages: screenshots.deletedTrackerImages,
       uploadHost: uploadImages.uploadHost,
       uploadSelections: uploadImages.uploadSelections,
       uploadedImages: uploadImages.uploadedImages,
       uploadedImageRecords: uploadImages.uploadedImageRecords,
-      trackerUploadJobID,
-      trackerUploadSnapshot,
+      trackerUploadJobID: "",
+      trackerUploadSnapshot: uploadSnapshotForSave,
       trackerDryRunPreview,
       trackerQuestionnaireAnswers,
     };
     if (!hasRealUIState(state)) {
+      return;
+    }
+    if (hasConflictingPreviewSource(state)) {
       return;
     }
     uiStateSaveTimerRef.current = setTimeout(() => {
@@ -1649,7 +1909,10 @@ export default function App() {
           ? records.find((record) => record.id === saveID) || null
           : null;
         const attachedSource = uiStateSourceKey(attachedRecord?.state);
-        if (!saveID || (currentSource && attachedSource && currentSource !== attachedSource)) {
+        if (
+          !saveID ||
+          (currentSource && attachedSource && !sourcePathEquals(currentSource, attachedSource))
+        ) {
           const matchingRecord = matchingLiveUIState(records, state);
           saveID = matchingRecord?.id || createUIStateID();
           localStorage.setItem("ui-state-mode", "live");
@@ -1704,9 +1967,14 @@ export default function App() {
     dupeCheckJobID,
     dupeCheckSnapshot,
     prepPreview,
+    builderPreview,
     screenshots.screenshotPlan,
     screenshots.screenshotSelections,
     screenshots.showFrameSelections,
+    screenshots.previewImages,
+    screenshots.existingImages,
+    screenshots.existingTrackerImages,
+    screenshots.finalImages,
     screenshots.finalResult,
     screenshots.deletedTrackerImages,
     uploadImages.uploadHost,
@@ -1799,6 +2067,94 @@ export default function App() {
     setLiveCaptureLoading(false);
   }, [resetScreenshots, resetUploadState]);
 
+  const resetReleaseScopedState = useCallback(
+    (nextActiveTab = "input") => {
+      freshUIStateCanPromoteRef.current = false;
+      setSourcePathMode(undefined);
+      setSourceLookupURL("");
+      setMetadataResetting(false);
+      setError("");
+      setPreview(emptyPreview);
+      setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
+      setReleaseEdits(buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
+      setReleaseTouched(buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
+      setShowExternalIDInputUI(true);
+      setSelectedProvider("");
+      setActiveTab(nextActiveTab);
+      setRenderedDescriptions({});
+      setLightboxImage("");
+      setLightboxAlt("");
+      setShowPlaylistSelection(false);
+      setPlaylistSelectionPath("");
+      setPlaylistAutoPreparing(false);
+      setPlaylistPreparationError("");
+      setBdinfoProgressLines([]);
+      setCurrentDiscType("");
+      setMetadataProgressTarget("");
+      setMetadataProgressActive(false);
+      setMetadataProgressUpdates([]);
+      setDupeSummary(emptyDupeSummary);
+      setDupeLoading(false);
+      setDupeError("");
+      setDupeChecked(false);
+      dupeCheckJobIDRef.current = "";
+      setDupeCheckJobID("");
+      setDupeCheckSnapshot(null);
+      setDupeIgnore({});
+      setDupeTrackerFlags({});
+      setPrepPreview(emptyPreparation);
+      setPrepError("");
+      setBuilderPreview(emptyDescriptionBuilder);
+      setBuilderRawByGroup({});
+      setBuilderRenderedByGroup({});
+      setBuilderExpandedGroups({});
+      setBuilderLoading(false);
+      setBuilderError("");
+      setBuilderDirtyByGroup({});
+      setBuilderRenderLoading(false);
+      setBuilderSaved("");
+      setBuilderSaving(false);
+      setBuilderRefreshing(false);
+      clearBuilderProgressTimers();
+      setBuilderProgressMessage("");
+      setBuilderAutoRequestKey("");
+      resetScreenshotState();
+      setTrackerUploadRunning(false);
+      setTrackerUploadError("");
+      trackerUploadJobIDRef.current = "";
+      setTrackerUploadJobID("");
+      setTrackerUploadSnapshot(null);
+      setTrackerDryRunLoading(false);
+      setTrackerDryRunError("");
+      setTrackerDryRunPreview(emptyTrackerDryRun);
+      setTrackerDryRunProgress(null);
+      setTrackerQuestionnaireAnswers({});
+      setReleasePageTrackerSelection({});
+      setRunDebug(false);
+      setRunLogLevel(configuredRunLogLevel);
+      setRunLogLevelTouched(false);
+      setHostBrowserMode(null);
+      setHostBrowser(null);
+      setHostBrowserLoading(false);
+      setHostBrowserError("");
+    },
+    [clearBuilderProgressTimers, configuredRunLogLevel, resetScreenshotState],
+  );
+
+  const handleSourcePathChange = useCallback(
+    (value: string) => {
+      if (value !== path) {
+        uiStateAppliedPathKeyRef.current = "";
+        resetReleaseScopedState();
+        releaseStateResetPathKeyRef.current = normalizeWorkflowSourcePath(value);
+      }
+      currentPathRef.current = value;
+      setPath(value);
+      setSourcePathMode(undefined);
+    },
+    [path, resetReleaseScopedState],
+  );
+
   const buildCurrentUIState = useCallback(
     (): UIState => ({
       path,
@@ -1812,6 +2168,7 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
+      uploadSkipClientInjection,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1822,9 +2179,14 @@ export default function App() {
       dupeCheckJobID,
       dupeCheckSnapshot,
       prepPreview,
+      builderPreview,
       screenshotPlan: screenshots.screenshotPlan,
       screenshotSelections: screenshots.screenshotSelections,
       showFrameSelections: screenshots.showFrameSelections,
+      previewImages: screenshots.previewImages,
+      existingImages: screenshots.existingImages,
+      existingTrackerImages: screenshots.existingTrackerImages,
+      finalImages: screenshots.finalImages,
       finalResult: screenshots.finalResult,
       deletedTrackerImages: screenshots.deletedTrackerImages,
       uploadHost: uploadImages.uploadHost,
@@ -1848,6 +2210,7 @@ export default function App() {
       selectedProvider,
       releasePageTrackerSelection,
       uploadToggles,
+      uploadSkipClientInjection,
       runDebug,
       runLogLevel,
       runLogLevelTouched,
@@ -1858,9 +2221,14 @@ export default function App() {
       dupeCheckJobID,
       dupeCheckSnapshot,
       prepPreview,
+      builderPreview,
       screenshots.screenshotPlan,
       screenshots.screenshotSelections,
       screenshots.showFrameSelections,
+      screenshots.previewImages,
+      screenshots.existingImages,
+      screenshots.existingTrackerImages,
+      screenshots.finalImages,
       screenshots.finalResult,
       screenshots.deletedTrackerImages,
       uploadImages.uploadHost,
@@ -1880,6 +2248,9 @@ export default function App() {
       if (uiStateSaveTimerRef.current) {
         clearTimeout(uiStateSaveTimerRef.current);
       }
+      uiStateAppliedPathKeyRef.current = "";
+      releaseStateResetPathKeyRef.current = "";
+      currentPathRef.current = "";
       setPath("");
       setSourcePathMode(undefined);
       setSourceLookupURL("");
@@ -1901,6 +2272,7 @@ export default function App() {
       setPlaylistAutoPreparing(false);
       setPlaylistPreparationError("");
       setBdinfoProgressLines([]);
+      setCurrentDiscType("");
       setMetadataProgressTarget("");
       setMetadataProgressActive(false);
       setMetadataProgressUpdates([]);
@@ -1908,6 +2280,7 @@ export default function App() {
       setDupeLoading(false);
       setDupeError("");
       setDupeChecked(false);
+      dupeCheckJobIDRef.current = "";
       setDupeCheckJobID("");
       setDupeCheckSnapshot(null);
       setDupeIgnore({});
@@ -1925,10 +2298,13 @@ export default function App() {
       setBuilderSaved("");
       setBuilderSaving(false);
       setBuilderRefreshing(false);
+      clearBuilderProgressTimers();
+      setBuilderProgressMessage("");
       setBuilderAutoRequestKey("");
       resetScreenshotState();
       setTrackerUploadRunning(false);
       setTrackerUploadError("");
+      trackerUploadJobIDRef.current = "";
       setTrackerUploadJobID("");
       setTrackerUploadSnapshot(null);
       setTrackerDryRunLoading(false);
@@ -1946,7 +2322,7 @@ export default function App() {
       setHostBrowserLoading(false);
       setHostBrowserError("");
     },
-    [configuredRunLogLevel, resetScreenshotState],
+    [clearBuilderProgressTimers, configuredRunLogLevel, resetScreenshotState],
   );
 
   const handleHistoryReleaseDeleted = useCallback(
@@ -2337,6 +2713,13 @@ export default function App() {
       setSelectedProvider("");
     }
     setDupeSummary(emptyDupeSummary);
+    setDupeChecked(false);
+    dupeCheckJobIDRef.current = "";
+    setDupeCheckJobID("");
+    setDupeCheckSnapshot(null);
+    setDupeIgnore({});
+    setDupeTrackerFlags({});
+    setDupeLoading(false);
     setDupeError("");
     setPrepPreview(emptyPreparation);
     setPrepError("");
@@ -2350,6 +2733,16 @@ export default function App() {
     setBuilderRefreshing(false);
     setBuilderAutoRequestKey("");
     resetScreenshotState();
+    setTrackerUploadRunning(false);
+    setTrackerUploadError("");
+    trackerUploadJobIDRef.current = "";
+    setTrackerUploadJobID("");
+    setTrackerUploadSnapshot(null);
+    setTrackerDryRunLoading(false);
+    setTrackerDryRunError("");
+    setTrackerDryRunPreview(emptyTrackerDryRun);
+    setTrackerDryRunProgress(null);
+    setTrackerQuestionnaireAnswers({});
   };
 
   const clearHostBrowserSearch = () => {
@@ -2363,6 +2756,7 @@ export default function App() {
       setError("Browse is unavailable in this build.");
       return;
     }
+    const requestId = ++hostBrowserRequestIdRef.current;
     setHostBrowserMode(mode);
     setHostBrowserLoading(true);
     setHostBrowserError("");
@@ -2370,11 +2764,19 @@ export default function App() {
     try {
       const selectedStart = startPath || path.trim();
       const result = await browser(selectedStart, mode);
+      if (hostBrowserRequestIdRef.current !== requestId) {
+        return;
+      }
       setHostBrowser(result);
     } catch (err) {
+      if (hostBrowserRequestIdRef.current !== requestId) {
+        return;
+      }
       setHostBrowserError(String(err));
     } finally {
-      setHostBrowserLoading(false);
+      if (hostBrowserRequestIdRef.current === requestId) {
+        setHostBrowserLoading(false);
+      }
     }
   };
 
@@ -2410,8 +2812,10 @@ export default function App() {
   };
 
   const closeHostBrowser = () => {
+    hostBrowserRequestIdRef.current += 1;
     setHostBrowserMode(null);
     setHostBrowser(null);
+    setHostBrowserLoading(false);
     setHostBrowserError("");
     clearHostBrowserSearch();
   };
@@ -2538,10 +2942,17 @@ export default function App() {
       return null;
     }
     const selectedMode = mode ?? inferSourcePathMode(trimmedPath);
+    uiStateAppliedPathKeyRef.current = "";
+    resetReleaseScopedState();
+    releaseStateResetPathKeyRef.current = normalizeWorkflowSourcePath(trimmedPath);
+    currentPathRef.current = trimmedPath;
     setPath(trimmedPath);
     setSourcePathMode(selectedMode);
     rememberSourcePath(trimmedPath, selectedMode);
     const discType = await detectDiscType(trimmedPath);
+    if (!sourcePathEquals(currentPathRef.current, trimmedPath)) {
+      return null;
+    }
     setCurrentDiscType(discType);
     setShowExternalIDInputUI(true);
     setPlaylistPreparationError("");
@@ -2579,6 +2990,30 @@ export default function App() {
     setError("");
     await handlePathSelected(entry.path, entry.mode);
   };
+
+  const getSelectedTrackers = useCallback(
+    (options: { allowDefaultFallback?: boolean } = {}) => {
+      const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
+      const selected = Object.entries(releasePageTrackerSelection)
+        .filter(([name, enabled]) => enabled && validTrackers.has(name))
+        .map(([name]) => name);
+      if (selected.length > 0 || options.allowDefaultFallback === false) {
+        return selected;
+      }
+      if (Object.keys(releasePageTrackerSelection).length > 0) {
+        return selected;
+      }
+      return trackerUploadItems
+        .filter((item) => defaultTrackerSet.has(item.name.toLowerCase()))
+        .map((item) => item.name);
+    },
+    [defaultTrackerSet, releasePageTrackerSelection, trackerUploadItems],
+  );
+
+  const isCurrentSourcePath = useCallback(
+    (candidatePath?: string | null) => sourcePathMatches(currentPathRef.current, candidatePath),
+    [],
+  );
 
   const runPlaylistBDInfo = async () => {
     setPlaylistPreparationError("");
@@ -2640,6 +3075,9 @@ export default function App() {
       setError("Please select a file or folder.");
       return;
     }
+    const trackersForFetch = sourcePathMatches(currentPathRef.current, targetPath)
+      ? getSelectedTrackers()
+      : [];
     setMetadataProgressTarget(targetPath);
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
@@ -2650,8 +3088,11 @@ export default function App() {
         sourceLookupURL.trim(),
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
-        getSelectedTrackers(),
+        trackersForFetch,
       );
+      if (!sourcePathMatches(currentPathRef.current, result.SourcePath || targetPath)) {
+        return;
+      }
       applyPreviewResult(result, { switchToInput: options.switchToInput });
       rememberSourcePath(
         targetPath,
@@ -2660,10 +3101,15 @@ export default function App() {
       freshUIStateCanPromoteRef.current = uiStateMode === "fresh";
       setShowExternalIDInputUI(!hideExternalIDInputUIOnSuccess);
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, targetPath)) {
+        return;
+      }
       setError(String(err));
     } finally {
-      setMetadataProgressActive(false);
-      setLoading(false);
+      if (sourcePathMatches(currentPathRef.current, targetPath)) {
+        setMetadataProgressActive(false);
+        setLoading(false);
+      }
     }
   };
 
@@ -2765,14 +3211,22 @@ export default function App() {
         {},
         getSelectedTrackers(),
       );
+      if (!sourcePathMatches(currentPathRef.current, result.SourcePath || targetPath)) {
+        return;
+      }
       applyPreviewResult(result);
       setShowExternalIDInputUI(true);
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, targetPath)) {
+        return;
+      }
       setError(String(err));
     } finally {
-      setMetadataProgressActive(false);
-      setMetadataResetting(false);
-      setLoading(false);
+      if (sourcePathMatches(currentPathRef.current, targetPath)) {
+        setMetadataProgressActive(false);
+        setMetadataResetting(false);
+        setLoading(false);
+      }
     }
   };
 
@@ -2791,20 +3245,24 @@ export default function App() {
     setBluraySelecting(true);
     try {
       const result = await selector(targetPath, releaseID.trim());
+      if (!sourcePathMatches(currentPathRef.current, result.SourcePath || targetPath)) {
+        return;
+      }
       applyPreviewResult(result, { switchToInput: false });
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, targetPath)) {
+        return;
+      }
       setBluraySelectionError(String(err));
     } finally {
-      setBluraySelecting(false);
+      if (sourcePathMatches(currentPathRef.current, targetPath)) {
+        setBluraySelecting(false);
+      }
     }
   };
 
   const runDescriptionBuilder = useCallback(
     async (overrides: ExternalIDOverrides, nameOverrides: ReleaseNameOverrides) => {
-      const clearBuilderProgressTimers = () => {
-        builderProgressTimers.current.forEach((timer) => window.clearTimeout(timer));
-        builderProgressTimers.current = [];
-      };
       clearBuilderProgressTimers();
       setBuilderError("");
       setBuilderSaved("");
@@ -2818,41 +3276,48 @@ export default function App() {
         setBuilderError("Please select a file or folder.");
         return;
       }
+      const requestPath = path.trim();
+      const setBuilderProgressIfCurrent = (message: string) => {
+        if (sourcePathMatches(currentPathRef.current, requestPath)) {
+          setBuilderProgressMessage(message);
+        }
+      };
       setBuilderLoading(true);
       setBuilderProgressMessage("Preparing metadata and tracker selection...");
       builderProgressTimers.current = [
         window.setTimeout(
-          () => setBuilderProgressMessage("Checking image-host requirements..."),
+          () => setBuilderProgressIfCurrent("Checking image-host requirements..."),
           900,
         ),
         window.setTimeout(
           () =>
-            setBuilderProgressMessage("Rehosting required comparison and description images..."),
+            setBuilderProgressIfCurrent("Rehosting required comparison and description images..."),
           2500,
         ),
         window.setTimeout(
-          () => setBuilderProgressMessage("Still rehosting images and building descriptions..."),
+          () => setBuilderProgressIfCurrent("Still rehosting images and building descriptions..."),
           5000,
         ),
         window.setTimeout(
-          () => setBuilderProgressMessage("Large image upload still running..."),
+          () => setBuilderProgressIfCurrent("Large image upload still running..."),
           15000,
         ),
         window.setTimeout(
-          () => setBuilderProgressMessage("Waiting for image hosts to finish..."),
+          () => setBuilderProgressIfCurrent("Waiting for image hosts to finish..."),
           30000,
         ),
       ];
       try {
         const result = await fetcher(
-          path.trim(),
+          requestPath,
           normalizeOverrides(overrides),
           normalizeReleaseOverrides(nameOverrides),
-          Object.entries(releasePageTrackerSelection)
-            .filter(([, selected]) => selected)
-            .map(([name]) => name),
+          getSelectedTrackers(),
           ignoredDupeTrackers,
         );
+        if (!sourcePathMatches(currentPathRef.current, result.SourcePath || requestPath)) {
+          return;
+        }
         setBuilderPreview(result);
         setBuilderRawByGroup(
           Object.fromEntries(
@@ -2876,17 +3341,29 @@ export default function App() {
         setBuilderProgressMessage("Refreshing uploaded image records...");
         await refreshUploadedImages();
       } catch (err) {
+        if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+          return;
+        }
         setBuilderError(String(err));
       } finally {
-        clearBuilderProgressTimers();
-        setBuilderProgressMessage("");
-        setBuilderLoading(false);
+        if (sourcePathMatches(currentPathRef.current, requestPath)) {
+          clearBuilderProgressTimers();
+          setBuilderProgressMessage("");
+          setBuilderLoading(false);
+        }
       }
     },
-    [path, releasePageTrackerSelection, ignoredDupeTrackers, refreshUploadedImages],
+    [
+      path,
+      clearBuilderProgressTimers,
+      getSelectedTrackers,
+      ignoredDupeTrackers,
+      refreshUploadedImages,
+    ],
   );
 
   const refreshDescriptionBuilder = useCallback(async () => {
+    const requestPath = path.trim();
     if (builderDirty) {
       const shouldRefresh = window.confirm(
         "Refreshing descriptions will discard unsaved description edits. Continue?",
@@ -2903,9 +3380,11 @@ export default function App() {
         releaseOverrideState?.overrides || {},
       );
     } finally {
-      setBuilderRefreshing(false);
+      if (!requestPath || sourcePathMatches(currentPathRef.current, requestPath)) {
+        setBuilderRefreshing(false);
+      }
     }
-  }, [builderDirty, idOverrideState, releaseOverrideState, runDescriptionBuilder]);
+  }, [path, builderDirty, idOverrideState, releaseOverrideState, runDescriptionBuilder]);
 
   useEffect(() => {
     return () => {
@@ -2930,6 +3409,7 @@ export default function App() {
       setBuilderError("Please select a file or folder.");
       return;
     }
+    const requestPath = path.trim();
     const currentGroup = (builderPreview.Groups || []).find((group) => group.GroupKey === groupKey);
     if (!currentGroup) {
       setBuilderError("Description group not found.");
@@ -2938,13 +3418,16 @@ export default function App() {
     setBuilderLoading(true);
     try {
       const updatedGroup = await saver(
-        path.trim(),
+        requestPath,
         groupKey,
         "",
         currentGroup.Trackers || [],
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
       );
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       setBuilderPreview((prev) => upsertBuilderGroup(prev, updatedGroup));
       setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
       setBuilderRenderedByGroup((prev) => ({
@@ -2954,9 +3437,14 @@ export default function App() {
       setBuilderDirtyByGroup((prev) => ({ ...prev, [groupKey]: false }));
       setBuilderSaved("Description reset.");
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       setBuilderError(String(err));
     } finally {
-      setBuilderLoading(false);
+      if (sourcePathMatches(currentPathRef.current, requestPath)) {
+        setBuilderLoading(false);
+      }
     }
   };
 
@@ -2995,6 +3483,7 @@ export default function App() {
       setBuilderError("Please select a file or folder.");
       return;
     }
+    const requestPath = path.trim();
     const currentGroup = (builderPreview.Groups || []).find((group) => group.GroupKey === groupKey);
     if (!currentGroup) {
       setBuilderError("Description group not found.");
@@ -3003,13 +3492,16 @@ export default function App() {
     setBuilderSaving(true);
     try {
       const updatedGroup = await saver(
-        path.trim(),
+        requestPath,
         groupKey,
         builderRawByGroup[groupKey] || "",
         currentGroup.Trackers || [],
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
       );
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       const nextPreview = upsertBuilderGroup(builderPreview, updatedGroup);
       const shouldRefreshDryRun =
         path.trim() === String(trackerDryRunPreview.SourcePath || "").trim() &&
@@ -3033,9 +3525,14 @@ export default function App() {
         }
       }
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       setBuilderError(String(err));
     } finally {
-      setBuilderSaving(false);
+      if (sourcePathMatches(currentPathRef.current, requestPath)) {
+        setBuilderSaving(false);
+      }
     }
   };
 
@@ -3120,6 +3617,7 @@ export default function App() {
 
     const requestId = livePreviewRequestId.current + 1;
     livePreviewRequestId.current = requestId;
+    const requestPath = path.trim();
     setLivePreviewLoading(true);
     const timestamp = clampPreviewSeconds(timestampSeconds);
     try {
@@ -3129,17 +3627,26 @@ export default function App() {
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         timestamp,
       );
-      if (livePreviewRequestId.current !== requestId) {
+      if (
+        livePreviewRequestId.current !== requestId ||
+        !sourcePathMatches(currentPathRef.current, requestPath)
+      ) {
         return;
       }
       setLivePreviewImage(dataUri);
     } catch (err) {
-      if (livePreviewRequestId.current !== requestId) {
+      if (
+        livePreviewRequestId.current !== requestId ||
+        !sourcePathMatches(currentPathRef.current, requestPath)
+      ) {
         return;
       }
       setLivePreviewError(String(err));
     } finally {
-      if (livePreviewRequestId.current === requestId) {
+      if (
+        livePreviewRequestId.current === requestId &&
+        sourcePathMatches(currentPathRef.current, requestPath)
+      ) {
         setLivePreviewLoading(false);
       }
     }
@@ -3162,11 +3669,18 @@ export default function App() {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
     }
+    const requestPath = path.trim();
     screenshots.setPreviewLoadingIndex(selection.Index);
     try {
       const result = await runScreenshotCapture([selection], "preview");
+      if (!sourcePathMatches(currentPathRef.current, result.SourcePath || requestPath)) {
+        return;
+      }
       const images = result.Images || [];
       const previews = await Promise.all(images.map(screenshots.readScreenshotImage));
+      if (!sourcePathMatches(currentPathRef.current, result.SourcePath || requestPath)) {
+        return;
+      }
       screenshots.setPreviewImages((prev) => {
         const merged = new Map<string, ScreenshotPreviewImage>();
         prev.forEach((item) => {
@@ -3182,9 +3696,14 @@ export default function App() {
         return Array.from(merged.values());
       });
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       screenshots.setScreenshotsError(String(err));
     } finally {
-      screenshots.setPreviewLoadingIndex(null);
+      if (sourcePathMatches(currentPathRef.current, requestPath)) {
+        screenshots.setPreviewLoadingIndex(null);
+      }
     }
   };
 
@@ -3194,6 +3713,7 @@ export default function App() {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
     }
+    const requestPath = path.trim();
 
     const timestamp = clampPreviewSeconds(livePreviewSeconds);
     const baseSelections =
@@ -3275,8 +3795,14 @@ export default function App() {
     setLiveCaptureLoading(true);
     try {
       const result = await runScreenshotCapture([captureSelection], "preview");
+      if (!sourcePathMatches(currentPathRef.current, result.SourcePath || requestPath)) {
+        return;
+      }
       const images = result.Images || [];
       const previews = await Promise.all(images.map(screenshots.readScreenshotImage));
+      if (!sourcePathMatches(currentPathRef.current, result.SourcePath || requestPath)) {
+        return;
+      }
       screenshots.setPreviewImages((prev) => {
         const merged = new Map<string, ScreenshotPreviewImage>();
         prev.forEach((item) => {
@@ -3296,9 +3822,14 @@ export default function App() {
         await screenshots.saveFinalSelections(mergedFinals);
       }
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       screenshots.setScreenshotsError(String(err));
     } finally {
-      setLiveCaptureLoading(false);
+      if (sourcePathMatches(currentPathRef.current, requestPath)) {
+        setLiveCaptureLoading(false);
+      }
     }
   };
 
@@ -3324,6 +3855,7 @@ export default function App() {
       screenshots.setScreenshotsError("Please select a file or folder.");
       return;
     }
+    const requestPath = path.trim();
     let selections = screenshots.screenshotSelections;
     if (selections.length === 0) {
       const plan = await screenshots.loadScreenshotPlan(false);
@@ -3342,40 +3874,54 @@ export default function App() {
     screenshots.setScreenshotsLoading(true);
     try {
       const result = await runScreenshotCapture(filteredSelections, "final");
-      screenshots.setFinalResult(result);
+      if (!sourcePathMatches(currentPathRef.current, result.SourcePath || requestPath)) {
+        return;
+      }
       const images = result.Images || [];
       const previews = await Promise.all(images.map(screenshots.readScreenshotImage));
+      if (!sourcePathMatches(currentPathRef.current, result.SourcePath || requestPath)) {
+        return;
+      }
+      screenshots.setFinalResult(result);
       const merged = mergeFinalSelections(screenshots.finalImagesRef.current, previews);
       await screenshots.saveFinalSelections(merged);
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       screenshots.setScreenshotsError(String(err));
     } finally {
-      screenshots.setScreenshotsLoading(false);
+      if (sourcePathMatches(currentPathRef.current, requestPath)) {
+        screenshots.setScreenshotsLoading(false);
+      }
     }
   };
 
-  const applyDupeCheckSnapshot = useCallback((snapshot: DupeCheckSnapshot) => {
-    setDupeCheckSnapshot(snapshot);
-    setDupeSummary(snapshot.summary || emptyDupeSummary);
+  const applyDupeCheckSnapshot = useCallback(
+    (snapshot: DupeCheckSnapshot) => {
+      if (!isCurrentSourcePath(snapshot.sourcePath)) {
+        return;
+      }
+      setDupeCheckSnapshot(snapshot);
+      setDupeSummary(snapshot.summary || emptyDupeSummary);
 
-    const normalized = String(snapshot.status || "")
-      .toLowerCase()
-      .trim();
-    const running = normalized === "queued" || normalized === "running";
-    setDupeLoading(running);
+      const normalized = normalizedJobStatus(snapshot.status);
+      setDupeLoading(isRunningJobStatus(normalized));
 
-    if (normalized === "completed") {
-      setDupeChecked(true);
-      setDupeError("");
-    } else if (normalized === "completed_with_errors") {
-      setDupeChecked(true);
-      setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
-    } else if (normalized === "failed" || normalized === "canceled") {
-      setDupeChecked(false);
-      setPrepPreview(emptyPreparation);
-      setDupeError(snapshot.error || "Dupe check failed.");
-    }
-  }, []);
+      if (normalized === "completed") {
+        setDupeChecked(true);
+        setDupeError("");
+      } else if (normalized === "completed_with_errors") {
+        setDupeChecked(true);
+        setDupeError(dupeSnapshotError(snapshot));
+      } else if (normalized === "failed" || normalized === "canceled") {
+        setDupeChecked(false);
+        setPrepPreview(emptyPreparation);
+        setDupeError(dupeSnapshotError(snapshot));
+      }
+    },
+    [isCurrentSourcePath],
+  );
 
   const handleDupeCheck = async () => {
     setDupeError("");
@@ -3385,7 +3931,8 @@ export default function App() {
       setDupeError("Dupe checking is unavailable in this build.");
       return;
     }
-    if (!path.trim()) {
+    const requestPath = path.trim();
+    if (!requestPath) {
       setDupeError("Please select a file or folder.");
       return;
     }
@@ -3403,17 +3950,27 @@ export default function App() {
     setDupeLoading(true);
     try {
       const jobID = await starter(
-        path.trim(),
+        requestPath,
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
       );
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
+      dupeCheckJobIDRef.current = jobID;
       setDupeCheckJobID(jobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(jobID);
+        if (dupeCheckJobIDRef.current !== jobID) {
+          return;
+        }
         applyDupeCheckSnapshot(snapshot);
       }
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       const message = String(err);
       setDupeChecked(false);
       setPrepPreview(emptyPreparation);
@@ -3446,36 +4003,23 @@ export default function App() {
   }, [applyDupeCheckSnapshot, dupeCheckJobID]);
 
   useEffect(() => {
-    setDupeChecked(false);
-    setDupeCheckJobID("");
-    setDupeCheckSnapshot(null);
-    setDupeSummary(emptyDupeSummary);
-    setDupeIgnore({});
-    setDupeTrackerFlags({});
-    setPrepPreview(emptyPreparation);
-    setPrepError("");
-    setBuilderPreview(emptyDescriptionBuilder);
-    setBuilderRawByGroup({});
-    setBuilderRenderedByGroup({});
-    setBuilderExpandedGroups({});
-    setBuilderError("");
-    setBuilderDirtyByGroup({});
-    setBuilderSaved("");
-    setBuilderRefreshing(false);
-    setBuilderAutoRequestKey("");
-    setTrackerUploadRunning(false);
-    setTrackerUploadError("");
-    setTrackerUploadJobID("");
-    setTrackerUploadSnapshot(null);
-    setTrackerDryRunLoading(false);
-    setTrackerDryRunError("");
-    setTrackerDryRunPreview(emptyTrackerDryRun);
-    setTrackerDryRunProgress(null);
-    setMetadataProgressTarget("");
-    setMetadataProgressActive(false);
-    setMetadataProgressUpdates([]);
-    resetScreenshotState();
-  }, [path, resetScreenshotState]);
+    const pathKey = normalizeWorkflowSourcePath(path);
+    if (uiStateAppliedPathKeyRef.current) {
+      const appliedKey = uiStateAppliedPathKeyRef.current;
+      if (appliedKey === pathKey) {
+        return;
+      }
+      uiStateAppliedPathKeyRef.current = "";
+    }
+    if (releaseStateResetPathKeyRef.current) {
+      const resetKey = releaseStateResetPathKeyRef.current;
+      releaseStateResetPathKeyRef.current = "";
+      if (resetKey === pathKey) {
+        return;
+      }
+    }
+    resetReleaseScopedState();
+  }, [path, resetReleaseScopedState]);
 
   useEffect(() => {
     if (activeTab !== "description_builder") return;
@@ -3540,13 +4084,17 @@ export default function App() {
   useEffect(() => {
     if (activeTab !== "upload_images") return;
     if (!path.trim()) return;
+    const requestPath = path.trim();
     const loadUploadCandidates = async () => {
       try {
         const candidates = await globalThis.go?.guiapp?.App?.ListUploadCandidates(
-          path.trim(),
+          requestPath,
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         );
+        if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+          return;
+        }
         if (!candidates || candidates.length === 0) {
           setExistingImages([]);
           await refreshUploadedImages();
@@ -3561,11 +4109,17 @@ export default function App() {
             }
           }),
         );
+        if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+          return;
+        }
         setExistingImages(
           previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
         );
         await refreshUploadedImages();
       } catch (err) {
+        if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+          return;
+        }
         console.error("Failed to load upload candidates:", err);
       }
     };
@@ -3680,13 +4234,6 @@ export default function App() {
   // During final upload handling, use the trackers selected here combined with
   // dupe-check filtering and any special rules (e.g., banned groups).
 
-  // Helper to get selected tracker names
-  const getSelectedTrackers = () => {
-    return Object.entries(releasePageTrackerSelection)
-      .filter(([, selected]) => selected)
-      .map(([name]) => name);
-  };
-
   const getSelectedUploadTrackers = useCallback(
     () => selectedUploadImageTrackers,
     [selectedUploadImageTrackers],
@@ -3716,7 +4263,8 @@ export default function App() {
       setTrackerUploadError("Tracker upload is unavailable in this build.");
       return;
     }
-    if (!path.trim()) {
+    const requestPath = path.trim();
+    if (!requestPath) {
       setTrackerUploadError("Please select a file or folder.");
       return;
     }
@@ -3761,7 +4309,7 @@ export default function App() {
     setTrackerUploadSnapshot(null);
     try {
       const jobID = await starter(
-        path.trim(),
+        requestPath,
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
@@ -3772,12 +4320,27 @@ export default function App() {
         uploadSkipClientInjection,
         runLogLevel,
       );
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
+      trackerUploadJobIDRef.current = jobID;
       setTrackerUploadJobID(jobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(jobID);
+        if (trackerUploadJobIDRef.current !== jobID) {
+          return;
+        }
+        if (!sourcePathMatches(currentPathRef.current, snapshot.sourcePath || requestPath)) {
+          return;
+        }
         setTrackerUploadSnapshot(snapshot);
+        setTrackerUploadRunning(isRunningJobStatus(snapshot.status));
+        setTrackerUploadError(trackerUploadSnapshotError(snapshot));
       }
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       setTrackerUploadRunning(false);
       setTrackerUploadError(String(err));
     }
@@ -3817,6 +4380,7 @@ export default function App() {
         }
         throw new Error(message);
       }
+      const requestPath = path.trim();
       if (idOverrideState?.invalid || releaseOverrideState?.invalid) {
         const message = "Fix invalid overrides before running dry run.";
         if (surfaceError) {
@@ -3837,7 +4401,7 @@ export default function App() {
 
       setTrackerDryRunLoading(true);
       setTrackerDryRunProgress({
-        sourcePath: path.trim(),
+        sourcePath: requestPath,
         tracker: "",
         task: "dry_run",
         status: "running",
@@ -3850,7 +4414,7 @@ export default function App() {
       });
       try {
         const result = await fetcher(
-          path.trim(),
+          requestPath,
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
           selectedTrackers,
@@ -3861,6 +4425,9 @@ export default function App() {
           uploadSkipClientInjection,
           runLogLevel,
         );
+        if (!sourcePathMatches(currentPathRef.current, result?.SourcePath || requestPath)) {
+          return null;
+        }
         setTrackerDryRunPreview(result || emptyTrackerDryRun);
         setTrackerQuestionnaireAnswers((prev) => {
           const next = cloneQuestionnaireAnswers(prev);
@@ -3880,13 +4447,18 @@ export default function App() {
         });
         return result || emptyTrackerDryRun;
       } catch (err) {
+        if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+          return null;
+        }
         if (surfaceError) {
           setTrackerDryRunError(String(err));
           return null;
         }
         throw err;
       } finally {
-        setTrackerDryRunLoading(false);
+        if (sourcePathMatches(currentPathRef.current, requestPath)) {
+          setTrackerDryRunLoading(false);
+        }
       }
     },
     [
@@ -3910,7 +4482,7 @@ export default function App() {
     const off = EventsOn(trackerUploadProgressEvent, (payload: any) => {
       const update = payload as UploadProgressUpdate;
       const updatePath = String(update?.sourcePath || "").trim();
-      if (updatePath && updatePath !== path.trim()) {
+      if (updatePath && !sourcePathMatches(currentPathRef.current, updatePath)) {
         return;
       }
       setTrackerDryRunProgress(update);
@@ -3921,7 +4493,7 @@ export default function App() {
         off();
       }
     };
-  }, [path]);
+  }, []);
 
   const handleCancelTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
@@ -3951,19 +4523,39 @@ export default function App() {
       setTrackerUploadError("Tracker retry is unavailable in this build.");
       return;
     }
+    const requestPath = path.trim();
+    if (!requestPath) {
+      setTrackerUploadError("Please select a file or folder.");
+      return;
+    }
     setTrackerUploadRunning(true);
     try {
       const nextJobID = await retry(trackerUploadJobID);
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
+      trackerUploadJobIDRef.current = nextJobID;
       setTrackerUploadJobID(nextJobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(nextJobID);
+        if (trackerUploadJobIDRef.current !== nextJobID) {
+          return;
+        }
+        if (!sourcePathMatches(currentPathRef.current, snapshot.sourcePath || requestPath)) {
+          return;
+        }
         setTrackerUploadSnapshot(snapshot);
+        setTrackerUploadRunning(isRunningJobStatus(snapshot.status));
+        setTrackerUploadError(trackerUploadSnapshotError(snapshot));
       }
     } catch (err) {
+      if (!sourcePathMatches(currentPathRef.current, requestPath)) {
+        return;
+      }
       setTrackerUploadRunning(false);
       setTrackerUploadError(String(err));
     }
-  }, [trackerUploadJobID]);
+  }, [path, trackerUploadJobID]);
 
   useEffect(() => {
     if (!trackerUploadJobID) {
@@ -3976,15 +4568,12 @@ export default function App() {
         return;
       }
       const snapshot = payload as TrackerUploadSnapshot;
-      setTrackerUploadSnapshot(snapshot);
-      const normalized = String(snapshot.status || "").toLowerCase();
-      const running = normalized === "queued" || normalized === "running";
-      setTrackerUploadRunning(running);
-      if (normalized === "completed") {
-        setTrackerUploadError("");
-      } else if (normalized === "completed_with_errors" || normalized === "canceled") {
-        setTrackerUploadError(snapshot.error || "Upload finished with errors.");
+      if (!sourcePathMatches(currentPathRef.current, snapshot.sourcePath)) {
+        return;
       }
+      setTrackerUploadSnapshot(snapshot);
+      setTrackerUploadRunning(isRunningJobStatus(snapshot.status));
+      setTrackerUploadError(trackerUploadSnapshotError(snapshot));
     });
 
     return () => {

@@ -746,7 +746,11 @@ func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, n
 	}, host, images))
 }
 
-func (b *Backend) DeleteUploadedImage(path string, imagePath string, host string) error {
+// DeleteUploadedImage removes one uploaded-image record for the web UI.
+//
+// The current core validates the source path and applies usage-scope normalization; errors are
+// returned as web API failures by the route layer.
+func (b *Backend) DeleteUploadedImage(path string, imagePath string, host string, usageScope string) error {
 	if err := b.requireCore(); err != nil {
 		return err
 	}
@@ -755,7 +759,7 @@ func (b *Backend) DeleteUploadedImage(path string, imagePath string, host string
 	return wrapWebError(b.currentCore().DeleteUploadedImage(ctx, api.Request{
 		Paths: []string{path},
 		Mode:  api.ModeGUI,
-	}, imagePath, host))
+	}, imagePath, host, usageScope))
 }
 
 func (b *Backend) GetConfig() (string, error) {
