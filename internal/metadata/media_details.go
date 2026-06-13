@@ -29,6 +29,7 @@ var repackPattern = regexp.MustCompile(`(?i)\b(?:REPACK\d?|RERIP|PROPER\d?)\b`)
 var editionWordPattern = regexp.MustCompile(`(?i)\bedition\b`)
 var editionBadTokenPattern = regexp.MustCompile(`(?i)\b(?:internal|limited|retail|version|remastered)\b`)
 var editionWhitespacePattern = regexp.MustCompile(`\s+`)
+var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 var numericPattern = regexp.MustCompile(`\d+`)
 
 func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
@@ -1426,10 +1427,17 @@ func videoEncodeFromMedia(doc mediaInfoDoc, typeValue string) (string, string, b
 
 func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, string) {
 	edition := ""
+	isIMDbEdition := false
+	applyAnimeOverride(&meta)
+	if hasNoEditionOverride(meta.ReleaseNameOverrides) {
+		return "", ""
+	}
 	if !hasManualEditionOverride(meta.ReleaseNameOverrides) {
 		edition = strings.TrimSpace(resolveIMDbEditionFromMediaDuration(meta, doc))
+		isIMDbEdition = edition != ""
 		if edition == "" {
 			edition = strings.TrimSpace(resolveMultiPlaylistEdition(meta))
+			isIMDbEdition = edition != ""
 		}
 	}
 	if edition == "" {
@@ -1445,6 +1453,9 @@ func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, strin
 	if repackPattern.MatchString(edition) {
 		repack = repackPattern.FindString(edition)
 		edition = strings.TrimSpace(repackPattern.ReplaceAllString(edition, ""))
+	}
+	if isIMDbEdition {
+		return cleanIMDbEditionText(edition), strings.ToUpper(repack)
 	}
 	return cleanEditionText(edition), strings.ToUpper(repack)
 }
@@ -1526,17 +1537,86 @@ func resolveIMDbEditionFromMediaDuration(meta api.PreparedMetadata, doc mediaInf
 func mediaDurationSeconds(doc mediaInfoDoc) float64 {
 	generalTracks, _, _ := splitMediaInfoTracks(doc)
 	for _, track := range generalTracks {
-		value := strings.TrimSpace(trackString(track, "Duration"))
-		if value == "" {
-			continue
+		if value := trackString(track, "Duration"); value != "" {
+			if seconds := parseMediaDurationValue(value); seconds > 0 {
+				return seconds
+			}
 		}
-		value = strings.ReplaceAll(value, ",", "")
-		parsed, err := strconv.ParseFloat(value, 64)
-		if err == nil && parsed > 0 {
-			return parsed
+		if value := trackString(track, "Duration/String3", "Duration/String2", "Duration/String"); value != "" {
+			if seconds := parseMediaDurationValue(value); seconds > 0 {
+				return seconds
+			}
 		}
 	}
 	return 0
+}
+
+func parseMediaDurationValue(value string) float64 {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0
+	}
+	if strings.Contains(trimmed, ":") {
+		return parseMediaDurationColonValue(trimmed)
+	}
+	if seconds := parseMediaDurationTokens(trimmed); seconds > 0 {
+		return seconds
+	}
+	parsed, err := strconv.ParseFloat(strings.ReplaceAll(trimmed, ",", ""), 64)
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
+}
+
+func parseMediaDurationTokens(value string) float64 {
+	var total float64
+	for _, match := range durationTokenPattern.FindAllStringSubmatch(value, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(match[1], ",", ""), 64)
+		if err != nil || amount <= 0 {
+			continue
+		}
+		switch strings.ToLower(match[2]) {
+		case "h", "hr", "hrs", "hour", "hours":
+			total += amount * 3600
+		case "m", "min", "mins", "minute", "minutes":
+			total += amount * 60
+		case "s", "sec", "secs", "second", "seconds":
+			total += amount
+		case "ms", "msec", "msecs", "millisecond", "milliseconds":
+			total += amount / 1000
+		}
+	}
+	return total
+}
+
+func parseMediaDurationColonValue(value string) float64 {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) < 2 {
+		parsed, err := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(value), ",", ""), 64)
+		if err != nil || parsed <= 0 {
+			return 0
+		}
+		return parsed
+	}
+	var seconds float64
+	multiplier := 1.0
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
+		if part == "" {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(part, ",", ""), 64)
+		if err != nil {
+			return 0
+		}
+		seconds += amount * multiplier
+		multiplier *= 60
+	}
+	return seconds
 }
 
 func imdbEditionMatches(duration float64, details map[string]api.IMDBEditionDetail, includeTheatrical bool) []imdbEditionMatch {
@@ -1606,10 +1686,27 @@ func smartEditionWord(value string) string {
 	if value == "" {
 		return ""
 	}
+	if isAllUpperEditionWord(value) {
+		return value
+	}
 	lower := strings.ToLower(value)
 	runes := []rune(lower)
 	runes[0] = unicode.ToUpper(runes[0])
 	return string(runes)
+}
+
+func isAllUpperEditionWord(value string) bool {
+	hasLetter := false
+	for _, r := range value {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		hasLetter = true
+		if unicode.IsLower(r) {
+			return false
+		}
+	}
+	return hasLetter
 }
 
 func cleanEditionText(edition string) string {
@@ -1633,10 +1730,38 @@ func cleanEditionText(edition string) string {
 	return strings.TrimSpace(edition)
 }
 
-func hasManualEditionOverride(overrides api.ReleaseNameOverrides) bool {
-	if overrides.Edition != nil {
-		return true
+func cleanIMDbEditionText(edition string) string {
+	edition = strings.TrimSpace(strings.ReplaceAll(edition, ",", " "))
+	if edition == "" {
+		return ""
 	}
+	lower := strings.ToLower(edition)
+	if lower == "cut" || lower == "approximate" {
+		return ""
+	}
+	if strings.Contains(lower, "edition") {
+		edition = editionWordPattern.ReplaceAllString(edition, "")
+	}
+	lower = strings.ToLower(edition)
+	if strings.Contains(lower, "extended") && !strings.Contains(lower, "in1") && !strings.Contains(edition, "/") {
+		edition = "Extended"
+	}
+	edition = editionWhitespacePattern.ReplaceAllString(edition, " ")
+	return strings.TrimSpace(edition)
+}
+
+func applyAnimeOverride(meta *api.PreparedMetadata) {
+	if meta == nil || meta.MetadataOverrides.Anime == nil {
+		return
+	}
+	meta.Anime = *meta.MetadataOverrides.Anime
+}
+
+func hasManualEditionOverride(overrides api.ReleaseNameOverrides) bool {
+	return overrides.Edition != nil
+}
+
+func hasNoEditionOverride(overrides api.ReleaseNameOverrides) bool {
 	return overrides.NoEdition != nil && *overrides.NoEdition
 }
 

@@ -218,6 +218,8 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenNoEditionOverridePresent(t *testing.
 	noEdition := true
 	meta := api.PreparedMetadata{
 		ReleaseNameOverrides: api.ReleaseNameOverrides{NoEdition: &noEdition},
+		Edition:              "IMAX",
+		Release:              api.ReleaseInfo{Edition: []string{"Collector's", "Edition"}},
 		ExternalIDs:          api.ExternalIDs{Category: "MOVIE"},
 		ExternalMetadata: api.ExternalMetadata{
 			IMDB: &api.IMDBMetadata{
@@ -232,7 +234,29 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenNoEditionOverridePresent(t *testing.
 
 	edition, _ := editionFromMeta(meta, doc)
 	if edition != "" {
-		t.Fatalf("expected no IMDb auto edition when no-edition override is present, got %q", edition)
+		t.Fatalf("expected no edition when no-edition override is present, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaSkipsIMDbRuntimeWhenAnimeOverridePresent(t *testing.T) {
+	anime := true
+	meta := api.PreparedMetadata{
+		MetadataOverrides: api.MetadataOverrides{Anime: &anime},
+		ExternalIDs:       api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
+					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended"}},
+				},
+			},
+		},
+	}
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7500.000"}]}}`)
+
+	edition, _ := editionFromMeta(meta, doc)
+	if edition != "" {
+		t.Fatalf("expected anime override to skip IMDb runtime edition, got %q", edition)
 	}
 }
 
@@ -247,6 +271,83 @@ func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
 	}
 	if repack != "REPACK2" {
 		t.Fatalf("expected repack extraction, got %q", repack)
+	}
+}
+
+func TestMediaDurationSecondsParsesMediaInfoDurationFormats(t *testing.T) {
+	tests := []struct {
+		name string
+		doc  string
+		want float64
+	}{
+		{
+			name: "numeric duration",
+			doc:  `{"media":{"track":[{"@type":"General","Duration":"7,502.000"}]}}`,
+			want: 7502,
+		},
+		{
+			name: "string3 colon duration",
+			doc:  `{"media":{"track":[{"@type":"General","Duration/String3":"02:05:02.000"}]}}`,
+			want: 7502,
+		},
+		{
+			name: "token duration",
+			doc:  `{"media":{"track":[{"@type":"General","Duration/String":"2 h 5 min 2 s"}]}}`,
+			want: 7502,
+		},
+		{
+			name: "invalid duration",
+			doc:  `{"media":{"track":[{"@type":"General","Duration":"not a duration"}]}}`,
+			want: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := mustParseMediaInfoDoc(tt.doc)
+			if got := mediaDurationSeconds(doc); got != tt.want {
+				t.Fatalf("expected duration %.3f, got %.3f", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestEditionFromMetaMatchesIMDbRuntimeFromDurationString(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
+					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended"}},
+				},
+			},
+		},
+	}
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration/String":"2 h 5 min"}]}}`)
+
+	edition, _ := editionFromMeta(meta, doc)
+	if edition != "Extended" {
+		t.Fatalf("expected IMDb runtime edition from duration string, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaPreservesIMDbEditionAttributeText(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{
+				EditionDetails: map[string]api.IMDBEditionDetail{
+					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
+					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"IMAX", "remastered version"}},
+				},
+			},
+		},
+	}
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General","Duration":"7500.000"}]}}`)
+
+	edition, _ := editionFromMeta(meta, doc)
+	if edition != "IMAX Remastered Version" {
+		t.Fatalf("expected preserved IMDb attribute edition, got %q", edition)
 	}
 }
 
