@@ -150,11 +150,6 @@ const emptyPreview: MetadataPreview = {
   TrackerData: [],
 };
 
-const emptyPreparation: PreparationPreview = {
-  SourcePath: "",
-  Descriptions: [],
-};
-
 const emptyTrackerDryRun: TrackerDryRunPreview = {
   SourcePath: "",
   Trackers: [],
@@ -625,8 +620,6 @@ export default function App() {
   const [dupeCheckSnapshot, setDupeCheckSnapshot] = useState<DupeCheckSnapshot | null>(null);
   const [dupeIgnore, setDupeIgnore] = useState<Record<string, boolean>>({});
   const [dupeTrackerFlags, setDupeTrackerFlags] = useState<Record<string, boolean>>({});
-  const [prepPreview, setPrepPreview] = useState<PreparationPreview>(emptyPreparation);
-  const [, setPrepError] = useState("");
   const [builderPreview, setBuilderPreview] =
     useState<DescriptionBuilderPreview>(emptyDescriptionBuilder);
   const [builderRawByGroup, setBuilderRawByGroup] = useState<Record<string, string>>({});
@@ -1379,8 +1372,6 @@ export default function App() {
       setDupeCheckSnapshot(null);
       setDupeIgnore({});
       setDupeTrackerFlags({});
-      setPrepPreview(emptyPreparation);
-      setPrepError("");
       setBuilderPreview(emptyDescriptionBuilder);
       setBuilderRawByGroup({});
       setBuilderRenderedByGroup({});
@@ -1717,8 +1708,6 @@ export default function App() {
     }
     setDupeSummary(emptyDupeSummary);
     setDupeError("");
-    setPrepPreview(emptyPreparation);
-    setPrepError("");
     setBuilderPreview(emptyDescriptionBuilder);
     setBuilderRawByGroup({});
     setBuilderRenderedByGroup({});
@@ -2000,8 +1989,6 @@ export default function App() {
     setError("");
     setDupeChecked(false);
     setDupeSummary(emptyDupeSummary);
-    setPrepPreview(emptyPreparation);
-    setPrepError("");
     setBuilderPreview(emptyDescriptionBuilder);
     setBuilderRawByGroup({});
     setBuilderRenderedByGroup({});
@@ -2749,7 +2736,6 @@ export default function App() {
       setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
     } else if (normalized === "failed" || normalized === "canceled") {
       setDupeChecked(false);
-      setPrepPreview(emptyPreparation);
       setDupeError(snapshot.error || "Dupe check failed.");
     }
   }, []);
@@ -2793,7 +2779,6 @@ export default function App() {
     } catch (err) {
       const message = String(err);
       setDupeChecked(false);
-      setPrepPreview(emptyPreparation);
       if (message.includes("dupe check requires metadata preview")) {
         setDupeError("Fetch metadata first to cache a preview before checking dupes.");
       } else {
@@ -2829,8 +2814,6 @@ export default function App() {
     setDupeSummary(emptyDupeSummary);
     setDupeIgnore({});
     setDupeTrackerFlags({});
-    setPrepPreview(emptyPreparation);
-    setPrepError("");
     setBuilderPreview(emptyDescriptionBuilder);
     setBuilderRawByGroup({});
     setBuilderRenderedByGroup({});

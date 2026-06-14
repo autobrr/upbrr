@@ -251,21 +251,6 @@ const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
   return payload as T;
 };
 
-const getJSON = async <T>(path: string): Promise<T> => {
-  const response = await fetch(path, {
-    method: "GET",
-    credentials: "include",
-  });
-  const payload = await parseJSONResponse<T & { error?: string }>(response);
-  if (!response.ok) {
-    throw new Error(String(payload?.error || response.statusText || "Request failed"));
-  }
-  if (payload === null) {
-    throw new Error("Request returned an empty response");
-  }
-  return payload as T;
-};
-
 /**
  * Installs the browser-mode app bridge and pins app calls/events to token.
  *
