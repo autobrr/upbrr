@@ -32,6 +32,7 @@ import (
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/services/trackericon"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -84,11 +85,6 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		return nil, fmt.Errorf("gui: %w", err)
 	}
 	if err := repo.MigrateContext(ctx); err != nil {
-		_ = repo.Close()
-		_ = logger.Close()
-		return nil, fmt.Errorf("gui: %w", err)
-	}
-	if err := repo.ClearUIState(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
 		return nil, fmt.Errorf("gui: %w", err)
@@ -242,44 +238,6 @@ func (a *App) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResp
 	}
 	fallback := guishared.BrowseDirectoryFallback(a.currentConfig().MainSettings.DBPath)
 	return wrapGUIResult(guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback))
-}
-
-func (a *App) ListUIStates() (api.UIStateList, error) {
-	if a == nil || a.repo == nil {
-		return api.UIStateList{}, errors.New("config repository not initialized")
-	}
-	ctx := a.runtimeContext()
-	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
-	defer cancel()
-	states, err := a.repo.ListUIStates(ctx)
-	if err != nil {
-		return api.UIStateList{}, fmt.Errorf("gui: %w", err)
-	}
-	return api.UIStateList{States: states}, nil
-}
-
-func (a *App) GetUIState(id string) (api.UIStateRecord, error) {
-	if a == nil || a.repo == nil {
-		return api.UIStateRecord{}, errors.New("config repository not initialized")
-	}
-	if strings.TrimSpace(id) == "" {
-		return api.UIStateRecord{}, errors.New("id is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	return wrapGUIResult(a.repo.LoadUIState(ctx, id))
-}
-
-func (a *App) SaveUIState(id string, label string, state api.UIState) error {
-	if a == nil || a.repo == nil {
-		return errors.New("config repository not initialized")
-	}
-	if strings.TrimSpace(id) == "" {
-		return errors.New("id is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	return wrapGUIError(a.repo.SaveUIState(ctx, id, label, state))
 }
 
 func validateExternalURL(raw string) (string, error) {
@@ -674,7 +632,7 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 	return wrapGUIResult(a.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
-func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	if err := a.requireCore(); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -689,9 +647,12 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		return api.TrackerDryRunPreview{}, fmt.Errorf("gui: tracker dry-run preview canceled: %w", err)
 	}
 	trimmedPath := strings.TrimSpace(path)
-	runOpts, err := a.buildRunOptions(debug, runLogLevel)
+	runOpts, err := a.buildRunOptions(debug, noSeed, runLogLevel)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
+	}
+	if logger := a.currentLogger(); logger != nil {
+		logger.Debugf("gui: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", trimmedPath, debug, noSeed, runOpts.RunLogLevel)
 	}
 	runCore, runLogger, err := a.buildRunCore(runOpts)
 	if err != nil {
@@ -1572,4 +1533,24 @@ func (a *App) requireHistoryRepo() error {
 		return errors.New("history repository not initialized")
 	}
 	return nil
+}
+
+func (a *App) GetTrackerIcon(trackerNameOrDomain string, customURL string) (string, error) {
+	if a == nil {
+		return "", errors.New("app not initialized")
+	}
+	ctx := a.runtimeContext()
+	cfg := a.currentConfig()
+
+	domain, resolvedURL := config.ResolveTrackerDomain(&cfg, trackerNameOrDomain)
+	urlToUse := customURL
+	if urlToUse == "" {
+		urlToUse = resolvedURL
+	}
+
+	res, err := trackericon.GetTrackerIcon(ctx, cfg.MainSettings.DBPath, domain, urlToUse)
+	if err != nil {
+		return "", fmt.Errorf("gui: %w", err)
+	}
+	return res, nil
 }

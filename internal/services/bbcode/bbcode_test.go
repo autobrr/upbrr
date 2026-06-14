@@ -264,9 +264,49 @@ func TestCleanPTPDescriptionRemovesWidthStyledImageBlocks(t *testing.T) {
 }
 
 func TestNormalizeImageRawURLConvertsPixhostThumbURL(t *testing.T) {
-	value := normalizeImageRawURL("https://t1.pixhost.to/thumbs/11645/685417513_file-upload-0.png")
-	if value != "https://img1.pixhost.to/images/11645/685417513_file-upload-0.png" {
-		t.Fatalf("unexpected normalized value %q", value)
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "current domain",
+			in:   "https://t1.pixhost.cc/thumbs/11645/685417513_file-upload-0.png",
+			want: "https://img1.pixhost.cc/images/11645/685417513_file-upload-0.png",
+		},
+		{
+			name: "mixed case current domain",
+			in:   "https://T1.PixHost.Cc/thumbs/11645/685417513_file-upload-0.png",
+			want: "https://img1.pixhost.cc/images/11645/685417513_file-upload-0.png",
+		},
+		{
+			name: "legacy domain",
+			in:   "https://t1.pixhost.to/thumbs/11645/685417513_file-upload-0.png",
+			want: "https://img1.pixhost.to/images/11645/685417513_file-upload-0.png",
+		},
+		{
+			name: "exact current host",
+			in:   "https://pixhost.cc/thumbs/11645/685417513_file-upload-0.png",
+			want: "https://pixhost.cc/images/11645/685417513_file-upload-0.png",
+		},
+		{
+			name: "foreign suffix current domain",
+			in:   "https://t1.evilpixhost.cc/thumbs/11645/685417513_file-upload-0.png",
+			want: "https://t1.evilpixhost.cc/thumbs/11645/685417513_file-upload-0.png",
+		},
+		{
+			name: "foreign suffix legacy domain",
+			in:   "https://t1.evilpixhost.to/thumbs/11645/685417513_file-upload-0.png",
+			want: "https://t1.evilpixhost.to/thumbs/11645/685417513_file-upload-0.png",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value := normalizeImageRawURL(tt.in)
+			if value != tt.want {
+				t.Fatalf("unexpected normalized value %q", value)
+			}
+		})
 	}
 }
 

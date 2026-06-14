@@ -235,7 +235,72 @@ func TestHDBHandlerSearchUsesTVDBWhenIMDbMissing(t *testing.T) {
 	}
 
 	meta := api.PreparedMetadata{
-		SourcePath: "C:/media/movie",
+		SourcePath: "C:/media/show",
+		ExternalIDs: api.ExternalIDs{
+			TVDBID:   765432,
+			Category: "TV",
+		},
+	}
+
+	entries, notes, err := handler.Search(context.Background(), meta, "HDB")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("expected no notes, got %#v", notes)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no entries, got %d", len(entries))
+	}
+}
+
+func TestHDBHandlerSearchSkipsTVDBForMovie(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var payload map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request payload: %v", err)
+			}
+			if _, hasTVDB := payload["tvdb"]; hasTVDB {
+				t.Fatalf("did not expect tvdb in movie payload")
+			}
+			if got := stringFromAny(payload["search"]); got != "Movie.Release.2024.1080p.WEB-DL" {
+				t.Fatalf("unexpected fallback search %q", got)
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":0,"data":[]}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+
+	handler := hdbHandler{
+		cfg: config.Config{
+			MainSettings: config.MainSettingsConfig{
+				DBPath: filepath.Join(tmpDir, "ua.db"),
+			},
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"HDB": {
+						Username: "user",
+						Passkey:  "pk",
+					},
+				},
+			},
+		},
+		http:   client,
+		logger: api.NopLogger{},
+	}
+
+	meta := api.PreparedMetadata{
+		SourcePath:        "C:/media/movie",
+		ReleaseName:       "Movie.Release.2024.1080p.WEB-DL",
+		MediaInfoCategory: "TV",
 		ExternalIDs: api.ExternalIDs{
 			TVDBID:   765432,
 			Category: "MOVIE",

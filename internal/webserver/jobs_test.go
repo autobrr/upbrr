@@ -221,6 +221,59 @@ func TestPruneCompletedUploadJobsLockedKeepsNewestCompleted(t *testing.T) {
 	}
 }
 
+func TestDupeJobAccessRequiresOwningSession(t *testing.T) {
+	backend := &Backend{
+		dupes: map[string]*dupeCheckJob{
+			"job-1": {
+				sessionID:  "session-a",
+				id:         "job-1",
+				sourcePath: `C:\Media\Movie.mkv`,
+				status:     "running",
+				states:     map[string]DupeCheckTrackerState{},
+				startedAt:  time.Now().UTC(),
+			},
+		},
+	}
+
+	if _, err := backend.GetDupeCheckSnapshot("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session snapshot read to be rejected")
+	}
+	if err := backend.CancelDupeCheck("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session cancel to be rejected")
+	}
+	if _, err := backend.GetDupeCheckSnapshot("session-a", "job-1"); err != nil {
+		t.Fatalf("expected owning session snapshot read to succeed: %v", err)
+	}
+}
+
+func TestTrackerUploadJobAccessRequiresOwningSession(t *testing.T) {
+	backend := &Backend{
+		uploads: map[string]*trackerUploadJob{
+			"job-1": {
+				sessionID:  "session-a",
+				id:         "job-1",
+				sourcePath: `C:\Media\Movie.mkv`,
+				status:     "running",
+				states:     map[string]TrackerUploadTrackerState{},
+				startedAt:  time.Now().UTC(),
+			},
+		},
+	}
+
+	if _, err := backend.GetTrackerUploadSnapshot("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session snapshot read to be rejected")
+	}
+	if err := backend.CancelTrackerUpload("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session cancel to be rejected")
+	}
+	if _, err := backend.RetryFailedTrackerUpload("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session retry to be rejected")
+	}
+	if _, err := backend.GetTrackerUploadSnapshot("session-a", "job-1"); err != nil {
+		t.Fatalf("expected owning session snapshot read to succeed: %v", err)
+	}
+}
+
 func TestApplyTrackerUploadProgressThrottlesSmallHashRateBurst(t *testing.T) {
 	hub := newEventHub()
 	ch, unsubscribe := hub.Subscribe("session")
@@ -303,6 +356,42 @@ func TestApplyTrackerUploadProgressEmitsMeaningfulChangeWithinThrottle(t *testin
 				t.Fatal("expected meaningful progress change to emit immediately")
 			}
 		})
+	}
+}
+
+func TestApplyTrackerUploadProgressUpdatesOnlyNamedTrackerForMultiTrackerJobs(t *testing.T) {
+	hub := newEventHub()
+	backend := &Backend{hub: hub}
+	job := &trackerUploadJob{
+		sessionID: "session",
+		id:        "job",
+		trackers:  []string{"BLU", "AITHER"},
+		states: map[string]TrackerUploadTrackerState{
+			"BLU":    {Tracker: "BLU", Status: "running", Message: "queued"},
+			"AITHER": {Tracker: "AITHER", Status: "running", Message: "queued"},
+		},
+		startedAt: time.Now().UTC(),
+	}
+
+	backend.applyTrackerUploadProgress(job, api.UploadProgressUpdate{
+		Tracker: "BLU",
+		Task:    "tracker_upload",
+		Status:  "running",
+		Message: "Uploading to tracker",
+		Percent: 40,
+	})
+
+	if got := job.states["BLU"].Task; got != "tracker_upload" {
+		t.Fatalf("expected BLU task to update, got %q", got)
+	}
+	if got := job.states["BLU"].Message; got != "Uploading to tracker" {
+		t.Fatalf("expected BLU message to update, got %q", got)
+	}
+	if got := job.states["AITHER"].Task; got != "" {
+		t.Fatalf("expected AITHER task to remain untouched, got %q", got)
+	}
+	if got := job.states["AITHER"].Message; got != "queued" {
+		t.Fatalf("expected AITHER message to remain queued, got %q", got)
 	}
 }
 

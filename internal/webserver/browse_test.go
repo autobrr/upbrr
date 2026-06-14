@@ -338,137 +338,6 @@ func TestDevelopmentNoAuthAppRouteRejectsMissingCSRF(t *testing.T) {
 	}
 }
 
-func TestUIStateRoutePersistsSharedState(t *testing.T) {
-	repo, dbPath := openBrowseTestRepo(t)
-	server := testServerWithBackend(t, repo, config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-	})
-	setTestBrowsePolicy(t, server, dbPath, "", true)
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	post := newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
-	post.Body = io.NopCloser(strings.NewReader(`{"id":"state-a","label":"Dupes","state":{"path":"/media/release","activeTab":"dupes"}}`))
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, post)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("save ui state returned %d: %s", recorder.Code, recorder.Body.String())
-	}
-
-	get := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState?id=state-a", nil)
-	get.Host = "example.com:8080"
-	get.RemoteAddr = "192.168.1.25:5050"
-	get.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
-	recorder = httptest.NewRecorder()
-	mux.ServeHTTP(recorder, get)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("get ui state returned %d: %s", recorder.Code, recorder.Body.String())
-	}
-	var payload api.UIStateRecord
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("unmarshal ui state: %v", err)
-	}
-	if payload.ID != "state-a" || payload.Label != "Dupes" || payload.State["path"] != "/media/release" || payload.State["activeTab"] != "dupes" {
-		t.Fatalf("unexpected ui state payload: %#v", payload)
-	}
-
-	post = newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
-	post.Body = io.NopCloser(strings.NewReader(`{"id":"state-b","label":"Upload","state":{"path":"/media/other","activeTab":"upload"}}`))
-	recorder = httptest.NewRecorder()
-	mux.ServeHTTP(recorder, post)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("save second ui state returned %d: %s", recorder.Code, recorder.Body.String())
-	}
-
-	list := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState", nil)
-	list.Host = "example.com:8080"
-	list.RemoteAddr = "192.168.1.25:5050"
-	list.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
-	recorder = httptest.NewRecorder()
-	mux.ServeHTTP(recorder, list)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("list ui states returned %d: %s", recorder.Code, recorder.Body.String())
-	}
-	var stateList api.UIStateList
-	if err := json.Unmarshal(recorder.Body.Bytes(), &stateList); err != nil {
-		t.Fatalf("unmarshal ui state list: %v", err)
-	}
-	seen := map[string]bool{}
-	for _, record := range stateList.States {
-		seen[record.ID] = true
-	}
-	if len(stateList.States) != 2 || !seen["state-a"] || !seen["state-b"] {
-		t.Fatalf("expected both live ui states, got %#v", stateList.States)
-	}
-	if stateList.States[0].ID != "state-a" || stateList.States[1].ID != "state-b" {
-		t.Fatalf("expected stable live ui state order, got %#v", stateList.States)
-	}
-}
-
-func TestUIStateRouteRejectsUnauthenticatedAndBadCSRF(t *testing.T) {
-	repo, dbPath := openBrowseTestRepo(t)
-	server := testServerWithBackend(t, repo, config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-	})
-	setTestBrowsePolicy(t, server, dbPath, "", true)
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	cases := []struct {
-		name           string
-		request        func() *http.Request
-		expectedStatus int
-	}{
-		{
-			name: "unauthenticated",
-			request: func() *http.Request {
-				return httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/UIState", nil)
-			},
-			expectedStatus: http.StatusUnauthorized,
-		},
-		{
-			name: "bad csrf",
-			request: func() *http.Request {
-				req := newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
-				req.Header.Del("X-Csrf-Token")
-				return req
-			},
-			expectedStatus: http.StatusForbidden,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			mux.ServeHTTP(recorder, tc.request())
-			if recorder.Code != tc.expectedStatus {
-				t.Fatalf("expected status %d, got %d", tc.expectedStatus, recorder.Code)
-			}
-		})
-	}
-}
-
-func TestUIStateRouteRejectsBlankPostID(t *testing.T) {
-	repo, dbPath := openBrowseTestRepo(t)
-	server := testServerWithBackend(t, repo, config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-	})
-	setTestBrowsePolicy(t, server, dbPath, "", true)
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	req := newBrowseRequest("/api/app/UIState", "example.com:8080", "192.168.1.25:5050")
-	req.Body = io.NopCloser(strings.NewReader(`{"id":"   ","label":"Blank","state":{}}`))
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("expected blank id to return 400, got %d: %s", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), "id is required") {
-		t.Fatalf("expected id validation error, got %s", recorder.Body.String())
-	}
-}
-
 func TestBrowseDirectoryRouteAllowsRemoteSessionsAndSortsEntries(t *testing.T) {
 	repo, dbPath := openBrowseTestRepo(t)
 	root := canonicalBrowseTestPath(t, t.TempDir())
@@ -834,6 +703,30 @@ func TestBrowseDirectoryRouteHonorsMultipleWebAuthBrowseRoots(t *testing.T) {
 	mux.ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected outside browse roots to return 400, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestBrowsePolicyRootsRoundTripCommaPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "media, 4k")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+
+	encoded := joinBrowsePolicyRoots([]string{root})
+	roots, err := normalizeBrowsePolicyRoots(splitBrowsePolicyRoots(encoded))
+	if err != nil {
+		t.Fatalf("normalize encoded root: %v", err)
+	}
+	if len(roots) != 1 || roots[0] != root {
+		t.Fatalf("expected encoded comma root to round-trip, got %#v", roots)
+	}
+
+	roots, err = normalizeBrowsePolicyRoots(splitBrowsePolicyRoots(root))
+	if err != nil {
+		t.Fatalf("normalize raw comma root: %v", err)
+	}
+	if len(roots) != 1 || roots[0] != root {
+		t.Fatalf("expected raw comma root to remain one root, got %#v", roots)
 	}
 }
 

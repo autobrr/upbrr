@@ -10,6 +10,7 @@ import {
   inferSourcePathMode,
   normalizeSourcePathHistory,
   resolveInputHistoryLimit,
+  sameSourcePath,
 } from "./inputHistory";
 
 describe("resolveInputHistoryLimit", () => {
@@ -62,6 +63,26 @@ describe("normalizeSourcePathHistory", () => {
       { path: "E:/legacy/movie.mkv", mode: "folder" },
     ]);
   });
+
+  it("deduplicates equivalent paths with runtime-aware comparison", () => {
+    expect(
+      normalizeSourcePathHistory(
+        ["C:\\Media\\Movie.mkv", "c:/media/movie.mkv", "D:/shows/Season 01"],
+        5,
+        true,
+      ),
+    ).toEqual([
+      { path: "C:\\Media\\Movie.mkv", mode: "folder" },
+      { path: "D:/shows/Season 01", mode: "folder" },
+    ]);
+
+    expect(
+      normalizeSourcePathHistory(["C:/Media/Movie.mkv", "c:/media/movie.mkv"], 5, false),
+    ).toEqual([
+      { path: "C:/Media/Movie.mkv", mode: "folder" },
+      { path: "c:/media/movie.mkv", mode: "folder" },
+    ]);
+  });
 });
 
 describe("addSourcePathHistoryEntry", () => {
@@ -88,6 +109,24 @@ describe("addSourcePathHistoryEntry", () => {
       addSourcePathHistoryEntry([{ path: "C:/media/movie.mkv", mode: "file" }], " ", "file", 5),
     ).toEqual([{ path: "C:/media/movie.mkv", mode: "file" }]);
   });
+
+  it("moves runtime-equivalent entries to the top", () => {
+    expect(
+      addSourcePathHistoryEntry(
+        [
+          { path: "D:/shows/Season 01", mode: "folder" },
+          { path: "C:\\Media\\Movie.mkv", mode: "folder" },
+        ],
+        "c:/media/movie.mkv",
+        "file",
+        5,
+        true,
+      ),
+    ).toEqual([
+      { path: "c:/media/movie.mkv", mode: "file" },
+      { path: "D:/shows/Season 01", mode: "folder" },
+    ]);
+  });
 });
 
 describe("inferSourcePathMode", () => {
@@ -99,6 +138,14 @@ describe("inferSourcePathMode", () => {
   it("keeps disc and extensionless paths as folders", () => {
     expect(inferSourcePathMode("C:/media/Movie/BDMV")).toBe("folder");
     expect(inferSourcePathMode("D:/shows/Season 01")).toBe("folder");
+  });
+});
+
+describe("sameSourcePath", () => {
+  it("normalizes separators and folds case only for case-insensitive runtimes", () => {
+    expect(sameSourcePath("C:\\Media\\Movie.mkv", "c:/media/movie.mkv", true)).toBe(true);
+    expect(sameSourcePath("/media/Movie.mkv", "/media/movie.mkv", false)).toBe(false);
+    expect(sameSourcePath("/media/Movie.mkv", "/media/Movie.mkv", false)).toBe(true);
   });
 });
 

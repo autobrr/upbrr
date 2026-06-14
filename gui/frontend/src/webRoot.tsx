@@ -18,6 +18,7 @@ type AuthStatus = {
   username: string;
   csrfToken: string;
   nativeBrowseEnabled: boolean;
+  caseInsensitivePaths: boolean;
   browseRoot: string;
   allowUnrestrictedBrowse: boolean;
   needsBrowsePolicy: boolean;
@@ -29,6 +30,7 @@ const initialStatus: AuthStatus = {
   username: "",
   csrfToken: "",
   nativeBrowseEnabled: false,
+  caseInsensitivePaths: false,
   browseRoot: "",
   allowUnrestrictedBrowse: false,
   needsBrowsePolicy: false,
@@ -57,7 +59,11 @@ export default function WebRoot() {
         setStatus(next);
         setBrowseRoot(next.browseRoot || "");
         setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
-        initializeBrowserBridge(next.csrfToken || "", !!next.nativeBrowseEnabled);
+        initializeBrowserBridge(
+          next.csrfToken || "",
+          !!next.nativeBrowseEnabled,
+          !!next.caseInsensitivePaths,
+        );
       })
       .catch((err) => {
         setError(String(err));
@@ -92,8 +98,12 @@ export default function WebRoot() {
         setStatus(next);
         setBrowseRoot(next.browseRoot || "");
         setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
-        updateBrowserCSRFToken(next.csrfToken || "");
-        initializeBrowserBridge(next.csrfToken || "", !!next.nativeBrowseEnabled);
+        updateBrowserCSRFToken(next.csrfToken || "", !!next.caseInsensitivePaths);
+        initializeBrowserBridge(
+          next.csrfToken || "",
+          !!next.nativeBrowseEnabled,
+          !!next.caseInsensitivePaths,
+        );
       } catch (err) {
         setError(String(err));
       } finally {
@@ -178,8 +188,12 @@ export default function WebRoot() {
       setStatus(next);
       setBrowseRoot(next.browseRoot || "");
       setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
-      updateBrowserCSRFToken(next.csrfToken || "");
-      initializeBrowserBridge(next.csrfToken || "", !!next.nativeBrowseEnabled);
+      updateBrowserCSRFToken(next.csrfToken || "", !!next.caseInsensitivePaths);
+      initializeBrowserBridge(
+        next.csrfToken || "",
+        !!next.nativeBrowseEnabled,
+        !!next.caseInsensitivePaths,
+      );
     } catch (err) {
       setError(String(err));
     } finally {

@@ -57,9 +57,6 @@ func TestMigrateCreatesTrackerCookiesSchema(t *testing.T) {
 	if !slices.Contains(ids, "2026_04_add_tracker_cookies") {
 		t.Fatalf("expected tracker cookies migration id to be recorded, got %v", ids)
 	}
-	if !slices.Contains(ids, "2026_04_add_ui_state") {
-		t.Fatalf("expected ui state migration id to be recorded, got %v", ids)
-	}
 
 	objects := []struct {
 		typ  string
@@ -68,7 +65,6 @@ func TestMigrateCreatesTrackerCookiesSchema(t *testing.T) {
 		{typ: "table", name: "tracker_cookies"},
 		{typ: "index", name: "idx_tracker_cookies_tracker_id"},
 		{typ: "index", name: "idx_tracker_cookies_created_at"},
-		{typ: "table", name: "ui_states"},
 	}
 
 	for _, item := range objects {

@@ -13,10 +13,130 @@ import (
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/torrentmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type trackerUploadTorrentSpec struct {
+	source          string
+	defaultAnnounce string
+	useMyAnnounce   bool
+}
+
+var trackerUploadTorrentSpecs = map[string]trackerUploadTorrentSpec{
+	"ACM":   {source: "AsianCinema"},
+	"ANT":   {source: "ANT"},
+	"AR":    {source: "AlphaRatio"},
+	"ASC":   {source: "ASC"},
+	"AZ":    {source: "AvistaZ", defaultAnnounce: "https://tracker.avistaz.to/announce"},
+	"BHD":   {source: "BHD"},
+	"BHDTV": {source: "BIT-HDTV", useMyAnnounce: true},
+	"BJS":   {source: "BJ"},
+	"BT":    {source: "BT"},
+	"CZ":    {source: "CinemaZ", defaultAnnounce: "https://tracker.cinemaz.to/announce"},
+	"DC":    {source: "DigitalCore.club"},
+	"FF":    {source: "FunFile"},
+	"FL":    {source: "FL"},
+	"GPW":   {source: "GreatPosterWall"},
+	"HDB":   {source: "HDBits"},
+	"HDS":   {source: "HD-Space"},
+	"HDT":   {source: "hd-torrents.org"},
+	"IS":    {source: "https://immortalseed.me"},
+	"MTV":   {source: "MTV"},
+	"NBL":   {source: "NBL"},
+	"PHD":   {source: "PrivateHD", defaultAnnounce: "https://tracker.privatehd.to/announce"},
+	"PTP":   {source: "PTP"},
+	"PTS":   {source: "[www.ptskit.org] PTSKIT"},
+	"RTF":   {source: "sunshine"},
+	"THR":   {source: "[https://www.torrenthr.org] TorrentHR.org"},
+	"TL":    {source: "TorrentLeech.org"},
+	"TOS":   {source: "TheOldSchool"},
+	"TVC":   {source: "TVCHAOS"},
+}
+
+func PrepareTrackerUploadTorrent(meta api.PreparedMetadata, dbPath string, tracker string, trackerConfig config.TrackerConfig) (api.PreparedMetadata, error) {
+	source, announce, ok := trackerUploadTorrentFields(tracker, trackerConfig)
+	if !ok {
+		return meta, nil
+	}
+
+	basePath, err := ResolveUploadTorrentPath(meta, dbPath)
+	if err != nil {
+		if isUploadTorrentNotFound(err) {
+			return meta, nil
+		}
+		return api.PreparedMetadata{}, err
+	}
+	artifactPath, err := ResolveTrackerTorrentArtifactPath(meta, dbPath, tracker)
+	if err != nil {
+		if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
+			return meta, nil
+		}
+		return api.PreparedMetadata{}, err
+	}
+	if err := WritePersonalizedTorrent(basePath, artifactPath, announce, "", source); err != nil {
+		return api.PreparedMetadata{}, err
+	}
+	meta.TorrentPath = artifactPath
+	return meta, nil
+}
+
+func PrepareDryRunInjectionTorrent(meta api.PreparedMetadata, dbPath string, tracker string, trackerConfig config.TrackerConfig) (api.PreparedMetadata, error) {
+	source, announce, ok := trackerUploadTorrentFields(tracker, trackerConfig)
+	if !ok {
+		source = strings.ToUpper(strings.TrimSpace(tracker))
+		announce = strings.TrimSpace(trackerConfig.AnnounceURL)
+		if announce == "" {
+			announce = strings.TrimSpace(trackerConfig.MyAnnounceURL)
+		}
+		if source == "" && announce == "" {
+			return meta, nil
+		}
+	}
+
+	basePath, err := ResolveUploadTorrentPath(meta, dbPath)
+	if err != nil {
+		if isUploadTorrentNotFound(err) {
+			return meta, nil
+		}
+		return api.PreparedMetadata{}, err
+	}
+	artifactPath, err := ResolveTrackerTorrentArtifactPath(meta, dbPath, tracker)
+	if err != nil {
+		if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
+			return meta, nil
+		}
+		return api.PreparedMetadata{}, err
+	}
+	if err := WritePersonalizedTorrent(basePath, artifactPath, announce, "", source); err != nil {
+		return api.PreparedMetadata{}, err
+	}
+	meta.TorrentPath = artifactPath
+	return meta, nil
+}
+
+func trackerUploadTorrentFields(tracker string, trackerConfig config.TrackerConfig) (string, string, bool) {
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	spec, ok := trackerUploadTorrentSpecs[name]
+	if !ok {
+		return "", "", false
+	}
+	announce := strings.TrimSpace(trackerConfig.AnnounceURL)
+	if spec.useMyAnnounce {
+		announce = strings.TrimSpace(trackerConfig.MyAnnounceURL)
+	}
+	if announce == "" {
+		announce = spec.defaultAnnounce
+	}
+	source := strings.TrimSpace(spec.source)
+	if source == "" && announce == "" {
+		return "", "", false
+	}
+	return source, announce, true
+}
 
 func ResolveTrackerTorrentArtifactPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
@@ -37,7 +157,7 @@ func ResolveTrackerTorrentArtifactPath(meta api.PreparedMetadata, dbPath string,
 	if name == "" {
 		name = "tracker"
 	}
-	return filepath.Join(tmpDir, base+"."+name+".torrent"), nil
+	return filepath.Join(tmpDir, "["+name+"]."+base+".torrent"), nil
 }
 
 func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
@@ -81,7 +201,7 @@ func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string,
 		}
 	}
 
-	return "", errors.New("trackers: torrent file not found")
+	return "", fmt.Errorf("trackers: %w", errUploadTorrentNotFound)
 }
 
 func uploadTorrentCleanPath(meta api.PreparedMetadata, dbPath string) (string, bool) {
@@ -104,6 +224,11 @@ func isUploadTorrentLoadError(err error) bool {
 }
 
 var errInvalidUploadTorrent = errors.New("invalid upload torrent")
+var errUploadTorrentNotFound = errors.New("torrent file not found")
+
+func isUploadTorrentNotFound(err error) bool {
+	return errors.Is(err, errUploadTorrentNotFound)
+}
 
 func WriteUploadTorrent(sourcePath string, outputPath string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
@@ -132,10 +257,11 @@ func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL 
 		torrentMeta.Announce = trimmedAnnounce
 		torrentMeta.AnnounceList = metainfo.AnnounceList{{trimmedAnnounce}}
 	}
-	torrentMeta.Comment = "upbrr"
+	torrentMeta.Comment = torrentmeta.UploadCommentFallback
 	if trimmedComment := strings.TrimSpace(comment); trimmedComment != "" {
 		torrentMeta.Comment = trimmedComment
 	}
+	torrentMeta.CreatedBy = torrentmeta.UploadCreatedBy
 
 	return writeTorrentMeta(*torrentMeta, outputPath, "torrent artifact")
 }
@@ -159,10 +285,8 @@ func cleanTorrentMeta(torrentMeta *metainfo.MetaInfo) {
 	torrentMeta.AnnounceList = nil
 	torrentMeta.Nodes = nil
 	torrentMeta.UrlList = nil
-	torrentMeta.Comment = "upbrr"
-	if strings.Contains(strings.ToLower(torrentMeta.CreatedBy), "upload assistant") {
-		torrentMeta.CreatedBy = "upbrr"
-	}
+	torrentMeta.Comment = torrentmeta.UploadCommentFallback
+	torrentMeta.CreatedBy = torrentmeta.UploadCreatedBy
 }
 
 func writeTorrentMeta(torrentMeta metainfo.MetaInfo, outputPath string, context string) error {

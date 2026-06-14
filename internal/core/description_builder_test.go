@@ -735,6 +735,7 @@ func TestFetchTrackerDryRunPreviewUsesCanonicalDescriptionGroups(t *testing.T) {
 			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
 			Metadata:   &stubMeta{},
 			Torrents:   stubTorrent{},
+			Clients:    &stubClient{},
 			Trackers:   trackerSvc,
 		},
 		dupeCache: make(map[string]dupeCacheEntry),

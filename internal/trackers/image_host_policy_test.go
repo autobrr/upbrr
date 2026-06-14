@@ -50,7 +50,7 @@ func TestResolveImageHostPolicy(t *testing.T) {
 			cfg:              config.TrackerConfig{ImageHost: "imgbox"},
 			overrides:        api.ImageHostOverrides{},
 			wantPreferred:    "imgbox",
-			wantAllowedCount: 1,
+			wantAllowedCount: 0,
 		},
 		{
 			name:             "rejects owned cli host for other tracker",
@@ -118,12 +118,56 @@ func TestResolveImageHostPolicy(t *testing.T) {
 				}
 			default:
 				if tc.wantAllowedCount >= 0 {
-					if len(policy.allowed) != tc.wantAllowedCount || (tc.wantAllowedCount == 1 && policy.allowed[0] != "imgbox") {
-						t.Fatalf("expected configured no-policy tracker host to be required, got %#v", policy)
+					if len(policy.allowed) != tc.wantAllowedCount {
+						t.Fatalf("expected allowed host count %d, got %#v", tc.wantAllowedCount, policy)
 					}
 				}
 			}
 		})
+	}
+}
+
+func TestNeededImageUploadTargetsFallsBackFromTrackerConfiguredHostForUnrestrictedTracker(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargetsExcluding(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "pixhost",
+			Host2: "imgbb",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"HHD": {ImageHost: "pixhost"},
+			},
+		},
+	}, []string{"HHD"}, "pixhost", []string{"pixhost"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbb" {
+		t.Fatalf("expected unrestricted tracker to fall back to global imgbb, got %#v", targets)
+	}
+}
+
+func TestNeededImageUploadTargetsDoesNotFallbackToUnsupportedHostForRestrictedTracker(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargetsExcluding(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "pixhost",
+			Host2: "imgbox",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {ImageHost: "pixhost"},
+			},
+		},
+	}, []string{"PTP"}, "pixhost", []string{"pixhost"})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("expected restricted tracker to reject unsupported imgbox fallback, got %#v", targets)
 	}
 }
 
@@ -249,5 +293,87 @@ func TestNeededImageUploadTargetsDoesNotShareTrackerConfiguredHostUnlessGlobally
 	}
 	if targets[1].Host != "imgbb" || len(targets[1].Trackers) != 1 || targets[1].Trackers[0] != "STC" {
 		t.Fatalf("expected imgbb only for STC, got %#v", targets[1])
+	}
+}
+
+func TestNeededImageUploadTargetsUsesConfiguredLostimgForLST(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1:          "imgbb",
+			LostimgEnabled: true,
+			LostimgAPI:     "secret",
+		},
+	}, []string{"LST"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one target, got %#v", targets)
+	}
+	if targets[0].Host != "lostimg" || targets[0].UsageScope != "tracker:LST" {
+		t.Fatalf("expected LST scoped lostimg target, got %#v", targets[0])
+	}
+}
+
+func TestNeededImageUploadTargetsSkipsLostimgWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+	}, []string{"LST"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbb" {
+		t.Fatalf("expected global imgbb fallback, got %#v", targets)
+	}
+}
+
+func TestNeededImageUploadTargetsUsesConfiguredReelflixForRF(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"RF": {ImageHost: "reelflix", ImgAPI: "secret"},
+			},
+		},
+	}, []string{"RF"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one target, got %#v", targets)
+	}
+	if targets[0].Host != "reelflix" || targets[0].UsageScope != "tracker:RF" {
+		t.Fatalf("expected RF scoped reelflix target, got %#v", targets[0])
+	}
+}
+
+func TestNeededImageUploadTargetsSkipsReelflixWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"RF": {ImgAPI: "secret"},
+			},
+		},
+	}, []string{"RF"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbb" {
+		t.Fatalf("expected global imgbb fallback, got %#v", targets)
 	}
 }

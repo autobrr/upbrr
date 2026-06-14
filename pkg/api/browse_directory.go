@@ -3,25 +3,6 @@
 
 package api
 
-type UIState map[string]any
-
-type UIStateRecord struct {
-	ID        string  `json:"id"`
-	Label     string  `json:"label"`
-	UpdatedAt string  `json:"updatedAt"`
-	State     UIState `json:"state"`
-}
-
-type UIStateList struct {
-	States []UIStateRecord `json:"states"`
-}
-
-type SaveUIStateRequest struct {
-	ID    string  `json:"id"`
-	Label string  `json:"label"`
-	State UIState `json:"state"`
-}
-
 type BrowseDirectoryRequest struct {
 	Path string `json:"path"`
 	Mode string `json:"mode"`

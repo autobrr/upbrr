@@ -8,6 +8,7 @@ import type { MetadataPreview, TrackerDryRunPreview } from "../../types";
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   cleanup();
 });
 
@@ -78,6 +79,8 @@ describe("TrackerUploadPage", () => {
     failedDupeTrackerSet: new Set<string>(),
     uploadToggles: { AITHER: true },
     setUploadToggles: vi.fn(),
+    skipClientInjection: false,
+    setSkipClientInjection: vi.fn(),
     namingOverrides: [],
     preview,
     formatLabel: (value: string) => value,
@@ -89,6 +92,7 @@ describe("TrackerUploadPage", () => {
     dryRunProgress: null,
     dryRunPreview,
     trackerQuestionnaireAnswers: {},
+    trackerIconSrcByName: {},
     onQuestionnaireAnswerChange: vi.fn(),
     onRunDryRun: vi.fn(),
     onStartUpload: vi.fn(),
@@ -111,6 +115,34 @@ describe("TrackerUploadPage", () => {
 
     expect(screen.queryByText("Name changed")).toBeNull();
     expect(screen.queryByText(/Upload:/)).toBeNull();
+  });
+
+  it("renders cached tracker icons without fetching from the page", () => {
+    const getTrackerIcon = vi.fn().mockResolvedValue("");
+    vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });
+
+    const { container } = render(
+      <TrackerUploadPage
+        {...baseProps}
+        trackerIconSrcByName={{ aither: "data:image/png;base64,iVBORw0KGgo=" }}
+      />,
+    );
+
+    expect(container.querySelector("img")).toBeInstanceOf(HTMLImageElement);
+    expect(getTrackerIcon).not.toHaveBeenCalled();
+  });
+
+  it("uses abbreviation fallback for blocked tracker icons without cached icons", () => {
+    render(<TrackerUploadPage {...baseProps} failedDupeTrackerSet={new Set(["aither"])} />);
+
+    expect(screen.getByText("AIT")).toBeTruthy();
+  });
+
+  it("hides full tracker names when favicon-only mode is enabled", () => {
+    render(<TrackerUploadPage {...baseProps} faviconOnly={true} useFavicons={true} />);
+
+    expect(screen.queryByText("AITHER")).toBeNull();
+    expect(screen.getAllByText("AIT").length).toBeGreaterThan(0);
   });
 
   it("does not lose a pending live dry-run refresh when the timer is cleaned up", () => {

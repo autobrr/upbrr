@@ -68,6 +68,7 @@ type backendLogStream struct {
 
 type runOptions struct {
 	Debug       bool
+	NoSeed      bool
 	RunLogLevel string
 }
 
@@ -90,11 +91,6 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		return nil, fmt.Errorf("web: %w", err)
 	}
 	if err := repo.MigrateContext(ctx); err != nil {
-		_ = repo.Close()
-		_ = logger.Close()
-		return nil, fmt.Errorf("web: %w", err)
-	}
-	if err := repo.ClearUIState(ctx); err != nil {
 		_ = repo.Close()
 		_ = logger.Close()
 		return nil, fmt.Errorf("web: %w", err)
@@ -378,13 +374,16 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 	return wrapWebResult(b.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
-func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
-	runOpts, err := b.buildRunOptions(debug, runLogLevel)
+	runOpts, err := b.buildRunOptions(debug, noSeed, runLogLevel)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
+	}
+	if logger := b.currentLogger(); logger != nil {
+		logger.Debugf("web: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", strings.TrimSpace(path), debug, noSeed, runOpts.RunLogLevel)
 	}
 	runCore, runLogger, err := b.buildRunCore(runOpts)
 	if err != nil {
@@ -496,43 +495,6 @@ func (b *Backend) LoadPlaylistSelection(path string) (api.PlaylistSelection, err
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	return wrapWebResult(b.currentCore().LoadPlaylistSelection(ctx, path))
-}
-
-func (b *Backend) ListUIStates() (api.UIStateList, error) {
-	if b == nil || b.repo == nil {
-		return api.UIStateList{}, errors.New("config repository not initialized")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	states, err := b.repo.ListUIStates(ctx)
-	if err != nil {
-		return api.UIStateList{}, fmt.Errorf("web: %w", err)
-	}
-	return api.UIStateList{States: states}, nil
-}
-
-func (b *Backend) GetUIState(id string) (api.UIStateRecord, error) {
-	if b == nil || b.repo == nil {
-		return api.UIStateRecord{}, errors.New("config repository not initialized")
-	}
-	if strings.TrimSpace(id) == "" {
-		return api.UIStateRecord{}, errors.New("id is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	return wrapWebResult(b.repo.LoadUIState(ctx, id))
-}
-
-func (b *Backend) SaveUIState(id string, label string, state api.UIState) error {
-	if b == nil || b.repo == nil {
-		return errors.New("config repository not initialized")
-	}
-	if strings.TrimSpace(id) == "" {
-		return errors.New("id is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	return wrapWebError(b.repo.SaveUIState(ctx, id, label, state))
 }
 
 func (b *Backend) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResponse, error) {
@@ -1017,9 +979,15 @@ func (b *Backend) StartLogStream(sessionID string) (string, error) {
 	return streamID, nil
 }
 
-func (b *Backend) StopLogStream(streamID string) error {
+// StopLogStream stops streamID only when it belongs to sessionID.
+// Unknown streams and streams owned by other sessions are treated as no-ops.
+func (b *Backend) StopLogStream(sessionID string, streamID string) error {
+	trimmedSessionID := strings.TrimSpace(sessionID)
 	b.streamMu.Lock()
 	session := b.streams[streamID]
+	if session != nil && strings.TrimSpace(session.sessionID) != trimmedSessionID {
+		session = nil
+	}
 	if session != nil {
 		delete(b.streams, streamID)
 		select {
@@ -1035,6 +1003,7 @@ func (b *Backend) StopLogStream(streamID string) error {
 	return nil
 }
 
+// StopSessionLogStreams closes all active log streams owned by sessionID.
 func (b *Backend) StopSessionLogStreams(sessionID string) {
 	trimmedSessionID := strings.TrimSpace(sessionID)
 	if trimmedSessionID == "" {
@@ -1051,19 +1020,19 @@ func (b *Backend) StopSessionLogStreams(sessionID string) {
 	b.streamMu.Unlock()
 
 	for _, streamID := range streamIDs {
-		_ = b.StopLogStream(streamID)
+		_ = b.StopLogStream(trimmedSessionID, streamID)
 	}
 }
 
-func (b *Backend) buildRunOptions(debug bool, runLogLevel string) (runOptions, error) {
+func (b *Backend) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (runOptions, error) {
 	if strings.TrimSpace(runLogLevel) == "" {
-		return runOptions{Debug: debug}, nil
+		return runOptions{Debug: debug, NoSeed: noSeed}, nil
 	}
 	normalized, err := api.ParseLogLevel(runLogLevel)
 	if err != nil {
 		return runOptions{}, fmt.Errorf("web: %w", err)
 	}
-	return runOptions{Debug: debug, RunLogLevel: normalized}, nil
+	return runOptions{Debug: debug, NoSeed: noSeed, RunLogLevel: normalized}, nil
 }
 
 func (b *Backend) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
@@ -1095,6 +1064,7 @@ func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions
 	options := buildBaseMetadataOptions(cfg)
 	options.Debug = opts.Debug
 	options.DryRun = opts.Debug
+	options.NoSeed = opts.NoSeed
 	options.RunLogLevel = opts.RunLogLevel
 	return options
 }

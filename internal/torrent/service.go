@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/torrentmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -196,10 +197,34 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 		emitTorrentProgress(ctx, meta, "failed", "Torrent validation failed")
 		return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent %q: %w", info.Path, err)
 	}
+	if err := setCreatedBy(info.Path, torrentmeta.MkbrrUploadCreatedBy); err != nil {
+		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")
+		return api.TorrentResult{}, err
+	}
 	emitTorrentProgress(ctx, meta, "completed", "Torrent ready")
 	s.logger.Infof("torrent: created torrent %s", info.Path)
 
 	return api.TorrentResult{Path: info.Path, InfoHash: info.InfoHash}, nil
+}
+
+func setCreatedBy(path string, createdBy string) error {
+	torrentMeta, err := metainfo.LoadFromFile(path)
+	if err != nil {
+		return fmt.Errorf("torrent: load created torrent metadata: %w", err)
+	}
+	torrentMeta.CreatedBy = createdBy
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("torrent: open created torrent metadata: %w", err)
+	}
+	if err := torrentMeta.Write(file); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("torrent: write created torrent metadata: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("torrent: close created torrent metadata: %w", err)
+	}
+	return nil
 }
 
 func resultFromExistingTorrent(ctx context.Context, meta api.PreparedMetadata, path string, message string) (api.TorrentResult, error) {

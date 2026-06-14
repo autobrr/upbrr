@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -373,6 +374,9 @@ func TestOpenWithLoggerConfiguresConcurrentSQLiteSettings(t *testing.T) {
 	if busyTimeout != sqliteBusyTimeout {
 		t.Fatalf("expected busy timeout %d, got %d", sqliteBusyTimeout, busyTimeout)
 	}
+	if maxOpen := repo.db.Stats().MaxOpenConnections; maxOpen != 1 {
+		t.Fatalf("expected max open connections 1, got %d", maxOpen)
+	}
 }
 
 func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
@@ -380,7 +384,7 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 
 	repoPath := filepath.Join(t.TempDir(), "shared.db")
 	repos := make([]*SQLiteRepository, 0, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		repo, err := OpenWithLogger(repoPath, nopLogger{})
 		if err != nil {
 			t.Fatalf("open repo %d: %v", i, err)
@@ -401,14 +405,14 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 		go func(idx int, repo *SQLiteRepository) {
 			defer wg.Done()
 			<-start
-			for attempt := 0; attempt < 3; attempt++ {
+			for attempt := range 3 {
 				if err := repo.Migrate(); err != nil {
 					errCh <- fmt.Errorf("repo %d migrate attempt %d: %w", idx, attempt, err)
 					return
 				}
 			}
 			ctx := context.Background()
-			for item := 0; item < 10; item++ {
+			for item := range 10 {
 				sourcePath := testStoredPath("shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
 				if err := repo.Save(ctx, FileMetadata{
 					Path:      sourcePath,
@@ -438,10 +442,161 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 
 	ctx := context.Background()
 	for idx := range repos {
-		for item := 0; item < 10; item++ {
+		for item := range 10 {
 			sourcePath := testStoredPath("shared", fmt.Sprintf("release-%d-%d.mkv", idx, item))
 			if _, err := repos[0].GetByPath(ctx, sourcePath); err != nil {
 				t.Fatalf("get %s: %v", sourcePath, err)
+			}
+		}
+	}
+}
+
+func TestSQLiteRepositoryConcurrentDistinctPathWritesOnDisk(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "distinct-path-writes.db")
+	migratorRepo, err := OpenWithLogger(repoPath, nopLogger{})
+	if err != nil {
+		t.Fatalf("open migrator repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = migratorRepo.Close()
+	})
+	if err := migratorRepo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	const repoCount = 4
+	const itemsPerRepo = 12
+	repos := make([]*SQLiteRepository, 0, repoCount)
+	for i := range repoCount {
+		repo, err := OpenWithLogger(repoPath, nopLogger{})
+		if err != nil {
+			t.Fatalf("open writer repo %d: %v", i, err)
+		}
+		repos = append(repos, repo)
+	}
+	for _, repo := range repos {
+		t.Cleanup(func() {
+			_ = repo.Close()
+		})
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, repoCount)
+	var wg sync.WaitGroup
+	for repoIdx, repo := range repos {
+		wg.Add(1)
+		go func(repoIdx int, repo *SQLiteRepository) {
+			defer wg.Done()
+			<-start
+			ctx := context.Background()
+			for item := range itemsPerRepo {
+				sourcePath := testStoredPath("concurrent", fmt.Sprintf("repo-%d", repoIdx), fmt.Sprintf("release-%d.mkv", item))
+				imagePath := testStoredPath("screenshots", fmt.Sprintf("repo-%d-release-%d.jpg", repoIdx, item))
+				now := time.Now().UTC().Truncate(time.Second)
+				if err := repo.Save(ctx, FileMetadata{
+					Path:      sourcePath,
+					Title:     fmt.Sprintf("Title %d-%d", repoIdx, item),
+					UpdatedAt: now,
+				}); err != nil {
+					errCh <- fmt.Errorf("repo %d save metadata %d: %w", repoIdx, item, err)
+					return
+				}
+				if err := repo.SaveExternalIDs(ctx, ExternalIDs{
+					SourcePath: sourcePath,
+					TMDBID:     repoIdx*1000 + item,
+					Category:   string(api.CategoryMovie),
+					UpdatedAt:  now,
+				}); err != nil {
+					errCh <- fmt.Errorf("repo %d save external ids %d: %w", repoIdx, item, err)
+					return
+				}
+				if err := repo.SaveTrackerRuleFailures(ctx, sourcePath, "BLU", []TrackerRuleFailure{{
+					Rule:      "resolution",
+					Reason:    "test",
+					CreatedAt: now,
+				}}); err != nil {
+					errCh <- fmt.Errorf("repo %d save rule failures %d: %w", repoIdx, item, err)
+					return
+				}
+				if err := repo.SaveFinalSelections(ctx, sourcePath, []ScreenshotFinalSelection{{
+					ImagePath:  imagePath,
+					Order:      1,
+					Source:     "test",
+					SelectedAt: now,
+				}}); err != nil {
+					errCh <- fmt.Errorf("repo %d save final selections %d: %w", repoIdx, item, err)
+					return
+				}
+				if err := repo.SaveUploadedImages(ctx, sourcePath, "imgbb", []UploadedImageLink{{
+					ImagePath:  imagePath,
+					UsageScope: "global",
+					ImgURL:     fmt.Sprintf("https://img.example/%d/%d.jpg", repoIdx, item),
+					RawURL:     fmt.Sprintf("https://raw.example/%d/%d.jpg", repoIdx, item),
+					WebURL:     fmt.Sprintf("https://web.example/%d/%d", repoIdx, item),
+					SizeBytes:  1024,
+					UploadedAt: now,
+				}}); err != nil {
+					errCh <- fmt.Errorf("repo %d save uploaded images %d: %w", repoIdx, item, err)
+					return
+				}
+			}
+		}(repoIdx, repo)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx := context.Background()
+	paths, err := migratorRepo.ListStoredReleasePaths(ctx)
+	if err != nil {
+		t.Fatalf("list stored paths: %v", err)
+	}
+	stored := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		stored[path] = struct{}{}
+	}
+	for repoIdx := range repoCount {
+		for item := range itemsPerRepo {
+			sourcePath := testStoredPath("concurrent", fmt.Sprintf("repo-%d", repoIdx), fmt.Sprintf("release-%d.mkv", item))
+			if _, ok := stored[sourcePath]; !ok {
+				t.Fatalf("missing stored path %s", sourcePath)
+			}
+			ids, err := migratorRepo.GetExternalIDs(ctx, sourcePath)
+			if err != nil {
+				t.Fatalf("get external ids %s: %v", sourcePath, err)
+			}
+			if ids.TMDBID != repoIdx*1000+item {
+				t.Fatalf("unexpected tmdb id for %s: %d", sourcePath, ids.TMDBID)
+			}
+			failures, err := migratorRepo.ListTrackerRuleFailuresByPath(ctx, sourcePath)
+			if err != nil {
+				t.Fatalf("list rule failures %s: %v", sourcePath, err)
+			}
+			if len(failures) != 1 {
+				t.Fatalf("expected 1 rule failure for %s, got %d", sourcePath, len(failures))
+			}
+			selections, err := migratorRepo.ListFinalSelections(ctx, sourcePath)
+			if err != nil {
+				t.Fatalf("list final selections %s: %v", sourcePath, err)
+			}
+			if len(selections) != 1 {
+				t.Fatalf("expected 1 final selection for %s, got %d", sourcePath, len(selections))
+			}
+			images, err := migratorRepo.ListUploadedImagesByPath(ctx, sourcePath)
+			if err != nil {
+				t.Fatalf("list uploaded images %s: %v", sourcePath, err)
+			}
+			if len(images) != 1 {
+				t.Fatalf("expected 1 uploaded image for %s, got %d", sourcePath, len(images))
 			}
 		}
 	}
@@ -464,7 +619,7 @@ func TestSQLiteRepositoryConcurrentReadsOnDisk(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		sourcePath := testStoredPath("reads", fmt.Sprintf("release-%d.mkv", i))
 		if err := writerRepo.Save(ctx, FileMetadata{
 			Path:      sourcePath,
@@ -476,7 +631,7 @@ func TestSQLiteRepositoryConcurrentReadsOnDisk(t *testing.T) {
 	}
 
 	repos := make([]*SQLiteRepository, 0, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		repo, err := OpenWithLogger(repoPath, nopLogger{})
 		if err != nil {
 			t.Fatalf("open reader repo %d: %v", i, err)
@@ -497,7 +652,7 @@ func TestSQLiteRepositoryConcurrentReadsOnDisk(t *testing.T) {
 		go func(idx int, repo *SQLiteRepository) {
 			defer wg.Done()
 			<-start
-			for item := 0; item < 25; item++ {
+			for item := range 25 {
 				sourcePath := testStoredPath("reads", fmt.Sprintf("release-%d.mkv", item))
 				got, err := repo.GetByPath(ctx, sourcePath)
 				if err != nil {
@@ -595,7 +750,7 @@ func TestSQLiteRepositoryReadsOverlapWithWriteTransaction(t *testing.T) {
 		go func(idx int, repo *SQLiteRepository) {
 			defer wg.Done()
 			<-start
-			for attempt := 0; attempt < 20; attempt++ {
+			for attempt := range 20 {
 				got, err := repo.GetByPath(ctx, sourcePath)
 				if err != nil {
 					errCh <- fmt.Errorf("reader %d get attempt %d: %w", idx, attempt, err)
@@ -627,7 +782,7 @@ func TestRetryBusyContextStopsOnCancellation(t *testing.T) {
 	cancel()
 
 	attempts := 0
-	err := retryBusyContext(ctx, nil, "test", 3, func() error {
+	err := retryBusyContext(ctx, nil, "test", func() error {
 		attempts++
 		return errors.New("database is locked")
 	})
@@ -1010,13 +1165,7 @@ func TestSQLiteMigrationBridgesLegacyV8AndAppliesReleaseCategory(t *testing.T) {
 	ids := readSchemaMigrationIDs(t, rawDB)
 	expected := []string{"2026_04_add_tracker_cookies", "2026_04_add_release_category"}
 	for _, id := range expected {
-		found := false
-		for _, got := range ids {
-			if got == id {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(ids, id)
 		if !found {
 			t.Fatalf("expected migration %q to be recorded after v8 bridge, got %v", id, ids)
 		}
@@ -1123,13 +1272,7 @@ func TestSQLiteMigrationBranchesCanApplyDisjointLedgerMigrations(t *testing.T) {
 		t.Fatalf("expected %d migrations after branch sharing, got %d (%v)", len(expected), len(ids), ids)
 	}
 	for _, id := range expected {
-		found := false
-		for _, got := range ids {
-			if got == id {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(ids, id)
 		if !found {
 			t.Fatalf("expected migration %q to be recorded, got %v", id, ids)
 		}
@@ -1263,9 +1406,24 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	targetPath := "/media/file.mkv"
-	otherPath := "/media/other.mkv"
+	baseDir := t.TempDir()
+	targetPath := filepath.Join(baseDir, "media", "file.mkv")
+	//pathpolicy:allow raw legacy DB path variant used to verify cleanup equivalence, not filesystem access
+	equivalentTargetPath := filepath.FromSlash(filepath.ToSlash(targetPath) + "/.")
+	otherPath := filepath.Join(baseDir, "media", "other.mkv")
 	now := time.Now().UTC().Truncate(time.Second)
+
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		CREATE TABLE ui_states (
+			source_path TEXT PRIMARY KEY,
+			payload TEXT NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create legacy ui_states: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO ui_states (source_path, payload) VALUES (?, ?), (?, ?), (?, ?)`, targetPath, "target", equivalentTargetPath, "target-equivalent", otherPath, "other"); err != nil {
+		t.Fatalf("insert legacy ui_states: %v", err)
+	}
 
 	if err := repo.Save(ctx, FileMetadata{Path: targetPath, InfoHash: "hash-a", UpdatedAt: now}); err != nil {
 		t.Fatalf("save target metadata: %v", err)
@@ -1368,26 +1526,6 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if err := repo.CreateUploadRecord(ctx, UploadRecord{Tracker: "BLU", Status: "pending", SourcePath: otherPath}); err != nil {
 		t.Fatalf("save upload record other: %v", err)
 	}
-	if err := repo.SaveUIState(ctx, "target-state", "Target", api.UIState{
-		"path": targetPath,
-		"preview": map[string]any{
-			"SourcePath":  targetPath,
-			"TrackerData": []any{map[string]any{"Tracker": "BLU", "TrackerID": "123"}},
-		},
-	}); err != nil {
-		t.Fatalf("save target ui state: %v", err)
-	}
-	if err := repo.SaveUIState(ctx, "target-upload-state", "Target upload", api.UIState{
-		"trackerUploadSnapshot": map[string]any{"sourcePath": targetPath},
-	}); err != nil {
-		t.Fatalf("save target upload ui state: %v", err)
-	}
-	if err := repo.SaveUIState(ctx, "other-state", "Other", api.UIState{
-		"path": otherPath,
-	}); err != nil {
-		t.Fatalf("save other ui state: %v", err)
-	}
-
 	if err := repo.PurgeContentData(ctx, targetPath); err != nil {
 		t.Fatalf("purge content: %v", err)
 	}
@@ -1428,6 +1566,13 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if slots, err := repo.ListScreenshotSlotsByPath(ctx, targetPath); err != nil || len(slots) != 0 {
 		t.Fatalf("expected screenshot slots removed, got len=%d err=%v", len(slots), err)
 	}
+	var legacyRows int
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE source_path IN (?, ?)`, targetPath, equivalentTargetPath).Scan(&legacyRows); err != nil {
+		t.Fatalf("query target legacy ui_states: %v", err)
+	}
+	if legacyRows != 0 {
+		t.Fatalf("expected target legacy ui_states removed, got %d", legacyRows)
+	}
 
 	if _, err := repo.GetByPath(ctx, otherPath); err != nil {
 		t.Fatalf("expected other path untouched, got %v", err)
@@ -1442,12 +1587,79 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if len(pending) != 1 || pending[0].SourcePath != otherPath {
 		t.Fatalf("expected only other upload record remaining, got %#v", pending)
 	}
-	uiStates, err := repo.ListUIStates(ctx)
-	if err != nil {
-		t.Fatalf("list ui states: %v", err)
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE source_path = ?`, otherPath).Scan(&legacyRows); err != nil {
+		t.Fatalf("query other legacy ui_states: %v", err)
 	}
-	if len(uiStates) != 1 || uiStates[0].ID != "other-state" {
-		t.Fatalf("expected only other ui state remaining, got %#v", uiStates)
+	if legacyRows != 1 {
+		t.Fatalf("expected other legacy ui_states untouched, got %d", legacyRows)
+	}
+}
+
+func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	baseDir := t.TempDir()
+	targetPath := filepath.Join(baseDir, "media", "file.mkv")
+	//pathpolicy:allow raw legacy DB path variant used to verify cleanup equivalence, not filesystem access
+	equivalentTargetPath := filepath.FromSlash(filepath.ToSlash(targetPath) + "/.")
+	otherPath := filepath.Join(baseDir, "media", "other.mkv")
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		CREATE TABLE ui_states (
+			id TEXT PRIMARY KEY,
+			data TEXT NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create legacy ui_states: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(
+		ctx,
+		`INSERT INTO ui_states (id, data) VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)`,
+		"target-by-data",
+		fmt.Sprintf(`{"sourcePath":%q}`, targetPath),
+		"target-by-equivalent-data",
+		fmt.Sprintf(`{"sourcePath":%q}`, equivalentTargetPath),
+		"target-by-nested-data",
+		fmt.Sprintf(`{"state":{"sourcePath":%q}}`, equivalentTargetPath),
+		targetPath,
+		fmt.Sprintf(`{"sourcePath":%q}`, filepath.Join(baseDir, "media", "renamed.mkv")),
+		equivalentTargetPath,
+		fmt.Sprintf(`{"sourcePath":%q}`, filepath.Join(baseDir, "media", "renamed-again.mkv")),
+		"other",
+		fmt.Sprintf(`{"state":{"sourcePath":%q}}`, otherPath),
+		"malformed",
+		`{"sourcePath":`,
+	); err != nil {
+		t.Fatalf("insert legacy ui_states: %v", err)
+	}
+
+	if err := repo.PurgeContentData(ctx, targetPath); err != nil {
+		t.Fatalf("purge content: %v", err)
+	}
+
+	var count int
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?, ?, ?, ?)`, "target-by-data", "target-by-equivalent-data", "target-by-nested-data", targetPath, equivalentTargetPath).Scan(&count); err != nil {
+		t.Fatalf("query removed legacy ui_states: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected target legacy ui_states removed, got %d", count)
+	}
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?)`, "other", "malformed").Scan(&count); err != nil {
+		t.Fatalf("query retained legacy ui_states: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected other and malformed legacy ui_states retained, got %d", count)
 	}
 }
 

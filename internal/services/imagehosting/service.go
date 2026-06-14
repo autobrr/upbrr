@@ -336,9 +336,7 @@ dispatchLoop:
 			<-sem
 			break
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer func() { <-sem }()
 			if err := ctx.Err(); err != nil {
 				mu.Lock()
@@ -410,7 +408,7 @@ dispatchLoop:
 			})
 			mu.Unlock()
 			s.logger.Debugf("image hosting: successfully uploaded %s in %v", fileName, uploadDuration)
-		}()
+		})
 	}
 
 	wg.Wait()

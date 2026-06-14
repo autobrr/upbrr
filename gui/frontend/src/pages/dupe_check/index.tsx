@@ -5,7 +5,10 @@ import type { Dispatch, SetStateAction } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type { DupeCheckSummary } from "../../types";
+import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
+import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import { cn } from "../../utils/cn";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 
@@ -21,11 +24,20 @@ type Props = {
   dupeProgressStatus: string;
   dupeCompletedCount: number;
   dupeTotalCount: number;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
+  trackerIconSrcByName: TrackerIconCache;
   handleDupeCheck: () => void;
   setDupeIgnore: Dispatch<SetStateAction<Record<string, boolean>>>;
 };
 
 const pathedNote = "pathed torrent match found; skipping dupe search";
+
+const splitTrackerLabel = (value: string) =>
+  value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 
 export default function DupeCheckPage(props: Readonly<Props>) {
   const {
@@ -40,6 +52,9 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     dupeProgressStatus,
     dupeCompletedCount,
     dupeTotalCount,
+    useFavicons = true,
+    faviconOnly = false,
+    trackerIconSrcByName,
     handleDupeCheck,
     setDupeIgnore,
   } = props;
@@ -94,6 +109,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     })
     .map((result) => result.Tracker);
   const unavailableCount = Math.max(sortedResults.length - availableTrackers.length, 0);
+  const hideTrackerNames = faviconOnly && useFavicons;
 
   return (
     <section className="flex flex-col gap-3">
@@ -113,18 +129,23 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                 Available for upload: {availableTrackers.length}
               </span>
               {availableTrackers.length ? (
-                availableTrackers.map((tracker) => (
-                  <Badge
-                    className="text-[var(--text)]"
-                    style={{
-                      backgroundColor: "color-mix(in srgb, var(--accent-2) 14%, transparent)",
-                      borderColor: "color-mix(in srgb, var(--accent-2) 42%, transparent)",
-                    }}
-                    key={`available-${tracker}`}
-                  >
-                    {tracker}
-                  </Badge>
-                ))
+                availableTrackers.map((tracker) => {
+                  const iconSrc = trackerIconFor(trackerIconSrcByName, tracker);
+                  return (
+                    <Badge
+                      aria-label={hideTrackerNames ? tracker : undefined}
+                      className="text-[var(--text)] flex items-center gap-1"
+                      style={{
+                        backgroundColor: "color-mix(in srgb, var(--accent-2) 14%, transparent)",
+                        borderColor: "color-mix(in srgb, var(--accent-2) 42%, transparent)",
+                      }}
+                      key={`available-${tracker}`}
+                    >
+                      <TrackerIconImage tracker={tracker} iconSrc={iconSrc} enabled={useFavicons} />
+                      {hideTrackerNames ? null : tracker}
+                    </Badge>
+                  );
+                })
               ) : (
                 <span>No trackers passed.</span>
               )}
@@ -192,14 +213,31 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               const showIgnoreToggle = !hasPathedNote && (hasDupes || dupeCount > 0);
               const displayDupeCount =
                 (dupeTrackerFlags[result.Tracker] ?? hasDupes) ? dupeCount : 0;
+              const displayTrackers = hasPathedNote ? splitTrackerLabel(result.Tracker) : [];
+              const iconTrackers = displayTrackers.length > 0 ? displayTrackers : [result.Tracker];
 
               return (
                 <article
                   className="grid grid-cols-[minmax(72px,96px)_44px_minmax(0,1fr)] gap-2 px-2 py-2 text-sm md:grid-cols-[minmax(90px,140px)_58px_minmax(0,1fr)_116px] md:gap-3 md:px-3"
                   key={result.Tracker}
                 >
-                  <div className="min-w-0">
-                    <p className="font-bold text-[var(--text)]">{result.Tracker}</p>
+                  <div className="min-w-0 flex items-center gap-2">
+                    <div
+                      className="flex shrink-0 flex-wrap items-center gap-1"
+                      aria-label={hideTrackerNames ? iconTrackers.join(", ") : undefined}
+                    >
+                      {iconTrackers.map((tracker) => (
+                        <TrackerIconImage
+                          tracker={tracker}
+                          iconSrc={trackerIconFor(trackerIconSrcByName, tracker)}
+                          enabled={useFavicons}
+                          key={`${result.Tracker}-${tracker}`}
+                        />
+                      ))}
+                    </div>
+                    {hideTrackerNames ? null : (
+                      <p className="font-bold text-[var(--text)]">{result.Tracker}</p>
+                    )}
                   </div>
 
                   <p

@@ -107,46 +107,6 @@ func TestNewBackendKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	}
 }
 
-func TestNewBackendClearsPersistedUIState(t *testing.T) {
-	t.Parallel()
-
-	repoPath := filepath.Join(t.TempDir(), "startup-state.db")
-	repo, err := db.OpenWithLogger(repoPath, nil)
-	if err != nil {
-		t.Fatalf("open repo: %v", err)
-	}
-	if err := repo.Migrate(); err != nil {
-		_ = repo.Close()
-		t.Fatalf("migrate repo: %v", err)
-	}
-	if err := repo.SaveUIState(context.Background(), "state-a", "Stale", map[string]any{"path": "stale"}); err != nil {
-		_ = repo.Close()
-		t.Fatalf("save ui state: %v", err)
-	}
-	_ = repo.Close()
-
-	cfg := config.Config{
-		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
-		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
-	}
-	backend, err := NewBackend(cfg, newEventHub())
-	if err != nil {
-		t.Fatalf("new backend: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = backend.Close()
-	})
-
-	stateList, err := backend.ListUIStates()
-	if err != nil {
-		t.Fatalf("list ui states: %v", err)
-	}
-	if len(stateList.States) != 0 {
-		t.Fatalf("expected startup to clear persisted UI state, got %#v", stateList.States)
-	}
-}
-
 func TestBackendGetLogExclusionsReturnsEmptySliceWhenMissing(t *testing.T) {
 	t.Parallel()
 

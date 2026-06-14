@@ -6,6 +6,9 @@ import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Switch } from "../../components/ui/switch";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
+import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
+import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type {
   MetadataPreview,
   TrackerDryRunPreview,
@@ -24,6 +27,8 @@ type Props = {
   failedDupeTrackerSet: Set<string>;
   uploadToggles: Record<string, boolean>;
   setUploadToggles: Dispatch<SetStateAction<Record<string, boolean>>>;
+  skipClientInjection: boolean;
+  setSkipClientInjection: Dispatch<SetStateAction<boolean>>;
   namingOverrides: Array<[string, unknown]>;
   preview: MetadataPreview;
   formatLabel: (value: string) => string;
@@ -35,6 +40,9 @@ type Props = {
   dryRunProgress: UploadProgressUpdate | null;
   dryRunPreview: TrackerDryRunPreview;
   trackerQuestionnaireAnswers: Record<string, Record<string, string>>;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
+  trackerIconSrcByName: TrackerIconCache;
   onQuestionnaireAnswerChange: (tracker: string, key: string, value: string) => void;
   onRunDryRun: () => void;
   onStartUpload: () => void;
@@ -72,6 +80,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     failedDupeTrackerSet,
     uploadToggles,
     setUploadToggles,
+    skipClientInjection,
+    setSkipClientInjection,
     namingOverrides,
     preview,
     formatLabel,
@@ -83,6 +93,9 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     dryRunProgress,
     dryRunPreview,
     trackerQuestionnaireAnswers,
+    useFavicons = true,
+    faviconOnly = false,
+    trackerIconSrcByName,
     onQuestionnaireAnswerChange,
     onRunDryRun,
     onStartUpload,
@@ -354,6 +367,18 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
           <Button type="button" onClick={onRetryFailed} disabled={!canRetry}>
             Retry Failed
           </Button>
+          <label
+            className="inline-flex items-center gap-2 text-sm text-[var(--text)]"
+            htmlFor="skip-client-injection"
+          >
+            <Checkbox
+              id="skip-client-injection"
+              checked={skipClientInjection}
+              disabled={uploadRunning}
+              onCheckedChange={setSkipClientInjection}
+            />
+            <span>Skip client injection</span>
+          </label>
           <p className="m-0 text-xs text-[var(--muted)]">
             Selected: {selectedTrackerCount} · Uploaded: {uploadSnapshot?.uploadedCount || 0}
           </p>
@@ -412,12 +437,20 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
               <div className="mt-2 grid gap-1">
                 {blockedTrackers.map((tracker) => {
                   const state = trackerBlockState[tracker.name];
+                  const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
                   return (
                     <div
                       className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1.5"
                       key={tracker.name}
                     >
-                      <span className="value text-sm leading-5">{tracker.name}</span>
+                      <span className="value text-sm leading-5 flex items-center gap-1.5">
+                        <TrackerIconImage
+                          tracker={tracker.name}
+                          iconSrc={iconSrc}
+                          enabled={useFavicons}
+                        />
+                        {faviconOnly && useFavicons ? null : tracker.name}
+                      </span>
                       <div className="flex flex-wrap items-center justify-end gap-1">
                         {state?.reasons.map((reason) => (
                           <span className={blockReasonClass} key={`${tracker.name}-${reason}`}>
@@ -443,6 +476,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
             const dryRun = selected ? dryRunMap[normalizedTrackerName] : undefined;
             const imageHost = dryRun?.ImageHost;
             const imageHostWarnings = imageHost?.Warnings || [];
+            const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
             const imageHostStatus = String(imageHost?.Status || "").toLowerCase();
             const questionnaire = dryRun?.Questionnaire;
             const questionnaireAnswers =
@@ -467,8 +501,15 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                 key={tracker.name}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <p className="value text-base leading-5">{tracker.name}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <TrackerIconImage
+                      tracker={tracker.name}
+                      iconSrc={iconSrc}
+                      enabled={useFavicons}
+                    />
+                    {faviconOnly && useFavicons ? null : (
+                      <p className="value text-base leading-5">{tracker.name}</p>
+                    )}
                     <span
                       className={cn(
                         "inline-flex items-center rounded-full border px-2 py-0.5 text-xs capitalize",

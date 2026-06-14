@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -45,7 +46,7 @@ func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	hashLarge, dataLarge := createTestTorrent(t, dir, "Movie.Title.2024.large.mkv", 25)
+	hashLarge, dataLarge := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 25)
 	hashSmall, dataSmall := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
 	dataByHash := map[string][]byte{
 		hashLarge: dataLarge,
@@ -230,17 +231,521 @@ func TestSearchPathedTorrentsProxyStripsSymbolsFromSearch(t *testing.T) {
 	if strings.Contains(searchQueries[0], "\u2122") {
 		t.Fatalf("expected proxy search term without trademark symbol, got %q", searchQueries[0])
 	}
-	if result.TrackerIDs["bhd"] != "10001" {
-		t.Fatalf("expected BHD tracker id, got %q", result.TrackerIDs["bhd"])
+	if len(result.TrackerIDs) != 0 {
+		t.Fatalf("expected unvalidated tracker ids to be ignored, got %#v", result.TrackerIDs)
 	}
-	if result.TrackerIDs["ptp"] != "10002" {
-		t.Fatalf("expected PTP tracker id, got %q", result.TrackerIDs["ptp"])
+	if len(result.MatchedTrackers) != 0 {
+		t.Fatalf("expected unvalidated tracker matches to be ignored, got %v", result.MatchedTrackers)
 	}
-	if !containsString(result.MatchedTrackers, "BHD") {
-		t.Fatalf("expected BHD in matched trackers, got %v", result.MatchedTrackers)
+}
+
+func TestSearchPathedTorrentsProxySearchesExtensionlessFileName(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	hash, data := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
+	searchQueries := make([]string, 0)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/search":
+			search := r.URL.Query().Get("search")
+			searchQueries = append(searchQueries, search)
+			if search != "Movie.Title.2024" {
+				_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
+				return
+			}
+			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{
+				Hash:        hash,
+				Name:        "Movie.Title.2024",
+				Tracker:     "https://blutopia.cc/announce/redacted",
+				Comment:     "https://blutopia.cc/torrents/7788",
+				Trackers:    []qbittorrent.TorrentTracker{{Url: "https://blutopia.cc/announce/redacted", Status: qbittorrent.TrackerStatusOK}},
+				NumComplete: 4,
+			}})
+		case "/api/v2/torrents/properties":
+			_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{
+				Comment:   "https://blutopia.cc/torrents/7788",
+				PieceSize: 4 * 1024 * 1024,
+			})
+		case "/api/v2/torrents/export":
+			if err := r.ParseForm(); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if r.FormValue("hash") != hash {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write(data)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{TMDBAPI: "x", DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{"qbit"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:        "qui",
+				QuiProxyURL: server.URL,
+			},
+		},
 	}
-	if !containsString(result.MatchedTrackers, "PTP") {
-		t.Fatalf("expected PTP in matched trackers, got %v", result.MatchedTrackers)
+
+	svc := NewService(cfg, api.NopLogger{})
+	result, err := svc.SearchPathedTorrents(context.Background(), api.PreparedMetadata{
+		SourcePath: filepath.Join(dir, "Movie.Title.2024.mkv"),
+		FileList:   []string{filepath.Join(dir, "Movie.Title.2024.mkv")},
+	})
+	if err != nil {
+		t.Fatalf("search pathed torrents: %v", err)
+	}
+	if !containsString(searchQueries, "Movie.Title.2024.mkv") || !containsString(searchQueries, "Movie.Title.2024") {
+		t.Fatalf("expected original and extensionless search terms, got %v", searchQueries)
+	}
+	if result.InfoHash != hash {
+		t.Fatalf("expected validated infohash %q, got %q", hash, result.InfoHash)
+	}
+	if result.TrackerIDs["blu"] != "7788" {
+		t.Fatalf("expected validated BLU tracker id, got %q", result.TrackerIDs["blu"])
+	}
+	if !containsString(result.MatchedTrackers, "BLU") {
+		t.Fatalf("expected validated BLU match, got %v", result.MatchedTrackers)
+	}
+}
+
+func TestSearchPathedTorrentsProxyRejectsIDsFromInvalidExtensionlessMatch(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	validHash, validData := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
+	wrongHash, wrongData := createTestTorrent(t, dir, "Different.Title.2024.mkv", 22)
+	dataByHash := map[string][]byte{
+		validHash: validData,
+		wrongHash: wrongData,
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/search":
+			if r.URL.Query().Get("search") != "Movie.Title.2024" {
+				_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
+				return
+			}
+			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{
+				{
+					Hash:        wrongHash,
+					Name:        "Movie.Title.2024",
+					Tracker:     "https://tracker.beyond-hd.me/announce/redacted",
+					Comment:     "https://beyond-hd.me/details/1111",
+					Trackers:    []qbittorrent.TorrentTracker{{Url: "https://tracker.beyond-hd.me/announce/redacted", Status: qbittorrent.TrackerStatusOK}},
+					NumComplete: 9,
+				},
+				{
+					Hash:        validHash,
+					Name:        "Movie.Title.2024",
+					Tracker:     "https://blutopia.cc/announce/redacted",
+					Comment:     "https://blutopia.cc/torrents/2222",
+					Trackers:    []qbittorrent.TorrentTracker{{Url: "https://blutopia.cc/announce/redacted", Status: qbittorrent.TrackerStatusOK}},
+					NumComplete: 5,
+				},
+			})
+		case "/api/v2/torrents/properties":
+			hash := r.URL.Query().Get("hash")
+			props := qbittorrent.TorrentProperties{PieceSize: 4 * 1024 * 1024}
+			if hash == wrongHash {
+				props.Comment = "https://beyond-hd.me/details/1111"
+			} else {
+				props.Comment = "https://blutopia.cc/torrents/2222"
+			}
+			_ = json.NewEncoder(w).Encode(props)
+		case "/api/v2/torrents/export":
+			if err := r.ParseForm(); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			data, ok := dataByHash[r.FormValue("hash")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write(data)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{TMDBAPI: "x", DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{"qbit"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:        "qui",
+				QuiProxyURL: server.URL,
+			},
+		},
+	}
+
+	svc := NewService(cfg, api.NopLogger{})
+	result, err := svc.SearchPathedTorrents(context.Background(), api.PreparedMetadata{
+		SourcePath: filepath.Join(dir, "Movie.Title.2024.mkv"),
+		FileList:   []string{filepath.Join(dir, "Movie.Title.2024.mkv")},
+	})
+	if err != nil {
+		t.Fatalf("search pathed torrents: %v", err)
+	}
+	if result.InfoHash != validHash {
+		t.Fatalf("expected validated infohash %q, got %q", validHash, result.InfoHash)
+	}
+	if result.TrackerIDs["blu"] != "2222" {
+		t.Fatalf("expected validated BLU tracker id, got %q", result.TrackerIDs["blu"])
+	}
+	if got := result.TrackerIDs["bhd"]; got != "" {
+		t.Fatalf("expected invalid BHD tracker id to be ignored, got %q", got)
+	}
+	if containsString(result.MatchedTrackers, "BHD") {
+		t.Fatalf("expected invalid BHD match to be ignored, got %v", result.MatchedTrackers)
+	}
+}
+
+func TestSearchPathedTorrentsProxyUsesFolderWrappedSingleFileAsTrackerSource(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	exactHash, exactData := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
+	folderHash, folderData := createTestFolderTorrent(t, dir, "Movie.Title.2024.Release", "Movie.Title.2024.mkv", 22)
+	dataByHash := map[string][]byte{
+		exactHash:  exactData,
+		folderHash: folderData,
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/search":
+			if r.URL.Query().Get("search") != "Movie.Title.2024" {
+				_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
+				return
+			}
+			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{
+				{
+					Hash:        folderHash,
+					Name:        "Movie.Title.2024",
+					Tracker:     "https://tracker.beyond-hd.me/announce/redacted",
+					Comment:     "https://beyond-hd.me/details/3333",
+					Trackers:    []qbittorrent.TorrentTracker{{Url: "https://tracker.beyond-hd.me/announce/redacted", Status: qbittorrent.TrackerStatusOK}},
+					NumComplete: 8,
+				},
+				{
+					Hash:        exactHash,
+					Name:        "Movie.Title.2024",
+					Tracker:     "https://blutopia.cc/announce/redacted",
+					Comment:     "https://blutopia.cc/torrents/4444",
+					Trackers:    []qbittorrent.TorrentTracker{{Url: "https://blutopia.cc/announce/redacted", Status: qbittorrent.TrackerStatusOK}},
+					NumComplete: 4,
+				},
+			})
+		case "/api/v2/torrents/properties":
+			hash := r.URL.Query().Get("hash")
+			props := qbittorrent.TorrentProperties{PieceSize: 4 * 1024 * 1024}
+			if hash == folderHash {
+				props.Comment = "https://beyond-hd.me/details/3333"
+			} else {
+				props.Comment = "https://blutopia.cc/torrents/4444"
+			}
+			_ = json.NewEncoder(w).Encode(props)
+		case "/api/v2/torrents/export":
+			if err := r.ParseForm(); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			data, ok := dataByHash[r.FormValue("hash")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write(data)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{TMDBAPI: "x", DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{"qbit"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:        "qui",
+				QuiProxyURL: server.URL,
+			},
+		},
+	}
+
+	svc := NewService(cfg, api.NopLogger{})
+	result, err := svc.SearchPathedTorrents(context.Background(), api.PreparedMetadata{
+		SourcePath: filepath.Join(dir, "Movie.Title.2024.mkv"),
+		FileList:   []string{filepath.Join(dir, "Movie.Title.2024.mkv")},
+	})
+	if err != nil {
+		t.Fatalf("search pathed torrents: %v", err)
+	}
+	if result.InfoHash != exactHash {
+		t.Fatalf("expected reusable exact-file infohash %q, got %q", exactHash, result.InfoHash)
+	}
+	if result.InfoHash == folderHash {
+		t.Fatalf("expected folder-wrapped torrent not to be selected as reusable infohash")
+	}
+	if result.TorrentPath == "" {
+		t.Fatalf("expected exact-file torrent path to be selected")
+	}
+	if result.TrackerIDs["bhd"] != "3333" {
+		t.Fatalf("expected folder-wrapped BHD tracker id, got %q", result.TrackerIDs["bhd"])
+	}
+	if result.TrackerIDs["blu"] != "4444" {
+		t.Fatalf("expected exact BLU tracker id, got %q", result.TrackerIDs["blu"])
+	}
+	if !containsString(result.MatchedTrackers, "BHD") || !containsString(result.MatchedTrackers, "BLU") {
+		t.Fatalf("expected both folder-wrapped and exact matches reported in client, got %v", result.MatchedTrackers)
+	}
+	if len(result.TorrentComments) != 2 {
+		t.Fatalf("expected both client matches in torrent comments, got %d", len(result.TorrentComments))
+	}
+}
+
+func TestSearchPathedTorrentsProxyKeepsPieceConstrainedTrackerData(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	hash, data := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 16)
+	data = padTorrentData(t, data, 251*1024, hash)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/search":
+			search := r.URL.Query().Get("search")
+			if search != "Movie.Title.2024.mkv" && search != "Movie.Title.2024" {
+				_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
+				return
+			}
+			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{
+				Hash:        hash,
+				Name:        "Movie.Title.2024",
+				Tracker:     "https://blutopia.cc/announce/redacted",
+				Comment:     "https://blutopia.cc/torrents/5555",
+				Trackers:    []qbittorrent.TorrentTracker{{Url: "https://blutopia.cc/announce/redacted", Status: qbittorrent.TrackerStatusOK}},
+				NumComplete: 6,
+			}})
+		case "/api/v2/torrents/properties":
+			_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{
+				Comment:   "https://blutopia.cc/torrents/5555",
+				PieceSize: 64 * 1024,
+			})
+		case "/api/v2/torrents/export":
+			if err := r.ParseForm(); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if r.FormValue("hash") != hash {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write(data)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{TMDBAPI: "x", DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{"qbit"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:        "qui",
+				QuiProxyURL: server.URL,
+			},
+		},
+	}
+
+	svc := NewService(cfg, api.NopLogger{})
+	result, err := svc.SearchPathedTorrents(context.Background(), api.PreparedMetadata{
+		SourcePath: filepath.Join(dir, "Movie.Title.2024.mkv"),
+		FileList:   []string{filepath.Join(dir, "Movie.Title.2024.mkv")},
+	})
+	if err != nil {
+		t.Fatalf("search pathed torrents: %v", err)
+	}
+	if result.InfoHash != "" {
+		t.Fatalf("expected piece-constrained torrent not to be selected as reusable infohash, got %q", result.InfoHash)
+	}
+	if result.TorrentPath != "" {
+		t.Fatalf("expected piece-constrained torrent not to be saved as reusable torrent path, got %q", result.TorrentPath)
+	}
+	if result.TrackerIDs["blu"] != "5555" {
+		t.Fatalf("expected piece-constrained BLU tracker id, got %q", result.TrackerIDs["blu"])
+	}
+	if !result.FoundTrackerMatch {
+		t.Fatal("expected piece-constrained client match to report tracker match")
+	}
+	if !containsString(result.MatchedTrackers, "BLU") {
+		t.Fatalf("expected piece-constrained BLU match, got %v", result.MatchedTrackers)
+	}
+	if len(result.TorrentComments) != 1 {
+		t.Fatalf("expected piece-constrained client match in torrent comments, got %d", len(result.TorrentComments))
+	}
+}
+
+func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	validHash, validData := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
+	wrongHash, wrongData := createTestTorrent(t, dir, "Different.Title.2024.mkv", 22)
+	dataByHash := map[string][]byte{
+		validHash: validData,
+		wrongHash: wrongData,
+	}
+
+	var mu sync.Mutex
+	calls := make([]string, 0)
+	record := func(call string) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, call)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			record("login")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			hashes := r.URL.Query().Get("hashes")
+			if hashes != "" {
+				record("info:" + hashes)
+				_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{Hash: hashes}})
+				return
+			}
+			record("list")
+			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{
+				{
+					Hash:        wrongHash,
+					Name:        "Movie.Title.2024",
+					Tracker:     "https://tracker.beyond-hd.me/announce/redacted",
+					Comment:     "https://beyond-hd.me/details/6666",
+					NumComplete: 9,
+				},
+				{
+					Hash:        validHash,
+					Name:        "Movie.Title.2024",
+					Tracker:     "https://blutopia.cc/announce/redacted",
+					Comment:     "https://blutopia.cc/torrents/7777",
+					NumComplete: 5,
+				},
+			})
+		case "/api/v2/torrents/properties":
+			hash := r.URL.Query().Get("hash")
+			record("properties:" + hash)
+			props := qbittorrent.TorrentProperties{PieceSize: 4 * 1024 * 1024}
+			if hash == wrongHash {
+				props.Comment = "https://beyond-hd.me/details/6666"
+			} else {
+				props.Comment = "https://blutopia.cc/torrents/7777"
+			}
+			_ = json.NewEncoder(w).Encode(props)
+		case "/api/v2/torrents/trackers":
+			hash := r.URL.Query().Get("hash")
+			record("trackers:" + hash)
+			trackerURL := "https://blutopia.cc/announce/redacted"
+			if hash == wrongHash {
+				trackerURL = "https://tracker.beyond-hd.me/announce/redacted"
+			}
+			_ = json.NewEncoder(w).Encode([]qbittorrent.TorrentTracker{{Url: trackerURL, Status: qbittorrent.TrackerStatusOK}})
+		case "/api/v2/torrents/export":
+			hash := r.URL.Query().Get("hash")
+			record("export:" + hash)
+			data, ok := dataByHash[hash]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write(data)
+		case "/api/v2/torrents/recheck":
+			if err := r.ParseForm(); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			record("recheck:" + r.FormValue("hashes"))
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{TMDBAPI: "x", DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{"qbit"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}
+
+	forceRecheck := true
+	svc := NewService(cfg, api.NopLogger{})
+	result, err := svc.SearchPathedTorrents(context.Background(), api.PreparedMetadata{
+		SourcePath: filepath.Join(dir, "Movie.Title.2024.mkv"),
+		FileList:   []string{filepath.Join(dir, "Movie.Title.2024.mkv")},
+		ClientOverrides: api.ClientOverrides{
+			ForceRecheck: &forceRecheck,
+		},
+	})
+	if err != nil {
+		t.Fatalf("search pathed torrents: %v", err)
+	}
+	if result.InfoHash != validHash {
+		t.Fatalf("expected validated infohash %q, got %q", validHash, result.InfoHash)
+	}
+
+	mu.Lock()
+	gotCalls := append([]string(nil), calls...)
+	mu.Unlock()
+
+	if containsString(gotCalls, "recheck:"+wrongHash) {
+		t.Fatalf("did not expect invalid metadata candidate to be rechecked; calls=%v", gotCalls)
+	}
+	validExportIdx := indexOfValue(gotCalls, "export:"+validHash)
+	validRecheckIdx := indexOfValue(gotCalls, "recheck:"+validHash)
+	if validExportIdx == -1 || validRecheckIdx == -1 {
+		t.Fatalf("expected valid candidate export and recheck calls, got %v", gotCalls)
+	}
+	if validRecheckIdx < validExportIdx {
+		t.Fatalf("expected valid candidate recheck after metadata export, got %v", gotCalls)
 	}
 }
 
@@ -268,6 +773,18 @@ func TestLogPathedSearchMatchesRedactsTrackerURLs(t *testing.T) {
 	}
 	if strings.Contains(joined, "announce") || strings.Contains(joined, "passkey") || strings.Contains(joined, "beyond-hd.me") {
 		t.Fatalf("expected tracker URLs redacted from debug log, got %q", joined)
+	}
+}
+
+func TestCommonPathDoesNotFoldCaseDistinctSegments(t *testing.T) {
+	t.Parallel()
+
+	got := commonPath([]string{
+		"Release/BDMV/STREAM/00001.m2ts",
+		"Release/bdmv/STREAM/00002.m2ts",
+	})
+	if got != "Release" {
+		t.Fatalf("expected exact shared root only, got %q", got)
 	}
 }
 
@@ -541,6 +1058,76 @@ func createTestTorrent(t *testing.T, dir, name string, pieceExp uint) (string, [
 	torrentPath := filepath.Join(dir, name+".torrent")
 	_, err := mkbrr.Create(mkbrr.CreateOptions{
 		Path:           source,
+		OutputPath:     torrentPath,
+		IsPrivate:      true,
+		PieceLengthExp: &pieceExp,
+	})
+	if err != nil {
+		t.Fatalf("create torrent: %v", err)
+	}
+
+	data, err := os.ReadFile(torrentPath)
+	if err != nil {
+		t.Fatalf("read torrent: %v", err)
+	}
+	metaInfo, err := metainfo.LoadFromFile(torrentPath)
+	if err != nil {
+		t.Fatalf("load torrent: %v", err)
+	}
+
+	return metaInfo.HashInfoBytes().String(), data
+}
+
+// padTorrentData appends a top-level bencoded padding field without changing
+// the infohash.
+func padTorrentData(t *testing.T, data []byte, minSize int, expectedHash string) []byte {
+	t.Helper()
+
+	if len(data) >= minSize {
+		return data
+	}
+	if len(data) == 0 || data[len(data)-1] != 'e' {
+		t.Fatalf("expected top-level torrent dictionary ending")
+	}
+
+	padding := bytes.Repeat([]byte("p"), minSize-len(data)+32)
+	entry := []byte(fmt.Sprintf("7:padding%d:", len(padding)))
+	padded := make([]byte, 0, len(data)+len(entry)+len(padding))
+	padded = append(padded, data[:len(data)-1]...)
+	padded = append(padded, entry...)
+	padded = append(padded, padding...)
+	padded = append(padded, 'e')
+
+	metaInfo, err := metainfo.Load(bytes.NewReader(padded))
+	if err != nil {
+		t.Fatalf("load padded torrent: %v", err)
+	}
+	if got := metaInfo.HashInfoBytes().String(); got != expectedHash {
+		t.Fatalf("padded torrent changed infohash: got %q want %q", got, expectedHash)
+	}
+	if len(padded) < minSize {
+		t.Fatalf("padded torrent size = %d, want at least %d", len(padded), minSize)
+	}
+	return padded
+}
+
+// createTestFolderTorrent creates a folder-wrapped single-file torrent and
+// returns its infohash with the raw torrent data.
+func createTestFolderTorrent(t *testing.T, dir, folderName, fileName string, pieceExp uint) (string, []byte) {
+	t.Helper()
+
+	sourceDir := filepath.Join(dir, folderName)
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatalf("create source dir: %v", err)
+	}
+	source := filepath.Join(sourceDir, fileName)
+	if err := os.WriteFile(source, bytes.Repeat([]byte("a"), 5*1024*1024), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	torrentPath := filepath.Join(dir, folderName+".torrent")
+	_, err := mkbrr.Create(mkbrr.CreateOptions{
+		Path:           sourceDir,
 		OutputPath:     torrentPath,
 		IsPrivate:      true,
 		PieceLengthExp: &pieceExp,

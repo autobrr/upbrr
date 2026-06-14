@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"reflect"
@@ -43,6 +44,8 @@ type MainSettingsConfig struct {
 	TrackerPassChecks   int    `yaml:"tracker_pass_checks"`
 	InputHistoryLimit   int    `yaml:"input_history_limit"`
 	DBPath              string `yaml:"db_path"`
+	UseFavicons         bool   `yaml:"use_favicons"`
+	FaviconOnly         bool   `yaml:"favicon_only"`
 }
 
 type mainSettingsConfigAlias MainSettingsConfig
@@ -50,6 +53,7 @@ type mainSettingsConfigAlias MainSettingsConfig
 func (c *MainSettingsConfig) UnmarshalYAML(value *yaml.Node) error {
 	var raw mainSettingsConfigAlias
 	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	raw.UseFavicons = true
 	if err := value.Decode(&raw); err != nil {
 		return fmt.Errorf("config: decode main settings yaml: %w", err)
 	}
@@ -60,6 +64,7 @@ func (c *MainSettingsConfig) UnmarshalYAML(value *yaml.Node) error {
 func (c *MainSettingsConfig) UnmarshalJSON(data []byte) error {
 	var raw mainSettingsConfigAlias
 	raw.InputHistoryLimit = DefaultInputHistoryLimit
+	raw.UseFavicons = true
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("config: decode main settings json: %w", err)
 	}
@@ -86,6 +91,8 @@ type ImageHostingConfig struct {
 	ShareXURL       string `yaml:"sharex_url"`
 	ShareXAPIKey    string `yaml:"sharex_api_key"`
 	UTPPMAPI        string `yaml:"utppm_api"`
+	LostimgEnabled  bool   `yaml:"lostimg_enabled"`
+	LostimgAPI      string `yaml:"lostimg_api"`
 }
 
 type MetadataConfig struct {
@@ -201,55 +208,57 @@ type TrackersConfig struct {
 }
 
 type TrackerConfig struct {
-	LinkDirName         string                 `yaml:"link_dir_name" json:"LinkDirName"`
-	APIKey              string                 `yaml:"api_key" json:"APIKey"`
-	PTPAPIUser          string                 `yaml:"ApiUser" json:"ApiUser"`
-	PTPAPIKey           string                 `yaml:"ApiKey" json:"ApiKey"`
-	Username            string                 `yaml:"username" json:"Username"`
-	Password            string                 `yaml:"password" json:"Password"`
-	Passkey             string                 `yaml:"passkey" json:"Passkey"`
-	AnnounceURL         string                 `yaml:"announce_url" json:"AnnounceURL"`
-	MyAnnounceURL       string                 `yaml:"my_announce_url" json:"MyAnnounceURL"`
-	URL                 string                 `yaml:"url" json:"URL"`
-	UploaderStatus      bool                   `yaml:"uploader_status" json:"UploaderStatus"`
-	CustomLayout        string                 `yaml:"custom_layout" json:"CustomLayout"`
-	TagForCustomRelease string                 `yaml:"tag_for_custom_release" json:"TagForCustomRelease"`
-	CheckForRules       bool                   `yaml:"check_for_rules" json:"CheckForRules"`
-	ModQ                bool                   `yaml:"modq" json:"ModQ"`
-	Draft               bool                   `yaml:"draft" json:"Draft"`
-	DraftDefault        bool                   `yaml:"draft_default" json:"DraftDefault"`
-	Anon                bool                   `yaml:"anon" json:"Anon"`
-	ShowGroupIfAnon     bool                   `yaml:"show_group_if_anon" json:"ShowGroupIfAnon"`
-	BhdRSSKey           string                 `yaml:"bhd_rss_key" json:"BhdRSSKey"`
-	CheckRequests       bool                   `yaml:"check_requests" json:"CheckRequests"`
-	FullMediainfo       bool                   `yaml:"full_mediainfo" json:"FullMediainfo"`
-	UploaderName        string                 `yaml:"uploader_name" json:"UploaderName"`
-	ImgRehost           bool                   `yaml:"img_rehost" json:"ImgRehost"`
-	ImageHost           string                 `yaml:"image_host" json:"ImageHost"`
-	UseSpanishTitle     bool                   `yaml:"use_spanish_title" json:"UseSpanishTitle"`
-	UseItalianTitle     bool                   `yaml:"use_italian_title" json:"UseItalianTitle"`
-	OTPURI              string                 `yaml:"otp_uri" json:"OTPURI"`
-	SkipIfRehash        bool                   `yaml:"skip_if_rehash" json:"SkipIfRehash"`
-	PreferMTV           bool                   `yaml:"prefer_mtv_torrent" json:"PreferMTV"`
-	PTGenAPI            string                 `yaml:"ptgen_api" json:"PTGenAPI"`
-	AddWebSourceToDesc  bool                   `yaml:"add_web_source_to_desc" json:"AddWebSourceToDesc"`
-	UseMetadataName     bool                   `yaml:"use_metadata_name" json:"UseMetadataName"`
-	InjectDelay         *int                   `yaml:"inject_delay" json:"InjectDelay"`
-	ImageCount          int                    `yaml:"image_count" json:"ImageCount"`
-	Channel             string                 `yaml:"channel" json:"Channel"`
-	ImgAPI              string                 `yaml:"img_api" json:"ImgAPI"`
-	PronfoAPIKey        string                 `yaml:"pronfo_api_key" json:"PronfoAPIKey"`
-	PronfoTheme         string                 `yaml:"pronfo_theme" json:"PronfoTheme"`
-	PronfoRAPIID        string                 `yaml:"pronfo_rapi_id" json:"PronfoRAPIID"`
-	APIUpload           bool                   `yaml:"api_upload" json:"APIUpload"`
-	Exclusive           bool                   `yaml:"exclusive" json:"Exclusive"`
-	LoginQuestion       string                 `yaml:"login_question" json:"LoginQuestion"`
-	LoginAnswer         string                 `yaml:"login_answer" json:"LoginAnswer"`
-	UserID              string                 `yaml:"user_id" json:"UserID"`
-	Filebrowser         string                 `yaml:"filebrowser" json:"Filebrowser"`
-	Internal            bool                   `yaml:"internal" json:"Internal"`
-	InternalGroups      []string               `yaml:"internal_groups" json:"InternalGroups"`
-	Unknown             map[string]interface{} `yaml:"-" json:"-"`
+	LinkDirName         string         `yaml:"link_dir_name" json:"LinkDirName"`
+	APIKey              string         `yaml:"api_key" json:"APIKey"`
+	PTPAPIUser          string         `yaml:"ApiUser" json:"ApiUser"`
+	PTPAPIKey           string         `yaml:"ApiKey" json:"ApiKey"`
+	Username            string         `yaml:"username" json:"Username"`
+	Password            string         `yaml:"password" json:"Password"`
+	Passkey             string         `yaml:"passkey" json:"Passkey"`
+	AnnounceURL         string         `yaml:"announce_url" json:"AnnounceURL"`
+	MyAnnounceURL       string         `yaml:"my_announce_url" json:"MyAnnounceURL"`
+	URL                 string         `yaml:"url" json:"URL"`
+	FaviconURL          string         `yaml:"favicon_url" json:"FaviconURL"`
+	UploaderStatus      bool           `yaml:"uploader_status" json:"UploaderStatus"`
+	CustomLayout        string         `yaml:"custom_layout" json:"CustomLayout"`
+	TagForCustomRelease string         `yaml:"tag_for_custom_release" json:"TagForCustomRelease"`
+	CheckForRules       bool           `yaml:"check_for_rules" json:"CheckForRules"`
+	ModQ                bool           `yaml:"modq" json:"ModQ"`
+	Draft               bool           `yaml:"draft" json:"Draft"`
+	DraftDefault        bool           `yaml:"draft_default" json:"DraftDefault"`
+	Anon                bool           `yaml:"anon" json:"Anon"`
+	ShowGroupIfAnon     bool           `yaml:"show_group_if_anon" json:"ShowGroupIfAnon"`
+	BhdRSSKey           string         `yaml:"bhd_rss_key" json:"BhdRSSKey"`
+	CheckRequests       bool           `yaml:"check_requests" json:"CheckRequests"`
+	FullMediainfo       bool           `yaml:"full_mediainfo" json:"FullMediainfo"`
+	UploaderName        string         `yaml:"uploader_name" json:"UploaderName"`
+	ImgRehost           bool           `yaml:"img_rehost" json:"ImgRehost"`
+	ImageHost           string         `yaml:"image_host" json:"ImageHost"`
+	TorrentClient       string         `yaml:"torrent_client" json:"TorrentClient"`
+	UseSpanishTitle     bool           `yaml:"use_spanish_title" json:"UseSpanishTitle"`
+	UseItalianTitle     bool           `yaml:"use_italian_title" json:"UseItalianTitle"`
+	OTPURI              string         `yaml:"otp_uri" json:"OTPURI"`
+	SkipIfRehash        bool           `yaml:"skip_if_rehash" json:"SkipIfRehash"`
+	PreferMTV           bool           `yaml:"prefer_mtv_torrent" json:"PreferMTV"`
+	PTGenAPI            string         `yaml:"ptgen_api" json:"PTGenAPI"`
+	AddWebSourceToDesc  bool           `yaml:"add_web_source_to_desc" json:"AddWebSourceToDesc"`
+	UseMetadataName     bool           `yaml:"use_metadata_name" json:"UseMetadataName"`
+	InjectDelay         *int           `yaml:"inject_delay" json:"InjectDelay"`
+	ImageCount          int            `yaml:"image_count" json:"ImageCount"`
+	Channel             string         `yaml:"channel" json:"Channel"`
+	ImgAPI              string         `yaml:"img_api" json:"ImgAPI"`
+	PronfoAPIKey        string         `yaml:"pronfo_api_key" json:"PronfoAPIKey"`
+	PronfoTheme         string         `yaml:"pronfo_theme" json:"PronfoTheme"`
+	PronfoRAPIID        string         `yaml:"pronfo_rapi_id" json:"PronfoRAPIID"`
+	APIUpload           bool           `yaml:"api_upload" json:"APIUpload"`
+	Exclusive           bool           `yaml:"exclusive" json:"Exclusive"`
+	LoginQuestion       string         `yaml:"login_question" json:"LoginQuestion"`
+	LoginAnswer         string         `yaml:"login_answer" json:"LoginAnswer"`
+	UserID              string         `yaml:"user_id" json:"UserID"`
+	Filebrowser         string         `yaml:"filebrowser" json:"Filebrowser"`
+	Internal            bool           `yaml:"internal" json:"Internal"`
+	InternalGroups      []string       `yaml:"internal_groups" json:"InternalGroups"`
+	Unknown             map[string]any `yaml:"-" json:"-"`
 }
 
 type trackerConfigAlias TrackerConfig
@@ -272,9 +281,8 @@ func initTrackerTagMetadata() {
 		trackerYAMLToJSON = make(map[string]string)
 		trackerJSONToYAML = make(map[string]string)
 
-		t := reflect.TypeOf(TrackerConfig{})
-		for i := 0; i < t.NumField(); i++ {
-			field := t.Field(i)
+		t := reflect.TypeFor[TrackerConfig]()
+		for field := range t.Fields() {
 			yamlTag := strings.TrimSpace(strings.Split(field.Tag.Get("yaml"), ",")[0])
 			jsonTag := strings.TrimSpace(strings.Split(field.Tag.Get("json"), ",")[0])
 			if yamlTag == "" || yamlTag == "-" || jsonTag == "" || jsonTag == "-" {
@@ -293,7 +301,7 @@ func initTrackerSchema() {
 		trackerSchema = make(map[string]map[string]struct{})
 
 		var root struct {
-			Trackers map[string]interface{} `yaml:"trackers"`
+			Trackers map[string]any `yaml:"trackers"`
 		}
 		if err := yaml.Unmarshal(EmbeddedExampleYAML(), &root); err != nil {
 			return
@@ -303,7 +311,7 @@ func initTrackerSchema() {
 			if strings.EqualFold(trackerName, "default_trackers") || strings.EqualFold(trackerName, "preferred_tracker") {
 				continue
 			}
-			entry, ok := raw.(map[string]interface{})
+			entry, ok := raw.(map[string]any)
 			if !ok {
 				continue
 			}
@@ -319,6 +327,7 @@ func initTrackerSchema() {
 func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 	initTrackerSchema()
 	addGlobal := func(keys map[string]struct{}) map[string]struct{} {
+		keys["favicon_url"] = struct{}{}
 		keys["image_host"] = struct{}{}
 		return keys
 	}
@@ -350,18 +359,16 @@ func trackerAllowedJSONKeys(trackerName string) map[string]struct{} {
 	return converted
 }
 
-func filterMapByAllowedKeys(source map[string]interface{}, allowed map[string]struct{}) map[string]interface{} {
+func filterMapByAllowedKeys(source map[string]any, allowed map[string]struct{}) map[string]any {
 	if len(source) == 0 {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 	if len(allowed) == 0 {
-		clone := make(map[string]interface{}, len(source))
-		for key, value := range source {
-			clone[key] = value
-		}
+		clone := make(map[string]any, len(source))
+		maps.Copy(clone, source)
 		return clone
 	}
-	filtered := make(map[string]interface{}, len(allowed))
+	filtered := make(map[string]any, len(allowed))
 	for key := range allowed {
 		if value, ok := source[key]; ok {
 			filtered[key] = value
@@ -370,7 +377,7 @@ func filterMapByAllowedKeys(source map[string]interface{}, allowed map[string]st
 	return filtered
 }
 
-func mergeUnknownKeys(target map[string]interface{}, unknown map[string]interface{}) {
+func mergeUnknownKeys(target map[string]any, unknown map[string]any) {
 	if len(unknown) == 0 {
 		return
 	}
@@ -382,7 +389,7 @@ func mergeUnknownKeys(target map[string]interface{}, unknown map[string]interfac
 	}
 }
 
-func trackerConfigToJSONMap(cfg TrackerConfig) (map[string]interface{}, error) {
+func trackerConfigToJSONMap(cfg TrackerConfig) (map[string]any, error) {
 	alias := trackerConfigAlias(cfg)
 	alias.Unknown = nil
 	// Export paths encrypt known secrets first unless explicitly called for plaintext export.
@@ -391,14 +398,14 @@ func trackerConfigToJSONMap(cfg TrackerConfig) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: marshal tracker config to json map: %w", err)
 	}
-	result := map[string]interface{}{}
+	result := map[string]any{}
 	if err := json.Unmarshal(payload, &result); err != nil {
 		return nil, fmt.Errorf("config: unmarshal tracker config json map: %w", err)
 	}
 	return result, nil
 }
 
-func trackerConfigToYAMLMap(cfg TrackerConfig) (map[string]interface{}, error) {
+func trackerConfigToYAMLMap(cfg TrackerConfig) (map[string]any, error) {
 	alias := trackerConfigAlias(cfg)
 	alias.Unknown = nil
 	// Export paths encrypt known secrets first unless explicitly called for plaintext export.
@@ -407,19 +414,19 @@ func trackerConfigToYAMLMap(cfg TrackerConfig) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: marshal tracker config to yaml map: %w", err)
 	}
-	result := map[string]interface{}{}
+	result := map[string]any{}
 	if err := yaml.Unmarshal(payload, &result); err != nil {
 		return nil, fmt.Errorf("config: unmarshal tracker config yaml map: %w", err)
 	}
 	return result, nil
 }
 
-func parseDefaultTrackersValue(raw interface{}) CSVList {
+func parseDefaultTrackersValue(raw any) CSVList {
 	if raw == nil {
 		return CSVList{}
 	}
 	switch value := raw.(type) {
-	case []interface{}:
+	case []any:
 		result := make([]string, 0, len(value))
 		for _, item := range value {
 			trimmed := strings.TrimSpace(fmt.Sprintf("%v", item))
@@ -455,12 +462,12 @@ func parseDefaultTrackersValue(raw interface{}) CSVList {
 	}
 }
 
-func extractTrackerUnknown(raw map[string]interface{}) map[string]interface{} {
+func extractTrackerUnknown(raw map[string]any) map[string]any {
 	if len(raw) == 0 {
 		return nil
 	}
 	initTrackerTagMetadata()
-	unknown := make(map[string]interface{})
+	unknown := make(map[string]any)
 	for key, value := range raw {
 		if _, ok := trackerKnownJSONKeys[key]; ok {
 			continue
@@ -476,7 +483,7 @@ func extractTrackerUnknown(raw map[string]interface{}) map[string]interface{} {
 	return unknown
 }
 
-func decodeTrackerConfigFromJSON(raw map[string]interface{}) (TrackerConfig, error) {
+func decodeTrackerConfigFromJSON(raw map[string]any) (TrackerConfig, error) {
 	payload, err := json.Marshal(raw)
 	if err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from json: %w", err)
@@ -489,7 +496,7 @@ func decodeTrackerConfigFromJSON(raw map[string]interface{}) (TrackerConfig, err
 	return cfg, nil
 }
 
-func decodeTrackerConfigFromYAML(raw map[string]interface{}) (TrackerConfig, error) {
+func decodeTrackerConfigFromYAML(raw map[string]any) (TrackerConfig, error) {
 	payload, err := yaml.Marshal(raw)
 	if err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from yaml: %w", err)
@@ -503,7 +510,7 @@ func decodeTrackerConfigFromYAML(raw map[string]interface{}) (TrackerConfig, err
 }
 
 func (t TrackersConfig) MarshalJSON() ([]byte, error) {
-	trackers := make(map[string]map[string]interface{}, len(t.Trackers))
+	trackers := make(map[string]map[string]any, len(t.Trackers))
 	for trackerName, trackerCfg := range t.Trackers {
 		jsonMap, err := trackerConfigToJSONMap(trackerCfg)
 		if err != nil {
@@ -515,9 +522,9 @@ func (t TrackersConfig) MarshalJSON() ([]byte, error) {
 	}
 
 	type trackersJSON struct {
-		DefaultTrackers  CSVList                           `json:"DefaultTrackers"`
-		PreferredTracker string                            `json:"PreferredTracker"`
-		Trackers         map[string]map[string]interface{} `json:"Trackers"`
+		DefaultTrackers  CSVList                   `json:"DefaultTrackers"`
+		PreferredTracker string                    `json:"PreferredTracker"`
+		Trackers         map[string]map[string]any `json:"Trackers"`
 	}
 
 	defaultTrackers := t.DefaultTrackers
@@ -588,7 +595,7 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 	}
 
 	for trackerName, raw := range rawTrackers {
-		entry := map[string]interface{}{}
+		entry := map[string]any{}
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			continue
 		}
@@ -602,8 +609,8 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (t TrackersConfig) MarshalYAML() (interface{}, error) {
-	root := map[string]interface{}{}
+func (t TrackersConfig) MarshalYAML() (any, error) {
+	root := map[string]any{}
 	defaultTrackers := t.DefaultTrackers
 	if defaultTrackers == nil {
 		defaultTrackers = CSVList{}
@@ -629,7 +636,7 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 		return errors.New("trackers: nil target")
 	}
 
-	var root map[string]interface{}
+	var root map[string]any
 	if err := value.Decode(&root); err != nil {
 		return fmt.Errorf("config: decode trackers yaml: %w", err)
 	}
@@ -642,10 +649,8 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 	t.Trackers = map[string]TrackerConfig{}
 
 	if nestedRaw, ok := root["trackers"]; ok {
-		if nested, ok := nestedRaw.(map[string]interface{}); ok {
-			for key, value := range nested {
-				root[key] = value
-			}
+		if nested, ok := nestedRaw.(map[string]any); ok {
+			maps.Copy(root, nested)
 		}
 	}
 
@@ -653,7 +658,7 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 		if strings.EqualFold(key, "default_trackers") || strings.EqualFold(key, "preferred_tracker") || strings.EqualFold(key, "trackers") {
 			continue
 		}
-		entry, ok := raw.(map[string]interface{})
+		entry, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -668,17 +673,22 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type TorrentClientConfig struct {
-	Type          string   `yaml:"type"`
-	TorrentClient string   `yaml:"torrent_client"`
-	URL           string   `yaml:"url"`
-	QuiProxyURL   string   `yaml:"qui_proxy_url"`
-	WatchFolder   string   `yaml:"watch_folder"`
-	StorageDir    string   `yaml:"torrent_storage_dir"`
-	Username      string   `yaml:"username"`
-	Password      string   `yaml:"password"`
-	Category      string   `yaml:"category"`
-	Tags          []string `yaml:"tags"`
-	TLSSkipVerify *bool    `yaml:"tls_skip_verify"`
+	Type          string     `yaml:"type"`
+	TorrentClient string     `yaml:"torrent_client"`
+	URL           string     `yaml:"url"`
+	QuiProxyURL   string     `yaml:"qui_proxy_url"`
+	WatchFolder   string     `yaml:"watch_folder"`
+	StorageDir    string     `yaml:"torrent_storage_dir"`
+	Username      string     `yaml:"username"`
+	Password      string     `yaml:"password"`
+	Category      string     `yaml:"category"`
+	Tags          []string   `yaml:"tags"`
+	TLSSkipVerify *bool      `yaml:"tls_skip_verify"`
+	Linking       string     `yaml:"linking"`
+	AllowFallback *bool      `yaml:"allow_fallback"`
+	LinkedFolder  StringList `yaml:"linked_folder"`
+	LocalPath     StringList `yaml:"local_path"`
+	RemotePath    StringList `yaml:"remote_path"`
 
 	QbitURL                string   `yaml:"qbit_url"`
 	QbitPort               int      `yaml:"qbit_port"`
@@ -687,7 +697,121 @@ type TorrentClientConfig struct {
 	QbitCategoryValue      string   `yaml:"qbit_cat"`
 	QbitTag                string   `yaml:"qbit_tag"`
 	QbitTagsValue          []string `yaml:"qbit_tags"`
+	QbitCrossCategory      string   `yaml:"qbit_cross_cat"`
+	QbitCrossTag           string   `yaml:"qbit_cross_tag"`
+	UseTrackerAsTag        bool     `yaml:"use_tracker_as_tag"`
 	VerifyWebUICertificate *bool    `yaml:"verify_webui_certificate"`
+}
+
+func (c TorrentClientConfig) MarshalJSON() ([]byte, error) {
+	payload := torrentClientConfigJSONMap(c)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("config: marshal torrent client config: %w", err)
+	}
+	return data, nil
+}
+
+func (c TorrentClientConfig) MarshalYAML() (any, error) {
+	return torrentClientConfigYAMLMap(c), nil
+}
+
+func torrentClientConfigJSONMap(c TorrentClientConfig) map[string]any {
+	out := map[string]any{}
+	addString := func(key string, value string) {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out[key] = trimmed
+		}
+	}
+	addStringList := func(key string, values StringList) {
+		if items := nonEmptyStrings(values); len(items) > 0 {
+			out[key] = items
+		}
+	}
+
+	clientType := c.ClientType()
+	addString("Type", clientType)
+	if strings.EqualFold(clientType, "watch") {
+		addString("WatchFolder", c.WatchFolder)
+		addString("StorageDir", c.StorageDir)
+	}
+	addString("QuiProxyURL", c.QuiProxyURL)
+	if strings.TrimSpace(c.QuiProxyURL) == "" {
+		addString("QbitURL", firstNonEmpty(c.QbitURL, c.URL))
+		if c.QbitPort != 0 {
+			out["QbitPort"] = c.QbitPort
+		}
+		addString("QbitUser", c.QbitUsername())
+		addString("QbitPass", c.QbitPassword())
+	}
+	addString("QbitCategoryValue", c.QbitCategory())
+	addString("QbitTag", c.QbitTags())
+	addString("QbitCrossCategory", c.QbitCrossCategory)
+	addString("QbitCrossTag", c.QbitCrossTag)
+	if c.UseTrackerAsTag {
+		out["UseTrackerAsTag"] = c.UseTrackerAsTag
+	}
+	addString("Linking", c.LinkingMode())
+	if c.AllowFallback != nil {
+		out["AllowFallback"] = *c.AllowFallback
+	}
+	addStringList("LinkedFolder", c.LinkedFolder)
+	addStringList("LocalPath", c.LocalPath)
+	addStringList("RemotePath", c.RemotePath)
+	if c.VerifyWebUICertificate != nil {
+		out["VerifyWebUICertificate"] = *c.VerifyWebUICertificate
+	}
+
+	return out
+}
+
+func torrentClientConfigYAMLMap(c TorrentClientConfig) map[string]any {
+	out := map[string]any{}
+	addString := func(key string, value string) {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out[key] = trimmed
+		}
+	}
+	addStringList := func(key string, values StringList) {
+		if items := nonEmptyStrings(values); len(items) > 0 {
+			out[key] = items
+		}
+	}
+
+	clientType := c.ClientType()
+	addString("type", clientType)
+	if strings.EqualFold(clientType, "watch") {
+		addString("watch_folder", c.WatchFolder)
+		addString("torrent_storage_dir", c.StorageDir)
+	}
+	addString("qui_proxy_url", c.QuiProxyURL)
+	if strings.TrimSpace(c.QuiProxyURL) == "" {
+		addString("qbit_url", firstNonEmpty(c.QbitURL, c.URL))
+		if c.QbitPort != 0 {
+			out["qbit_port"] = c.QbitPort
+		}
+		addString("qbit_user", c.QbitUsername())
+		addString("qbit_pass", c.QbitPassword())
+	}
+	addString("qbit_cat", c.QbitCategory())
+	addString("qbit_tag", c.QbitTags())
+	addString("qbit_cross_cat", c.QbitCrossCategory)
+	addString("qbit_cross_tag", c.QbitCrossTag)
+	if c.UseTrackerAsTag {
+		out["use_tracker_as_tag"] = c.UseTrackerAsTag
+	}
+	addString("linking", c.LinkingMode())
+	if c.AllowFallback != nil {
+		out["allow_fallback"] = *c.AllowFallback
+	}
+	addStringList("linked_folder", c.LinkedFolder)
+	addStringList("local_path", c.LocalPath)
+	addStringList("remote_path", c.RemotePath)
+	if c.VerifyWebUICertificate != nil {
+		out["verify_webui_certificate"] = *c.VerifyWebUICertificate
+	}
+
+	return out
 }
 
 func (c Config) Validate() error {
@@ -714,9 +838,6 @@ func (c Config) Validate() error {
 
 	for name, client := range c.TorrentClients {
 		clientType := strings.TrimSpace(client.ClientType())
-		if clientType == "" {
-			return fmt.Errorf("config: torrent_clients.%s.type or torrent_client is required", name)
-		}
 		switch {
 		case strings.EqualFold(clientType, "watch"):
 			if strings.TrimSpace(client.WatchFolder) == "" {
@@ -734,6 +855,17 @@ func (c Config) Validate() error {
 					return fmt.Errorf("config: torrent_clients.%s.password or qbit_pass is required", name)
 				}
 			}
+			switch strings.ToLower(strings.TrimSpace(client.Linking)) {
+			case "", "none", "disabled", "symlink", "hardlink", "reflink":
+			default:
+				return fmt.Errorf("config: torrent_clients.%s.linking must be symlink, hardlink, reflink, or empty", name)
+			}
+			linkMode := strings.ToLower(strings.TrimSpace(client.Linking))
+			if linkMode == "symlink" || linkMode == "hardlink" || linkMode == "reflink" {
+				if len(nonEmptyStrings(client.LinkedFolder)) == 0 {
+					return fmt.Errorf("config: torrent_clients.%s.linked_folder is required when linking is enabled", name)
+				}
+			}
 		case strings.EqualFold(clientType, "qui"):
 			if !client.UsesQuiProxy() {
 				return fmt.Errorf("config: torrent_clients.%s.qui_proxy_url is required", name)
@@ -742,6 +874,13 @@ func (c Config) Validate() error {
 	}
 
 	for trackerName, trackerCfg := range c.Trackers.Trackers {
+		torrentClient := strings.TrimSpace(trackerCfg.TorrentClient)
+		if torrentClient != "" {
+			if _, ok := lookupTorrentClient(c.TorrentClients, torrentClient); !ok {
+				return fmt.Errorf("config: trackers.%s.torrent_client references unknown torrent client %q", trackerName, trackerCfg.TorrentClient)
+			}
+		}
+
 		imageHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
 		if imageHost != "" {
 			if !imagehostpolicy.IsUploadHost(imageHost) {
@@ -765,6 +904,19 @@ func (c Config) Validate() error {
 	}
 
 	return nil
+}
+
+func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string) (string, bool) {
+	trimmed := strings.TrimSpace(selected)
+	if trimmed == "" {
+		return "", false
+	}
+	for name := range clients {
+		if strings.EqualFold(strings.TrimSpace(name), trimmed) {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
@@ -819,10 +971,15 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 		return errors.New("load embedded tracker defaults: embedded default trackers missing")
 	}
 	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
-		if _, ok := cfg.Trackers.Trackers[trackerName]; ok {
+		existing, ok := cfg.Trackers.Trackers[trackerName]
+		if !ok {
+			cfg.Trackers.Trackers[trackerName] = trackerCfg
 			continue
 		}
-		cfg.Trackers.Trackers[trackerName] = trackerCfg
+		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
+			existing.URL = trackerCfg.URL
+			cfg.Trackers.Trackers[trackerName] = existing
+		}
 	}
 	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" {
 		btnCfg := cfg.Trackers.Trackers["BTN"]
@@ -842,9 +999,9 @@ func (c TorrentClientConfig) QbitHost() string {
 		}
 		return host
 	}
-	host := strings.TrimSpace(c.URL)
+	host := strings.TrimSpace(c.QbitURL)
 	if host == "" {
-		host = strings.TrimSpace(c.QbitURL)
+		host = strings.TrimSpace(c.URL)
 	}
 	if host == "" {
 		return ""
@@ -866,42 +1023,34 @@ func (c TorrentClientConfig) ClientType() string {
 	if strings.TrimSpace(c.Type) != "" {
 		return strings.TrimSpace(c.Type)
 	}
-	return strings.TrimSpace(c.TorrentClient)
+	if strings.TrimSpace(c.TorrentClient) != "" {
+		return strings.TrimSpace(c.TorrentClient)
+	}
+	return "qbit"
 }
 
 func (c TorrentClientConfig) QbitUsername() string {
-	if strings.TrimSpace(c.Username) != "" {
-		return strings.TrimSpace(c.Username)
+	if strings.TrimSpace(c.QbitUser) != "" {
+		return strings.TrimSpace(c.QbitUser)
 	}
-	return strings.TrimSpace(c.QbitUser)
+	return strings.TrimSpace(c.Username)
 }
 
 func (c TorrentClientConfig) QbitPassword() string {
-	if strings.TrimSpace(c.Password) != "" {
-		return strings.TrimSpace(c.Password)
+	if strings.TrimSpace(c.QbitPass) != "" {
+		return strings.TrimSpace(c.QbitPass)
 	}
-	return strings.TrimSpace(c.QbitPass)
+	return strings.TrimSpace(c.Password)
 }
 
 func (c TorrentClientConfig) QbitCategory() string {
-	if strings.TrimSpace(c.Category) != "" {
-		return strings.TrimSpace(c.Category)
+	if strings.TrimSpace(c.QbitCategoryValue) != "" {
+		return strings.TrimSpace(c.QbitCategoryValue)
 	}
-	return strings.TrimSpace(c.QbitCategoryValue)
+	return strings.TrimSpace(c.Category)
 }
 
 func (c TorrentClientConfig) QbitTags() string {
-	if len(c.Tags) > 0 {
-		items := make([]string, 0, len(c.Tags))
-		for _, value := range c.Tags {
-			trimmed := strings.TrimSpace(value)
-			if trimmed == "" {
-				continue
-			}
-			items = append(items, trimmed)
-		}
-		return strings.Join(items, ",")
-	}
 	if strings.TrimSpace(c.QbitTag) != "" {
 		return strings.TrimSpace(c.QbitTag)
 	}
@@ -916,7 +1065,32 @@ func (c TorrentClientConfig) QbitTags() string {
 		}
 		return strings.Join(items, ",")
 	}
+	if len(c.Tags) > 0 {
+		items := make([]string, 0, len(c.Tags))
+		for _, value := range c.Tags {
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+			items = append(items, trimmed)
+		}
+		return strings.Join(items, ",")
+	}
 	return ""
+}
+
+func (c TorrentClientConfig) LinkingMode() string {
+	mode := strings.ToLower(strings.TrimSpace(c.Linking))
+	switch mode {
+	case "none", "disabled":
+		return ""
+	default:
+		return mode
+	}
+}
+
+func (c TorrentClientConfig) FallbackAllowed() bool {
+	return c.AllowFallback == nil || *c.AllowFallback
 }
 
 func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
@@ -931,4 +1105,54 @@ func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
 
 func (c TorrentClientConfig) UsesQuiProxy() bool {
 	return strings.TrimSpace(c.QuiProxyURL) != ""
+}
+
+// ResolveTrackerDomain resolves a tracker name or raw domain into a domain name and its configured URL.
+func ResolveTrackerDomain(cfg *Config, trackerNameOrDomain string) (string, string) {
+	name := strings.TrimSpace(trackerNameOrDomain)
+	if name == "" {
+		return "", ""
+	}
+
+	if cfg != nil && cfg.Trackers.Trackers != nil {
+		for k, v := range cfg.Trackers.Trackers {
+			if strings.EqualFold(k, name) {
+				u := strings.TrimSpace(v.URL)
+				if u != "" {
+					// Prepend scheme if missing to allow url.Parse to extract hostname
+					urlString := u
+					if !strings.Contains(urlString, "://") {
+						urlString = "http://" + urlString
+					}
+					if parsed, err := url.Parse(urlString); err == nil && parsed.Hostname() != "" {
+						return parsed.Hostname(), u
+					}
+					return "", u
+				}
+			}
+		}
+	}
+
+	return name, ""
+}
+
+func nonEmptyStrings[S ~[]string](values S) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

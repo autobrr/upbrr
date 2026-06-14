@@ -197,7 +197,7 @@ func BackupToYAML(cfg *Config, baseDir string) (string, error) {
 
 // LoadFromDatabase loads the full config from the repository.
 func LoadFromDatabase(ctx context.Context, repo interface {
-	LoadFullConfig(ctx context.Context, dest interface{}) error
+	LoadFullConfig(ctx context.Context, dest any) error
 }) (*Config, error) {
 	if repo == nil {
 		return nil, errors.New("config load: nil repository")
@@ -218,7 +218,7 @@ func LoadFromDatabase(ctx context.Context, repo interface {
 
 // SaveToDatabase persists the config to the repository.
 func SaveToDatabase(ctx context.Context, cfg *Config, repo interface {
-	SaveFullConfig(ctx context.Context, cfg interface{}) error
+	SaveFullConfig(ctx context.Context, cfg any) error
 }) error {
 	if cfg == nil {
 		return internalerrors.ErrInvalidInput
@@ -240,8 +240,8 @@ func SaveToDatabase(ctx context.Context, cfg *Config, repo interface {
 }
 
 // SaveSectionToDatabase persists a single config section to the repository.
-func SaveSectionToDatabase(ctx context.Context, section string, data interface{}, repo interface {
-	SaveConfigSection(ctx context.Context, section string, data interface{}) error
+func SaveSectionToDatabase(ctx context.Context, section string, data any, repo interface {
+	SaveConfigSection(ctx context.Context, section string, data any) error
 }) error {
 	if section == "" {
 		return errors.New("config save section: empty section name")
@@ -261,8 +261,8 @@ func SaveSectionToDatabase(ctx context.Context, section string, data interface{}
 }
 
 // LoadSectionFromDatabase retrieves a single config section from the repository.
-func LoadSectionFromDatabase(ctx context.Context, section string, dest interface{}, repo interface {
-	LoadConfigSection(ctx context.Context, section string, dest interface{}) error
+func LoadSectionFromDatabase(ctx context.Context, section string, dest any, repo interface {
+	LoadConfigSection(ctx context.Context, section string, dest any) error
 }) error {
 	if section == "" {
 		return errors.New("config load section: empty section name")
@@ -284,7 +284,7 @@ func LoadSectionFromDatabase(ctx context.Context, section string, dest interface
 // ExportFromDatabaseToYAML loads config from database, applies environment overrides,
 // and writes the resulting config to a YAML file.
 func ExportFromDatabaseToYAML(ctx context.Context, outputPath string, repo interface {
-	LoadFullConfig(ctx context.Context, dest interface{}) error
+	LoadFullConfig(ctx context.Context, dest any) error
 }) error {
 	return exportFromDatabaseToYAML(ctx, outputPath, repo, true)
 }
@@ -292,13 +292,13 @@ func ExportFromDatabaseToYAML(ctx context.Context, outputPath string, repo inter
 // ExportFromDatabaseToPlaintextYAML loads config from database, applies environment overrides,
 // and writes the resulting config to a YAML file without encrypting secret fields.
 func ExportFromDatabaseToPlaintextYAML(ctx context.Context, outputPath string, repo interface {
-	LoadFullConfig(ctx context.Context, dest interface{}) error
+	LoadFullConfig(ctx context.Context, dest any) error
 }) error {
 	return exportFromDatabaseToYAML(ctx, outputPath, repo, false)
 }
 
 func exportFromDatabaseToYAML(ctx context.Context, outputPath string, repo interface {
-	LoadFullConfig(ctx context.Context, dest interface{}) error
+	LoadFullConfig(ctx context.Context, dest any) error
 }, encryptSecrets bool) error {
 	if strings.TrimSpace(outputPath) == "" {
 		return errors.New("config export from database: empty output path")

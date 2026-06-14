@@ -5,6 +5,9 @@ import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import RenderedDescription from "../../components/RenderedDescription";
 import { Button } from "../../components/ui/button";
+import { TrackerIconImage } from "../../components/ui/tracker-icon";
+import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
+import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { MetadataPreview, TrackerPreview } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 
@@ -14,6 +17,9 @@ type Props = {
   setRenderedDescriptions: Dispatch<SetStateAction<Record<string, boolean>>>;
   setLightboxImage: Dispatch<SetStateAction<string>>;
   setLightboxAlt: Dispatch<SetStateAction<string>>;
+  useFavicons?: boolean;
+  faviconOnly?: boolean;
+  trackerIconSrcByName: TrackerIconCache;
 };
 
 export default function TrackerDataPage(props: Props) {
@@ -23,6 +29,9 @@ export default function TrackerDataPage(props: Props) {
     setRenderedDescriptions,
     setLightboxImage,
     setLightboxAlt,
+    useFavicons = true,
+    faviconOnly = false,
+    trackerIconSrcByName,
   } = props;
 
   const trackerDataOrdered = useMemo(() => {
@@ -69,6 +78,8 @@ export default function TrackerDataPage(props: Props) {
               Boolean(renderedDescriptions[trackerKey]) && Boolean(item.DescriptionHTML);
             const renderedHTML = isRendered ? item.DescriptionHTML : "";
             const isPrimary = index === trackerDataOrdered.primaryIndex;
+            const iconSrc = trackerIconFor(trackerIconSrcByName, item.Tracker);
+            const hideTrackerName = faviconOnly && useFavicons;
             return (
               <details
                 className="overflow-hidden rounded-lg border border-white/10 bg-[rgba(12,16,26,0.78)]"
@@ -76,8 +87,16 @@ export default function TrackerDataPage(props: Props) {
                 open={isPrimary}
               >
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
-                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                    {item.Tracker || "Unknown"}
+                  <span
+                    aria-label={hideTrackerName ? item.Tracker || "Unknown" : undefined}
+                    className="flex items-center gap-2 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+                  >
+                    <TrackerIconImage
+                      tracker={item.Tracker}
+                      iconSrc={iconSrc}
+                      enabled={useFavicons}
+                    />
+                    {hideTrackerName ? null : item.Tracker || "Unknown"}
                   </span>
                   <span className="whitespace-nowrap text-sm font-medium text-[var(--muted)]">
                     Torrent ID: {item.TrackerID || "-"}
@@ -89,17 +108,33 @@ export default function TrackerDataPage(props: Props) {
                       <p className="label">Tracker</p>
                       {item.TorrentURL ? (
                         <a
-                          className="tracker-link"
+                          className="tracker-link flex items-center gap-1.5"
                           href={item.TorrentURL}
+                          aria-label={hideTrackerName ? item.Tracker || "Unknown" : undefined}
                           target="_blank"
                           rel="noreferrer"
                           onAuxClick={handleExternalLinkClick}
                           onClick={handleExternalLinkClick}
                         >
-                          {item.Tracker || "Unknown"}
+                          <TrackerIconImage
+                            tracker={item.Tracker}
+                            iconSrc={iconSrc}
+                            enabled={useFavicons}
+                          />
+                          {hideTrackerName ? null : item.Tracker || "Unknown"}
                         </a>
                       ) : (
-                        <p className="value">{item.Tracker || "Unknown"}</p>
+                        <div
+                          aria-label={hideTrackerName ? item.Tracker || "Unknown" : undefined}
+                          className="value flex items-center gap-1.5"
+                        >
+                          <TrackerIconImage
+                            tracker={item.Tracker}
+                            iconSrc={iconSrc}
+                            enabled={useFavicons}
+                          />
+                          {hideTrackerName ? null : <span>{item.Tracker || "Unknown"}</span>}
+                        </div>
                       )}
                     </div>
                     <div>

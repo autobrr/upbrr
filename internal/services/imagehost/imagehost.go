@@ -11,6 +11,7 @@ import (
 // HostMapping maps URL domain patterns to normalized host names
 var HostMapping = map[string]string{
 	"ibb.co":               "imgbb",
+	"pixhost.cc":           "pixhost",
 	"pixhost.to":           "pixhost",
 	"imgbox.com":           "imgbox",
 	"beyondhd.co":          "bhd",

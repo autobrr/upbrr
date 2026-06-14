@@ -4,6 +4,7 @@
 package imagehostpolicy
 
 import (
+	"maps"
 	"slices"
 	"strings"
 )
@@ -29,7 +30,7 @@ var trackerAllowedHosts = map[string][]string{
 	"HDB": {"hdb"},
 	"MTV": {"imgbox", "imgbb"},
 	"OE":  {"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
-	"PTP": {"pixhost", "imgbb", "onlyimage", "ptscreens"},
+	"PTP": {"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
 	"STC": {"imgbox", "imgbb"},
 	"THR": {"thr"},
 	"TVC": {"imgbb", "imgbox", "pixhost", "bam", "onlyimage"},
@@ -41,10 +42,12 @@ var uploadHosts = map[string]struct{}{
 	"imgbb":        {},
 	"imgbox":       {},
 	"lensdump":     {},
+	"lostimg":      {},
 	"onlyimage":    {},
 	"passtheimage": {},
 	"pixhost":      {},
 	"ptscreens":    {},
+	"reelflix":     {},
 	"seedpool_cdn": {},
 	"sharex":       {},
 	"thr":          {},
@@ -53,8 +56,15 @@ var uploadHosts = map[string]struct{}{
 }
 
 var ownedHosts = map[string]string{
-	"hdb": "HDB",
-	"thr": "THR",
+	"hdb":      "HDB",
+	"lostimg":  "LST",
+	"reelflix": "RF",
+	"thr":      "THR",
+}
+
+var trackerOptionalUploadHosts = map[string][]string{
+	"LST": {"lostimg"},
+	"RF":  {"reelflix"},
 }
 
 func ForTracker(tracker string, imgRehost bool, imgAPI string) Policy {
@@ -108,14 +118,16 @@ func KnownTrackerUploadPolicies() map[string][]string {
 	for tracker, hosts := range trackerAllowedHosts {
 		out[tracker] = filterUploadHosts(normalizeUnique(hosts...))
 	}
+	for tracker, hosts := range trackerOptionalUploadHosts {
+		existing := out[tracker]
+		out[tracker] = filterUploadHosts(normalizeUnique(append(existing, hosts...)...))
+	}
 	return out
 }
 
 func KnownOwnedHosts() map[string]string {
 	out := make(map[string]string, len(ownedHosts))
-	for host, tracker := range ownedHosts {
-		out[host] = tracker
-	}
+	maps.Copy(out, ownedHosts)
 	return out
 }
 

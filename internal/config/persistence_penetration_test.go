@@ -392,7 +392,7 @@ func TestExportToJSONZeroConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export zero: %v", err)
 	}
-	var back map[string]interface{}
+	var back map[string]any
 	if err := json.Unmarshal([]byte(payload), &back); err != nil {
 		t.Fatalf("zero config JSON is not valid JSON: %v", err)
 	}
@@ -448,16 +448,16 @@ func TestBackupToYAMLOverwrites(t *testing.T) {
 // with specific errors rather than silently no-oping.
 type recordingRepo struct {
 	savedSection string
-	loadedDest   interface{}
+	loadedDest   any
 	saveErr      error
 	loadErr      error
 }
 
-func (r *recordingRepo) SaveConfigSection(_ context.Context, section string, _ interface{}) error {
+func (r *recordingRepo) SaveConfigSection(_ context.Context, section string, _ any) error {
 	r.savedSection = section
 	return r.saveErr
 }
-func (r *recordingRepo) LoadConfigSection(_ context.Context, _ string, dest interface{}) error {
+func (r *recordingRepo) LoadConfigSection(_ context.Context, _ string, dest any) error {
 	r.loadedDest = dest
 	return r.loadErr
 }
@@ -493,7 +493,7 @@ func TestLoadFromDatabaseNilRepo(t *testing.T) {
 	t.Parallel()
 
 	type nilRepo interface {
-		LoadFullConfig(ctx context.Context, dest interface{}) error
+		LoadFullConfig(ctx context.Context, dest any) error
 	}
 	var repo nilRepo
 	_, err := LoadFromDatabase(context.Background(), repo)
@@ -507,7 +507,7 @@ func TestSaveToDatabaseInvalidInputs(t *testing.T) {
 	t.Parallel()
 
 	type saveRepo interface {
-		SaveFullConfig(ctx context.Context, cfg interface{}) error
+		SaveFullConfig(ctx context.Context, cfg any) error
 	}
 	var repo saveRepo
 	if err := SaveToDatabase(context.Background(), validMinimalConfig(), repo); err == nil {
@@ -525,7 +525,7 @@ type saveCaptureRepo struct {
 	err   error
 }
 
-func (s *saveCaptureRepo) SaveFullConfig(_ context.Context, cfg interface{}) error {
+func (s *saveCaptureRepo) SaveFullConfig(_ context.Context, cfg any) error {
 	if s.err != nil {
 		return s.err
 	}

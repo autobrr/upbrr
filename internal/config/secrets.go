@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -177,15 +178,15 @@ func decryptConfigSecretsWithHelperFrom(cfg *Config, helper string, assumeCloned
 }
 
 func RewrapSecretsInDatabase(ctx context.Context, repo interface {
-	LoadFullConfig(ctx context.Context, dest interface{}) error
-	SaveFullConfig(ctx context.Context, cfg interface{}) error
+	LoadFullConfig(ctx context.Context, dest any) error
+	SaveFullConfig(ctx context.Context, cfg any) error
 }, oldMaterial, newMaterial authmaterial.Material) error {
 	return RewrapSecretsInDatabaseWithFallback(ctx, repo, []authmaterial.Material{oldMaterial}, newMaterial)
 }
 
 func RewrapSecretsInDatabaseWithFallback(ctx context.Context, repo interface {
-	LoadFullConfig(ctx context.Context, dest interface{}) error
-	SaveFullConfig(ctx context.Context, cfg interface{}) error
+	LoadFullConfig(ctx context.Context, dest any) error
+	SaveFullConfig(ctx context.Context, cfg any) error
 }, sourceMaterials []authmaterial.Material, newMaterial authmaterial.Material) error {
 	if repo == nil {
 		return errors.New("config secret rewrap: nil repository")
@@ -255,13 +256,7 @@ func decryptConfigSecretsWithHelpersFrom(cfg *Config, helpers []string, assumeCl
 		if helper == "" {
 			continue
 		}
-		duplicate := false
-		for _, existing := range cleanHelpers {
-			if existing == helper {
-				duplicate = true
-				break
-			}
-		}
+		duplicate := slices.Contains(cleanHelpers, helper)
 		if !duplicate {
 			cleanHelpers = append(cleanHelpers, helper)
 		}
@@ -354,6 +349,7 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 		&cfg.ImageHosting.SeedpoolCDNAPI,
 		&cfg.ImageHosting.ShareXAPIKey,
 		&cfg.ImageHosting.UTPPMAPI,
+		&cfg.ImageHosting.LostimgAPI,
 	}
 	for idx, field := range imageSecrets {
 		if err := visit(fmt.Sprintf("ImageHosting[%d]", idx), field); err != nil {

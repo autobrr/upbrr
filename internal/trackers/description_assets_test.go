@@ -277,6 +277,24 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsDedupesAfterSanitizingBotSignatures(t *testing.T) {
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "AITHER", Description: "Body\n\n[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]"},
+			{Tracker: "AITHER", Description: "Body"},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "Body" {
+		t.Fatalf("expected sanitized duplicate removed, got %q", assets.Description)
+	}
+}
+
 func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T) {
 	t.Parallel()
 
@@ -367,6 +385,26 @@ func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsClearsOverrideWhenSanitizedDescriptionIsEmpty(t *testing.T) {
+	repo := &stubRepo{
+		descriptionOverride: "[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		overrideGroupKey:    "unit3d",
+		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "" {
+		t.Fatalf("expected empty sanitized description, got %q", assets.Description)
+	}
+	if assets.Override {
+		t.Fatalf("expected empty sanitized override to clear override flag")
+	}
+}
+
 func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "override desc",
@@ -394,6 +432,41 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 	}
 	if !assets.Final {
 		t.Fatal("expected prepared composite group description to be final")
+	}
+}
+
+func TestResolveDescriptionAssetsClearsFinalWhenSanitizedDescriptionIsEmpty(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	meta := api.PreparedMetadata{
+		SourcePath: sourcePath,
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: "[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "" {
+		t.Fatalf("expected empty sanitized description, got %q", assets.Description)
+	}
+	if assets.Final {
+		t.Fatalf("expected empty sanitized final description to clear final flag")
+	}
+	if assets.Override {
+		t.Fatalf("expected empty sanitized final description to clear override flag")
+	}
+
+	applyResolvedDescriptionScreenshots(context.Background(), meta, nil, nil, &assets, []api.ScreenshotImage{{
+		ImgURL: "https://pixhost.example/1.png",
+		RawURL: "https://pixhost.example/raw-1.png",
+		Host:   "pixhost",
+	}})
+	if len(assets.Screenshots) != 1 {
+		t.Fatalf("expected screenshots preserved for empty final description, got %#v", assets.Screenshots)
 	}
 }
 
@@ -841,6 +914,23 @@ func TestResolveDescriptionAssetsFallbackOtherTrackerDescription(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsFallbackSanitizesByRecordTracker(t *testing.T) {
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "ANT", Description: "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "Body" {
+		t.Fatalf("expected fallback description sanitized by source tracker, got %q", assets.Description)
+	}
+}
+
 func TestResolveDescriptionAssetsPrefersMatchingTrackerDescription(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{
@@ -916,6 +1006,78 @@ func TestResolveDescriptionAssetsStripsDefaultSignatureForNBL(t *testing.T) {
 	}
 	if assets.Description != "Body" {
 		t.Fatalf("expected cleaned NBL description, got %q", assets.Description)
+	}
+}
+
+func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromTrackerDescriptions(t *testing.T) {
+	repo := &stubRepo{
+		trackerRecords: []api.TrackerMetadata{
+			{Tracker: "AITHER", Description: strings.Join([]string{
+				"Body",
+				"[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+				"[center]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/center]",
+				"[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+				"[center][url=https://github.com/edge20200/Only-Uploader]Powered by Only-Uploader[/url][/center]",
+				"[center][url=/torrents?perPage=50&name=Example][/url][/center]",
+				"[right]Created by Upload Assistant[/right]",
+				"[right][url=https://github.com/Audionut/Upload-Assistant][size=4]Created by Upload Assistant v7.0.2[/size][/url][/right]",
+				"[center][url=https://github.com/Audionut/Upload-Assistant]Created by Audionut's Upload Assistant[/url][/center]",
+				"[center][url=https://aither.cc/forums/topics/1349]Created by L4G's Upload Assistant[/url][/center]",
+				"[center]Created by L4G's Upload Assistant[/center]",
+				"[center] Uploaded with [color=red]\u2764[/color] using GG-BOT Upload Assistant[/center]",
+				"[center] Uploaded with [color=red]\u2764[/color] using GG-BOT Upload Assistant[/center]",
+				"[img=500]https://files.catbox.moe/5izwmx.svg[/img]",
+				"[center]Find our uploads [url=https://aither.cc/torrents?name=Kitsune]here[/url][/center]",
+			}, "\n")},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "Body" {
+		t.Fatalf("expected bot signatures removed, got %q", assets.Description)
+	}
+	if strings.Contains(assets.Description, "uploadrr") || strings.Contains(assets.Description, "Upload Assistant") || strings.Contains(assets.Description, "UNIT3D") || strings.Contains(assets.Description, "GG-BOT") || strings.Contains(assets.Description, "Find our uploads") || strings.Contains(assets.Description, "5izwmx.svg") {
+		t.Fatalf("expected all bot text removed, got %q", assets.Description)
+	}
+}
+
+func TestSanitizeTrackerDescriptionKeepsMalformedUNIT3DBoldTags(t *testing.T) {
+	cases := []string{
+		"Body\n[center][bUploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/b][/center]",
+		"Body\n[center][b]Uploaded Using [url=https://github.com/HDInnovations/UNIT3D]UNIT3D[/url] Auto Uploader[/center]",
+	}
+
+	for _, value := range cases {
+		cleaned := sanitizeTrackerDescription("AITHER", value)
+		if !strings.Contains(cleaned, "UNIT3D") {
+			t.Fatalf("expected malformed UNIT3D bold tag to remain, got %q", cleaned)
+		}
+	}
+}
+
+func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromDescriptionGroups(t *testing.T) {
+	meta := api.PreparedMetadata{
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey: "unit3d",
+			Trackers: []string{"AITHER"},
+			RawDescription: strings.Join([]string{
+				"Body",
+				"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+				"[right]Created by Upload Assistant[/right]",
+			}, "\n\n"),
+		}},
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assets.Description != "Body" {
+		t.Fatalf("expected bot signatures removed from prepared group, got %q", assets.Description)
 	}
 }
 
@@ -1739,6 +1901,48 @@ func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testin
 	}
 	if len(images.calls) != 2 || images.calls[0] != "onlyimage" || images.calls[1] != "imgbox" {
 		t.Fatalf("expected onlyimage then imgbox calls, got %#v", images.calls)
+	}
+}
+
+func TestEnsureDescriptionImageHostFallsBackFromConfiguredHostForUnrestrictedTracker(t *testing.T) {
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	images := &stubImageService{
+		errs: map[string]error{"pixhost": errors.New("pixhost unavailable")},
+	}
+
+	resolution, err := ensureDescriptionImageHost(
+		context.Background(),
+		"HHD",
+		meta,
+		config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}},
+		config.TrackerConfig{ImageHost: "pixhost"},
+		repo,
+		images,
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolution.blocking {
+		t.Fatalf("expected fallback success not to block")
+	}
+	if resolution.feedback.SelectedHost != "imgbb" {
+		t.Fatalf("expected imgbb fallback, got %#v", resolution.feedback)
+	}
+	if len(resolution.feedback.AllowedHosts) != 0 {
+		t.Fatalf("expected unrestricted tracker policy, got %#v", resolution.feedback.AllowedHosts)
+	}
+	if len(resolution.feedback.Warnings) != 1 || resolution.feedback.Warnings[0].Host != "pixhost" {
+		t.Fatalf("expected pixhost warning, got %#v", resolution.feedback.Warnings)
+	}
+	if len(images.calls) != 2 || images.calls[0] != "pixhost" || images.calls[1] != "imgbb" {
+		t.Fatalf("expected pixhost then imgbb calls, got %#v", images.calls)
 	}
 }
 

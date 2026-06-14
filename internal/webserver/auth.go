@@ -274,6 +274,47 @@ func (m *sessionManager) Get(id string) (session, bool) {
 	return current, true
 }
 
+// GetByCSRFToken returns the active session that owns token.
+// Expired retained sessions found while scanning are removed from memory and
+// persisted before the lookup returns.
+func (m *sessionManager) GetByCSRFToken(token string) (session, bool) {
+	trimmedToken := strings.TrimSpace(token)
+	if trimmedToken == "" {
+		return session{}, false
+	}
+
+	now := time.Now().UTC()
+	changedRetained := false
+	var matched session
+	matchedOK := false
+	m.mu.Lock()
+	for id, current := range m.sessions {
+		if now.After(current.ExpiresAt) {
+			delete(m.sessions, id)
+			if current.Retain {
+				changedRetained = true
+			}
+			continue
+		}
+		if current.CSRFToken == trimmedToken {
+			matched = current
+			matchedOK = true
+			break
+		}
+	}
+	m.mu.Unlock()
+	if changedRetained {
+		if err := m.persistRetained(); err != nil {
+			m.logPersistError("cleanup expired retained session", err)
+		}
+	}
+	if matchedOK {
+		return matched, true
+	}
+
+	return session{}, false
+}
+
 func (m *sessionManager) Delete(id string) error {
 	m.mu.Lock()
 	current, ok := m.sessions[id]
