@@ -1410,6 +1410,18 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	otherPath := "/media/other.mkv"
 	now := time.Now().UTC().Truncate(time.Second)
 
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		CREATE TABLE ui_states (
+			source_path TEXT PRIMARY KEY,
+			payload TEXT NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create legacy ui_states: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO ui_states (source_path, payload) VALUES (?, ?), (?, ?)`, targetPath, "target", otherPath, "other"); err != nil {
+		t.Fatalf("insert legacy ui_states: %v", err)
+	}
+
 	if err := repo.Save(ctx, FileMetadata{Path: targetPath, InfoHash: "hash-a", UpdatedAt: now}); err != nil {
 		t.Fatalf("save target metadata: %v", err)
 	}
@@ -1551,6 +1563,13 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if slots, err := repo.ListScreenshotSlotsByPath(ctx, targetPath); err != nil || len(slots) != 0 {
 		t.Fatalf("expected screenshot slots removed, got len=%d err=%v", len(slots), err)
 	}
+	var legacyRows int
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE source_path = ?`, targetPath).Scan(&legacyRows); err != nil {
+		t.Fatalf("query target legacy ui_states: %v", err)
+	}
+	if legacyRows != 0 {
+		t.Fatalf("expected target legacy ui_states removed, got %d", legacyRows)
+	}
 
 	if _, err := repo.GetByPath(ctx, otherPath); err != nil {
 		t.Fatalf("expected other path untouched, got %v", err)
@@ -1564,6 +1583,12 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}
 	if len(pending) != 1 || pending[0].SourcePath != otherPath {
 		t.Fatalf("expected only other upload record remaining, got %#v", pending)
+	}
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE source_path = ?`, otherPath).Scan(&legacyRows); err != nil {
+		t.Fatalf("query other legacy ui_states: %v", err)
+	}
+	if legacyRows != 1 {
+		t.Fatalf("expected other legacy ui_states untouched, got %d", legacyRows)
 	}
 }
 

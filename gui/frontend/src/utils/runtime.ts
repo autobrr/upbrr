@@ -92,8 +92,8 @@ const ensureEventSource = () => {
   if (!browserMode || eventSource) {
     return;
   }
-  const tokenParam = csrfToken ? `?csrfToken=${encodeURIComponent(csrfToken)}` : "";
-  eventSource = new EventSource(`/api/events${tokenParam}`, { withCredentials: true });
+  // Keep auth on cookies; EventSource URLs can be persisted by browser/network tooling.
+  eventSource = new EventSource("/api/events", { withCredentials: true });
   eventSource.onmessage = () => undefined;
   const attach = (eventName: string) => {
     eventSource?.addEventListener(eventName, (event) => {

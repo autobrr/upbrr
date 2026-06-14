@@ -1410,15 +1410,17 @@ export default function App() {
 
   const handleHistoryReleaseDeleted = useCallback(
     (deletedPath: string) => {
+      // The input path can be edited after loading history; reset based on the displayed release.
+      const loadedPath = (preview.SourcePath || path).trim();
       if (
-        path.trim().replaceAll("\\", "/").toLowerCase() !==
+        loadedPath.replaceAll("\\", "/").toLowerCase() !==
         deletedPath.trim().replaceAll("\\", "/").toLowerCase()
       ) {
         return;
       }
       resetFreshWorkflowState("history");
     },
-    [path, resetFreshWorkflowState],
+    [path, preview.SourcePath, resetFreshWorkflowState],
   );
 
   // Helper functions for screenshot management (not in the hook)

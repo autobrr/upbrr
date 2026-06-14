@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -185,6 +186,57 @@ func TestStopSessionLogStreamsStopsMatchingStreams(t *testing.T) {
 	}
 
 	_ = backend.StopLogStream("session-b", "stream-3")
+}
+
+func TestHandleEventsDoesNotStopSessionLogStreams(t *testing.T) {
+	backend := &Backend{
+		streams: make(map[string]*backendLogStream),
+	}
+	stream := &backendLogStream{
+		id:        "stream-1",
+		sessionID: "session-a",
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
+	}
+	backend.streams[stream.id] = stream
+	backend.streamWG.Go(func() {
+		<-stream.stop
+		close(stream.done)
+	})
+	t.Cleanup(func() {
+		_ = backend.StopLogStream("session-a", stream.id)
+	})
+
+	hub := newEventHub()
+	server := &Server{
+		backend:        backend,
+		hub:            hub,
+		generalLimiter: newFixedWindowLimiter(300, time.Minute),
+	}
+	current := session{ID: "session-a", CSRFToken: "csrf"}
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/events", nil)
+	recorder := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		server.handleEvents(recorder, req, current)
+		close(done)
+	}()
+
+	waitForEventSubscriber(t, hub, current.ID)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected event stream to close after request cancellation")
+	}
+
+	backend.streamMu.Lock()
+	_, ok := backend.streams[stream.id]
+	backend.streamMu.Unlock()
+	if !ok {
+		t.Fatal("expected event stream close to leave session log streams running")
+	}
 }
 
 func TestServeCancelsOpenEventStreamOnContextDone(t *testing.T) {

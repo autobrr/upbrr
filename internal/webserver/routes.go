@@ -417,9 +417,9 @@ func sameFilesystemPath(left string, right string) bool {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current session) {
-	// EventSource cannot send custom headers, so browser clients pin the stream
-	// to the session by passing the CSRF token in the query string.
-	if strings.TrimSpace(r.URL.Query().Get("csrfToken")) != current.CSRFToken {
+	// Older browser clients may send csrfToken in the URL. Treat it only as a
+	// cookie-bound consistency check, never as session authentication.
+	if token := strings.TrimSpace(r.URL.Query().Get("csrfToken")); token != "" && token != current.CSRFToken {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf validation failed"})
 		return
 	}
@@ -434,7 +434,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current se
 
 	ch, unsubscribe := s.hub.Subscribe(current.ID)
 	defer unsubscribe()
-	defer s.backend.StopSessionLogStreams(current.ID)
 
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -497,7 +496,7 @@ func (s *Server) currentSession(r *http.Request) (session, bool) {
 }
 
 // currentSessionByToken resolves the session explicitly named by a request CSRF
-// token. It accepts either the normal header or the EventSource query token.
+// token from the normal request header.
 func (s *Server) currentSessionByToken(r *http.Request) (session, bool) {
 	token := sessionTokenFromRequest(r)
 	if token == "" {
@@ -515,15 +514,12 @@ func (s *Server) currentSessionByToken(r *http.Request) (session, bool) {
 }
 
 // sessionTokenFromRequest returns the session-pinning CSRF token supplied by
-// app calls or browser EventSource requests.
+// app calls.
 func sessionTokenFromRequest(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if token := strings.TrimSpace(r.Header.Get("X-Csrf-Token")); token != "" {
-		return token
-	}
-	return strings.TrimSpace(r.URL.Query().Get("csrfToken"))
+	return strings.TrimSpace(r.Header.Get("X-Csrf-Token"))
 }
 
 func (s *Server) developmentCurrentSession(r *http.Request) (session, bool) {

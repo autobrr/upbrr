@@ -187,7 +187,7 @@ describe("browser runtime bridge", () => {
     const off = EventsOn("metadata:progress", vi.fn());
     const lastEventSource = eventSources[eventSources.length - 1];
 
-    expect(lastEventSource?.url).toBe("/api/events?csrfToken=csrf-token");
+    expect(lastEventSource?.url).toBe("/api/events");
     expect(lastEventSource?.options).toEqual({ withCredentials: true });
     off();
   });

@@ -613,3 +613,63 @@ func TestInvalidRequestSessionTokenDoesNotFallbackToCookie(t *testing.T) {
 		t.Fatalf("expected invalid request token to reject cookie fallback, got %#v", resolved)
 	}
 }
+
+func TestQuerySessionTokenDoesNotAuthenticateAppRoute(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	current, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/GetConfig?csrfToken="+current.CSRFToken, nil)
+	if resolved, ok := server.currentSession(req); ok {
+		t.Fatalf("expected query token without cookie to reject app route, got %#v", resolved)
+	}
+}
+
+func TestEventQuerySessionTokenDoesNotOverrideCookie(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	first, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create first session: %v", err)
+	}
+	second, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create second session: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/events?csrfToken="+first.CSRFToken, nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: second.ID})
+
+	current, ok := server.currentSession(req)
+	if !ok {
+		t.Fatal("expected cookie session to resolve")
+	}
+	if current.ID != second.ID {
+		t.Fatalf("expected query token not to override cookie session, got %q", current.ID)
+	}
+}
+
+func TestSaveConfigRejectsGet(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	current, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/SaveConfig", strings.NewReader(`{"Payload":"{}"}`))
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected method not allowed, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}

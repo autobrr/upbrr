@@ -2563,6 +2563,11 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 				totalRemoved += rows
 			}
 		}
+		rows, err := r.purgeLegacyUIState(ctx, tx, trimmedPath)
+		if err != nil {
+			return err
+		}
+		totalRemoved += rows
 		return nil
 	}); err != nil {
 		return err
@@ -2571,6 +2576,33 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		r.logger.Debugf("db: purge content data completed path=%s rows_removed=%d", trimmedPath, totalRemoved)
 	}
 	return nil
+}
+
+// purgeLegacyUIState removes rows from the retired ui_states table when an old
+// installation still has it. Current schemas do not create the table, so a
+// missing table is a no-op.
+func (r *SQLiteRepository) purgeLegacyUIState(ctx context.Context, tx *sql.Tx, path string) (int64, error) {
+	var tableName string
+	err := tx.QueryRowContext(ctx, `
+		SELECT name
+		FROM sqlite_master
+		WHERE type = 'table' AND name = 'ui_states'
+	`).Scan(&tableName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: check legacy ui_states: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE source_path = ?`, path)
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: legacy ui_states: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, nil
+	}
+	return rows, nil
 }
 
 func resolvePath(path string) (string, error) {

@@ -601,6 +601,10 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	}))
 
 	mux.HandleFunc("/api/app/SaveConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
 		var req struct{ Payload string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
