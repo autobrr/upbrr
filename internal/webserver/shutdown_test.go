@@ -176,7 +176,15 @@ func TestStopSessionLogStreamsStopsMatchingStreams(t *testing.T) {
 		t.Fatal("expected other session log streams to remain")
 	}
 
-	_ = backend.StopLogStream("stream-3")
+	_ = backend.StopLogStream("session-a", "stream-3")
+	backend.streamMu.Lock()
+	_, hasThirdAfterForeignStop := backend.streams["stream-3"]
+	backend.streamMu.Unlock()
+	if !hasThirdAfterForeignStop {
+		t.Fatal("expected foreign session stop to leave log stream running")
+	}
+
+	_ = backend.StopLogStream("session-b", "stream-3")
 }
 
 func TestServeCancelsOpenEventStreamOnContextDone(t *testing.T) {
@@ -217,7 +225,7 @@ func TestServeCancelsOpenEventStreamOnContextDone(t *testing.T) {
 	req, err := http.NewRequestWithContext(
 		context.Background(),
 		http.MethodGet,
-		"http://"+listener.Addr().String()+"/api/events",
+		"http://"+listener.Addr().String()+"/api/events?csrfToken=csrf",
 		nil,
 	)
 	if err != nil {

@@ -3,13 +3,17 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const eventSources: FakeEventSource[] = [];
+
 class FakeEventSource {
   onmessage: (() => void) | null = null;
 
   constructor(
     readonly url: string,
     readonly options?: EventSourceInit,
-  ) {}
+  ) {
+    eventSources.push(this);
+  }
 
   addEventListener = vi.fn();
   close = vi.fn();
@@ -24,6 +28,7 @@ const jsonResponse = (payload: unknown, init?: ResponseInit) =>
 describe("browser runtime bridge", () => {
   beforeEach(() => {
     vi.resetModules();
+    eventSources.length = 0;
     vi.stubGlobal("EventSource", FakeEventSource);
   });
 
@@ -81,7 +86,7 @@ describe("browser runtime bridge", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           authenticated: true,
-          csrfToken: "fresh-csrf",
+          csrfToken: "stale-csrf",
           nativeBrowseEnabled: true,
         }),
       )
@@ -115,9 +120,31 @@ describe("browser runtime bridge", () => {
       "/api/app/StartDupeCheck",
       expect.objectContaining({
         credentials: "include",
-        headers: expect.objectContaining({ "X-CSRF-Token": "fresh-csrf" }),
+        headers: expect.objectContaining({ "X-CSRF-Token": "stale-csrf" }),
       }),
     );
+  });
+
+  it("does not adopt a different browser session during auth refresh", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: "csrf validation failed" }, { status: 403 }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          authenticated: true,
+          csrfToken: "other-session-csrf",
+          nativeBrowseEnabled: true,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeBrowserBridge } = await import("./runtime");
+    initializeBrowserBridge("session-a-csrf", false);
+
+    await expect(
+      (globalThis as any).go.guiapp.App.StartDupeCheck("C:/media/movie.mkv", {}, {}, ["AITHER"]),
+    ).rejects.toThrow("Web session changed in another tab");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("notifies listeners when auth refresh changes native browse availability", async () => {
@@ -127,7 +154,7 @@ describe("browser runtime bridge", () => {
       .mockResolvedValueOnce(
         jsonResponse({
           authenticated: true,
-          csrfToken: "fresh-csrf",
+          csrfToken: "stale-csrf",
           nativeBrowseEnabled: true,
         }),
       )
@@ -150,5 +177,18 @@ describe("browser runtime bridge", () => {
     expect(listener).toHaveBeenCalledOnce();
     expect(isBrowserNativeBrowseAvailable()).toBe(true);
     unsubscribe();
+  });
+
+  it("opens browser events against the initialized session token", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ ok: true })));
+
+    const { EventsOn, initializeBrowserBridge } = await import("./runtime");
+    initializeBrowserBridge("csrf-token", true);
+    const off = EventsOn("metadata:progress", vi.fn());
+    const lastEventSource = eventSources[eventSources.length - 1];
+
+    expect(lastEventSource?.url).toBe("/api/events?csrfToken=csrf-token");
+    expect(lastEventSource?.options).toEqual({ withCredentials: true });
+    off();
   });
 });

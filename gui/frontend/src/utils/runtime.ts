@@ -12,6 +12,9 @@ let browserMode = false;
 let csrfToken = "";
 let nativeBrowseEnabled = false;
 
+const sessionChangedMessage =
+  "Web session changed in another tab. Reload this tab to continue with the active login.";
+
 const isWebUIRuntime = () => {
   const runtime = (window as typeof window & { runtime?: unknown }).runtime;
   return (
@@ -37,6 +40,10 @@ const setNativeBrowseEnabled = (enabled: boolean) => {
   nativeBrowseAvailabilityListeners.forEach((listener) => listener());
 };
 
+/**
+ * Refreshes browser auth state for a retry without switching this tab to a
+ * different web session.
+ */
 const refreshBrowserAuthState = async () => {
   if (!browserMode) {
     return false;
@@ -52,7 +59,11 @@ const refreshBrowserAuthState = async () => {
   if (!response.ok || !payload?.authenticated) {
     return false;
   }
-  csrfToken = String(payload.csrfToken || "");
+  const nextCSRFToken = String(payload.csrfToken || "");
+  if (csrfToken && nextCSRFToken && nextCSRFToken !== csrfToken) {
+    throw new Error(sessionChangedMessage);
+  }
+  csrfToken = nextCSRFToken;
   setNativeBrowseEnabled(Boolean(payload.nativeBrowseEnabled));
   recreateEventSource();
   return csrfToken !== "";
@@ -81,7 +92,8 @@ const ensureEventSource = () => {
   if (!browserMode || eventSource) {
     return;
   }
-  eventSource = new EventSource("/api/events", { withCredentials: true });
+  const tokenParam = csrfToken ? `?csrfToken=${encodeURIComponent(csrfToken)}` : "";
+  eventSource = new EventSource(`/api/events${tokenParam}`, { withCredentials: true });
   eventSource.onmessage = () => undefined;
   const attach = (eventName: string) => {
     eventSource?.addEventListener(eventName, (event) => {
@@ -140,6 +152,10 @@ const getJSON = async <T>(path: string): Promise<T> => {
   return payload as T;
 };
 
+/**
+ * Installs the browser-mode app bridge and pins subsequent app calls/events to
+ * the session represented by token.
+ */
 export const initializeBrowserBridge = (token: string, browseEnabled = false) => {
   browserMode = isWebUIRuntime();
   setNativeBrowseEnabled(browseEnabled);
@@ -517,6 +533,9 @@ export const subscribeBrowserNativeBrowseAvailability = (listener: () => void) =
   };
 };
 
+/**
+ * Updates the session token used by browser-mode app calls and event streams.
+ */
 export const updateBrowserCSRFToken = (token: string) => {
   csrfToken = token;
   recreateEventSource();
@@ -540,6 +559,10 @@ export const browserAuth = {
   logout: () => postJSON("/api/auth/logout"),
 };
 
+/**
+ * Subscribes to Wails events in desktop mode or the token-pinned web event
+ * stream in browser mode.
+ */
 export const EventsOn = (eventName: string, callback: EventCallback) => {
   if (!browserMode) {
     return wailsEventsOn(eventName, callback as any);

@@ -979,9 +979,15 @@ func (b *Backend) StartLogStream(sessionID string) (string, error) {
 	return streamID, nil
 }
 
-func (b *Backend) StopLogStream(streamID string) error {
+// StopLogStream stops streamID only when it belongs to sessionID.
+// Unknown streams and streams owned by other sessions are treated as no-ops.
+func (b *Backend) StopLogStream(sessionID string, streamID string) error {
+	trimmedSessionID := strings.TrimSpace(sessionID)
 	b.streamMu.Lock()
 	session := b.streams[streamID]
+	if session != nil && strings.TrimSpace(session.sessionID) != trimmedSessionID {
+		session = nil
+	}
 	if session != nil {
 		delete(b.streams, streamID)
 		select {
@@ -997,6 +1003,7 @@ func (b *Backend) StopLogStream(streamID string) error {
 	return nil
 }
 
+// StopSessionLogStreams closes all active log streams owned by sessionID.
 func (b *Backend) StopSessionLogStreams(sessionID string) {
 	trimmedSessionID := strings.TrimSpace(sessionID)
 	if trimmedSessionID == "" {
@@ -1013,7 +1020,7 @@ func (b *Backend) StopSessionLogStreams(sessionID string) {
 	b.streamMu.Unlock()
 
 	for _, streamID := range streamIDs {
-		_ = b.StopLogStream(streamID)
+		_ = b.StopLogStream(trimmedSessionID, streamID)
 	}
 }
 

@@ -417,6 +417,12 @@ func sameFilesystemPath(left string, right string) bool {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current session) {
+	// EventSource cannot send custom headers, so browser clients pin the stream
+	// to the session by passing the CSRF token in the query string.
+	if strings.TrimSpace(r.URL.Query().Get("csrfToken")) != current.CSRFToken {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf validation failed"})
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
@@ -473,6 +479,14 @@ func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, se
 }
 
 func (s *Server) currentSession(r *http.Request) (session, bool) {
+	// Prefer explicit request tokens over the origin-wide cookie so an existing
+	// tab keeps its own session after another tab logs in.
+	if current, ok := s.currentSessionByToken(r); ok {
+		return current, true
+	}
+	if sessionTokenFromRequest(r) != "" {
+		return session{}, false
+	}
 	cookie, err := r.Cookie(sessionCookieName)
 	if err == nil && s.sessions != nil {
 		if current, ok := s.sessions.Get(cookie.Value); ok {
@@ -480,6 +494,36 @@ func (s *Server) currentSession(r *http.Request) (session, bool) {
 		}
 	}
 	return s.developmentCurrentSession(r)
+}
+
+// currentSessionByToken resolves the session explicitly named by a request CSRF
+// token. It accepts either the normal header or the EventSource query token.
+func (s *Server) currentSessionByToken(r *http.Request) (session, bool) {
+	token := sessionTokenFromRequest(r)
+	if token == "" {
+		return session{}, false
+	}
+	if s != nil && s.sessions != nil {
+		if current, ok := s.sessions.GetByCSRFToken(token); ok {
+			return current, true
+		}
+	}
+	if current, ok := s.developmentCurrentSession(r); ok && current.CSRFToken == token {
+		return current, true
+	}
+	return session{}, false
+}
+
+// sessionTokenFromRequest returns the session-pinning CSRF token supplied by
+// app calls or browser EventSource requests.
+func sessionTokenFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if token := strings.TrimSpace(r.Header.Get("X-Csrf-Token")); token != "" {
+		return token
+	}
+	return strings.TrimSpace(r.URL.Query().Get("csrfToken"))
 }
 
 func (s *Server) developmentCurrentSession(r *http.Request) (session, bool) {

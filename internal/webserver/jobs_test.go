@@ -221,6 +221,59 @@ func TestPruneCompletedUploadJobsLockedKeepsNewestCompleted(t *testing.T) {
 	}
 }
 
+func TestDupeJobAccessRequiresOwningSession(t *testing.T) {
+	backend := &Backend{
+		dupes: map[string]*dupeCheckJob{
+			"job-1": {
+				sessionID:  "session-a",
+				id:         "job-1",
+				sourcePath: `C:\Media\Movie.mkv`,
+				status:     "running",
+				states:     map[string]DupeCheckTrackerState{},
+				startedAt:  time.Now().UTC(),
+			},
+		},
+	}
+
+	if _, err := backend.GetDupeCheckSnapshot("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session snapshot read to be rejected")
+	}
+	if err := backend.CancelDupeCheck("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session cancel to be rejected")
+	}
+	if _, err := backend.GetDupeCheckSnapshot("session-a", "job-1"); err != nil {
+		t.Fatalf("expected owning session snapshot read to succeed: %v", err)
+	}
+}
+
+func TestTrackerUploadJobAccessRequiresOwningSession(t *testing.T) {
+	backend := &Backend{
+		uploads: map[string]*trackerUploadJob{
+			"job-1": {
+				sessionID:  "session-a",
+				id:         "job-1",
+				sourcePath: `C:\Media\Movie.mkv`,
+				status:     "running",
+				states:     map[string]TrackerUploadTrackerState{},
+				startedAt:  time.Now().UTC(),
+			},
+		},
+	}
+
+	if _, err := backend.GetTrackerUploadSnapshot("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session snapshot read to be rejected")
+	}
+	if err := backend.CancelTrackerUpload("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session cancel to be rejected")
+	}
+	if _, err := backend.RetryFailedTrackerUpload("session-b", "job-1"); err == nil {
+		t.Fatal("expected foreign session retry to be rejected")
+	}
+	if _, err := backend.GetTrackerUploadSnapshot("session-a", "job-1"); err != nil {
+		t.Fatalf("expected owning session snapshot read to succeed: %v", err)
+	}
+}
+
 func TestApplyTrackerUploadProgressThrottlesSmallHashRateBurst(t *testing.T) {
 	hub := newEventHub()
 	ch, unsubscribe := hub.Subscribe("session")

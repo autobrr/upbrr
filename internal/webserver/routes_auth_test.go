@@ -571,3 +571,45 @@ func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 		t.Fatalf("expected retained session to access app route after restart, got %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestRequestSessionTokenLocksSessionDespiteDifferentCookie(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	first, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create first session: %v", err)
+	}
+	second, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create second session: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/StartDupeCheck", strings.NewReader(`{}`))
+	req.Header.Set("X-Csrf-Token", first.CSRFToken)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: second.ID})
+
+	current, ok := server.currentSession(req)
+	if !ok {
+		t.Fatal("expected request token to resolve a session")
+	}
+	if current.ID != first.ID {
+		t.Fatalf("expected request token to lock first session, got %q", current.ID)
+	}
+}
+
+func TestInvalidRequestSessionTokenDoesNotFallbackToCookie(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	current, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/StartDupeCheck", strings.NewReader(`{}`))
+	req.Header.Set("X-Csrf-Token", "not-current-token")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+
+	if resolved, ok := server.currentSession(req); ok {
+		t.Fatalf("expected invalid request token to reject cookie fallback, got %#v", resolved)
+	}
+}
