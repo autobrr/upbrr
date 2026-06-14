@@ -81,6 +81,7 @@ import {
   sourcePathHistoryStorageKey,
 } from "./utils/inputHistory";
 import { handleExternalLinkClick } from "./utils/externalLinks";
+import { normalizeJobStatus } from "./utils/jobStatus";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -265,7 +266,7 @@ const upsertProgressLine = (lines: string[], line: string) => {
 
 /** Returns whether a background job status should keep progress recovery active. */
 const isRunningJobStatus = (status: string) => {
-  const normalized = status.toLowerCase().trim();
+  const normalized = normalizeJobStatus(status);
   return normalized === "queued" || normalized === "running";
 };
 
@@ -2744,9 +2745,7 @@ export default function App() {
     setDupeCheckSnapshot(snapshot);
     setDupeSummary(snapshot.summary || emptyDupeSummary);
 
-    const normalized = String(snapshot.status || "")
-      .toLowerCase()
-      .trim();
+    const normalized = normalizeJobStatus(snapshot.status);
     const running = isRunningJobStatus(normalized);
     setDupeLoading(running);
 
@@ -3132,7 +3131,7 @@ export default function App() {
   /** Applies an upload job snapshot from either live events or polling fallback. */
   const applyTrackerUploadSnapshot = useCallback((snapshot: TrackerUploadSnapshot) => {
     setTrackerUploadSnapshot(snapshot);
-    const normalized = String(snapshot.status || "").toLowerCase();
+    const normalized = normalizeJobStatus(snapshot.status);
     const running = isRunningJobStatus(normalized);
     setTrackerUploadRunning(running);
     if (normalized === "completed") {

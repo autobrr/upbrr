@@ -75,6 +75,10 @@ const formatTime = (iso: string) => {
   return date.toLocaleTimeString();
 };
 
+/** Builds the dedupe/render identity for log rows across logger restarts. */
+const logEntryKey = (entry: LogEntry) =>
+  `${Number.isFinite(entry.ID) ? entry.ID : "no-id"}|${entry.Time}|${entry.Level}|${entry.Message}`;
+
 export default function LogSettingsPanel({
   configData,
   renderField,
@@ -124,12 +128,13 @@ export default function LogSettingsPanel({
       if (incoming.length === 0) return;
       setEntries((prev) => {
         // Recent-log backfills can overlap live stream events; logger IDs keep
-        // the rendered buffer idempotent across both sources.
-        const seenIDs = new Set(prev.map((entry) => entry.ID));
+        // the rendered buffer idempotent across both sources. IDs restart with
+        // each logger instance, so include row content to survive stream rebinds.
+        const seenRows = new Set(prev.map(logEntryKey));
         const uniqueIncoming = incoming.filter((entry) => {
-          if (!Number.isFinite(entry.ID)) return true;
-          if (seenIDs.has(entry.ID)) return false;
-          seenIDs.add(entry.ID);
+          const key = logEntryKey(entry);
+          if (seenRows.has(key)) return false;
+          seenRows.add(key);
           return true;
         });
         if (uniqueIncoming.length === 0) return prev;
@@ -389,7 +394,7 @@ export default function LogSettingsPanel({
           ) : (
             filteredEntries.map((entry) => (
               <div
-                key={entry.ID}
+                key={logEntryKey(entry)}
                 className="grid grid-cols-[72px_64px_minmax(0,1fr)] items-center gap-2"
               >
                 <span className="text-xs text-[var(--muted)]">{formatTime(entry.Time)}</span>

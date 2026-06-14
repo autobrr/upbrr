@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import LogSettingsPanel from "./LogSettingsPanel";
+import { EventsOn } from "../utils/runtime";
 
 vi.mock("../utils/runtime", () => ({
   EventsOn: vi.fn(() => vi.fn()),
@@ -30,6 +31,7 @@ const installGoAPI = () => {
 describe("LogSettingsPanel", () => {
   afterEach(() => {
     cleanup();
+    vi.clearAllMocks();
     delete (globalThis as any).go;
   });
 
@@ -51,5 +53,62 @@ describe("LogSettingsPanel", () => {
     await userEvent.selectOptions(screen.getByLabelText("Verbosity"), "debug");
 
     expect(updateConfigValue).toHaveBeenCalledWith(["Logging", "Level"], "debug");
+  });
+
+  it("keeps distinct rows when a restarted log stream reuses IDs", async () => {
+    installGoAPI();
+    const app = (globalThis as any).go.guiapp.App;
+    app.GetRecentLogs.mockResolvedValueOnce([
+      {
+        ID: 1,
+        Time: "2026-06-15T00:00:00.000Z",
+        Level: "info",
+        Message: "before restart",
+      },
+    ]);
+    app.GetRecentLogs.mockResolvedValueOnce([
+      {
+        ID: 1,
+        Time: "2026-06-15T00:01:00.000Z",
+        Level: "info",
+        Message: "after restart",
+      },
+    ]);
+
+    render(
+      <LogSettingsPanel
+        configData={{ Logging: { Level: "info" } }}
+        fieldMeta={{ Level: { label: "Verbosity" } }}
+        renderField={(label) => <div key={label}>{label}</div>}
+        updateConfigValue={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("before restart")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("after restart")).toBeInTheDocument());
+  });
+
+  it("dedupes exact recent/live overlap rows", async () => {
+    installGoAPI();
+    const app = (globalThis as any).go.guiapp.App;
+    const row = {
+      ID: 2,
+      Time: "2026-06-15T00:00:00.000Z",
+      Level: "info",
+      Message: "overlap",
+    };
+    app.GetRecentLogs.mockResolvedValue([row]);
+
+    render(
+      <LogSettingsPanel
+        configData={{ Logging: { Level: "info" } }}
+        fieldMeta={{ Level: { label: "Verbosity" } }}
+        renderField={(label) => <div key={label}>{label}</div>}
+        updateConfigValue={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(EventsOn).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getAllByText("overlap")).toHaveLength(1));
   });
 });
