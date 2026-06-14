@@ -82,6 +82,7 @@ import {
 } from "./utils/inputHistory";
 import { handleExternalLinkClick } from "./utils/externalLinks";
 import { normalizeJobStatus } from "./utils/jobStatus";
+import { isMetadataProgressPathMatch } from "./utils/metadataProgress";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -906,14 +907,13 @@ export default function App() {
   useEffect(() => {
     // Keep one stable metadata progress listener for the app lifetime; refs
     // carry the active request state without resubscribing mid-fetch.
-    const normalizePath = (value: string) => value.trim().replaceAll("\\", "/").toLowerCase();
     const off = EventsOn(metadataProgressEvent, (payload: any) => {
       if (!metadataProgressActiveRef.current) {
         return;
       }
       const eventPath = typeof payload?.path === "string" ? payload.path : "";
       const progressTarget = metadataProgressTargetRef.current;
-      if (progressTarget && normalizePath(eventPath) !== normalizePath(progressTarget)) {
+      if (!isMetadataProgressPathMatch(eventPath, progressTarget)) {
         return;
       }
 
@@ -2799,6 +2799,10 @@ export default function App() {
       }
     } catch (err) {
       const message = String(err);
+      // Starter failures do not create a durable job, so clear the polling gates.
+      setDupeLoading(false);
+      setDupeCheckJobID("");
+      setDupeCheckSnapshot(null);
       setDupeChecked(false);
       if (message.includes("dupe check requires metadata preview")) {
         setDupeError("Fetch metadata first to cache a preview before checking dupes.");

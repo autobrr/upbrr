@@ -31,7 +31,7 @@ const installGoAPI = () => {
 describe("LogSettingsPanel", () => {
   afterEach(() => {
     cleanup();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
     delete (globalThis as any).go;
   });
 
@@ -98,6 +98,10 @@ describe("LogSettingsPanel", () => {
       Message: "overlap",
     };
     app.GetRecentLogs.mockResolvedValue([row]);
+    vi.mocked(EventsOn).mockImplementationOnce((_eventName, callback) => {
+      callback(row);
+      return vi.fn();
+    });
 
     render(
       <LogSettingsPanel
@@ -110,5 +114,51 @@ describe("LogSettingsPanel", () => {
 
     await waitFor(() => expect(EventsOn).toHaveBeenCalled());
     await waitFor(() => expect(screen.getAllByText("overlap")).toHaveLength(1));
+  });
+
+  it("does not restart the log stream when auto-scroll changes", async () => {
+    installGoAPI();
+    const app = (globalThis as any).go.guiapp.App;
+
+    render(
+      <LogSettingsPanel
+        configData={{ Logging: { Level: "info" } }}
+        fieldMeta={{ Level: { label: "Verbosity" } }}
+        renderField={(label) => <div key={label}>{label}</div>}
+        updateConfigValue={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(app.StartLogStream).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByLabelText("Auto-scroll logs"));
+
+    expect(app.StopLogStream).not.toHaveBeenCalled();
+    expect(app.StartLogStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops a started stream when event subscription fails", async () => {
+    installGoAPI();
+    const app = (globalThis as any).go.guiapp.App;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.mocked(EventsOn).mockImplementationOnce(() => {
+      throw new Error("subscribe failed");
+    });
+
+    render(
+      <LogSettingsPanel
+        configData={{ Logging: { Level: "info" } }}
+        fieldMeta={{ Level: { label: "Verbosity" } }}
+        renderField={(label) => <div key={label}>{label}</div>}
+        updateConfigValue={vi.fn()}
+      />,
+    );
+
+    try {
+      await waitFor(() => expect(app.StopLogStream).toHaveBeenCalledWith("stream-1"));
+      expect(consoleError).toHaveBeenCalledWith("Failed to start log stream", expect.any(Error));
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
