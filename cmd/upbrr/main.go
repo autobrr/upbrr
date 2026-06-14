@@ -30,7 +30,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var version = "dev"
+var (
+	version         = "dev"
+	buildIdentifier = ""
+)
 
 func main() {
 	exitCode := 0
@@ -75,7 +78,7 @@ func exitError(code int, err error) error {
 }
 
 func run() error {
-	api.SetApplicationBuild(version, "")
+	api.SetApplicationBuild(version, buildIdentifier)
 
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		if err := runServe(os.Args[2:]); err != nil {

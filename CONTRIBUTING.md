@@ -29,7 +29,7 @@ Install the following on your machine:
 - [Wails CLI](https://wails.io/) `v2.12.0` for desktop builds
   - Build scripts invoke `go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0`
 
-On Linux, Wails builds also need GTK/WebKit development packages. The full list is in [`.github/workflows/build-binaries.yml`](./.github/workflows/build-binaries.yml) — key packages are `build-essential`, `libgtk-3-dev`, `libwebkit2gtk-4.0-dev` (or `4.1-dev`), `libglib2.0-dev`, and `pkg-config`.
+On Linux, Wails builds also need GTK/WebKit development packages. The full list is in [`.github/workflows/build-binaries.yml`](./.github/workflows/build-binaries.yml) — key packages are `build-essential`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libglib2.0-dev`, and `pkg-config`.
 
 ### Supported platforms
 
@@ -74,7 +74,7 @@ lefthook install
 What runs when Git invokes hooks:
 
 - `pre-commit` — on **staged files only**: `prettier --write` (gui/frontend), `eslint` (gui/frontend/src), `golangci-lint fmt` (Go), `go run ./cmd/logpolicy` (when `internal/**` Go files change), and `go run ./cmd/pathpolicy` (when Go files change). Formatters auto-re-stage their fixes.
-- `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the path-portability checker before golangci-lint. These checks run locally without CI. Disabled workflow templates under `.github/workflows/*.yml22` mirror the Go test/pathpolicy OS matrix for later CI re-enable.
+- `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the path-portability checker before golangci-lint. CI mirrors the Go test/pathpolicy OS matrix and frontend checks for pull requests.
 - `commit-msg` — `go run ./cmd/commitmsgcheck` enforces [Conventional Commits](https://www.conventionalcommits.org/) without requiring Node.js or `pnpm install`.
 
 Makefile shortcuts:
@@ -112,7 +112,7 @@ Examples:
 ```
 feat(config): add YAML import
 fix(bt): correct duplicate search payload
-chore(ci): switch to pnpm action v5
+chore(ci): switch to pnpm action v6
 ```
 
 VS Code users: `.vscode/settings.json` wires the Source Control input-box length warning and Copilot's _Generate commit message_ prompt to the same 115-character budget, so IDE output passes the hooks on first try.
