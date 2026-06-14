@@ -39,7 +39,7 @@ func (h mtvHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		params.Set("imdbid", "tt"+strconv.Itoa(meta.ExternalIDs.IMDBID))
 	case meta.ExternalIDs.TMDBID != 0:
 		params.Set("tmdbid", strconv.Itoa(meta.ExternalIDs.TMDBID))
-	case meta.ExternalIDs.TVDBID != 0:
+	case isMTVTVCategory(meta) && meta.ExternalIDs.TVDBID != 0:
 		params.Set("tvdbid", strconv.Itoa(meta.ExternalIDs.TVDBID))
 	default:
 		query := cleanMTVSearchTitle(meta)
@@ -111,6 +111,23 @@ func (h mtvHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	}
 
 	return entries, nil, nil
+}
+
+// isMTVTVCategory reports whether MTV torznab searches may use a TVDB ID query.
+// Explicit movie categories suppress TVDB even when MediaInfo classifies the release as TV.
+func isMTVTVCategory(meta api.PreparedMetadata) bool {
+	if isMTVMovieCategory(meta) {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV")
+}
+
+func isMTVMovieCategory(meta api.PreparedMetadata) bool {
+	return strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "MOVIE")
 }
 
 func cleanMTVSearchTitle(meta api.PreparedMetadata) string {

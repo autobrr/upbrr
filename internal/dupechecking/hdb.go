@@ -44,7 +44,7 @@ func (h hdbHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	payload["medium"] = mediumID
 	if meta.ExternalIDs.IMDBID != 0 {
 		payload["imdb"] = map[string]any{"id": formatHDBIMDbID(meta.ExternalIDs.IMDBID)}
-	} else if meta.ExternalIDs.TVDBID != 0 {
+	} else if isHDBTVCategory(meta) && meta.ExternalIDs.TVDBID != 0 {
 		payload["tvdb"] = map[string]any{"id": meta.ExternalIDs.TVDBID}
 	}
 	if _, hasIMDB := payload["imdb"]; !hasIMDB {
@@ -111,6 +111,35 @@ func (h hdbHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	}
 	logger.Debugf("dupechecking: HDB returned %d entries for %s method=%s", len(entries), meta.SourcePath, searchMethod)
 	return entries, nil, nil
+}
+
+// isHDBTVCategory reports whether HDB dupe searches may use TVDB-specific filters.
+// Explicit movie categories suppress TVDB even when MediaInfo or overrides classify the release as TV.
+func isHDBTVCategory(meta api.PreparedMetadata) bool {
+	if isHDBMovieCategory(meta) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV") {
+		return true
+	}
+	if meta.ReleaseNameOverrides.Category != nil {
+		return strings.EqualFold(strings.TrimSpace(*meta.ReleaseNameOverrides.Category), "TV")
+	}
+	return false
+}
+
+func isHDBMovieCategory(meta api.PreparedMetadata) bool {
+	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "MOVIE") {
+		return true
+	}
+	if meta.ReleaseNameOverrides.Category != nil {
+		return strings.EqualFold(strings.TrimSpace(*meta.ReleaseNameOverrides.Category), "MOVIE")
+	}
+	return false
 }
 
 func formatHDBIMDbID(imdbID int) string {

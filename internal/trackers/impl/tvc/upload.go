@@ -160,7 +160,6 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		"type":             resolveResolution(req.Meta),
 		"tmdb":             strconv.Itoa(req.Meta.ExternalIDs.TMDBID),
 		"imdb":             strconv.Itoa(req.Meta.ExternalIDs.IMDBID),
-		"tvdb":             strconv.Itoa(req.Meta.ExternalIDs.TVDBID),
 		"mal":              strconv.Itoa(req.Meta.MALID),
 		"igdb":             "0",
 		"anonymous":        boolNum(req.TrackerConfig.Anon),
@@ -175,6 +174,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		"sticky":           "0",
 	}
 	if isTV(req.Meta) {
+		if isTVCategory(req.Meta) {
+			fields["tvdb"] = strconv.Itoa(req.Meta.ExternalIDs.TVDBID)
+		}
 		fields["season_number"] = strconv.Itoa(maxInt(req.Meta.SeasonInt, 0))
 		fields["episode_number"] = strconv.Itoa(maxInt(req.Meta.EpisodeInt, 0))
 	}
@@ -315,7 +317,7 @@ func externalLinks(meta api.PreparedMetadata) string {
 	if meta.ExternalIDs.IMDBID > 0 {
 		parts = append(parts, fmt.Sprintf("[url=https://www.imdb.com/title/tt%07d]IMDb[/url]", meta.ExternalIDs.IMDBID))
 	}
-	if meta.ExternalIDs.TVDBID > 0 {
+	if isTVCategory(meta) && meta.ExternalIDs.TVDBID > 0 {
 		parts = append(parts, fmt.Sprintf("[url=https://www.thetvdb.com/?id=%d&tab=series]TVDB[/url]", meta.ExternalIDs.TVDBID))
 	}
 	return strings.Join(parts, " | ")
@@ -379,7 +381,25 @@ func cloneFields(input map[string]string) map[string]string {
 }
 
 func isTV(meta api.PreparedMetadata) bool {
-	return meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0 || strings.EqualFold(meta.ExternalIDs.Category, "TV")
+	return isTVCategory(meta)
+}
+
+// isTVCategory reports whether TVC payloads may include TVDB-specific fields.
+// Explicit movie categories suppress TVDB fields; otherwise TVPack, episode data, and MediaInfo TV are enough.
+func isTVCategory(meta api.PreparedMetadata) bool {
+	if isMovieCategory(meta) {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV") ||
+		meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0
+}
+
+func isMovieCategory(meta api.PreparedMetadata) bool {
+	return strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "MOVIE")
 }
 
 func categoryName(meta api.PreparedMetadata) string {

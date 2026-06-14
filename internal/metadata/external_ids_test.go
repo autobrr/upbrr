@@ -391,7 +391,7 @@ func TestResolveExternalIDsPrecedence(t *testing.T) {
 		MediaInfoTVDBID:   777,
 		SceneIMDB:         666,
 		TrackerData:       []api.TrackerMetadata{{TMDBID: 1, IMDBID: 2, TVDBID: 3}},
-		MediaInfoCategory: "movie",
+		MediaInfoCategory: "TV",
 	}
 
 	result, err := svc.ResolveExternalIDs(context.Background(), meta)
@@ -441,9 +441,10 @@ func TestResolveExternalIDsSkipAutoTorrentIgnoresTrackerSourcedIDs(t *testing.T)
 			SourceTVDB: "tracker",
 			Category:   "MOVIE",
 		},
-		MediaInfoTMDBID: 999,
-		MediaInfoIMDBID: 888,
-		MediaInfoTVDBID: 777,
+		MediaInfoTMDBID:   999,
+		MediaInfoIMDBID:   888,
+		MediaInfoTVDBID:   777,
+		MediaInfoCategory: "movie",
 		TrackerData: []api.TrackerMetadata{{
 			TMDBID: 4,
 			IMDBID: 5,
@@ -460,8 +461,8 @@ func TestResolveExternalIDsSkipAutoTorrentIgnoresTrackerSourcedIDs(t *testing.T)
 	if result.ExternalIDs.IMDBID != 888 || result.ExternalIDs.SourceIMDB != "mediainfo" {
 		t.Fatalf("expected imdb from mediainfo, got %#v", result.ExternalIDs)
 	}
-	if result.ExternalIDs.TVDBID != 777 || result.ExternalIDs.SourceTVDB != "mediainfo" {
-		t.Fatalf("expected tvdb from mediainfo, got %#v", result.ExternalIDs)
+	if result.ExternalIDs.TVDBID != 0 || result.ExternalIDs.SourceTVDB != "" {
+		t.Fatalf("expected tvdb cleared for movie category, got %#v", result.ExternalIDs)
 	}
 	if tmdbClient.findCalls != 0 || tmdbClient.searchCalls != 0 || tmdbClient.metaCalls != 1 {
 		t.Fatalf("expected one tmdb metadata fetch only, got find=%d search=%d metadata=%d", tmdbClient.findCalls, tmdbClient.searchCalls, tmdbClient.metaCalls)
@@ -472,8 +473,8 @@ func TestResolveExternalIDsSkipAutoTorrentIgnoresTrackerSourcedIDs(t *testing.T)
 	if tvdbClient.calls != 0 {
 		t.Fatalf("expected tvdb external lookup skipped, got %d", tvdbClient.calls)
 	}
-	if len(tvdbClient.seriesLangCalls) != 1 {
-		t.Fatalf("expected one tvdb metadata fetch, got %d", len(tvdbClient.seriesLangCalls))
+	if len(tvdbClient.seriesLangCalls) != 0 {
+		t.Fatalf("expected tvdb metadata fetch skipped for movie category, got %d", len(tvdbClient.seriesLangCalls))
 	}
 	if tvmazeClient.calls != 0 {
 		t.Fatalf("expected tvmaze lookup skipped, got %d", tvmazeClient.calls)
@@ -510,9 +511,10 @@ func TestResolveExternalIDsSkipAutoTorrentIgnoresTrackerSourcedIDs(t *testing.T)
 			IMDB:       &api.IMDBMetadata{IMDBID: 888, Title: "Stored IMDb"},
 			TVDB:       &api.TVDBMetadata{TVDBID: 777, Name: "Stored TVDB"},
 		},
-		MediaInfoTMDBID: 999,
-		MediaInfoIMDBID: 888,
-		MediaInfoTVDBID: 777,
+		MediaInfoTMDBID:   999,
+		MediaInfoIMDBID:   888,
+		MediaInfoTVDBID:   777,
+		MediaInfoCategory: "movie",
 		TrackerData: []api.TrackerMetadata{{
 			TMDBID: 4,
 			IMDBID: 5,
@@ -528,8 +530,8 @@ func TestResolveExternalIDsSkipAutoTorrentIgnoresTrackerSourcedIDs(t *testing.T)
 	if reused.ExternalMetadata.IMDB == nil || reused.ExternalMetadata.IMDB.Title != "Stored IMDb" {
 		t.Fatalf("expected stored imdb metadata reused, got %#v", reused.ExternalMetadata.IMDB)
 	}
-	if reused.ExternalMetadata.TVDB == nil || reused.ExternalMetadata.TVDB.Name != "Stored TVDB" {
-		t.Fatalf("expected stored tvdb metadata reused, got %#v", reused.ExternalMetadata.TVDB)
+	if reused.ExternalMetadata.TVDB != nil {
+		t.Fatalf("expected stored tvdb metadata cleared for movie category, got %#v", reused.ExternalMetadata.TVDB)
 	}
 	if reuseTMDBClient.findCalls != 0 || reuseTMDBClient.searchCalls != 0 || reuseTMDBClient.metaCalls != 0 {
 		t.Fatalf("expected tmdb calls skipped for stored metadata, got find=%d search=%d metadata=%d", reuseTMDBClient.findCalls, reuseTMDBClient.searchCalls, reuseTMDBClient.metaCalls)
@@ -545,7 +547,7 @@ func TestResolveExternalIDsSkipAutoTorrentIgnoresTrackerSourcedIDs(t *testing.T)
 	}
 }
 
-func TestResolveExternalIDsPropagatesAuthoritativeMovieTVCategoryToRelease(t *testing.T) {
+func TestResolveExternalIDsMovieCategoryVetoesEarlierTVCandidate(t *testing.T) {
 	repo := &fakeRepo{
 		fileMetadata: api.FileMetadata{
 			Path:     "/media/file.mkv",
@@ -569,26 +571,29 @@ func TestResolveExternalIDsPropagatesAuthoritativeMovieTVCategoryToRelease(t *te
 	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
 		SourcePath:  "/media/file.mkv",
 		Release:     api.ReleaseInfo{Category: "MOVIE", Title: "Example", Year: 2024},
-		TrackerData: []api.TrackerMetadata{{Category: "TV"}},
+		TrackerData: []api.TrackerMetadata{{Category: "TV", TVDBID: 12345}},
 	})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	if result.ExternalIDs.Category != "TV" {
-		t.Fatalf("expected external IDs category TV, got %q", result.ExternalIDs.Category)
+	if result.ExternalIDs.Category != "MOVIE" {
+		t.Fatalf("expected external IDs category MOVIE, got %q", result.ExternalIDs.Category)
 	}
-	if result.Release.Category != "TV" {
-		t.Fatalf("expected release category TV, got %q", result.Release.Category)
+	if result.ExternalIDs.TVDBID != 0 {
+		t.Fatalf("expected tvdb cleared for movie category, got %d", result.ExternalIDs.TVDBID)
 	}
-	if repo.fileMetadata.Category != "TV" {
-		t.Fatalf("expected persisted release category TV, got %q", repo.fileMetadata.Category)
+	if result.Release.Category != "MOVIE" {
+		t.Fatalf("expected release category MOVIE, got %q", result.Release.Category)
 	}
-	if repo.ids.Category != "TV" {
-		t.Fatalf("expected persisted external IDs category TV, got %q", repo.ids.Category)
+	if repo.fileMetadata.Category != "MOVIE" {
+		t.Fatalf("expected persisted release category MOVIE, got %q", repo.fileMetadata.Category)
 	}
-	if len(tmdbClient.searchInputs) == 0 || tmdbClient.searchInputs[0].Category != "TV" {
-		t.Fatalf("expected TV to be passed as TMDB preference, got %#v", tmdbClient.searchInputs)
+	if repo.ids.Category != "MOVIE" {
+		t.Fatalf("expected persisted external IDs category MOVIE, got %q", repo.ids.Category)
+	}
+	if len(tmdbClient.searchInputs) == 0 || tmdbClient.searchInputs[0].Category != "MOVIE" {
+		t.Fatalf("expected MOVIE to be passed as TMDB preference, got %#v", tmdbClient.searchInputs)
 	}
 }
 
@@ -1213,21 +1218,16 @@ func TestResolveExternalIDsDoesNotTreatTMDBMovieWithoutIMDbAsTVMovie(t *testing.
 	if result.ExternalIDs.TVDBID != 0 {
 		t.Fatalf("expected no tvdb id without imdb tv movie metadata, got %d", result.ExternalIDs.TVDBID)
 	}
-	if len(tvdbClient.tvMovieCalls) == 0 {
-		t.Fatalf("expected tvdb lookup")
-	}
-	for _, tvMovie := range tvdbClient.tvMovieCalls {
-		if tvMovie {
-			t.Fatalf("expected tvdb lookup not to use tv movie fallback without imdb metadata, got calls %#v", tvdbClient.tvMovieCalls)
-		}
+	if len(tvdbClient.tvMovieCalls) != 0 {
+		t.Fatalf("expected no tvdb lookup for movie category, got calls %#v", tvdbClient.tvMovieCalls)
 	}
 }
 
-func TestResolveExternalIDsTreatsIMDbTVMovieTypeAsTVMovie(t *testing.T) {
+func TestResolveExternalIDsDoesNotApplyTVDBForMovieCategory(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{
 		searchOutcome: tmdb.SearchOutcome{TMDBID: 1234, Category: "Movie"},
-		metadata:      tmdb.MetadataResult{Title: "Example TV Movie", TMDBType: "Movie"},
+		metadata:      tmdb.MetadataResult{Title: "Example TV Movie", TMDBType: "Movie", TVDBID: 55},
 	}
 	imdbClient := &stubIMDB{
 		searchResult: imdb.SearchResult{IMDbID: 9876},
@@ -1254,14 +1254,14 @@ func TestResolveExternalIDsTreatsIMDbTVMovieTypeAsTVMovie(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	if result.ExternalIDs.TVDBID != 55 {
-		t.Fatalf("expected tvdb id from tv movie fallback, got %d", result.ExternalIDs.TVDBID)
+	if result.ExternalIDs.TVDBID != 0 {
+		t.Fatalf("expected no tvdb id for movie category, got %d", result.ExternalIDs.TVDBID)
 	}
-	if len(tvdbClient.tvMovieCalls) != 2 {
-		t.Fatalf("expected initial non-tv-movie lookup and metadata-backed retry, got %#v", tvdbClient.tvMovieCalls)
+	if result.ExternalMetadata.TVDB != nil {
+		t.Fatalf("expected no tvdb metadata for movie category, got %#v", result.ExternalMetadata.TVDB)
 	}
-	if tvdbClient.tvMovieCalls[0] || !tvdbClient.tvMovieCalls[1] {
-		t.Fatalf("expected tv movie fallback only after imdb metadata, got %#v", tvdbClient.tvMovieCalls)
+	if len(tvdbClient.tvMovieCalls) != 0 {
+		t.Fatalf("expected no tvdb lookup for movie category, got %#v", tvdbClient.tvMovieCalls)
 	}
 }
 

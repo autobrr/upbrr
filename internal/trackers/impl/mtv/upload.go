@@ -692,7 +692,7 @@ func resolveGroupDescription(meta api.PreparedMetadata) string {
 		}
 		parts = append(parts, "https://www.themoviedb.org/"+category+"/"+strconv.Itoa(meta.ExternalIDs.TMDBID))
 	}
-	if meta.ExternalIDs.TVDBID != 0 {
+	if strings.EqualFold(resolveCategory(meta), "TV") && meta.ExternalIDs.TVDBID != 0 {
 		parts = append(parts, "https://www.thetvdb.com/?id="+strconv.Itoa(meta.ExternalIDs.TVDBID))
 	}
 	if meta.ExternalIDs.TVmazeID != 0 {

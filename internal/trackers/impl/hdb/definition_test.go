@@ -233,3 +233,38 @@ func TestDefinitionBuildUploadDryRunUsesProvidedAssets(t *testing.T) {
 		t.Fatalf("expected provided screenshot in dry-run description, got %q", entry.Description)
 	}
 }
+
+func TestBuildUploadFieldsSkipsTVDBForMovie(t *testing.T) {
+	fields := buildUploadFields(api.PreparedMetadata{
+		MediaInfoCategory: "TV",
+		ExternalIDs:       api.ExternalIDs{Category: "MOVIE", TVDBID: 765432},
+	}, config.Config{}, 1, 5, 6, "description")
+
+	if _, ok := fields["tvdb"]; ok {
+		t.Fatalf("did not expect tvdb for movie payload")
+	}
+	if _, ok := fields["tvdb_season"]; ok {
+		t.Fatalf("did not expect tvdb_season for movie payload")
+	}
+	if _, ok := fields["tvdb_episode"]; ok {
+		t.Fatalf("did not expect tvdb_episode for movie payload")
+	}
+}
+
+func TestBuildUploadFieldsIncludesTVDBForTV(t *testing.T) {
+	fields := buildUploadFields(api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV", TVDBID: 765432},
+		SeasonInt:   2,
+		EpisodeInt:  3,
+	}, config.Config{}, 2, 5, 6, "description")
+
+	if got := fields["tvdb"]; got != "765432" {
+		t.Fatalf("expected tvdb=765432, got %q", got)
+	}
+	if got := fields["tvdb_season"]; got != "2" {
+		t.Fatalf("expected tvdb_season=2, got %q", got)
+	}
+	if got := fields["tvdb_episode"]; got != "3" {
+		t.Fatalf("expected tvdb_episode=3, got %q", got)
+	}
+}

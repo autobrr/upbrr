@@ -178,6 +178,100 @@ func TestMTVHandlerFallsBackToCleanedTitleQuery(t *testing.T) {
 	}
 }
 
+func TestMTVHandlerSkipsTVDBForMovie(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			query := req.URL.Query()
+			assertQueryParam(t, query, "q", "Movie Title")
+			if got := query.Get("tvdbid"); got != "" {
+				t.Fatalf("tvdbid should be empty for movie category, got %q", got)
+			}
+			body := `<rss><channel></channel></rss>`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+
+	handler := mtvHandler{
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"MTV": {APIKey: "token"},
+				},
+			},
+		},
+		http: client,
+	}
+	meta := api.PreparedMetadata{
+		MediaInfoCategory: "TV",
+		ExternalIDs:       api.ExternalIDs{Category: "MOVIE", TVDBID: 888},
+		Release:           api.ReleaseInfo{Title: "Movie Title"},
+	}
+
+	entries, notes, err := handler.Search(context.Background(), meta, "MTV")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("expected no notes, got %#v", notes)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no entries, got %d", len(entries))
+	}
+}
+
+func TestMTVHandlerUsesTVDBForTV(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			query := req.URL.Query()
+			assertQueryParam(t, query, "tvdbid", "888")
+			if got := query.Get("q"); got != "" {
+				t.Fatalf("q should be empty when tvdbid is present, got %q", got)
+			}
+			body := `<rss><channel></channel></rss>`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+
+	handler := mtvHandler{
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"MTV": {APIKey: "token"},
+				},
+			},
+		},
+		http: client,
+	}
+	meta := api.PreparedMetadata{
+		MediaInfoCategory: "TV",
+		ExternalIDs:       api.ExternalIDs{TVDBID: 888},
+		Release:           api.ReleaseInfo{Title: "Show Title"},
+	}
+
+	entries, notes, err := handler.Search(context.Background(), meta, "MTV")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("expected no notes, got %#v", notes)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no entries, got %d", len(entries))
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
