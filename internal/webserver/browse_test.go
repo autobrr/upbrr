@@ -434,7 +434,7 @@ func TestMenuImportPathsWithinBrowsePolicyRejectsOutsideRoot(t *testing.T) {
 func TestMenuImportPathsWithinBrowsePolicyAllowsInsideRoot(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
+	root := canonicalBrowseTestPath(t, t.TempDir())
 	inside := filepath.Join(root, "menu.png")
 	if err := os.WriteFile(inside, []byte("png"), 0o600); err != nil {
 		t.Fatalf("write inside image: %v", err)
