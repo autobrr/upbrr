@@ -249,13 +249,17 @@ jobs:
           fi
           build_id="$(git rev-parse --short=12 HEAD)"
           ldflags="-s -w -X main.version=${version} -X main.buildIdentifier=${build_id}"
+          tags=()
+          if [[ "${{ matrix.platform }}" == linux/* ]]; then
+            tags=(-tags webkit2_41)
+          fi
 
           cd gui
           if [[ "${{ matrix.platform }}" == "windows/arm64" ]]; then
             # Wails bindings helper is built for target arch; skip on x64 runners for arm64 target.
-            wails build -platform "${{ matrix.platform }}" -clean -skipbindings -trimpath -ldflags "$ldflags"
+            wails build -platform "${{ matrix.platform }}" -clean -skipbindings -trimpath "${tags[@]}" -ldflags "$ldflags"
           else
-            wails build -platform "${{ matrix.platform }}" -clean -trimpath -ldflags "$ldflags"
+            wails build -platform "${{ matrix.platform }}" -clean -trimpath "${tags[@]}" -ldflags "$ldflags"
           fi
 
       - name: Package GUI (Windows)

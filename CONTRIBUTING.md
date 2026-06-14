@@ -29,7 +29,7 @@ Install the following on your machine:
 - [Wails CLI](https://wails.io/) `v2.12.0` for desktop builds
   - Build scripts invoke `go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0`
 
-On Linux, Wails builds also need GTK/WebKit development packages. The full list is in [`.github/workflows/build-binaries.yml`](./.github/workflows/build-binaries.yml) — key packages are `build-essential`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libglib2.0-dev`, and `pkg-config`.
+On Linux, Wails builds also need GTK/WebKit development packages. The full list is in [`.github/workflows/build-binaries.yml`](./.github/workflows/build-binaries.yml) — key packages are `build-essential`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libglib2.0-dev`, and `pkg-config`. Builds using WebKitGTK 4.1 must pass the Go build tag `webkit2_41`.
 
 ### Supported platforms
 

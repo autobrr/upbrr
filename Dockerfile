@@ -73,7 +73,7 @@ COPY . .
 COPY --from=frontend /src/gui/frontend/dist ./gui/frontend/dist
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
-        go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildIdentifier=${BUILD_ID}" -o /out/upbrr-gui ./gui
+        go build -tags webkit2_41 -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildIdentifier=${BUILD_ID}" -o /out/upbrr-gui ./gui
 
 FROM debian:bookworm-slim
 
