@@ -191,6 +191,65 @@ function ImageHostingHarness() {
   );
 }
 
+function AdvancedFieldMetaHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+  const advancedBySection = Object.fromEntries(
+    Object.entries(state.sectionFieldMeta).map(([section, fields]) => [
+      section,
+      Object.values(fields)
+        .filter((field) => field.advanced)
+        .map((field) => field.key)
+        .sort(),
+    ]),
+  );
+
+  return createElement(
+    "pre",
+    { "data-testid": "advanced-fields" },
+    JSON.stringify(advancedBySection),
+  );
+}
+
+describe("settings advanced fields", () => {
+  it("matches the configured per-section advanced allowlist", () => {
+    render(createElement(AdvancedFieldMetaHarness));
+
+    const advancedBySection = JSON.parse(
+      screen.getByTestId("advanced-fields").textContent ?? "{}",
+    ) as Record<string, string[]>;
+
+    expect(advancedBySection.MainSettings).toEqual([]);
+    expect(advancedBySection.Metadata).toEqual([
+      "BTNAPI",
+      "BlurayScore",
+      "BluraySingleScore",
+      "CheckPredb",
+      "SkipAutoTorrent",
+      "SkipTrackerFilenameLookup",
+      "UserOverrides",
+    ]);
+    expect(advancedBySection.ScreenshotHandling).toEqual([
+      "Desat",
+      "FFmpegCompression",
+      "FFmpegLimit",
+      "MaxConcurrentUploads",
+      "ProcessLimit",
+      "TonemapAlgorithm",
+    ]);
+    expect(advancedBySection.Description).toEqual([
+      "CharLimit",
+      "CustomSignature",
+      "FileLimit",
+      "LogoLanguage",
+      "LogoSize",
+      "ProcessLimit",
+    ]);
+    expect(advancedBySection.PostUpload).toEqual(["InjectDelay", "MaxConcurrentTrackers"]);
+    expect(advancedBySection.TorrentCreation).toEqual([]);
+    expect(advancedBySection.TorrentClients).toEqual(["VerifyWebUICertificate"]);
+  });
+});
+
 describe("renderTorrentClientsSection", () => {
   it("renders watch client fields and preserves qbit clients on update", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
@@ -415,7 +474,7 @@ describe("Tracker client selectors", () => {
       },
     };
 
-    render(createElement(TrackerSettingsHarness));
+    render(createElement(TrackerSettingsAdvancedHarness));
 
     await waitFor(() =>
       expect(
@@ -714,6 +773,57 @@ describe("Tracker client selectors", () => {
     ).map((option) => option.value);
     expect(values).toContain("imgbb");
     expect(values).not.toContain("reelflix");
+  });
+});
+
+describe("tracker advanced fields", () => {
+  it("hides only the tracker advanced allowlist when advanced is closed", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  MTV: {
+                    FaviconURL: "https://example.test/favicon.ico",
+                    LinkDirName: "mtv",
+                    APIKey: "api-key",
+                    Username: "user",
+                    Password: "pass",
+                    AnnounceURL: "https://example.test/announce",
+                    Anon: false,
+                    OTPURI: "otpauth://totp/example",
+                    SkipIfRehash: true,
+                    PreferMTV: true,
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["MTV"],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("MTV", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("MTV", { selector: ".settings-card__summary-name" }));
+
+    expect(screen.queryByLabelText("Favicon URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Link dir name")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Skip if rehash")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Prefer MTV torrent")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Announce URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("OTP URI")).toBeInTheDocument();
   });
 });
 
