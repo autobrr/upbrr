@@ -18,6 +18,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -2580,8 +2581,9 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 
 // purgeLegacyUIState removes rows from the retired ui_states table when an old
 // installation still has it. It accepts both the later source_path schema and
-// the shipped id/data schema; current schemas do not create the table, so a
-// missing table is a no-op.
+// the shipped id/data schema, matching stored paths with host filesystem
+// equivalence so slash, clean-path, and OS case variants are purged together.
+// Current schemas do not create the table, so a missing table is a no-op.
 func (r *SQLiteRepository) purgeLegacyUIState(ctx context.Context, tx *sql.Tx, path string) (int64, error) {
 	var tableName string
 	err := tx.QueryRowContext(ctx, `
@@ -2601,15 +2603,28 @@ func (r *SQLiteRepository) purgeLegacyUIState(ctx context.Context, tx *sql.Tx, p
 		return 0, fmt.Errorf("db purge content: inspect legacy ui_states source_path: %w", err)
 	}
 	if hasSourcePath {
-		result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE source_path = ?`, path)
+		rows, err := tx.QueryContext(ctx, `SELECT rowid, source_path FROM ui_states`)
 		if err != nil {
-			return 0, fmt.Errorf("db purge content: legacy ui_states: %w", err)
+			return 0, fmt.Errorf("db purge content: read legacy ui_states source_path: %w", err)
 		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return 0, nil
+		defer rows.Close()
+
+		rowIDs := make([]int64, 0)
+		for rows.Next() {
+			var rowID int64
+			var sourcePath string
+			if err := rows.Scan(&rowID, &sourcePath); err != nil {
+				return 0, fmt.Errorf("db purge content: scan legacy ui_states source_path: %w", err)
+			}
+			if legacyUIStatePathMatches(sourcePath, path) {
+				rowIDs = append(rowIDs, rowID)
+			}
 		}
-		return rows, nil
+		if err := rows.Err(); err != nil {
+			return 0, fmt.Errorf("db purge content: iterate legacy ui_states source_path: %w", err)
+		}
+
+		return deleteLegacyUIStateRowIDs(ctx, tx, rowIDs)
 	}
 
 	rows, err := r.purgeLegacyUIStateIDData(ctx, tx, path)
@@ -2620,8 +2635,8 @@ func (r *SQLiteRepository) purgeLegacyUIState(ctx context.Context, tx *sql.Tx, p
 }
 
 // purgeLegacyUIStateIDData removes legacy rows whose id or JSON data names the
-// target source path. Malformed legacy JSON is ignored so purge can still remove
-// the current path's other content rows.
+// target source path under host filesystem path semantics. Malformed legacy JSON
+// is ignored so purge can still remove the current path's other content rows.
 func (r *SQLiteRepository) purgeLegacyUIStateIDData(ctx context.Context, tx *sql.Tx, path string) (int64, error) {
 	hasID, err := tableColumnExists(ctx, tx, "ui_states", "id")
 	if err != nil {
@@ -2635,15 +2650,27 @@ func (r *SQLiteRepository) purgeLegacyUIStateIDData(ctx context.Context, tx *sql
 		return 0, fmt.Errorf("db purge content: inspect legacy ui_states data: %w", err)
 	}
 	if !hasData {
-		result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE id = ?`, path)
+		rows, err := tx.QueryContext(ctx, `SELECT rowid, id FROM ui_states`)
 		if err != nil {
-			return 0, fmt.Errorf("db purge content: legacy ui_states id: %w", err)
+			return 0, fmt.Errorf("db purge content: read legacy ui_states id: %w", err)
 		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return 0, nil
+		defer rows.Close()
+
+		rowIDs := make([]int64, 0)
+		for rows.Next() {
+			var rowID int64
+			var id string
+			if err := rows.Scan(&rowID, &id); err != nil {
+				return 0, fmt.Errorf("db purge content: scan legacy ui_states id: %w", err)
+			}
+			if legacyUIStatePathMatches(id, path) {
+				rowIDs = append(rowIDs, rowID)
+			}
 		}
-		return rows, nil
+		if err := rows.Err(); err != nil {
+			return 0, fmt.Errorf("db purge content: iterate legacy ui_states id: %w", err)
+		}
+		return deleteLegacyUIStateRowIDs(ctx, tx, rowIDs)
 	}
 
 	rows, err := tx.QueryContext(ctx, `SELECT id, data FROM ui_states`)
@@ -2659,7 +2686,7 @@ func (r *SQLiteRepository) purgeLegacyUIStateIDData(ctx context.Context, tx *sql
 		if err := rows.Scan(&id, &data); err != nil {
 			return 0, fmt.Errorf("db purge content: scan legacy ui_states: %w", err)
 		}
-		if id == path || legacyUIStateDataMatchesPath(data, path) {
+		if legacyUIStatePathMatches(id, path) || legacyUIStateDataMatchesPath(data, path) {
 			ids = append(ids, id)
 		}
 	}
@@ -2681,9 +2708,34 @@ func (r *SQLiteRepository) purgeLegacyUIStateIDData(ctx context.Context, tx *sql
 	return removed, nil
 }
 
+// deleteLegacyUIStateRowIDs removes rows selected by rowid after path-equivalent
+// matching. Deleting by rowid avoids requiring raw stored paths to equal the
+// caller's current spelling.
+func deleteLegacyUIStateRowIDs(ctx context.Context, tx *sql.Tx, rowIDs []int64) (int64, error) {
+	var removed int64
+	for _, rowID := range rowIDs {
+		result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE rowid = ?`, rowID)
+		if err != nil {
+			return 0, fmt.Errorf("db purge content: delete legacy ui_states rowid: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err == nil {
+			removed += rows
+		}
+	}
+	return removed, nil
+}
+
+// legacyUIStatePathMatches compares retired UI-state paths as host filesystem
+// paths rather than serialized strings.
+func legacyUIStatePathMatches(stored string, target string) bool {
+	return pathutil.SamePath(stored, target)
+}
+
 // legacyUIStateDataMatchesPath reports whether a legacy ui_states payload names
 // path using one of the source path field names seen in older UI state rows. The
-// payload may be nested; malformed JSON never matches.
+// payload may be nested, path comparisons use host filesystem semantics, and
+// malformed JSON never matches.
 func legacyUIStateDataMatchesPath(data string, path string) bool {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
@@ -2698,7 +2750,7 @@ func legacyUIStateValueMatchesPath(value any, path string) bool {
 	switch typed := value.(type) {
 	case map[string]any:
 		for _, key := range []string{"sourcePath", "SourcePath", "source_path", "path", "Path"} {
-			if value, ok := typed[key].(string); ok && value == path {
+			if value, ok := typed[key].(string); ok && legacyUIStatePathMatches(value, path) {
 				return true
 			}
 		}

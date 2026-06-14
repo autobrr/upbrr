@@ -577,6 +577,7 @@ export default function App() {
       return normalizeSourcePathHistory(
         JSON.parse(localStorage.getItem(sourcePathHistoryStorageKey) || "[]"),
         defaultInputHistoryLimit,
+        isRuntimePathCaseInsensitive(),
       );
     } catch {
       return [];
@@ -772,6 +773,7 @@ export default function App() {
           value,
           mode ?? inferSourcePathMode(value),
           inputHistoryLimit,
+          isRuntimePathCaseInsensitive(),
         );
         persistSourcePathHistory(next);
         return next;
@@ -787,7 +789,11 @@ export default function App() {
 
   useEffect(() => {
     setSourcePathHistory((prev) => {
-      const next = normalizeSourcePathHistory(prev, inputHistoryLimit);
+      const next = normalizeSourcePathHistory(
+        prev,
+        inputHistoryLimit,
+        isRuntimePathCaseInsensitive(),
+      );
       persistSourcePathHistory(next);
       return next;
     });

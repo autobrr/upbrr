@@ -1406,8 +1406,11 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	targetPath := "/media/file.mkv"
-	otherPath := "/media/other.mkv"
+	baseDir := t.TempDir()
+	targetPath := filepath.Join(baseDir, "media", "file.mkv")
+	//pathpolicy:allow raw legacy DB path variant used to verify cleanup equivalence, not filesystem access
+	equivalentTargetPath := filepath.FromSlash(filepath.ToSlash(targetPath) + "/.")
+	otherPath := filepath.Join(baseDir, "media", "other.mkv")
 	now := time.Now().UTC().Truncate(time.Second)
 
 	if _, err := repo.RawDB().ExecContext(ctx, `
@@ -1418,7 +1421,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	`); err != nil {
 		t.Fatalf("create legacy ui_states: %v", err)
 	}
-	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO ui_states (source_path, payload) VALUES (?, ?), (?, ?)`, targetPath, "target", otherPath, "other"); err != nil {
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO ui_states (source_path, payload) VALUES (?, ?), (?, ?), (?, ?)`, targetPath, "target", equivalentTargetPath, "target-equivalent", otherPath, "other"); err != nil {
 		t.Fatalf("insert legacy ui_states: %v", err)
 	}
 
@@ -1564,7 +1567,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 		t.Fatalf("expected screenshot slots removed, got len=%d err=%v", len(slots), err)
 	}
 	var legacyRows int
-	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE source_path = ?`, targetPath).Scan(&legacyRows); err != nil {
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE source_path IN (?, ?)`, targetPath, equivalentTargetPath).Scan(&legacyRows); err != nil {
 		t.Fatalf("query target legacy ui_states: %v", err)
 	}
 	if legacyRows != 0 {
@@ -1607,7 +1610,11 @@ func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	targetPath := "/media/file.mkv"
+	baseDir := t.TempDir()
+	targetPath := filepath.Join(baseDir, "media", "file.mkv")
+	//pathpolicy:allow raw legacy DB path variant used to verify cleanup equivalence, not filesystem access
+	equivalentTargetPath := filepath.FromSlash(filepath.ToSlash(targetPath) + "/.")
+	otherPath := filepath.Join(baseDir, "media", "other.mkv")
 	if _, err := repo.RawDB().ExecContext(ctx, `
 		CREATE TABLE ui_states (
 			id TEXT PRIMARY KEY,
@@ -1618,15 +1625,19 @@ func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
 	}
 	if _, err := repo.RawDB().ExecContext(
 		ctx,
-		`INSERT INTO ui_states (id, data) VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)`,
+		`INSERT INTO ui_states (id, data) VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)`,
 		"target-by-data",
-		`{"sourcePath":"/media/file.mkv"}`,
+		fmt.Sprintf(`{"sourcePath":%q}`, targetPath),
+		"target-by-equivalent-data",
+		fmt.Sprintf(`{"sourcePath":%q}`, equivalentTargetPath),
 		"target-by-nested-data",
-		`{"state":{"sourcePath":"/media/file.mkv"}}`,
+		fmt.Sprintf(`{"state":{"sourcePath":%q}}`, equivalentTargetPath),
 		targetPath,
-		`{"sourcePath":"/media/renamed.mkv"}`,
+		fmt.Sprintf(`{"sourcePath":%q}`, filepath.Join(baseDir, "media", "renamed.mkv")),
+		equivalentTargetPath,
+		fmt.Sprintf(`{"sourcePath":%q}`, filepath.Join(baseDir, "media", "renamed-again.mkv")),
 		"other",
-		`{"state":{"sourcePath":"/media/other.mkv"}}`,
+		fmt.Sprintf(`{"state":{"sourcePath":%q}}`, otherPath),
 		"malformed",
 		`{"sourcePath":`,
 	); err != nil {
@@ -1638,7 +1649,7 @@ func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
 	}
 
 	var count int
-	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?, ?)`, "target-by-data", "target-by-nested-data", targetPath).Scan(&count); err != nil {
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?, ?, ?, ?)`, "target-by-data", "target-by-equivalent-data", "target-by-nested-data", targetPath, equivalentTargetPath).Scan(&count); err != nil {
 		t.Fatalf("query removed legacy ui_states: %v", err)
 	}
 	if count != 0 {

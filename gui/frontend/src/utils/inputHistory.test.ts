@@ -63,6 +63,26 @@ describe("normalizeSourcePathHistory", () => {
       { path: "E:/legacy/movie.mkv", mode: "folder" },
     ]);
   });
+
+  it("deduplicates equivalent paths with runtime-aware comparison", () => {
+    expect(
+      normalizeSourcePathHistory(
+        ["C:\\Media\\Movie.mkv", "c:/media/movie.mkv", "D:/shows/Season 01"],
+        5,
+        true,
+      ),
+    ).toEqual([
+      { path: "C:\\Media\\Movie.mkv", mode: "folder" },
+      { path: "D:/shows/Season 01", mode: "folder" },
+    ]);
+
+    expect(
+      normalizeSourcePathHistory(["C:/Media/Movie.mkv", "c:/media/movie.mkv"], 5, false),
+    ).toEqual([
+      { path: "C:/Media/Movie.mkv", mode: "folder" },
+      { path: "c:/media/movie.mkv", mode: "folder" },
+    ]);
+  });
 });
 
 describe("addSourcePathHistoryEntry", () => {
@@ -88,6 +108,24 @@ describe("addSourcePathHistoryEntry", () => {
     expect(
       addSourcePathHistoryEntry([{ path: "C:/media/movie.mkv", mode: "file" }], " ", "file", 5),
     ).toEqual([{ path: "C:/media/movie.mkv", mode: "file" }]);
+  });
+
+  it("moves runtime-equivalent entries to the top", () => {
+    expect(
+      addSourcePathHistoryEntry(
+        [
+          { path: "D:/shows/Season 01", mode: "folder" },
+          { path: "C:\\Media\\Movie.mkv", mode: "folder" },
+        ],
+        "c:/media/movie.mkv",
+        "file",
+        5,
+        true,
+      ),
+    ).toEqual([
+      { path: "c:/media/movie.mkv", mode: "file" },
+      { path: "D:/shows/Season 01", mode: "folder" },
+    ]);
   });
 });
 
