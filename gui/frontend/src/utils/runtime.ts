@@ -159,10 +159,6 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         BrowseFolder: () => call<string>("BrowseFolder"),
         BrowseDirectory: (path: string, mode: "file" | "folder") =>
           call("BrowseDirectory", { path, mode }),
-        ListUIStates: () => getJSON("/api/app/UIState"),
-        GetUIState: (id: string) => getJSON(`/api/app/UIState?id=${encodeURIComponent(id)}`),
-        SaveUIState: (id: string, label: string, state: unknown) =>
-          call("UIState", { id, label, state }),
         DetectDiscType: (path: string) => call<string>("DetectDiscType", { Path: path }),
         FetchMetadata: (
           path: string,

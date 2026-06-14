@@ -95,11 +95,6 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		_ = logger.Close()
 		return nil, fmt.Errorf("web: %w", err)
 	}
-	if err := repo.ClearUIState(ctx); err != nil {
-		_ = repo.Close()
-		_ = logger.Close()
-		return nil, fmt.Errorf("web: %w", err)
-	}
 
 	var coreSvc api.Core
 	var coreInitErr error
@@ -500,43 +495,6 @@ func (b *Backend) LoadPlaylistSelection(path string) (api.PlaylistSelection, err
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	return wrapWebResult(b.currentCore().LoadPlaylistSelection(ctx, path))
-}
-
-func (b *Backend) ListUIStates() (api.UIStateList, error) {
-	if b == nil || b.repo == nil {
-		return api.UIStateList{}, errors.New("config repository not initialized")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	states, err := b.repo.ListUIStates(ctx)
-	if err != nil {
-		return api.UIStateList{}, fmt.Errorf("web: %w", err)
-	}
-	return api.UIStateList{States: states}, nil
-}
-
-func (b *Backend) GetUIState(id string) (api.UIStateRecord, error) {
-	if b == nil || b.repo == nil {
-		return api.UIStateRecord{}, errors.New("config repository not initialized")
-	}
-	if strings.TrimSpace(id) == "" {
-		return api.UIStateRecord{}, errors.New("id is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	return wrapWebResult(b.repo.LoadUIState(ctx, id))
-}
-
-func (b *Backend) SaveUIState(id string, label string, state api.UIState) error {
-	if b == nil || b.repo == nil {
-		return errors.New("config repository not initialized")
-	}
-	if strings.TrimSpace(id) == "" {
-		return errors.New("id is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	return wrapWebError(b.repo.SaveUIState(ctx, id, label, state))
 }
 
 func (b *Backend) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResponse, error) {

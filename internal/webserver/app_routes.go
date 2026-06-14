@@ -306,45 +306,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/UIState", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		switch r.Method {
-		case http.MethodGet:
-			id := strings.TrimSpace(r.URL.Query().Get("id"))
-			if id == "" {
-				value, err := s.backend.ListUIStates()
-				if err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-					return
-				}
-				writeJSON(w, http.StatusOK, value)
-				return
-			}
-			value, err := s.backend.GetUIState(id)
-			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
-			writeJSON(w, http.StatusOK, value)
-		case http.MethodPost:
-			var req api.SaveUIStateRequest
-			if err := decodeJSON(r, &req); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
-			if strings.TrimSpace(req.ID) == "" {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
-				return
-			}
-			if err := s.backend.SaveUIState(req.ID, req.Label, req.State); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		}
-	}))
-
 	mux.HandleFunc("/api/app/BrowseDirectory", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
