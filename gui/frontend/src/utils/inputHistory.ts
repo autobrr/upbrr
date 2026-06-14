@@ -40,6 +40,25 @@ export const inferSourcePathMode = (path: string): SourcePathMode => {
     : "folder";
 };
 
+/**
+ * Compares host filesystem paths after separator normalization.
+ *
+ * Case folding is caller-controlled so browser UI comparisons can match the
+ * server runtime instead of the user's browser platform.
+ */
+export const sameSourcePath = (
+  left: string,
+  right: string,
+  caseInsensitivePaths: boolean,
+): boolean => {
+  const normalize = (value: string) => value.trim().replaceAll("\\", "/");
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  return caseInsensitivePaths
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+};
+
 export const normalizeSourcePathHistory = (
   value: unknown,
   limit: unknown,

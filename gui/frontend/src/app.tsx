@@ -9,6 +9,7 @@ import {
   EventsOn,
   isBrowserMode,
   isBrowserNativeBrowseAvailable,
+  isRuntimePathCaseInsensitive,
   subscribeBrowserNativeBrowseAvailability,
 } from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
@@ -74,6 +75,7 @@ import {
   inferSourcePathMode,
   normalizeSourcePathHistory,
   resolveInputHistoryLimit,
+  sameSourcePath,
   type SourcePathHistoryEntry,
   type SourcePathMode,
   sourcePathHistoryStorageKey,
@@ -1412,10 +1414,7 @@ export default function App() {
     (deletedPath: string) => {
       // The input path can be edited after loading history; reset based on the displayed release.
       const loadedPath = (preview.SourcePath || path).trim();
-      if (
-        loadedPath.replaceAll("\\", "/").toLowerCase() !==
-        deletedPath.trim().replaceAll("\\", "/").toLowerCase()
-      ) {
+      if (!sameSourcePath(loadedPath, deletedPath, isRuntimePathCaseInsensitive())) {
         return;
       }
       resetFreshWorkflowState("history");

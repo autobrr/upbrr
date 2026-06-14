@@ -2579,7 +2579,8 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 }
 
 // purgeLegacyUIState removes rows from the retired ui_states table when an old
-// installation still has it. Current schemas do not create the table, so a
+// installation still has it. It accepts both the later source_path schema and
+// the shipped id/data schema; current schemas do not create the table, so a
 // missing table is a no-op.
 func (r *SQLiteRepository) purgeLegacyUIState(ctx context.Context, tx *sql.Tx, path string) (int64, error) {
 	var tableName string
@@ -2594,15 +2595,105 @@ func (r *SQLiteRepository) purgeLegacyUIState(ctx context.Context, tx *sql.Tx, p
 	if err != nil {
 		return 0, fmt.Errorf("db purge content: check legacy ui_states: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE source_path = ?`, path)
+
+	hasSourcePath, err := tableColumnExists(ctx, tx, "ui_states", "source_path")
 	if err != nil {
-		return 0, fmt.Errorf("db purge content: legacy ui_states: %w", err)
+		return 0, fmt.Errorf("db purge content: inspect legacy ui_states source_path: %w", err)
 	}
-	rows, err := result.RowsAffected()
+	if hasSourcePath {
+		result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE source_path = ?`, path)
+		if err != nil {
+			return 0, fmt.Errorf("db purge content: legacy ui_states: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return 0, nil
+		}
+		return rows, nil
+	}
+
+	rows, err := r.purgeLegacyUIStateIDData(ctx, tx, path)
 	if err != nil {
-		return 0, nil
+		return 0, err
 	}
 	return rows, nil
+}
+
+// purgeLegacyUIStateIDData removes legacy rows whose id or JSON data names the
+// target source path. Malformed legacy JSON is ignored so purge can still remove
+// the current path's other content rows.
+func (r *SQLiteRepository) purgeLegacyUIStateIDData(ctx context.Context, tx *sql.Tx, path string) (int64, error) {
+	hasID, err := tableColumnExists(ctx, tx, "ui_states", "id")
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: inspect legacy ui_states id: %w", err)
+	}
+	if !hasID {
+		return 0, nil
+	}
+	hasData, err := tableColumnExists(ctx, tx, "ui_states", "data")
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: inspect legacy ui_states data: %w", err)
+	}
+	if !hasData {
+		result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE id = ?`, path)
+		if err != nil {
+			return 0, fmt.Errorf("db purge content: legacy ui_states id: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return 0, nil
+		}
+		return rows, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT id, data FROM ui_states`)
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: read legacy ui_states: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		var data string
+		if err := rows.Scan(&id, &data); err != nil {
+			return 0, fmt.Errorf("db purge content: scan legacy ui_states: %w", err)
+		}
+		if id == path || legacyUIStateDataMatchesPath(data, path) {
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("db purge content: iterate legacy ui_states: %w", err)
+	}
+
+	var removed int64
+	for _, id := range ids {
+		result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE id = ?`, id)
+		if err != nil {
+			return 0, fmt.Errorf("db purge content: delete legacy ui_states id: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err == nil {
+			removed += rows
+		}
+	}
+	return removed, nil
+}
+
+// legacyUIStateDataMatchesPath reports whether a legacy ui_states payload names
+// path using one of the source path field names seen in older UI state rows.
+func legacyUIStateDataMatchesPath(data string, path string) bool {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return false
+	}
+	for _, key := range []string{"sourcePath", "SourcePath", "source_path", "path", "Path"} {
+		if value, ok := payload[key].(string); ok && value == path {
+			return true
+		}
+	}
+	return false
 }
 
 func resolvePath(path string) (string, error) {

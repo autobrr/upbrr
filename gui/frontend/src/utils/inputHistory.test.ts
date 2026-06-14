@@ -10,6 +10,7 @@ import {
   inferSourcePathMode,
   normalizeSourcePathHistory,
   resolveInputHistoryLimit,
+  sameSourcePath,
 } from "./inputHistory";
 
 describe("resolveInputHistoryLimit", () => {
@@ -99,6 +100,14 @@ describe("inferSourcePathMode", () => {
   it("keeps disc and extensionless paths as folders", () => {
     expect(inferSourcePathMode("C:/media/Movie/BDMV")).toBe("folder");
     expect(inferSourcePathMode("D:/shows/Season 01")).toBe("folder");
+  });
+});
+
+describe("sameSourcePath", () => {
+  it("normalizes separators and folds case only for case-insensitive runtimes", () => {
+    expect(sameSourcePath("C:\\Media\\Movie.mkv", "c:/media/movie.mkv", true)).toBe(true);
+    expect(sameSourcePath("/media/Movie.mkv", "/media/movie.mkv", false)).toBe(false);
+    expect(sameSourcePath("/media/Movie.mkv", "/media/Movie.mkv", false)).toBe(true);
   });
 });
 

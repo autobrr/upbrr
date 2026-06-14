@@ -3,33 +3,29 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const eventSources: FakeEventSource[] = [];
-
-class FakeEventSource {
-  onmessage: (() => void) | null = null;
-
-  constructor(
-    readonly url: string,
-    readonly options?: EventSourceInit,
-  ) {
-    eventSources.push(this);
-  }
-
-  addEventListener = vi.fn();
-  close = vi.fn();
-}
-
 const jsonResponse = (payload: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(payload), {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
 
+const eventStreamResponse = (payload: unknown) => {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        encoder.encode(`event: metadata:progress\ndata: ${JSON.stringify(payload)}\n\n`),
+      );
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream" },
+  });
+};
+
 describe("browser runtime bridge", () => {
   beforeEach(() => {
     vi.resetModules();
-    eventSources.length = 0;
-    vi.stubGlobal("EventSource", FakeEventSource);
   });
 
   afterEach(() => {
@@ -179,16 +175,34 @@ describe("browser runtime bridge", () => {
     unsubscribe();
   });
 
-  it("opens browser events against the initialized session token", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ ok: true })));
+  it("opens browser events with the initialized session token header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(eventStreamResponse({ jobID: "job-1" }));
+    vi.stubGlobal("fetch", fetchMock);
 
     const { EventsOn, initializeBrowserBridge } = await import("./runtime");
     initializeBrowserBridge("csrf-token", true);
-    const off = EventsOn("metadata:progress", vi.fn());
-    const lastEventSource = eventSources[eventSources.length - 1];
+    const listener = vi.fn();
+    const off = EventsOn("metadata:progress", listener);
 
-    expect(lastEventSource?.url).toBe("/api/events");
-    expect(lastEventSource?.options).toEqual({ withCredentials: true });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/events",
+      expect.objectContaining({
+        method: "GET",
+        credentials: "include",
+        headers: { "X-CSRF-Token": "csrf-token" },
+      }),
+    );
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ jobID: "job-1" }));
     off();
+  });
+
+  it("stores runtime path case sensitivity from bridge initialization", async () => {
+    const { initializeBrowserBridge, isRuntimePathCaseInsensitive } = await import("./runtime");
+
+    initializeBrowserBridge("csrf-token", true, true);
+    expect(isRuntimePathCaseInsensitive()).toBe(true);
+
+    initializeBrowserBridge("csrf-token", true, false);
+    expect(isRuntimePathCaseInsensitive()).toBe(false);
   });
 });

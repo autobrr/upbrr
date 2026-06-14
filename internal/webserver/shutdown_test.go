@@ -215,6 +215,7 @@ func TestHandleEventsDoesNotStopSessionLogStreams(t *testing.T) {
 	}
 	current := session{ID: "session-a", CSRFToken: "csrf"}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/events", nil)
 	recorder := httptest.NewRecorder()
 	done := make(chan struct{})
@@ -269,13 +270,16 @@ func TestServeCancelsOpenEventStreamOnContextDone(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() {
 		done <- server.serve(ctx, listener)
 	}()
 
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+	defer clientCancel()
 	req, err := http.NewRequestWithContext(
-		context.Background(),
+		clientCtx,
 		http.MethodGet,
 		"http://"+listener.Addr().String()+"/api/events?csrfToken=csrf",
 		nil,
@@ -284,6 +288,7 @@ func TestServeCancelsOpenEventStreamOnContextDone(t *testing.T) {
 		t.Fatalf("create request: %v", err)
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
+	defer client.CloseIdleConnections()
 	clientDone := make(chan error, 1)
 	go func() {
 		resp, err := client.Do(req)
@@ -296,6 +301,7 @@ func TestServeCancelsOpenEventStreamOnContextDone(t *testing.T) {
 
 	waitForEventSubscriber(t, hub, "dev-no-auth")
 	cancel()
+	clientCancel()
 
 	select {
 	case err := <-done:

@@ -1592,6 +1592,64 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}
 }
 
+func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	targetPath := "/media/file.mkv"
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		CREATE TABLE ui_states (
+			id TEXT PRIMARY KEY,
+			data TEXT NOT NULL
+		)
+	`); err != nil {
+		t.Fatalf("create legacy ui_states: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(
+		ctx,
+		`INSERT INTO ui_states (id, data) VALUES (?, ?), (?, ?), (?, ?), (?, ?)`,
+		"target-by-data",
+		`{"sourcePath":"/media/file.mkv"}`,
+		targetPath,
+		`{"sourcePath":"/media/renamed.mkv"}`,
+		"other",
+		`{"sourcePath":"/media/other.mkv"}`,
+		"malformed",
+		`{"sourcePath":`,
+	); err != nil {
+		t.Fatalf("insert legacy ui_states: %v", err)
+	}
+
+	if err := repo.PurgeContentData(ctx, targetPath); err != nil {
+		t.Fatalf("purge content: %v", err)
+	}
+
+	var count int
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?)`, "target-by-data", targetPath).Scan(&count); err != nil {
+		t.Fatalf("query removed legacy ui_states: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected target legacy ui_states removed, got %d", count)
+	}
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?)`, "other", "malformed").Scan(&count); err != nil {
+		t.Fatalf("query retained legacy ui_states: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected other and malformed legacy ui_states retained, got %d", count)
+	}
+}
+
 func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 	t.Parallel()
 

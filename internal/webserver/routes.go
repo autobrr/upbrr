@@ -59,6 +59,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 			"username":                current.Username,
 			"csrfToken":               current.CSRFToken,
 			"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+			"caseInsensitivePaths":    runtime.GOOS == "windows",
 			"browseRoot":              "",
 			"allowUnrestrictedBrowse": true,
 			"needsBrowsePolicy":       false,
@@ -79,6 +80,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 		"username":                "",
 		"csrfToken":               "",
 		"nativeBrowseEnabled":     browseAvailable,
+		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              "",
 		"allowUnrestrictedBrowse": false,
 		"needsBrowsePolicy":       false,
@@ -141,6 +143,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
 		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              "",
 		"allowUnrestrictedBrowse": false,
 		"needsBrowsePolicy":       true,
@@ -259,6 +262,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
 		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              joinBrowsePolicyRoots(browseRoots),
 		"allowUnrestrictedBrowse": record.AllowUnrestrictedBrowse,
 		"needsBrowsePolicy":       !record.AllowUnrestrictedBrowse && len(browseRoots) == 0,
@@ -277,13 +281,15 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to clear session"})
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-	})
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value == current.ID {
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -333,6 +339,7 @@ func (s *Server) handleBrowsePolicy(w http.ResponseWriter, r *http.Request, curr
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
 		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              joinBrowsePolicyRoots(roots),
 		"allowUnrestrictedBrowse": req.AllowUnrestrictedBrowse,
 		"needsBrowsePolicy":       false,
@@ -417,8 +424,8 @@ func sameFilesystemPath(left string, right string) bool {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current session) {
-	// Older browser clients may send csrfToken in the URL. Treat it only as a
-	// cookie-bound consistency check, never as session authentication.
+	// Query csrfToken is a legacy cookie-bound consistency check. Header tokens
+	// from the fetch-based browser stream authenticate through currentSession.
 	if token := strings.TrimSpace(r.URL.Query().Get("csrfToken")); token != "" && token != current.CSRFToken {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf validation failed"})
 		return
