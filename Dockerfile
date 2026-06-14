@@ -18,7 +18,7 @@ RUN corepack enable && pnpm install --frozen-lockfile
 COPY gui/frontend/ ./
 RUN pnpm run build
 
-FROM --platform=$BUILDPLATFORM golang:1.26.3-bookworm AS cli-builder
+FROM --platform=$BUILDPLATFORM golang:1.26.4-bookworm AS cli-builder
 
 WORKDIR /src
 
@@ -43,7 +43,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
         CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="$goarm" \
             go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildIdentifier=${BUILD_ID}" -o /out/upbrr ./cmd/upbrr
 
-FROM golang:1.26.3-bookworm AS gui-builder
+FROM golang:1.26.4-bookworm AS gui-builder
 
 WORKDIR /src
 
