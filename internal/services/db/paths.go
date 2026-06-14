@@ -10,10 +10,13 @@ import (
 	"strings"
 )
 
-const defaultDirName = ".upbrr"
+const defaultDirName = ".config/upbrr"
 const defaultDBName = "db.sqlite"
 
 func DefaultPath() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "upbrr", defaultDBName), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("database: user home dir: %w", err)

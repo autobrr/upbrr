@@ -150,7 +150,7 @@ Stop the embedded server after inspection so later runs do not reuse an old proc
 ### Backend
 
 ```sh
-# Run the CLI (defaults to ~/.upbrr/db.sqlite):
+# Run the CLI (defaults to ~/.config/upbrr/db.sqlite):
 go run ./cmd/upbrr
 
 # Run the embedded web server:

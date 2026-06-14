@@ -21,17 +21,17 @@ func TestNewBannedGroupCheckerFromDBPath(t *testing.T) {
 		t.Fatalf("expected base path %q, got %q", bannedDir, checker.basePath)
 	}
 }
-
 func TestNewBannedGroupCheckerNoPathUsesDefaultRoot(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	checker := NewBannedGroupChecker(" ")
 	if checker == nil {
 		t.Fatalf("expected checker")
 	}
-	expected := filepath.Join(home, ".upbrr", "cache", "banned")
+	expected := filepath.Join(home, ".config", "upbrr", "cache", "banned")
 	if checker.basePath != expected {
 		t.Fatalf("expected base path %q, got %q", expected, checker.basePath)
 	}
