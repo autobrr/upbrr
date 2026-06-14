@@ -78,6 +78,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
     libgtk-3-0 \
     libwebkit2gtk-4.1-0 \
     libglib2.0-0 \

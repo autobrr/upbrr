@@ -30,6 +30,9 @@ Have these ready:
 - image host credentials
 - torrent client details or watch-folder paths
 - existing Upload Assistant `config.py`, if migrating
+- Also needs ffmpeg installed on your system
+    - On Windows systems, ffmpeg must be added to PATH (https://windowsloop.com/install-ffmpeg-windows-10/)
+    - On linux systems, get it from your favorite package manager
 
 By default, upbrr stores its database at:
 
