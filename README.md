@@ -30,9 +30,16 @@ Have these ready:
 - image host credentials
 - torrent client details or watch-folder paths
 - existing Upload Assistant `config.py`, if migrating
-- Also needs ffmpeg installed on your system
-    - On Windows systems, ffmpeg must be added to PATH (https://windowsloop.com/install-ffmpeg-windows-10/)
-    - On linux systems, get it from your favorite package manager
+- ffmpeg installed on your system for screenshot generation
+    - On Windows, ffmpeg must be added to PATH (https://windowsloop.com/install-ffmpeg-windows-10/)
+    - On Linux, install it from your distribution package manager
+    - On macOS, install it with Homebrew:
+
+      ```bash
+      brew install ffmpeg
+      ```
+
+      The CLI can find ffmpeg when your shell PATH includes Homebrew. If you start the GUI from Finder, macOS may not pass your shell PATH to the app, so the GUI may not see Homebrew's ffmpeg. Start the GUI from Terminal, or make ffmpeg available in the environment used to launch the app.
 
 By default, upbrr stores its database at:
 
