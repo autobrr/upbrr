@@ -59,6 +59,32 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.27.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: gui/frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        shell: bash
+        working-directory: gui/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build embedded web assets
+        shell: bash
+        working-directory: gui/frontend
+        run: pnpm run build:bundle
+
+      - name: Sync embedded web assets
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/sync-frontend-assets.ps1
+
       - name: Build CLI
         shell: bash
         env:
@@ -209,6 +235,10 @@ jobs:
           build_pid=$!
           wait "$typecheck_pid"
           wait "$build_pid"
+
+      - name: Sync embedded GUI assets
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/sync-frontend-assets.ps1
 
       - name: Install Linux GUI dependencies
         if: startsWith(matrix.platform, 'linux/')
