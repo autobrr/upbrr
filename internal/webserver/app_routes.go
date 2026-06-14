@@ -306,45 +306,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/UIState", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		switch r.Method {
-		case http.MethodGet:
-			id := strings.TrimSpace(r.URL.Query().Get("id"))
-			if id == "" {
-				value, err := s.backend.ListUIStates()
-				if err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-					return
-				}
-				writeJSON(w, http.StatusOK, value)
-				return
-			}
-			value, err := s.backend.GetUIState(id)
-			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
-			writeJSON(w, http.StatusOK, value)
-		case http.MethodPost:
-			var req api.SaveUIStateRequest
-			if err := decodeJSON(r, &req); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-				return
-			}
-			if strings.TrimSpace(req.ID) == "" {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
-				return
-			}
-			if err := s.backend.SaveUIState(req.ID, req.Label, req.State); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-		default:
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		}
-	}))
-
 	mux.HandleFunc("/api/app/BrowseDirectory", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -640,6 +601,10 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	}))
 
 	mux.HandleFunc("/api/app/SaveConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
 		var req struct{ Payload string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -762,13 +727,16 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/StopLogStream", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/StopLogStream", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		var req struct{ StreamID string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		_ = s.backend.StopLogStream(req.StreamID)
+		if err := s.backend.StopLogStream(current.ID, req.StreamID); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
@@ -813,26 +781,30 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/CancelDupeCheck", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/CancelDupeCheck", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
 		var req struct{ JobID string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.backend.CancelDupeCheck(req.JobID); err != nil {
+		if err := s.backend.CancelDupeCheck(current.ID, req.JobID); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
-	mux.HandleFunc("/api/app/GetDupeCheckSnapshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/GetDupeCheckSnapshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		var req struct{ JobID string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.GetDupeCheckSnapshot(req.JobID)
+		value, err := s.backend.GetDupeCheckSnapshot(current.ID, req.JobID)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -865,26 +837,30 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/CancelTrackerUpload", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/CancelTrackerUpload", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
 		var req struct{ JobID string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.backend.CancelTrackerUpload(req.JobID); err != nil {
+		if err := s.backend.CancelTrackerUpload(current.ID, req.JobID); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
-	mux.HandleFunc("/api/app/RetryFailedTrackerUpload", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/RetryFailedTrackerUpload", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		var req struct{ JobID string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.RetryFailedTrackerUpload(req.JobID)
+		value, err := s.backend.RetryFailedTrackerUpload(current.ID, req.JobID)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -892,13 +868,13 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/GetTrackerUploadSnapshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/GetTrackerUploadSnapshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		var req struct{ JobID string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.GetTrackerUploadSnapshot(req.JobID)
+		value, err := s.backend.GetTrackerUploadSnapshot(current.ID, req.JobID)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -942,6 +918,8 @@ type webBrowsePolicy struct {
 	AllowUnrestricted bool
 }
 
+// webBrowsePolicy returns the filesystem roots that browser-mode file
+// operations may read, or unrestricted access for trusted development sessions.
 func (s *Server) webBrowsePolicy(current session) (webBrowsePolicy, error) {
 	if s != nil && s.isDevelopmentSession(current) {
 		return webBrowsePolicy{AllowUnrestricted: true}, nil
@@ -966,6 +944,9 @@ func (s *Server) webBrowsePolicy(current session) (webBrowsePolicy, error) {
 	return webBrowsePolicy{Roots: roots}, nil
 }
 
+// menuImportPathsWithinBrowsePolicy resolves menu image paths under the active
+// browse policy. Directory inputs expand to their immediate non-directory
+// entries after each resolved path is checked against configured roots.
 func menuImportPathsWithinBrowsePolicy(paths []string, policy webBrowsePolicy) ([]string, error) {
 	if policy.AllowUnrestricted {
 		return paths, nil
@@ -1008,6 +989,8 @@ func menuImportPathsWithinBrowsePolicy(paths []string, policy webBrowsePolicy) (
 	return filtered, nil
 }
 
+// resolveMenuImportPath normalizes a menu image path to its absolute symlink
+// target and returns metadata for the resolved filesystem entry.
 func resolveMenuImportPath(rawPath string) (string, os.FileInfo, error) {
 	trimmed := strings.TrimSpace(rawPath)
 	if trimmed == "" {
@@ -1028,6 +1011,8 @@ func resolveMenuImportPath(rawPath string) (string, os.FileInfo, error) {
 	return resolved, info, nil
 }
 
+// pathWithinBrowseRoots reports whether candidate is contained by any
+// normalized browse root.
 func pathWithinBrowseRoots(candidate string, roots []string) bool {
 	for _, root := range roots {
 		if pathutil.IsWithinRoot(root, candidate) {

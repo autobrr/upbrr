@@ -89,11 +89,6 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		_ = logger.Close()
 		return nil, fmt.Errorf("gui: %w", err)
 	}
-	if err := repo.ClearUIState(ctx); err != nil {
-		_ = repo.Close()
-		_ = logger.Close()
-		return nil, fmt.Errorf("gui: %w", err)
-	}
 
 	var coreSvc api.Core
 	var coreInitErr error
@@ -243,44 +238,6 @@ func (a *App) BrowseDirectory(path string, mode string) (api.BrowseDirectoryResp
 	}
 	fallback := guishared.BrowseDirectoryFallback(a.currentConfig().MainSettings.DBPath)
 	return wrapGUIResult(guishared.BrowseDirectory(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback))
-}
-
-func (a *App) ListUIStates() (api.UIStateList, error) {
-	if a == nil || a.repo == nil {
-		return api.UIStateList{}, errors.New("config repository not initialized")
-	}
-	ctx := a.runtimeContext()
-	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
-	defer cancel()
-	states, err := a.repo.ListUIStates(ctx)
-	if err != nil {
-		return api.UIStateList{}, fmt.Errorf("gui: %w", err)
-	}
-	return api.UIStateList{States: states}, nil
-}
-
-func (a *App) GetUIState(id string) (api.UIStateRecord, error) {
-	if a == nil || a.repo == nil {
-		return api.UIStateRecord{}, errors.New("config repository not initialized")
-	}
-	if strings.TrimSpace(id) == "" {
-		return api.UIStateRecord{}, errors.New("id is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	return wrapGUIResult(a.repo.LoadUIState(ctx, id))
-}
-
-func (a *App) SaveUIState(id string, label string, state api.UIState) error {
-	if a == nil || a.repo == nil {
-		return errors.New("config repository not initialized")
-	}
-	if strings.TrimSpace(id) == "" {
-		return errors.New("id is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	return wrapGUIError(a.repo.SaveUIState(ctx, id, label, state))
 }
 
 func validateExternalURL(raw string) (string, error) {

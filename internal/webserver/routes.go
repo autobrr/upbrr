@@ -4,6 +4,8 @@
 package webserver
 
 import (
+	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,11 +18,62 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
+
+// eventSessionLogStopGracePeriod lets fast SSE reconnects register a replacement
+// subscriber before per-session log streams are stopped as idle.
+const eventSessionLogStopGracePeriod = 50 * time.Millisecond
+
+var sessionLogStopGenerations = struct {
+	mu     sync.Mutex
+	byServ map[*Server]map[string]uint64
+}{
+	byServ: make(map[*Server]map[string]uint64),
+}
+
+// nextSessionLogStopGeneration records a new idle-stop attempt for a session
+// and returns the generation that delayed cleanup must still own before it can
+// stop shared session log streams.
+func nextSessionLogStopGeneration(s *Server, sessionID string) uint64 {
+	sessionLogStopGenerations.mu.Lock()
+	defer sessionLogStopGenerations.mu.Unlock()
+
+	return nextSessionLogStopGenerationLocked(s, sessionID)
+}
+
+func nextSessionLogStopGenerationLocked(s *Server, sessionID string) uint64 {
+	if _, ok := sessionLogStopGenerations.byServ[s]; !ok {
+		sessionLogStopGenerations.byServ[s] = make(map[string]uint64)
+	}
+	sessionLogStopGenerations.byServ[s][sessionID]++
+	return sessionLogStopGenerations.byServ[s][sessionID]
+}
+
+// clearSessionLogStopGeneration drops idle-stop generation state after the
+// owning delayed cleanup exits, regardless of whether it stopped the session
+// log streams or yielded to a replacement subscriber.
+func clearSessionLogStopGeneration(s *Server, sessionID string) {
+	sessionLogStopGenerations.mu.Lock()
+	defer sessionLogStopGenerations.mu.Unlock()
+
+	clearSessionLogStopGenerationLocked(s, sessionID)
+}
+
+func clearSessionLogStopGenerationLocked(s *Server, sessionID string) {
+	sessionGenerations, ok := sessionLogStopGenerations.byServ[s]
+	if !ok {
+		return
+	}
+	delete(sessionGenerations, sessionID)
+	if len(sessionGenerations) == 0 {
+		delete(sessionLogStopGenerations.byServ, s)
+	}
+}
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/status", func(w http.ResponseWriter, r *http.Request) { s.handleAuthStatus(w, r, session{}) })
@@ -59,6 +112,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 			"username":                current.Username,
 			"csrfToken":               current.CSRFToken,
 			"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+			"caseInsensitivePaths":    runtime.GOOS == "windows",
 			"browseRoot":              "",
 			"allowUnrestrictedBrowse": true,
 			"needsBrowsePolicy":       false,
@@ -79,6 +133,7 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 		"username":                "",
 		"csrfToken":               "",
 		"nativeBrowseEnabled":     browseAvailable,
+		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              "",
 		"allowUnrestrictedBrowse": false,
 		"needsBrowsePolicy":       false,
@@ -141,6 +196,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
 		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              "",
 		"allowUnrestrictedBrowse": false,
 		"needsBrowsePolicy":       true,
@@ -259,6 +315,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
 		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              joinBrowsePolicyRoots(browseRoots),
 		"allowUnrestrictedBrowse": record.AllowUnrestrictedBrowse,
 		"needsBrowsePolicy":       !record.AllowUnrestrictedBrowse && len(browseRoots) == 0,
@@ -277,13 +334,18 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to clear session"})
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-	})
+	if s.backend != nil {
+		s.backend.StopSessionLogStreams(current.ID)
+	}
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value == current.ID {
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -333,14 +395,32 @@ func (s *Server) handleBrowsePolicy(w http.ResponseWriter, r *http.Request, curr
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
 		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
+		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              joinBrowsePolicyRoots(roots),
 		"allowUnrestrictedBrowse": req.AllowUnrestrictedBrowse,
 		"needsBrowsePolicy":       false,
 	})
 }
 
+// splitBrowsePolicyRoots decodes stored or submitted browse roots. A single
+// existing directory wins before CSV parsing so unquoted comma-containing paths
+// from older records still round-trip as one root.
 func splitBrowsePolicyRoots(value string) []string {
-	parts := strings.Split(value, ",")
+	trimmedValue := strings.TrimSpace(value)
+	if trimmedValue == "" {
+		return nil
+	}
+	if info, err := os.Stat(trimmedValue); err == nil && info.IsDir() {
+		return []string{trimmedValue}
+	}
+
+	reader := csv.NewReader(strings.NewReader(trimmedValue))
+	reader.FieldsPerRecord = -1
+	reader.TrimLeadingSpace = true
+	parts, err := reader.Read()
+	if err != nil {
+		parts = strings.Split(trimmedValue, ",")
+	}
 	roots := make([]string, 0, len(parts))
 	for _, part := range parts {
 		trimmed := strings.TrimSpace(part)
@@ -403,8 +483,19 @@ func recordBrowseRoots(record authmaterial.Record) []string {
 	return normalized
 }
 
+// joinBrowsePolicyRoots encodes browse roots as one CSV record so commas in
+// host filesystem paths are escaped instead of becoming root separators.
 func joinBrowsePolicyRoots(roots []string) string {
-	return strings.Join(roots, ", ")
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	if err := writer.Write(roots); err != nil {
+		return strings.Join(roots, ", ")
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return strings.Join(roots, ", ")
+	}
+	return strings.TrimRight(buf.String(), "\r\n")
 }
 
 func sameFilesystemPath(left string, right string) bool {
@@ -416,7 +507,17 @@ func sameFilesystemPath(left string, right string) bool {
 	return left == right
 }
 
+// handleEvents streams session-scoped server-sent events until the request
+// context ends, then stops shared session log streams only after the session has
+// no replacement event subscribers.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current session) {
+	// Query csrfToken is a legacy cookie-bound consistency check. Header tokens
+	// from the fetch-based browser stream are validated against the session cookie
+	// in currentSession.
+	if token := strings.TrimSpace(r.URL.Query().Get("csrfToken")); token != "" && token != current.CSRFToken {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf validation failed"})
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"})
@@ -427,8 +528,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current se
 	w.Header().Set("Connection", "keep-alive")
 
 	ch, unsubscribe := s.hub.Subscribe(current.ID)
-	defer unsubscribe()
-	defer s.backend.StopSessionLogStreams(current.ID)
+	defer func() {
+		trimmedSessionID := strings.TrimSpace(current.ID)
+		if trimmedSessionID == "" || s == nil || s.backend == nil {
+			unsubscribe()
+			return
+		}
+
+		// Claim the next idle-stop generation before removing the current
+		// subscriber so an older disconnect timer cannot observe a newer gap.
+		generation := nextSessionLogStopGeneration(s, trimmedSessionID)
+		unsubscribe()
+		s.scheduleStopSessionLogStreamsIfIdle(trimmedSessionID, generation)
+	}()
 
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -451,6 +563,70 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current se
 	}
 }
 
+// stopSessionLogStreamsIfIdle schedules cleanup for the latest session
+// disconnect only, so stale SSE disconnect timers cannot stop shared session
+// logs during a newer reconnect grace window.
+func (s *Server) stopSessionLogStreamsIfIdle(sessionID string) {
+	if s == nil || s.backend == nil {
+		return
+	}
+	trimmedSessionID := strings.TrimSpace(sessionID)
+	if trimmedSessionID == "" {
+		return
+	}
+
+	s.scheduleStopSessionLogStreamsIfIdle(trimmedSessionID, nextSessionLogStopGeneration(s, trimmedSessionID))
+}
+
+func (s *Server) scheduleStopSessionLogStreamsIfIdle(sessionID string, generation uint64) {
+	if s == nil || s.backend == nil || generation == 0 {
+		return
+	}
+
+	time.AfterFunc(eventSessionLogStopGracePeriod, func() {
+		s.stopSessionLogStreamsIfOwnedAndIdle(sessionID, generation)
+	})
+}
+
+// stopSessionLogStreamsIfOwnedAndIdle stops shared session log streams only
+// while generation still owns the latest disconnect and no replacement
+// subscriber is registered under the event hub lock.
+func (s *Server) stopSessionLogStreamsIfOwnedAndIdle(sessionID string, generation uint64) {
+	if s == nil || s.backend == nil {
+		return
+	}
+	trimmedSessionID := strings.TrimSpace(sessionID)
+	if trimmedSessionID == "" {
+		return
+	}
+
+	if s.hub != nil {
+		s.hub.mu.Lock()
+		defer s.hub.mu.Unlock()
+	}
+
+	sessionLogStopGenerations.mu.Lock()
+	sessionGenerations := sessionLogStopGenerations.byServ[s]
+	if sessionGenerations[trimmedSessionID] != generation {
+		sessionLogStopGenerations.mu.Unlock()
+		return
+	}
+
+	if s.hub != nil && len(s.hub.subscribers[trimmedSessionID]) > 0 {
+		clearSessionLogStopGenerationLocked(s, trimmedSessionID)
+		sessionLogStopGenerations.mu.Unlock()
+		return
+	}
+
+	clearSessionLogStopGenerationLocked(s, trimmedSessionID)
+	sessionLogStopGenerations.mu.Unlock()
+
+	s.backend.StopSessionLogStreams(trimmedSessionID)
+}
+
+// requireSession applies request rate limits and resolves the cookie-bound
+// session before dispatch. Unsafe HTTP methods must also pass same-origin and
+// CSRF checks for that session.
 func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.allowGeneralRequest(r) {
@@ -472,7 +648,12 @@ func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, se
 	}
 }
 
+// currentSession resolves the cookie session and, when a CSRF header is present,
+// requires that token to match the cookie-bound session.
 func (s *Server) currentSession(r *http.Request) (session, bool) {
+	if token := sessionTokenFromRequest(r); token != "" {
+		return s.currentSessionByToken(r, token)
+	}
 	cookie, err := r.Cookie(sessionCookieName)
 	if err == nil && s.sessions != nil {
 		if current, ok := s.sessions.Get(cookie.Value); ok {
@@ -480,6 +661,35 @@ func (s *Server) currentSession(r *http.Request) (session, bool) {
 		}
 	}
 	return s.developmentCurrentSession(r)
+}
+
+// currentSessionByToken validates the request CSRF token against the
+// cookie-bound session. The token is not a bearer credential.
+func (s *Server) currentSessionByToken(r *http.Request, token string) (session, bool) {
+	if token == "" {
+		return session{}, false
+	}
+	cookie, err := r.Cookie(sessionCookieName)
+	if err == nil && s.sessions != nil {
+		if current, ok := s.sessions.Get(cookie.Value); ok {
+			if current.CSRFToken == token {
+				return current, true
+			}
+			return session{}, false
+		}
+	}
+	if current, ok := s.developmentCurrentSession(r); ok && current.CSRFToken == token {
+		return current, true
+	}
+	return session{}, false
+}
+
+// sessionTokenFromRequest returns the CSRF token supplied by app calls.
+func sessionTokenFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.Header.Get("X-Csrf-Token"))
 }
 
 func (s *Server) developmentCurrentSession(r *http.Request) (session, bool) {

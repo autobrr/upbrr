@@ -18,6 +18,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -66,6 +67,10 @@ func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQ
 	if err != nil {
 		return nil, fmt.Errorf("db open: %w", err)
 	}
+	// Keep each repository handle on one connection so connection-local SQLite
+	// PRAGMAs apply consistently to all app reads and writes through this repo.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
@@ -142,7 +147,7 @@ func (r *SQLiteRepository) MigrateContext(ctx context.Context) error {
 	if r.logger != nil {
 		r.logger.Debugf("db: running migrations")
 	}
-	return retryBusyContext(ctx, r.logger, "migration", sqliteRetryAttempts, func() error {
+	return retryBusyContext(ctx, r.logger, "migration", func() error {
 		return MigrateContext(ctx, r.db)
 	})
 }
@@ -163,12 +168,12 @@ func IsBusyError(err error) bool {
 	}
 }
 
-func retryBusyContext(ctx context.Context, logger Logger, operation string, attempts int, fn func() error) error {
-	if attempts < 1 {
-		attempts = 1
-	}
+// retryBusyContext reruns an operation when SQLite reports a transient busy or
+// locked database and stops immediately for non-lock errors or context
+// cancellation.
+func retryBusyContext(ctx context.Context, logger Logger, operation string, fn func() error) error {
 	var lastErr error
-	for attempt := 1; attempt <= attempts; attempt++ {
+	for attempt := 1; attempt <= sqliteRetryAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("db: retry busy context canceled: %w", err)
 		}
@@ -177,14 +182,14 @@ func retryBusyContext(ctx context.Context, logger Logger, operation string, atte
 			return nil
 		}
 		lastErr = err
-		if !IsBusyError(err) || attempt == attempts {
+		if !IsBusyError(err) || attempt == sqliteRetryAttempts {
 			if IsBusyError(err) && logger != nil {
-				logger.Warnf("db: %s busy lock persisted after %d attempts; returning retry exhaustion", operation, attempts)
+				logger.Warnf("db: %s busy lock persisted after %d attempts; returning retry exhaustion", operation, sqliteRetryAttempts)
 			}
 			return err
 		}
 		if logger != nil {
-			logger.Infof("db: %s busy, retrying (%d/%d)", operation, attempt, attempts)
+			logger.Infof("db: %s busy, retrying (%d/%d)", operation, attempt, sqliteRetryAttempts)
 		}
 		delay := time.Duration(50*attempt) * time.Millisecond
 		timer := time.NewTimer(delay)
@@ -196,6 +201,50 @@ func retryBusyContext(ctx context.Context, logger Logger, operation string, atte
 		}
 	}
 	return lastErr
+}
+
+// execWrite runs a single write statement with the repository's busy-lock retry
+// policy. It returns the final statement result when the write succeeds.
+func (r *SQLiteRepository) execWrite(ctx context.Context, operation string, query string, args ...any) (sql.Result, error) {
+	var result sql.Result
+	err := retryBusyContext(ctx, r.logger, operation, func() error {
+		var execErr error
+		result, execErr = r.db.ExecContext(ctx, query, args...)
+		if execErr != nil {
+			return fmt.Errorf("db %s: %w", operation, execErr)
+		}
+		return nil
+	})
+	return result, err
+}
+
+// withWriteTx runs a complete write transaction under the repository's busy-lock
+// retry policy. The callback must keep work DB-local because any busy or locked
+// error retries the entire transaction.
+func (r *SQLiteRepository) withWriteTx(ctx context.Context, operation string, fn func(*sql.Tx) error) error {
+	return retryBusyContext(ctx, r.logger, operation, func() error {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("db %s begin: %w", operation, err)
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+
+		if err := fn(tx); err != nil {
+			_ = tx.Rollback()
+			committed = true
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("db %s commit: %w", operation, err)
+		}
+		committed = true
+		return nil
+	})
 }
 
 func enableWALJournalMode(ctx context.Context, db *sql.DB) (string, error) {
@@ -376,7 +425,7 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 	if metadata.Scene {
 		sceneValue = 1
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save file metadata", `
 		INSERT INTO file_metadata (
 			path, info_hash, updated_at, disc_type, video_path, file_list, scene, scene_name, scene_imdb,
 			release_category,
@@ -524,7 +573,7 @@ func (r *SQLiteRepository) SaveExternalIDs(ctx context.Context, ids ExternalIDs)
 		timestamp = time.Now().UTC()
 	}
 
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save external ids", `
 		INSERT INTO external_ids (
 			source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, category,
 			source_tmdb, source_imdb, source_tvdb, source_tvmaze, updated_at
@@ -627,7 +676,7 @@ func (r *SQLiteRepository) SaveDVDMediaInfo(ctx context.Context, info DVDMediaIn
 		highFrameRateValue = 1
 	}
 
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save dvd mediainfo", `
 		INSERT INTO dvd_mediainfo (
 			source_path, ifo_path, vob_path, vob_set, width, height, frame_rate, scan_type,
 			resolution, high_frame_rate, mediainfo_json, mediainfo_text, vob_mediainfo_raw, updated_at
@@ -749,7 +798,7 @@ func (r *SQLiteRepository) SaveExternalMetadata(ctx context.Context, metadata Ex
 	tvmazeJSON := encodeOptionalJSON(metadata.TVmaze)
 	blurayJSON := encodeOptionalJSON(metadata.Bluray)
 
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save external metadata", `
 		INSERT INTO external_metadata (
 			source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, bluray_json, updated_at
 		)
@@ -883,7 +932,7 @@ func (r *SQLiteRepository) SaveReleaseNameOverrides(ctx context.Context, path st
 
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
 
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save release overrides", `
 		INSERT INTO release_overrides (
 			source_path,
 			category,
@@ -974,7 +1023,7 @@ func (r *SQLiteRepository) DeleteReleaseNameOverrides(ctx context.Context, path 
 	if strings.TrimSpace(path) == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM release_overrides WHERE source_path = ?`, path); err != nil {
+	if _, err := r.execWrite(ctx, "delete release overrides", `DELETE FROM release_overrides WHERE source_path = ?`, path); err != nil {
 		return fmt.Errorf("db delete release overrides: %w", err)
 	}
 	return nil
@@ -1038,7 +1087,7 @@ func (r *SQLiteRepository) SavePlaylistSelection(ctx context.Context, sourcePath
 		playlistsJSON = string(data)
 	}
 
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save playlist selection", `
 		INSERT INTO playlist_selections (source_path, selected_playlists, use_all, updated_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
@@ -1061,7 +1110,7 @@ func (r *SQLiteRepository) DeletePlaylistSelection(ctx context.Context, sourcePa
 		return internalerrors.ErrInvalidInput
 	}
 
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM playlist_selections WHERE source_path = ?`, sourcePath); err != nil {
+	if _, err := r.execWrite(ctx, "delete playlist selection", `DELETE FROM playlist_selections WHERE source_path = ?`, sourcePath); err != nil {
 		return fmt.Errorf("db delete playlist selection: %w", err)
 	}
 	return nil
@@ -1164,7 +1213,7 @@ func (r *SQLiteRepository) SaveDescriptionOverride(ctx context.Context, override
 		updatedAt = time.Now().UTC()
 	}
 
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save description override", `
 		INSERT INTO description_overrides (source_path, group_key, description, updated_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(source_path, group_key) DO UPDATE SET
@@ -1186,7 +1235,7 @@ func (r *SQLiteRepository) DeleteDescriptionOverride(ctx context.Context, path s
 		return internalerrors.ErrInvalidInput
 	}
 	trimmedGroup := normalizeDescriptionOverrideGroupKey(groupKey)
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM description_overrides WHERE source_path = ? AND group_key = ?`, trimmed, trimmedGroup); err != nil {
+	if _, err := r.execWrite(ctx, "delete description override", `DELETE FROM description_overrides WHERE source_path = ? AND group_key = ?`, trimmed, trimmedGroup); err != nil {
 		return fmt.Errorf("db delete description override: %w", err)
 	}
 	return nil
@@ -1196,21 +1245,21 @@ func normalizeDescriptionOverrideGroupKey(groupKey string) string {
 	return strings.ToLower(strings.TrimSpace(groupKey))
 }
 
-func nullString(value *string) interface{} {
+func nullString(value *string) any {
 	if value == nil {
 		return nil
 	}
 	return *value
 }
 
-func nullInt(value *int) interface{} {
+func nullInt(value *int) any {
 	if value == nil {
 		return nil
 	}
 	return *value
 }
 
-func nullBool(value *bool) interface{} {
+func nullBool(value *bool) any {
 	if value == nil {
 		return nil
 	}
@@ -1490,7 +1539,7 @@ func (r *SQLiteRepository) CreateUploadRecord(ctx context.Context, record Upload
 		createdAt = time.Now().UTC()
 	}
 
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "create upload record", `
 		INSERT INTO upload_records (tracker, status, created_at, source_path)
 		VALUES (?, ?, ?, ?)
 	`, record.Tracker, status, createdAt.Format(time.RFC3339Nano), record.SourcePath)
@@ -1511,7 +1560,7 @@ func (r *SQLiteRepository) UpdateLatestUploadRecordStatus(ctx context.Context, s
 		return internalerrors.ErrInvalidInput
 	}
 
-	result, err := r.db.ExecContext(ctx, `
+	result, err := r.execWrite(ctx, "update upload status", `
 		UPDATE upload_records
 		SET status = ?
 		WHERE id = (
@@ -1547,54 +1596,47 @@ func (r *SQLiteRepository) SaveTrackerRuleFailures(ctx context.Context, sourcePa
 		return internalerrors.ErrInvalidInput
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("db save tracker rule failures: begin: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM tracker_rule_failures
-		WHERE source_path = ? AND tracker = ?
-	`, trimmedPath, strings.ToUpper(trimmedTracker)); err != nil {
-		return fmt.Errorf("db save tracker rule failures: delete: %w", err)
-	}
-
-	if len(failures) > 0 {
-		stmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO tracker_rule_failures (source_path, tracker, rule, reason, created_at)
-			VALUES (?, ?, ?, ?, ?)
-		`)
-		if err != nil {
-			return fmt.Errorf("db save tracker rule failures: prepare: %w", err)
+	if err := r.withWriteTx(ctx, "save tracker rule failures", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM tracker_rule_failures
+			WHERE source_path = ? AND tracker = ?
+		`, trimmedPath, strings.ToUpper(trimmedTracker)); err != nil {
+			return fmt.Errorf("db save tracker rule failures: delete: %w", err)
 		}
-		defer stmt.Close()
 
-		for _, failure := range failures {
-			rule := strings.TrimSpace(failure.Rule)
-			if rule == "" {
-				continue
+		if len(failures) > 0 {
+			stmt, err := tx.PrepareContext(ctx, `
+				INSERT INTO tracker_rule_failures (source_path, tracker, rule, reason, created_at)
+				VALUES (?, ?, ?, ?, ?)
+			`)
+			if err != nil {
+				return fmt.Errorf("db save tracker rule failures: prepare: %w", err)
 			}
-			createdAt := failure.CreatedAt
-			if createdAt.IsZero() {
-				createdAt = time.Now().UTC()
-			}
-			if _, err := stmt.ExecContext(ctx,
-				trimmedPath,
-				strings.ToUpper(trimmedTracker),
-				rule,
-				strings.TrimSpace(failure.Reason),
-				createdAt.Format(time.RFC3339Nano),
-			); err != nil {
-				return fmt.Errorf("db save tracker rule failures: insert: %w", err)
+			defer stmt.Close()
+
+			for _, failure := range failures {
+				rule := strings.TrimSpace(failure.Rule)
+				if rule == "" {
+					continue
+				}
+				createdAt := failure.CreatedAt
+				if createdAt.IsZero() {
+					createdAt = time.Now().UTC()
+				}
+				if _, err := stmt.ExecContext(ctx,
+					trimmedPath,
+					strings.ToUpper(trimmedTracker),
+					rule,
+					strings.TrimSpace(failure.Reason),
+					createdAt.Format(time.RFC3339Nano),
+				); err != nil {
+					return fmt.Errorf("db save tracker rule failures: insert: %w", err)
+				}
 			}
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("db save tracker rule failures: commit: %w", err)
+		return nil
+	}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1683,7 +1725,7 @@ func (r *SQLiteRepository) SaveTrackerTimestamp(ctx context.Context, timestamp T
 	if value.IsZero() {
 		value = time.Now().UTC()
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save tracker timestamp", `
 		INSERT INTO tracker_timestamps (tracker, updated_at)
 		VALUES (?, ?)
 		ON CONFLICT(tracker) DO UPDATE SET
@@ -1716,7 +1758,7 @@ func (r *SQLiteRepository) SaveTrackerMetadata(ctx context.Context, metadata Tra
 	if metadata.Matched {
 		matched = 1
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save tracker metadata", `
 		INSERT INTO tracker_metadata (
 			source_path, tracker, tracker_id, info_hash, tmdb_id, imdb_id, tvdb_id, mal_id,
 			category, description, image_urls, filename, matched, updated_at
@@ -1827,7 +1869,7 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, screenshot Screen
 	if strings.TrimSpace(screenshot.SourcePath) == "" || strings.TrimSpace(screenshot.ImagePath) == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := r.execWrite(ctx, "save screenshot", `
 		INSERT OR REPLACE INTO screenshots (
 			source_path, image_path, timestamp, frame_number, width, height, purpose, captured_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -1896,11 +1938,16 @@ func (r *SQLiteRepository) DeleteScreenshot(ctx context.Context, imagePath strin
 	if strings.TrimSpace(imagePath) == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM uploaded_images WHERE image_path = ?`, imagePath); err != nil {
-		return fmt.Errorf("db delete screenshot: delete uploaded images: %w", err)
-	}
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM screenshots WHERE image_path = ?`, imagePath); err != nil {
-		return fmt.Errorf("db delete screenshot: %w", err)
+	if err := r.withWriteTx(ctx, "delete screenshot", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM uploaded_images WHERE image_path = ?`, imagePath); err != nil {
+			return fmt.Errorf("db delete screenshot: delete uploaded images: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM screenshots WHERE image_path = ?`, imagePath); err != nil {
+			return fmt.Errorf("db delete screenshot: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1917,54 +1964,47 @@ func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, path string,
 		return fmt.Errorf("db save final selections: context canceled: %w", err)
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("db save final selections: begin: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_final_selections WHERE source_path = ?`, trimmed); err != nil {
-		return fmt.Errorf("db save final selections: clear: %w", err)
-	}
-
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO screenshot_final_selections (
-			source_path, image_path, sort_order, source, selected_at
-		) VALUES (?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return fmt.Errorf("db save final selections: prepare: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, selection := range selections {
-		if strings.TrimSpace(selection.ImagePath) == "" {
-			return internalerrors.ErrInvalidInput
+	if err := r.withWriteTx(ctx, "save final selections", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_final_selections WHERE source_path = ?`, trimmed); err != nil {
+			return fmt.Errorf("db save final selections: clear: %w", err)
 		}
-		source := strings.TrimSpace(selection.Source)
-		if source == "" {
-			source = "unknown"
-		}
-		selectedAt := selection.SelectedAt
-		if selectedAt.IsZero() {
-			selectedAt = time.Now().UTC()
-		}
-		if _, err := stmt.ExecContext(
-			ctx,
-			trimmed,
-			selection.ImagePath,
-			selection.Order,
-			source,
-			selectedAt.UTC().Format(time.RFC3339Nano),
-		); err != nil {
-			return fmt.Errorf("db save final selections: insert: %w", err)
-		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("db save final selections: commit: %w", err)
+		stmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO screenshot_final_selections (
+				source_path, image_path, sort_order, source, selected_at
+			) VALUES (?, ?, ?, ?, ?)
+		`)
+		if err != nil {
+			return fmt.Errorf("db save final selections: prepare: %w", err)
+		}
+		defer stmt.Close()
+
+		for _, selection := range selections {
+			if strings.TrimSpace(selection.ImagePath) == "" {
+				return internalerrors.ErrInvalidInput
+			}
+			source := strings.TrimSpace(selection.Source)
+			if source == "" {
+				source = "unknown"
+			}
+			selectedAt := selection.SelectedAt
+			if selectedAt.IsZero() {
+				selectedAt = time.Now().UTC()
+			}
+			if _, err := stmt.ExecContext(
+				ctx,
+				trimmed,
+				selection.ImagePath,
+				selection.Order,
+				source,
+				selectedAt.UTC().Format(time.RFC3339Nano),
+			); err != nil {
+				return fmt.Errorf("db save final selections: insert: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -2016,7 +2056,7 @@ func (r *SQLiteRepository) DeleteFinalSelection(ctx context.Context, imagePath s
 	if strings.TrimSpace(imagePath) == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	_, err := r.db.ExecContext(ctx, `DELETE FROM screenshot_final_selections WHERE image_path = ?`, imagePath)
+	_, err := r.execWrite(ctx, "delete final selection", `DELETE FROM screenshot_final_selections WHERE image_path = ?`, imagePath)
 	if err != nil {
 		return fmt.Errorf("db delete final selection: %w", err)
 	}
@@ -2035,83 +2075,76 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, path stri
 		return fmt.Errorf("db replace screenshot slots: context canceled: %w", err)
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("db replace screenshot slots: begin: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_slot_variants WHERE source_path = ?`, trimmed); err != nil {
-		return fmt.Errorf("db replace screenshot slots: clear variants: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_slots WHERE source_path = ?`, trimmed); err != nil {
-		return fmt.Errorf("db replace screenshot slots: clear slots: %w", err)
-	}
-
-	slotStmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO screenshot_slots (
-			source_path, slot_order, source_kind, original_key, original_url, original_host,
-			image_path, from_description, tracker, section_kind, render_in_screenshots
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return fmt.Errorf("db replace screenshot slots: prepare slots: %w", err)
-	}
-	defer slotStmt.Close()
-
-	variantStmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO screenshot_slot_variants (
-			source_path, slot_order, host, usage_scope, image_path, img_url, raw_url, web_url, uploaded_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return fmt.Errorf("db replace screenshot slots: prepare variants: %w", err)
-	}
-	defer variantStmt.Close()
-
-	for _, slot := range slots {
-		if _, err := slotStmt.ExecContext(
-			ctx,
-			trimmed,
-			slot.SlotOrder,
-			strings.TrimSpace(slot.SourceKind),
-			strings.TrimSpace(slot.OriginalKey),
-			strings.TrimSpace(slot.OriginalURL),
-			strings.TrimSpace(slot.OriginalHost),
-			strings.TrimSpace(slot.ImagePath),
-			boolToInt(slot.FromDescription),
-			strings.TrimSpace(slot.Tracker),
-			strings.TrimSpace(slot.SectionKind),
-			boolToInt(slot.RenderInScreenshots),
-		); err != nil {
-			return fmt.Errorf("db replace screenshot slots: insert slot %d: %w", slot.SlotOrder, err)
+	if err := r.withWriteTx(ctx, "replace screenshot slots", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_slot_variants WHERE source_path = ?`, trimmed); err != nil {
+			return fmt.Errorf("db replace screenshot slots: clear variants: %w", err)
 		}
-		for _, variant := range slot.Variants {
-			uploadedAt := ""
-			if !variant.UploadedAt.IsZero() {
-				uploadedAt = variant.UploadedAt.UTC().Format(time.RFC3339Nano)
-			}
-			if _, err := variantStmt.ExecContext(
+		if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_slots WHERE source_path = ?`, trimmed); err != nil {
+			return fmt.Errorf("db replace screenshot slots: clear slots: %w", err)
+		}
+
+		slotStmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO screenshot_slots (
+				source_path, slot_order, source_kind, original_key, original_url, original_host,
+				image_path, from_description, tracker, section_kind, render_in_screenshots
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`)
+		if err != nil {
+			return fmt.Errorf("db replace screenshot slots: prepare slots: %w", err)
+		}
+		defer slotStmt.Close()
+
+		variantStmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO screenshot_slot_variants (
+				source_path, slot_order, host, usage_scope, image_path, img_url, raw_url, web_url, uploaded_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`)
+		if err != nil {
+			return fmt.Errorf("db replace screenshot slots: prepare variants: %w", err)
+		}
+		defer variantStmt.Close()
+
+		for _, slot := range slots {
+			if _, err := slotStmt.ExecContext(
 				ctx,
 				trimmed,
 				slot.SlotOrder,
-				strings.TrimSpace(variant.Host),
-				strings.TrimSpace(variant.UsageScope),
-				strings.TrimSpace(variant.ImagePath),
-				strings.TrimSpace(variant.ImgURL),
-				strings.TrimSpace(variant.RawURL),
-				strings.TrimSpace(variant.WebURL),
-				uploadedAt,
+				strings.TrimSpace(slot.SourceKind),
+				strings.TrimSpace(slot.OriginalKey),
+				strings.TrimSpace(slot.OriginalURL),
+				strings.TrimSpace(slot.OriginalHost),
+				strings.TrimSpace(slot.ImagePath),
+				boolToInt(slot.FromDescription),
+				strings.TrimSpace(slot.Tracker),
+				strings.TrimSpace(slot.SectionKind),
+				boolToInt(slot.RenderInScreenshots),
 			); err != nil {
-				return fmt.Errorf("db replace screenshot slots: insert variant slot=%d host=%s: %w", slot.SlotOrder, variant.Host, err)
+				return fmt.Errorf("db replace screenshot slots: insert slot %d: %w", slot.SlotOrder, err)
+			}
+			for _, variant := range slot.Variants {
+				uploadedAt := ""
+				if !variant.UploadedAt.IsZero() {
+					uploadedAt = variant.UploadedAt.UTC().Format(time.RFC3339Nano)
+				}
+				if _, err := variantStmt.ExecContext(
+					ctx,
+					trimmed,
+					slot.SlotOrder,
+					strings.TrimSpace(variant.Host),
+					strings.TrimSpace(variant.UsageScope),
+					strings.TrimSpace(variant.ImagePath),
+					strings.TrimSpace(variant.ImgURL),
+					strings.TrimSpace(variant.RawURL),
+					strings.TrimSpace(variant.WebURL),
+					uploadedAt,
+				); err != nil {
+					return fmt.Errorf("db replace screenshot slots: insert variant slot=%d host=%s: %w", slot.SlotOrder, variant.Host, err)
+				}
 			}
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("db replace screenshot slots: commit: %w", err)
+		return nil
+	}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -2225,42 +2258,47 @@ func (r *SQLiteRepository) UpsertScreenshotSlotVariants(ctx context.Context, pat
 		return nil
 	}
 
-	stmt, err := r.db.PrepareContext(ctx, `
-		INSERT INTO screenshot_slot_variants (
-			source_path, slot_order, host, usage_scope, image_path, img_url, raw_url, web_url, uploaded_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(source_path, slot_order, usage_scope, host)
-		DO UPDATE SET
-			image_path = excluded.image_path,
-			img_url = excluded.img_url,
-			raw_url = excluded.raw_url,
-			web_url = excluded.web_url,
-			uploaded_at = excluded.uploaded_at
-	`)
-	if err != nil {
-		return fmt.Errorf("db upsert screenshot slot variants: prepare: %w", err)
-	}
-	defer stmt.Close()
+	if err := r.withWriteTx(ctx, "upsert screenshot slot variants", func(tx *sql.Tx) error {
+		stmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO screenshot_slot_variants (
+				source_path, slot_order, host, usage_scope, image_path, img_url, raw_url, web_url, uploaded_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(source_path, slot_order, usage_scope, host)
+			DO UPDATE SET
+				image_path = excluded.image_path,
+				img_url = excluded.img_url,
+				raw_url = excluded.raw_url,
+				web_url = excluded.web_url,
+				uploaded_at = excluded.uploaded_at
+		`)
+		if err != nil {
+			return fmt.Errorf("db upsert screenshot slot variants: prepare: %w", err)
+		}
+		defer stmt.Close()
 
-	for _, variant := range variants {
-		uploadedAt := ""
-		if !variant.UploadedAt.IsZero() {
-			uploadedAt = variant.UploadedAt.UTC().Format(time.RFC3339Nano)
+		for _, variant := range variants {
+			uploadedAt := ""
+			if !variant.UploadedAt.IsZero() {
+				uploadedAt = variant.UploadedAt.UTC().Format(time.RFC3339Nano)
+			}
+			if _, err := stmt.ExecContext(
+				ctx,
+				trimmed,
+				variant.SlotOrder,
+				strings.TrimSpace(variant.Host),
+				strings.TrimSpace(variant.UsageScope),
+				strings.TrimSpace(variant.ImagePath),
+				strings.TrimSpace(variant.ImgURL),
+				strings.TrimSpace(variant.RawURL),
+				strings.TrimSpace(variant.WebURL),
+				uploadedAt,
+			); err != nil {
+				return fmt.Errorf("db upsert screenshot slot variants: slot=%d host=%s: %w", variant.SlotOrder, variant.Host, err)
+			}
 		}
-		if _, err := stmt.ExecContext(
-			ctx,
-			trimmed,
-			variant.SlotOrder,
-			strings.TrimSpace(variant.Host),
-			strings.TrimSpace(variant.UsageScope),
-			strings.TrimSpace(variant.ImagePath),
-			strings.TrimSpace(variant.ImgURL),
-			strings.TrimSpace(variant.RawURL),
-			strings.TrimSpace(variant.WebURL),
-			uploadedAt,
-		); err != nil {
-			return fmt.Errorf("db upsert screenshot slot variants: slot=%d host=%s: %w", variant.SlotOrder, variant.Host, err)
-		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -2281,61 +2319,54 @@ func (r *SQLiteRepository) SaveUploadedImages(ctx context.Context, path string, 
 		return fmt.Errorf("db save uploaded images: context canceled: %w", err)
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("db save uploaded images: begin: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
+	if err := r.withWriteTx(ctx, "save uploaded images", func(tx *sql.Tx) error {
+		stmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO uploaded_images (
+				source_path, image_path, host, usage_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(source_path, usage_scope, host, image_path)
+			DO UPDATE SET
+				img_url = excluded.img_url,
+				raw_url = excluded.raw_url,
+				web_url = excluded.web_url,
+				size_bytes = excluded.size_bytes,
+				uploaded_at = excluded.uploaded_at
+		`)
+		if err != nil {
+			return fmt.Errorf("db save uploaded images: prepare: %w", err)
+		}
+		defer stmt.Close()
 
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO uploaded_images (
-			source_path, image_path, host, usage_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(source_path, usage_scope, host, image_path)
-		DO UPDATE SET
-			img_url = excluded.img_url,
-			raw_url = excluded.raw_url,
-			web_url = excluded.web_url,
-			size_bytes = excluded.size_bytes,
-			uploaded_at = excluded.uploaded_at
-	`)
-	if err != nil {
-		return fmt.Errorf("db save uploaded images: prepare: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, image := range images {
-		if strings.TrimSpace(image.ImagePath) == "" {
-			return internalerrors.ErrInvalidInput
+		for _, image := range images {
+			if strings.TrimSpace(image.ImagePath) == "" {
+				return internalerrors.ErrInvalidInput
+			}
+			usageScope := strings.TrimSpace(image.UsageScope)
+			if usageScope == "" {
+				usageScope = "global"
+			}
+			uploadedAt := image.UploadedAt
+			if uploadedAt.IsZero() {
+				uploadedAt = time.Now().UTC()
+			}
+			if _, err := stmt.ExecContext(
+				ctx,
+				trimmed,
+				image.ImagePath,
+				trimmedHost,
+				usageScope,
+				strings.TrimSpace(image.ImgURL),
+				strings.TrimSpace(image.RawURL),
+				strings.TrimSpace(image.WebURL),
+				image.SizeBytes,
+				uploadedAt.UTC().Format(time.RFC3339Nano),
+			); err != nil {
+				return fmt.Errorf("db save uploaded images: insert: %w", err)
+			}
 		}
-		usageScope := strings.TrimSpace(image.UsageScope)
-		if usageScope == "" {
-			usageScope = "global"
-		}
-		uploadedAt := image.UploadedAt
-		if uploadedAt.IsZero() {
-			uploadedAt = time.Now().UTC()
-		}
-		if _, err := stmt.ExecContext(
-			ctx,
-			trimmed,
-			image.ImagePath,
-			trimmedHost,
-			usageScope,
-			strings.TrimSpace(image.ImgURL),
-			strings.TrimSpace(image.RawURL),
-			strings.TrimSpace(image.WebURL),
-			image.SizeBytes,
-			uploadedAt.UTC().Format(time.RFC3339Nano),
-		); err != nil {
-			return fmt.Errorf("db save uploaded images: insert: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("db save uploaded images: commit: %w", err)
+		return nil
+	}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -2409,7 +2440,7 @@ func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string,
 	if trimmedHost == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	result, err := r.db.ExecContext(ctx, `
+	result, err := r.execWrite(ctx, "delete uploaded image", `
 		DELETE FROM uploaded_images
 		WHERE source_path = ? AND host = ? AND image_path = ?
 	`, trimmedPath, trimmedHost, trimmedImagePath)
@@ -2499,14 +2530,6 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		r.logger.Debugf("db: purge content data started path=%s", trimmedPath)
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("db purge content: begin: %w", err)
-	}
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
 	queries := []struct {
 		sql  string
 		args []any
@@ -2529,25 +2552,26 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 	}
 
 	totalRemoved := int64(0)
-	for _, query := range queries {
-		result, err := tx.ExecContext(ctx, query.sql, query.args...)
+	if err := r.withWriteTx(ctx, "purge content", func(tx *sql.Tx) error {
+		totalRemoved = 0
+		for _, query := range queries {
+			result, err := tx.ExecContext(ctx, query.sql, query.args...)
+			if err != nil {
+				return fmt.Errorf("db purge content: %w", err)
+			}
+			rows, err := result.RowsAffected()
+			if err == nil {
+				totalRemoved += rows
+			}
+		}
+		rows, err := r.purgeLegacyUIState(ctx, tx, trimmedPath)
 		if err != nil {
-			return fmt.Errorf("db purge content: %w", err)
+			return err
 		}
-		rows, err := result.RowsAffected()
-		if err == nil {
-			totalRemoved += rows
-		}
-	}
-
-	uiStateRows, err := r.purgeUIStatesForSourcePathTx(ctx, tx, trimmedPath)
-	if err != nil {
+		totalRemoved += rows
+		return nil
+	}); err != nil {
 		return err
-	}
-	totalRemoved += uiStateRows
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("db purge content: commit: %w", err)
 	}
 	if r.logger != nil {
 		r.logger.Debugf("db: purge content data completed path=%s rows_removed=%d", trimmedPath, totalRemoved)
@@ -2555,93 +2579,194 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 	return nil
 }
 
-func (r *SQLiteRepository) purgeUIStatesForSourcePathTx(ctx context.Context, tx *sql.Tx, path string) (int64, error) {
-	sourceKey := normalizeUIStateSourcePath(path)
-	if sourceKey == "" {
+// purgeLegacyUIState removes rows from the retired ui_states table when an old
+// installation still has it. It accepts both the later source_path schema and
+// the shipped id/data schema, matching stored paths with host filesystem
+// equivalence so slash, clean-path, and OS case variants are purged together.
+// Current schemas do not create the table, so a missing table is a no-op.
+func (r *SQLiteRepository) purgeLegacyUIState(ctx context.Context, tx *sql.Tx, path string) (int64, error) {
+	var tableName string
+	err := tx.QueryRowContext(ctx, `
+		SELECT name
+		FROM sqlite_master
+		WHERE type = 'table' AND name = 'ui_states'
+	`).Scan(&tableName)
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: check legacy ui_states: %w", err)
+	}
+
+	hasSourcePath, err := tableColumnExists(ctx, tx, "ui_states", "source_path")
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: inspect legacy ui_states source_path: %w", err)
+	}
+	if hasSourcePath {
+		rows, err := tx.QueryContext(ctx, `SELECT rowid, source_path FROM ui_states`)
+		if err != nil {
+			return 0, fmt.Errorf("db purge content: read legacy ui_states source_path: %w", err)
+		}
+		defer rows.Close()
+
+		rowIDs := make([]int64, 0)
+		for rows.Next() {
+			var rowID int64
+			var sourcePath string
+			if err := rows.Scan(&rowID, &sourcePath); err != nil {
+				return 0, fmt.Errorf("db purge content: scan legacy ui_states source_path: %w", err)
+			}
+			if legacyUIStatePathMatches(sourcePath, path) {
+				rowIDs = append(rowIDs, rowID)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return 0, fmt.Errorf("db purge content: iterate legacy ui_states source_path: %w", err)
+		}
+
+		return deleteLegacyUIStateRowIDs(ctx, tx, rowIDs)
+	}
+
+	rows, err := r.purgeLegacyUIStateIDData(ctx, tx, path)
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
+// purgeLegacyUIStateIDData removes legacy rows whose id or JSON data names the
+// target source path under host filesystem path semantics. Malformed legacy JSON
+// is ignored so purge can still remove the current path's other content rows.
+func (r *SQLiteRepository) purgeLegacyUIStateIDData(ctx context.Context, tx *sql.Tx, path string) (int64, error) {
+	hasID, err := tableColumnExists(ctx, tx, "ui_states", "id")
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: inspect legacy ui_states id: %w", err)
+	}
+	if !hasID {
+		return 0, nil
+	}
+	hasData, err := tableColumnExists(ctx, tx, "ui_states", "data")
+	if err != nil {
+		return 0, fmt.Errorf("db purge content: inspect legacy ui_states data: %w", err)
+	}
+	if !hasData {
+		rows, err := tx.QueryContext(ctx, `SELECT rowid, id FROM ui_states`)
+		if err != nil {
+			return 0, fmt.Errorf("db purge content: read legacy ui_states id: %w", err)
+		}
+		defer rows.Close()
+
+		rowIDs := make([]int64, 0)
+		for rows.Next() {
+			var rowID int64
+			var id string
+			if err := rows.Scan(&rowID, &id); err != nil {
+				return 0, fmt.Errorf("db purge content: scan legacy ui_states id: %w", err)
+			}
+			if legacyUIStatePathMatches(id, path) {
+				rowIDs = append(rowIDs, rowID)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return 0, fmt.Errorf("db purge content: iterate legacy ui_states id: %w", err)
+		}
+		return deleteLegacyUIStateRowIDs(ctx, tx, rowIDs)
 	}
 
 	rows, err := tx.QueryContext(ctx, `SELECT id, data FROM ui_states`)
 	if err != nil {
-		return 0, fmt.Errorf("db purge content: list ui states: %w", err)
+		return 0, fmt.Errorf("db purge content: read legacy ui_states: %w", err)
 	}
 	defer rows.Close()
 
-	matchedIDs := make([]string, 0)
+	var ids []string
 	for rows.Next() {
 		var id string
-		var payload string
-		if err := rows.Scan(&id, &payload); err != nil {
-			return 0, fmt.Errorf("db purge content: scan ui state: %w", err)
+		var data string
+		if err := rows.Scan(&id, &data); err != nil {
+			return 0, fmt.Errorf("db purge content: scan legacy ui_states: %w", err)
 		}
-		matched, err := uiStatePayloadMatchesSourcePath(payload, sourceKey)
-		if err != nil {
-			if r.logger != nil {
-				r.logger.Warnf("db: purge content skipped malformed ui state id=%s error=%v", id, err)
-			}
-			continue
-		}
-		if matched {
-			matchedIDs = append(matchedIDs, id)
+		if legacyUIStatePathMatches(id, path) || legacyUIStateDataMatchesPath(data, path) {
+			ids = append(ids, id)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("db purge content: iterate ui states: %w", err)
+		return 0, fmt.Errorf("db purge content: iterate legacy ui_states: %w", err)
 	}
 
 	var removed int64
-	for _, id := range matchedIDs {
+	for _, id := range ids {
 		result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE id = ?`, id)
 		if err != nil {
-			return removed, fmt.Errorf("db purge content: delete ui state: %w", err)
+			return 0, fmt.Errorf("db purge content: delete legacy ui_states id: %w", err)
 		}
-		resultRows, err := result.RowsAffected()
+		rows, err := result.RowsAffected()
 		if err == nil {
-			removed += resultRows
+			removed += rows
 		}
 	}
-
 	return removed, nil
 }
 
-func uiStatePayloadMatchesSourcePath(payload string, sourceKey string) (bool, error) {
-	var state map[string]any
-	if err := json.Unmarshal([]byte(payload), &state); err != nil {
-		return false, fmt.Errorf("unmarshal ui state: %w", err)
-	}
-
-	candidates := []string{
-		uiStateStringAt(state, "path"),
-		uiStateStringAt(state, "preview", "SourcePath"),
-		uiStateStringAt(state, "dupeSummary", "SourcePath"),
-		uiStateStringAt(state, "dupeCheckSnapshot", "sourcePath"),
-		uiStateStringAt(state, "prepPreview", "SourcePath"),
-		uiStateStringAt(state, "trackerDryRunPreview", "SourcePath"),
-		uiStateStringAt(state, "trackerUploadSnapshot", "sourcePath"),
-	}
-	for _, candidate := range candidates {
-		if normalizeUIStateSourcePath(candidate) == sourceKey {
-			return true, nil
+// deleteLegacyUIStateRowIDs removes rows selected by rowid after path-equivalent
+// matching. Deleting by rowid avoids requiring raw stored paths to equal the
+// caller's current spelling.
+func deleteLegacyUIStateRowIDs(ctx context.Context, tx *sql.Tx, rowIDs []int64) (int64, error) {
+	var removed int64
+	for _, rowID := range rowIDs {
+		result, err := tx.ExecContext(ctx, `DELETE FROM ui_states WHERE rowid = ?`, rowID)
+		if err != nil {
+			return 0, fmt.Errorf("db purge content: delete legacy ui_states rowid: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err == nil {
+			removed += rows
 		}
 	}
-	return false, nil
+	return removed, nil
 }
 
-func uiStateStringAt(root map[string]any, path ...string) string {
-	var current any = root
-	for _, key := range path {
-		currentMap, ok := current.(map[string]any)
-		if !ok {
-			return ""
-		}
-		current = currentMap[key]
+// legacyUIStatePathMatches compares retired UI-state paths as host filesystem
+// paths rather than serialized strings.
+func legacyUIStatePathMatches(stored string, target string) bool {
+	return pathutil.SamePath(stored, target)
+}
+
+// legacyUIStateDataMatchesPath reports whether a legacy ui_states payload names
+// path using one of the source path field names seen in older UI state rows. The
+// payload may be nested, path comparisons use host filesystem semantics, and
+// malformed JSON never matches.
+func legacyUIStateDataMatchesPath(data string, path string) bool {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return false
 	}
-	value, _ := current.(string)
-	return value
+	return legacyUIStateValueMatchesPath(payload, path)
 }
 
-func normalizeUIStateSourcePath(path string) string {
-	return strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+// legacyUIStateValueMatchesPath walks legacy object/array payloads looking for
+// known source path keys without treating arbitrary string values as paths.
+func legacyUIStateValueMatchesPath(value any, path string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"sourcePath", "SourcePath", "source_path", "path", "Path"} {
+			if value, ok := typed[key].(string); ok && legacyUIStatePathMatches(value, path) {
+				return true
+			}
+		}
+		for _, nested := range typed {
+			if legacyUIStateValueMatchesPath(nested, path) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if legacyUIStateValueMatchesPath(nested, path) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func resolvePath(path string) (string, error) {
@@ -2666,7 +2791,7 @@ func resolvePath(path string) (string, error) {
 }
 
 // SaveConfigSection persists a single config section as JSON.
-func (r *SQLiteRepository) SaveConfigSection(ctx context.Context, section string, data interface{}) error {
+func (r *SQLiteRepository) SaveConfigSection(ctx context.Context, section string, data any) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -2680,7 +2805,7 @@ func (r *SQLiteRepository) SaveConfigSection(ctx context.Context, section string
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err = r.db.ExecContext(ctx, `
+	_, err = r.execWrite(ctx, "save config section", `
 		INSERT INTO config_settings (section, data, updated_at) VALUES (?, ?, ?)
 		ON CONFLICT(section) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
 	`, section, string(payload), now)
@@ -2692,7 +2817,7 @@ func (r *SQLiteRepository) SaveConfigSection(ctx context.Context, section string
 }
 
 // LoadConfigSection retrieves a single config section from the database.
-func (r *SQLiteRepository) LoadConfigSection(ctx context.Context, section string, dest interface{}) error {
+func (r *SQLiteRepository) LoadConfigSection(ctx context.Context, section string, dest any) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -2720,105 +2845,9 @@ func (r *SQLiteRepository) LoadConfigSection(ctx context.Context, section string
 	return nil
 }
 
-func (r *SQLiteRepository) SaveUIState(ctx context.Context, id string, label string, state api.UIState) error {
-	if r == nil || r.db == nil {
-		return errors.New("db: repository not initialized")
-	}
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return internalerrors.ErrInvalidInput
-	}
-	if state == nil {
-		state = api.UIState{}
-	}
-	payload, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("db save ui state: marshal: %w", err)
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := r.db.ExecContext(ctx, `
-		INSERT INTO ui_states (id, label, data, updated_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET label = excluded.label, data = excluded.data, updated_at = excluded.updated_at
-	`, id, strings.TrimSpace(label), string(payload), now); err != nil {
-		return fmt.Errorf("db save ui state: %w", err)
-	}
-	return nil
-}
-
-func (r *SQLiteRepository) LoadUIState(ctx context.Context, id string) (api.UIStateRecord, error) {
-	if r == nil || r.db == nil {
-		return api.UIStateRecord{}, errors.New("db: repository not initialized")
-	}
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return api.UIStateRecord{}, internalerrors.ErrInvalidInput
-	}
-	row := r.db.QueryRowContext(ctx, `SELECT id, label, data, updated_at FROM ui_states WHERE id = ?`, id)
-	var record api.UIStateRecord
-	var payload string
-	if err := row.Scan(&record.ID, &record.Label, &payload, &record.UpdatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return api.UIStateRecord{}, internalerrors.ErrNotFound
-		}
-		return api.UIStateRecord{}, fmt.Errorf("db load ui state: %w", err)
-	}
-	var state api.UIState
-	if err := json.Unmarshal([]byte(payload), &state); err != nil {
-		return api.UIStateRecord{}, fmt.Errorf("db load ui state: unmarshal: %w", err)
-	}
-	if state == nil {
-		state = api.UIState{}
-	}
-	record.State = state
-	return record, nil
-}
-
-func (r *SQLiteRepository) ListUIStates(ctx context.Context) ([]api.UIStateRecord, error) {
-	if r == nil || r.db == nil {
-		return nil, errors.New("db: repository not initialized")
-	}
-	rows, err := r.db.QueryContext(ctx, `SELECT id, label, data, updated_at FROM ui_states ORDER BY id COLLATE NOCASE ASC`)
-	if err != nil {
-		return nil, fmt.Errorf("db list ui states: %w", err)
-	}
-	defer rows.Close()
-
-	records := make([]api.UIStateRecord, 0)
-	for rows.Next() {
-		var record api.UIStateRecord
-		var payload string
-		if err := rows.Scan(&record.ID, &record.Label, &payload, &record.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("db list ui states scan: %w", err)
-		}
-		var state api.UIState
-		if err := json.Unmarshal([]byte(payload), &state); err != nil {
-			return nil, fmt.Errorf("db list ui states unmarshal: %w", err)
-		}
-		if state == nil {
-			state = api.UIState{}
-		}
-		record.State = state
-		records = append(records, record)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("db list ui states rows: %w", err)
-	}
-	return records, nil
-}
-
-func (r *SQLiteRepository) ClearUIState(ctx context.Context) error {
-	if r == nil || r.db == nil {
-		return errors.New("db: repository not initialized")
-	}
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM ui_states`); err != nil {
-		return fmt.Errorf("db clear ui state: %w", err)
-	}
-	return nil
-}
-
 // SaveFullConfig persists the entire config to all sections.
 // This is called when exporting to database from YAML or UI updates.
-func (r *SQLiteRepository) SaveFullConfig(ctx context.Context, cfg interface{}) error {
+func (r *SQLiteRepository) SaveFullConfig(ctx context.Context, cfg any) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -2832,33 +2861,40 @@ func (r *SQLiteRepository) SaveFullConfig(ctx context.Context, cfg interface{}) 
 		return fmt.Errorf("db save full config: marshal: %w", err)
 	}
 
-	var cfgMap map[string]interface{}
+	var cfgMap map[string]any
 	if err := json.Unmarshal(cfgData, &cfgMap); err != nil {
 		return fmt.Errorf("db save full config: unmarshal to map: %w", err)
 	}
 
-	// Insert each top-level key as a section.
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	sections := make(map[string]string, len(cfgMap))
 	for section, value := range cfgMap {
 		payload, err := json.Marshal(value)
 		if err != nil {
 			return fmt.Errorf("db save full config: marshal section %s: %w", section, err)
 		}
+		sections[section] = string(payload)
+	}
 
-		_, err = r.db.ExecContext(ctx, `
+	if err := r.withWriteTx(ctx, "save full config", func(tx *sql.Tx) error {
+		for section, payload := range sections {
+			if _, err := tx.ExecContext(ctx, `
 			INSERT INTO config_settings (section, data, updated_at) VALUES (?, ?, ?)
 			ON CONFLICT(section) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-		`, section, string(payload), now)
-		if err != nil {
-			return fmt.Errorf("db save full config section %s: %w", section, err)
+		`, section, payload, now); err != nil {
+				return fmt.Errorf("db save full config section %s: %w", section, err)
+			}
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	return nil
 }
 
 // LoadFullConfig reconstructs the entire config from all sections.
-func (r *SQLiteRepository) LoadFullConfig(ctx context.Context, dest interface{}) error {
+func (r *SQLiteRepository) LoadFullConfig(ctx context.Context, dest any) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
