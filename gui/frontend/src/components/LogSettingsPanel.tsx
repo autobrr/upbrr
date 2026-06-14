@@ -123,7 +123,17 @@ export default function LogSettingsPanel({
     (incoming: LogEntry[]) => {
       if (incoming.length === 0) return;
       setEntries((prev) => {
-        let next = [...prev, ...incoming];
+        // Recent-log backfills can overlap live stream events; logger IDs keep
+        // the rendered buffer idempotent across both sources.
+        const seenIDs = new Set(prev.map((entry) => entry.ID));
+        const uniqueIncoming = incoming.filter((entry) => {
+          if (!Number.isFinite(entry.ID)) return true;
+          if (seenIDs.has(entry.ID)) return false;
+          seenIDs.add(entry.ID);
+          return true;
+        });
+        if (uniqueIncoming.length === 0) return prev;
+        let next = [...prev, ...uniqueIncoming];
         if (autoScroll && next.length > LOG_SOFT_CAP) {
           next = next.slice(-LOG_SOFT_CAP);
         } else if (!autoScroll && next.length > LOG_HARD_CAP) {
@@ -135,6 +145,19 @@ export default function LogSettingsPanel({
     },
     [autoScroll],
   );
+
+  /** Backfills buffered log entries without replacing the active stream state. */
+  const fetchRecentLogs = useCallback(async () => {
+    const getRecent = globalThis.go?.guiapp?.App?.GetRecentLogs;
+    if (!getRecent) return;
+    try {
+      const payload = await getRecent(LOG_SOFT_CAP);
+      const normalized = Array.isArray(payload) ? payload.map(normalizeEntry).filter(Boolean) : [];
+      appendEntries(normalized as LogEntry[]);
+    } catch (err) {
+      console.error("Failed to load recent logs", err);
+    }
+  }, [appendEntries]);
 
   useEffect(() => {
     const fetchLogPath = async () => {
@@ -151,21 +174,8 @@ export default function LogSettingsPanel({
   }, []);
 
   useEffect(() => {
-    const fetchRecent = async () => {
-      const getRecent = globalThis.go?.guiapp?.App?.GetRecentLogs;
-      if (!getRecent) return;
-      try {
-        const payload = await getRecent(LOG_SOFT_CAP);
-        const normalized = Array.isArray(payload)
-          ? payload.map(normalizeEntry).filter(Boolean)
-          : [];
-        appendEntries(normalized as LogEntry[]);
-      } catch (err) {
-        console.error("Failed to load recent logs", err);
-      }
-    };
-    fetchRecent();
-  }, [appendEntries]);
+    fetchRecentLogs();
+  }, [fetchRecentLogs]);
 
   useEffect(() => {
     const fetchMuted = async () => {
@@ -208,6 +218,9 @@ export default function LogSettingsPanel({
             stop(streamID).catch(() => undefined);
           }
         };
+        // Backfill after subscribing to cover entries emitted between
+        // StartLogStream resolving and the event listener attaching.
+        await fetchRecentLogs();
       } catch (err) {
         setConnected(false);
         console.error("Failed to start log stream", err);
@@ -224,7 +237,7 @@ export default function LogSettingsPanel({
         streamStopRef.current = null;
       }
     };
-  }, [appendEntries]);
+  }, [appendEntries, fetchRecentLogs]);
 
   useEffect(() => {
     if (!autoScroll) return;
