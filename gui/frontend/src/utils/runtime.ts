@@ -133,10 +133,11 @@ const scheduleEventStreamReconnect = () => {
 };
 
 /**
- * Opens the browser-mode SSE stream with the same token pinning as app calls.
+ * Opens the browser-mode SSE stream with the same cookie-bound CSRF header as
+ * app calls.
  *
  * Native EventSource cannot send CSRF headers, so fetch streaming is used to
- * avoid storing session tokens in URLs while preserving reconnect behavior.
+ * avoid storing CSRF tokens in URLs while preserving reconnect behavior.
  */
 const runBrowserEventStream = async (controller: AbortController) => {
   let reconnect = true;
@@ -173,12 +174,24 @@ const runBrowserEventStream = async (controller: AbortController) => {
   }
 };
 
+/**
+ * Reads browser-mode SSE frames until the stream ends or the supplied signal is
+ * aborted. Aborts cancel the active reader so unsubscribe cannot leave a pending
+ * read behind.
+ */
 const readBrowserEventStream = async (body: ReadableStream<Uint8Array>, signal: AbortSignal) => {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const abortRead = () => {
+    void reader.cancel();
+  };
+  signal.addEventListener("abort", abortRead, { once: true });
   try {
     for (;;) {
+      if (signal.aborted) {
+        break;
+      }
       const { value, done } = await reader.read();
       if (done || signal.aborted) {
         break;
@@ -191,6 +204,7 @@ const readBrowserEventStream = async (body: ReadableStream<Uint8Array>, signal: 
       }
     }
   } finally {
+    signal.removeEventListener("abort", abortRead);
     reader.releaseLock();
   }
 };
@@ -634,7 +648,8 @@ export const isBrowserNativeBrowseAvailable = () => {
 };
 
 /**
- * Reports whether source-path comparisons should fold case for the host runtime.
+ * Reports whether the current runtime compares host filesystem paths
+ * case-insensitively.
  */
 export const isRuntimePathCaseInsensitive = () => caseInsensitivePaths;
 
@@ -646,7 +661,7 @@ export const subscribeBrowserNativeBrowseAvailability = (listener: () => void) =
 };
 
 /**
- * Updates the session token used by browser-mode app calls and event streams.
+ * Updates the CSRF token used by browser-mode app calls and event streams.
  *
  * Passing runtimeCaseInsensitivePaths also refreshes the host path-comparison
  * contract carried by auth/status responses.
@@ -676,7 +691,7 @@ export const browserAuth = {
 };
 
 /**
- * Subscribes to Wails events in desktop mode or the token-pinned web event
+ * Subscribes to Wails events in desktop mode or the cookie-bound web event
  * stream in browser mode.
  */
 export const EventsOn = (eventName: string, callback: EventCallback) => {

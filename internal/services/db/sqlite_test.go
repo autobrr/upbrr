@@ -1618,13 +1618,15 @@ func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
 	}
 	if _, err := repo.RawDB().ExecContext(
 		ctx,
-		`INSERT INTO ui_states (id, data) VALUES (?, ?), (?, ?), (?, ?), (?, ?)`,
+		`INSERT INTO ui_states (id, data) VALUES (?, ?), (?, ?), (?, ?), (?, ?), (?, ?)`,
 		"target-by-data",
 		`{"sourcePath":"/media/file.mkv"}`,
+		"target-by-nested-data",
+		`{"state":{"sourcePath":"/media/file.mkv"}}`,
 		targetPath,
 		`{"sourcePath":"/media/renamed.mkv"}`,
 		"other",
-		`{"sourcePath":"/media/other.mkv"}`,
+		`{"state":{"sourcePath":"/media/other.mkv"}}`,
 		"malformed",
 		`{"sourcePath":`,
 	); err != nil {
@@ -1636,7 +1638,7 @@ func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
 	}
 
 	var count int
-	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?)`, "target-by-data", targetPath).Scan(&count); err != nil {
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM ui_states WHERE id IN (?, ?, ?)`, "target-by-data", "target-by-nested-data", targetPath).Scan(&count); err != nil {
 		t.Fatalf("query removed legacy ui_states: %v", err)
 	}
 	if count != 0 {

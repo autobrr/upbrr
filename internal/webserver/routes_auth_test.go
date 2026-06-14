@@ -539,7 +539,7 @@ func TestLogoutReturnsErrorWhenRetainedSessionPersistenceFails(t *testing.T) {
 	}
 }
 
-func TestTokenPinnedLogoutDoesNotClearDifferentCookieSession(t *testing.T) {
+func TestLogoutRejectsMismatchedCSRFAndCookieSession(t *testing.T) {
 	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
 
 	first, err := server.sessions.Create("admin", false)
@@ -560,19 +560,14 @@ func TestTokenPinnedLogoutDoesNotClearDifferentCookieSession(t *testing.T) {
 
 	server.requireSession(server.handleLogout)(recorder, req)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("handleLogout returned %d: %s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized logout, got %d: %s", recorder.Code, recorder.Body.String())
 	}
-	if _, ok := server.sessions.Get(first.ID); ok {
-		t.Fatal("expected token-selected session deleted")
+	if _, ok := server.sessions.Get(first.ID); !ok {
+		t.Fatal("expected first session to remain active")
 	}
 	if _, ok := server.sessions.Get(second.ID); !ok {
-		t.Fatal("expected cookie-selected session to remain active")
-	}
-	for _, cookie := range recorder.Result().Cookies() {
-		if cookie.Name == sessionCookieName && cookie.MaxAge < 0 {
-			t.Fatal("expected logout not to clear a different cookie session")
-		}
+		t.Fatal("expected second session to remain active")
 	}
 }
 
@@ -609,7 +604,7 @@ func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 	}
 }
 
-func TestRequestSessionTokenLocksSessionDespiteDifferentCookie(t *testing.T) {
+func TestRequestSessionTokenMustMatchCookieSession(t *testing.T) {
 	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
 
 	first, err := server.sessions.Create("admin", false)
@@ -625,12 +620,8 @@ func TestRequestSessionTokenLocksSessionDespiteDifferentCookie(t *testing.T) {
 	req.Header.Set("X-Csrf-Token", first.CSRFToken)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: second.ID})
 
-	current, ok := server.currentSession(req)
-	if !ok {
-		t.Fatal("expected request token to resolve a session")
-	}
-	if current.ID != first.ID {
-		t.Fatalf("expected request token to lock first session, got %q", current.ID)
+	if current, ok := server.currentSession(req); ok {
+		t.Fatalf("expected mismatched request token to reject cookie session, got %#v", current)
 	}
 }
 
@@ -665,7 +656,7 @@ func TestQuerySessionTokenDoesNotAuthenticateAppRoute(t *testing.T) {
 	}
 }
 
-func TestEventHeaderSessionTokenLocksSessionDespiteDifferentCookie(t *testing.T) {
+func TestEventHeaderSessionTokenMustMatchCookieSession(t *testing.T) {
 	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
 
 	first, err := server.sessions.Create("admin", false)
@@ -681,12 +672,24 @@ func TestEventHeaderSessionTokenLocksSessionDespiteDifferentCookie(t *testing.T)
 	req.Header.Set("X-Csrf-Token", first.CSRFToken)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: second.ID})
 
-	current, ok := server.currentSession(req)
-	if !ok {
-		t.Fatal("expected event header token to resolve")
+	if current, ok := server.currentSession(req); ok {
+		t.Fatalf("expected mismatched event token to reject cookie session, got %#v", current)
 	}
-	if current.ID != first.ID {
-		t.Fatalf("expected event header token to lock first session, got %q", current.ID)
+}
+
+func TestEventHeaderSessionTokenWithoutCookieDoesNotAuthenticate(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	current, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/events", nil)
+	req.Header.Set("X-Csrf-Token", current.CSRFToken)
+
+	if resolved, ok := server.currentSession(req); ok {
+		t.Fatalf("expected header token without cookie to reject event route, got %#v", resolved)
 	}
 }
 

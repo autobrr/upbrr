@@ -2682,15 +2682,36 @@ func (r *SQLiteRepository) purgeLegacyUIStateIDData(ctx context.Context, tx *sql
 }
 
 // legacyUIStateDataMatchesPath reports whether a legacy ui_states payload names
-// path using one of the source path field names seen in older UI state rows.
+// path using one of the source path field names seen in older UI state rows. The
+// payload may be nested; malformed JSON never matches.
 func legacyUIStateDataMatchesPath(data string, path string) bool {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
 		return false
 	}
-	for _, key := range []string{"sourcePath", "SourcePath", "source_path", "path", "Path"} {
-		if value, ok := payload[key].(string); ok && value == path {
-			return true
+	return legacyUIStateValueMatchesPath(payload, path)
+}
+
+// legacyUIStateValueMatchesPath walks legacy object/array payloads looking for
+// known source path keys without treating arbitrary string values as paths.
+func legacyUIStateValueMatchesPath(value any, path string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"sourcePath", "SourcePath", "source_path", "path", "Path"} {
+			if value, ok := typed[key].(string); ok && value == path {
+				return true
+			}
+		}
+		for _, nested := range typed {
+			if legacyUIStateValueMatchesPath(nested, path) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if legacyUIStateValueMatchesPath(nested, path) {
+				return true
+			}
 		}
 	}
 	return false

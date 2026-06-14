@@ -9,13 +9,16 @@ const jsonResponse = (payload: unknown, init?: ResponseInit) =>
     ...init,
   });
 
-const eventStreamResponse = (payload: unknown) => {
+const eventStreamResponse = (payload: unknown, onCancel?: () => void) => {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(
         encoder.encode(`event: metadata:progress\ndata: ${JSON.stringify(payload)}\n\n`),
       );
+    },
+    cancel() {
+      onCancel?.();
     },
   });
   return new Response(stream, {
@@ -176,7 +179,10 @@ describe("browser runtime bridge", () => {
   });
 
   it("opens browser events with the initialized session token header", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(eventStreamResponse({ jobID: "job-1" }));
+    const cancelStream = vi.fn();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(eventStreamResponse({ jobID: "job-1" }, cancelStream));
     vi.stubGlobal("fetch", fetchMock);
 
     const { EventsOn, initializeBrowserBridge } = await import("./runtime");
@@ -194,6 +200,7 @@ describe("browser runtime bridge", () => {
     );
     await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ jobID: "job-1" }));
     off();
+    await vi.waitFor(() => expect(cancelStream).toHaveBeenCalledOnce());
   });
 
   it("stores runtime path case sensitivity from bridge initialization", async () => {

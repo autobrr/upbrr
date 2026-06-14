@@ -692,6 +692,30 @@ func TestBrowseDirectoryRouteHonorsMultipleWebAuthBrowseRoots(t *testing.T) {
 	}
 }
 
+func TestBrowsePolicyRootsRoundTripCommaPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "media, 4k")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+
+	encoded := joinBrowsePolicyRoots([]string{root})
+	roots, err := normalizeBrowsePolicyRoots(splitBrowsePolicyRoots(encoded))
+	if err != nil {
+		t.Fatalf("normalize encoded root: %v", err)
+	}
+	if len(roots) != 1 || roots[0] != root {
+		t.Fatalf("expected encoded comma root to round-trip, got %#v", roots)
+	}
+
+	roots, err = normalizeBrowsePolicyRoots(splitBrowsePolicyRoots(root))
+	if err != nil {
+		t.Fatalf("normalize raw comma root: %v", err)
+	}
+	if len(roots) != 1 || roots[0] != root {
+		t.Fatalf("expected raw comma root to remain one root, got %#v", roots)
+	}
+}
+
 func TestBrowseDirectoryRouteRejectsInvalidPath(t *testing.T) {
 	repo, dbPath := openBrowseTestRepo(t)
 	server := testServerWithBackend(t, repo, config.Config{

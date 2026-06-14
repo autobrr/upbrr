@@ -188,7 +188,7 @@ func TestStopSessionLogStreamsStopsMatchingStreams(t *testing.T) {
 	_ = backend.StopLogStream("session-b", "stream-3")
 }
 
-func TestHandleEventsDoesNotStopSessionLogStreams(t *testing.T) {
+func TestHandleEventsStopsSessionLogStreamsOnClose(t *testing.T) {
 	backend := &Backend{
 		streams: make(map[string]*backendLogStream),
 	}
@@ -232,11 +232,16 @@ func TestHandleEventsDoesNotStopSessionLogStreams(t *testing.T) {
 		t.Fatal("expected event stream to close after request cancellation")
 	}
 
+	select {
+	case <-stream.done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected event stream close to stop session log stream")
+	}
 	backend.streamMu.Lock()
 	_, ok := backend.streams[stream.id]
 	backend.streamMu.Unlock()
-	if !ok {
-		t.Fatal("expected event stream close to leave session log streams running")
+	if ok {
+		t.Fatal("expected event stream close to remove session log stream")
 	}
 }
 

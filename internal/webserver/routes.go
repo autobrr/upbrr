@@ -4,6 +4,8 @@
 package webserver
 
 import (
+	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -346,8 +348,25 @@ func (s *Server) handleBrowsePolicy(w http.ResponseWriter, r *http.Request, curr
 	})
 }
 
+// splitBrowsePolicyRoots decodes stored or submitted browse roots. A single
+// existing directory wins before CSV parsing so unquoted comma-containing paths
+// from older records still round-trip as one root.
 func splitBrowsePolicyRoots(value string) []string {
-	parts := strings.Split(value, ",")
+	trimmedValue := strings.TrimSpace(value)
+	if trimmedValue == "" {
+		return nil
+	}
+	if info, err := os.Stat(trimmedValue); err == nil && info.IsDir() {
+		return []string{trimmedValue}
+	}
+
+	reader := csv.NewReader(strings.NewReader(trimmedValue))
+	reader.FieldsPerRecord = -1
+	reader.TrimLeadingSpace = true
+	parts, err := reader.Read()
+	if err != nil {
+		parts = strings.Split(trimmedValue, ",")
+	}
 	roots := make([]string, 0, len(parts))
 	for _, part := range parts {
 		trimmed := strings.TrimSpace(part)
@@ -410,8 +429,19 @@ func recordBrowseRoots(record authmaterial.Record) []string {
 	return normalized
 }
 
+// joinBrowsePolicyRoots encodes browse roots as one CSV record so commas in
+// host filesystem paths are escaped instead of becoming root separators.
 func joinBrowsePolicyRoots(roots []string) string {
-	return strings.Join(roots, ", ")
+	var buf bytes.Buffer
+	writer := csv.NewWriter(&buf)
+	if err := writer.Write(roots); err != nil {
+		return strings.Join(roots, ", ")
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return strings.Join(roots, ", ")
+	}
+	return strings.TrimRight(buf.String(), "\r\n")
 }
 
 func sameFilesystemPath(left string, right string) bool {
@@ -425,7 +455,8 @@ func sameFilesystemPath(left string, right string) bool {
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current session) {
 	// Query csrfToken is a legacy cookie-bound consistency check. Header tokens
-	// from the fetch-based browser stream authenticate through currentSession.
+	// from the fetch-based browser stream are validated against the session cookie
+	// in currentSession.
 	if token := strings.TrimSpace(r.URL.Query().Get("csrfToken")); token != "" && token != current.CSRFToken {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf validation failed"})
 		return
@@ -441,6 +472,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current se
 
 	ch, unsubscribe := s.hub.Subscribe(current.ID)
 	defer unsubscribe()
+	if s.backend != nil {
+		defer s.backend.StopSessionLogStreams(current.ID)
+	}
 
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -484,14 +518,11 @@ func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, se
 	}
 }
 
+// currentSession resolves the cookie session and, when a CSRF header is present,
+// requires that token to match the cookie-bound session.
 func (s *Server) currentSession(r *http.Request) (session, bool) {
-	// Prefer explicit request tokens over the origin-wide cookie so an existing
-	// tab keeps its own session after another tab logs in.
-	if current, ok := s.currentSessionByToken(r); ok {
-		return current, true
-	}
-	if sessionTokenFromRequest(r) != "" {
-		return session{}, false
+	if token := sessionTokenFromRequest(r); token != "" {
+		return s.currentSessionByToken(r, token)
 	}
 	cookie, err := r.Cookie(sessionCookieName)
 	if err == nil && s.sessions != nil {
@@ -502,16 +533,19 @@ func (s *Server) currentSession(r *http.Request) (session, bool) {
 	return s.developmentCurrentSession(r)
 }
 
-// currentSessionByToken resolves the session explicitly named by a request CSRF
-// token from the normal request header.
-func (s *Server) currentSessionByToken(r *http.Request) (session, bool) {
-	token := sessionTokenFromRequest(r)
+// currentSessionByToken validates the request CSRF token against the
+// cookie-bound session. The token is not a bearer credential.
+func (s *Server) currentSessionByToken(r *http.Request, token string) (session, bool) {
 	if token == "" {
 		return session{}, false
 	}
-	if s != nil && s.sessions != nil {
-		if current, ok := s.sessions.GetByCSRFToken(token); ok {
-			return current, true
+	cookie, err := r.Cookie(sessionCookieName)
+	if err == nil && s.sessions != nil {
+		if current, ok := s.sessions.Get(cookie.Value); ok {
+			if current.CSRFToken == token {
+				return current, true
+			}
+			return session{}, false
 		}
 	}
 	if current, ok := s.developmentCurrentSession(r); ok && current.CSRFToken == token {
@@ -520,8 +554,7 @@ func (s *Server) currentSessionByToken(r *http.Request) (session, bool) {
 	return session{}, false
 }
 
-// sessionTokenFromRequest returns the session-pinning CSRF token supplied by
-// app calls.
+// sessionTokenFromRequest returns the CSRF token supplied by app calls.
 func sessionTokenFromRequest(r *http.Request) string {
 	if r == nil {
 		return ""
