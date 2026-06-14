@@ -78,7 +78,7 @@ func TestConfigSectionUpdate(t *testing.T) {
 
 	ctx := context.Background()
 
-	section := map[string]interface{}{
+	section := map[string]any{
 		"screens": 4,
 		"cutoff":  2,
 	}
@@ -95,7 +95,7 @@ func TestConfigSectionUpdate(t *testing.T) {
 	}
 
 	// Load and verify update.
-	var loaded map[string]interface{}
+	var loaded map[string]any
 	if err := repo.LoadConfigSection(ctx, "screenshot_handling", &loaded); err != nil {
 		t.Fatalf("load updated: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestConfigLoadNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	// Try to load non-existent section.
-	var loaded map[string]interface{}
+	var loaded map[string]any
 	err = repo.LoadConfigSection(ctx, "nonexistent_section", &loaded)
 	if err == nil {
 		t.Fatalf("expected error for non-existent section, got nil")
@@ -150,16 +150,16 @@ func TestFullConfigSaveLoad(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a full config structure.
-	fullConfig := map[string]interface{}{
-		"main_settings": map[string]interface{}{
+	fullConfig := map[string]any{
+		"main_settings": map[string]any{
 			"tmdb_api": "test-key",
 			"db_path":  "/test/db",
 		},
-		"screenshot_handling": map[string]interface{}{
+		"screenshot_handling": map[string]any{
 			"screens":        4,
 			"cutoff_screens": 2,
 		},
-		"torrent_creation": map[string]interface{}{
+		"torrent_creation": map[string]any{
 			"mkbrr_threads": 4,
 			"prefer_max_16": true,
 		},
@@ -171,7 +171,7 @@ func TestFullConfigSaveLoad(t *testing.T) {
 	}
 
 	// Load full config.
-	var loaded map[string]interface{}
+	var loaded map[string]any
 	if err := repo.LoadFullConfig(ctx, &loaded); err != nil {
 		t.Fatalf("load full config: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestConfigLastUpdated(t *testing.T) {
 
 	ctx := context.Background()
 
-	section := map[string]interface{}{
+	section := map[string]any{
 		"test": "data",
 	}
 
@@ -273,7 +273,7 @@ func TestMultipleSectionsSaveLoad(t *testing.T) {
 	ctx := context.Background()
 
 	// Save multiple sections.
-	sections := map[string]interface{}{
+	sections := map[string]any{
 		"main": map[string]string{"key": "value1"},
 		"meta": map[string]string{"key": "value2"},
 		"shot": map[string]string{"key": "value3"},
@@ -391,7 +391,7 @@ func TestConfigContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	section := map[string]interface{}{
+	section := map[string]any{
 		"test": "data",
 	}
 
@@ -410,7 +410,7 @@ func TestConfigNilRepository(t *testing.T) {
 	// Try operations on nil repository.
 	var repo *SQLiteRepository
 
-	section := map[string]interface{}{}
+	section := map[string]any{}
 
 	if err := repo.SaveConfigSection(ctx, "test", section); err == nil {
 		t.Fatalf("expected error on nil repository SaveConfigSection")
