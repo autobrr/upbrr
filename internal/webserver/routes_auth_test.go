@@ -539,6 +539,54 @@ func TestLogoutReturnsErrorWhenRetainedSessionPersistenceFails(t *testing.T) {
 	}
 }
 
+func TestLogoutStopsSessionLogStreams(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	current, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	stream := &backendLogStream{
+		id:        "stream-1",
+		sessionID: current.ID,
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
+	}
+	server.backend.streams = map[string]*backendLogStream{stream.id: stream}
+	server.backend.streamWG.Go(func() {
+		<-stream.stop
+		close(stream.done)
+	})
+	t.Cleanup(func() {
+		server.backend.StopSessionLogStreams(current.ID)
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/logout", nil)
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5000"
+	recorder := httptest.NewRecorder()
+
+	server.handleLogout(recorder, req, current)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleLogout returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	select {
+	case <-stream.done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected logout to stop active session log streams")
+	}
+
+	server.backend.streamMu.Lock()
+	_, ok := server.backend.streams[stream.id]
+	server.backend.streamMu.Unlock()
+	if ok {
+		t.Fatal("expected logout to remove session log stream")
+	}
+}
+
 func TestLogoutRejectsMismatchedCSRFAndCookieSession(t *testing.T) {
 	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
 
@@ -715,6 +763,267 @@ func TestEventQuerySessionTokenDoesNotOverrideCookie(t *testing.T) {
 	if current.ID != second.ID {
 		t.Fatalf("expected query token not to override cookie session, got %q", current.ID)
 	}
+}
+
+func TestCancelDupeCheckRequiresPost(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	current, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	canceled := make(chan struct{}, 1)
+	server.backend.dupes = map[string]*dupeCheckJob{
+		"job-1": {
+			sessionID: current.ID,
+			id:        "job-1",
+			cancel: func() {
+				select {
+				case canceled <- struct{}{}:
+				default:
+				}
+			},
+		},
+	}
+
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	getReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/CancelDupeCheck", strings.NewReader(`{"JobID":"job-1"}`))
+	getReq.Header.Set("Content-Type", "application/json")
+	getReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+	getRecorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(getRecorder, getReq)
+
+	if getRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected GET cancel to be rejected, got %d: %s", getRecorder.Code, getRecorder.Body.String())
+	}
+	select {
+	case <-canceled:
+		t.Fatal("expected GET cancel request to leave dupe job running")
+	default:
+	}
+
+	postReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/CancelDupeCheck", strings.NewReader(`{"JobID":"job-1"}`))
+	postReq.Host = "127.0.0.1:7480"
+	postReq.Header.Set("Content-Type", "application/json")
+	postReq.Header.Set("Origin", "http://127.0.0.1:7480")
+	postReq.Header.Set("X-Csrf-Token", current.CSRFToken)
+	postReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+	postRecorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(postRecorder, postReq)
+
+	if postRecorder.Code != http.StatusOK {
+		t.Fatalf("expected POST cancel to succeed, got %d: %s", postRecorder.Code, postRecorder.Body.String())
+	}
+	select {
+	case <-canceled:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected POST cancel request to cancel dupe job")
+	}
+}
+
+func TestCancelTrackerUploadRequiresPost(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	current, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	canceled := make(chan struct{}, 1)
+	server.backend.uploads = map[string]*trackerUploadJob{
+		"job-1": {
+			id:        "job-1",
+			sessionID: current.ID,
+			cancel: func() {
+				select {
+				case canceled <- struct{}{}:
+				default:
+				}
+			},
+		},
+	}
+
+	mux := http.NewServeMux()
+	server.registerAppRoutes(mux)
+
+	getReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/CancelTrackerUpload", strings.NewReader(`{"JobID":"job-1"}`))
+	getReq.Header.Set("Content-Type", "application/json")
+	getReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+	getRecorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(getRecorder, getReq)
+
+	if getRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected GET cancel to be rejected, got %d: %s", getRecorder.Code, getRecorder.Body.String())
+	}
+	select {
+	case <-canceled:
+		t.Fatal("expected GET cancel request to leave tracker upload job running")
+	default:
+	}
+
+	postReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/CancelTrackerUpload", strings.NewReader(`{"JobID":"job-1"}`))
+	postReq.Host = "127.0.0.1:7480"
+	postReq.Header.Set("Content-Type", "application/json")
+	postReq.Header.Set("Origin", "http://127.0.0.1:7480")
+	postReq.Header.Set("X-Csrf-Token", current.CSRFToken)
+	postReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+	postRecorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(postRecorder, postReq)
+
+	if postRecorder.Code != http.StatusOK {
+		t.Fatalf("expected POST cancel to succeed, got %d: %s", postRecorder.Code, postRecorder.Body.String())
+	}
+	select {
+	case <-canceled:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected POST cancel request to cancel tracker upload job")
+	}
+}
+
+func TestStopSessionLogStreamsIfIdleLatestDisconnectWins(t *testing.T) {
+	backend := &Backend{
+		streams: make(map[string]*backendLogStream),
+	}
+	stream := &backendLogStream{
+		id:        "stream-1",
+		sessionID: "session-a",
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
+	}
+	backend.streams[stream.id] = stream
+	backend.streamWG.Go(func() {
+		<-stream.stop
+		close(stream.done)
+	})
+	t.Cleanup(func() {
+		_ = backend.StopLogStream("session-a", stream.id)
+	})
+
+	hub := newEventHub()
+	server := &Server{
+		backend:        backend,
+		hub:            hub,
+		generalLimiter: newFixedWindowLimiter(300, time.Minute),
+	}
+	t.Cleanup(func() {
+		clearSessionLogStopGeneration(server, "session-a")
+	})
+
+	server.stopSessionLogStreamsIfIdle("session-a")
+
+	hub.mu.Lock()
+	time.Sleep(eventSessionLogStopGracePeriod + eventSessionLogStopGracePeriod/2)
+	server.stopSessionLogStreamsIfIdle("session-a")
+	hub.mu.Unlock()
+
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for testSessionALogStopGeneration(t, server) != 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("expected latest disconnect to own generation 2, got %d", testSessionALogStopGeneration(t, server))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	select {
+	case <-stream.done:
+		t.Fatal("expected stale disconnect timer to leave session log streams active during newer grace window")
+	default:
+	}
+
+	backend.streamMu.Lock()
+	_, streamStillRegistered := backend.streams[stream.id]
+	backend.streamMu.Unlock()
+	if !streamStillRegistered {
+		t.Fatal("expected stale disconnect timer to leave session log streams registered during newer grace window")
+	}
+
+	select {
+	case <-stream.done:
+	case <-time.After(eventSessionLogStopGracePeriod + 150*time.Millisecond):
+		t.Fatal("expected latest disconnect grace timer to stop session log streams")
+	}
+}
+
+func TestStopSessionLogStreamsIfIdleSubscriberAtStopBoundaryKeepsStreamActiveAndClearsGeneration(t *testing.T) {
+	backend := &Backend{
+		streams: make(map[string]*backendLogStream),
+	}
+	stream := &backendLogStream{
+		id:        "stream-1",
+		sessionID: "session-a",
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
+	}
+	backend.streams[stream.id] = stream
+	backend.streamWG.Go(func() {
+		<-stream.stop
+		close(stream.done)
+	})
+
+	hub := newEventHub()
+	server := &Server{
+		backend:        backend,
+		hub:            hub,
+		generalLimiter: newFixedWindowLimiter(300, time.Minute),
+	}
+	t.Cleanup(func() {
+		hub.mu.Lock()
+		if subs, ok := hub.subscribers["session-a"]; ok {
+			for ch := range subs {
+				delete(subs, ch)
+				close(ch)
+			}
+			delete(hub.subscribers, "session-a")
+		}
+		hub.mu.Unlock()
+		clearSessionLogStopGeneration(server, "session-a")
+		_ = backend.StopLogStream("session-a", stream.id)
+	})
+
+	server.stopSessionLogStreamsIfIdle("session-a")
+
+	hub.mu.Lock()
+	time.Sleep(eventSessionLogStopGracePeriod + eventSessionLogStopGracePeriod/2)
+	reconnected := make(chan serverEvent)
+	hub.subscribers["session-a"] = map[chan serverEvent]struct{}{reconnected: {}}
+	hub.mu.Unlock()
+
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for testSessionALogStopGeneration(t, server) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("expected active replacement subscriber to clear idle-stop generation, got %d", testSessionALogStopGeneration(t, server))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	select {
+	case <-stream.done:
+		t.Fatal("expected replacement subscriber at stop boundary to keep session log streams active")
+	default:
+	}
+
+	backend.streamMu.Lock()
+	_, streamStillRegistered := backend.streams[stream.id]
+	backend.streamMu.Unlock()
+	if !streamStillRegistered {
+		t.Fatal("expected replacement subscriber at stop boundary to keep session log streams registered")
+	}
+}
+
+func testSessionALogStopGeneration(t *testing.T, s *Server) uint64 {
+	t.Helper()
+
+	sessionLogStopGenerations.mu.Lock()
+	defer sessionLogStopGenerations.mu.Unlock()
+
+	return sessionLogStopGenerations.byServ[s]["session-a"]
 }
 
 func TestSaveConfigRejectsGet(t *testing.T) {

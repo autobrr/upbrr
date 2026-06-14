@@ -782,6 +782,10 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	}))
 
 	mux.HandleFunc("/api/app/CancelDupeCheck", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
 		var req struct{ JobID string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -834,6 +838,10 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	}))
 
 	mux.HandleFunc("/api/app/CancelTrackerUpload", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
 		var req struct{ JobID string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -910,6 +918,8 @@ type webBrowsePolicy struct {
 	AllowUnrestricted bool
 }
 
+// webBrowsePolicy returns the filesystem roots that browser-mode file
+// operations may read, or unrestricted access for trusted development sessions.
 func (s *Server) webBrowsePolicy(current session) (webBrowsePolicy, error) {
 	if s != nil && s.isDevelopmentSession(current) {
 		return webBrowsePolicy{AllowUnrestricted: true}, nil
@@ -934,6 +944,9 @@ func (s *Server) webBrowsePolicy(current session) (webBrowsePolicy, error) {
 	return webBrowsePolicy{Roots: roots}, nil
 }
 
+// menuImportPathsWithinBrowsePolicy resolves menu image paths under the active
+// browse policy. Directory inputs expand to their immediate non-directory
+// entries after each resolved path is checked against configured roots.
 func menuImportPathsWithinBrowsePolicy(paths []string, policy webBrowsePolicy) ([]string, error) {
 	if policy.AllowUnrestricted {
 		return paths, nil
@@ -976,6 +989,8 @@ func menuImportPathsWithinBrowsePolicy(paths []string, policy webBrowsePolicy) (
 	return filtered, nil
 }
 
+// resolveMenuImportPath normalizes a menu image path to its absolute symlink
+// target and returns metadata for the resolved filesystem entry.
 func resolveMenuImportPath(rawPath string) (string, os.FileInfo, error) {
 	trimmed := strings.TrimSpace(rawPath)
 	if trimmed == "" {
@@ -996,6 +1011,8 @@ func resolveMenuImportPath(rawPath string) (string, os.FileInfo, error) {
 	return resolved, info, nil
 }
 
+// pathWithinBrowseRoots reports whether candidate is contained by any
+// normalized browse root.
 func pathWithinBrowseRoots(candidate string, roots []string) bool {
 	for _, root := range roots {
 		if pathutil.IsWithinRoot(root, candidate) {

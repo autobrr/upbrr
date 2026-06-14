@@ -18,11 +18,62 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
+
+// eventSessionLogStopGracePeriod lets fast SSE reconnects register a replacement
+// subscriber before per-session log streams are stopped as idle.
+const eventSessionLogStopGracePeriod = 50 * time.Millisecond
+
+var sessionLogStopGenerations = struct {
+	mu     sync.Mutex
+	byServ map[*Server]map[string]uint64
+}{
+	byServ: make(map[*Server]map[string]uint64),
+}
+
+// nextSessionLogStopGeneration records a new idle-stop attempt for a session
+// and returns the generation that delayed cleanup must still own before it can
+// stop shared session log streams.
+func nextSessionLogStopGeneration(s *Server, sessionID string) uint64 {
+	sessionLogStopGenerations.mu.Lock()
+	defer sessionLogStopGenerations.mu.Unlock()
+
+	return nextSessionLogStopGenerationLocked(s, sessionID)
+}
+
+func nextSessionLogStopGenerationLocked(s *Server, sessionID string) uint64 {
+	if _, ok := sessionLogStopGenerations.byServ[s]; !ok {
+		sessionLogStopGenerations.byServ[s] = make(map[string]uint64)
+	}
+	sessionLogStopGenerations.byServ[s][sessionID]++
+	return sessionLogStopGenerations.byServ[s][sessionID]
+}
+
+// clearSessionLogStopGeneration drops idle-stop generation state after the
+// owning delayed cleanup exits, regardless of whether it stopped the session
+// log streams or yielded to a replacement subscriber.
+func clearSessionLogStopGeneration(s *Server, sessionID string) {
+	sessionLogStopGenerations.mu.Lock()
+	defer sessionLogStopGenerations.mu.Unlock()
+
+	clearSessionLogStopGenerationLocked(s, sessionID)
+}
+
+func clearSessionLogStopGenerationLocked(s *Server, sessionID string) {
+	sessionGenerations, ok := sessionLogStopGenerations.byServ[s]
+	if !ok {
+		return
+	}
+	delete(sessionGenerations, sessionID)
+	if len(sessionGenerations) == 0 {
+		delete(sessionLogStopGenerations.byServ, s)
+	}
+}
 
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/status", func(w http.ResponseWriter, r *http.Request) { s.handleAuthStatus(w, r, session{}) })
@@ -283,6 +334,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to clear session"})
 		return
 	}
+	if s.backend != nil {
+		s.backend.StopSessionLogStreams(current.ID)
+	}
 	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value == current.ID {
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,
@@ -453,6 +507,9 @@ func sameFilesystemPath(left string, right string) bool {
 	return left == right
 }
 
+// handleEvents streams session-scoped server-sent events until the request
+// context ends, then stops shared session log streams only after the session has
+// no replacement event subscribers.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current session) {
 	// Query csrfToken is a legacy cookie-bound consistency check. Header tokens
 	// from the fetch-based browser stream are validated against the session cookie
@@ -471,10 +528,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current se
 	w.Header().Set("Connection", "keep-alive")
 
 	ch, unsubscribe := s.hub.Subscribe(current.ID)
-	defer unsubscribe()
-	if s.backend != nil {
-		defer s.backend.StopSessionLogStreams(current.ID)
-	}
+	defer func() {
+		trimmedSessionID := strings.TrimSpace(current.ID)
+		if trimmedSessionID == "" || s == nil || s.backend == nil {
+			unsubscribe()
+			return
+		}
+
+		// Claim the next idle-stop generation before removing the current
+		// subscriber so an older disconnect timer cannot observe a newer gap.
+		generation := nextSessionLogStopGeneration(s, trimmedSessionID)
+		unsubscribe()
+		s.scheduleStopSessionLogStreamsIfIdle(trimmedSessionID, generation)
+	}()
 
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -497,6 +563,70 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current se
 	}
 }
 
+// stopSessionLogStreamsIfIdle schedules cleanup for the latest session
+// disconnect only, so stale SSE disconnect timers cannot stop shared session
+// logs during a newer reconnect grace window.
+func (s *Server) stopSessionLogStreamsIfIdle(sessionID string) {
+	if s == nil || s.backend == nil {
+		return
+	}
+	trimmedSessionID := strings.TrimSpace(sessionID)
+	if trimmedSessionID == "" {
+		return
+	}
+
+	s.scheduleStopSessionLogStreamsIfIdle(trimmedSessionID, nextSessionLogStopGeneration(s, trimmedSessionID))
+}
+
+func (s *Server) scheduleStopSessionLogStreamsIfIdle(sessionID string, generation uint64) {
+	if s == nil || s.backend == nil || generation == 0 {
+		return
+	}
+
+	time.AfterFunc(eventSessionLogStopGracePeriod, func() {
+		s.stopSessionLogStreamsIfOwnedAndIdle(sessionID, generation)
+	})
+}
+
+// stopSessionLogStreamsIfOwnedAndIdle stops shared session log streams only
+// while generation still owns the latest disconnect and no replacement
+// subscriber is registered under the event hub lock.
+func (s *Server) stopSessionLogStreamsIfOwnedAndIdle(sessionID string, generation uint64) {
+	if s == nil || s.backend == nil {
+		return
+	}
+	trimmedSessionID := strings.TrimSpace(sessionID)
+	if trimmedSessionID == "" {
+		return
+	}
+
+	if s.hub != nil {
+		s.hub.mu.Lock()
+		defer s.hub.mu.Unlock()
+	}
+
+	sessionLogStopGenerations.mu.Lock()
+	sessionGenerations := sessionLogStopGenerations.byServ[s]
+	if sessionGenerations[trimmedSessionID] != generation {
+		sessionLogStopGenerations.mu.Unlock()
+		return
+	}
+
+	if s.hub != nil && len(s.hub.subscribers[trimmedSessionID]) > 0 {
+		clearSessionLogStopGenerationLocked(s, trimmedSessionID)
+		sessionLogStopGenerations.mu.Unlock()
+		return
+	}
+
+	clearSessionLogStopGenerationLocked(s, trimmedSessionID)
+	sessionLogStopGenerations.mu.Unlock()
+
+	s.backend.StopSessionLogStreams(trimmedSessionID)
+}
+
+// requireSession applies request rate limits and resolves the cookie-bound
+// session before dispatch. Unsafe HTTP methods must also pass same-origin and
+// CSRF checks for that session.
 func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.allowGeneralRequest(r) {
