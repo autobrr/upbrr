@@ -128,6 +128,18 @@ func setTestBrowsePolicy(t *testing.T, server *Server, dbPath string, root strin
 	server.auth = store
 }
 
+func canonicalBrowseTestPath(t *testing.T, path string) string {
+	t.Helper()
+	if strings.TrimSpace(path) == "" {
+		return path
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("canonicalize %q: %v", path, err)
+	}
+	return resolved
+}
+
 func newBrowseRequest(path string, host string, remoteAddr string) *http.Request {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(`{}`))
 	req.Host = host
@@ -459,7 +471,7 @@ func TestUIStateRouteRejectsBlankPostID(t *testing.T) {
 
 func TestBrowseDirectoryRouteAllowsRemoteSessionsAndSortsEntries(t *testing.T) {
 	repo, dbPath := openBrowseTestRepo(t)
-	root := t.TempDir()
+	root := canonicalBrowseTestPath(t, t.TempDir())
 	if err := os.Mkdir(filepath.Join(root, "b-folder"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -591,7 +603,7 @@ func TestMenuImportPathsWithinBrowsePolicyAdditionalScenarios(t *testing.T) {
 			name: "directory import posix path",
 			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
 				t.Helper()
-				root := t.TempDir()
+				root := canonicalBrowseTestPath(t, t.TempDir())
 				dir := filepath.Join(root, "menus")
 				if err := os.Mkdir(dir, 0o755); err != nil {
 					t.Fatalf("mkdir menu dir: %v", err)
@@ -615,7 +627,7 @@ func TestMenuImportPathsWithinBrowsePolicyAdditionalScenarios(t *testing.T) {
 			name: "directory import windows path",
 			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
 				t.Helper()
-				root := t.TempDir()
+				root := canonicalBrowseTestPath(t, t.TempDir())
 				dir := filepath.Join(root, "menus")
 				if err := os.Mkdir(dir, 0o755); err != nil {
 					t.Fatalf("mkdir menu dir: %v", err)
@@ -631,7 +643,7 @@ func TestMenuImportPathsWithinBrowsePolicyAdditionalScenarios(t *testing.T) {
 			name: "symlink inside root points outside",
 			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
 				t.Helper()
-				root := t.TempDir()
+				root := canonicalBrowseTestPath(t, t.TempDir())
 				outside := filepath.Join(t.TempDir(), "menu.png")
 				if err := os.WriteFile(outside, []byte("png"), 0o600); err != nil {
 					t.Fatalf("write outside image: %v", err)
@@ -657,8 +669,8 @@ func TestMenuImportPathsWithinBrowsePolicyAdditionalScenarios(t *testing.T) {
 			name: "multiple roots accepts second root posix path",
 			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
 				t.Helper()
-				firstRoot := t.TempDir()
-				secondRoot := t.TempDir()
+				firstRoot := canonicalBrowseTestPath(t, t.TempDir())
+				secondRoot := canonicalBrowseTestPath(t, t.TempDir())
 				image := filepath.Join(secondRoot, "menu.png")
 				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
 					t.Fatalf("write image: %v", err)
@@ -670,8 +682,8 @@ func TestMenuImportPathsWithinBrowsePolicyAdditionalScenarios(t *testing.T) {
 			name: "multiple roots accepts second root windows path",
 			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
 				t.Helper()
-				firstRoot := t.TempDir()
-				secondRoot := t.TempDir()
+				firstRoot := canonicalBrowseTestPath(t, t.TempDir())
+				secondRoot := canonicalBrowseTestPath(t, t.TempDir())
 				image := filepath.Join(secondRoot, "menu.png")
 				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
 					t.Fatalf("write image: %v", err)
@@ -717,7 +729,7 @@ func TestMenuImportPathsWithinBrowsePolicyAdditionalScenarios(t *testing.T) {
 
 func TestBrowseDirectoryRouteHonorsWebAuthBrowseRoot(t *testing.T) {
 	repo, dbPath := openBrowseTestRepo(t)
-	root := t.TempDir()
+	root := canonicalBrowseTestPath(t, t.TempDir())
 	allowed := filepath.Join(root, "allowed")
 	outside := filepath.Join(t.TempDir(), "outside")
 	if err := os.Mkdir(allowed, 0o755); err != nil {
@@ -766,14 +778,16 @@ func TestBrowseDirectoryRouteHonorsWebAuthBrowseRoot(t *testing.T) {
 
 func TestBrowseDirectoryRouteHonorsMultipleWebAuthBrowseRoots(t *testing.T) {
 	repo, dbPath := openBrowseTestRepo(t)
-	first := filepath.Join(t.TempDir(), "first")
-	second := filepath.Join(t.TempDir(), "second")
+	first := filepath.Join(canonicalBrowseTestPath(t, t.TempDir()), "first")
+	second := filepath.Join(canonicalBrowseTestPath(t, t.TempDir()), "second")
 	outside := filepath.Join(t.TempDir(), "outside")
 	for _, dir := range []string{first, second, outside} {
 		if err := os.Mkdir(dir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
+	first = canonicalBrowseTestPath(t, first)
+	second = canonicalBrowseTestPath(t, second)
 
 	server := testServerWithBackend(t, repo, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},

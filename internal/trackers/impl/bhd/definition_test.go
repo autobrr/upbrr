@@ -116,8 +116,6 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 }
 
 func TestUploadRetriesInvalidIMDb(t *testing.T) {
-	t.Parallel()
-
 	tmp := t.TempDir()
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
 	torrentPath := filepath.Join(tmp, "Movie.torrent")

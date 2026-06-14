@@ -276,12 +276,15 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to clear session"})
 		return
 	}
+	//nolint:gosec // Session clear cookie sets HttpOnly, SameSite, and Secure for HTTPS requests.
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.requestScheme(r) == "https",
 	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -501,6 +504,7 @@ func (s *Server) isDevelopmentSession(current session) bool {
 }
 
 func (s *Server) writeSessionCookie(w http.ResponseWriter, r *http.Request, current session) {
+	//nolint:gosec // Session cookie sets HttpOnly, SameSite, and Secure for HTTPS requests.
 	cookie := &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    current.ID,

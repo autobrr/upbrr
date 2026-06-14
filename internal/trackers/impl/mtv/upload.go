@@ -212,6 +212,7 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
 			continue
 		}
+		// #nosec G124 -- Outbound tracker jar cookie mirrors configured MTV session values.
 		jarCookies = append(jarCookies, &http.Cookie{Name: name, Value: value, Path: "/", Domain: parsedBase.Hostname()})
 	}
 	jar.SetCookies(parsedBase, jarCookies)
