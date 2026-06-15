@@ -209,6 +209,7 @@ type stubTMDB struct {
 	searchOutcome tmdb.SearchOutcome
 	findResult    tmdb.FindResult
 	metadata      tmdb.MetadataResult
+	metadataErr   error
 	searchFn      func(tmdb.SearchInput) (tmdb.SearchOutcome, error)
 	dailySeason   int
 	dailyEpisode  int
@@ -249,6 +250,9 @@ func (s *stubTMDB) SearchID(_ context.Context, input tmdb.SearchInput) (tmdb.Sea
 func (s *stubTMDB) FetchMetadata(_ context.Context, input tmdb.MetadataInput) (tmdb.MetadataResult, error) {
 	s.metaCalls++
 	s.metaInputs = append(s.metaInputs, input)
+	if s.metadataErr != nil {
+		return tmdb.MetadataResult{}, s.metadataErr
+	}
 	return s.metadata, nil
 }
 
@@ -2047,7 +2051,7 @@ func TestResolveExternalIDsLocalizedFetchSucceedsWhenTMDBMetadataIsNil(t *testin
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{
 		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "MOVIE"},
-		// metadata is deliberately left empty/error to keep TMDB nil
+		metadataErr:   errors.New("tmdb metadata fetch failed"),
 		localizedData: map[string]any{
 			"title":    "Título Localizado",
 			"overview": "Sinopse Localizada",

@@ -1058,7 +1058,7 @@ func isSeen(seen map[string]struct{}, url string) bool {
 }
 
 func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
-	if categoryOf(meta) == "TV" && ptBR.EpisodeOverview != "" {
+	if strings.EqualFold(categoryOf(meta), "TV") && ptBR.EpisodeOverview != "" {
 		return strings.TrimSpace(ptBR.EpisodeOverview)
 	}
 	if ptBR.Overview != "" {

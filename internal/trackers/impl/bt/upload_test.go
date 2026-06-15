@@ -26,6 +26,16 @@ func TestResolveOverviewPrefersEpisodeOverviewForTV(t *testing.T) {
 		t.Fatalf("expected episode overview, got %q", got)
 	}
 
+	// For lowercase tv category, it should still prefer the episode overview
+	metaTVLower := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{
+			Category: "tv",
+		},
+	}
+	if got := resolveOverview(metaTVLower, ptBR); got != "Episode Overview" {
+		t.Fatalf("expected episode overview for lowercase tv, got %q", got)
+	}
+
 	// For Movie, it should prefer the series overview
 	metaMovie := api.PreparedMetadata{
 		ExternalIDs: api.ExternalIDs{

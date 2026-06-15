@@ -119,6 +119,130 @@ func TestBuildFieldsWithNilMetadata(t *testing.T) {
 	if got := fields["numtemporadas"]; got != "0" {
 		t.Fatalf("expected 0 seasons for nil IMDB, got %q", got)
 	}
+	if got := fields["idioma"]; got != "Outro" {
+		t.Fatalf("expected idioma to fall back to 'Outro' for nil TMDB, got %q", got)
+	}
+	if got := fields["network"]; got != "" {
+		t.Fatalf("expected network to be empty for nil TMDB, got %q", got)
+	}
+	if got := fields["avaliacao"]; got != "" {
+		t.Fatalf("expected avaliacao to be empty for nil IMDB, got %q", got)
+	}
+	if got := fields["elenco"]; got != "" {
+		t.Fatalf("expected elenco to be empty for nil TMDB/IMDB, got %q", got)
+	}
+	if got := fields["traileryoutube"]; got != "" {
+		t.Fatalf("expected traileryoutube to be empty for nil TMDB, got %q", got)
+	}
+}
+
+func TestBuildFieldsWithTMDBNilAndIMDBPresent(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{
+			Title: "Test TV Title",
+		},
+		ExternalIDs: api.ExternalIDs{
+			Category: "TV",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: nil,
+			IMDB: &api.IMDBMetadata{
+				Rating: 8.5,
+				Stars:  []api.IMDBPerson{{Name: "Star One"}, {Name: "Star Two"}},
+			},
+		},
+	}
+
+	fields := buildFields(meta, "description", "auth", nil)
+	if got := fields["avaliacao"]; got != "8.5" {
+		t.Fatalf("expected avaliacao from IMDB, got %q", got)
+	}
+	if got := fields["elenco"]; got != "Star One, Star Two" {
+		t.Fatalf("expected elenco from IMDB stars, got %q", got)
+	}
+	if got := fields["idioma"]; got != "Outro" {
+		t.Fatalf("expected idioma to fall back to 'Outro' for nil TMDB, got %q", got)
+	}
+}
+
+func TestBuildFieldsWithTMDBPresentAndIMDBNil(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{
+			Title: "Test TV Title",
+		},
+		ExternalIDs: api.ExternalIDs{
+			Category: "TV",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				OriginalTitle:    "Original Title",
+				Title:            "Title",
+				OriginalLanguage: "en",
+				Networks:         []api.TMDBNetwork{{Name: "HBO"}},
+				Cast:             []string{"Cast One", "Cast Two"},
+				YouTube:          "https://youtube.com/watch?v=123",
+			},
+			IMDB: nil,
+		},
+	}
+
+	fields := buildFields(meta, "description", "auth", nil)
+	if got := fields["title"]; got != "Original Title" {
+		t.Fatalf("expected title from TMDB OriginalTitle, got %q", got)
+	}
+	if got := fields["idioma"]; got != "Inglês" {
+		t.Fatalf("expected idioma from TMDB original language, got %q", got)
+	}
+	if got := fields["network"]; got != "HBO" {
+		t.Fatalf("expected network from TMDB, got %q", got)
+	}
+	if got := fields["elenco"]; got != "Cast One, Cast Two" {
+		t.Fatalf("expected elenco from TMDB cast, got %q", got)
+	}
+	if got := fields["traileryoutube"]; got != "https://youtube.com/watch?v=123" {
+		t.Fatalf("expected traileryoutube URL from TMDB, got %q", got)
+	}
+	if got := fields["avaliacao"]; got != "" {
+		t.Fatalf("expected empty avaliacao for nil IMDB, got %q", got)
+	}
+}
+
+func TestBuildFieldsWithTMDBLocalizedAndIMDBNil(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{
+			Title: "Test TV Title",
+		},
+		ExternalIDs: api.ExternalIDs{
+			Category: "TV",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				OriginalTitle: "Original Title",
+				Title:         "Title",
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {
+						Title:      "Título Localizado",
+						TrailerURL: "https://youtube.com/watch?v=localized",
+					},
+				},
+			},
+			IMDB: nil,
+		},
+	}
+
+	fields := buildFields(meta, "description", "auth", nil)
+	if got := fields["titulobrasileiro"]; got != "Título Localizado" {
+		t.Fatalf("expected titulobrasileiro from TMDB localized title, got %q", got)
+	}
+	if got := fields["traileryoutube"]; got != "https://youtube.com/watch?v=localized" {
+		t.Fatalf("expected traileryoutube URL from TMDB localized trailer, got %q", got)
+	}
 }
 
 func TestResolveOverviewPrefersEpisodeOverviewForTV(t *testing.T) {
