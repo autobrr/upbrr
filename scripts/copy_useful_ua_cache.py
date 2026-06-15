@@ -108,6 +108,8 @@ def process_bdinfo_directory(
             print_log(f"Failed to create target directory '{dst_dir}': {e}", level="error")
             return False
 
+    had_errors = False
+
     # Copy image_data.json and menu_images.json if present
     for json_name in ["image_data.json", "menu_images.json"]:
         exact_src_file = next((f for f in files if f.name.lower() == json_name.lower()), None)
@@ -138,6 +140,7 @@ def process_bdinfo_directory(
                     stats["files_copied"] += 1
                 except Exception as e:
                     print_log(f"Failed to copy file '{exact_src_file}': {e}", level="error", quiet=quiet)
+                    had_errors = True
 
     # Copy and rename matched files for each playlist code found
     for df in disc_files:
@@ -188,8 +191,9 @@ def process_bdinfo_directory(
                     stats["files_copied"] += 1
                 except Exception as e:
                     print_log(f"Failed to copy file '{exact_src_file}': {e}", level="error", quiet=quiet)
+                    had_errors = True
 
-    return True
+    return not had_errors
 
 def main() -> int:
     # Determine default paths dynamically
