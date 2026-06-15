@@ -236,7 +236,7 @@ func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categ
 		}
 	}
 
-	if meta.ExternalIDs.TVDBID != 0 {
+	if isHDBTVCategory(meta) && meta.ExternalIDs.TVDBID != 0 {
 		fields["tvdb"] = strconv.Itoa(meta.ExternalIDs.TVDBID)
 	}
 	if imdb := resolveIMDbURL(meta); imdb != "" {
@@ -244,7 +244,7 @@ func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categ
 	} else {
 		fields["imdb"] = "0"
 	}
-	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") || strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") {
+	if isHDBTVCategory(meta) {
 		season := meta.SeasonInt
 		episode := meta.EpisodeInt
 		if season <= 0 {
@@ -258,6 +258,35 @@ func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categ
 	}
 
 	return fields
+}
+
+// isHDBTVCategory reports whether HDB upload payloads may include TVDB fields.
+// Explicit movie categories suppress TVDB fields even when MediaInfo or overrides classify the release as TV.
+func isHDBTVCategory(meta api.PreparedMetadata) bool {
+	if isHDBMovieCategory(meta) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV") {
+		return true
+	}
+	if meta.ReleaseNameOverrides.Category != nil {
+		return strings.EqualFold(strings.TrimSpace(*meta.ReleaseNameOverrides.Category), "TV")
+	}
+	return false
+}
+
+func isHDBMovieCategory(meta api.PreparedMetadata) bool {
+	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "MOVIE") {
+		return true
+	}
+	if meta.ReleaseNameOverrides.Category != nil {
+		return strings.EqualFold(strings.TrimSpace(*meta.ReleaseNameOverrides.Category), "MOVIE")
+	}
+	return false
 }
 
 func resolveDescriptionAssets(

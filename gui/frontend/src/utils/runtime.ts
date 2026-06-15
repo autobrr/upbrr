@@ -6,10 +6,16 @@ import { EventsOn as wailsEventsOn } from "../../wailsjs/runtime/runtime";
 type EventCallback = (payload: unknown) => void;
 
 const callbackMap = new Map<string, Set<EventCallback>>();
-let eventSource: EventSource | null = null;
+const nativeBrowseAvailabilityListeners = new Set<() => void>();
+let eventStreamController: AbortController | null = null;
+let eventStreamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let browserMode = false;
 let csrfToken = "";
 let nativeBrowseEnabled = false;
+let caseInsensitivePaths = navigator.platform.toLowerCase().startsWith("win");
+
+const sessionChangedMessage =
+  "Web session changed in another tab. Reload this tab to continue with the active login.";
 
 const isWebUIRuntime = () => {
   const runtime = (window as typeof window & { runtime?: unknown }).runtime;
@@ -26,50 +32,202 @@ const parseJSONResponse = async <T>(response: Response): Promise<T | null> => {
   return JSON.parse(text) as T;
 };
 
+const isAuthFailureStatus = (status: number) => status === 401 || status === 403;
+
+const setNativeBrowseEnabled = (enabled: boolean) => {
+  if (nativeBrowseEnabled === enabled) {
+    return;
+  }
+  nativeBrowseEnabled = enabled;
+  nativeBrowseAvailabilityListeners.forEach((listener) => listener());
+};
+
+const setRuntimePathCaseSensitivity = (caseInsensitive: unknown) => {
+  if (typeof caseInsensitive === "boolean") {
+    caseInsensitivePaths = caseInsensitive;
+  }
+};
+
+/**
+ * Refreshes browser auth state for a retry without switching this tab to a
+ * different web session.
+ */
+const refreshBrowserAuthState = async () => {
+  if (!browserMode) {
+    return false;
+  }
+  const response = await fetch("/api/auth/status", { credentials: "include" });
+  const payload = await parseJSONResponse<
+    Record<string, unknown> & {
+      authenticated?: boolean;
+      csrfToken?: string;
+      nativeBrowseEnabled?: boolean;
+      caseInsensitivePaths?: boolean;
+    }
+  >(response);
+  if (!response.ok || !payload?.authenticated) {
+    return false;
+  }
+  const nextCSRFToken = String(payload.csrfToken || "");
+  if (csrfToken && nextCSRFToken && nextCSRFToken !== csrfToken) {
+    throw new Error(sessionChangedMessage);
+  }
+  csrfToken = nextCSRFToken;
+  setRuntimePathCaseSensitivity(payload.caseInsensitivePaths);
+  setNativeBrowseEnabled(Boolean(payload.nativeBrowseEnabled));
+  recreateEventSource();
+  return csrfToken !== "";
+};
+
 const addBrowserListener = (eventName: string, callback: EventCallback) => {
-  const isNew = !callbackMap.has(eventName);
   if (!callbackMap.has(eventName)) {
     callbackMap.set(eventName, new Set());
   }
   const set = callbackMap.get(eventName)!;
   set.add(callback);
   ensureEventSource();
-  if (isNew && eventSource) {
-    eventSource.addEventListener(eventName, (event) => {
-      const payload = JSON.parse((event as MessageEvent).data);
-      callbackMap.get(eventName)?.forEach((listener) => listener(payload));
-    });
-  }
   return () => {
     set.delete(callback);
+    if (set.size === 0) {
+      callbackMap.delete(eventName);
+    }
+    if (callbackMap.size === 0) {
+      closeEventSource();
+    }
   };
 };
 
 const ensureEventSource = () => {
-  if (!browserMode || eventSource) {
+  if (!browserMode || eventStreamController || !csrfToken || callbackMap.size === 0) {
     return;
   }
-  eventSource = new EventSource("/api/events", { withCredentials: true });
-  eventSource.onmessage = () => undefined;
-  const attach = (eventName: string) => {
-    eventSource?.addEventListener(eventName, (event) => {
-      const payload = JSON.parse((event as MessageEvent).data);
-      callbackMap.get(eventName)?.forEach((callback) => callback(payload));
-    });
-  };
-  callbackMap.forEach((_value, key) => attach(key));
+  const controller = new AbortController();
+  eventStreamController = controller;
+  void runBrowserEventStream(controller);
 };
 
 const recreateEventSource = () => {
-  if (eventSource) {
-    eventSource.close();
-    eventSource = null;
-  }
+  closeEventSource();
   ensureEventSource();
 };
 
+const closeEventSource = () => {
+  if (eventStreamReconnectTimer) {
+    clearTimeout(eventStreamReconnectTimer);
+    eventStreamReconnectTimer = null;
+  }
+  if (eventStreamController) {
+    eventStreamController.abort();
+    eventStreamController = null;
+  }
+};
+
+const scheduleEventStreamReconnect = () => {
+  if (!browserMode || !csrfToken || callbackMap.size === 0 || eventStreamReconnectTimer) {
+    return;
+  }
+  eventStreamReconnectTimer = setTimeout(() => {
+    eventStreamReconnectTimer = null;
+    ensureEventSource();
+  }, 1000);
+};
+
+/**
+ * Opens the browser-mode SSE stream with the same cookie-bound CSRF header as
+ * app calls.
+ *
+ * Native EventSource cannot send CSRF headers, so fetch streaming is used to
+ * avoid storing CSRF tokens in URLs while preserving reconnect behavior.
+ */
+const runBrowserEventStream = async (controller: AbortController) => {
+  let reconnect = true;
+  try {
+    const response = await fetch("/api/events", {
+      method: "GET",
+      credentials: "include",
+      headers: { "X-CSRF-Token": csrfToken },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      if (isAuthFailureStatus(response.status)) {
+        reconnect = await refreshBrowserAuthState().catch(() => false);
+      }
+      return;
+    }
+    if (!response.body) {
+      throw new Error("Event stream response body is unavailable");
+    }
+    await readBrowserEventStream(response.body, controller.signal);
+  } catch (_err) {
+    if (!controller.signal.aborted) {
+      // Network interruptions should behave like EventSource reconnects.
+      scheduleEventStreamReconnect();
+    }
+    return;
+  } finally {
+    if (eventStreamController === controller) {
+      eventStreamController = null;
+      if (reconnect && !controller.signal.aborted) {
+        scheduleEventStreamReconnect();
+      }
+    }
+  }
+};
+
+/**
+ * Reads browser-mode SSE frames until the stream ends or the supplied signal is
+ * aborted. Aborts cancel the active reader so unsubscribe cannot leave a pending
+ * read behind.
+ */
+const readBrowserEventStream = async (body: ReadableStream<Uint8Array>, signal: AbortSignal) => {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const abortRead = () => {
+    void reader.cancel();
+  };
+  signal.addEventListener("abort", abortRead, { once: true });
+  try {
+    for (;;) {
+      if (signal.aborted) {
+        break;
+      }
+      const { value, done } = await reader.read();
+      if (done || signal.aborted) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split(/\r?\n\r?\n/);
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        dispatchBrowserEventBlock(part);
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", abortRead);
+    reader.releaseLock();
+  }
+};
+
+const dispatchBrowserEventBlock = (block: string) => {
+  let eventName = "message";
+  const data: string[] = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      data.push(line.slice("data:".length).trimStart());
+    }
+  }
+  if (!callbackMap.has(eventName) || data.length === 0) {
+    return;
+  }
+  const payload = JSON.parse(data.join("\n"));
+  callbackMap.get(eventName)?.forEach((callback) => callback(payload));
+};
+
 const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
-  const response = await fetch(path, {
+  const requestInit = (): RequestInit => ({
     method: "POST",
     credentials: "include",
     headers: {
@@ -78,7 +236,12 @@ const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const payload = await parseJSONResponse<T & { error?: string }>(response);
+  let response = await fetch(path, requestInit());
+  let payload = await parseJSONResponse<T & { error?: string }>(response);
+  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshBrowserAuthState())) {
+    response = await fetch(path, requestInit());
+    payload = await parseJSONResponse<T & { error?: string }>(response);
+  }
   if (!response.ok) {
     throw new Error(String(payload?.error || response.statusText || "Request failed"));
   }
@@ -88,24 +251,20 @@ const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
   return payload as T;
 };
 
-const getJSON = async <T>(path: string): Promise<T> => {
-  const response = await fetch(path, {
-    method: "GET",
-    credentials: "include",
-  });
-  const payload = await parseJSONResponse<T & { error?: string }>(response);
-  if (!response.ok) {
-    throw new Error(String(payload?.error || response.statusText || "Request failed"));
-  }
-  if (payload === null) {
-    throw new Error("Request returned an empty response");
-  }
-  return payload as T;
-};
-
-export const initializeBrowserBridge = (token: string, browseEnabled = false) => {
+/**
+ * Installs the browser-mode app bridge and pins app calls/events to token.
+ *
+ * runtimeCaseInsensitivePaths should come from the web server so browser path
+ * comparisons match the host filesystem, not the client platform.
+ */
+export const initializeBrowserBridge = (
+  token: string,
+  browseEnabled = false,
+  runtimeCaseInsensitivePaths?: boolean,
+) => {
   browserMode = isWebUIRuntime();
-  nativeBrowseEnabled = browseEnabled;
+  setNativeBrowseEnabled(browseEnabled);
+  setRuntimePathCaseSensitivity(runtimeCaseInsensitivePaths);
   if (!browserMode) {
     return;
   }
@@ -122,10 +281,6 @@ export const initializeBrowserBridge = (token: string, browseEnabled = false) =>
         BrowseFolder: () => call<string>("BrowseFolder"),
         BrowseDirectory: (path: string, mode: "file" | "folder") =>
           call("BrowseDirectory", { path, mode }),
-        ListUIStates: () => getJSON("/api/app/UIState"),
-        GetUIState: (id: string) => getJSON(`/api/app/UIState?id=${encodeURIComponent(id)}`),
-        SaveUIState: (id: string, label: string, state: unknown) =>
-          call("UIState", { id, label, state }),
         DetectDiscType: (path: string) => call<string>("DetectDiscType", { Path: path }),
         FetchMetadata: (
           path: string,
@@ -477,8 +632,28 @@ export const isBrowserNativeBrowseAvailable = () => {
   return nativeBrowseEnabled;
 };
 
-export const updateBrowserCSRFToken = (token: string) => {
+/**
+ * Reports whether the current runtime compares host filesystem paths
+ * case-insensitively.
+ */
+export const isRuntimePathCaseInsensitive = () => caseInsensitivePaths;
+
+export const subscribeBrowserNativeBrowseAvailability = (listener: () => void) => {
+  nativeBrowseAvailabilityListeners.add(listener);
+  return () => {
+    nativeBrowseAvailabilityListeners.delete(listener);
+  };
+};
+
+/**
+ * Updates the CSRF token used by browser-mode app calls and event streams.
+ *
+ * Passing runtimeCaseInsensitivePaths also refreshes the host path-comparison
+ * contract carried by auth/status responses.
+ */
+export const updateBrowserCSRFToken = (token: string, runtimeCaseInsensitivePaths?: boolean) => {
   csrfToken = token;
+  setRuntimePathCaseSensitivity(runtimeCaseInsensitivePaths);
   recreateEventSource();
 };
 
@@ -500,6 +675,10 @@ export const browserAuth = {
   logout: () => postJSON("/api/auth/logout"),
 };
 
+/**
+ * Subscribes to Wails events in desktop mode or the cookie-bound web event
+ * stream in browser mode.
+ */
 export const EventsOn = (eventName: string, callback: EventCallback) => {
   if (!browserMode) {
     return wailsEventsOn(eventName, callback as any);

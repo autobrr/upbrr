@@ -9,9 +9,17 @@ import (
 	"os"
 
 	"github.com/autobrr/upbrr/internal/guiapp"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+var (
+	version         = "dev"
+	buildIdentifier = ""
 )
 
 func main() {
+	api.SetApplicationBuild(version, buildIdentifier)
+
 	configPath := flag.String("config", "", "Path to config file")
 	flag.Parse()
 

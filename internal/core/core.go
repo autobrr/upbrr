@@ -1170,7 +1170,7 @@ func (c *Core) resolveImageUploadTargets(req api.Request, meta api.PreparedMetad
 	trackerCfg.Trackers.DefaultTrackers = nil
 	resolvedTrackers := trackers.ResolveTrackers(trackerCfg, req.Trackers, req.TrackersRemove, c.logger)
 	resolvedTrackers = c.filterImageUploadTrackers(resolvedTrackers, meta)
-	targets, err := trackers.NeededImageUploadTargets(c.cfg, resolvedTrackers, normalizedHost)
+	targets, err := trackers.NeededImageUploadTargetsForMetadata(c.cfg, resolvedTrackers, normalizedHost, meta)
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)
 	}
@@ -1262,12 +1262,12 @@ func ruleFailuresForTracker(failures map[string][]api.RuleFailure, tracker strin
 	return nil
 }
 
-func (c *Core) resolveFallbackImageUploadTargets(host string, trackerNames []string, excludedHosts []string) ([]trackers.ImageUploadTarget, error) {
+func (c *Core) resolveFallbackImageUploadTargets(host string, trackerNames []string, excludedHosts []string, meta api.PreparedMetadata) ([]trackers.ImageUploadTarget, error) {
 	normalizedHost := strings.ToLower(strings.TrimSpace(host))
 	if normalizedHost == "" || len(trackerNames) == 0 {
 		return nil, nil
 	}
-	targets, err := trackers.NeededImageUploadTargetsExcluding(c.cfg, trackerNames, normalizedHost, excludedHosts)
+	targets, err := trackers.NeededImageUploadTargetsForMetadataExcluding(c.cfg, trackerNames, normalizedHost, excludedHosts, meta)
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)
 	}
@@ -1304,7 +1304,7 @@ func (c *Core) uploadImagesToTargetsWithFallback(ctx context.Context, meta api.P
 		}
 
 		blockedTrackers := uploadFailureTrackers(failures)
-		fallbackTargets, err := c.resolveFallbackImageUploadTargets(host, blockedTrackers, sortedMapKeys(failedHosts))
+		fallbackTargets, err := c.resolveFallbackImageUploadTargets(host, blockedTrackers, sortedMapKeys(failedHosts), meta)
 		if err != nil {
 			return api.UploadImagesResult{}, err
 		}

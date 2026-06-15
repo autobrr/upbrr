@@ -1,6 +1,12 @@
 name: build-binaries
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Release tag to build, for example v1.2.3"
+        required: false
+        type: string
   workflow_dispatch:
 
 permissions:
@@ -44,12 +50,40 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.27.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: gui/frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        shell: bash
+        working-directory: gui/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build embedded web assets
+        shell: bash
+        working-directory: gui/frontend
+        run: pnpm run build:bundle
+
+      - name: Sync embedded web assets
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/sync-frontend-assets.ps1
 
       - name: Build CLI
         shell: bash
@@ -58,9 +92,20 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: 0
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p dist/cli
+          version="$RELEASE_TAG"
+          if [[ -z "$version" && "$REF_TYPE" == "tag" ]]; then
+            version="$REF_NAME"
+          fi
+          if [[ -z "$version" ]]; then
+            version="dev"
+          fi
+          build_id="$(git rev-parse --short=12 HEAD)"
 
           suffix=""
           if [[ "$GOOS" == "windows" ]]; then
@@ -73,7 +118,7 @@ jobs:
           fi
 
           out="dist/cli/upbrr-${GOOS}-${GOARCH}${arm_suffix}${suffix}"
-          go build -trimpath -ldflags="-s -w" -o "$out" ./cmd/upbrr
+          go build -trimpath -ldflags="-s -w -X main.version=${version} -X main.buildIdentifier=${build_id}" -o "$out" ./cmd/upbrr
 
       - name: Package CLI
         shell: bash
@@ -81,9 +126,19 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p dist/packages
+          version="$RELEASE_TAG"
+          if [[ -z "$version" && "$REF_TYPE" == "tag" ]]; then
+            version="$REF_NAME"
+          fi
+          if [[ -z "$version" ]]; then
+            version="dev"
+          fi
 
           arm_suffix=""
           if [[ -n "${GOARM:-}" ]]; then
@@ -99,10 +154,10 @@ jobs:
           target="${GOOS}-${GOARCH}${arm_suffix}"
 
           if [[ "$GOOS" == "windows" ]]; then
-            archive="dist/packages/upbrr-cli-${target}.zip"
+            archive="dist/packages/upbrr-cli-${version}-${target}.zip"
             (cd dist/cli && zip -q -j "../packages/$(basename "$archive")" "$bin_name")
           else
-            archive="dist/packages/upbrr-cli-${target}.tar.gz"
+            archive="dist/packages/upbrr-cli-${version}-${target}.tar.gz"
             tar -C dist/cli -czf "$archive" "$bin_name"
           fi
 
@@ -110,7 +165,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm != '' && format('v{0}', matrix.goarm) || '' }}
-          path: dist/packages/upbrr-cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm != '' && format('v{0}', matrix.goarm) || '' }}${{ matrix.goos == 'windows' && '.zip' || '.tar.gz' }}
+          path: dist/packages/upbrr-cli-*-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm != '' && format('v{0}', matrix.goarm) || '' }}${{ matrix.goos == 'windows' && '.zip' || '.tar.gz' }}
           if-no-files-found: error
 
   build-gui:
@@ -127,10 +182,10 @@ jobs:
           - runner: windows-latest
             platform: windows/arm64
             artifact: windows-arm64
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             platform: linux/amd64
             artifact: linux-x64
-          - runner: ubuntu-22.04-arm
+          - runner: ubuntu-24.04-arm
             platform: linux/arm64
             artifact: linux-arm64
           - runner: macos-15-intel
@@ -143,6 +198,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -151,14 +208,14 @@ jobs:
           cache: true
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
         with:
-          version: 9
+          version: 10.27.0
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
           cache-dependency-path: gui/frontend/pnpm-lock.yaml
 
@@ -179,6 +236,10 @@ jobs:
           wait "$typecheck_pid"
           wait "$build_pid"
 
+      - name: Sync embedded GUI assets
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/sync-frontend-assets.ps1
+
       - name: Install Linux GUI dependencies
         if: startsWith(matrix.platform, 'linux/')
         run: |
@@ -186,7 +247,7 @@ jobs:
           sudo apt-get install -y \
             build-essential \
             libgtk-3-dev \
-            libwebkit2gtk-4.0-dev \
+            libwebkit2gtk-4.1-dev \
             libglib2.0-dev \
             libx11-dev \
             libxkbcommon-dev \
@@ -199,27 +260,54 @@ jobs:
 
       - name: Install Wails CLI
         shell: bash
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
       - name: Build GUI
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          version="$RELEASE_TAG"
+          if [[ -z "$version" && "$REF_TYPE" == "tag" ]]; then
+            version="$REF_NAME"
+          fi
+          if [[ -z "$version" ]]; then
+            version="dev"
+          fi
+          build_id="$(git rev-parse --short=12 HEAD)"
+          ldflags="-s -w -X main.version=${version} -X main.buildIdentifier=${build_id}"
+
           cd gui
-          if [[ "${{ matrix.platform }}" == "windows/arm64" ]]; then
+          if [[ "${{ matrix.platform }}" == linux/* ]]; then
+            wails build -platform "${{ matrix.platform }}" -clean -trimpath -tags webkit2_41 -ldflags "$ldflags"
+          elif [[ "${{ matrix.platform }}" == "windows/arm64" ]]; then
             # Wails bindings helper is built for target arch; skip on x64 runners for arm64 target.
-            wails build -platform "${{ matrix.platform }}" -clean -skipbindings
+            wails build -platform "${{ matrix.platform }}" -clean -skipbindings -trimpath -ldflags "$ldflags"
           else
-            wails build -platform "${{ matrix.platform }}" -clean
+            wails build -platform "${{ matrix.platform }}" -clean -trimpath -ldflags "$ldflags"
           fi
 
       - name: Package GUI (Windows)
         if: startsWith(matrix.platform, 'windows/')
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
+          $version = $env:RELEASE_TAG
+          if (-not $version -and $env:REF_TYPE -eq "tag") {
+            $version = $env:REF_NAME
+          }
+          if (-not $version) {
+            $version = "dev"
+          }
           New-Item -ItemType Directory -Force -Path dist/packages | Out-Null
           $target = "${{ matrix.artifact }}"
-          $archive = "dist/packages/upbrr-gui-$target.zip"
+          $archive = "dist/packages/upbrr-gui-$version-$target.zip"
           if (Test-Path $archive) {
             Remove-Item $archive -Force
           }
@@ -228,18 +316,29 @@ jobs:
       - name: Package GUI (Linux/macOS)
         if: ${{ !startsWith(matrix.platform, 'windows/') }}
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p dist/packages
+          version="$RELEASE_TAG"
+          if [[ -z "$version" && "$REF_TYPE" == "tag" ]]; then
+            version="$REF_NAME"
+          fi
+          if [[ -z "$version" ]]; then
+            version="dev"
+          fi
           target="${{ matrix.artifact }}"
-          archive="dist/packages/upbrr-gui-${target}.tar.gz"
+          archive="dist/packages/upbrr-gui-${version}-${target}.tar.gz"
           tar -C gui/build/bin -czf "$archive" .
 
       - name: Upload GUI artifact
         uses: actions/upload-artifact@v7
         with:
           name: gui-${{ matrix.artifact }}
-          path: dist/packages/upbrr-gui-${{ matrix.artifact }}${{ startsWith(matrix.platform, 'windows/') && '.zip' || '.tar.gz' }}
+          path: dist/packages/upbrr-gui-*-${{ matrix.artifact }}${{ startsWith(matrix.platform, 'windows/') && '.zip' || '.tar.gz' }}
           if-no-files-found: error
 
   build-docker-amd64:
@@ -253,9 +352,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Resolve build metadata
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "id=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "go_version=$(awk '/^go /{print $2; exit}' go.mod)" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         if: github.event_name != 'pull_request'
@@ -271,12 +380,13 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/upbrr
           tags: |
-            type=sha
+            type=sha,enable=${{ inputs.release_tag == '' }}
+            type=raw,value=sha-${{ steps.build.outputs.id }},enable=${{ inputs.release_tag != '' }}
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch }}
 
       - name: Derive amd64 image tags
         id: amd64_tags
@@ -306,12 +416,16 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.amd64_tags.outputs.tags }}
           labels: ${{ steps.meta_combined.outputs.labels }}
+          build-args: |
+            VERSION=${{ inputs.release_tag || (github.ref_type == 'tag' && github.ref_name) || 'dev' }}
+            BUILD_ID=${{ steps.build.outputs.id }}
+            GO_VERSION=${{ steps.build.outputs.go_version }}
           cache-from: type=gha,scope=build-docker-amd64
           cache-to: type=gha,scope=build-docker-amd64,mode=min
 
   build-docker-arm64:
     name: Build Docker Image (cli+gui linux/arm64)
-    runs-on: ubuntu-22.04-arm
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     permissions:
       contents: read
@@ -320,9 +434,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Resolve build metadata
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "id=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "go_version=$(awk '/^go /{print $2; exit}' go.mod)" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         if: github.event_name != 'pull_request'
@@ -338,12 +462,13 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/upbrr
           tags: |
-            type=sha
+            type=sha,enable=${{ inputs.release_tag == '' }}
+            type=raw,value=sha-${{ steps.build.outputs.id }},enable=${{ inputs.release_tag != '' }}
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch }}
 
       - name: Derive arm64 image tags
         id: arm64_tags
@@ -373,6 +498,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.arm64_tags.outputs.tags }}
           labels: ${{ steps.meta_combined.outputs.labels }}
+          build-args: |
+            VERSION=${{ inputs.release_tag || (github.ref_type == 'tag' && github.ref_name) || 'dev' }}
+            BUILD_ID=${{ steps.build.outputs.id }}
+            GO_VERSION=${{ steps.build.outputs.go_version }}
           cache-from: type=gha,scope=build-docker-arm64
           cache-to: type=gha,scope=build-docker-arm64,mode=min
 
@@ -388,8 +517,21 @@ jobs:
       packages: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Resolve build metadata
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "id=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "go_version=$(awk '/^go /{print $2; exit}' go.mod)" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         if: github.event_name != 'pull_request'
@@ -405,12 +547,13 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/upbrr
           tags: |
-            type=sha
+            type=sha,enable=${{ inputs.release_tag == '' }}
+            type=raw,value=sha-${{ steps.build.outputs.id }},enable=${{ inputs.release_tag != '' }}
             type=ref,event=branch
             type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch }}
 
       - name: Create and push multi-arch manifests
         if: github.event_name != 'pull_request'

@@ -438,56 +438,6 @@ func TestNewAppKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	}
 }
 
-func TestNewAppClearsPersistedUIState(t *testing.T) {
-	t.Parallel()
-
-	repoPath := filepath.Join(t.TempDir(), "fresh-ui.db")
-	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
-	if err != nil {
-		t.Fatalf("open repo: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
-	if err := repo.SaveUIState(context.Background(), "state-a", "Upload", map[string]any{"activeTab": "upload"}); err != nil {
-		t.Fatalf("save ui state: %v", err)
-	}
-
-	cfg := &config.Config{
-		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
-		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
-	}
-
-	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	authPath := filepath.Join(filepath.Dir(repoPath), authmaterial.WebAuthFileName)
-	if err := os.WriteFile(authPath, []byte(`{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":"stable-seed-for-tests"}`), 0o600); err != nil {
-		t.Fatalf("write web auth fixture: %v", err)
-	}
-	if err := config.ExportToYAML(cfg, configPath); err != nil {
-		t.Fatalf("export config: %v", err)
-	}
-
-	app, err := NewApp(configPath, true)
-	if err != nil {
-		t.Fatalf("new app: %v", err)
-	}
-	t.Cleanup(func() {
-		app.shutdown(context.Background())
-	})
-
-	stateList, err := app.ListUIStates()
-	if err != nil {
-		t.Fatalf("list ui states: %v", err)
-	}
-	if len(stateList.States) != 0 {
-		t.Fatalf("expected startup to clear persisted UI state, got %#v", stateList.States)
-	}
-}
-
 func TestAppAllowUnencryptedExportFromWebAuth(t *testing.T) {
 	t.Parallel()
 

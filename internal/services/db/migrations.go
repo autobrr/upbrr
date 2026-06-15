@@ -54,8 +54,7 @@ var migrationRegistry = []migrationStep{
 	{id: "2026_04_normalize_description_overrides", dependsOn: []string{"2026_04_add_screenshot_slot_tables"}, apply: migrateNormalizeDescriptionOverrides},
 	{id: "2026_04_add_tracker_cookies", dependsOn: []string{"2026_04_normalize_description_overrides"}, apply: migrateAddTrackerCookies},
 	{id: "2026_04_add_release_category", dependsOn: []string{"2026_04_add_tracker_cookies"}, apply: migrateAddReleaseCategory},
-	{id: "2026_04_add_ui_state", dependsOn: []string{"2026_04_add_release_category"}, apply: migrateAddUIState},
-	{id: "2026_05_add_bluray_external_metadata", dependsOn: []string{"2026_04_add_ui_state"}, apply: migrateAddBlurayExternalMetadata},
+	{id: "2026_05_add_bluray_external_metadata", dependsOn: []string{"2026_04_add_release_category"}, apply: migrateAddBlurayExternalMetadata},
 }
 
 var legacyVersionToMigrationIDs = map[int][]string{
@@ -307,21 +306,6 @@ func migrateAddReleaseCategory(ctx context.Context, exec migrationExecutor) erro
 		return nil
 	}
 	if _, err := exec.ExecContext(ctx, `ALTER TABLE file_metadata ADD COLUMN release_category TEXT NOT NULL DEFAULT ""`); err != nil {
-		return fmt.Errorf("db: %w", err)
-	}
-	return nil
-}
-
-func migrateAddUIState(ctx context.Context, exec migrationExecutor) error {
-	_, err := exec.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS ui_states (
-			id TEXT PRIMARY KEY,
-			label TEXT NOT NULL DEFAULT "",
-			data TEXT NOT NULL DEFAULT "{}",
-			updated_at TEXT NOT NULL
-		)
-	`)
-	if err != nil {
 		return fmt.Errorf("db: %w", err)
 	}
 	return nil
@@ -786,14 +770,6 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 		CREATE TABLE IF NOT EXISTS config_settings (
 			section TEXT PRIMARY KEY,
 			data TEXT NOT NULL,
-			updated_at TEXT NOT NULL
-		)
-		`,
-		`
-		CREATE TABLE IF NOT EXISTS ui_states (
-			id TEXT PRIMARY KEY,
-			label TEXT NOT NULL DEFAULT '',
-			data TEXT NOT NULL DEFAULT '{}',
 			updated_at TEXT NOT NULL
 		)
 		`,

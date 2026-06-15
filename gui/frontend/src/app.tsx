@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
-import { EventsOn, isBrowserMode, isBrowserNativeBrowseAvailable } from "./utils/runtime";
+import {
+  EventsOn,
+  isBrowserMode,
+  isBrowserNativeBrowseAvailable,
+  isRuntimePathCaseInsensitive,
+  subscribeBrowserNativeBrowseAvailability,
+} from "./utils/runtime";
 import DescriptionBuilderPage from "./pages/description_builder";
 import BlurayCandidatesPage from "./pages/bluray_candidates";
 import DupeCheckPage from "./pages/dupe_check";
@@ -52,9 +58,6 @@ import type {
   TrackerQuestionnaire,
   TrackerDryRunPreview,
   TrackerUploadSnapshot,
-  UIState,
-  UIStateList,
-  UIStateRecord,
   WebAuthStatus,
   UploadedImageLink,
   UploadImagesResult,
@@ -72,11 +75,14 @@ import {
   inferSourcePathMode,
   normalizeSourcePathHistory,
   resolveInputHistoryLimit,
+  sameSourcePath,
   type SourcePathHistoryEntry,
   type SourcePathMode,
   sourcePathHistoryStorageKey,
 } from "./utils/inputHistory";
 import { handleExternalLinkClick } from "./utils/externalLinks";
+import { normalizeJobStatus } from "./utils/jobStatus";
+import { isMetadataProgressPathMatch } from "./utils/metadataProgress";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -103,9 +109,6 @@ const sidebarButtonClass = (active = false) =>
     active &&
       "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] shadow-[0_8px_22px_rgba(245,185,66,0.18)] hover:bg-[var(--sidebar-active-bg)] hover:text-[var(--sidebar-active-text)]",
   );
-
-const liveButtonClass =
-  "border-[rgba(53,194,193,0.24)] bg-[rgba(53,194,193,0.1)] text-[var(--text)] hover:bg-[rgba(53,194,193,0.16)]";
 
 const sidebarAppDetailsClass =
   "mt-1 grid grid-cols-[1fr_auto] items-center gap-1.5 px-2 py-1.5 text-[0.72rem] leading-tight text-[var(--muted)] max-[960px]:hidden";
@@ -147,11 +150,6 @@ const emptyPreview: MetadataPreview = {
   ExternalPreview: [],
   Bluray: undefined,
   TrackerData: [],
-};
-
-const emptyPreparation: PreparationPreview = {
-  SourcePath: "",
-  Descriptions: [],
 };
 
 const emptyTrackerDryRun: TrackerDryRunPreview = {
@@ -267,6 +265,12 @@ const upsertProgressLine = (lines: string[], line: string) => {
   return next;
 };
 
+/** Returns whether a background job status should keep progress recovery active. */
+const isRunningJobStatus = (status: string) => {
+  const normalized = normalizeJobStatus(status);
+  return normalized === "queued" || normalized === "running";
+};
+
 declare global {
   var go:
     | {
@@ -282,9 +286,6 @@ declare global {
               mode: "file" | "folder",
             ) => Promise<BrowseDirectoryResponse>;
             OpenExternalURL?: (url: string) => Promise<void>;
-            ListUIStates: () => Promise<UIStateList>;
-            GetUIState: (id: string) => Promise<UIStateRecord>;
-            SaveUIState: (id: string, label: string, state: UIState) => Promise<void>;
             DetectDiscType: (path: string) => Promise<string>;
             FetchMetadata: (
               path: string,
@@ -552,14 +553,6 @@ const isValidManualDate = (value: string) => {
 };
 
 type ThemeMode = "light" | "dark" | "auto";
-type UIStateMode = "fresh" | "live";
-
-const loadUIStateMode = (): UIStateMode => {
-  const storedMode = localStorage.getItem("ui-state-mode");
-  return storedMode === "fresh" || storedMode === "live" ? storedMode : "live";
-};
-
-const maxUIStateLabelLength = 18;
 
 const emptyWebAuthStatus: WebAuthStatus = {
   path: "",
@@ -576,13 +569,18 @@ const emptyWebAuthStatus: WebAuthStatus = {
 
 export default function App() {
   const browserMode = isBrowserMode();
-  const browserNativeBrowseAvailable = !browserMode || isBrowserNativeBrowseAvailable();
+  const browserNativeBrowseAvailable = useSyncExternalStore(
+    subscribeBrowserNativeBrowseAvailability,
+    isBrowserNativeBrowseAvailable,
+    () => true,
+  );
   const [path, setPath] = useState("");
   const [sourcePathHistory, setSourcePathHistory] = useState<SourcePathHistoryEntry[]>(() => {
     try {
       return normalizeSourcePathHistory(
         JSON.parse(localStorage.getItem(sourcePathHistoryStorageKey) || "[]"),
         defaultInputHistoryLimit,
+        isRuntimePathCaseInsensitive(),
       );
     } catch {
       return [];
@@ -606,9 +604,6 @@ export default function App() {
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [activeTab, setActiveTab] = useState("input");
   const [theme, setTheme] = useState<ThemeMode>("auto");
-  const [uiStateMode, setUIStateMode] = useState<UIStateMode>(() => loadUIStateMode());
-  const [uiStateID, setUIStateID] = useState(() => localStorage.getItem("ui-state-id") || "");
-  const [liveUIStates, setLiveUIStates] = useState<UIStateRecord[]>([]);
   const [renderedDescriptions, setRenderedDescriptions] = useState<Record<string, boolean>>({});
   const [bluraySelecting, setBluraySelecting] = useState(false);
   const [bluraySelectionError, setBluraySelectionError] = useState("");
@@ -620,11 +615,15 @@ export default function App() {
   const [playlistAutoPreparing, setPlaylistAutoPreparing] = useState(false);
   const [playlistPreparationError, setPlaylistPreparationError] = useState("");
   const [bdinfoProgressLines, setBdinfoProgressLines] = useState<string[]>([]);
-  const [metadataProgressTarget, setMetadataProgressTarget] = useState("");
+  const bdinfoProgressActiveRef = useRef(false);
   const [metadataProgressActive, setMetadataProgressActive] = useState(false);
   const [metadataProgressUpdates, setMetadataProgressUpdates] = useState<MetadataProgressUpdate[]>(
     [],
   );
+  // Mirrors metadata progress state synchronously so events emitted during the
+  // same tick as a fetch/reset request are not dropped by a stale React closure.
+  const metadataProgressActiveRef = useRef(false);
+  const metadataProgressTargetRef = useRef("");
   const [dupeSummary, setDupeSummary] = useState<DupeCheckSummary>(emptyDupeSummary);
   const [dupeLoading, setDupeLoading] = useState(false);
   const [dupeError, setDupeError] = useState("");
@@ -633,8 +632,6 @@ export default function App() {
   const [dupeCheckSnapshot, setDupeCheckSnapshot] = useState<DupeCheckSnapshot | null>(null);
   const [dupeIgnore, setDupeIgnore] = useState<Record<string, boolean>>({});
   const [dupeTrackerFlags, setDupeTrackerFlags] = useState<Record<string, boolean>>({});
-  const [prepPreview, setPrepPreview] = useState<PreparationPreview>(emptyPreparation);
-  const [, setPrepError] = useState("");
   const [builderPreview, setBuilderPreview] =
     useState<DescriptionBuilderPreview>(emptyDescriptionBuilder);
   const [builderRawByGroup, setBuilderRawByGroup] = useState<Record<string, string>>({});
@@ -694,11 +691,6 @@ export default function App() {
   const [webAuthError, setWebAuthError] = useState("");
   const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
   const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const uiStateHydratedRef = useRef(false);
-  const uiStateInitialLiveStateCheckedRef = useRef(false);
-  const freshUIStateCanPromoteRef = useRef(false);
-  const uiStateSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const uiStateResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sourcePathDropHandlerRef = useRef<(paths: string[]) => void>(() => undefined);
   const [hostBrowserMode, setHostBrowserMode] = useState<"file" | "folder" | null>(null);
   const [hostBrowser, setHostBrowser] = useState<BrowseDirectoryResponse | null>(null);
@@ -786,6 +778,7 @@ export default function App() {
           value,
           mode ?? inferSourcePathMode(value),
           inputHistoryLimit,
+          isRuntimePathCaseInsensitive(),
         );
         persistSourcePathHistory(next);
         return next;
@@ -801,7 +794,11 @@ export default function App() {
 
   useEffect(() => {
     setSourcePathHistory((prev) => {
-      const next = normalizeSourcePathHistory(prev, inputHistoryLimit);
+      const next = normalizeSourcePathHistory(
+        prev,
+        inputHistoryLimit,
+        isRuntimePathCaseInsensitive(),
+      );
       persistSourcePathHistory(next);
       return next;
     });
@@ -883,10 +880,12 @@ export default function App() {
   }, [lightboxImage]);
 
   useEffect(() => {
-    if (!playlistAutoPreparing) {
-      return;
-    }
+    // Keep BDInfo progress subscribed before preparation starts; the backend
+    // can emit first lines before React commits playlistAutoPreparing state.
     const off = EventsOn(bdinfoProgressEvent, (payload: any) => {
+      if (!bdinfoProgressActiveRef.current) {
+        return;
+      }
       const line = typeof payload === "string" ? payload : payload?.line;
       if (typeof line !== "string") {
         return;
@@ -903,19 +902,18 @@ export default function App() {
         off();
       }
     };
-  }, [playlistAutoPreparing]);
+  }, []);
 
   useEffect(() => {
-    const normalizePath = (value: string) => value.trim().replaceAll("\\", "/").toLowerCase();
+    // Keep one stable metadata progress listener for the app lifetime; refs
+    // carry the active request state without resubscribing mid-fetch.
     const off = EventsOn(metadataProgressEvent, (payload: any) => {
-      if (!metadataProgressActive) {
+      if (!metadataProgressActiveRef.current) {
         return;
       }
       const eventPath = typeof payload?.path === "string" ? payload.path : "";
-      if (
-        metadataProgressTarget &&
-        normalizePath(eventPath) !== normalizePath(metadataProgressTarget)
-      ) {
+      const progressTarget = metadataProgressTargetRef.current;
+      if (!isMetadataProgressPathMatch(eventPath, progressTarget)) {
         return;
       }
 
@@ -929,8 +927,9 @@ export default function App() {
       };
 
       if (update.phase === "complete" && update.status === "completed") {
+        metadataProgressActiveRef.current = false;
+        metadataProgressTargetRef.current = "";
         setMetadataProgressActive(false);
-        setMetadataProgressTarget("");
         setMetadataProgressUpdates([]);
         return;
       }
@@ -946,7 +945,7 @@ export default function App() {
         off();
       }
     };
-  }, [metadataProgressActive, metadataProgressTarget]);
+  }, []);
 
   const getThemeIcon = () => {
     if (theme === "auto") return "🔄";
@@ -1260,13 +1259,8 @@ export default function App() {
     livePreviewImage,
     setLivePreviewImage,
     livePreviewRequestId,
-    setScreenshotPlan,
-    setScreenshotSelections,
     screenshotsSettingsSaving,
     setScreenshotsSettingsSaving,
-    setShowFrameSelections,
-    setFinalResult,
-    setDeletedTrackerImages,
     loadScreenshotPlan,
     readScreenshotImage,
     setExistingImages,
@@ -1310,413 +1304,8 @@ export default function App() {
     resetUploadState,
     setUploadSelections,
     setUploadHost,
-    setUploadedImages,
-    setUploadedImageRecords,
     uploadHost,
   } = uploadImages;
-
-  const applyUIState = useCallback(
-    (state: UIState) => {
-      if (typeof state.path === "string") {
-        setPath(state.path);
-        setSourcePathMode(undefined);
-      }
-      if (typeof state.sourceLookupURL === "string") setSourceLookupURL(state.sourceLookupURL);
-      if (typeof state.activeTab === "string") setActiveTab(state.activeTab);
-      if (state.preview) setPreview({ ...emptyPreview, ...state.preview });
-      if (state.idEdits)
-        setIdEdits({ ...buildIDEditState(emptyPreview.ExternalIDs), ...state.idEdits });
-      if (state.releaseEdits) {
-        setReleaseEdits({ ...buildReleaseEditState({}), ...state.releaseEdits });
-      }
-      if (state.releaseTouched) {
-        setReleaseTouched({ ...buildReleaseTouchedState({}), ...state.releaseTouched });
-      }
-      if (typeof state.showExternalIDInputUI === "boolean") {
-        setShowExternalIDInputUI(state.showExternalIDInputUI);
-      }
-      if (typeof state.selectedProvider === "string") setSelectedProvider(state.selectedProvider);
-      if (state.releasePageTrackerSelection) {
-        setReleasePageTrackerSelection(state.releasePageTrackerSelection);
-      }
-      if (state.uploadToggles) setUploadToggles(state.uploadToggles);
-      if (typeof state.uploadSkipClientInjection === "boolean") {
-        setUploadSkipClientInjection(state.uploadSkipClientInjection);
-      }
-      if (typeof state.runDebug === "boolean") setRunDebug(state.runDebug);
-      if (typeof state.runLogLevel === "string") setRunLogLevel(state.runLogLevel);
-      if (typeof state.runLogLevelTouched === "boolean") {
-        setRunLogLevelTouched(state.runLogLevelTouched);
-      }
-      if (state.dupeSummary) setDupeSummary({ ...emptyDupeSummary, ...state.dupeSummary });
-      if (typeof state.dupeChecked === "boolean") setDupeChecked(state.dupeChecked);
-      if (state.dupeIgnore) setDupeIgnore(state.dupeIgnore);
-      if (state.dupeTrackerFlags) setDupeTrackerFlags(state.dupeTrackerFlags);
-      if (typeof state.dupeCheckJobID === "string") setDupeCheckJobID(state.dupeCheckJobID);
-      if (state.dupeCheckSnapshot !== undefined) setDupeCheckSnapshot(state.dupeCheckSnapshot);
-      if (state.prepPreview) setPrepPreview({ ...emptyPreparation, ...state.prepPreview });
-      if (state.screenshotPlan !== undefined) setScreenshotPlan(state.screenshotPlan);
-      if (state.screenshotSelections) setScreenshotSelections(state.screenshotSelections);
-      if (typeof state.showFrameSelections === "boolean") {
-        setShowFrameSelections(state.showFrameSelections);
-      }
-      if (state.finalResult !== undefined) setFinalResult(state.finalResult);
-      if (state.deletedTrackerImages) setDeletedTrackerImages(state.deletedTrackerImages);
-      if (typeof state.uploadHost === "string") setUploadHost(state.uploadHost);
-      if (state.uploadSelections) setUploadSelections(state.uploadSelections);
-      if (state.uploadedImages) setUploadedImages(state.uploadedImages);
-      if (state.uploadedImageRecords) {
-        setUploadedImageRecords(state.uploadedImageRecords);
-      }
-      if (typeof state.trackerUploadJobID === "string") {
-        setTrackerUploadJobID(state.trackerUploadJobID);
-      }
-      if (state.trackerUploadSnapshot !== undefined) {
-        setTrackerUploadSnapshot(state.trackerUploadSnapshot);
-      }
-      if (state.trackerDryRunPreview) {
-        setTrackerDryRunPreview({ ...emptyTrackerDryRun, ...state.trackerDryRunPreview });
-      }
-      if (state.trackerQuestionnaireAnswers) {
-        setTrackerQuestionnaireAnswers(state.trackerQuestionnaireAnswers);
-      }
-    },
-    [
-      setDeletedTrackerImages,
-      setFinalResult,
-      setScreenshotPlan,
-      setScreenshotSelections,
-      setShowFrameSelections,
-      setUploadHost,
-      setUploadSelections,
-      setUploadedImageRecords,
-      setUploadedImages,
-    ],
-  );
-
-  const createUIStateID = () => {
-    const randomID =
-      typeof globalThis.crypto?.randomUUID === "function"
-        ? globalThis.crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    return `ui-${randomID}`;
-  };
-
-  const uiStateLabel = (state: UIState) => {
-    const statePath = typeof state.path === "string" ? state.path.trim() : "";
-    let label = "";
-    if (statePath) {
-      const parts = statePath.replaceAll("\\", "/").split("/").filter(Boolean);
-      label = parts[parts.length - 1] || statePath;
-    }
-    if (!label) {
-      label = state.preview?.ReleaseName?.trim() || "";
-    }
-    if (!label) {
-      const stateTab = typeof state.activeTab === "string" ? state.activeTab.trim() : "";
-      label = stateTab ? `Live ${stateTab}` : "Live state";
-    }
-    return label.length > maxUIStateLabelLength
-      ? `${label.slice(0, maxUIStateLabelLength - 3)}...`
-      : label;
-  };
-
-  const hasRealUIState = useCallback((state?: UIState | null) => {
-    if (!state) {
-      return false;
-    }
-    const hasText = (...values: Array<string | undefined>) =>
-      values.some((value) => typeof value === "string" && value.trim().length > 0);
-    return (
-      hasText(
-        state.preview?.SourcePath,
-        state.preview?.ReleaseName,
-        state.dupeCheckJobID,
-        state.trackerUploadJobID,
-        state.dupeSummary?.SourcePath,
-      ) ||
-      Boolean(state.preview?.TrackerData?.length) ||
-      Boolean(state.dupeChecked) ||
-      Boolean(state.dupeCheckSnapshot) ||
-      hasText(state.prepPreview?.SourcePath) ||
-      Boolean(state.prepPreview?.Descriptions?.length) ||
-      Boolean(state.screenshotPlan) ||
-      Boolean(state.screenshotSelections?.length) ||
-      Boolean(state.finalResult) ||
-      Boolean(state.uploadedImages?.length) ||
-      Boolean(state.uploadedImageRecords?.length) ||
-      Boolean(state.trackerUploadSnapshot) ||
-      Boolean(state.trackerDryRunPreview?.Trackers?.length) ||
-      Boolean(Object.keys(state.releasePageTrackerSelection || {}).length) ||
-      Boolean(Object.keys(state.uploadToggles || {}).length)
-    );
-  }, []);
-
-  const liveUIStateRecords = useCallback(
-    (records: UIStateRecord[] | undefined) =>
-      (records || []).filter((record) => hasRealUIState(record.state)),
-    [hasRealUIState],
-  );
-
-  const uiStateSourceKey = useCallback((state?: UIState | null) => {
-    const raw =
-      state?.preview?.SourcePath ||
-      state?.dupeSummary?.SourcePath ||
-      state?.dupeCheckSnapshot?.sourcePath ||
-      state?.prepPreview?.SourcePath ||
-      state?.trackerDryRunPreview?.SourcePath ||
-      state?.path ||
-      "";
-    return raw.trim().replaceAll("\\", "/").toLowerCase();
-  }, []);
-
-  const matchingLiveUIState = useCallback(
-    (records: UIStateRecord[], state: UIState) => {
-      const key = uiStateSourceKey(state);
-      if (!key) {
-        return null;
-      }
-      return records.find((record) => uiStateSourceKey(record.state) === key) || null;
-    },
-    [uiStateSourceKey],
-  );
-
-  const refreshLiveUIStates = useCallback(async () => {
-    const listUIStates = globalThis.go?.guiapp?.App?.ListUIStates;
-    if (!listUIStates) {
-      return [];
-    }
-    const result = await listUIStates();
-    const states = liveUIStateRecords(result?.states);
-    setLiveUIStates(states);
-    return states;
-  }, [liveUIStateRecords]);
-
-  const suspendUIStateSaves = () => {
-    uiStateHydratedRef.current = false;
-    if (uiStateSaveTimerRef.current) {
-      clearTimeout(uiStateSaveTimerRef.current);
-      uiStateSaveTimerRef.current = null;
-    }
-    if (uiStateResumeTimerRef.current) {
-      clearTimeout(uiStateResumeTimerRef.current);
-      uiStateResumeTimerRef.current = null;
-    }
-  };
-
-  const resumeUIStateSavesSoon = () => {
-    if (uiStateResumeTimerRef.current) {
-      clearTimeout(uiStateResumeTimerRef.current);
-    }
-    uiStateResumeTimerRef.current = setTimeout(() => {
-      uiStateHydratedRef.current = true;
-      uiStateResumeTimerRef.current = null;
-    }, 250);
-  };
-
-  useEffect(() => {
-    const shouldCheckForSavedLiveState =
-      browserMode &&
-      !uiStateInitialLiveStateCheckedRef.current &&
-      uiStateMode === "fresh" &&
-      !uiStateID;
-    const shouldBootstrapLiveState = uiStateMode === "live" || shouldCheckForSavedLiveState;
-    if (!shouldBootstrapLiveState) {
-      uiStateHydratedRef.current = true;
-      return;
-    }
-    if (browserMode && !uiStateInitialLiveStateCheckedRef.current) {
-      uiStateInitialLiveStateCheckedRef.current = true;
-    }
-
-    let canceled = false;
-    suspendUIStateSaves();
-    refreshLiveUIStates()
-      .then((states) => {
-        if (canceled) {
-          return;
-        }
-        const selected =
-          (uiStateID ? states.find((record) => record.id === uiStateID) : null) ||
-          states[0] ||
-          null;
-        if (selected) {
-          setUIStateID(selected.id);
-          localStorage.setItem("ui-state-mode", "live");
-          localStorage.setItem("ui-state-id", selected.id);
-          applyUIState(selected.state || {});
-          setUIStateMode("live");
-          return;
-        }
-        if (shouldCheckForSavedLiveState) {
-          return;
-        }
-        const nextID = uiStateID || createUIStateID();
-        localStorage.setItem("ui-state-mode", "live");
-        localStorage.setItem("ui-state-id", nextID);
-        setUIStateID(nextID);
-        setUIStateMode("live");
-      })
-      .catch((err) => {
-        console.error("Failed to load UI states:", err);
-      })
-      .finally(() => {
-        if (!canceled) {
-          resumeUIStateSavesSoon();
-        }
-      });
-
-    return () => {
-      canceled = true;
-      suspendUIStateSaves();
-    };
-  }, [applyUIState, browserMode, refreshLiveUIStates, uiStateID, uiStateMode]);
-
-  useEffect(() => {
-    if (uiStateMode !== "live" && !freshUIStateCanPromoteRef.current) {
-      return;
-    }
-    if (!uiStateHydratedRef.current) {
-      return;
-    }
-    const saveUIState = globalThis.go?.guiapp?.App?.SaveUIState;
-    if (!saveUIState) {
-      return;
-    }
-    if (uiStateSaveTimerRef.current) {
-      clearTimeout(uiStateSaveTimerRef.current);
-    }
-    const state: UIState = {
-      path,
-      sourceLookupURL,
-      activeTab,
-      preview,
-      idEdits,
-      releaseEdits,
-      releaseTouched,
-      showExternalIDInputUI,
-      selectedProvider,
-      releasePageTrackerSelection,
-      uploadToggles,
-      uploadSkipClientInjection,
-      runDebug,
-      runLogLevel,
-      runLogLevelTouched,
-      dupeSummary,
-      dupeChecked,
-      dupeIgnore,
-      dupeTrackerFlags,
-      dupeCheckJobID,
-      dupeCheckSnapshot,
-      prepPreview,
-      screenshotPlan: screenshots.screenshotPlan,
-      screenshotSelections: screenshots.screenshotSelections,
-      showFrameSelections: screenshots.showFrameSelections,
-      finalResult: screenshots.finalResult,
-      deletedTrackerImages: screenshots.deletedTrackerImages,
-      uploadHost: uploadImages.uploadHost,
-      uploadSelections: uploadImages.uploadSelections,
-      uploadedImages: uploadImages.uploadedImages,
-      uploadedImageRecords: uploadImages.uploadedImageRecords,
-      trackerUploadJobID,
-      trackerUploadSnapshot,
-      trackerDryRunPreview,
-      trackerQuestionnaireAnswers,
-    };
-    if (!hasRealUIState(state)) {
-      return;
-    }
-    uiStateSaveTimerRef.current = setTimeout(() => {
-      void (async () => {
-        let saveID = uiStateID;
-        let records = liveUIStates;
-        try {
-          records = await refreshLiveUIStates();
-        } catch (err) {
-          console.error("Failed to refresh UI states before save:", err);
-        }
-        const currentSource = uiStateSourceKey(state);
-        const attachedRecord = saveID
-          ? records.find((record) => record.id === saveID) || null
-          : null;
-        const attachedSource = uiStateSourceKey(attachedRecord?.state);
-        if (!saveID || (currentSource && attachedSource && currentSource !== attachedSource)) {
-          const matchingRecord = matchingLiveUIState(records, state);
-          saveID = matchingRecord?.id || createUIStateID();
-          localStorage.setItem("ui-state-mode", "live");
-          localStorage.setItem("ui-state-id", saveID);
-          setUIStateID(saveID);
-          setUIStateMode("live");
-        }
-        const label = uiStateLabel(state);
-        await saveUIState(saveID, label, state);
-        freshUIStateCanPromoteRef.current = false;
-        setLiveUIStates((prev) => {
-          const baseRecords = records.length > 0 ? records : prev;
-          return liveUIStateRecords([
-            ...baseRecords.filter((record) => record.id !== saveID),
-            {
-              id: saveID,
-              label,
-              updatedAt: new Date().toISOString(),
-              state,
-            },
-          ]);
-        });
-      })().catch((err) => {
-        console.error("Failed to save UI state:", err);
-      });
-    }, 750);
-    return () => {
-      if (uiStateSaveTimerRef.current) {
-        clearTimeout(uiStateSaveTimerRef.current);
-      }
-    };
-  }, [
-    path,
-    sourceLookupURL,
-    activeTab,
-    preview,
-    idEdits,
-    releaseEdits,
-    releaseTouched,
-    showExternalIDInputUI,
-    selectedProvider,
-    releasePageTrackerSelection,
-    uploadToggles,
-    uploadSkipClientInjection,
-    runDebug,
-    runLogLevel,
-    runLogLevelTouched,
-    dupeSummary,
-    dupeChecked,
-    dupeIgnore,
-    dupeTrackerFlags,
-    dupeCheckJobID,
-    dupeCheckSnapshot,
-    prepPreview,
-    screenshots.screenshotPlan,
-    screenshots.screenshotSelections,
-    screenshots.showFrameSelections,
-    screenshots.finalResult,
-    screenshots.deletedTrackerImages,
-    uploadImages.uploadHost,
-    uploadImages.uploadSelections,
-    uploadImages.uploadedImages,
-    uploadImages.uploadedImageRecords,
-    trackerUploadJobID,
-    trackerUploadSnapshot,
-    trackerDryRunPreview,
-    trackerQuestionnaireAnswers,
-    hasRealUIState,
-    liveUIStateRecords,
-    liveUIStates,
-    matchingLiveUIState,
-    refreshLiveUIStates,
-    uiStateSourceKey,
-    uiStateID,
-    uiStateMode,
-  ]);
 
   // Tracker image URL handling
   const trackerImageURLs = useMemo(() => {
@@ -1755,33 +1344,6 @@ export default function App() {
     );
   }, [screenshots.uploadCandidates]);
 
-  const activeLiveState = useMemo(
-    () => liveUIStates.find((record) => record.id === uiStateID) || null,
-    [liveUIStates, uiStateID],
-  );
-
-  const activeLiveIndex = useMemo(
-    () => liveUIStates.findIndex((record) => record.id === uiStateID),
-    [liveUIStates, uiStateID],
-  );
-
-  const uiStateToggleLabel =
-    uiStateMode === "fresh"
-      ? "Fresh"
-      : activeLiveIndex >= 0
-        ? `Live ${activeLiveIndex + 1}/${Math.max(1, liveUIStates.length)}`
-        : "Live";
-
-  const uiStateToggleTitle =
-    uiStateMode === "fresh"
-      ? "Using a fresh local workspace"
-      : liveUIStates.length > 1
-        ? `Using shared live UI state ${Math.max(
-            1,
-            liveUIStates.findIndex((record) => record.id === uiStateID) + 1,
-          )} of ${liveUIStates.length}${activeLiveState?.label ? `: ${activeLiveState.label}` : ""}`
-        : `Using shared live UI state${activeLiveState?.label ? `: ${activeLiveState.label}` : ""}`;
-
   const resetScreenshotState = useCallback(() => {
     resetScreenshots();
     resetUploadState();
@@ -1790,87 +1352,8 @@ export default function App() {
     setLiveCaptureLoading(false);
   }, [resetScreenshots, resetUploadState]);
 
-  const buildCurrentUIState = useCallback(
-    (): UIState => ({
-      path,
-      sourceLookupURL,
-      activeTab,
-      preview,
-      idEdits,
-      releaseEdits,
-      releaseTouched,
-      showExternalIDInputUI,
-      selectedProvider,
-      releasePageTrackerSelection,
-      uploadToggles,
-      runDebug,
-      runLogLevel,
-      runLogLevelTouched,
-      dupeSummary,
-      dupeChecked,
-      dupeIgnore,
-      dupeTrackerFlags,
-      dupeCheckJobID,
-      dupeCheckSnapshot,
-      prepPreview,
-      screenshotPlan: screenshots.screenshotPlan,
-      screenshotSelections: screenshots.screenshotSelections,
-      showFrameSelections: screenshots.showFrameSelections,
-      finalResult: screenshots.finalResult,
-      deletedTrackerImages: screenshots.deletedTrackerImages,
-      uploadHost: uploadImages.uploadHost,
-      uploadSelections: uploadImages.uploadSelections,
-      uploadedImages: uploadImages.uploadedImages,
-      uploadedImageRecords: uploadImages.uploadedImageRecords,
-      trackerUploadJobID,
-      trackerUploadSnapshot,
-      trackerDryRunPreview,
-      trackerQuestionnaireAnswers,
-    }),
-    [
-      path,
-      sourceLookupURL,
-      activeTab,
-      preview,
-      idEdits,
-      releaseEdits,
-      releaseTouched,
-      showExternalIDInputUI,
-      selectedProvider,
-      releasePageTrackerSelection,
-      uploadToggles,
-      runDebug,
-      runLogLevel,
-      runLogLevelTouched,
-      dupeSummary,
-      dupeChecked,
-      dupeIgnore,
-      dupeTrackerFlags,
-      dupeCheckJobID,
-      dupeCheckSnapshot,
-      prepPreview,
-      screenshots.screenshotPlan,
-      screenshots.screenshotSelections,
-      screenshots.showFrameSelections,
-      screenshots.finalResult,
-      screenshots.deletedTrackerImages,
-      uploadImages.uploadHost,
-      uploadImages.uploadSelections,
-      uploadImages.uploadedImages,
-      uploadImages.uploadedImageRecords,
-      trackerUploadJobID,
-      trackerUploadSnapshot,
-      trackerDryRunPreview,
-      trackerQuestionnaireAnswers,
-    ],
-  );
-
   const resetFreshWorkflowState = useCallback(
     (nextActiveTab = "input") => {
-      freshUIStateCanPromoteRef.current = false;
-      if (uiStateSaveTimerRef.current) {
-        clearTimeout(uiStateSaveTimerRef.current);
-      }
       setPath("");
       setSourcePathMode(undefined);
       setSourceLookupURL("");
@@ -1890,9 +1373,11 @@ export default function App() {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
       setPlaylistAutoPreparing(false);
+      bdinfoProgressActiveRef.current = false;
       setPlaylistPreparationError("");
       setBdinfoProgressLines([]);
-      setMetadataProgressTarget("");
+      metadataProgressTargetRef.current = "";
+      metadataProgressActiveRef.current = false;
       setMetadataProgressActive(false);
       setMetadataProgressUpdates([]);
       setDupeSummary(emptyDupeSummary);
@@ -1903,8 +1388,6 @@ export default function App() {
       setDupeCheckSnapshot(null);
       setDupeIgnore({});
       setDupeTrackerFlags({});
-      setPrepPreview(emptyPreparation);
-      setPrepError("");
       setBuilderPreview(emptyDescriptionBuilder);
       setBuilderRawByGroup({});
       setBuilderRenderedByGroup({});
@@ -1942,103 +1425,15 @@ export default function App() {
 
   const handleHistoryReleaseDeleted = useCallback(
     (deletedPath: string) => {
-      const deletedKey = uiStateSourceKey({ path: deletedPath });
-      if (!deletedKey) {
+      // The input path can be edited after loading history; reset based on the displayed release.
+      const loadedPath = (preview.SourcePath || path).trim();
+      if (!sameSourcePath(loadedPath, deletedPath, isRuntimePathCaseInsensitive())) {
         return;
       }
-      if (uiStateSourceKey(buildCurrentUIState()) !== deletedKey) {
-        return;
-      }
-      localStorage.setItem("ui-state-mode", "fresh");
-      localStorage.removeItem("ui-state-id");
-      suspendUIStateSaves();
       resetFreshWorkflowState("history");
-      setUIStateID("");
-      setUIStateMode("fresh");
-      resumeUIStateSavesSoon();
-      void refreshLiveUIStates().catch((err) => {
-        console.error("Failed to refresh UI states after history delete:", err);
-      });
     },
-    [buildCurrentUIState, refreshLiveUIStates, resetFreshWorkflowState, uiStateSourceKey],
+    [path, preview.SourcePath, resetFreshWorkflowState],
   );
-
-  const toggleUIStateMode = async () => {
-    let states = liveUIStates;
-    try {
-      states = await refreshLiveUIStates();
-    } catch (err) {
-      console.error("Failed to refresh UI states:", err);
-    }
-    const currentIndex = states.findIndex((record) => record.id === uiStateID);
-
-    if (uiStateMode === "live" && currentIndex >= 0 && currentIndex + 1 < states.length) {
-      const nextState = states[currentIndex + 1];
-      localStorage.setItem("ui-state-mode", "live");
-      localStorage.setItem("ui-state-id", nextState.id);
-      suspendUIStateSaves();
-      applyUIState(nextState.state || {});
-      setUIStateID(nextState.id);
-      setUIStateMode("live");
-      resumeUIStateSavesSoon();
-      return;
-    }
-
-    if (uiStateMode === "live") {
-      localStorage.setItem("ui-state-mode", "fresh");
-      localStorage.removeItem("ui-state-id");
-      suspendUIStateSaves();
-      resetFreshWorkflowState();
-      setUIStateID("");
-      setUIStateMode("fresh");
-      return;
-    }
-
-    const state = buildCurrentUIState();
-    const matchingState = matchingLiveUIState(states, state);
-    const nextState = matchingState || states[0];
-    if (nextState) {
-      localStorage.setItem("ui-state-mode", "live");
-      localStorage.setItem("ui-state-id", nextState.id);
-      suspendUIStateSaves();
-      applyUIState(nextState.state || {});
-      setUIStateID(nextState.id);
-      setUIStateMode("live");
-      resumeUIStateSavesSoon();
-      return;
-    }
-
-    if (!hasRealUIState(state)) {
-      localStorage.setItem("ui-state-mode", "fresh");
-      localStorage.removeItem("ui-state-id");
-      setUIStateID("");
-      setUIStateMode("fresh");
-      return;
-    }
-    const nextID = createUIStateID();
-    const nextRecord = {
-      id: nextID,
-      label: uiStateLabel(state),
-      updatedAt: new Date().toISOString(),
-      state,
-    };
-    const saveUIState = globalThis.go?.guiapp?.App?.SaveUIState;
-    if (saveUIState) {
-      try {
-        await saveUIState(nextID, nextRecord.label, state);
-      } catch (err) {
-        console.error("Failed to save UI state:", err);
-        return;
-      }
-    }
-    localStorage.setItem("ui-state-mode", "live");
-    localStorage.setItem("ui-state-id", nextID);
-    suspendUIStateSaves();
-    setLiveUIStates([...states.filter((record) => record.id !== nextID), nextRecord]);
-    setUIStateID(nextID);
-    setUIStateMode("live");
-    resumeUIStateSavesSoon();
-  };
 
   // Helper functions for screenshot management (not in the hook)
   const handleDeleteExistingImage = (image: ScreenshotImage) => {
@@ -2329,8 +1724,6 @@ export default function App() {
     }
     setDupeSummary(emptyDupeSummary);
     setDupeError("");
-    setPrepPreview(emptyPreparation);
-    setPrepError("");
     setBuilderPreview(emptyDescriptionBuilder);
     setBuilderRawByGroup({});
     setBuilderRenderedByGroup({});
@@ -2523,7 +1916,6 @@ export default function App() {
     selectedPath: string,
     mode?: SourcePathMode,
   ): Promise<SourcePathSelection | null> => {
-    freshUIStateCanPromoteRef.current = false;
     const trimmedPath = selectedPath.trim();
     if (!trimmedPath) {
       return null;
@@ -2538,6 +1930,7 @@ export default function App() {
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
     setPlaylistAutoPreparing(false);
+    bdinfoProgressActiveRef.current = false;
 
     if (selectedMode === "file") {
       setShowPlaylistSelection(false);
@@ -2594,8 +1987,10 @@ export default function App() {
   const handlePlaylistSelectionComplete = async () => {
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
+    bdinfoProgressActiveRef.current = true;
     setPlaylistAutoPreparing(true);
     const completed = await runPlaylistBDInfo();
+    bdinfoProgressActiveRef.current = false;
     setPlaylistAutoPreparing(false);
     if (completed) {
       setShowPlaylistSelection(false);
@@ -2608,13 +2003,11 @@ export default function App() {
     overrides: ExternalIDOverrides,
     nameOverrides: ReleaseNameOverrides,
     hideExternalIDInputUIOnSuccess = false,
-    options: { targetPath?: string; targetMode?: SourcePathMode } = {},
+    options: { targetPath?: string; targetMode?: SourcePathMode; switchToInput?: boolean } = {},
   ) => {
     setError("");
     setDupeChecked(false);
     setDupeSummary(emptyDupeSummary);
-    setPrepPreview(emptyPreparation);
-    setPrepError("");
     setBuilderPreview(emptyDescriptionBuilder);
     setBuilderRawByGroup({});
     setBuilderRenderedByGroup({});
@@ -2631,7 +2024,8 @@ export default function App() {
       setError("Please select a file or folder.");
       return;
     }
-    setMetadataProgressTarget(targetPath);
+    metadataProgressTargetRef.current = targetPath;
+    metadataProgressActiveRef.current = true;
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
     setLoading(true);
@@ -2643,16 +2037,16 @@ export default function App() {
         normalizeReleaseOverrides(nameOverrides),
         getSelectedTrackers(),
       );
-      applyPreviewResult(result);
+      applyPreviewResult(result, { switchToInput: options.switchToInput });
       rememberSourcePath(
         targetPath,
         options.targetMode ?? sourcePathMode ?? inferSourcePathMode(targetPath),
       );
-      freshUIStateCanPromoteRef.current = uiStateMode === "fresh";
       setShowExternalIDInputUI(!hideExternalIDInputUIOnSuccess);
     } catch (err) {
       setError(String(err));
     } finally {
+      metadataProgressActiveRef.current = false;
       setMetadataProgressActive(false);
       setLoading(false);
     }
@@ -2743,7 +2137,8 @@ export default function App() {
     }
     const targetPath = path.trim();
     clearEditAttributesState();
-    setMetadataProgressTarget(targetPath);
+    metadataProgressTargetRef.current = targetPath;
+    metadataProgressActiveRef.current = true;
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
     setLoading(true);
@@ -2761,6 +2156,7 @@ export default function App() {
     } catch (err) {
       setError(String(err));
     } finally {
+      metadataProgressActiveRef.current = false;
       setMetadataProgressActive(false);
       setMetadataResetting(false);
       setLoading(false);
@@ -3349,10 +2745,8 @@ export default function App() {
     setDupeCheckSnapshot(snapshot);
     setDupeSummary(snapshot.summary || emptyDupeSummary);
 
-    const normalized = String(snapshot.status || "")
-      .toLowerCase()
-      .trim();
-    const running = normalized === "queued" || normalized === "running";
+    const normalized = normalizeJobStatus(snapshot.status);
+    const running = isRunningJobStatus(normalized);
     setDupeLoading(running);
 
     if (normalized === "completed") {
@@ -3363,7 +2757,6 @@ export default function App() {
       setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
     } else if (normalized === "failed" || normalized === "canceled") {
       setDupeChecked(false);
-      setPrepPreview(emptyPreparation);
       setDupeError(snapshot.error || "Dupe check failed.");
     }
   }, []);
@@ -3392,26 +2785,37 @@ export default function App() {
     setDupeChecked(false);
     setDupeSummary(emptyDupeSummary);
     setDupeLoading(true);
+    let jobID = "";
     try {
-      const jobID = await starter(
+      jobID = await starter(
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
       );
-      setDupeCheckJobID(jobID);
-      if (snapshotLoader) {
-        const snapshot = await snapshotLoader(jobID);
-        applyDupeCheckSnapshot(snapshot);
-      }
     } catch (err) {
       const message = String(err);
+      // Starter failures do not create a durable job, so clear the polling gates.
+      setDupeLoading(false);
+      setDupeCheckJobID("");
+      setDupeCheckSnapshot(null);
       setDupeChecked(false);
-      setPrepPreview(emptyPreparation);
       if (message.includes("dupe check requires metadata preview")) {
         setDupeError("Fetch metadata first to cache a preview before checking dupes.");
       } else {
         setDupeError(message);
+      }
+      return;
+    }
+    setDupeCheckJobID(jobID);
+    // The first snapshot is best-effort; once a job exists, events and fallback
+    // polling own lifecycle updates.
+    if (snapshotLoader) {
+      try {
+        const snapshot = await snapshotLoader(jobID);
+        applyDupeCheckSnapshot(snapshot);
+      } catch {
+        // Keep tracking the job even when this initial fetch is transiently unavailable.
       }
     }
   };
@@ -3437,14 +2841,49 @@ export default function App() {
   }, [applyDupeCheckSnapshot, dupeCheckJobID]);
 
   useEffect(() => {
+    // Poll active jobs as a fallback for missed early job events; live events
+    // still drive updates when the runtime stream is healthy.
+    const currentStatus = String(dupeCheckSnapshot?.status || "");
+    if (!dupeCheckJobID || (!dupeLoading && !isRunningJobStatus(currentStatus))) {
+      return;
+    }
+    const snapshotLoader = globalThis.go?.guiapp?.App?.GetDupeCheckSnapshot;
+    if (!snapshotLoader) {
+      return;
+    }
+
+    let stopped = false;
+    let timer: number | undefined;
+    const loadSnapshot = async () => {
+      try {
+        const snapshot = await snapshotLoader(dupeCheckJobID);
+        if (!stopped) {
+          applyDupeCheckSnapshot(snapshot);
+        }
+      } catch {
+        // Event delivery remains primary; transient polling failures should not replace UI errors.
+      }
+      if (!stopped) {
+        timer = window.setTimeout(loadSnapshot, 1000);
+      }
+    };
+
+    timer = window.setTimeout(loadSnapshot, 1000);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [applyDupeCheckSnapshot, dupeCheckJobID, dupeCheckSnapshot?.status, dupeLoading]);
+
+  useEffect(() => {
     setDupeChecked(false);
     setDupeCheckJobID("");
     setDupeCheckSnapshot(null);
     setDupeSummary(emptyDupeSummary);
     setDupeIgnore({});
     setDupeTrackerFlags({});
-    setPrepPreview(emptyPreparation);
-    setPrepError("");
     setBuilderPreview(emptyDescriptionBuilder);
     setBuilderRawByGroup({});
     setBuilderRenderedByGroup({});
@@ -3462,7 +2901,9 @@ export default function App() {
     setTrackerDryRunError("");
     setTrackerDryRunPreview(emptyTrackerDryRun);
     setTrackerDryRunProgress(null);
-    setMetadataProgressTarget("");
+    bdinfoProgressActiveRef.current = false;
+    metadataProgressTargetRef.current = "";
+    metadataProgressActiveRef.current = false;
     setMetadataProgressActive(false);
     setMetadataProgressUpdates([]);
     resetScreenshotState();
@@ -3699,6 +3140,23 @@ export default function App() {
     [],
   );
 
+  /** Applies an upload job snapshot from either live events or polling fallback. */
+  const applyTrackerUploadSnapshot = useCallback((snapshot: TrackerUploadSnapshot) => {
+    setTrackerUploadSnapshot(snapshot);
+    const normalized = normalizeJobStatus(snapshot.status);
+    const running = isRunningJobStatus(normalized);
+    setTrackerUploadRunning(running);
+    if (normalized === "completed") {
+      setTrackerUploadError("");
+    } else if (
+      normalized === "completed_with_errors" ||
+      normalized === "failed" ||
+      normalized === "canceled"
+    ) {
+      setTrackerUploadError(snapshot.error || "Upload finished with errors.");
+    }
+  }, []);
+
   const handleStartTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
     const starter = globalThis.go?.guiapp?.App?.StartTrackerUpload;
@@ -3766,7 +3224,7 @@ export default function App() {
       setTrackerUploadJobID(jobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(jobID);
-        setTrackerUploadSnapshot(snapshot);
+        applyTrackerUploadSnapshot(snapshot);
       }
     } catch (err) {
       setTrackerUploadRunning(false);
@@ -3784,6 +3242,7 @@ export default function App() {
     runDebug,
     uploadSkipClientInjection,
     runLogLevel,
+    applyTrackerUploadSnapshot,
   ]);
 
   const runTrackerDryRun = useCallback(
@@ -3948,13 +3407,13 @@ export default function App() {
       setTrackerUploadJobID(nextJobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(nextJobID);
-        setTrackerUploadSnapshot(snapshot);
+        applyTrackerUploadSnapshot(snapshot);
       }
     } catch (err) {
       setTrackerUploadRunning(false);
       setTrackerUploadError(String(err));
     }
-  }, [trackerUploadJobID]);
+  }, [applyTrackerUploadSnapshot, trackerUploadJobID]);
 
   useEffect(() => {
     if (!trackerUploadJobID) {
@@ -3966,16 +3425,7 @@ export default function App() {
       if (payload?.jobID !== trackerUploadJobID) {
         return;
       }
-      const snapshot = payload as TrackerUploadSnapshot;
-      setTrackerUploadSnapshot(snapshot);
-      const normalized = String(snapshot.status || "").toLowerCase();
-      const running = normalized === "queued" || normalized === "running";
-      setTrackerUploadRunning(running);
-      if (normalized === "completed") {
-        setTrackerUploadError("");
-      } else if (normalized === "completed_with_errors" || normalized === "canceled") {
-        setTrackerUploadError(snapshot.error || "Upload finished with errors.");
-      }
+      applyTrackerUploadSnapshot(payload as TrackerUploadSnapshot);
     });
 
     return () => {
@@ -3983,7 +3433,48 @@ export default function App() {
         off();
       }
     };
-  }, [trackerUploadJobID]);
+  }, [applyTrackerUploadSnapshot, trackerUploadJobID]);
+
+  useEffect(() => {
+    // Poll active upload jobs as a fallback for missed upload snapshot events.
+    const currentStatus = String(trackerUploadSnapshot?.status || "");
+    if (!trackerUploadJobID || (!trackerUploadRunning && !isRunningJobStatus(currentStatus))) {
+      return;
+    }
+    const snapshotLoader = globalThis.go?.guiapp?.App?.GetTrackerUploadSnapshot;
+    if (!snapshotLoader) {
+      return;
+    }
+
+    let stopped = false;
+    let timer: number | undefined;
+    const loadSnapshot = async () => {
+      try {
+        const snapshot = await snapshotLoader(trackerUploadJobID);
+        if (!stopped) {
+          applyTrackerUploadSnapshot(snapshot);
+        }
+      } catch {
+        // Event delivery remains primary; transient polling failures should not replace UI errors.
+      }
+      if (!stopped) {
+        timer = window.setTimeout(loadSnapshot, 1000);
+      }
+    };
+
+    timer = window.setTimeout(loadSnapshot, 1000);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [
+    applyTrackerUploadSnapshot,
+    trackerUploadJobID,
+    trackerUploadRunning,
+    trackerUploadSnapshot?.status,
+  ]);
 
   const markReleaseTouched = (key: keyof ReleaseNameTouchedState) => {
     setReleaseTouched((prev) => ({ ...prev, [key]: true }));
@@ -4286,16 +3777,6 @@ export default function App() {
               onClick={() => setActiveTab("history")}
             >
               <span>History</span>
-            </button>
-            <button
-              className={cn(sidebarButtonClass(false), "mt-1", liveButtonClass)}
-              type="button"
-              onClick={toggleUIStateMode}
-              title={uiStateToggleTitle}
-            >
-              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                {uiStateToggleLabel}
-              </span>
             </button>
             <button
               className={cn(sidebarButtonClass(), "mt-0")}

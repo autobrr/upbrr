@@ -164,6 +164,7 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 		if name == "" || value == "" {
 			continue
 		}
+		// #nosec G124 -- Netscape cookie import preserves outbound tracker cookie attributes.
 		cookies = append(cookies, &http.Cookie{
 			Domain: "." + domain,
 			Path:   metautil.FirstNonEmptyTrimmed(strings.TrimSpace(fields[2]), "/"),

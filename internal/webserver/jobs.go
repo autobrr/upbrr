@@ -247,16 +247,19 @@ func (b *Backend) StartDupeCheck(sessionID string, path string, overrides api.Ex
 	return jobID, nil
 }
 
-func (b *Backend) GetDupeCheckSnapshot(jobID string) (DupeCheckSnapshot, error) {
-	job := b.getDupeCheckJob(strings.TrimSpace(jobID))
+// GetDupeCheckSnapshot returns a dupe job snapshot only to the session that
+// started the job.
+func (b *Backend) GetDupeCheckSnapshot(sessionID string, jobID string) (DupeCheckSnapshot, error) {
+	job := b.getDupeCheckJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
 	if job == nil {
 		return DupeCheckSnapshot{}, errors.New("dupe job not found")
 	}
 	return buildDupeCheckSnapshot(job), nil
 }
 
-func (b *Backend) CancelDupeCheck(jobID string) error {
-	job := b.getDupeCheckJob(strings.TrimSpace(jobID))
+// CancelDupeCheck requests cancellation only for a dupe job owned by sessionID.
+func (b *Backend) CancelDupeCheck(sessionID string, jobID string) error {
+	job := b.getDupeCheckJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
 	if job == nil {
 		return errors.New("dupe job not found")
 	}
@@ -468,8 +471,10 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	return jobID, nil
 }
 
-func (b *Backend) CancelTrackerUpload(jobID string) error {
-	job := b.getTrackerUploadJob(strings.TrimSpace(jobID))
+// CancelTrackerUpload requests cancellation only for an upload job owned by
+// sessionID.
+func (b *Backend) CancelTrackerUpload(sessionID string, jobID string) error {
+	job := b.getTrackerUploadJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
 	if job == nil {
 		return errors.New("upload job not found")
 	}
@@ -482,15 +487,17 @@ func (b *Backend) CancelTrackerUpload(jobID string) error {
 	return nil
 }
 
-func (b *Backend) RetryFailedTrackerUpload(jobID string) (string, error) {
-	job := b.getTrackerUploadJob(strings.TrimSpace(jobID))
+// RetryFailedTrackerUpload starts a retry job for failed trackers only when
+// sessionID owns the original upload job.
+func (b *Backend) RetryFailedTrackerUpload(sessionID string, jobID string) (string, error) {
+	job := b.getTrackerUploadJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
 	if job == nil {
 		return "", errors.New("upload job not found")
 	}
 	job.mu.Lock()
 	failedTrackers := append([]string(nil), job.failedTrackers...)
 	sourcePath := job.sourcePath
-	sessionID := job.sessionID
+	retrySessionID := job.sessionID
 	overrides := job.overrides
 	nameOverrides := job.nameOverrides
 	questionnaireAnswers := cloneQuestionnaireAnswers(job.questionnaireAnswers)
@@ -502,11 +509,13 @@ func (b *Backend) RetryFailedTrackerUpload(jobID string) (string, error) {
 	if len(failedTrackers) == 0 {
 		return "", errors.New("no failed trackers to retry")
 	}
-	return b.StartTrackerUpload(sessionID, sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.NoSeed, runOptions.RunLogLevel)
+	return b.StartTrackerUpload(retrySessionID, sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.NoSeed, runOptions.RunLogLevel)
 }
 
-func (b *Backend) GetTrackerUploadSnapshot(jobID string) (TrackerUploadSnapshot, error) {
-	job := b.getTrackerUploadJob(strings.TrimSpace(jobID))
+// GetTrackerUploadSnapshot returns an upload job snapshot only to the session
+// that started the job.
+func (b *Backend) GetTrackerUploadSnapshot(sessionID string, jobID string) (TrackerUploadSnapshot, error) {
+	job := b.getTrackerUploadJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
 	if job == nil {
 		return TrackerUploadSnapshot{}, errors.New("upload job not found")
 	}
@@ -782,6 +791,19 @@ func (b *Backend) getDupeCheckJob(jobID string) *dupeCheckJob {
 	return b.dupes[jobID]
 }
 
+func (b *Backend) getDupeCheckJobForSession(sessionID string, jobID string) *dupeCheckJob {
+	job := b.getDupeCheckJob(jobID)
+	if job == nil {
+		return nil
+	}
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if strings.TrimSpace(job.sessionID) != sessionID {
+		return nil
+	}
+	return job
+}
+
 func (b *Backend) scheduleDupeJobCleanup(job *dupeCheckJob) {
 	if job == nil {
 		return
@@ -881,6 +903,19 @@ func (b *Backend) getTrackerUploadJob(jobID string) *trackerUploadJob {
 	b.uploadMu.Lock()
 	defer b.uploadMu.Unlock()
 	return b.uploads[jobID]
+}
+
+func (b *Backend) getTrackerUploadJobForSession(sessionID string, jobID string) *trackerUploadJob {
+	job := b.getTrackerUploadJob(jobID)
+	if job == nil {
+		return nil
+	}
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if strings.TrimSpace(job.sessionID) != sessionID {
+		return nil
+	}
+	return job
 }
 
 func (b *Backend) scheduleTrackerUploadJobCleanup(job *trackerUploadJob) {

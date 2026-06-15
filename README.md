@@ -1,162 +1,176 @@
 # upbrr
 
-`upbrr` is a Go-based upload preparation and tracker submission tool for private-tracker workflows. This repository contains a shared core used by:
+> **Alpha release:** upbrr is early software and the documentation is incomplete. It is intended for users who already understand Upload Assistant workflows, tracker rules, release naming, category/type selection, screenshots, descriptions, torrent clients, and post-upload checking.
+>
+> **Quality check every upload before submitting.** Pay close attention to generated names, tracker category, tracker type, edition/source/resolution handling, description output, image links, and torrent-client injection settings. Do not rely on alpha automation as the final authority.
 
-- a command-line app in `cmd/upbrr`
-- a desktop GUI built with Wails in `gui`
-- an embedded web-serving mode exposed through `upbrr serve`
+<img width="1899" height="1580" alt="Screenshot 2026-06-12 093436" src="https://github.com/user-attachments/assets/d0bd8123-52d0-4d17-9aed-1cba270f258b" />
 
-The project handles the full preparation pipeline around an upload candidate: metadata lookup, naming overrides, dupe checks, screenshot planning and uploads, description generation, tracker-specific payload building, torrent creation, and post-upload seeding/injection.
+upbrr is an upload preparation app for private-tracker workflows.
 
-## What this repository includes
+- pick a release folder or file
+- fetch and adjust metadata
+- review tracker choices and dupe checks
+- generate, select, and upload screenshots
+- build tracker descriptions
+- preview payloads before upload
+- submit to trackers
+- inject or save torrents for your client
 
-- Shared Go core for preparation, upload orchestration, and persistence
-- CLI workflow for interactive and unattended runs
-- Wails desktop GUI with step-by-step preparation screens
-- Embedded frontend assets for GUI and web-serving mode
-- SQLite-backed configuration and history storage
-- Tracker-specific implementations under `internal/trackers`
-- Image-host, screenshot, description, metadata, and torrent services
+The goal is a guided upload workspace, not a replacement for user judgement or tracker rules.
 
-## Key capabilities
+## Before You Start
 
-- Import configuration from YAML, JSON, or a legacy Upload Assistant `config.py` and persist it to SQLite
-- Export the current SQLite-backed config back to YAML
-- Launch a desktop GUI with `--gui` or `./gui`
-- Run uploads from the CLI against one or more paths
-- Process queue roots instead of single paths
-- Run site checks without uploading
-- Build uploads from previously prepared metadata with `--upload-only`
-- Discover BDMV playlists and persist playlist selection
-- Generate screenshots, upload them to supported hosts, and manage selections
-- Build tracker-specific descriptions and upload payload previews
-- Check dupes before upload
-- Integrate with torrent clients such as qBittorrent and watch folders
-- Serve the embedded frontend through the built-in web server
+You should already know how your trackers expect uploads to be named and categorized. Before doing real uploads, run test paths, dry runs, or site checks where possible and compare upbrr output with what you would have submitted manually.
 
-## Repository layout
+Have these ready:
 
-- `cmd/upbrr` - main CLI entrypoint
-- `gui` - Wails desktop application entrypoint and build config
-- `gui/frontend` - React/Vite frontend used by the GUI and web mode
-- `internal` - core business logic, services, tracker implementations, web server, and GUI backend bindings
-- `pkg/api` - shared request/response types used across the app
-- `scripts/build.ps1` - Windows build helper
-- `scripts/build.sh` - Unix-like build helper
-- `.github/workflows` - CI for tests, linting, and binary packaging
+- TMDB API key
+- tracker API keys, cookies, or credentials required by the trackers you use
+- image host credentials
+- torrent client details or watch-folder paths
+- existing Upload Assistant `config.py`, if migrating
+- ffmpeg installed on your system for screenshot generation
+    - On Windows, ffmpeg must be added to PATH (https://windowsloop.com/install-ffmpeg-windows-10/)
+    - On Linux, install it from your distribution package manager
+    - On macOS, install it with Homebrew:
 
-## Requirements
+      ```bash
+      brew install ffmpeg
+      ```
 
-- A TMDB API key in config: `main_settings.tmdb_api`
-- SQLite is embedded via `modernc.org/sqlite`, so no separate database server is required
-- Additional media tools may be needed depending on your workflow, especially for screenshots and media analysis
+      The CLI can find ffmpeg when your shell PATH includes Homebrew. If you start the GUI from Finder, macOS may not pass your shell PATH to the app, so the GUI may not see Homebrew's ffmpeg. Start the GUI from Terminal, or make ffmpeg available in the environment used to launch the app.
 
-Setting up a development environment? See [CONTRIBUTING.md](./CONTRIBUTING.md) for dependencies, supported platforms, and git hooks.
+By default, upbrr stores its database at:
 
-## Quick start
-
-### 1. Create or export config
-
-The app embeds a default YAML config template at `internal/config/defaults/example.yaml`.
-
-Typical first-run options:
-
-- start the program once and let it create a new blank/default config state automatically
-- if a `config.yaml` already exists in the same directory as the database, the app will automatically import it into the SQLite config store on startup
-- use the embedded defaults and save changes through the GUI
-- pass `--config path/to/config.yaml` to load a YAML file as the active config at startup
-- import a config file into the SQLite store without starting the app: `--import-config path/to/config.{yaml,yml,json,py}` (legacy Upload Assistant `config.py` files are parsed natively)
-- import the same formats through the GUI or web UI from the Settings page
-- export the current SQLite-backed config with `--export-config path/to/config.yaml`
-- create the web auth helper file for CLI-only setups with `--create-auth`
-
-For authenticated GUI/web Settings exports, plaintext secret export is disabled by default. If you need that behavior for a local trusted setup, add `"allow_unencrypted_export": true` to the `web-auth.json` file stored beside the active database. This hidden flag only affects UI export behavior and is not exposed in the app.
-
-Important: `main_settings.tmdb_api` must be set before the core can run normally.
-
-If you are migrating from the older program and already have tracker cookie files under `data/cookies`, copy those files into the new cookie directory for this build. By default that location is `~/.upbrr/cookies` beside the default database `~/.upbrr/db.sqlite`. If you use a custom `main_settings.db_path`, place the cookie files in the `cookies` folder next to that database instead.
-
-### 2. Launch the GUI
-
-```bash
-go run ./cmd/upbrr --gui
+```text
+%USERPROFILE%\.upbrr\db.sqlite
 ```
 
-Or run the dedicated GUI entrypoint:
+Cookie files live beside that database:
 
-```bash
-go run ./gui
+```text
+%USERPROFILE%\.upbrr\cookies
 ```
 
-### 3. Run the CLI against a source path
+If you use a custom database path, put cookies in a `cookies` folder beside that database.
 
-```bash
-go run ./cmd/upbrr "D:\releases\Some.Release.2026.1080p.BluRay"
+## Migration From Upload Assistant
+
+upbrr can import a legacy Upload Assistant `config.py` directly, or convert it to a YAML file first so you can inspect it.
+
+### Option 1: Direct Import
+
+Use this when you want the app to convert and save the config straight into the upbrr database:
+
+```powershell
+.\upbrr.exe --import-config "C:\path\to\Upload-Assistant\data\config.py"
 ```
 
-Useful variants:
+The importer accepts:
 
-```bash
-go run ./cmd/upbrr --site-check --trackers BLU,OE "D:\releases\Some.Release"
-go run ./cmd/upbrr --dry-run --trackers PTP,HDB "D:\releases\Some.Release"
-go run ./cmd/upbrr --upload-only "D:\releases\Some.Release"
-go run ./cmd/upbrr --queue "D:\upload-queue" --limit-queue 5
+- `.py` legacy Upload Assistant config files
+- `.yaml` / `.yml` upbrr config files
+- `.json` upbrr config files
+
+Read all warnings printed during import. Unknown legacy keys, unsupported tracker fields, or unsupported image-host settings may be skipped or adjusted.
+
+You can also import config files from the Settings page in the GUI or web UI.
+
+### Web UI Browse Access
+
+Config import does not set web browse roots. Browse access is stored separately in `web-auth.json`, beside the upbrr database, because it controls which host folders the browser-based web UI can read.
+
+On a fresh web UI setup, after creating the admin account, upbrr asks you to choose one or more browse roots such as `D:\Media, E:\Downloads`, or to explicitly allow unrestricted host browsing. The web UI cannot browse release folders or import menu images until this is set.
+
+If you import an existing Upload Assistant config, the imported tracker, client, and app settings do not change browse access. If `web-auth.json` already exists, its current browse roots or unrestricted-browse setting stay in effect. If no `web-auth.json` exists yet, you will still be asked to set browse access the first time you set up the web UI.
+
+### Option 2: Convert To YAML First
+
+Use the included converter when you want a human-readable file to review before importing:
+
+```powershell
+py .\scripts\convert_ua_config.py "C:\path\to\Upload-Assistant\data\config.py" -o ".\config.converted.yaml"
 ```
 
-### 4. Run the embedded web mode
+Then inspect `config.converted.yaml`, fix any values that need manual attention, and import it:
 
-```bash
-go run ./cmd/upbrr serve
+```powershell
+.\upbrr.exe --import-config ".\config.converted.yaml"
 ```
 
-This starts the internal web server and serves the frontend from embedded assets or `gui/frontend/dist` when available.
+The converter maps known Upload Assistant defaults, tracker settings, and torrent-client settings onto the current upbrr config shape. Legacy-only settings that do not exist in upbrr are not carried over. Treat the converted file as a starting point, not proof that your setup is complete.
 
-## Configuration model
+### Migrating Cookies
 
-Configuration is centered around `internal/config.Config` and includes:
+If your old Upload Assistant setup has tracker cookies under `data\cookies`, copy those files to upbrr's cookie folder:
 
-- main settings and database path
-- image hosting credentials and host order
-- metadata behavior
-- screenshot handling
-- description formatting
-- torrent client setup
-- Sonarr/Radarr integration
-- torrent creation defaults
-- post-upload behavior
-- logging
-- tracker-specific settings
+```text
+%USERPROFILE%\.upbrr\cookies
+```
 
-The app can:
+Restart upbrr after copying cookies, then verify tracker login/session status before uploading.
 
-- import YAML, JSON, or a legacy Upload Assistant `config.py` into the SQLite-backed config store (via `--import-config` or the Settings page in the GUI and web UI)
-- load defaults from the embedded example config
-- apply environment overrides at runtime without persisting them to the database
-- export the current database-backed config back to YAML
+## Running upbrr
 
-## Packaging and distribution
+Desktop GUI:
 
-GitHub Actions includes workflows for:
+```powershell
+.\upbrr-gui.exe
+```
 
-- Go tests
-- frontend lint and type checks
-- `golangci-lint`
-- cross-platform CLI builds
-- cross-platform GUI builds
-- Docker image builds
+Web UI:
 
-The Dockerfile builds both `upbrr` and `upbrr-gui` binaries and places them in the final image.
+```powershell
+.\upbrr.exe serve
+```
 
-## Frontend Styling Strategy
+CLI upload preparation:
 
-The frontend is in an incremental migration from broad custom CSS blocks toward Tailwind utilities. Existing `.settings-*` and `.screens-*` classes may stay until their JSX is touched, but new UI should prefer Tailwind utilities for local layout and spacing. Keep custom classes for shared component states, cross-cutting selectors, theme variables, or styles that would make JSX hard to read.
+```powershell
+.\upbrr.exe "D:\releases\Some.Release.2026.1080p.BluRay"
+```
 
-Owner: frontend maintainers. Timeline: migrate class families opportunistically with the component PR that already changes the matching UI, then remove obsolete custom CSS in the same PR.
+Useful CLI checks:
 
-## Contributing
+```powershell
+.\upbrr.exe --site-check --trackers BLU,OE "D:\releases\Some.Release"
+.\upbrr.exe --dry-run --trackers PTP,HDB "D:\releases\Some.Release"
+.\upbrr.exe --queue "D:\upload-queue" --limit-queue 5
+```
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to set up a development environment, run the test suite, install the git hooks, and write commit messages that pass the repo's commit-message validator ([`cmd/commitmsgcheck`](./cmd/commitmsgcheck)). The project uses [AGENTS.md](https://agents.md/) for AI-coding-agent guidance — see [`AGENTS.md`](./AGENTS.md).
+NOTE: with cli `--debug` works as expected. Additionally, the printed feedback (even with debug) can be adjusted with `--log-level`. See `upbrr.exe --help`
+
+## Typical Upload Flow
+
+1. Open upbrr.
+2. Go to Settings and confirm required API keys, trackers, image hosts, torrent clients, screenshots, and post-upload options.
+3. Select a release path.
+4. Fetch metadata.
+5. Review title, year, IDs, category, type, source, resolution, edition, season/episode, and generated release name.
+6. Run dupe checks and read tracker-specific warnings.
+7. Generate or import screenshots, then verify the selected images and image-host output.
+8. Build descriptions and inspect rendered tracker descriptions.
+9. Run a dry run or payload preview where available.
+10. Upload only after every tracker tab looks correct.
+
+## Required Manual Checks
+
+Before submitting, verify:
+
+- release name matches tracker rules
+- category and type are correct for each tracker
+- movie vs TV handling is correct
+- disc, remux, encode, WEB, HDTV, pack, season, and episode handling is correct
+- source, resolution, edition, service, tag, and group are correct
+- screenshots are valid, ordered, and hosted on allowed hosts
+- description BBCode renders correctly
+- torrent file contents and piece settings are expected
+- torrent client category, tags, save path, and injection target are correct
+- dupe results and rule warnings have been read
+
+Alpha builds can have rough edges. When in doubt, stop before upload and check manually.
 
 ## License
 
-This project is licensed under `GPL-2.0-or-later`. See [LICENSE](./LICENSE).
+GPL-2.0-or-later. See [LICENSE](./LICENSE).

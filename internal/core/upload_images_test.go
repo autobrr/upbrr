@@ -589,6 +589,59 @@ func TestUploadImagesFallsBackWhenSelectedHostFails(t *testing.T) {
 	}
 }
 
+func TestUploadImagesFallsBackFromTrackerConfiguredHostForUnrestrictedTracker(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/img1.png"}}
+	var calls []string
+	imageService := &stubImageHosting{
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			calls = append(calls, host)
+			if host == "pixhost" {
+				return nil, errors.New("pixhost unavailable")
+			}
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{
+				Host1: "pixhost",
+				Host2: "imgbb",
+			},
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"HHD": {ImageHost: "pixhost"},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"HHD"},
+	}, "pixhost", images)
+	if err != nil {
+		t.Fatalf("expected fallback upload to succeed, got %v", err)
+	}
+	if len(result.Failures) != 0 {
+		t.Fatalf("expected configured host failure to be recovered by fallback, got %#v", result.Failures)
+	}
+	if len(result.Links) != 1 || result.Links[0].Host != "imgbb" {
+		t.Fatalf("expected fallback imgbb link, got %#v", result)
+	}
+	if !slices.Equal(calls, []string{"pixhost", "imgbb"}) {
+		t.Fatalf("expected configured host then fallback host, got %v", calls)
+	}
+}
+
 func uploadedImageLinksForHost(meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) []api.UploadedImageLink {
 	result := make([]api.UploadedImageLink, 0, len(images))
 	for _, image := range images {

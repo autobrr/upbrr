@@ -169,6 +169,28 @@ type pieceConstraints struct {
 	preferMax16 bool
 }
 
+// validatedTorrentSelection records validated client matches and the single
+// torrent file, if any, that is safe to reuse for the searched source.
+type validatedTorrentSelection struct {
+	infoHash       string
+	torrentPath    string
+	foundPreferred string
+	matches        []api.TorrentMatch
+}
+
+// torrentDataValidation classifies exported torrent metadata separately for
+// tracker provenance and for saving as this source's reusable torrent file.
+type torrentDataValidation struct {
+	// reusable means the exported torrent file can be saved and used for this source.
+	reusable bool
+	// clientMatch means the client torrent is valid for tracker provenance. Some
+	// path mismatches intentionally set this without allowing torrent-file reuse.
+	clientMatch bool
+	pieceSize   int64
+	infoHash    string
+	reason      string
+}
+
 func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMetadata) (api.ClientSearchResult, error) {
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return api.ClientSearchResult{}, internalerrors.ErrInvalidInput
@@ -326,42 +348,38 @@ func resolvePieceConstraints(cfg config.Config) pieceConstraints {
 	return pieceConstraints{}
 }
 
+// resolveSearchClients returns configured qbit/qui client names for pathed
+// search. Explicit overrides, searching_client_list, and default_torrent_client
+// are authoritative after normalization. Blank search list entries do not block
+// default_torrent_client, while "none" disables implicit fallback. The boolean
+// reports only whether the implicit all qbit/qui fallback was used.
 func resolveSearchClients(cfg config.Config, overrides api.ClientOverrides) ([]string, bool) {
 	if overrides.Client != nil {
 		requested := strings.TrimSpace(*overrides.Client)
 		if requested == "" || strings.EqualFold(requested, "none") {
 			return nil, false
 		}
-		for name := range cfg.TorrentClients {
-			if strings.EqualFold(name, requested) {
-				return []string{name}, false
-			}
+		if name, _, ok := lookupTorrentClientConfig(cfg.TorrentClients, requested); ok {
+			return []string{name}, false
 		}
 		return nil, false
 	}
 
 	values := make([]string, 0)
-	if len(cfg.ClientSetup.SearchClients) > 0 {
+	if hasSearchDisableSelector(cfg.ClientSetup.SearchClients) {
+		return selectSearchClientNames(cfg.TorrentClients, cfg.ClientSetup.SearchClients), false
+	}
+	if hasNonBlankSearchSelector(cfg.ClientSetup.SearchClients) {
 		values = append(values, cfg.ClientSetup.SearchClients...)
 	} else if strings.TrimSpace(cfg.ClientSetup.DefaultClient) != "" {
 		values = append(values, cfg.ClientSetup.DefaultClient)
 	}
 
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" || strings.EqualFold(trimmed, "none") {
-			continue
-		}
-		if _, ok := seen[trimmed]; ok {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-		result = append(result, trimmed)
+	if hasSearchDisableSelector(values) {
+		return selectSearchClientNames(cfg.TorrentClients, values), false
 	}
-	if len(result) > 0 {
-		return result, false
+	if hasNonBlankSearchSelector(values) {
+		return selectSearchClientNames(cfg.TorrentClients, values), false
 	}
 
 	clientNames := make([]string, 0, len(cfg.TorrentClients))
@@ -369,6 +387,7 @@ func resolveSearchClients(cfg config.Config, overrides api.ClientOverrides) ([]s
 		clientNames = append(clientNames, name)
 	}
 	sort.Strings(clientNames)
+	result := make([]string, 0, len(clientNames))
 	for _, name := range clientNames {
 		clientType := strings.ToLower(strings.TrimSpace(cfg.TorrentClients[name].ClientType()))
 		if clientType != "qbit" && clientType != "qbittorrent" && clientType != "qui" {
@@ -380,14 +399,71 @@ func resolveSearchClients(cfg config.Config, overrides api.ClientOverrides) ([]s
 	return result, len(result) > 0
 }
 
+// hasNonBlankSearchSelector reports whether configured search selectors should
+// suppress lower-priority selectors after blank and "none" entries are ignored.
+func hasNonBlankSearchSelector(selected []string) bool {
+	for _, value := range selected {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" && !strings.EqualFold(trimmed, "none") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSearchDisableSelector reports whether a selector list explicitly disables
+// search. "none" is authoritative when no usable client selector accompanies it.
+func hasSearchDisableSelector(selected []string) bool {
+	hasNone := false
+	for _, value := range selected {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.EqualFold(trimmed, "none") {
+			return false
+		}
+		hasNone = true
+	}
+	return hasNone
+}
+
+// selectSearchClientNames resolves configured search selectors to canonical map
+// keys. Unknown and ambiguous selectors are ignored rather than returned as raw
+// names for callers to skip later.
+func selectSearchClientNames(clients map[string]config.TorrentClientConfig, selected []string) []string {
+	if len(clients) == 0 || len(selected) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(selected))
+	result := make([]string, 0, len(selected))
+	for _, value := range selected {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || strings.EqualFold(trimmed, "none") {
+			continue
+		}
+		name, _, ok := lookupTorrentClientConfig(clients, trimmed)
+		if !ok {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		result = append(result, name)
+	}
+	return result
+}
+
 func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg config.TorrentClientConfig, meta api.PreparedMetadata, constraints pieceConstraints) (api.ClientSearchResult, []api.TorrentMatch, error) {
-	searchTerm := buildSearchTerm(meta)
-	if searchTerm == "" {
+	searchTerms := buildSearchTerms(meta)
+	if len(searchTerms) == 0 {
 		s.logger.Debugf("clients: %s search term empty for source=%s", name, meta.SourcePath)
 		return api.ClientSearchResult{}, nil, internalerrors.ErrInvalidInput
 	}
 
-	s.logger.Tracef("clients: searching qBittorrent client %s for %s", name, searchTerm)
+	s.logger.Tracef("clients: searching qBittorrent client %s for %s", name, strings.Join(searchTerms, ", "))
 
 	useProxy := clientCfg.UsesQuiProxy()
 	var (
@@ -426,7 +502,7 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 
 	var torrents []qbittorrent.Torrent
 	if useProxy {
-		items, err := searchProxyTorrents(ctx, httpClient, proxyBaseURL, searchTerm)
+		items, err := searchProxyTorrentTerms(ctx, httpClient, proxyBaseURL, searchTerms)
 		if err != nil {
 			return api.ClientSearchResult{}, nil, err
 		}
@@ -448,11 +524,8 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		return api.ClientSearchResult{}, nil, nil
 	}
 
-	propertiesCache := make(map[string]qbittorrent.TorrentProperties)
 	priorityOrder := effectiveTrackerPriority(s.cfg)
 	matches := make([]api.TorrentMatch, 0)
-	matchedTrackers := make([]string, 0)
-	foundTrackerMatch := false
 	nameMatched := 0
 
 	for _, torrent := range torrents {
@@ -471,11 +544,8 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		props, err := fetchTorrentProperties(ctx, qbitClient, httpClient, proxyBaseURL, torrent.Hash, useProxy)
 		if err != nil {
 			s.logger.Debugf("clients: %s properties lookup failed for %s: %v", name, torrent.Name, err)
-		} else {
-			propertiesCache[torrent.Hash] = props
-			if comment == "" {
-				comment = strings.TrimSpace(props.Comment)
-			}
+		} else if comment == "" {
+			comment = strings.TrimSpace(props.Comment)
 		}
 
 		trackers, err := fetchTorrentTrackers(ctx, qbitClient, httpClient, proxyBaseURL, torrent.Hash, useProxy, torrent.Trackers)
@@ -484,7 +554,6 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		}
 
 		trackerURLs := collectTrackerURLs(torrent.Tracker, trackers)
-		matchedTrackers = append(matchedTrackers, matchTrackerURLs(trackerURLs)...)
 
 		hasWorkingTracker := useProxy
 		if !useProxy {
@@ -497,9 +566,6 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 		}
 
 		trackerMatches, trackerFound := extractTrackerMatches(comment, trackerURLs, hasWorkingTracker, priorityOrder)
-		if trackerFound {
-			foundTrackerMatch = true
-		}
 
 		match := api.TorrentMatch{
 			Hash:              torrent.Hash,
@@ -529,46 +595,116 @@ func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg c
 
 	sortMatchingTorrents(matches, priorityOrder)
 
-	bestMatch := matches[0]
-	var foundPreferred string
-	if constraints.preferSmall || constraints.preferMax16 {
-		bestMatch, foundPreferred = selectPreferredMatch(ctx, matches, propertiesCache, qbitClient, httpClient, proxyBaseURL, useProxy, constraints)
-	} else {
-		foundPreferred = "no_constraints"
-	}
-	s.logger.Tracef("clients: %s selected hash %s (preferred=%q)", name, bestMatch.Hash, foundPreferred)
-
-	trackerIDs := collectTrackerIDs(matches, priorityOrder)
-	matchedTrackers = ensureMatchedTrackersForKnownIDs(matchedTrackers, trackerIDs)
-
-	result := api.ClientSearchResult{
-		InfoHash:            "",
-		TrackerIDs:          trackerIDs,
-		FoundTrackerMatch:   foundTrackerMatch,
-		TorrentComments:     matches,
-		PieceSizeConstraint: constraints.label,
-		FoundPreferredPiece: foundPreferred,
-		MatchedTrackers:     matchedTrackers,
-	}
-
-	validatedHash, torrentPath, err := s.selectValidTorrent(ctx, meta, matches, constraints, qbitClient, httpClient, proxyBaseURL, useProxy)
+	selection, err := s.selectValidTorrent(ctx, meta, matches, constraints, qbitClient, httpClient, proxyBaseURL, useProxy)
 	if err != nil {
 		return api.ClientSearchResult{}, nil, err
 	}
-	result.InfoHash = validatedHash
-	result.TorrentPath = torrentPath
+	s.logger.Tracef("clients: %s validated %d of %d matched torrents", name, len(selection.matches), len(matches))
 
-	return result, matches, nil
+	trackerIDs := collectTrackerIDs(selection.matches, priorityOrder)
+	matchedTrackers := collectMatchedTrackers(selection.matches)
+	matchedTrackers = ensureMatchedTrackersForKnownIDs(matchedTrackers, trackerIDs)
+
+	result := api.ClientSearchResult{
+		InfoHash:            selection.infoHash,
+		TrackerIDs:          trackerIDs,
+		FoundTrackerMatch:   hasTrackerIDMatch(selection.matches),
+		TorrentComments:     selection.matches,
+		PieceSizeConstraint: constraints.label,
+		FoundPreferredPiece: selection.foundPreferred,
+		MatchedTrackers:     matchedTrackers,
+		TorrentPath:         selection.torrentPath,
+	}
+
+	return result, selection.matches, nil
 }
 
-func buildSearchTerm(meta api.PreparedMetadata) string {
-	base := pathutil.Base(meta.SourcePath)
+// buildSearchTerms returns distinct sanitized qBittorrent search terms for the
+// source path, including extensionless single-file variants when safe.
+func buildSearchTerms(meta api.PreparedMetadata) []string {
+	terms := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	add := func(base string, allowExtensionless bool) {
+		addSearchTerm(&terms, seen, base)
+		if !allowExtensionless {
+			return
+		}
+		extensionless := extensionlessSearchBase(base)
+		if extensionless == "" {
+			return
+		}
+		addSearchTerm(&terms, seen, extensionless)
+	}
+
+	sourceBase := pathutil.Base(meta.SourcePath)
+	fileBase := ""
+	singleFile := meta.DiscType == "" && len(meta.FileList) == 1
+	if singleFile {
+		fileBase = pathutil.Base(meta.FileList[0])
+	}
+
+	allowSourceExtensionless := meta.DiscType == "" && (!singleFile || strings.EqualFold(sourceBase, fileBase))
+	add(sourceBase, allowSourceExtensionless)
+	if singleFile && !strings.EqualFold(sourceBase, fileBase) {
+		add(fileBase, true)
+	}
+
+	return terms
+}
+
+func addSearchTerm(terms *[]string, seen map[string]struct{}, base string) {
+	term := normalizeSearchBase(base)
+	if term == "" {
+		return
+	}
+	key := strings.ToLower(term)
+	if _, ok := seen[key]; ok {
+		return
+	}
+	seen[key] = struct{}{}
+	*terms = append(*terms, term)
+}
+
+func normalizeSearchBase(base string) string {
 	if base == "." || base == "/" {
 		return ""
 	}
 	search := strings.ReplaceAll(base, "[", ".")
 	search = strings.ReplaceAll(search, "]", ".")
 	return sanitizeSearchTerm(search)
+}
+
+// extensionlessSearchBase strips a file-like extension from base. It leaves
+// release names with non-extension suffixes unchanged.
+func extensionlessSearchBase(base string) string {
+	trimmed := strings.TrimSpace(base)
+	ext := filepath.Ext(trimmed)
+	if !looksLikeFileExtension(ext) {
+		return ""
+	}
+	extensionless := strings.TrimSpace(strings.TrimSuffix(trimmed, ext))
+	if extensionless == "" || extensionless == trimmed {
+		return ""
+	}
+	return extensionless
+}
+
+func looksLikeFileExtension(ext string) bool {
+	trimmed := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+	if len(trimmed) < 2 || len(trimmed) > 8 {
+		return false
+	}
+	hasLetter := false
+	for idx, r := range trimmed {
+		switch {
+		case unicode.IsLetter(r):
+			hasLetter = true
+		case unicode.IsDigit(r) && idx > 0:
+		default:
+			return false
+		}
+	}
+	return hasLetter
 }
 
 func sanitizeSearchTerm(value string) string {
@@ -597,7 +733,13 @@ func torrentNameMatches(name string, meta api.PreparedMetadata) bool {
 	base := pathutil.Base(meta.SourcePath)
 	if meta.DiscType == "" && len(meta.FileList) == 1 {
 		fileBase := pathutil.Base(meta.FileList[0])
-		return torrentNameEquals(name, fileBase) || torrentNameEquals(name, base)
+		return torrentNameEquals(name, fileBase) ||
+			torrentNameEquals(name, base) ||
+			torrentNameEqualsExtensionless(name, fileBase) ||
+			torrentNameEqualsExtensionless(name, base)
+	}
+	if meta.DiscType == "" && len(meta.FileList) == 0 {
+		return torrentNameEquals(name, base) || torrentNameEqualsExtensionless(name, base)
 	}
 	return torrentNameEquals(name, base)
 }
@@ -611,6 +753,11 @@ func torrentNameEquals(left string, right string) bool {
 	return leftCanonical != "" && rightCanonical != "" && leftCanonical == rightCanonical
 }
 
+func torrentNameEqualsExtensionless(name string, sourceBase string) bool {
+	sourceExtensionless := extensionlessSearchBase(sourceBase)
+	return sourceExtensionless != "" && torrentNameEquals(name, sourceExtensionless)
+}
+
 func canonicalTorrentName(value string) string {
 	var builder strings.Builder
 	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
@@ -619,6 +766,30 @@ func canonicalTorrentName(value string) string {
 		}
 	}
 	return builder.String()
+}
+
+// searchProxyTorrentTerms searches each proxy term in order and deduplicates
+// non-empty torrent hashes while preserving the first returned item.
+func searchProxyTorrentTerms(ctx context.Context, client *http.Client, proxyBase string, searchTerms []string) ([]qbittorrent.Torrent, error) {
+	torrents := make([]qbittorrent.Torrent, 0)
+	seen := make(map[string]struct{}, len(searchTerms))
+	for _, searchTerm := range searchTerms {
+		items, err := searchProxyTorrents(ctx, client, proxyBase, searchTerm)
+		if err != nil {
+			return nil, err
+		}
+		for _, torrent := range items {
+			hash := normalizeQbitHash(torrent.Hash)
+			if hash != "" {
+				if _, ok := seen[hash]; ok {
+					continue
+				}
+				seen[hash] = struct{}{}
+			}
+			torrents = append(torrents, torrent)
+		}
+	}
+	return torrents, nil
 }
 
 func searchProxyTorrents(ctx context.Context, client *http.Client, proxyBase, searchTerm string) ([]qbittorrent.Torrent, error) {
@@ -948,6 +1119,26 @@ func collectTrackerIDs(matches []api.TorrentMatch, priority []string) map[string
 	return trackerIDs
 }
 
+// collectMatchedTrackers derives matched tracker names from validated torrent
+// announce URLs only.
+func collectMatchedTrackers(matches []api.TorrentMatch) []string {
+	matched := make([]string, 0, len(matches))
+	for _, match := range matches {
+		matched = append(matched, matchTrackerURLs(match.TrackerURLsRaw)...)
+	}
+	return dedupeStrings(matched)
+}
+
+// hasTrackerIDMatch reports whether any validated match produced a tracker ID.
+func hasTrackerIDMatch(matches []api.TorrentMatch) bool {
+	for _, match := range matches {
+		if match.HasTracker {
+			return true
+		}
+	}
+	return false
+}
+
 func ensureMatchedTrackersForKnownIDs(matchedTrackers []string, trackerIDs map[string]string) []string {
 	if len(trackerIDs) == 0 {
 		return matchedTrackers
@@ -1007,71 +1198,6 @@ func applyPreferredTrackerPriority(priority []string, preferred string) []string
 	return ordered
 }
 
-func selectPreferredMatch(
-	ctx context.Context,
-	matches []api.TorrentMatch,
-	propertiesCache map[string]qbittorrent.TorrentProperties,
-	qbitClient *qbittorrent.Client,
-	httpClient *http.Client,
-	proxyBase string,
-	useProxy bool,
-	constraints pieceConstraints,
-) (api.TorrentMatch, string) {
-	best := matches[0]
-	bestPiece := 0
-
-	getPieceSize := func(hash string) (int, error) {
-		if props, ok := propertiesCache[hash]; ok {
-			return props.PieceSize, nil
-		}
-		props, err := fetchTorrentProperties(ctx, qbitClient, httpClient, proxyBase, hash, useProxy)
-		if err != nil {
-			return 0, err
-		}
-		propertiesCache[hash] = props
-		return props.PieceSize, nil
-	}
-
-	for _, match := range matches {
-		pieceSize, err := getPieceSize(match.Hash)
-		if err != nil || pieceSize <= 0 {
-			continue
-		}
-
-		if bestPiece == 0 {
-			best = match
-			bestPiece = pieceSize
-			continue
-		}
-
-		if constraints.preferSmall || constraints.preferMax16 {
-			if shouldReplaceBest(int64(pieceSize), int64(bestPiece), constraints) {
-				best = match
-				bestPiece = pieceSize
-			}
-			continue
-		}
-	}
-
-	if bestPiece == 0 {
-		return matches[0], ""
-	}
-
-	if constraints.preferSmall {
-		if bestPiece <= mtvPieceSizeLimit {
-			return best, "MTV"
-		}
-		return best, ""
-	}
-	if constraints.preferMax16 {
-		if bestPiece <= max16PieceSize {
-			return best, "16MiB"
-		}
-		return best, ""
-	}
-	return best, ""
-}
-
 func shouldStopSearch(constraints string, foundPreferred string) bool {
 	if constraints == "" {
 		return foundPreferred == "no_constraints"
@@ -1105,6 +1231,9 @@ func dedupeStrings(values []string) []string {
 	return result
 }
 
+// selectValidTorrent validates qBittorrent name/comment matches against
+// exported metadata, returning only matches trusted for tracker provenance and
+// choosing one reusable torrent file when strict path and piece checks pass.
 func (s *Service) selectValidTorrent(
 	ctx context.Context,
 	meta api.PreparedMetadata,
@@ -1114,13 +1243,14 @@ func (s *Service) selectValidTorrent(
 	httpClient *http.Client,
 	proxyBase string,
 	useProxy bool,
-) (string, string, error) {
+) (validatedTorrentSelection, error) {
+	selection := validatedTorrentSelection{}
 	if len(matches) == 0 {
-		return "", "", nil
+		return selection, nil
 	}
 	tmpRoot, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 	if err != nil {
-		return "", "", fmt.Errorf("clients: tmp dir: %w", err)
+		return selection, fmt.Errorf("clients: tmp dir: %w", err)
 	}
 
 	bestHash := ""
@@ -1129,10 +1259,50 @@ func (s *Service) selectValidTorrent(
 	var bestPiece int64
 	rechecked := make(map[string]struct{})
 
+	considerClientMatch := func(match api.TorrentMatch) {
+		selection.matches = append(selection.matches, match)
+	}
+
+	considerReusable := func(hash string, path string, data []byte, pieceSize int64) {
+		if bestHash == "" {
+			bestHash = hash
+			bestPath = path
+			bestData = data
+			bestPiece = pieceSize
+			return
+		}
+		if constraints.preferSmall || constraints.preferMax16 {
+			if shouldReplaceBest(pieceSize, bestPiece, constraints) {
+				bestHash = hash
+				bestPath = path
+				bestData = data
+				bestPiece = pieceSize
+			}
+		}
+	}
+
+	forceRecheckValidated := func(hash string) error {
+		if !shouldForceRecheck(meta.ClientOverrides) {
+			return nil
+		}
+		if useProxy || qbitClient == nil {
+			s.logger.Debugf("clients: force-recheck requested for %s but direct qBittorrent access is unavailable", hash)
+			return nil
+		}
+		if _, ok := rechecked[hash]; ok {
+			return nil
+		}
+		if err := forceRecheckTorrent(ctx, qbitClient, hash, s.logger); err != nil {
+			return err
+		}
+		rechecked[hash] = struct{}{}
+		return nil
+	}
+
 	for _, match := range matches {
 		select {
 		case <-ctx.Done():
-			return "", "", fmt.Errorf("context canceled: %w", ctx.Err())
+			return validatedTorrentSelection{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -1140,41 +1310,29 @@ func (s *Service) selectValidTorrent(
 		if normalizedHash == "" {
 			continue
 		}
-		if shouldForceRecheck(meta.ClientOverrides) {
-			if useProxy || qbitClient == nil {
-				s.logger.Debugf("clients: force-recheck requested for %s but direct qBittorrent access is unavailable", normalizedHash)
-			} else if _, ok := rechecked[normalizedHash]; !ok {
-				if err := forceRecheckTorrent(ctx, qbitClient, normalizedHash, s.logger); err != nil {
-					return "", "", err
-				}
-				rechecked[normalizedHash] = struct{}{}
-			}
-		}
 
 		outputPath, err := torrent.TempTorrentPath(tmpRoot, meta, meta.SourcePath)
 		if err != nil {
-			return "", "", fmt.Errorf("clients: %w", err)
+			return validatedTorrentSelection{}, fmt.Errorf("clients: %w", err)
 		}
 
 		if info, err := os.Stat(outputPath); err == nil && !info.IsDir() {
 			data, err := os.ReadFile(outputPath)
 			if err == nil {
-				valid, pieceSize, infoHash, reason := validateTorrentData(meta, normalizedHash, data, constraints)
-				if valid && strings.EqualFold(infoHash, normalizedHash) {
-					s.logger.Debugf("clients: validated existing torrent for %s (piece=%d)", normalizedHash, pieceSize)
-					if shouldSelectPreferred(pieceSize, constraints) {
-						return normalizedHash, outputPath, nil
+				validation := validateTorrentData(meta, normalizedHash, data, constraints)
+				if validation.clientMatch && strings.EqualFold(validation.infoHash, normalizedHash) {
+					if err := forceRecheckValidated(normalizedHash); err != nil {
+						return validatedTorrentSelection{}, err
 					}
-					if shouldReplaceBest(pieceSize, bestPiece, constraints) {
-						bestHash = normalizedHash
-						bestPath = outputPath
-						bestPiece = pieceSize
-						bestData = nil
-					}
+					considerClientMatch(match)
+				}
+				if validation.reusable && strings.EqualFold(validation.infoHash, normalizedHash) {
+					s.logger.Debugf("clients: validated existing torrent for %s (piece=%d)", normalizedHash, validation.pieceSize)
+					considerReusable(normalizedHash, outputPath, nil, validation.pieceSize)
 					continue
 				}
-				if reason != "" {
-					s.logger.Debugf("clients: existing torrent failed validation for %s: %s", normalizedHash, reason)
+				if validation.reason != "" {
+					s.logger.Debugf("clients: existing torrent failed validation for %s: %s", normalizedHash, validation.reason)
 				}
 			}
 		}
@@ -1189,45 +1347,45 @@ func (s *Service) selectValidTorrent(
 			continue
 		}
 
-		valid, pieceSize, infoHash, reason := validateTorrentData(meta, normalizedHash, data, constraints)
-		if !valid {
-			if reason != "" {
-				s.logger.Debugf("clients: exported torrent failed validation for %s: %s", normalizedHash, reason)
+		validation := validateTorrentData(meta, normalizedHash, data, constraints)
+		if !validation.clientMatch {
+			if validation.reason != "" {
+				s.logger.Debugf("clients: exported torrent failed validation for %s: %s", normalizedHash, validation.reason)
 			}
 			continue
 		}
-		if !strings.EqualFold(infoHash, normalizedHash) {
+		if !strings.EqualFold(validation.infoHash, normalizedHash) {
 			s.logger.Debugf("clients: exported torrent infohash mismatch for %s", normalizedHash)
 			continue
 		}
-		s.logger.Tracef("clients: validated exported torrent for %s (piece=%d)", normalizedHash, pieceSize)
+		if err := forceRecheckValidated(normalizedHash); err != nil {
+			return validatedTorrentSelection{}, err
+		}
+		considerClientMatch(match)
 
-		if shouldSelectPreferred(pieceSize, constraints) {
-			path, err := writeTorrentFile(outputPath, data)
-			if err != nil {
-				return "", "", err
-			}
-			return normalizedHash, path, nil
+		if !validation.reusable {
+			s.logger.Tracef("clients: validated exported torrent as client match only for %s (reason=%s)", normalizedHash, validation.reason)
+			continue
 		}
-		if shouldReplaceBest(pieceSize, bestPiece, constraints) {
-			bestHash = normalizedHash
-			bestPiece = pieceSize
-			bestData = data
-			bestPath = outputPath
-		}
+		s.logger.Tracef("clients: validated exported torrent for %s (piece=%d)", normalizedHash, validation.pieceSize)
+
+		considerReusable(normalizedHash, outputPath, data, validation.pieceSize)
 	}
 
 	if bestHash == "" {
-		return "", "", nil
+		return selection, nil
 	}
 	if bestData != nil {
 		path, err := writeTorrentFile(bestPath, bestData)
 		if err != nil {
-			return "", "", err
+			return validatedTorrentSelection{}, err
 		}
-		return bestHash, path, nil
+		bestPath = path
 	}
-	return bestHash, bestPath, nil
+	selection.infoHash = bestHash
+	selection.torrentPath = bestPath
+	selection.foundPreferred = preferredPieceLabel(bestPiece, constraints)
+	return selection, nil
 }
 
 func shouldForceRecheck(overrides api.ClientOverrides) bool {
@@ -1354,38 +1512,63 @@ func sanitizeTorrentData(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func validateTorrentData(meta api.PreparedMetadata, hash string, data []byte, constraints pieceConstraints) (bool, int64, string, string) {
+// validateTorrentData parses torrent data and reports whether its hash, paths,
+// and piece metadata are usable as a client match and/or a reusable torrent file.
+func validateTorrentData(meta api.PreparedMetadata, hash string, data []byte, constraints pieceConstraints) torrentDataValidation {
 	metaInfo, err := metainfo.Load(bytes.NewReader(data))
 	if err != nil {
-		return false, 0, "", "load_failed"
+		return torrentDataValidation{reason: "load_failed"}
 	}
 	info, err := metaInfo.UnmarshalInfo()
 	if err != nil {
-		return false, 0, "", "info_unmarshal_failed"
+		return torrentDataValidation{reason: "info_unmarshal_failed"}
 	}
 	infoHash := metaInfo.HashInfoBytes().String()
 	if strings.TrimSpace(hash) != "" && !strings.EqualFold(infoHash, hash) {
-		return false, 0, infoHash, "hash_mismatch"
+		return torrentDataValidation{infoHash: infoHash, reason: "hash_mismatch"}
 	}
 
 	valid, wrongFile := validateTorrentPaths(meta, info)
-	if !valid || wrongFile {
-		return false, 0, infoHash, "path_mismatch"
+	if !valid && !wrongFile {
+		return torrentDataValidation{infoHash: infoHash, reason: "path_mismatch"}
 	}
 
 	pieceSize := info.PieceLength
 	pieces := info.NumPieces()
 	if pieceSize <= 0 || pieces <= 0 {
-		return false, pieceSize, infoHash, "piece_metadata_invalid"
+		return torrentDataValidation{pieceSize: pieceSize, infoHash: infoHash, reason: "piece_metadata_invalid"}
+	}
+
+	if wrongFile {
+		// Same-basename path mismatches are valid for tracker data, but not strict
+		// enough to use the exported torrent file as this source's torrent file.
+		return torrentDataValidation{
+			clientMatch: true,
+			pieceSize:   pieceSize,
+			infoHash:    infoHash,
+			reason:      "path_mismatch",
+		}
 	}
 
 	if invalidPieceConstraints(constraints, pieceSize, pieces, int64(len(data)), wrongFile) {
-		return false, pieceSize, infoHash, "piece_constraints"
+		return torrentDataValidation{
+			clientMatch: true,
+			pieceSize:   pieceSize,
+			infoHash:    infoHash,
+			reason:      "piece_constraints",
+		}
 	}
 
-	return true, pieceSize, infoHash, ""
+	return torrentDataValidation{
+		reusable:    true,
+		clientMatch: true,
+		pieceSize:   pieceSize,
+		infoHash:    infoHash,
+	}
 }
 
+// validateTorrentPaths returns whether torrent paths strictly match the source
+// and whether a same-basename layout mismatch can still identify provenance.
 func validateTorrentPaths(meta api.PreparedMetadata, info metainfo.Info) (bool, bool) {
 	fileList := meta.FileList
 	metaPath := strings.TrimSpace(meta.SourcePath)
@@ -1410,6 +1593,8 @@ func validateTorrentPaths(meta api.PreparedMetadata, info metainfo.Info) (bool, 
 			if pathutil.Base(torrentFiles[0]) == torrentFiles[0] {
 				return true, false
 			}
+			// Folder-wrapped single-file torrents can still identify tracker
+			// provenance, but their layout is wrong for torrent-file reuse.
 			wrongFile = true
 		}
 		return false, wrongFile
@@ -1458,6 +1643,8 @@ func buildTorrentFileList(info metainfo.Info) []string {
 	return result
 }
 
+// invalidPieceConstraints reports metadata limits that prevent saving an
+// exported torrent as the reusable torrent file for this source.
 func invalidPieceConstraints(constraints pieceConstraints, pieceSize int64, pieces int, torrentSize int64, wrongFile bool) bool {
 	if pieces >= 5000 && pieceSize < 4294304 {
 		return true
@@ -1512,17 +1699,22 @@ func splitPath(value string) []string {
 	return strings.Split(trimmed, "/")
 }
 
-func shouldSelectPreferred(pieceSize int64, constraints pieceConstraints) bool {
+// preferredPieceLabel returns the constraint label satisfied by a selected
+// reusable torrent, or "no_constraints" when no constraint was configured.
+func preferredPieceLabel(pieceSize int64, constraints pieceConstraints) string {
+	if pieceSize <= 0 {
+		return ""
+	}
 	if !constraints.preferSmall && !constraints.preferMax16 {
-		return true
+		return "no_constraints"
 	}
-	if constraints.preferSmall {
-		return pieceSize <= mtvPieceSizeLimit
+	if constraints.preferSmall && pieceSize <= mtvPieceSizeLimit {
+		return "MTV"
 	}
-	if constraints.preferMax16 {
-		return pieceSize <= max16PieceSize
+	if constraints.preferMax16 && pieceSize <= max16PieceSize {
+		return "16MiB"
 	}
-	return false
+	return ""
 }
 
 func shouldReplaceBest(pieceSize int64, bestPiece int64, constraints pieceConstraints) bool {

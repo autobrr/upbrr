@@ -207,6 +207,144 @@ func TestInjectQbitClient(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientUsesPathMappingSavePath(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddCaptureServer(t)
+
+	root := t.TempDir()
+	localRoot := filepath.Join(root, "local")
+	releaseDir := filepath.Join(localRoot, "Movies", "Fixture.Title.2024")
+	if err := os.MkdirAll(releaseDir, 0o700); err != nil {
+		t.Fatalf("mkdir release: %v", err)
+	}
+	source := filepath.Join(releaseDir, "video.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	remoteRoot := "/remote/media"
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:       "qbit",
+				URL:        server.URL,
+				Username:   "user",
+				Password:   "pass",
+				LocalPath:  config.StringList{"", localRoot},
+				RemotePath: config.StringList{"/wrong/root", remoteRoot},
+			},
+		},
+	}, nil)
+
+	meta := api.PreparedMetadata{SourcePath: source, FileList: []string{source}}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	wantSavePath := "/remote/media/Movies/Fixture.Title.2024/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected mapped savepath %q, got %q", wantSavePath, capture.savePath)
+	}
+}
+
+func TestInjectQbitClientUsesPathMappingSavePathWithoutSourceStat(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddCaptureServer(t)
+
+	root := t.TempDir()
+	localRoot := filepath.Join(root, "local")
+	source := filepath.Join(localRoot, "Movies", "Fixture.Title.2024", "video.mkv")
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	remoteRoot := "/remote/media"
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:       "qbit",
+				URL:        server.URL,
+				Username:   "user",
+				Password:   "pass",
+				LocalPath:  config.StringList{localRoot},
+				RemotePath: config.StringList{remoteRoot},
+			},
+		},
+	}, nil)
+
+	meta := api.PreparedMetadata{SourcePath: source, FileList: []string{source}}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	wantSavePath := "/remote/media/Movies/Fixture.Title.2024/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected mapped savepath %q, got %q", wantSavePath, capture.savePath)
+	}
+}
+
+func TestMappedRemotePathPreservesBlankPathPairAlignment(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	localRoot := filepath.Join(root, "local")
+	otherRoot := filepath.Join(root, "other")
+	source := filepath.Join(localRoot, "Movies", "Fixture.Title.2024", "video.mkv")
+
+	tests := []struct {
+		name    string
+		locals  config.StringList
+		remotes config.StringList
+	}{
+		{
+			name:    "blank local path",
+			locals:  config.StringList{"", localRoot},
+			remotes: config.StringList{"/wrong/root", "/remote/media"},
+		},
+		{
+			name:    "blank remote path",
+			locals:  config.StringList{otherRoot, localRoot},
+			remotes: config.StringList{"", "/remote/media"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := mappedRemotePath(source, tt.locals, tt.remotes)
+			if !ok {
+				t.Fatal("expected mapped path")
+			}
+			want := filepath.Join("/remote/media", "Movies", "Fixture.Title.2024", "video.mkv")
+			if got != want {
+				t.Fatalf("expected mapped path %q, got %q", want, got)
+			}
+		})
+	}
+}
+
 func TestInjectQbitClientUsesRequestOverrides(t *testing.T) {
 	t.Parallel()
 
@@ -1012,6 +1150,233 @@ func TestInjectUsesSelectedClientOverride(t *testing.T) {
 	}
 }
 
+func TestInjectUsesDefaultClientWhenNoInjectionListOrTrackerClient(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	defaultWatch := filepath.Join(watchRoot, "default")
+	otherWatch := filepath.Join(watchRoot, "other")
+	if err := os.MkdirAll(defaultWatch, 0o700); err != nil {
+		t.Fatalf("mkdir default: %v", err)
+	}
+	if err := os.MkdirAll(otherWatch, 0o700); err != nil {
+		t.Fatalf("mkdir other: %v", err)
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "default",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"default": {Type: "watch", WatchFolder: defaultWatch},
+			"other":   {Type: "watch", WatchFolder: otherWatch},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(defaultWatch, filepath.Base(torrentPath))); err != nil {
+		t.Fatalf("expected default client copy, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(otherWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected other client untouched, got %v", err)
+	}
+}
+
+func TestInjectUsesMultipleInjectionClients(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	firstWatch := filepath.Join(watchRoot, "first")
+	secondWatch := filepath.Join(watchRoot, "second")
+	thirdWatch := filepath.Join(watchRoot, "third")
+	for _, dir := range []string{firstWatch, secondWatch, thirdWatch} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "first",
+			InjectClients: config.CSVList{"second", "third"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"first":  {Type: "watch", WatchFolder: firstWatch},
+			"second": {Type: "watch", WatchFolder: secondWatch},
+			"third":  {Type: "watch", WatchFolder: thirdWatch},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(firstWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected default client untouched, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(secondWatch, filepath.Base(torrentPath))); err != nil {
+		t.Fatalf("expected second client copy, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(thirdWatch, filepath.Base(torrentPath))); err != nil {
+		t.Fatalf("expected third client copy, got %v", err)
+	}
+}
+
+func TestInjectUsesSingleInjectionClientBeforeDefaultClient(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	defaultWatch := filepath.Join(watchRoot, "default")
+	otherWatch := filepath.Join(watchRoot, "other")
+	if err := os.MkdirAll(defaultWatch, 0o700); err != nil {
+		t.Fatalf("mkdir default: %v", err)
+	}
+	if err := os.MkdirAll(otherWatch, 0o700); err != nil {
+		t.Fatalf("mkdir other: %v", err)
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "default",
+			InjectClients: config.CSVList{"other"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"default": {Type: "watch", WatchFolder: defaultWatch},
+			"other":   {Type: "watch", WatchFolder: otherWatch},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(defaultWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected default client untouched, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(otherWatch, filepath.Base(torrentPath))); err != nil {
+		t.Fatalf("expected single injection client copy, got %v", err)
+	}
+}
+
+func TestInjectSkipsDefaultClientWhenInjectionClientUnknown(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	defaultWatch := filepath.Join(watchRoot, "default")
+	if err := os.MkdirAll(defaultWatch, 0o700); err != nil {
+		t.Fatalf("mkdir default: %v", err)
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "default",
+			InjectClients: config.CSVList{"missing"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"default": {Type: "watch", WatchFolder: defaultWatch},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(defaultWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected unknown injection selector to skip default fallback, got %v", err)
+	}
+}
+
+func TestInjectSkipsImplicitSingleClientWhenDefaultClientUnknown(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	watch := filepath.Join(watchRoot, "watch")
+	if err := os.MkdirAll(watch, 0o700); err != nil {
+		t.Fatalf("mkdir watch: %v", err)
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "missing",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"watch": {Type: "watch", WatchFolder: watch},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(watch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected unknown default selector to skip implicit fallback, got %v", err)
+	}
+}
+
+func TestInjectUnknownExplicitClientOverrideSkipsImplicitFallback(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	watch := filepath.Join(watchRoot, "watch")
+	if err := os.MkdirAll(watch, 0o700); err != nil {
+		t.Fatalf("mkdir watch: %v", err)
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	missing := "missing"
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"watch": {Type: "watch", WatchFolder: watch},
+		},
+	}, nil)
+
+	meta := api.PreparedMetadata{
+		SourcePath: "video.mkv",
+		ClientOverrides: api.ClientOverrides{
+			Client: &missing,
+		},
+	}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(watch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected explicit unknown override to skip fallback, got %v", err)
+	}
+}
+
 func TestInjectUsesTrackerTorrentClient(t *testing.T) {
 	t.Parallel()
 
@@ -1104,6 +1469,77 @@ func TestInjectClientOverrideWinsOverTrackerTorrentClient(t *testing.T) {
 	}
 }
 
+func TestInjectTrackerTorrentClientURLOnlyWatchReturnsErrorWithoutFallback(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	watch := filepath.Join(watchRoot, "watch")
+	if err := os.MkdirAll(watch, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {TorrentClient: "watch"},
+			},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"watch": {Type: "watch", WatchFolder: watch},
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{
+		URL:     "https://aither.cc/torrent/download/374352.382",
+		Tracker: "aither",
+	})
+	if !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("expected invalid input error, got %v", err)
+	}
+
+	entries, err := os.ReadDir(watch)
+	if err != nil {
+		t.Fatalf("read watch folder: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected watch folder untouched for URL injection, got %d entries", len(entries))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if addCalled {
+		t.Fatalf("did not expect tracker-selected watch client to fall back to qbit")
+	}
+}
+
 func TestInjectTrackerTorrentClientCanSelectClientNamedNone(t *testing.T) {
 	t.Parallel()
 
@@ -1144,6 +1580,72 @@ func TestInjectTrackerTorrentClientCanSelectClientNamedNone(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(otherWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected other client untouched, got %v", err)
+	}
+}
+
+func TestSelectTorrentClientsRejectsAmbiguousCaseInsensitiveNames(t *testing.T) {
+	t.Parallel()
+
+	clients := map[string]config.TorrentClientConfig{
+		"Qbit": {Type: "watch"},
+		"qbit": {Type: "qbit"},
+	}
+
+	matches := selectTorrentClients(clients, []string{"QBIT"})
+	if len(matches) != 0 {
+		t.Fatalf("expected ambiguous case-insensitive selector to be ignored, got %v", matches)
+	}
+
+	matches = selectTorrentClients(clients, []string{"qbit"})
+	if len(matches) != 1 {
+		t.Fatalf("expected exact selector match, got %v", matches)
+	}
+	if _, ok := matches["qbit"]; !ok {
+		t.Fatalf("expected exact lower-case client match, got %v", matches)
+	}
+
+	matches = selectTorrentClients(clients, []string{"QBIT", "qbit"})
+	if len(matches) != 1 {
+		t.Fatalf("expected later exact selector after ambiguous selector, got %v", matches)
+	}
+	if _, ok := matches["qbit"]; !ok {
+		t.Fatalf("expected exact lower-case client match after ambiguous selector, got %v", matches)
+	}
+}
+
+func TestSelectTorrentClientsDeduplicatesNormalizedSelectors(t *testing.T) {
+	t.Parallel()
+
+	clients := map[string]config.TorrentClientConfig{
+		"qbit": {Type: "qbit"},
+	}
+
+	matches := selectTorrentClients(clients, []string{"qbit", " QBIT ", "qbit"})
+	if len(matches) != 1 {
+		t.Fatalf("expected duplicate selector variants to select one client, got %v", matches)
+	}
+	if _, ok := matches["qbit"]; !ok {
+		t.Fatalf("expected qbit match, got %v", matches)
+	}
+}
+
+func TestSelectTorrentClientsKeepsExactCaseVariantClients(t *testing.T) {
+	t.Parallel()
+
+	clients := map[string]config.TorrentClientConfig{
+		"Qbit": {Type: "watch"},
+		"qbit": {Type: "qbit"},
+	}
+
+	matches := selectTorrentClients(clients, []string{"Qbit", "qbit"})
+	if len(matches) != 2 {
+		t.Fatalf("expected both exact case-variant clients, got %v", matches)
+	}
+	if _, ok := matches["Qbit"]; !ok {
+		t.Fatalf("expected exact upper-case client match, got %v", matches)
+	}
+	if _, ok := matches["qbit"]; !ok {
+		t.Fatalf("expected exact lower-case client match, got %v", matches)
 	}
 }
 
@@ -1464,6 +1966,7 @@ func TestInjectURLSkipsWatchFolderClient(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
+	var mu sync.Mutex
 	addCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1472,7 +1975,9 @@ func TestInjectURLSkipsWatchFolderClient(t *testing.T) {
 			_, _ = w.Write([]byte("Ok."))
 			return
 		case "/api/v2/torrents/add":
+			mu.Lock()
 			addCalled = true
+			mu.Unlock()
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("Ok."))
@@ -1485,6 +1990,9 @@ func TestInjectURLSkipsWatchFolderClient(t *testing.T) {
 	defer server.Close()
 
 	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+		},
 		TorrentClients: map[string]config.TorrentClientConfig{
 			"watch": {Type: "watch", WatchFolder: watch},
 			"qbit": {
@@ -1507,8 +2015,584 @@ func TestInjectURLSkipsWatchFolderClient(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("expected watch folder untouched for URL injection, got %d entries", len(entries))
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if !addCalled {
 		t.Fatalf("expected qbit URL add call")
+	}
+}
+
+func TestInjectURLFallsBackToQbitWhenDefaultWatchCannotHandleURL(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	watch := filepath.Join(watchRoot, "watch")
+	if err := os.MkdirAll(watch, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "watch",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"watch": {Type: "watch", WatchFolder: watch},
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	entries, err := os.ReadDir(watch)
+	if err != nil {
+		t.Fatalf("read watch folder: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected watch folder untouched for URL injection, got %d entries", len(entries))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !addCalled {
+		t.Fatalf("expected qbit URL add call")
+	}
+}
+
+func TestInjectURLFallbackIgnoresUnsupportedSelectedClient(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "rtorrent",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"rtorrent": {Type: "rtorrent"},
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !addCalled {
+		t.Fatalf("expected qbit URL add call")
+	}
+}
+
+func TestInjectURLDefaultDisabledDoesNotFallbackToQbit(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "disabled",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"disabled": {Type: "disabled"},
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if addCalled {
+		t.Fatalf("did not expect disabled default client to fall back to qbit")
+	}
+}
+
+func TestInjectURLUnknownDefaultFallsBackToQbit(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "missing",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !addCalled {
+		t.Fatalf("expected qbit URL add call")
+	}
+}
+
+func TestInjectURLUnknownInjectionListFallsBackToQbit(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "missing-default",
+			InjectClients: config.CSVList{
+				"missing-inject",
+			},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !addCalled {
+		t.Fatalf("expected qbit URL add call")
+	}
+}
+
+func TestInjectURLInjectionListDisabledDoesNotFallbackToQbit(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			InjectClients: config.CSVList{
+				"disabled",
+			},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"disabled": {Type: "none"},
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if addCalled {
+		t.Fatalf("did not expect disabled injection client to fall back to qbit")
+	}
+}
+
+func TestInjectURLFallbackSkipsQbitWhenFallbackDisallowed(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	watch := filepath.Join(watchRoot, "watch")
+	if err := os.MkdirAll(watch, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	allowFallback := false
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "watch",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"watch": {Type: "watch", WatchFolder: watch},
+			"qbit": {
+				Type:          "qbit",
+				URL:           server.URL,
+				Username:      "user",
+				Password:      "pass",
+				AllowFallback: &allowFallback,
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if addCalled {
+		t.Fatalf("did not expect qbit client with fallback disabled to receive URL fallback")
+	}
+}
+
+func TestInjectWatchFolderCopiesFileWhenURLAlsoPresent(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	watch := filepath.Join(watchRoot, "watch")
+	if err := os.MkdirAll(watch, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	torrentPath := filepath.Join(watchRoot, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "watch",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"watch": {Type: "watch", WatchFolder: watch},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{
+		Path: torrentPath,
+		URL:  "https://aither.cc/torrent/download/374352.382",
+	}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(watch, filepath.Base(torrentPath))); err != nil {
+		t.Fatalf("expected watch client copy with file and URL, got %v", err)
+	}
+}
+
+func TestInjectURLFallbackSkipsWatchBeforeDelay(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	watch := filepath.Join(watchRoot, "watch")
+	if err := os.MkdirAll(watch, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	var mu sync.Mutex
+	addCalled := false
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				cancel()
+			}()
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		PostUpload: config.PostUploadConfig{InjectDelay: 1},
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "watch",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"watch": {Type: "watch", WatchFolder: watch},
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	err := svc.Inject(ctx, api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"})
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !addCalled {
+		t.Fatalf("expected qbit URL add call")
+	}
+}
+
+func TestInjectCrossSeedURLFallbackPreservesQbitMetadata(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	watch := filepath.Join(watchRoot, "watch")
+	if err := os.MkdirAll(watch, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	var mu sync.Mutex
+	addCategory := ""
+	addTags := ""
+	errCh := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			if err := r.ParseForm(); err != nil {
+				errCh <- err
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			addCategory = r.FormValue("category")
+			addTags = r.FormValue("tags")
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "watch",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"watch": {Type: "watch", WatchFolder: watch},
+			"qbit": {
+				Type:              "qbit",
+				URL:               server.URL,
+				Username:          "user",
+				Password:          "pass",
+				QbitCrossCategory: "cross-cat",
+				QbitCrossTag:      "cross-tag",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{
+		URL:       "https://aither.cc/torrent/download/374352.382",
+		Tracker:   "AITHER",
+		CrossSeed: true,
+	}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if addCategory != "cross-cat" {
+		t.Fatalf("expected cross category, got %q", addCategory)
+	}
+	if addTags != "cross-tag" {
+		t.Fatalf("expected cross tag, got %q", addTags)
 	}
 }
 

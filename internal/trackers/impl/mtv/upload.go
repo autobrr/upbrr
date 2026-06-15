@@ -212,6 +212,7 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
 			continue
 		}
+		// #nosec G124 -- Outbound tracker jar cookie mirrors configured MTV session values.
 		jarCookies = append(jarCookies, &http.Cookie{Name: name, Value: value, Path: "/", Domain: parsedBase.Hostname()})
 	}
 	jar.SetCookies(parsedBase, jarCookies)
@@ -692,7 +693,7 @@ func resolveGroupDescription(meta api.PreparedMetadata) string {
 		}
 		parts = append(parts, "https://www.themoviedb.org/"+category+"/"+strconv.Itoa(meta.ExternalIDs.TMDBID))
 	}
-	if meta.ExternalIDs.TVDBID != 0 {
+	if strings.EqualFold(resolveCategory(meta), "TV") && meta.ExternalIDs.TVDBID != 0 {
 		parts = append(parts, "https://www.thetvdb.com/?id="+strconv.Itoa(meta.ExternalIDs.TVDBID))
 	}
 	if meta.ExternalIDs.TVmazeID != 0 {

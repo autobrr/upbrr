@@ -94,7 +94,12 @@ const imageHostOptions = [
   { value: "utppm", label: "UTPPM" },
 ];
 
-const trackerImageHostOptions = [...imageHostOptions, { value: "hdb", label: "HDB" }];
+const trackerImageHostOptions = [
+  ...imageHostOptions,
+  { value: "hdb", label: "HDB" },
+  { value: "lostimg", label: "Lostimg" },
+  { value: "reelflix", label: "Reelflix" },
+];
 const torrentClientTypeOptions = [
   { value: "qbit", label: "qBit" },
   { value: "watch", label: "Watch" },
@@ -108,7 +113,11 @@ const torrentClientLinkingOptions = [
 const imageHostOptionLabels = new Map(
   trackerImageHostOptions.map((option) => [option.value, option.label]),
 );
-const defaultOwnedImageHosts: Record<string, string> = { hdb: "HDB" };
+const defaultOwnedImageHosts: Record<string, string> = {
+  hdb: "HDB",
+  lostimg: "LST",
+  reelflix: "RF",
+};
 const normalizeImageHostValue = (value: string) => value.trim().toLowerCase();
 const imageHostOptionFor = (host: string) => {
   const value = normalizeImageHostValue(host);
@@ -155,68 +164,62 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   AnnounceURL: stringField("AnnounceURL", {
     label: "Announce URL",
     sensitive: true,
-    advanced: true,
   }),
   MyAnnounceURL: stringField("MyAnnounceURL", {
     label: "My announce URL",
     sensitive: true,
-    advanced: true,
   }),
-  URL: stringField("URL", { label: "URL", advanced: true }),
+  URL: stringField("URL", { label: "URL" }),
   FaviconURL: stringField("FaviconURL", { label: "Favicon URL", advanced: true }),
   UploaderName: stringField("UploaderName", { label: "Uploader name" }),
-  UploaderStatus: boolField("UploaderStatus", { label: "Uploader status", advanced: true }),
-  CustomLayout: stringField("CustomLayout", { label: "Custom layout", advanced: true }),
+  UploaderStatus: boolField("UploaderStatus", { label: "Uploader status" }),
+  CustomLayout: stringField("CustomLayout", { label: "Custom layout" }),
   TagForCustomRelease: stringField("TagForCustomRelease", { label: "Tag for custom release" }),
-  CheckForRules: boolField("CheckForRules", { label: "Check for rules", advanced: true }),
-  ModQ: boolField("ModQ", { label: "Mod queue", advanced: true }),
-  Draft: boolField("Draft", { label: "Draft", advanced: true }),
-  DraftDefault: boolField("DraftDefault", { label: "Draft default", advanced: true }),
+  CheckForRules: boolField("CheckForRules", { label: "Check for rules" }),
+  ModQ: boolField("ModQ", { label: "Mod queue" }),
+  Draft: boolField("Draft", { label: "Draft" }),
+  DraftDefault: boolField("DraftDefault", { label: "Draft default" }),
   Anon: boolField("Anon", { label: "Anonymous" }),
-  ShowGroupIfAnon: boolField("ShowGroupIfAnon", { label: "Show group if anon", advanced: true }),
-  BhdRSSKey: stringField("BhdRSSKey", { label: "BHD RSS key", sensitive: true, advanced: true }),
-  CheckRequests: boolField("CheckRequests", { label: "Check requests", advanced: true }),
-  FullMediainfo: boolField("FullMediainfo", { label: "Full mediainfo", advanced: true }),
-  ImgRehost: boolField("ImgRehost", { label: "Image rehost", advanced: true }),
+  ShowGroupIfAnon: boolField("ShowGroupIfAnon", { label: "Show group if anon" }),
+  BhdRSSKey: stringField("BhdRSSKey", { label: "BHD RSS key", sensitive: true }),
+  CheckRequests: boolField("CheckRequests", { label: "Check requests" }),
+  FullMediainfo: boolField("FullMediainfo", { label: "Full mediainfo" }),
+  ImgRehost: boolField("ImgRehost", { label: "Image rehost" }),
   ImageHost: stringField("ImageHost", {
     label: "Image host",
     options: imageHostOptions,
   }),
-  TorrentClient: stringField("TorrentClient", { label: "Torrent client" }),
-  UseSpanishTitle: boolField("UseSpanishTitle", { label: "Use Spanish title", advanced: true }),
-  UseItalianTitle: boolField("UseItalianTitle", { label: "Use Italian title", advanced: true }),
-  OTPURI: stringField("OTPURI", { label: "OTP URI", sensitive: true, advanced: true }),
+  TorrentClient: stringField("TorrentClient", { label: "Torrent client", advanced: true }),
+  UseSpanishTitle: boolField("UseSpanishTitle", { label: "Use Spanish title" }),
+  UseItalianTitle: boolField("UseItalianTitle", { label: "Use Italian title" }),
+  OTPURI: stringField("OTPURI", { label: "OTP URI", sensitive: true }),
   SkipIfRehash: boolField("SkipIfRehash", { label: "Skip if rehash", advanced: true }),
   PreferMTV: boolField("PreferMTV", { label: "Prefer MTV torrent", advanced: true }),
-  PTGenAPI: stringField("PTGenAPI", { label: "PTGen API", sensitive: true, advanced: true }),
+  PTGenAPI: stringField("PTGenAPI", { label: "PTGen API", sensitive: true }),
   AddWebSourceToDesc: boolField("AddWebSourceToDesc", {
     label: "Add web source to desc",
-    advanced: true,
   }),
-  ImageCount: numberField("ImageCount", { label: "Image count", advanced: true }),
-  Channel: stringField("Channel", { label: "Channel", advanced: true }),
-  ImgAPI: stringField("ImgAPI", { label: "Image API", sensitive: true, advanced: true }),
+  ImageCount: numberField("ImageCount", { label: "Image count" }),
+  Channel: stringField("Channel", { label: "Channel" }),
+  ImgAPI: stringField("ImgAPI", { label: "Image API", sensitive: true }),
   PronfoAPIKey: stringField("PronfoAPIKey", {
     label: "Pronfo API key",
     sensitive: true,
-    advanced: true,
   }),
-  PronfoTheme: stringField("PronfoTheme", { label: "Pronfo theme", advanced: true }),
-  PronfoRAPIID: stringField("PronfoRAPIID", { label: "Pronfo RAPI ID", advanced: true }),
-  APIUpload: boolField("APIUpload", { label: "API upload", advanced: true }),
-  Exclusive: boolField("Exclusive", { label: "Exclusive", advanced: true }),
+  PronfoTheme: stringField("PronfoTheme", { label: "Pronfo theme" }),
+  PronfoRAPIID: stringField("PronfoRAPIID", { label: "Pronfo RAPI ID" }),
+  APIUpload: boolField("APIUpload", { label: "API upload" }),
+  Exclusive: boolField("Exclusive", { label: "Exclusive" }),
   LoginQuestion: stringField("LoginQuestion", {
     label: "Login question",
     sensitive: true,
-    advanced: true,
   }),
   LoginAnswer: stringField("LoginAnswer", {
     label: "Login answer",
     sensitive: true,
-    advanced: true,
   }),
-  UserID: stringField("UserID", { label: "User ID", sensitive: true, advanced: true }),
-  Filebrowser: stringField("Filebrowser", { label: "Filebrowser", advanced: true }),
+  UserID: stringField("UserID", { label: "User ID", sensitive: true }),
+  Filebrowser: stringField("Filebrowser", { label: "Filebrowser" }),
 };
 
 const trackerSchemas: Record<string, FieldMeta[]> = {
@@ -532,6 +535,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
+    trackerFieldMeta.ImgAPI,
     trackerFieldMeta.Anon,
   ],
   RTF: [
@@ -665,7 +669,9 @@ const trackerActivationKeys = new Set([
   "BhdRSSKey",
   "OTPURI",
   "PTGenAPI",
+  "ImageHost",
   "ImgAPI",
+  "TorrentClient",
   "PronfoAPIKey",
   "LoginQuestion",
   "LoginAnswer",
@@ -729,18 +735,19 @@ const sensitiveKeyHints = [
 ];
 
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
+  ImageHosting: {
+    LostimgAPI: stringField("LostimgAPI", { label: "API key", sensitive: true }),
+  },
   MainSettings: {
-    TrackerPassChecks: { key: "TrackerPassChecks", advanced: true },
     InputHistoryLimit: { key: "InputHistoryLimit", label: "Input history limit", type: "number" },
     UseFavicons: { key: "UseFavicons", label: "Use favicons" },
     FaviconOnly: { key: "FaviconOnly", label: "Favicon only" },
-    DBPath: { key: "DBPath", advanced: true },
   },
   Metadata: {
+    BTNAPI: { key: "BTNAPI", advanced: true, sensitive: true },
+    SkipAutoTorrent: { key: "SkipAutoTorrent", advanced: true },
     SkipTrackerFilenameLookup: { key: "SkipTrackerFilenameLookup", advanced: true },
     UserOverrides: { key: "UserOverrides", advanced: true },
-    PingUnit3D: { key: "PingUnit3D", advanced: true },
-    GetBlurayInfo: { key: "GetBlurayInfo", advanced: true },
     BlurayScore: { key: "BlurayScore", advanced: true },
     BluraySingleScore: { key: "BluraySingleScore", advanced: true },
     CheckPredb: { key: "CheckPredb", advanced: true },
@@ -749,23 +756,17 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     ProcessLimit: { key: "ProcessLimit", advanced: true },
     MaxConcurrentUploads: { key: "MaxConcurrentUploads", advanced: true },
     FFmpegLimit: { key: "FFmpegLimit", advanced: true },
-    UseLibplacebo: { key: "UseLibplacebo", advanced: true },
     FFmpegCompression: { key: "FFmpegCompression", advanced: true },
     TonemapAlgorithm: { key: "TonemapAlgorithm", advanced: true },
     Desat: { key: "Desat", advanced: true },
   },
   Description: {
-    TonemappedHeader: { key: "TonemappedHeader", advanced: true },
-    MultiScreens: { key: "MultiScreens", advanced: true },
-    PackThumbSize: { key: "PackThumbSize", advanced: true },
+    LogoSize: { key: "LogoSize", advanced: true },
+    LogoLanguage: { key: "LogoLanguage", advanced: true },
     CharLimit: { key: "CharLimit", advanced: true },
     FileLimit: { key: "FileLimit", advanced: true },
     ProcessLimit: { key: "ProcessLimit", advanced: true },
-    CustomDescriptionHeader: { key: "CustomDescriptionHeader", advanced: true },
-    ScreenshotHeader: { key: "ScreenshotHeader", advanced: true },
-    DiscMenuHeader: { key: "DiscMenuHeader", advanced: true },
     CustomSignature: { key: "CustomSignature", advanced: true },
-    BlurayImageSize: { key: "BlurayImageSize", advanced: true },
   },
   ArrIntegration: {
     SonarrURL1: { key: "SonarrURL1", advanced: true },
@@ -783,21 +784,12 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     EmbyDir: { key: "EmbyDir", advanced: true },
     EmbyTVDir: { key: "EmbyTVDir", advanced: true },
   },
-  TorrentCreation: {
-    MkbrrThreads: { key: "MkbrrThreads", advanced: true },
-    PreferMax16: { key: "PreferMax16", advanced: true },
-    RehashCooldown: { key: "RehashCooldown", advanced: true },
-  },
+  TorrentCreation: {},
   PostUpload: {
-    PrintTrackerMessages: { key: "PrintTrackerMessages", advanced: true },
-    PrintTrackerLinks: { key: "PrintTrackerLinks", advanced: true },
-    SearchRequests: { key: "SearchRequests", advanced: true },
-    CrossSeedCheckEverything: { key: "CrossSeedCheckEverything", advanced: true },
+    InjectDelay: { key: "InjectDelay", advanced: true },
+    MaxConcurrentTrackers: { key: "MaxConcurrentTrackers", advanced: true },
   },
-  Logging: {
-    MaxTotalSizeMB: { key: "MaxTotalSizeMB", advanced: true },
-    MaxFiles: { key: "MaxFiles", advanced: true },
-  },
+  Logging: {},
   TorrentClients: {
     Type: stringField("Type", { label: "Type", options: torrentClientTypeOptions }),
     WatchFolder: stringField("WatchFolder", { label: "Watch folder" }),
@@ -818,8 +810,8 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     }),
     AllowFallback: boolField("AllowFallback", { label: "Allow link fallback" }),
     LinkedFolder: stringField("LinkedFolder", { label: "Linked folder" }),
-    LocalPath: stringField("LocalPath", { label: "Local path", advanced: true }),
-    RemotePath: stringField("RemotePath", { label: "Remote path", advanced: true }),
+    LocalPath: stringField("LocalPath", { label: "Local path" }),
+    RemotePath: stringField("RemotePath", { label: "Remote path" }),
     VerifyWebUICertificate: boolField("VerifyWebUICertificate", {
       label: "Verify WebUI certificate",
       advanced: true,
@@ -1140,8 +1132,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   const resolveImageHostLabel = (value: string) => {
-    const option = imageHostOptions.find((entry) => entry.value === value);
-    return option ? option.label : value;
+    return imageHostOptionLabels.get(value) ?? value;
   };
 
   const buildImageHostOptions = useCallback((hosts: string[]) => {
@@ -1171,15 +1162,68 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         imageHostPolicyMetadata.UploadHosts?.map((host) => normalizeImageHostValue(host)) ??
         imageHostOptions.filter((option) => option.value).map((option) => option.value);
       const ownerByHost = imageHostPolicyMetadata.OwnedHosts ?? defaultOwnedImageHosts;
-      const hosts = (policyHosts ?? fallbackHosts).filter((host) => {
+      const imageCfg =
+        configData?.ImageHosting &&
+        typeof configData.ImageHosting === "object" &&
+        !Array.isArray(configData.ImageHosting)
+          ? (configData.ImageHosting as ConfigMap)
+          : null;
+      const trackerRoot =
+        configData?.Trackers &&
+        typeof configData.Trackers === "object" &&
+        !Array.isArray(configData.Trackers)
+          ? (configData.Trackers as ConfigMap)
+          : null;
+      const trackerEntries =
+        trackerRoot?.Trackers &&
+        typeof trackerRoot.Trackers === "object" &&
+        !Array.isArray(trackerRoot.Trackers)
+          ? (trackerRoot.Trackers as ConfigMap)
+          : null;
+      const trackerCfg =
+        trackerEntries?.[trackerKey] &&
+        typeof trackerEntries[trackerKey] === "object" &&
+        !Array.isArray(trackerEntries[trackerKey])
+          ? (trackerEntries[trackerKey] as ConfigMap)
+          : null;
+      const globalFallbackHosts = fallbackHosts.filter((host) => !ownerByHost[host]);
+      const globalHosts = (configuredImageHosts.length ? configuredImageHosts : globalFallbackHosts)
+        .map((host) => normalizeImageHostValue(host))
+        .filter((host) => host.length > 0 && !ownerByHost[host]);
+      const policyHostSet = new Set(
+        (policyHosts ?? []).map((host) => normalizeImageHostValue(host)).filter(Boolean),
+      );
+      const policyHasGlobalHosts = Array.from(policyHostSet).some((host) => !ownerByHost[host]);
+      const policyAllowsGlobalFallback =
+        policyHostSet.size === 0 ||
+        Array.from(policyHostSet).every((host) => host === "lostimg" || host === "reelflix");
+      const hosts = globalHosts.filter(
+        (host) => policyAllowsGlobalFallback || (policyHasGlobalHosts && policyHostSet.has(host)),
+      );
+
+      (policyHosts ?? []).forEach((host) => {
         const normalizedHost = normalizeImageHostValue(host);
         const owner = ownerByHost[normalizedHost];
-        return !owner || owner.trim().toUpperCase() === trackerKey;
+        if (!owner || owner.trim().toUpperCase() !== trackerKey) {
+          return;
+        }
+        if (normalizedHost === "lostimg" && !Boolean(imageCfg?.LostimgEnabled)) {
+          return;
+        }
+        if (
+          normalizedHost === "reelflix" &&
+          normalizeImageHostValue(String(trackerCfg?.ImageHost ?? "")) !== "reelflix"
+        ) {
+          return;
+        }
+        if (!hosts.includes(normalizedHost)) {
+          hosts.push(normalizedHost);
+        }
       });
 
       return buildImageHostOptions(hosts);
     },
-    [buildImageHostOptions, imageHostPolicyMetadata],
+    [buildImageHostOptions, configData, configuredImageHosts, imageHostPolicyMetadata],
   );
 
   const updateConfigValue = (path: string[], value: ConfigValue) => {
@@ -1851,7 +1895,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                           meta.LinkedFolder,
                         )
                       : null}
-                    {!watchClient && advancedOpen
+                    {!watchClient
                       ? renderField(
                           "LocalPath",
                           arrayFor(client, "LocalPath"),
@@ -1859,7 +1903,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                           meta.LocalPath,
                         )
                       : null}
-                    {!watchClient && advancedOpen
+                    {!watchClient
                       ? renderField(
                           "RemotePath",
                           arrayFor(client, "RemotePath"),
@@ -2288,9 +2332,26 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
 
     const imageCfg = configData.ImageHosting as ConfigMap;
+    const trackersRoot =
+      configData.Trackers &&
+      typeof configData.Trackers === "object" &&
+      !Array.isArray(configData.Trackers)
+        ? (configData.Trackers as ConfigMap)
+        : null;
+    const trackerEntries =
+      trackersRoot?.Trackers &&
+      typeof trackersRoot.Trackers === "object" &&
+      !Array.isArray(trackersRoot.Trackers)
+        ? (trackersRoot.Trackers as ConfigMap)
+        : null;
+    const rfTrackerCfg =
+      trackerEntries?.RF &&
+      typeof trackerEntries.RF === "object" &&
+      !Array.isArray(trackerEntries.RF)
+        ? (trackerEntries.RF as ConfigMap)
+        : null;
     const hostFields = ["Host1", "Host2", "Host3", "Host4", "Host5", "Host6"];
     const requiredKeys = new Set<string>();
-
     hostFields.forEach((field) => {
       const selected = String(imageCfg[field] ?? "").trim();
       if (!selected) return;
@@ -2337,6 +2398,49 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               )}
             </div>
           )}
+        </div>
+
+        <div className="settings-subgroup">
+          <div className="settings-subgroup__title">Tracker Image Hosts</div>
+          <div className="settings-grid">
+            <div className="settings-switch-row">
+              <span>LST Lostimg</span>
+              <Switch
+                aria-label="LST Lostimg"
+                checked={Boolean(imageCfg.LostimgEnabled)}
+                onChange={(event) =>
+                  updateConfigValue(["ImageHosting", "LostimgEnabled"], event.target.checked)
+                }
+              />
+            </div>
+            {renderField(
+              "LostimgAPI",
+              (imageCfg.LostimgAPI as ConfigValue) ?? "",
+              ["ImageHosting", "LostimgAPI"],
+              sectionFieldMeta.ImageHosting.LostimgAPI,
+            )}
+            <div className="settings-switch-row">
+              <span>RF Reelflix</span>
+              <Switch
+                aria-label="RF Reelflix"
+                checked={
+                  normalizeImageHostValue(String(rfTrackerCfg?.ImageHost ?? "")) === "reelflix"
+                }
+                onChange={(event) =>
+                  updateConfigValue(
+                    ["Trackers", "Trackers", "RF", "ImageHost"],
+                    event.target.checked ? "reelflix" : "",
+                  )
+                }
+              />
+            </div>
+            {renderField(
+              "ImgAPI",
+              (rfTrackerCfg?.ImgAPI as ConfigValue) ?? "",
+              ["Trackers", "Trackers", "RF", "ImgAPI"],
+              trackerFieldMeta.ImgAPI,
+            )}
+          </div>
         </div>
       </div>
     );

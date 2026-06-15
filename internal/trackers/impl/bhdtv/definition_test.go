@@ -73,8 +73,6 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 }
 
 func TestUploadParsesViewAndWritesArtifact(t *testing.T) {
-	t.Parallel()
-
 	tempDir := t.TempDir()
 	torrentPath := filepath.Join(tempDir, "input.torrent")
 	mediaPath := filepath.Join(tempDir, "MEDIAINFO_CLEANPATH.txt")

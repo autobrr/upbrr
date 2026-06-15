@@ -268,7 +268,8 @@ func buildDatabaseLinks(meta api.PreparedMetadata) string {
 	if id := meta.ExternalIDs.TMDBID; id > 0 {
 		links = append(links, fmt.Sprintf("https://www.themoviedb.org/%s/%d", category, id))
 	}
-	if id := meta.ExternalIDs.TVDBID; id > 0 {
+	if isTVDBCategory(meta) && meta.ExternalIDs.TVDBID > 0 {
+		id := meta.ExternalIDs.TVDBID
 		links = append(links, fmt.Sprintf("https://www.thetvdb.com/?id=%d&tab=series", id))
 	}
 	if id := meta.ExternalIDs.TVmazeID; id > 0 {
@@ -278,6 +279,20 @@ func buildDatabaseLinks(meta api.PreparedMetadata) string {
 		links = append(links, fmt.Sprintf("https://myanimelist.net/anime/%d", meta.MALID))
 	}
 	return strings.Join(links, "\n")
+}
+
+// isTVDBCategory reports whether AR descriptions may include a TVDB series link.
+// Explicit movie categories suppress TVDB links even when MediaInfo or episode hints classify the release as TV.
+func isTVDBCategory(meta api.PreparedMetadata) bool {
+	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "MOVIE") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "MOVIE") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV") ||
+		meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0
 }
 
 func buildScreenshotSection(images []api.ScreenshotImage) string {

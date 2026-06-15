@@ -405,11 +405,12 @@ func setBTNJarCookiesFromNetscape(client *http.Client, rawURL string, values []*
 		if cookie == nil || strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
 			continue
 		}
-		copied := *cookie
+		copied := *cookie // #nosec G124 -- Outbound tracker jar cookie mirrors imported BTN cookie attributes.
 		copied.Domain = parsed.Hostname()
 		if strings.TrimSpace(copied.Path) == "" {
 			copied.Path = "/"
 		}
+		// #nosec G124 -- Outbound tracker jar cookie mirrors imported BTN cookie attributes.
 		jarCookies = append(jarCookies, &copied)
 	}
 	if len(jarCookies) == 0 {
@@ -932,15 +933,17 @@ func mirrorBTNCookiesForClaimedThread(client *http.Client) {
 		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
 			continue
 		}
-		copied := *cookie
+		copied := *cookie // #nosec G124 -- Outbound tracker jar cookie mirrors backup BTN session attributes.
 		copied.Domain = "broadcasthe.net"
 		if copied.Path == "" {
 			copied.Path = "/"
 		}
+		// #nosec G124 -- Outbound tracker jar cookie mirrors backup BTN session attributes.
 		mirrored = append(mirrored, &copied)
 
-		dotted := copied
+		dotted := copied // #nosec G124 -- Outbound tracker jar cookie mirrors backup BTN session attributes.
 		dotted.Domain = ".broadcasthe.net"
+		// #nosec G124 -- Outbound tracker jar cookie mirrors backup BTN session attributes.
 		mirrored = append(mirrored, &dotted)
 	}
 	if len(mirrored) == 0 {

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -51,11 +52,13 @@ func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uplo
 		"hdb":          &hdbUploader{username: cfg.Trackers.Trackers["HDB"].Username, passkey: cfg.Trackers.Trackers["HDB"].Passkey, client: client},
 		"pixhost":      &pixhostUploader{client: client},
 		"lensdump":     &lensdumpUploader{apiKey: cfg.ImageHosting.LensdumpAPI, client: client},
+		"lostimg":      &lostimgUploader{apiKey: cfg.ImageHosting.LostimgAPI, client: client},
 		"ptscreens":    &ptScreensUploader{apiKey: cfg.ImageHosting.PTScreensAPI, client: client},
 		"onlyimage":    &onlyImageUploader{apiKey: cfg.ImageHosting.OnlyImageAPI, client: client},
 		"dalexni":      &dalexniUploader{apiKey: cfg.ImageHosting.DalexniAPI, client: client},
 		"zipline":      &ziplineUploader{apiKey: cfg.ImageHosting.ZiplineAPIKey, url: cfg.ImageHosting.ZiplineURL, client: client},
 		"passtheimage": &passTheImageUploader{apiKey: cfg.ImageHosting.PassTheImageAPI, client: client},
+		"reelflix":     &reelflixUploader{apiKey: cfg.Trackers.Trackers["RF"].ImgAPI, client: client},
 		"seedpool_cdn": &seedpoolUploader{apiKey: cfg.ImageHosting.SeedpoolCDNAPI, client: client},
 		"sharex":       &shareXUploader{apiKey: cfg.ImageHosting.ShareXAPIKey, url: cfg.ImageHosting.ShareXURL, client: client},
 		"thr":          &thrUploader{apiKey: cfg.Trackers.Trackers["THR"].ImgAPI, client: client},
@@ -253,10 +256,7 @@ func (u *hdbUploader) UploadBatchWithName(ctx context.Context, imagePaths []stri
 	}
 	results := make([]uploadResult, 0, len(imagePaths))
 	for start := 0; start < len(imagePaths); start += hdbMaxBatchUploadImages {
-		end := start + hdbMaxBatchUploadImages
-		if end > len(imagePaths) {
-			end = len(imagePaths)
-		}
+		end := min(start+hdbMaxBatchUploadImages, len(imagePaths))
 		chunk, err := u.uploadBatchWithGalleryName(ctx, imagePaths[start:end], galleryName)
 		if err != nil {
 			return nil, err
@@ -392,7 +392,7 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 		}
 		return imgboxUploadToken{}, fmt.Errorf("imgbox token request failed with status %d, response: %s", resp.StatusCode, bodyStr)
 	}
-	var tokenResp map[string]interface{}
+	var tokenResp map[string]any
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		bodyStr := string(body)
 		if len(bodyStr) > 200 {
@@ -424,9 +424,7 @@ func imgboxHeaders(cookie string, extra map[string]string) map[string]string {
 	if strings.TrimSpace(cookie) != "" {
 		headers["Cookie"] = cookie
 	}
-	for key, value := range extra {
-		headers[key] = value
-	}
+	maps.Copy(headers, extra)
 	return headers
 }
 
@@ -463,7 +461,7 @@ func imgboxPickCookie(resp *http.Response) string {
 	return strings.Join(parts, "; ")
 }
 
-func imgboxJSONValue(value interface{}) string {
+func imgboxJSONValue(value any) string {
 	switch typed := value.(type) {
 	case nil:
 		return "null"
@@ -775,16 +773,92 @@ func (u *thrUploader) Upload(ctx context.Context, imagePath string) (uploadResul
 	return uploadResult{ImgURL: imageURL, RawURL: imageURL, WebURL: imageURL}, nil
 }
 
+type lostimgUploader struct {
+	apiKey string
+	client *http.Client
+}
+
+const lostimgMaxBatchUploadImages = 50
+
+func (u *lostimgUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
+	results, err := u.UploadBatch(ctx, []string{imagePath})
+	if err != nil {
+		return uploadResult{}, err
+	}
+	return results[0], nil
+}
+
+func (u *lostimgUploader) UploadBatch(ctx context.Context, imagePaths []string) ([]uploadResult, error) {
+	if strings.TrimSpace(u.apiKey) == "" {
+		return nil, errors.New("image hosting: lostimg api key missing")
+	}
+	if len(imagePaths) == 0 {
+		return nil, errors.New("image hosting: no Lostimg images to upload")
+	}
+	results := make([]uploadResult, 0, len(imagePaths))
+	for start := 0; start < len(imagePaths); start += lostimgMaxBatchUploadImages {
+		end := min(start+lostimgMaxBatchUploadImages, len(imagePaths))
+		chunkResults, err := u.uploadBatch(ctx, imagePaths[start:end])
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, chunkResults...)
+	}
+	return results, nil
+}
+
+func (u *lostimgUploader) uploadBatch(ctx context.Context, imagePaths []string) ([]uploadResult, error) {
+	headers := map[string]string{"Authorization": "Bearer " + strings.TrimSpace(u.apiKey)}
+	body, status, err := postMultipartRepeatedFileField(ctx, u.client, "https://lostimg.cc/api/v1/images", "file[]", imagePaths, headers)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("lostimg upload failed with status %d", status)
+	}
+
+	var response struct {
+		URL   string   `json:"url"`
+		URLs  []string `json:"urls"`
+		Error string   `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("lostimg invalid response: %w", err)
+	}
+	if strings.TrimSpace(response.Error) != "" {
+		return nil, fmt.Errorf("lostimg upload failed: %s", strings.TrimSpace(response.Error))
+	}
+
+	urls := response.URLs
+	if len(urls) == 0 && strings.TrimSpace(response.URL) != "" {
+		urls = []string{response.URL}
+	}
+	if len(urls) != len(imagePaths) {
+		return nil, fmt.Errorf("lostimg upload returned %d images for %d uploads", len(urls), len(imagePaths))
+	}
+	results := make([]uploadResult, 0, len(urls))
+	for _, raw := range urls {
+		imageURL := strings.TrimSpace(raw)
+		if imageURL == "" {
+			return nil, errors.New("lostimg upload returned empty image URL")
+		}
+		results = append(results, uploadResult{ImgURL: imageURL, RawURL: imageURL, WebURL: imageURL})
+	}
+	return results, nil
+}
+
 type pixhostUploader struct {
 	client *http.Client
 }
+
+const pixhostUploadURL = "https://api.pixhost.cc/images"
 
 func (u *pixhostUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
 	fields := map[string]string{
 		"content_type": "0",
 		"max_th_size":  "350",
 	}
-	body, status, err := postMultipart(ctx, u.client, "https://api.pixhost.to/images", fields, "img", imagePath, nil)
+	body, status, err := postMultipart(ctx, u.client, pixhostUploadURL, fields, "img", imagePath, nil)
 	if err != nil {
 		return uploadResult{}, err
 	}
@@ -897,6 +971,62 @@ func (u *passTheImageUploader) Upload(ctx context.Context, imagePath string) (up
 
 	return uploadResult{
 		ImgURL: response.Image.URL,
+		RawURL: response.Image.URL,
+		WebURL: response.Image.URLViewer,
+	}, nil
+}
+
+type reelflixUploader struct {
+	apiKey string
+	client *http.Client
+}
+
+func (u *reelflixUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
+	if strings.TrimSpace(u.apiKey) == "" {
+		return uploadResult{}, errors.New("image hosting: reelflix api key missing")
+	}
+	headers := map[string]string{"X-API-Key": strings.TrimSpace(u.apiKey)}
+	body, status, err := postMultipart(ctx, u.client, "https://img.reelflix.cc/api/1/upload", nil, "source", imagePath, headers)
+	if err != nil {
+		return uploadResult{}, err
+	}
+	if status != http.StatusOK {
+		return uploadResult{}, fmt.Errorf("reelflix upload failed with status %d", status)
+	}
+
+	var response struct {
+		StatusCode int `json:"status_code"`
+		Image      struct {
+			Medium struct {
+				URL string `json:"url"`
+			} `json:"medium"`
+			URL       string `json:"url"`
+			URLViewer string `json:"url_viewer"`
+		} `json:"image"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return uploadResult{}, fmt.Errorf("reelflix invalid response: %w", err)
+	}
+	if response.StatusCode != 0 && response.StatusCode != http.StatusOK {
+		message := strings.TrimSpace(response.Error.Message)
+		if message == "" {
+			message = "reelflix upload failed"
+		}
+		return uploadResult{}, fmt.Errorf("reelflix upload failed: %s", message)
+	}
+	if response.Image.URL == "" {
+		return uploadResult{}, errors.New("reelflix upload failed")
+	}
+	imgURL := response.Image.Medium.URL
+	if strings.TrimSpace(imgURL) == "" {
+		imgURL = response.Image.URL
+	}
+
+	return uploadResult{
+		ImgURL: imgURL,
 		RawURL: response.Image.URL,
 		WebURL: response.Image.URLViewer,
 	}, nil
@@ -1051,6 +1181,52 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 	sort.Strings(fileFieldKeys)
 	for _, fileField := range fileFieldKeys {
 		filePath := fileFields[fileField]
+		file, err := os.Open(filePath)
+		if err != nil {
+			return nil, 0, fmt.Errorf("image hosting: open multipart file: %w", err)
+		}
+		part, err := writer.CreateFormFile(fileField, filepath.Base(filePath))
+		if err != nil {
+			_ = file.Close()
+			return nil, 0, fmt.Errorf("image hosting: create multipart file %q: %w", fileField, err)
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			_ = file.Close()
+			return nil, 0, fmt.Errorf("image hosting: copy multipart file: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return nil, 0, fmt.Errorf("image hosting: close multipart file: %w", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, 0, fmt.Errorf("image hosting: close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("image hosting: create multipart request for %s: %w", target, err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		closeResponseBody(resp)
+		return nil, 0, fmt.Errorf("image hosting: send multipart request to %s: %w", target, err)
+	}
+	bodyBytes, err := readAndCloseResponseBody(resp)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return bodyBytes, resp.StatusCode, nil
+}
+
+func postMultipartRepeatedFileField(ctx context.Context, client *http.Client, target string, fileField string, filePaths []string, headers map[string]string) ([]byte, int, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	for _, filePath := range filePaths {
 		file, err := os.Open(filePath)
 		if err != nil {
 			return nil, 0, fmt.Errorf("image hosting: open multipart file: %w", err)

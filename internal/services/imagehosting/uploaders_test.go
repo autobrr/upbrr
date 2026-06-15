@@ -140,7 +140,7 @@ func TestHDBUploadBatchUsesSingleGalleryRequest(t *testing.T) {
 func TestHDBUploadBatchChunksLargeUploads(t *testing.T) {
 	tmpDir := t.TempDir()
 	paths := make([]string, 0, hdbMaxBatchUploadImages+1)
-	for idx := 0; idx < hdbMaxBatchUploadImages+1; idx++ {
+	for idx := range hdbMaxBatchUploadImages + 1 {
 		path := filepath.Join(tmpDir, fmt.Sprintf("shot-%02d.png", idx+1))
 		if err := os.WriteFile(path, []byte("testdata"), 0o644); err != nil {
 			t.Fatalf("write temp file: %v", err)
@@ -307,6 +307,231 @@ func TestTHRUploaderRequiresImageURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "bad image") {
 		t.Fatalf("expected response error message, got %v", err)
+	}
+}
+
+func TestLostimgUploaderPostsRepeatedFileFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	firstPath := filepath.Join(tmpDir, "shot-01.png")
+	secondPath := filepath.Join(tmpDir, "shot-02.png")
+	for _, path := range []string{firstPath, secondPath} {
+		if err := os.WriteFile(path, []byte("testdata"), 0o644); err != nil {
+			t.Fatalf("write temp file: %v", err)
+		}
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://lostimg.cc/api/v1/images" {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			if got := req.Header.Get("Authorization"); got != "Bearer secret" {
+				t.Fatalf("expected bearer auth, got %q", got)
+			}
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			fileFields := []string{}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read multipart part: %v", err)
+				}
+				_, _ = io.Copy(io.Discard, part)
+				if part.FileName() != "" {
+					fileFields = append(fileFields, part.FormName())
+				}
+			}
+			if len(fileFields) != 2 || fileFields[0] != "file[]" || fileFields[1] != "file[]" {
+				t.Fatalf("expected repeated file[] fields, got %v", fileFields)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"urls":["https://lostimg.cc/a.png","https://lostimg.cc/b.png"]}`)),
+			}, nil
+		}),
+	}
+
+	results, err := (&lostimgUploader{apiKey: "secret", client: client}).UploadBatch(context.Background(), []string{firstPath, secondPath})
+	if err != nil {
+		t.Fatalf("UploadBatch returned error: %v", err)
+	}
+	if len(results) != 2 || results[0].RawURL != "https://lostimg.cc/a.png" || results[1].RawURL != "https://lostimg.cc/b.png" {
+		t.Fatalf("unexpected lostimg results: %#v", results)
+	}
+}
+
+func TestLostimgUploaderAcceptsSingleURLResponse(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"url":"https://lostimg.cc/shot.png"}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&lostimgUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.RawURL != "https://lostimg.cc/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+}
+
+func TestPixhostUploaderPostsCurrentDomain(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != pixhostUploadURL {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			fields := map[string]string{}
+			fileFields := []string{}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read multipart part: %v", err)
+				}
+				body, err := io.ReadAll(part)
+				if err != nil {
+					t.Fatalf("read part body: %v", err)
+				}
+				if part.FileName() == "" {
+					fields[part.FormName()] = string(body)
+					continue
+				}
+				fileFields = append(fileFields, part.FormName())
+			}
+			if fields["content_type"] != "0" || fields["max_th_size"] != "350" {
+				t.Fatalf("unexpected pixhost fields: %v", fields)
+			}
+			if len(fileFields) != 1 || fileFields[0] != "img" {
+				t.Fatalf("expected img file field, got %v", fileFields)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"th_url":"https://t1.pixhost.cc/thumbs/11645/shot.png","show_url":"https://pixhost.cc/show/11645/shot.png"}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&pixhostUploader{client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.ImgURL != "https://t1.pixhost.cc/thumbs/11645/shot.png" {
+		t.Fatalf("unexpected img URL: %q", result.ImgURL)
+	}
+	if result.RawURL != "https://img1.pixhost.cc/images/11645/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+	if result.WebURL != "https://pixhost.cc/show/11645/shot.png" {
+		t.Fatalf("unexpected web URL: %q", result.WebURL)
+	}
+}
+
+func TestReelflixUploaderPostsSourceWithAPIKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://img.reelflix.cc/api/1/upload" {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			if got := req.Header.Get("X-Api-Key"); got != "secret" {
+				t.Fatalf("expected X-API-Key, got %q", got)
+			}
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			fileFields := []string{}
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read multipart part: %v", err)
+				}
+				_, _ = io.Copy(io.Discard, part)
+				if part.FileName() != "" {
+					fileFields = append(fileFields, part.FormName())
+				}
+			}
+			if len(fileFields) != 1 || fileFields[0] != "source" {
+				t.Fatalf("expected source file field, got %v", fileFields)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"status_code": 200,
+					"image": {
+						"url": "https://img.reelflix.cc/images/shot.png",
+						"url_viewer": "https://img.reelflix.cc/image/shot",
+						"medium": {"url": "https://img.reelflix.cc/images/medium/shot.png"}
+					}
+				}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&reelflixUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.ImgURL != "https://img.reelflix.cc/images/medium/shot.png" {
+		t.Fatalf("unexpected img URL: %q", result.ImgURL)
+	}
+	if result.RawURL != "https://img.reelflix.cc/images/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+	if result.WebURL != "https://img.reelflix.cc/image/shot" {
+		t.Fatalf("unexpected web URL: %q", result.WebURL)
 	}
 }
 

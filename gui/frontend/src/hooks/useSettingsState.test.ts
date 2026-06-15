@@ -169,6 +169,87 @@ function TrackerSettingsHarness() {
   );
 }
 
+function TrackerSettingsAdvancedHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+
+  return createElement(
+    "div",
+    null,
+    state.renderTrackerSection(true),
+    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+  );
+}
+
+function ImageHostingHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+
+  return createElement(
+    "div",
+    null,
+    state.renderImageHostingSection(),
+    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+  );
+}
+
+function AdvancedFieldMetaHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+  const advancedBySection = Object.fromEntries(
+    Object.entries(state.sectionFieldMeta).map(([section, fields]) => [
+      section,
+      Object.values(fields)
+        .filter((field) => field.advanced)
+        .map((field) => field.key)
+        .sort(),
+    ]),
+  );
+
+  return createElement(
+    "pre",
+    { "data-testid": "advanced-fields" },
+    JSON.stringify(advancedBySection),
+  );
+}
+
+describe("settings advanced fields", () => {
+  it("matches the configured per-section advanced allowlist", () => {
+    render(createElement(AdvancedFieldMetaHarness));
+
+    const advancedBySection = JSON.parse(
+      screen.getByTestId("advanced-fields").textContent ?? "{}",
+    ) as Record<string, string[]>;
+
+    expect(advancedBySection.MainSettings).toEqual([]);
+    expect(advancedBySection.Metadata).toEqual([
+      "BTNAPI",
+      "BlurayScore",
+      "BluraySingleScore",
+      "CheckPredb",
+      "SkipAutoTorrent",
+      "SkipTrackerFilenameLookup",
+      "UserOverrides",
+    ]);
+    expect(advancedBySection.ScreenshotHandling).toEqual([
+      "Desat",
+      "FFmpegCompression",
+      "FFmpegLimit",
+      "MaxConcurrentUploads",
+      "ProcessLimit",
+      "TonemapAlgorithm",
+    ]);
+    expect(advancedBySection.Description).toEqual([
+      "CharLimit",
+      "CustomSignature",
+      "FileLimit",
+      "LogoLanguage",
+      "LogoSize",
+      "ProcessLimit",
+    ]);
+    expect(advancedBySection.PostUpload).toEqual(["InjectDelay", "MaxConcurrentTrackers"]);
+    expect(advancedBySection.TorrentCreation).toEqual([]);
+    expect(advancedBySection.TorrentClients).toEqual(["VerifyWebUICertificate"]);
+  });
+});
+
 describe("renderTorrentClientsSection", () => {
   it("renders watch client fields and preserves qbit clients on update", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
@@ -365,7 +446,7 @@ describe("Tracker client selectors", () => {
                 Trackers: {
                   AITHER: {
                     LinkDirName: "",
-                    APIKey: "token",
+                    APIKey: "",
                     ImageHost: "",
                     TorrentClient: "qbit",
                     Anon: false,
@@ -393,7 +474,7 @@ describe("Tracker client selectors", () => {
       },
     };
 
-    render(createElement(TrackerSettingsHarness));
+    render(createElement(TrackerSettingsAdvancedHarness));
 
     await waitFor(() =>
       expect(
@@ -492,5 +573,357 @@ describe("Tracker client selectors", () => {
     expect(screen.queryByText("AITHER", { selector: ".settings-card__summary-name" })).toBeNull();
     expect(screen.queryByText("BLU", { selector: ".settings-card__summary-name" })).toBeNull();
     expect(screen.getByText("1/1")).toBeInTheDocument();
+  });
+
+  it("shows Lostimg as an LST image host only when configured in image hosting", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ImageHosting: {
+                LostimgEnabled: true,
+                LostimgAPI: "secret",
+              },
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  LST: {
+                    LinkDirName: "",
+                    APIKey: "tracker-token",
+                    ImageHost: "",
+                    Anon: false,
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["LST"],
+          GetImageHostPolicyMetadata: async () => ({
+            TrackerUploadHosts: { LST: ["lostimg"] },
+            OwnedHosts: { lostimg: "LST" },
+          }),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("LST", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("LST", { selector: ".settings-card__summary-name" }));
+
+    const imageHostSelect = screen.getByLabelText("Image host") as HTMLSelectElement;
+    expect(Array.from(imageHostSelect.options).map((option) => option.value)).toContain("lostimg");
+  });
+
+  it("shows configured global hosts for LST when Lostimg is disabled", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ImageHosting: {
+                Host1: "imgbb",
+                LostimgEnabled: false,
+                LostimgAPI: "",
+              },
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  LST: {
+                    LinkDirName: "",
+                    APIKey: "tracker-token",
+                    ImageHost: "",
+                    Anon: false,
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["LST"],
+          GetImageHostPolicyMetadata: async () => ({
+            TrackerUploadHosts: { LST: ["lostimg"] },
+            OwnedHosts: { lostimg: "LST" },
+          }),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("LST", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("LST", { selector: ".settings-card__summary-name" }));
+
+    const values = Array.from(
+      (screen.getByLabelText("Image host") as HTMLSelectElement).options,
+    ).map((option) => option.value);
+    expect(values).toContain("imgbb");
+    expect(values).not.toContain("lostimg");
+  });
+
+  it("shows Reelflix as an RF image host and exposes RF image API", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ImageHosting: {},
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  RF: {
+                    LinkDirName: "",
+                    APIKey: "",
+                    ImgAPI: "",
+                    ImageHost: "reelflix",
+                    Anon: false,
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["RF"],
+          GetImageHostPolicyMetadata: async () => ({
+            TrackerUploadHosts: { RF: ["reelflix"] },
+            OwnedHosts: { reelflix: "RF" },
+          }),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsAdvancedHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("RF", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("RF", { selector: ".settings-card__summary-name" }));
+
+    const imageHostSelect = screen.getByLabelText("Image host") as HTMLSelectElement;
+    expect(Array.from(imageHostSelect.options).map((option) => option.value)).toContain("reelflix");
+
+    fireEvent.change(screen.getByLabelText("Image API"), {
+      target: { value: "secret" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("Image API")).toHaveValue("secret"));
+
+    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    };
+    expect(payload.Trackers?.Trackers?.RF?.ImgAPI).toBe("secret");
+  });
+
+  it("shows configured global hosts for RF when Reelflix is disabled", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ImageHosting: {
+                Host1: "imgbb",
+              },
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  RF: {
+                    LinkDirName: "",
+                    APIKey: "tracker-token",
+                    ImgAPI: "",
+                    ImageHost: "",
+                    Anon: false,
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["RF"],
+          GetImageHostPolicyMetadata: async () => ({
+            TrackerUploadHosts: { RF: ["reelflix"] },
+            OwnedHosts: { reelflix: "RF" },
+          }),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("RF", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("RF", { selector: ".settings-card__summary-name" }));
+
+    const values = Array.from(
+      (screen.getByLabelText("Image host") as HTMLSelectElement).options,
+    ).map((option) => option.value);
+    expect(values).toContain("imgbb");
+    expect(values).not.toContain("reelflix");
+  });
+});
+
+describe("tracker advanced fields", () => {
+  it("hides only the tracker advanced allowlist when advanced is closed", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  MTV: {
+                    FaviconURL: "https://example.test/favicon.ico",
+                    LinkDirName: "mtv",
+                    APIKey: "api-key",
+                    Username: "user",
+                    Password: "pass",
+                    AnnounceURL: "https://example.test/announce",
+                    Anon: false,
+                    OTPURI: "otpauth://totp/example",
+                    SkipIfRehash: true,
+                    PreferMTV: true,
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["MTV"],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("MTV", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("MTV", { selector: ".settings-card__summary-name" }));
+
+    expect(screen.queryByLabelText("Favicon URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Link dir name")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Skip if rehash")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Prefer MTV torrent")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Announce URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("OTP URI")).toBeInTheDocument();
+  });
+});
+
+describe("Image hosting settings", () => {
+  it("renders Lostimg as tracker-specific and keeps it out of global host priority", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ImageHosting: {
+                Host1: "",
+                Host2: "",
+                Host3: "",
+                Host4: "",
+                Host5: "",
+                Host6: "",
+                LostimgEnabled: false,
+                LostimgAPI: "",
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => [],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(ImageHostingHarness));
+
+    await waitFor(() => expect(screen.getByLabelText("LST Lostimg")).toBeInTheDocument());
+
+    const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
+    expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("lostimg");
+
+    fireEvent.click(screen.getByLabelText("LST Lostimg"));
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "secret" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("LST Lostimg")).toBeChecked());
+
+    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      ImageHosting?: {
+        LostimgEnabled?: boolean;
+        LostimgAPI?: string;
+      };
+    };
+    expect(payload.ImageHosting?.LostimgEnabled).toBe(true);
+    expect(payload.ImageHosting?.LostimgAPI).toBe("secret");
+  });
+
+  it("renders Reelflix as an RF image host in image hosting settings", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              ImageHosting: {
+                Host1: "",
+                Host2: "",
+                Host3: "",
+                Host4: "",
+                Host5: "",
+                Host6: "",
+              },
+              Trackers: {
+                Trackers: {
+                  RF: {
+                    ImageHost: "",
+                    ImgAPI: "",
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => [],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(ImageHostingHarness));
+
+    await waitFor(() => expect(screen.getByLabelText("RF Reelflix")).toBeInTheDocument());
+
+    const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
+    expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("reelflix");
+
+    fireEvent.click(screen.getByLabelText("RF Reelflix"));
+    fireEvent.change(screen.getByLabelText("Image API"), {
+      target: { value: "secret" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("RF Reelflix")).toBeChecked());
+
+    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    };
+    expect(payload.Trackers?.Trackers?.RF?.ImageHost).toBe("reelflix");
+    expect(payload.Trackers?.Trackers?.RF?.ImgAPI).toBe("secret");
   });
 });

@@ -703,6 +703,7 @@ func fetchAntiCsrfToken(ctx context.Context, baseURL string, cookies map[string]
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
 			continue
 		}
+		// #nosec G124 -- Outbound tracker jar cookie mirrors configured PTP session values.
 		jarCookies = append(jarCookies, &http.Cookie{Name: name, Value: value, Path: "/", Domain: parsed.Hostname()})
 	}
 	jar.SetCookies(parsed, jarCookies)

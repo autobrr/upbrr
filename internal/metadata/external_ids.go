@@ -367,13 +367,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	tvdbName := ""
 
 	isTVForTVmaze := func() bool {
-		if strings.EqualFold(ids.Category, "TV") {
-			return true
-		}
-		if strings.TrimSpace(ids.Category) == "" {
-			return isLikelyTV(meta)
-		}
-		return false
+		return shouldUseTVDBForCategory(meta, ids)
 	}
 
 	tmdbLogoFetchAttempted := false
@@ -394,7 +388,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if ids.IMDBID != 0 && metadata.IMDB == nil {
 			return true
 		}
-		if !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0) {
+		if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0) {
 			return true
 		}
 		if metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0))) {
@@ -409,7 +403,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			tmdbLogoFetchAttempted = true
 		}
 		fetchIMDB := ids.IMDBID != 0 && metadata.IMDB == nil
-		lookupTVDB := !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
+		lookupTVDB := shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
 		lookupTVmaze := metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
 
 		if s.logger != nil {
@@ -551,11 +545,11 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			if !overrideIMDB && ids.IMDBID == 0 && tmdbResult.IMDbID != 0 {
 				applyResolvedID(&ids.IMDBID, &ids.SourceIMDB, tmdbResult.IMDbID, "tmdb")
 			}
-			if !overrideTVDB && ids.TVDBID == 0 && tmdbResult.TVDBID != 0 {
-				applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, tmdbResult.TVDBID, "tmdb")
-			}
 			if ids.Category == "" && tmdbResult.TMDBType != "" {
 				ids.Category = normalizeCategory(tmdbResult.TMDBType)
+			}
+			if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && tmdbResult.TVDBID != 0 {
+				applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, tmdbResult.TVDBID, "tmdb")
 			}
 		}
 
@@ -575,7 +569,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			}
 		}
 
-		if ids.TVDBID != 0 {
+		if shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 {
 			tvdbSeries, err := tvdbClient.GetSeriesMetadataWithLanguage(ctx, ids.TVDBID, "")
 			if err != nil {
 				tvdbSeries, err = tvdbClient.GetSeriesMetadata(ctx, ids.TVDBID)
@@ -607,13 +601,13 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			if !overrideIMDB && ids.IMDBID == 0 && tvmazeResult.IMDBID != 0 {
 				applyResolvedID(&ids.IMDBID, &ids.SourceIMDB, tvmazeResult.IMDBID, "tvmaze")
 			}
-			if !overrideTVDB && ids.TVDBID == 0 && tvmazeResult.TVDBID != 0 {
+			if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && tvmazeResult.TVDBID != 0 {
 				applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, tvmazeResult.TVDBID, "tvmaze")
 			}
 			metadata.TVmaze = mapTVmazeMetadata(*tvmazeResult)
 		}
 
-		if metadata.TVDB == nil && ids.TVDBID != 0 {
+		if shouldUseTVDBForCategory(meta, ids) && metadata.TVDB == nil && ids.TVDBID != 0 {
 			metadata.TVDB = &api.TVDBMetadata{TVDBID: ids.TVDBID, Name: tvdbName}
 		}
 		if metadata.TVmaze == nil && ids.TVmazeID != 0 {
@@ -642,6 +636,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		runFetchPass(true)
 	}
 
+	clearTVDBForNonTVCategory(meta, &ids, &metadata)
 	meta = s.applyTVEpisodeMetadata(ctx, meta, &ids, &metadata, tmdbClient, tvdbClient, tvmazeClient)
 
 	needsPTBR := false
@@ -793,6 +788,41 @@ func clearTrackerSourcedExternalIDs(ids *api.ExternalIDs) {
 	if strings.EqualFold(strings.TrimSpace(ids.SourceTVmaze), "tracker") {
 		ids.TVmazeID = 0
 		ids.SourceTVmaze = ""
+	}
+}
+
+// shouldUseTVDBForCategory reports whether TVDB data may be used for the resolved media category.
+// Any explicit MOVIE category is authoritative over TV hints from MediaInfo, stored IDs, release data, or the filename.
+func shouldUseTVDBForCategory(meta api.PreparedMetadata, ids api.ExternalIDs) bool {
+	candidates := []string{ids.Category, meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category}
+	if meta.ReleaseNameOverrides.Category != nil {
+		candidates = append(candidates, *meta.ReleaseNameOverrides.Category)
+	}
+	for _, candidate := range candidates {
+		if normalizeCategory(candidate) == "MOVIE" {
+			return false
+		}
+	}
+	for _, candidate := range candidates {
+		if normalizeCategory(candidate) == "TV" {
+			return true
+		}
+	}
+	return isLikelyTV(meta)
+}
+
+// clearTVDBForNonTVCategory removes TVDB IDs and metadata when the resolved category no longer permits TVDB data.
+func clearTVDBForNonTVCategory(meta api.PreparedMetadata, ids *api.ExternalIDs, metadata *api.ExternalMetadata) {
+	if ids == nil {
+		return
+	}
+	if shouldUseTVDBForCategory(meta, *ids) {
+		return
+	}
+	ids.TVDBID = 0
+	ids.SourceTVDB = ""
+	if metadata != nil {
+		metadata.TVDB = nil
 	}
 }
 
@@ -1049,10 +1079,19 @@ func resolveCategoryPreference(meta api.PreparedMetadata) string {
 			return category
 		}
 	}
+	// A known movie category wins before tracker or MediaInfo TV candidates can make the resolver keep TVDB state.
+	for _, candidate := range []string{meta.ExternalIDs.Category, meta.Release.Category, meta.MediaInfoCategory} {
+		if normalizeCategory(candidate) == "MOVIE" {
+			return "MOVIE"
+		}
+	}
 	for _, record := range meta.TrackerData {
 		if normalized := normalizeCategory(string(record.Category)); normalized != "" {
 			return normalized
 		}
+	}
+	if normalized := normalizeCategory(meta.ExternalIDs.Category); normalized != "" {
+		return normalized
 	}
 	category := normalizeCategory(meta.MediaInfoCategory)
 	if category != "" {

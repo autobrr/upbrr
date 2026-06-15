@@ -1716,6 +1716,10 @@ h2 {
   position: relative;
 }
 
+.input-source-panel--history-open {
+  z-index: 40;
+}
+
 .source-path-input-shell--drop-target {
   --wails-drop-target: drop;
 }

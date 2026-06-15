@@ -181,6 +181,7 @@ func CookieMapToHTTPCookies(values map[string]string, domain string) []*http.Coo
 		if trimmedName == "" || value == "" {
 			continue
 		}
+		// #nosec G124 -- Outbound tracker cookie jar entries preserve user-imported cookie attributes.
 		result = append(result, &http.Cookie{
 			Name:   trimmedName,
 			Value:  value,

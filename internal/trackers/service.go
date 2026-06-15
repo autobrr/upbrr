@@ -474,7 +474,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
 		targetKey := ""
-		policy, err := resolveImageHostPolicy(tracker, trackerCfg, meta.ImageHostOverrides)
+		policy, err := resolveImageHostPolicyForMetadata(tracker, s.cfg, trackerCfg, meta, meta.ImageHostOverrides)
 		if err != nil {
 			s.logger.Warnf("trackers: image host preflight failed for %s: %v", tracker, err)
 			continue
@@ -782,7 +782,7 @@ func preparationImageHostPreferences(appCfg config.Config, meta api.PreparedMeta
 	if meta.ImageHostOverrides.PreferredHost != nil {
 		return nil
 	}
-	targets, err := NeededImageUploadTargets(appCfg, trackers, "")
+	targets, err := NeededImageUploadTargetsForMetadata(appCfg, trackers, "", meta)
 	if err != nil {
 		if logger != nil {
 			logger.Warnf("trackers: preparation image host target resolution failed: %v", err)
