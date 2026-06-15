@@ -344,9 +344,9 @@ func (s *Service) cleanupFailedLinkStaging(clientName string, tracker string, st
 
 // resolveInjectClients selects the configured torrent clients that should receive
 // an injected torrent. Explicit client overrides take precedence, then a
-// non-empty injecting_client_list, then default_torrent_client. Unknown config
-// selectors fall through to lower-priority defaults, while unknown explicit
-// overrides stay authoritative and select no clients.
+// non-empty injecting_client_list, then default_torrent_client. Configured
+// selectors are authoritative: if a non-empty selector set resolves to no
+// clients, lower-priority fallbacks are skipped.
 func resolveInjectClients(cfg config.Config, overrides api.ClientOverrides) map[string]config.TorrentClientConfig {
 	clients := cfg.TorrentClients
 	if len(clients) == 0 {
@@ -354,19 +354,27 @@ func resolveInjectClients(cfg config.Config, overrides api.ClientOverrides) map[
 	}
 
 	if overrides.Client != nil && strings.TrimSpace(*overrides.Client) != "" {
+		if isDisableSelector(*overrides.Client) {
+			if selected := selectTorrentClients(clients, []string{*overrides.Client}); len(selected) > 0 {
+				return selected
+			}
+			return disabledTorrentClientSelection()
+		}
 		return selectTorrentClients(clients, []string{*overrides.Client})
 	}
 
+	if hasDisableOnlySelector(cfg.ClientSetup.InjectClients) {
+		return disabledTorrentClientSelection()
+	}
 	if hasNonBlankSelector(cfg.ClientSetup.InjectClients) {
-		if selected := selectTorrentClients(clients, cfg.ClientSetup.InjectClients); len(selected) > 0 {
-			return selected
-		}
+		return selectTorrentClients(clients, cfg.ClientSetup.InjectClients)
 	}
 
 	if strings.TrimSpace(cfg.ClientSetup.DefaultClient) != "" {
-		if selected := selectTorrentClients(clients, []string{cfg.ClientSetup.DefaultClient}); len(selected) > 0 {
-			return selected
+		if isDisableSelector(cfg.ClientSetup.DefaultClient) {
+			return disabledTorrentClientSelection()
 		}
+		return selectTorrentClients(clients, []string{cfg.ClientSetup.DefaultClient})
 	}
 
 	if len(clients) == 1 {
@@ -378,15 +386,48 @@ func resolveInjectClients(cfg config.Config, overrides api.ClientOverrides) map[
 	return nil
 }
 
-// hasNonBlankSelector reports whether a selector list should participate in
-// client resolution after whitespace-only entries are ignored.
+// hasNonBlankSelector reports whether a selector list contains at least one
+// real client name. A lone "none" selector is handled separately as an
+// explicit disable sentinel.
 func hasNonBlankSelector(selected []string) bool {
 	for _, value := range selected {
-		if strings.TrimSpace(value) != "" {
+		if strings.TrimSpace(value) != "" && !isDisableSelector(value) {
 			return true
 		}
 	}
 	return false
+}
+
+// hasDisableOnlySelector reports whether the selector list contains only blank
+// values and "none", with at least one "none" entry.
+func hasDisableOnlySelector(selected []string) bool {
+	hasDisable := false
+	for _, value := range selected {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if !isDisableSelector(trimmed) {
+			return false
+		}
+		hasDisable = true
+	}
+	return hasDisable
+}
+
+// isDisableSelector recognizes the literal selector used in config to disable
+// torrent injection or search fallback. Client configs with Type "disabled" are
+// detected later after a real client has been selected.
+func isDisableSelector(selected string) bool {
+	return strings.EqualFold(strings.TrimSpace(selected), "none")
+}
+
+// disabledTorrentClientSelection returns a synthetic selected client set that
+// carries the same no-op behavior as a configured client with Type "none".
+func disabledTorrentClientSelection() map[string]config.TorrentClientConfig {
+	return map[string]config.TorrentClientConfig{
+		"none": {Type: "none"},
+	}
 }
 
 // selectTorrentClients returns configured clients selected by name. Blank and
@@ -460,15 +501,12 @@ func lookupTorrentClientConfig(clients map[string]config.TorrentClientConfig, se
 	return "", config.TorrentClientConfig{}, false
 }
 
-// withURLCapableInjectFallback replaces URL-incompatible global/default
+// withURLCapableInjectFallback replaces empty or URL-incompatible global/default
 // selections with configured qbit/qui clients for URL-only injection. The
 // original selection is not merged into the fallback set, so unsupported client
 // types cannot fail an otherwise valid URL fallback. Selected none/disabled
 // clients are authoritative and suppress fallback fanout.
 func withURLCapableInjectFallback(selected, configured map[string]config.TorrentClientConfig) map[string]config.TorrentClientConfig {
-	if len(selected) == 0 {
-		return selected
-	}
 	if hasDisabledTorrentClient(selected) {
 		return selected
 	}

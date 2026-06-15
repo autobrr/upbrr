@@ -208,6 +208,39 @@ func TestConvertClientKeyAliases(t *testing.T) {
 	}
 }
 
+func TestConvertTorrentClientsDoesNotKeepTemplateQbit(t *testing.T) {
+	input := []byte(`
+config = {
+    'DEFAULT': {'tmdb_api': 'test', 'screens': 6},
+    'TRACKERS': {},
+    'TORRENT_CLIENTS': {
+        'watch-client': {
+            'torrent_client': 'watch',
+            'watch_folder': 'C:/Watch',
+        },
+    },
+}
+`)
+
+	cfg, _, err := ImportFromContent(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := cfg.TorrentClients["qbittorrent"]; ok {
+		t.Fatal("did not expect template qbittorrent client to be retained")
+	}
+	watch, ok := cfg.TorrentClients["watch-client"]
+	if !ok {
+		t.Fatal("watch-client not found")
+	}
+	if watch.ClientType() != "watch" {
+		t.Fatalf("ClientType: got %q, want watch", watch.ClientType())
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("converted config should validate: %v", err)
+	}
+}
+
 func TestConvertTrackers(t *testing.T) {
 	legacy := &Config{
 		Default: map[string]any{

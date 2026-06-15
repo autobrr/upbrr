@@ -873,10 +873,14 @@ func (c Config) Validate() error {
 		}
 	}
 
+	if err := validateGlobalTorrentClientSelectors(c); err != nil {
+		return err
+	}
+
 	for trackerName, trackerCfg := range c.Trackers.Trackers {
 		torrentClient := strings.TrimSpace(trackerCfg.TorrentClient)
 		if torrentClient != "" {
-			if _, ok := lookupTorrentClient(c.TorrentClients, torrentClient); !ok {
+			if !lookupTorrentClient(c.TorrentClients, torrentClient) {
 				return fmt.Errorf("config: trackers.%s.torrent_client references unknown torrent client %q", trackerName, trackerCfg.TorrentClient)
 			}
 		}
@@ -906,13 +910,46 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// validateGlobalTorrentClientSelectors checks the global client selectors that
+// are resolved at search and injection time. This keeps stale global refs from
+// becoming silent runtime skips while preserving blank and "none" sentinels.
+func validateGlobalTorrentClientSelectors(c Config) error {
+	if err := validateGlobalTorrentClientSelector(c.TorrentClients, "client_setup.default_torrent_client", c.ClientSetup.DefaultClient); err != nil {
+		return err
+	}
+	for _, selected := range c.ClientSetup.InjectClients {
+		if err := validateGlobalTorrentClientSelector(c.TorrentClients, "client_setup.injecting_client_list", selected); err != nil {
+			return err
+		}
+	}
+	for _, selected := range c.ClientSetup.SearchClients {
+		if err := validateGlobalTorrentClientSelector(c.TorrentClients, "client_setup.searching_client_list", selected); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateGlobalTorrentClientSelector applies the same exact-or-unique-folded
+// lookup rule used by runtime client resolution.
+func validateGlobalTorrentClientSelector(clients map[string]TorrentClientConfig, field string, selected string) error {
+	trimmed := strings.TrimSpace(selected)
+	if trimmed == "" || strings.EqualFold(trimmed, "none") {
+		return nil
+	}
+	if !lookupTorrentClient(clients, trimmed) {
+		return fmt.Errorf("config: %s references unknown torrent client %q", field, selected)
+	}
+	return nil
+}
+
 // lookupTorrentClient resolves tracker torrent_client selectors using the same
 // exact-or-unique-folded name rule as runtime injection. Ambiguous folded names
 // are rejected so config validation cannot accept a selector runtime skips.
-func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string) (string, bool) {
+func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string) bool {
 	trimmed := strings.TrimSpace(selected)
 	if trimmed == "" {
-		return "", false
+		return false
 	}
 
 	exactMatches := make([]string, 0, 1)
@@ -930,16 +967,13 @@ func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string
 
 	switch len(exactMatches) {
 	case 1:
-		return exactMatches[0], true
+		return true
 	case 0:
 	default:
-		return "", false
+		return false
 	}
 
-	if len(foldMatches) == 1 {
-		return foldMatches[0], true
-	}
-	return "", false
+	return len(foldMatches) == 1
 }
 
 func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {

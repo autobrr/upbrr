@@ -1276,7 +1276,7 @@ func TestInjectUsesSingleInjectionClientBeforeDefaultClient(t *testing.T) {
 	}
 }
 
-func TestInjectFallsBackToDefaultClientWhenInjectionClientUnknown(t *testing.T) {
+func TestInjectSkipsDefaultClientWhenInjectionClientUnknown(t *testing.T) {
 	t.Parallel()
 
 	watchRoot := t.TempDir()
@@ -1304,12 +1304,12 @@ func TestInjectFallsBackToDefaultClientWhenInjectionClientUnknown(t *testing.T) 
 		t.Fatalf("inject: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(defaultWatch, filepath.Base(torrentPath))); err != nil {
-		t.Fatalf("expected default client copy, got %v", err)
+	if _, err := os.Stat(filepath.Join(defaultWatch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected unknown injection selector to skip default fallback, got %v", err)
 	}
 }
 
-func TestInjectFallsBackToImplicitSingleClientWhenDefaultClientUnknown(t *testing.T) {
+func TestInjectSkipsImplicitSingleClientWhenDefaultClientUnknown(t *testing.T) {
 	t.Parallel()
 
 	watchRoot := t.TempDir()
@@ -1336,8 +1336,8 @@ func TestInjectFallsBackToImplicitSingleClientWhenDefaultClientUnknown(t *testin
 		t.Fatalf("inject: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(watch, filepath.Base(torrentPath))); err != nil {
-		t.Fatalf("expected implicit single client copy, got %v", err)
+	if _, err := os.Stat(filepath.Join(watch, filepath.Base(torrentPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected unknown default selector to skip implicit fallback, got %v", err)
 	}
 }
 
@@ -2188,6 +2188,111 @@ func TestInjectURLDefaultDisabledDoesNotFallbackToQbit(t *testing.T) {
 	defer mu.Unlock()
 	if addCalled {
 		t.Fatalf("did not expect disabled default client to fall back to qbit")
+	}
+}
+
+func TestInjectURLUnknownDefaultFallsBackToQbit(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "missing",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !addCalled {
+		t.Fatalf("expected qbit URL add call")
+	}
+}
+
+func TestInjectURLUnknownInjectionListFallsBackToQbit(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "missing-default",
+			InjectClients: config.CSVList{
+				"missing-inject",
+			},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !addCalled {
+		t.Fatalf("expected qbit URL add call")
 	}
 }
 
