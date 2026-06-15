@@ -179,6 +179,9 @@ func (s *Service) trackerLinkDirName(tracker string) string {
 	return trimmed
 }
 
+// sourcePathForLinking returns an existing local source path suitable for link
+// creation. It stats candidate paths because link staging must copy or link real
+// filesystem content.
 func sourcePathForLinking(meta api.PreparedMetadata) (string, error) {
 	if len(meta.FileList) == 1 {
 		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" {
@@ -203,6 +206,22 @@ func sourcePathForLinking(meta api.PreparedMetadata) (string, error) {
 		return absLocalPath("linking source", source)
 	}
 	return absLocalPath("linking source", source)
+}
+
+// sourcePathForQbitSavePath returns the prepared source path used for qbit
+// savepath mapping. It is intentionally lexical and does not stat the source,
+// because qbit injection can still be valid when source metadata is unavailable.
+func sourcePathForQbitSavePath(meta api.PreparedMetadata) (string, error) {
+	if len(meta.FileList) == 1 {
+		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" {
+			return absLocalPath("qbit mapping source", candidate)
+		}
+	}
+	source := strings.TrimSpace(meta.SourcePath)
+	if source == "" {
+		return "", internalerrors.ErrInvalidInput
+	}
+	return absLocalPath("qbit mapping source", source)
 }
 
 func linkedFolderCandidates[S ~[]string](source string, folders S, mode string) ([]string, error) {
@@ -623,12 +642,13 @@ func mappedRemotePath[S ~[]string](value string, localPaths S, remotePaths S) (s
 
 // mappedQbitSavePathForSource maps the prepared source path to the qBittorrent
 // save path parent that can contain the torrent's top-level content. It returns
-// mapped=false without touching source metadata when no usable path pairs exist.
+// mapped=false without touching source metadata when no usable path pairs exist
+// or no configured pair matches the lexical source path.
 func mappedQbitSavePathForSource[S ~[]string](meta api.PreparedMetadata, localPaths S, remotePaths S) (string, bool, error) {
 	if len(pathMappingPairs(localPaths, remotePaths)) == 0 {
 		return "", false, nil
 	}
-	source, err := sourcePathForLinking(meta)
+	source, err := sourcePathForQbitSavePath(meta)
 	if err != nil {
 		return "", false, err
 	}

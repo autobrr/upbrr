@@ -260,6 +260,52 @@ func TestInjectQbitClientUsesPathMappingSavePath(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientUsesPathMappingSavePathWithoutSourceStat(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddCaptureServer(t)
+
+	root := t.TempDir()
+	localRoot := filepath.Join(root, "local")
+	source := filepath.Join(localRoot, "Movies", "Fixture.Title.2024", "video.mkv")
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	remoteRoot := "/remote/media"
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:       "qbit",
+				URL:        server.URL,
+				Username:   "user",
+				Password:   "pass",
+				LocalPath:  config.StringList{localRoot},
+				RemotePath: config.StringList{remoteRoot},
+			},
+		},
+	}, nil)
+
+	meta := api.PreparedMetadata{SourcePath: source, FileList: []string{source}}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	wantSavePath := "/remote/media/Movies/Fixture.Title.2024/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected mapped savepath %q, got %q", wantSavePath, capture.savePath)
+	}
+}
+
 func TestMappedRemotePathPreservesBlankPathPairAlignment(t *testing.T) {
 	t.Parallel()
 
