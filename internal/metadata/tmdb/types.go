@@ -140,6 +140,7 @@ type MetadataResult struct {
 	Anime               bool
 	Demographic         string
 	RetrievedAKA        string
+	LocalizedTitles     map[string]string
 	Poster              string
 	TMDBPosterPath      string
 	Logo                string

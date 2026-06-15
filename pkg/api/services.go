@@ -434,6 +434,7 @@ type TMDBMetadata struct {
 	Demographic         string
 	RetrievedAKA        string
 	Keywords            string
+	LocalizedTitles     map[string]string
 	YouTube             string
 	Certification       string
 	ProductionCompanies []TMDBCompany

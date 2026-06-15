@@ -1160,6 +1160,7 @@ func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBM
 		Demographic:         result.Demographic,
 		RetrievedAKA:        result.RetrievedAKA,
 		Keywords:            result.Keywords,
+		LocalizedTitles:     result.LocalizedTitles,
 		YouTube:             result.YouTube,
 		Certification:       result.Certification,
 		ProductionCompanies: mapTMDBCompanies(result.ProductionCompanies),

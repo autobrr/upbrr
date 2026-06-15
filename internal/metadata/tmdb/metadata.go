@@ -119,17 +119,19 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	result.Genres, result.GenreIDs = genresFromMedia(media.Genres)
 
 	var (
-		external externalIDsResponse
-		videos   videosResponse
-		keywords keywordsResponse
-		credits  creditsResponse
-		images   imagesResponse
+		external     externalIDsResponse
+		videos       videosResponse
+		keywords     keywordsResponse
+		credits      creditsResponse
+		images       imagesResponse
+		translations TranslationResponse
 
-		externalErr error
-		videosErr   error
-		keywordsErr error
-		creditsErr  error
-		imagesErr   error
+		externalErr     error
+		videosErr       error
+		keywordsErr     error
+		creditsErr      error
+		imagesErr       error
+		translationsErr error
 	)
 
 	group, ctx := errgroup.WithContext(ctx)
@@ -137,6 +139,13 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		endpoint := path + "/external_ids"
 		if err := c.getJSON(ctx, endpoint, map[string]string{"api_key": c.apiKey}, &external); err != nil {
 			externalErr = err
+		}
+		return nil
+	})
+	group.Go(func() error {
+		endpoint := path + "/translations"
+		if err := c.getJSON(ctx, endpoint, map[string]string{"api_key": c.apiKey}, &translations); err != nil {
+			translationsErr = err
 		}
 		return nil
 	})
@@ -194,6 +203,18 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		result.Directors, result.Cast = collectCredits(credits)
 	} else if c.logger != nil {
 		c.logger.Warnf("tmdb: credits lookup failed: %v", creditsErr)
+	}
+
+	if translationsErr == nil {
+		result.LocalizedTitles = make(map[string]string)
+		for _, t := range translations.Translations {
+			title := metautil.FirstNonEmpty(t.Data.Title, t.Data.Name)
+			if title != "" {
+				result.LocalizedTitles[t.ISO6391] = title
+			}
+		}
+	} else if c.logger != nil {
+		c.logger.Warnf("tmdb: translations lookup failed: %v", translationsErr)
 	}
 
 	if input.AddLogo && imagesErr == nil {
