@@ -89,6 +89,25 @@ func (s *Service) importUploadAssistantScreenshots(ctx context.Context, meta api
 	var uploads []api.UploadedImageLink
 	now := time.Now().UTC()
 
+	usedNames := make(map[string]bool)
+	getUniqueFilename := func(filename string) string {
+		if !usedNames[filename] {
+			usedNames[filename] = true
+			return filename
+		}
+		ext := filepath.Ext(filename)
+		base := strings.TrimSuffix(filename, ext)
+		counter := 2
+		for {
+			candidate := fmt.Sprintf("%s_%d%s", base, counter, ext)
+			if !usedNames[candidate] {
+				usedNames[candidate] = true
+				return candidate
+			}
+			counter++
+		}
+	}
+
 	// Parse main screenshots
 	if imageData != nil && len(imageData.ImageList) > 0 {
 		for idx, entry := range imageData.ImageList {
@@ -101,12 +120,8 @@ func (s *Service) importUploadAssistantScreenshots(ctx context.Context, meta api
 			}
 
 			// Extract filename for synthetic local path
-			filename := "screenshot.png"
-			if parsedURL, err := url.Parse(rawURL); err == nil {
-				if base := path.Base(parsedURL.Path); base != "" && base != "." && base != "/" && base != ".." && !strings.ContainsAny(base, `/\`) {
-					filename = base
-				}
-			}
+			filename := extractFilenameFromURL(rawURL, "screenshot.png")
+			filename = getUniqueFilename(filename)
 			syntheticPath := filepath.Join(tmpDir, filename)
 
 			size := int64(0)
@@ -156,12 +171,8 @@ func (s *Service) importUploadAssistantScreenshots(ctx context.Context, meta api
 				continue
 			}
 
-			filename := "menu_screenshot.png"
-			if parsedURL, err := url.Parse(rawURL); err == nil {
-				if base := path.Base(parsedURL.Path); base != "" && base != "." && base != "/" && base != ".." && !strings.ContainsAny(base, `/\`) {
-					filename = base
-				}
-			}
+			filename := extractFilenameFromURL(rawURL, "menu_screenshot.png")
+			filename = getUniqueFilename(filename)
 			syntheticPath := filepath.Join(tmpDir, filename)
 
 			host := strings.ToLower(strings.TrimSpace(imagehost.ExtractHost(rawURL)))
@@ -211,4 +222,15 @@ func (s *Service) importUploadAssistantScreenshots(ctx context.Context, meta api
 	}
 
 	return nil
+}
+
+// extractFilenameFromURL extracts a safe filename from a URL, falling back to defaultName.
+func extractFilenameFromURL(rawURL, defaultName string) string {
+	filename := defaultName
+	if parsedURL, err := url.Parse(rawURL); err == nil {
+		if base := path.Base(parsedURL.Path); base != "" && base != "." && base != "/" && base != ".." && !strings.ContainsAny(base, `/\`) {
+			filename = base
+		}
+	}
+	return filename
 }

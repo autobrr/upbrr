@@ -114,6 +114,7 @@ def process_bdinfo_directory(
         if exact_src_file:
             dst_file_path = dst_dir / json_name
             if dst_file_path.exists() and not force:
+                stats["files_skipped"] += 1
                 continue
 
             try:
@@ -127,20 +128,21 @@ def process_bdinfo_directory(
                 print_log(f"Skipped empty file: '{exact_src_file}' (0 bytes)", level="warning", quiet=quiet)
                 continue
 
-            stats["files_copied"] += 1
             if dry_run:
                 print_log(f"Would copy: '{exact_src_file.name}' -> '{json_name}'", level="dryrun", quiet=quiet)
+                stats["files_copied"] += 1
             else:
                 print_log(f"Copying: '{exact_src_file.name}' -> '{json_name}'...", level="info", quiet=quiet)
                 try:
                     shutil.copy2(exact_src_file, dst_file_path)
+                    stats["files_copied"] += 1
                 except Exception as e:
                     print_log(f"Failed to copy file '{exact_src_file}': {e}", level="error", quiet=quiet)
 
     # Copy and rename matched files for each playlist code found
     for df in disc_files:
-        disc_num = df['disc_num']
-        playlist_code = df['playlist_code']
+        disc_num = df["disc_num"]
+        playlist_code = df["playlist_code"]
         disc_filename = df["filename"]
         YY = f"{disc_num - 1:02d}"
 
@@ -148,7 +150,7 @@ def process_bdinfo_directory(
         mappings = [
             (disc_filename, f"BD_SUMMARY_FULL_{playlist_code}.MPLS.txt"),
             (f"BD_SUMMARY_{YY}.txt", f"BD_SUMMARY_{playlist_code}.MPLS.txt"),
-            (f"BD_SUMMARY_EXT_{YY}.txt", f"BD_SUMMARY_EXT_{playlist_code}.MPLS.txt")
+            (f"BD_SUMMARY_EXT_{YY}.txt", f"BD_SUMMARY_EXT_{playlist_code}.MPLS.txt"),
         ]
 
         for src_name, dst_name in mappings:
@@ -167,22 +169,23 @@ def process_bdinfo_directory(
                 continue
 
             if size == 0:
-                stats['empty_files_skipped'] += 1
+                stats["empty_files_skipped"] += 1
                 print_log(f"Skipped empty file: '{exact_src_file}' (0 bytes)", level="warning", quiet=quiet)
                 continue
 
             # Check if destination file already exists
             if dst_file_path.exists() and not force:
-                stats['files_skipped'] += 1
+                stats["files_skipped"] += 1
                 continue
 
-            stats['files_copied'] += 1
             if dry_run:
                 print_log(f"Would copy and rename: '{exact_src_file.name}' -> '{dst_name}'", level="dryrun", quiet=quiet)
+                stats["files_copied"] += 1
             else:
                 print_log(f"Copying and renaming: '{exact_src_file.name}' -> '{dst_name}'...", level="info", quiet=quiet)
                 try:
                     shutil.copy2(exact_src_file, dst_file_path)
+                    stats["files_copied"] += 1
                 except Exception as e:
                     print_log(f"Failed to copy file '{exact_src_file}': {e}", level="error", quiet=quiet)
 
@@ -229,8 +232,8 @@ def main() -> int:
     args = parser.parse_args()
 
     # Resolve absolute paths
-    source_path = pathlib.Path(args.source).resolve()
-    dest_path = pathlib.Path(args.destination).resolve()
+    source_path = pathlib.Path(args.source).expanduser().resolve()
+    dest_path = pathlib.Path(args.destination).expanduser().resolve()
 
     print_log("Starting Release Copy & Rename Script", level="header", quiet=args.quiet)
     print_log(f"Source Directory      : {source_path}", level="info", quiet=args.quiet)

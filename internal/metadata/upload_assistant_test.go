@@ -146,3 +146,75 @@ func TestImportUploadAssistantScreenshots(t *testing.T) {
 		t.Fatalf("unexpected first upload raw url: %s", up1.RawURL)
 	}
 }
+
+func TestImportUploadAssistantScreenshots_DuplicateFilenames(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	meta := api.PreparedMetadata{
+		SourcePath: filepath.Join(tmpDir, "Example.Movie.mkv"),
+	}
+
+	dbPath := filepath.Join(tmpDir, "db.sqlite")
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{
+			DBPath: dbPath,
+		},
+	}
+
+	releaseTempDir, _, err := paths.ReleaseTempDir(filepath.Join(tmpDir, "tmp"), meta, meta.SourcePath)
+	if err != nil {
+		t.Fatalf("failed to create release temp dir: %v", err)
+	}
+
+	imageDataJSON := `{
+		"image_list": [
+			{
+				"img_url": "https://thumbs2.imgbox.com/aa/bb/screenshot.png",
+				"raw_url": "https://images2.imgbox.com/aa/bb/screenshot.png",
+				"web_url": "https://imgbox.com/123"
+			},
+			{
+				"img_url": "https://thumbs2.imgbox.com/cc/dd/screenshot.png",
+				"raw_url": "https://images2.imgbox.com/cc/dd/screenshot.png",
+				"web_url": "https://imgbox.com/456"
+			}
+		],
+		"tonemapped": false
+	}`
+	if err := os.WriteFile(filepath.Join(releaseTempDir, "image_data.json"), []byte(imageDataJSON), 0o600); err != nil {
+		t.Fatalf("failed to write image_data.json: %v", err)
+	}
+
+	menuImagesJSON := `{
+		"menu_images": [
+			{
+				"img_url": "https://thumbs2.imgbox.com/ee/ff/screenshot.png",
+				"raw_url": "https://images2.imgbox.com/ee/ff/screenshot.png",
+				"web_url": "https://imgbox.com/789"
+			}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(releaseTempDir, "menu_images.json"), []byte(menuImagesJSON), 0o600); err != nil {
+		t.Fatalf("failed to write menu_images.json: %v", err)
+	}
+
+	repo := &mockUploadAssistantRepo{}
+	service := NewService(repo, WithConfig(cfg))
+
+	err = service.importUploadAssistantScreenshots(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(repo.savedSelections) != 3 {
+		t.Fatalf("expected 3 saved selections, got %d", len(repo.savedSelections))
+	}
+
+	pathsExpected := []string{"screenshot.png", "screenshot_2.png", "screenshot_3.png"}
+	for i, expected := range pathsExpected {
+		gotPath := repo.savedSelections[i].ImagePath
+		if !strings.HasSuffix(gotPath, expected) {
+			t.Errorf("expected selection %d path to end with %q, got %q", i, expected, gotPath)
+		}
+	}
+}
