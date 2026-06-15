@@ -207,6 +207,98 @@ func TestInjectQbitClient(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientUsesPathMappingSavePath(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddCaptureServer(t)
+
+	root := t.TempDir()
+	localRoot := filepath.Join(root, "local")
+	releaseDir := filepath.Join(localRoot, "Movies", "Fixture.Title.2024")
+	if err := os.MkdirAll(releaseDir, 0o700); err != nil {
+		t.Fatalf("mkdir release: %v", err)
+	}
+	source := filepath.Join(releaseDir, "video.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	remoteRoot := "/remote/media"
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:       "qbit",
+				URL:        server.URL,
+				Username:   "user",
+				Password:   "pass",
+				LocalPath:  config.StringList{"", localRoot},
+				RemotePath: config.StringList{"/wrong/root", remoteRoot},
+			},
+		},
+	}, nil)
+
+	meta := api.PreparedMetadata{SourcePath: source, FileList: []string{source}}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	wantSavePath := "/remote/media/Movies/Fixture.Title.2024/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected mapped savepath %q, got %q", wantSavePath, capture.savePath)
+	}
+}
+
+func TestMappedRemotePathPreservesBlankPathPairAlignment(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	localRoot := filepath.Join(root, "local")
+	otherRoot := filepath.Join(root, "other")
+	source := filepath.Join(localRoot, "Movies", "Fixture.Title.2024", "video.mkv")
+
+	tests := []struct {
+		name    string
+		locals  config.StringList
+		remotes config.StringList
+	}{
+		{
+			name:    "blank local path",
+			locals:  config.StringList{"", localRoot},
+			remotes: config.StringList{"/wrong/root", "/remote/media"},
+		},
+		{
+			name:    "blank remote path",
+			locals:  config.StringList{otherRoot, localRoot},
+			remotes: config.StringList{"", "/remote/media"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := mappedRemotePath(source, tt.locals, tt.remotes)
+			if !ok {
+				t.Fatal("expected mapped path")
+			}
+			want := filepath.Join("/remote/media", "Movies", "Fixture.Title.2024", "video.mkv")
+			if got != want {
+				t.Fatalf("expected mapped path %q, got %q", want, got)
+			}
+		})
+	}
+}
+
 func TestInjectQbitClientUsesRequestOverrides(t *testing.T) {
 	t.Parallel()
 
