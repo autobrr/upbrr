@@ -75,6 +75,10 @@ const formatTime = (iso: string) => {
   return date.toLocaleTimeString();
 };
 
+/** Builds the dedupe/render identity for log rows across logger restarts. */
+const logEntryKey = (entry: LogEntry) =>
+  `${Number.isFinite(entry.ID) ? entry.ID : "no-id"}|${entry.Time}|${entry.Level}|${entry.Message}`;
+
 export default function LogSettingsPanel({
   configData,
   renderField,
@@ -91,6 +95,8 @@ export default function LogSettingsPanel({
   const [pendingMute, setPendingMute] = useState("");
   const [levelFilter, setLevelFilter] = useState<Record<string, boolean>>(normalizeLevels());
 
+  /** Keeps buffer trimming policy current without restarting the log stream. */
+  const autoScrollRef = useRef(autoScroll);
   const streamStopRef = useRef<null | (() => void)>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const logStreamRef = useRef<HTMLDivElement | null>(null);
@@ -109,6 +115,10 @@ export default function LogSettingsPanel({
     });
   }, [entries, search, levelFilter, mutedPatterns]);
 
+  useEffect(() => {
+    autoScrollRef.current = autoScroll;
+  }, [autoScroll]);
+
   const persistMuted = async (patterns: string[]) => {
     const updater = globalThis.go?.guiapp?.App?.UpdateLogExclusions;
     if (!updater) return;
@@ -119,21 +129,48 @@ export default function LogSettingsPanel({
     }
   };
 
-  const appendEntries = useCallback(
-    (incoming: LogEntry[]) => {
-      if (incoming.length === 0) return;
-      setEntries((prev) => {
-        let next = [...prev, ...incoming];
-        if (autoScroll && next.length > LOG_SOFT_CAP) {
-          next = next.slice(-LOG_SOFT_CAP);
-        } else if (!autoScroll && next.length > LOG_HARD_CAP) {
-          next = next.slice(-LOG_HARD_CAP);
-          setBufferWarning("Log buffer capped. Oldest entries were dropped.");
-        }
-        return next;
+  const appendEntries = useCallback((incoming: LogEntry[]) => {
+    if (incoming.length === 0) return;
+    setEntries((prev) => {
+      // Recent-log backfills can overlap live stream events; logger IDs keep
+      // the rendered buffer idempotent across both sources. IDs restart with
+      // each logger instance, so include row content to survive stream rebinds.
+      const seenRows = new Set(prev.map(logEntryKey));
+      const uniqueIncoming = incoming.filter((entry) => {
+        const key = logEntryKey(entry);
+        if (seenRows.has(key)) return false;
+        seenRows.add(key);
+        return true;
       });
+      if (uniqueIncoming.length === 0) return prev;
+      let next = [...prev, ...uniqueIncoming];
+      if (autoScrollRef.current && next.length > LOG_SOFT_CAP) {
+        next = next.slice(-LOG_SOFT_CAP);
+      } else if (!autoScrollRef.current && next.length > LOG_HARD_CAP) {
+        next = next.slice(-LOG_HARD_CAP);
+        setBufferWarning("Log buffer capped. Oldest entries were dropped.");
+      }
+      return next;
+    });
+  }, []);
+
+  /** Backfills buffered log entries only while the caller's effect is still active. */
+  const fetchRecentLogs = useCallback(
+    async (isActive: () => boolean = () => true) => {
+      const getRecent = globalThis.go?.guiapp?.App?.GetRecentLogs;
+      if (!getRecent) return;
+      try {
+        const payload = await getRecent(LOG_SOFT_CAP);
+        if (!isActive()) return;
+        const normalized = Array.isArray(payload)
+          ? payload.map(normalizeEntry).filter(Boolean)
+          : [];
+        appendEntries(normalized as LogEntry[]);
+      } catch (err) {
+        console.error("Failed to load recent logs", err);
+      }
     },
-    [autoScroll],
+    [appendEntries],
   );
 
   useEffect(() => {
@@ -151,21 +188,12 @@ export default function LogSettingsPanel({
   }, []);
 
   useEffect(() => {
-    const fetchRecent = async () => {
-      const getRecent = globalThis.go?.guiapp?.App?.GetRecentLogs;
-      if (!getRecent) return;
-      try {
-        const payload = await getRecent(LOG_SOFT_CAP);
-        const normalized = Array.isArray(payload)
-          ? payload.map(normalizeEntry).filter(Boolean)
-          : [];
-        appendEntries(normalized as LogEntry[]);
-      } catch (err) {
-        console.error("Failed to load recent logs", err);
-      }
+    let active = true;
+    fetchRecentLogs(() => active);
+    return () => {
+      active = false;
     };
-    fetchRecent();
-  }, [appendEntries]);
+  }, [fetchRecentLogs]);
 
   useEffect(() => {
     const fetchMuted = async () => {
@@ -181,7 +209,7 @@ export default function LogSettingsPanel({
       }
     };
     fetchMuted();
-  }, [appendEntries]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -189,10 +217,14 @@ export default function LogSettingsPanel({
       const start = globalThis.go?.guiapp?.App?.StartLogStream;
       const stop = globalThis.go?.guiapp?.App?.StopLogStream;
       if (!start) return;
+      // Tracks a stream that exists before event subscription cleanup is installed.
+      let pendingStreamID = "";
 
       try {
         const streamID = await start();
+        pendingStreamID = streamID;
         if (!active) {
+          pendingStreamID = "";
           if (stop) await stop(streamID);
           return;
         }
@@ -208,7 +240,14 @@ export default function LogSettingsPanel({
             stop(streamID).catch(() => undefined);
           }
         };
+        pendingStreamID = "";
+        // Backfill after subscribing to cover entries emitted between
+        // StartLogStream resolving and the event listener attaching.
+        await fetchRecentLogs(() => active);
       } catch (err) {
+        if (pendingStreamID && stop) {
+          await stop(pendingStreamID).catch(() => undefined);
+        }
         setConnected(false);
         console.error("Failed to start log stream", err);
       }
@@ -224,7 +263,7 @@ export default function LogSettingsPanel({
         streamStopRef.current = null;
       }
     };
-  }, [appendEntries]);
+  }, [appendEntries, fetchRecentLogs]);
 
   useEffect(() => {
     if (!autoScroll) return;
@@ -376,7 +415,7 @@ export default function LogSettingsPanel({
           ) : (
             filteredEntries.map((entry) => (
               <div
-                key={entry.ID}
+                key={logEntryKey(entry)}
                 className="grid grid-cols-[72px_64px_minmax(0,1fr)] items-center gap-2"
               >
                 <span className="text-xs text-[var(--muted)]">{formatTime(entry.Time)}</span>

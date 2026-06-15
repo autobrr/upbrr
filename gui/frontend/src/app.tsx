@@ -81,6 +81,8 @@ import {
   sourcePathHistoryStorageKey,
 } from "./utils/inputHistory";
 import { handleExternalLinkClick } from "./utils/externalLinks";
+import { normalizeJobStatus } from "./utils/jobStatus";
+import { isMetadataProgressPathMatch } from "./utils/metadataProgress";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -261,6 +263,12 @@ const upsertProgressLine = (lines: string[], line: string) => {
   const next = [...lines];
   next[existingIndex] = line;
   return next;
+};
+
+/** Returns whether a background job status should keep progress recovery active. */
+const isRunningJobStatus = (status: string) => {
+  const normalized = normalizeJobStatus(status);
+  return normalized === "queued" || normalized === "running";
 };
 
 declare global {
@@ -607,11 +615,15 @@ export default function App() {
   const [playlistAutoPreparing, setPlaylistAutoPreparing] = useState(false);
   const [playlistPreparationError, setPlaylistPreparationError] = useState("");
   const [bdinfoProgressLines, setBdinfoProgressLines] = useState<string[]>([]);
-  const [metadataProgressTarget, setMetadataProgressTarget] = useState("");
+  const bdinfoProgressActiveRef = useRef(false);
   const [metadataProgressActive, setMetadataProgressActive] = useState(false);
   const [metadataProgressUpdates, setMetadataProgressUpdates] = useState<MetadataProgressUpdate[]>(
     [],
   );
+  // Mirrors metadata progress state synchronously so events emitted during the
+  // same tick as a fetch/reset request are not dropped by a stale React closure.
+  const metadataProgressActiveRef = useRef(false);
+  const metadataProgressTargetRef = useRef("");
   const [dupeSummary, setDupeSummary] = useState<DupeCheckSummary>(emptyDupeSummary);
   const [dupeLoading, setDupeLoading] = useState(false);
   const [dupeError, setDupeError] = useState("");
@@ -868,10 +880,12 @@ export default function App() {
   }, [lightboxImage]);
 
   useEffect(() => {
-    if (!playlistAutoPreparing) {
-      return;
-    }
+    // Keep BDInfo progress subscribed before preparation starts; the backend
+    // can emit first lines before React commits playlistAutoPreparing state.
     const off = EventsOn(bdinfoProgressEvent, (payload: any) => {
+      if (!bdinfoProgressActiveRef.current) {
+        return;
+      }
       const line = typeof payload === "string" ? payload : payload?.line;
       if (typeof line !== "string") {
         return;
@@ -888,19 +902,18 @@ export default function App() {
         off();
       }
     };
-  }, [playlistAutoPreparing]);
+  }, []);
 
   useEffect(() => {
-    const normalizePath = (value: string) => value.trim().replaceAll("\\", "/").toLowerCase();
+    // Keep one stable metadata progress listener for the app lifetime; refs
+    // carry the active request state without resubscribing mid-fetch.
     const off = EventsOn(metadataProgressEvent, (payload: any) => {
-      if (!metadataProgressActive) {
+      if (!metadataProgressActiveRef.current) {
         return;
       }
       const eventPath = typeof payload?.path === "string" ? payload.path : "";
-      if (
-        metadataProgressTarget &&
-        normalizePath(eventPath) !== normalizePath(metadataProgressTarget)
-      ) {
+      const progressTarget = metadataProgressTargetRef.current;
+      if (!isMetadataProgressPathMatch(eventPath, progressTarget)) {
         return;
       }
 
@@ -914,8 +927,9 @@ export default function App() {
       };
 
       if (update.phase === "complete" && update.status === "completed") {
+        metadataProgressActiveRef.current = false;
+        metadataProgressTargetRef.current = "";
         setMetadataProgressActive(false);
-        setMetadataProgressTarget("");
         setMetadataProgressUpdates([]);
         return;
       }
@@ -931,7 +945,7 @@ export default function App() {
         off();
       }
     };
-  }, [metadataProgressActive, metadataProgressTarget]);
+  }, []);
 
   const getThemeIcon = () => {
     if (theme === "auto") return "🔄";
@@ -1359,9 +1373,11 @@ export default function App() {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
       setPlaylistAutoPreparing(false);
+      bdinfoProgressActiveRef.current = false;
       setPlaylistPreparationError("");
       setBdinfoProgressLines([]);
-      setMetadataProgressTarget("");
+      metadataProgressTargetRef.current = "";
+      metadataProgressActiveRef.current = false;
       setMetadataProgressActive(false);
       setMetadataProgressUpdates([]);
       setDupeSummary(emptyDupeSummary);
@@ -1914,6 +1930,7 @@ export default function App() {
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
     setPlaylistAutoPreparing(false);
+    bdinfoProgressActiveRef.current = false;
 
     if (selectedMode === "file") {
       setShowPlaylistSelection(false);
@@ -1970,8 +1987,10 @@ export default function App() {
   const handlePlaylistSelectionComplete = async () => {
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
+    bdinfoProgressActiveRef.current = true;
     setPlaylistAutoPreparing(true);
     const completed = await runPlaylistBDInfo();
+    bdinfoProgressActiveRef.current = false;
     setPlaylistAutoPreparing(false);
     if (completed) {
       setShowPlaylistSelection(false);
@@ -2005,7 +2024,8 @@ export default function App() {
       setError("Please select a file or folder.");
       return;
     }
-    setMetadataProgressTarget(targetPath);
+    metadataProgressTargetRef.current = targetPath;
+    metadataProgressActiveRef.current = true;
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
     setLoading(true);
@@ -2026,6 +2046,7 @@ export default function App() {
     } catch (err) {
       setError(String(err));
     } finally {
+      metadataProgressActiveRef.current = false;
       setMetadataProgressActive(false);
       setLoading(false);
     }
@@ -2116,7 +2137,8 @@ export default function App() {
     }
     const targetPath = path.trim();
     clearEditAttributesState();
-    setMetadataProgressTarget(targetPath);
+    metadataProgressTargetRef.current = targetPath;
+    metadataProgressActiveRef.current = true;
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
     setLoading(true);
@@ -2134,6 +2156,7 @@ export default function App() {
     } catch (err) {
       setError(String(err));
     } finally {
+      metadataProgressActiveRef.current = false;
       setMetadataProgressActive(false);
       setMetadataResetting(false);
       setLoading(false);
@@ -2722,10 +2745,8 @@ export default function App() {
     setDupeCheckSnapshot(snapshot);
     setDupeSummary(snapshot.summary || emptyDupeSummary);
 
-    const normalized = String(snapshot.status || "")
-      .toLowerCase()
-      .trim();
-    const running = normalized === "queued" || normalized === "running";
+    const normalized = normalizeJobStatus(snapshot.status);
+    const running = isRunningJobStatus(normalized);
     setDupeLoading(running);
 
     if (normalized === "completed") {
@@ -2764,25 +2785,37 @@ export default function App() {
     setDupeChecked(false);
     setDupeSummary(emptyDupeSummary);
     setDupeLoading(true);
+    let jobID = "";
     try {
-      const jobID = await starter(
+      jobID = await starter(
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
       );
-      setDupeCheckJobID(jobID);
-      if (snapshotLoader) {
-        const snapshot = await snapshotLoader(jobID);
-        applyDupeCheckSnapshot(snapshot);
-      }
     } catch (err) {
       const message = String(err);
+      // Starter failures do not create a durable job, so clear the polling gates.
+      setDupeLoading(false);
+      setDupeCheckJobID("");
+      setDupeCheckSnapshot(null);
       setDupeChecked(false);
       if (message.includes("dupe check requires metadata preview")) {
         setDupeError("Fetch metadata first to cache a preview before checking dupes.");
       } else {
         setDupeError(message);
+      }
+      return;
+    }
+    setDupeCheckJobID(jobID);
+    // The first snapshot is best-effort; once a job exists, events and fallback
+    // polling own lifecycle updates.
+    if (snapshotLoader) {
+      try {
+        const snapshot = await snapshotLoader(jobID);
+        applyDupeCheckSnapshot(snapshot);
+      } catch {
+        // Keep tracking the job even when this initial fetch is transiently unavailable.
       }
     }
   };
@@ -2808,6 +2841,43 @@ export default function App() {
   }, [applyDupeCheckSnapshot, dupeCheckJobID]);
 
   useEffect(() => {
+    // Poll active jobs as a fallback for missed early job events; live events
+    // still drive updates when the runtime stream is healthy.
+    const currentStatus = String(dupeCheckSnapshot?.status || "");
+    if (!dupeCheckJobID || (!dupeLoading && !isRunningJobStatus(currentStatus))) {
+      return;
+    }
+    const snapshotLoader = globalThis.go?.guiapp?.App?.GetDupeCheckSnapshot;
+    if (!snapshotLoader) {
+      return;
+    }
+
+    let stopped = false;
+    let timer: number | undefined;
+    const loadSnapshot = async () => {
+      try {
+        const snapshot = await snapshotLoader(dupeCheckJobID);
+        if (!stopped) {
+          applyDupeCheckSnapshot(snapshot);
+        }
+      } catch {
+        // Event delivery remains primary; transient polling failures should not replace UI errors.
+      }
+      if (!stopped) {
+        timer = window.setTimeout(loadSnapshot, 1000);
+      }
+    };
+
+    timer = window.setTimeout(loadSnapshot, 1000);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [applyDupeCheckSnapshot, dupeCheckJobID, dupeCheckSnapshot?.status, dupeLoading]);
+
+  useEffect(() => {
     setDupeChecked(false);
     setDupeCheckJobID("");
     setDupeCheckSnapshot(null);
@@ -2831,7 +2901,9 @@ export default function App() {
     setTrackerDryRunError("");
     setTrackerDryRunPreview(emptyTrackerDryRun);
     setTrackerDryRunProgress(null);
-    setMetadataProgressTarget("");
+    bdinfoProgressActiveRef.current = false;
+    metadataProgressTargetRef.current = "";
+    metadataProgressActiveRef.current = false;
     setMetadataProgressActive(false);
     setMetadataProgressUpdates([]);
     resetScreenshotState();
@@ -3068,6 +3140,23 @@ export default function App() {
     [],
   );
 
+  /** Applies an upload job snapshot from either live events or polling fallback. */
+  const applyTrackerUploadSnapshot = useCallback((snapshot: TrackerUploadSnapshot) => {
+    setTrackerUploadSnapshot(snapshot);
+    const normalized = normalizeJobStatus(snapshot.status);
+    const running = isRunningJobStatus(normalized);
+    setTrackerUploadRunning(running);
+    if (normalized === "completed") {
+      setTrackerUploadError("");
+    } else if (
+      normalized === "completed_with_errors" ||
+      normalized === "failed" ||
+      normalized === "canceled"
+    ) {
+      setTrackerUploadError(snapshot.error || "Upload finished with errors.");
+    }
+  }, []);
+
   const handleStartTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
     const starter = globalThis.go?.guiapp?.App?.StartTrackerUpload;
@@ -3135,7 +3224,7 @@ export default function App() {
       setTrackerUploadJobID(jobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(jobID);
-        setTrackerUploadSnapshot(snapshot);
+        applyTrackerUploadSnapshot(snapshot);
       }
     } catch (err) {
       setTrackerUploadRunning(false);
@@ -3153,6 +3242,7 @@ export default function App() {
     runDebug,
     uploadSkipClientInjection,
     runLogLevel,
+    applyTrackerUploadSnapshot,
   ]);
 
   const runTrackerDryRun = useCallback(
@@ -3317,13 +3407,13 @@ export default function App() {
       setTrackerUploadJobID(nextJobID);
       if (snapshotLoader) {
         const snapshot = await snapshotLoader(nextJobID);
-        setTrackerUploadSnapshot(snapshot);
+        applyTrackerUploadSnapshot(snapshot);
       }
     } catch (err) {
       setTrackerUploadRunning(false);
       setTrackerUploadError(String(err));
     }
-  }, [trackerUploadJobID]);
+  }, [applyTrackerUploadSnapshot, trackerUploadJobID]);
 
   useEffect(() => {
     if (!trackerUploadJobID) {
@@ -3335,16 +3425,7 @@ export default function App() {
       if (payload?.jobID !== trackerUploadJobID) {
         return;
       }
-      const snapshot = payload as TrackerUploadSnapshot;
-      setTrackerUploadSnapshot(snapshot);
-      const normalized = String(snapshot.status || "").toLowerCase();
-      const running = normalized === "queued" || normalized === "running";
-      setTrackerUploadRunning(running);
-      if (normalized === "completed") {
-        setTrackerUploadError("");
-      } else if (normalized === "completed_with_errors" || normalized === "canceled") {
-        setTrackerUploadError(snapshot.error || "Upload finished with errors.");
-      }
+      applyTrackerUploadSnapshot(payload as TrackerUploadSnapshot);
     });
 
     return () => {
@@ -3352,7 +3433,48 @@ export default function App() {
         off();
       }
     };
-  }, [trackerUploadJobID]);
+  }, [applyTrackerUploadSnapshot, trackerUploadJobID]);
+
+  useEffect(() => {
+    // Poll active upload jobs as a fallback for missed upload snapshot events.
+    const currentStatus = String(trackerUploadSnapshot?.status || "");
+    if (!trackerUploadJobID || (!trackerUploadRunning && !isRunningJobStatus(currentStatus))) {
+      return;
+    }
+    const snapshotLoader = globalThis.go?.guiapp?.App?.GetTrackerUploadSnapshot;
+    if (!snapshotLoader) {
+      return;
+    }
+
+    let stopped = false;
+    let timer: number | undefined;
+    const loadSnapshot = async () => {
+      try {
+        const snapshot = await snapshotLoader(trackerUploadJobID);
+        if (!stopped) {
+          applyTrackerUploadSnapshot(snapshot);
+        }
+      } catch {
+        // Event delivery remains primary; transient polling failures should not replace UI errors.
+      }
+      if (!stopped) {
+        timer = window.setTimeout(loadSnapshot, 1000);
+      }
+    };
+
+    timer = window.setTimeout(loadSnapshot, 1000);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [
+    applyTrackerUploadSnapshot,
+    trackerUploadJobID,
+    trackerUploadRunning,
+    trackerUploadSnapshot?.status,
+  ]);
 
   const markReleaseTouched = (key: keyof ReleaseNameTouchedState) => {
     setReleaseTouched((prev) => ({ ...prev, [key]: true }));
