@@ -92,7 +92,7 @@ func TestBuildCBRName(t *testing.T) {
 		{
 			name: "Non-pt AKA removal (with spaces)",
 			meta: api.PreparedMetadata{
-				ReleaseName: "Title AKA Some AKA 2023 1080p -GRP",
+				ReleaseName: "Title AKA Some AKA 2023 1080p-GRP",
 				Release:     api.ReleaseInfo{Title: "Title", Year: 2023, Group: "GRP"},
 				ExternalMetadata: api.ExternalMetadata{
 					TMDB: &api.TMDBMetadata{
@@ -102,7 +102,7 @@ func TestBuildCBRName(t *testing.T) {
 				},
 				Tag: "-GRP",
 			},
-			want: "Title AKA 2023 1080p -GRP",
+			want: "Title AKA 2023 1080p-GRP",
 		},
 		{
 			name: "Portuguese MULTI",

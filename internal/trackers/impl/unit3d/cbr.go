@@ -70,6 +70,7 @@ func BuildCBRName(meta api.PreparedMetadata, customTag string) string {
 
 	if !isPtBR && aka != "" {
 		name = strings.ReplaceAll(name, aka, "")
+		name = strings.Join(strings.Fields(name), " ")
 	}
 
 	if isPtBR && aka != "" {
@@ -80,7 +81,7 @@ func BuildCBRName(meta api.PreparedMetadata, customTag string) string {
 		name = strings.ReplaceAll(name, strings.ReplaceAll(aka, " ", "."), "")
 		name = strings.ReplaceAll(name, title, akaClean)
 		name = strings.ReplaceAll(name, strings.ReplaceAll(title, " ", "."), akaClean)
-		name = strings.TrimSpace(name)
+		name = strings.Join(strings.Fields(name), " ")
 	}
 
 	cbrName := name
@@ -117,6 +118,7 @@ func BuildCBRName(meta api.PreparedMetadata, customTag string) string {
 
 		if audioTag != "" {
 			cbrName = cbrAudioMarkerReplacer.Replace(cbrName)
+			cbrName = strings.Join(strings.Fields(cbrName), " ")
 			if idx := strings.LastIndex(cbrName, "-"); idx != -1 {
 				prefix := cbrName[:idx]
 				suffix := cbrName[idx+1:]
