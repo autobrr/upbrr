@@ -906,15 +906,38 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// lookupTorrentClient resolves tracker torrent_client selectors using the same
+// exact-or-unique-folded name rule as runtime injection. Ambiguous folded names
+// are rejected so config validation cannot accept a selector runtime skips.
 func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string) (string, bool) {
 	trimmed := strings.TrimSpace(selected)
 	if trimmed == "" {
 		return "", false
 	}
+
+	exactMatches := make([]string, 0, 1)
+	foldMatches := make([]string, 0, 1)
 	for name := range clients {
-		if strings.EqualFold(strings.TrimSpace(name), trimmed) {
-			return name, true
+		nameTrimmed := strings.TrimSpace(name)
+		if nameTrimmed == trimmed {
+			exactMatches = append(exactMatches, name)
+			continue
 		}
+		if strings.EqualFold(nameTrimmed, trimmed) {
+			foldMatches = append(foldMatches, name)
+		}
+	}
+
+	switch len(exactMatches) {
+	case 1:
+		return exactMatches[0], true
+	case 0:
+	default:
+		return "", false
+	}
+
+	if len(foldMatches) == 1 {
+		return foldMatches[0], true
 	}
 	return "", false
 }
