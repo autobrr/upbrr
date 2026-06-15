@@ -179,6 +179,9 @@ func (s *Service) trackerLinkDirName(tracker string) string {
 	return trimmed
 }
 
+// sourcePathForLinking returns an existing local source path suitable for link
+// creation. It stats candidate paths because link staging must copy or link real
+// filesystem content.
 func sourcePathForLinking(meta api.PreparedMetadata) (string, error) {
 	if len(meta.FileList) == 1 {
 		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" {
@@ -203,6 +206,22 @@ func sourcePathForLinking(meta api.PreparedMetadata) (string, error) {
 		return absLocalPath("linking source", source)
 	}
 	return absLocalPath("linking source", source)
+}
+
+// sourcePathForQbitSavePath returns the prepared source path used for qbit
+// savepath mapping. It is intentionally lexical and does not stat the source,
+// because qbit injection can still be valid when source metadata is unavailable.
+func sourcePathForQbitSavePath(meta api.PreparedMetadata) (string, error) {
+	if len(meta.FileList) == 1 {
+		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" {
+			return absLocalPath("qbit mapping source", candidate)
+		}
+	}
+	source := strings.TrimSpace(meta.SourcePath)
+	if source == "" {
+		return "", internalerrors.ErrInvalidInput
+	}
+	return absLocalPath("qbit mapping source", source)
 }
 
 func linkedFolderCandidates[S ~[]string](source string, folders S, mode string) ([]string, error) {
@@ -590,29 +609,80 @@ func symlink(source string, dest string, _ bool) error {
 	return nil
 }
 
+// mapLocalPathToRemote maps a local filesystem path through the first matching,
+// positionally paired local_path/remote_path entry, or returns the trimmed input
+// when no usable pair matches.
 func mapLocalPathToRemote[S ~[]string](value string, localPaths S, remotePaths S) string {
+	if mapped, ok := mappedRemotePath(value, localPaths, remotePaths); ok {
+		return mapped
+	}
+	return strings.TrimSpace(value)
+}
+
+// mappedRemotePath reports whether value is under a usable configured local
+// root and, when it is, returns the paired remote root plus relative suffix.
+// Blank local or remote entries are ignored without shifting later pairs.
+func mappedRemotePath[S ~[]string](value string, localPaths S, remotePaths S) (string, bool) {
 	savePath := strings.TrimSpace(value)
 	if savePath == "" {
-		return ""
+		return "", false
 	}
-	locals := nonEmptyClientPaths(localPaths)
-	remotes := nonEmptyClientPaths(remotePaths)
-	for idx, localPath := range locals {
-		if idx >= len(remotes) {
-			break
-		}
-		remotePath := remotes[idx]
-		rel, ok := relativePathUnderRoot(localPath, savePath)
+	for _, pair := range pathMappingPairs(localPaths, remotePaths) {
+		rel, ok := relativePathUnderRoot(pair.local, savePath)
 		if !ok {
 			continue
 		}
 		if rel == "." {
-			return remotePath
+			return pair.remote, true
 		}
-		//pathpolicy:allow Joins configured qBittorrent remote save path with staged relative suffix before API slash normalization.
-		return filepath.Join(remotePath, rel)
+		return filepath.Join(pair.remote, rel), true
 	}
-	return savePath
+	return "", false
+}
+
+// mappedQbitSavePathForSource maps the prepared source path to the qBittorrent
+// save path parent that can contain the torrent's top-level content. It returns
+// mapped=false without touching source metadata when no usable path pairs exist
+// or no configured pair matches the lexical source path.
+func mappedQbitSavePathForSource[S ~[]string](meta api.PreparedMetadata, localPaths S, remotePaths S) (string, bool, error) {
+	if len(pathMappingPairs(localPaths, remotePaths)) == 0 {
+		return "", false, nil
+	}
+	source, err := sourcePathForQbitSavePath(meta)
+	if err != nil {
+		return "", false, err
+	}
+	mappedSource, ok := mappedRemotePath(source, localPaths, remotePaths)
+	if !ok {
+		return "", false, nil
+	}
+	return qbitSavePath(filepath.Dir(mappedSource)), true, nil
+}
+
+// pathMappingPair is one trimmed local_path/remote_path mapping that kept its
+// original positional relationship from the client configuration.
+type pathMappingPair struct {
+	local  string
+	remote string
+}
+
+// pathMappingPairs trims configured path entries while preserving positional
+// local_path/remote_path pairing; entries with either side blank are ignored.
+func pathMappingPairs[S ~[]string](localPaths S, remotePaths S) []pathMappingPair {
+	limit := len(localPaths)
+	if len(remotePaths) < limit {
+		limit = len(remotePaths)
+	}
+	pairs := make([]pathMappingPair, 0, limit)
+	for idx := 0; idx < limit; idx++ {
+		localPath := strings.TrimSpace(localPaths[idx])
+		remotePath := strings.TrimSpace(remotePaths[idx])
+		if localPath == "" || remotePath == "" {
+			continue
+		}
+		pairs = append(pairs, pathMappingPair{local: localPath, remote: remotePath})
+	}
+	return pairs
 }
 
 func relativePathUnderRoot(root string, target string) (string, bool) {

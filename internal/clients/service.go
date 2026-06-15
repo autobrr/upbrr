@@ -258,6 +258,17 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	if staging.Linked {
 		options.SavePath = staging.SavePath
 		s.logger.Debugf("clients: qbit link staging ready client=%s tracker=%s save_path=%s", name, strings.TrimSpace(torrent.Tracker), staging.SavePath)
+	} else {
+		// Without link staging, local_path/remote_path still controls where
+		// qBittorrent should save the injected torrent on the client host.
+		savePath, mapped, err := mappedQbitSavePathForSource(meta, client.LocalPath, client.RemotePath)
+		if err != nil {
+			return fmt.Errorf("clients: %s qbit path mapping: %w", name, err)
+		}
+		if mapped {
+			options.SavePath = savePath
+			s.logger.Debugf("clients: qbit path mapping ready client=%s save_path=%s", name, savePath)
+		}
 	}
 	if category := strings.TrimSpace(client.QbitCrossCategory); torrent.CrossSeed && category != "" {
 		options.Category = category
