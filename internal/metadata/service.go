@@ -722,6 +722,10 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 	}
 	s.logger.Debugf("metadata: persisted metadata for %s", primary)
 
+	if err := s.importUploadAssistantScreenshots(ctx, meta); err != nil {
+		s.logger.Warnf("metadata: failed to import Upload-Assistant screenshots: %v", err)
+	}
+
 	return meta, nil
 }
 
@@ -1009,6 +1013,15 @@ func cachedPlaylistNames(cache bdmvSummaryCache) []string {
 }
 
 func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Request, tmpDir string, playlistPath string, selected []string) (string, bool, error) {
+	if s.bdinfo == nil {
+		return "", false, errors.New("metadata: bdinfo service not configured")
+	}
+
+	logger := s.logger
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+
 	cache, err := discoverBDMVSummaryCache(tmpDir)
 	if err != nil {
 		return "", false, fmt.Errorf("metadata: discover bdmv tmp cache: %w", err)
@@ -1036,7 +1049,7 @@ func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Requ
 	}
 
 	if len(selected) > 1 {
-		s.logger.Debugf("metadata: executing full-disc bdinfo for %d selected playlists", len(selected))
+		logger.Debugf("metadata: executing full-disc bdinfo for %d selected playlists", len(selected))
 		scanResult, berr := executeFullBDInfoScan(s.bdinfo, ctx, playlistPath, tmpDir)
 		if berr != nil {
 			return "", false, fmt.Errorf("metadata: bdinfo full scan failed: %w", berr)
@@ -1049,7 +1062,7 @@ func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Requ
 	}
 
 	playlistName := selected[0]
-	s.logger.Debugf("metadata: executing bdinfo for playlist %s in path %s", playlistName, playlistPath)
+	logger.Debugf("metadata: executing bdinfo for playlist %s in path %s", playlistName, playlistPath)
 	fullPath := paths.BDMVFullSummaryPath(tmpDir, playlistName)
 	_, berr := executePlaylistBDInfo(s.bdinfo, ctx, playlistPath, playlistName, fullPath, false)
 	if berr != nil {
