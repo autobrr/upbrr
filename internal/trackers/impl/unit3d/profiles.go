@@ -33,6 +33,7 @@ var unit3DSiteProfiles = map[string]unit3DSiteProfile{
 	"PT":     sitePTProfile(),
 	"R4E":    siteR4EProfile(),
 	"RF":     siteRFProfile(),
+	"RHD":    siteRHDProfile(),
 	"SHRI":   siteSHRIProfile(),
 	"STC":    siteSTCProfile(),
 	"TIK":    siteTIKProfile(),
