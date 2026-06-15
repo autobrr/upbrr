@@ -332,6 +332,11 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
     trackerFieldMeta.CheckForRules,
   ],
+  CZT: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.Passkey,
+  ],
   DC: [
     trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,

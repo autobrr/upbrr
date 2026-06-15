@@ -30,6 +30,7 @@ var knownNonUnit3DTrackers = map[string]struct{}{
 	"BT":     {},
 	"BTN":    {},
 	"CZ":     {},
+	"CZT":    {},
 	"DC":     {},
 	"FF":     {},
 	"FL":     {},
