@@ -4,10 +4,13 @@
 package importer
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/config"
 )
 
 func TestImportFromContentYAMLOverlaysDefaults(t *testing.T) {
@@ -46,6 +49,159 @@ func TestImportFromContentJSONOverlaysDefaults(t *testing.T) {
 	}
 	if len(cfg.Trackers.Trackers) == 0 {
 		t.Fatal("expected tracker defaults to be merged in")
+	}
+}
+
+func TestImportFromContentYAMLDoesNotKeepTemplateQbit(t *testing.T) {
+	yaml := []byte(`
+main_settings:
+  tmdb_api: test-key
+torrent_clients:
+  watch-client:
+    type: watch
+    watch_folder: C:/Watch
+`)
+
+	cfg, _, err := ImportFromContent("config.yaml", yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := cfg.TorrentClients["qbittorrent"]; ok {
+		t.Fatal("did not expect template qbittorrent client to be retained")
+	}
+	if _, ok := cfg.TorrentClients["watch-client"]; !ok {
+		t.Fatal("watch-client not found")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("imported config should validate: %v", err)
+	}
+}
+
+func TestImportFromContentJSONDoesNotKeepTemplateQbit(t *testing.T) {
+	json := []byte(`{
+  "MainSettings": {"TMDBAPI": "test-key"},
+  "TorrentClients": {
+    "watch-client": {
+      "Type": "watch",
+      "WatchFolder": "C:/Watch"
+    }
+  }
+}`)
+
+	cfg, _, err := ImportFromContent("config.json", json)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := cfg.TorrentClients["qbittorrent"]; ok {
+		t.Fatal("did not expect template qbittorrent client to be retained")
+	}
+	if _, ok := cfg.TorrentClients["watch-client"]; !ok {
+		t.Fatal("watch-client not found")
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("imported config should validate: %v", err)
+	}
+}
+
+func TestImportFromContentYAMLOmittedTorrentClientsExportsEmptyMap(t *testing.T) {
+	cfg, _, err := ImportFromContent("config.yaml", []byte("main_settings:\n  tmdb_api: test-key\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TorrentClients == nil {
+		t.Fatal("expected omitted torrent_clients to import as an empty map")
+	}
+	if len(cfg.TorrentClients) != 0 {
+		t.Fatalf("expected no imported torrent clients, got %d", len(cfg.TorrentClients))
+	}
+
+	payload, err := config.ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var exported struct {
+		TorrentClients map[string]config.TorrentClientConfig
+	}
+	if err := json.Unmarshal([]byte(payload), &exported); err != nil {
+		t.Fatalf("unmarshal export: %v", err)
+	}
+	if exported.TorrentClients == nil {
+		t.Fatal("expected exported TorrentClients to be {}, got null")
+	}
+	if len(exported.TorrentClients) != 0 {
+		t.Fatalf("expected exported TorrentClients to be empty, got %d", len(exported.TorrentClients))
+	}
+}
+
+func TestImportFromContentYAMLNullTorrentClientsExportsEmptyMap(t *testing.T) {
+	cfg, _, err := ImportFromContent("config.yaml", []byte("main_settings:\n  tmdb_api: test-key\ntorrent_clients: null\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TorrentClients == nil {
+		t.Fatal("expected null torrent_clients to import as an empty map")
+	}
+	if len(cfg.TorrentClients) != 0 {
+		t.Fatalf("expected no imported torrent clients, got %d", len(cfg.TorrentClients))
+	}
+
+	payload, err := config.ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var exported map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &exported); err != nil {
+		t.Fatalf("unmarshal export: %v", err)
+	}
+	if string(exported["TorrentClients"]) != "{}" {
+		t.Fatalf("expected exported TorrentClients {}, got %s", exported["TorrentClients"])
+	}
+}
+
+func TestImportFromContentJSONOmittedTorrentClientsExportsEmptyMap(t *testing.T) {
+	cfg, _, err := ImportFromContent("config.json", []byte(`{"MainSettings":{"TMDBAPI":"json-key"}}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TorrentClients == nil {
+		t.Fatal("expected omitted TorrentClients to import as an empty map")
+	}
+
+	payload, err := config.ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var exported map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &exported); err != nil {
+		t.Fatalf("unmarshal export: %v", err)
+	}
+	if string(exported["TorrentClients"]) != "{}" {
+		t.Fatalf("expected exported TorrentClients {}, got %s", exported["TorrentClients"])
+	}
+}
+
+func TestImportFromContentJSONNullTorrentClientsExportsEmptyMap(t *testing.T) {
+	cfg, _, err := ImportFromContent("config.json", []byte(`{"TorrentClients":null}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TorrentClients == nil {
+		t.Fatal("expected null TorrentClients to normalize to an empty map")
+	}
+	if len(cfg.TorrentClients) != 0 {
+		t.Fatalf("expected no imported torrent clients, got %d", len(cfg.TorrentClients))
+	}
+
+	payload, err := config.ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	var exported map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &exported); err != nil {
+		t.Fatalf("unmarshal export: %v", err)
+	}
+	if string(exported["TorrentClients"]) != "{}" {
+		t.Fatalf("expected exported TorrentClients {}, got %s", exported["TorrentClients"])
 	}
 }
 

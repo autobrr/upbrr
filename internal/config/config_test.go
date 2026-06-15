@@ -59,6 +59,84 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid global torrent client refs",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				ClientSetup: ClientSetupConfig{
+					DefaultClient: "qbit",
+					InjectClients: CSVList{"qbit"},
+					SearchClients: CSVList{"QBIT"},
+				},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "global torrent client none selectors allowed",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				ClientSetup: ClientSetupConfig{
+					DefaultClient: "none",
+					InjectClients: CSVList{"none"},
+					SearchClients: CSVList{"none"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid default torrent client ref",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				ClientSetup:        ClientSetupConfig{DefaultClient: "missing"},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid searching torrent client ref",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				ClientSetup:        ClientSetupConfig{SearchClients: CSVList{"missing"}},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid injecting torrent client ref",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				ClientSetup:        ClientSetupConfig{InjectClients: CSVList{"missing"}},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid global torrent client ambiguous folded duplicate",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				ClientSetup:        ClientSetupConfig{DefaultClient: "QBIT"},
+				TorrentClients: map[string]TorrentClientConfig{
+					"Qbit": {Type: "watch", WatchFolder: "/tmp/watch1"},
+					"qbit": {Type: "watch", WatchFolder: "/tmp/watch2"},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "valid tracker torrent client",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
