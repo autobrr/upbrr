@@ -75,6 +75,40 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid tracker torrent client exact match with folded duplicate",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"Qbit": {Type: "watch", WatchFolder: "/tmp/watch1"},
+					"qbit": {Type: "watch", WatchFolder: "/tmp/watch2"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "qbit"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid tracker torrent client ambiguous folded duplicate",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"Qbit": {Type: "watch", WatchFolder: "/tmp/watch1"},
+					"qbit": {Type: "watch", WatchFolder: "/tmp/watch2"},
+				},
+				Trackers: TrackersConfig{
+					Trackers: map[string]TrackerConfig{
+						"AITHER": {TorrentClient: "QBIT"},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "invalid tracker torrent client",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
