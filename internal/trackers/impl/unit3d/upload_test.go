@@ -378,6 +378,47 @@ func TestResolveUnit3DTypeIDForTrackerYUS(t *testing.T) {
 	}
 }
 
+func TestResolveUnit3DTypeIDForTrackerZNTH(t *testing.T) {
+	meta := api.PreparedMetadata{Type: "DVDRIP"}
+	got, err := resolveUnit3DTypeIDForTracker("ZNTH", meta)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != "11" {
+		t.Fatalf("expected ZNTH DVDRIP type_id=11, got %q", got)
+	}
+}
+
+func TestBuildZNTHNameTV(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ReleaseName:  "Show.S01E01.Episode.Title.1080p.WEB-DL-GRP",
+		EpisodeTitle: "Episode Title",
+		ExternalIDs:  api.ExternalIDs{Category: "TV"},
+		Release:      api.ReleaseInfo{Resolution: "1080p"},
+	}
+	got := buildUnit3DName("ZNTH", meta)
+	expected := "Show.S01E01.1080p.WEB-DL-GRP"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestBuildZNTHNameMovieYearMismatch(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ReleaseName: "Movie.2024.1080p.WEB-DL-GRP",
+		Release:     api.ReleaseInfo{Year: 2024},
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{Year: 2025},
+		},
+	}
+	got := buildUnit3DName("ZNTH", meta)
+	expected := "Movie.2025.1080p.WEB-DL-GRP"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
 func TestResolveUnit3DResolutionIDForTrackerRF(t *testing.T) {
 	meta := api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "1440p"}}
 	if got := resolveUnit3DResolutionIDForTracker("RF", meta); got != "10" {

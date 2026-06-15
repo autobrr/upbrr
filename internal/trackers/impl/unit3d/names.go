@@ -5,6 +5,7 @@ package unit3d
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -44,6 +45,8 @@ func buildUnit3DName(tracker string, meta api.PreparedMetadata) string {
 		return addNoGroupSuffix(name, meta, "NOGRP")
 	case "ULCX":
 		return buildULCXName(name, meta)
+	case "ZNTH":
+		return buildZNTHName(name, meta)
 	default:
 		return name
 	}
@@ -252,4 +255,35 @@ func isNoGroupTag(tag string) bool {
 	default:
 		return false
 	}
+}
+
+func buildZNTHName(name string, meta api.PreparedMetadata) string {
+	category := resolveUnit3DCategory(meta)
+	if category == "TV" && strings.TrimSpace(meta.EpisodeTitle) != "" {
+		resolution := resolveResolution(meta)
+		if resolution != "" {
+			words := strings.Fields(strings.TrimSpace(meta.EpisodeTitle))
+			escapedWords := make([]string, len(words))
+			for i, w := range words {
+				escapedWords[i] = regexp.QuoteMeta(w)
+			}
+			pattern := "(?i)" + strings.Join(escapedWords, `[.\s_]+`) + `[.\s_]+` + regexp.QuoteMeta(resolution)
+			re, err := regexp.Compile(pattern)
+			if err == nil {
+				name = re.ReplaceAllString(name, resolution)
+			}
+		}
+	}
+
+	if category != "TV" {
+		imdbYear := 0
+		if meta.ExternalMetadata.IMDB != nil {
+			imdbYear = meta.ExternalMetadata.IMDB.Year
+		}
+		year := meta.Release.Year
+		if imdbYear > 0 && year > 0 && imdbYear != year {
+			name = strings.Replace(name, strconv.Itoa(year), strconv.Itoa(imdbYear), 1)
+		}
+	}
+	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
 }
