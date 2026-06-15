@@ -78,3 +78,26 @@ func TestTranslateGenreToPortugueseStrict(t *testing.T) {
 		})
 	}
 }
+
+func TestISO3166PortugueseName(t *testing.T) {
+	tests := []struct {
+		name     string
+		code     string
+		fallback string
+		want     string
+	}{
+		{name: "empty", code: "", fallback: "Unknown", want: "Unknown"},
+		{name: "US to PT", code: "US", fallback: "US", want: "Estados Unidos da América"},
+		{name: "US lowercase", code: "us", fallback: "US", want: "Estados Unidos da América"},
+		{name: "BR to PT", code: "BR", fallback: "BR", want: "Brasil"},
+		{name: "unknown fallback", code: "XYZ", fallback: "XYZ", want: "XYZ"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ISO3166PortugueseName(tt.code, tt.fallback); got != tt.want {
+				t.Fatalf("ISO3166PortugueseName(%q, %q) = %q, want %q", tt.code, tt.fallback, got, tt.want)
+			}
+		})
+	}
+}

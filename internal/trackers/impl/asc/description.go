@@ -543,23 +543,17 @@ func buildCastSection(meta api.PreparedMetadata, richCast []richCreditItem) stri
 		if len(names) == 0 {
 			return ""
 		}
-		limit := len(names)
-		if limit > 10 {
-			limit = 10
-		}
+		limit := min(len(names), 10)
 		parts := make([]string, 0, limit)
-		for idx := 0; idx < limit; idx++ {
+		for idx := range limit {
 			parts = append(parts, "[size=2][b]"+names[idx]+"[/b][/size]")
 		}
 		return strings.Join(parts, "\n")
 	}
 
-	limit := len(richCast)
-	if limit > 10 {
-		limit = 10
-	}
+	limit := min(len(richCast), 10)
 	var parts []string
-	for idx := 0; idx < limit; idx++ {
+	for idx := range limit {
 		person := richCast[idx]
 		profileURL := "https://i.imgur.com/eCCCtFA.png"
 		if strings.TrimSpace(person.ProfilePath) != "" {

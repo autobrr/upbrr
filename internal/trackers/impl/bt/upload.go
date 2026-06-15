@@ -689,7 +689,9 @@ func resolveVideoCodec(meta api.PreparedMetadata) string {
 	codecLower := strings.ToLower(codecFinal)
 	codecMap := []struct{ Key, Value string }{
 		{"hevc", "x265"},
+		{"265", "x265"},
 		{"avc", "x264"},
+		{"264", "x264"},
 		{"mpeg-2", "MPEG-2"},
 		{"vc-1", "VC-1"},
 	}
@@ -868,7 +870,7 @@ func resolveTags(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
 	for _, genre := range genres {
 		translated := metautil.TranslateGenreToPortugueseStrict(genre)
 		if translated == "" {
-			continue // discard if translation fails
+			translated = genre
 		}
 		cleaned := removeDiacritics(translated)
 		tag := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(cleaned), " ", "."))
@@ -942,7 +944,7 @@ func parseMediaInfoDurationMinutes(content string) int {
 	return 0
 }
 
-func parseBDInfoLengthMinutes(value interface{}) int {
+func parseBDInfoLengthMinutes(value any) int {
 	text := strings.TrimSpace(fmt.Sprint(value))
 	if text == "" || text == "<nil>" {
 		return 0
@@ -997,10 +999,7 @@ func resolveDirectors(meta api.PreparedMetadata) string {
 	}
 
 	if len(directors) > 0 {
-		limit := len(directors)
-		if limit > 5 {
-			limit = 5
-		}
+		limit := min(len(directors), 5)
 		return strings.Join(directors[:limit], ", ")
 	}
 
@@ -1057,6 +1056,9 @@ func isSeen(seen map[string]struct{}, url string) bool {
 }
 
 func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	if categoryOf(meta) == "TV" && ptBR.EpisodeOverview != "" {
+		return strings.TrimSpace(ptBR.EpisodeOverview)
+	}
 	if ptBR.Overview != "" {
 		return strings.TrimSpace(ptBR.Overview)
 	}

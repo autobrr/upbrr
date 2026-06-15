@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"path/filepath"
@@ -191,6 +192,13 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 	width, height := resolveResolution(meta)
 	runtimeMinutes := resolveRuntime(meta)
 	ptBR := api.ExtractLocalizedPTBR(meta)
+
+	var tmdbOriginalTitle, tmdbTitle string
+	if meta.ExternalMetadata.TMDB != nil {
+		tmdbOriginalTitle = meta.ExternalMetadata.TMDB.OriginalTitle
+		tmdbTitle = meta.ExternalMetadata.TMDB.Title
+	}
+
 	fields := map[string]string{
 		"audio":            resolveAudio(meta),
 		"auth":             auth,
@@ -212,8 +220,8 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 		"submit":           "true",
 		"tags":             metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta, ptBR)),
 		"tipolegenda":      resolveSubtitle(meta),
-		"title":            metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.OriginalTitle, meta.Release.Title),
-		"titulobrasileiro": metautil.FirstNonEmptyTrimmed(ptBR.Title, meta.ExternalMetadata.TMDB.Title, meta.Release.Title),
+		"title":            metautil.FirstNonEmptyTrimmed(tmdbOriginalTitle, meta.Release.Title),
+		"titulobrasileiro": metautil.FirstNonEmptyTrimmed(ptBR.Title, tmdbTitle, meta.Release.Title),
 		"traileryoutube":   resolveYouTube(meta, ptBR),
 		"type":             resolveType(meta),
 		"year":             resolveYearLabel(meta),
@@ -234,8 +242,21 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 		fields["season"] = strconv.Itoa(meta.SeasonInt)
 		fields["episode"] = strconv.Itoa(meta.EpisodeInt)
 		fields["network"] = resolveNetworks(meta)
-		fields["numtemporadas"] = strconv.Itoa(len(meta.ExternalMetadata.IMDB.SeasonsSummary))
-		fields["pais"] = strings.Join(meta.ExternalMetadata.TMDB.OriginCountry, ", ")
+
+		numSeasons := 0
+		if meta.ExternalMetadata.IMDB != nil {
+			numSeasons = len(meta.ExternalMetadata.IMDB.SeasonsSummary)
+		}
+		fields["numtemporadas"] = strconv.Itoa(numSeasons)
+
+		var originCountry []string
+		if meta.ExternalMetadata.TMDB != nil {
+			for _, code := range meta.ExternalMetadata.TMDB.OriginCountry {
+				originCountry = append(originCountry, metautil.ISO3166PortugueseName(code, code))
+			}
+		}
+		fields["pais"] = strings.Join(originCountry, ", ")
+
 		fields["diretorserie"] = resolveDirectors(meta)
 		fields["avaliacao"] = resolveIMDbRating(meta)
 		fields["datalancamento"] = resolveReleaseDate(meta)
@@ -574,7 +595,7 @@ func resolveRuntime(meta api.PreparedMetadata) int {
 	return 0
 }
 
-func parseBDInfoLengthMinutes(value interface{}) int {
+func parseBDInfoLengthMinutes(value any) int {
 	text := strings.TrimSpace(fmt.Sprint(value))
 	if text == "" || text == "<nil>" {
 		return 0
@@ -680,6 +701,9 @@ func resolveIDLink(meta api.PreparedMetadata) string {
 }
 
 func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	if categoryOf(meta) == "TV" && ptBR.EpisodeOverview != "" {
+		return strings.TrimSpace(ptBR.EpisodeOverview)
+	}
 	if ptBR.Overview != "" {
 		return strings.TrimSpace(ptBR.Overview)
 	}
@@ -991,9 +1015,7 @@ func categoryOf(meta api.PreparedMetadata) string {
 
 func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }
 

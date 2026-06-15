@@ -381,7 +381,7 @@ func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string 
 		}
 		translated := metautil.TranslateGenreToPortugueseStrict(g)
 		if translated == "" {
-			continue // discard if translation fails
+			translated = g
 		}
 		capitalized := metautil.CapitalizeGenre(translated)
 		if capitalized != "" {

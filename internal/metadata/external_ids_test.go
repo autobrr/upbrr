@@ -2042,3 +2042,44 @@ func containsString(values []string, target string) bool {
 	}
 	return false
 }
+
+func TestResolveExternalIDsLocalizedFetchSucceedsWhenTMDBMetadataIsNil(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "MOVIE"},
+		// metadata is deliberately left empty/error to keep TMDB nil
+		localizedData: map[string]any{
+			"title":    "Título Localizado",
+			"overview": "Sinopse Localizada",
+		},
+	}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	// Make sure BJS/BT/ASC is in Trackers list so needsPTBR is true
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/file.mkv",
+		Release:    api.ReleaseInfo{Title: "Example", Year: 2024},
+		Trackers:   []string{"BJS"},
+	}
+
+	result, err := svc.ResolveExternalIDs(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if result.ExternalMetadata.TMDB == nil {
+		t.Fatalf("expected TMDB metadata to be initialized with localized info")
+	}
+	if result.ExternalMetadata.TMDB.Localized == nil {
+		t.Fatalf("expected Localized map to be populated")
+	}
+	ptBR, ok := result.ExternalMetadata.TMDB.Localized["pt-BR"]
+	if !ok || ptBR.Title != "Título Localizado" {
+		t.Fatalf("expected localized title, got %#v", ptBR)
+	}
+}

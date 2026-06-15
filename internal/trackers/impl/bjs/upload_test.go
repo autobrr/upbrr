@@ -45,7 +45,7 @@ func TestResolveRuntimeFallsBackToExternalMetadata(t *testing.T) {
 func TestResolveRuntimePrefersBDInfoLengthForBDMV(t *testing.T) {
 	meta := api.PreparedMetadata{
 		DiscType: "BDMV",
-		BDInfo: map[string]interface{}{
+		BDInfo: map[string]any{
 			"length": "01:40:00.000",
 		},
 		ExternalMetadata: api.ExternalMetadata{
@@ -70,7 +70,7 @@ func TestBuildFieldsLimitsDirectorCreatorAndSetsRepack(t *testing.T) {
 			TMDB: &api.TMDBMetadata{
 				Creators:      []string{"Creator One", "Creator Two"},
 				Directors:     []string{"Director One", "Director Two"},
-				OriginCountry: []string{"BR"},
+				OriginCountry: []string{"BR", "US"},
 				Title:         "Title",
 			},
 			IMDB: &api.IMDBMetadata{Year: 2026},
@@ -86,5 +86,65 @@ func TestBuildFieldsLimitsDirectorCreatorAndSetsRepack(t *testing.T) {
 	}
 	if got := fields["repack"]; got != "on" {
 		t.Fatalf("expected repack flag, got %q", got)
+	}
+	if got := fields["pais"]; got != "Brasil, Estados Unidos da América" {
+		t.Fatalf("expected translated countries, got %q", got)
+	}
+}
+
+func TestBuildFieldsWithNilMetadata(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{
+			Title: "Test TV Title",
+		},
+		ExternalIDs: api.ExternalIDs{
+			Category: "TV",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: nil,
+			IMDB: nil,
+		},
+	}
+
+	// Make sure buildFields does not panic and populates fallback title from release
+	fields := buildFields(meta, "description", "auth", nil)
+	if got := fields["title"]; got != "Test TV Title" {
+		t.Fatalf("expected title to fall back to release title, got %q", got)
+	}
+	if got := fields["pais"]; got != "" {
+		t.Fatalf("expected empty country for nil TMDB, got %q", got)
+	}
+	if got := fields["numtemporadas"]; got != "0" {
+		t.Fatalf("expected 0 seasons for nil IMDB, got %q", got)
+	}
+}
+
+func TestResolveOverviewPrefersEpisodeOverviewForTV(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{
+			Category: "TV",
+		},
+	}
+	ptBR := api.TMDBLocalizedData{
+		Overview:        "Series Overview",
+		EpisodeOverview: "Episode Overview",
+	}
+
+	if got := resolveOverview(meta, ptBR); got != "Episode Overview" {
+		t.Fatalf("expected episode overview, got %q", got)
+	}
+
+	// For Movie, it should prefer the series overview
+	metaMovie := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{
+			Category: "MOVIE",
+		},
+	}
+	if got := resolveOverview(metaMovie, ptBR); got != "Series Overview" {
+		t.Fatalf("expected series overview for movie, got %q", got)
 	}
 }

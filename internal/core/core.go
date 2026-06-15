@@ -3254,6 +3254,10 @@ func deepCopyTMDBMetadata(metadata *api.TMDBMetadata) *api.TMDBMetadata {
 	cloned.ProductionCompanies = append([]api.TMDBCompany(nil), metadata.ProductionCompanies...)
 	cloned.ProductionCountries = append([]api.TMDBCountry(nil), metadata.ProductionCountries...)
 	cloned.Networks = append([]api.TMDBNetwork(nil), metadata.Networks...)
+	if metadata.Localized != nil {
+		cloned.Localized = make(map[string]api.TMDBLocalizedData, len(metadata.Localized))
+		maps.Copy(cloned.Localized, metadata.Localized)
+	}
 	return &cloned
 }
 

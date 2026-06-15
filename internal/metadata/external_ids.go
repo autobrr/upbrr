@@ -702,12 +702,13 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 
 		if mainData != nil || seasonData != nil || episodeData != nil {
 			localized := parseTMDBLocalizedData(mainData, seasonData, episodeData)
-			if metadata.TMDB != nil {
-				if metadata.TMDB.Localized == nil {
-					metadata.TMDB.Localized = make(map[string]api.TMDBLocalizedData)
-				}
-				metadata.TMDB.Localized["pt-BR"] = localized
+			if metadata.TMDB == nil {
+				metadata.TMDB = &api.TMDBMetadata{TMDBID: ids.TMDBID}
 			}
+			if metadata.TMDB.Localized == nil {
+				metadata.TMDB.Localized = make(map[string]api.TMDBLocalizedData)
+			}
+			metadata.TMDB.Localized["pt-BR"] = localized
 		}
 	}
 
