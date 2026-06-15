@@ -364,6 +364,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "id=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "go_version=$(awk '/^go /{print $2; exit}' go.mod)" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         if: github.event_name != 'pull_request'
@@ -418,6 +419,7 @@ jobs:
           build-args: |
             VERSION=${{ inputs.release_tag || (github.ref_type == 'tag' && github.ref_name) || 'dev' }}
             BUILD_ID=${{ steps.build.outputs.id }}
+            GO_VERSION=${{ steps.build.outputs.go_version }}
           cache-from: type=gha,scope=build-docker-amd64
           cache-to: type=gha,scope=build-docker-amd64,mode=min
 
@@ -444,6 +446,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "id=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "go_version=$(awk '/^go /{print $2; exit}' go.mod)" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         if: github.event_name != 'pull_request'
@@ -498,6 +501,7 @@ jobs:
           build-args: |
             VERSION=${{ inputs.release_tag || (github.ref_type == 'tag' && github.ref_name) || 'dev' }}
             BUILD_ID=${{ steps.build.outputs.id }}
+            GO_VERSION=${{ steps.build.outputs.go_version }}
           cache-from: type=gha,scope=build-docker-arm64
           cache-to: type=gha,scope=build-docker-arm64,mode=min
 
@@ -527,6 +531,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "id=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "go_version=$(awk '/^go /{print $2; exit}' go.mod)" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         if: github.event_name != 'pull_request'
