@@ -37,7 +37,7 @@ func TestConfigSectionSaveLoad(t *testing.T) {
 
 	testSettings := MainSettingsSection{
 		TMDBAPI: "test-api-key",
-		DBPath:  "/home/user/.config/upbrr/db.sqlite",
+		DBPath:  "/home/user/.upbrr/db.sqlite",
 	}
 
 	// Save section.

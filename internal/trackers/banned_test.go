@@ -31,7 +31,7 @@ func TestNewBannedGroupCheckerNoPathUsesDefaultRoot(t *testing.T) {
 	if checker == nil {
 		t.Fatalf("expected checker")
 	}
-	expected := filepath.Join(home, ".config", "upbrr", "cache", "banned")
+	expected := filepath.Join(home, ".upbrr", "cache", "banned")
 	if checker.basePath != expected {
 		t.Fatalf("expected base path %q, got %q", expected, checker.basePath)
 	}

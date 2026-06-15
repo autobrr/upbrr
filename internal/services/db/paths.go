@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const defaultDirName = ".config/upbrr"
+const defaultDirName = ".upbrr"
 const defaultDBName = "db.sqlite"
 
 func DefaultPath() (string, error) {

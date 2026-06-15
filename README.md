@@ -37,13 +37,18 @@ Have these ready:
 By default, upbrr stores its database at:
 
 ```text
-%USERPROFILE%\.config\upbrr\db.sqlite
+%USERPROFILE%\.upbrr\db.sqlite
+```
+
+Otherwise, if the `XDG_CONFIG_HOME` environment variable is set (normally `~/.config`), the path is:
+```
+$XDG_CONFIG_HOME/upbrr/db.sqlite
 ```
 
 Cookie files live beside that database:
 
 ```text
-%USERPROFILE%\.config\upbrr\cookies
+%USERPROFILE%\.upbrr\cookies
 ```
 
 If you use a custom database path, put cookies in a `cookies` folder beside that database.
@@ -99,7 +104,7 @@ The converter maps known Upload Assistant defaults, tracker settings, and torren
 If your old Upload Assistant setup has tracker cookies under `data\cookies`, copy those files to upbrr's cookie folder:
 
 ```text
-%USERPROFILE%\.config\upbrr\cookies
+%USERPROFILE%\.upbrr\cookies
 ```
 
 Restart upbrr after copying cookies, then verify tracker login/session status before uploading.
