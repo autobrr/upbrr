@@ -40,6 +40,8 @@ func buildUnit3DName(tracker string, meta api.PreparedMetadata) string {
 		return buildLDUName(name, meta)
 	case "RF":
 		return addNoGroupSuffix(name, meta, "NoGroup")
+	case "RHD":
+		return buildRHDName(meta)
 	case "OE":
 		return addNoGroupSuffix(name, meta, "NOGRP")
 	case "ULCX":
