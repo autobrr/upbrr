@@ -1091,7 +1091,7 @@ func padTorrentData(t *testing.T, data []byte, minSize int, expectedHash string)
 	}
 
 	padding := bytes.Repeat([]byte("p"), minSize-len(data)+32)
-	entry := []byte(fmt.Sprintf("7:padding%d:", len(padding)))
+	entry := fmt.Appendf(nil, "7:padding%d:", len(padding))
 	padded := make([]byte, 0, len(data)+len(entry)+len(padding))
 	padded = append(padded, data[:len(data)-1]...)
 	padded = append(padded, entry...)

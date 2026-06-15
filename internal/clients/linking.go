@@ -669,12 +669,9 @@ type pathMappingPair struct {
 // pathMappingPairs trims configured path entries while preserving positional
 // local_path/remote_path pairing; entries with either side blank are ignored.
 func pathMappingPairs[S ~[]string](localPaths S, remotePaths S) []pathMappingPair {
-	limit := len(localPaths)
-	if len(remotePaths) < limit {
-		limit = len(remotePaths)
-	}
+	limit := min(len(remotePaths), len(localPaths))
 	pairs := make([]pathMappingPair, 0, limit)
-	for idx := 0; idx < limit; idx++ {
+	for idx := range limit {
 		localPath := strings.TrimSpace(localPaths[idx])
 		remotePath := strings.TrimSpace(remotePaths[idx])
 		if localPath == "" || remotePath == "" {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -464,12 +465,8 @@ func withURLCapableInjectFallback(selected, configured map[string]config.Torrent
 	}
 
 	merged := make(map[string]config.TorrentClientConfig, len(selected)+len(fallback))
-	for name, client := range selected {
-		merged[name] = client
-	}
-	for name, client := range fallback {
-		merged[name] = client
-	}
+	maps.Copy(merged, selected)
+	maps.Copy(merged, fallback)
 	return merged
 }
 
@@ -497,11 +494,11 @@ func hasURLCapableTorrentClient(clients map[string]config.TorrentClientConfig) b
 }
 
 // urlCapableTorrentClients returns every configured client that can add a
-// torrent by URL.
+// torrent by URL and permits fallback fanout.
 func urlCapableTorrentClients(clients map[string]config.TorrentClientConfig) map[string]config.TorrentClientConfig {
 	matches := make(map[string]config.TorrentClientConfig)
 	for name, client := range clients {
-		if isURLCapableTorrentClient(client) {
+		if client.FallbackAllowed() && isURLCapableTorrentClient(client) {
 			matches[name] = client
 		}
 	}

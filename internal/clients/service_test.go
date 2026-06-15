@@ -2174,6 +2174,66 @@ func TestInjectURLInjectionListDisabledDoesNotFallbackToQbit(t *testing.T) {
 	}
 }
 
+func TestInjectURLFallbackSkipsQbitWhenFallbackDisallowed(t *testing.T) {
+	t.Parallel()
+
+	watchRoot := t.TempDir()
+	watch := filepath.Join(watchRoot, "watch")
+	if err := os.MkdirAll(watch, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	var mu sync.Mutex
+	addCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalled = true
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	allowFallback := false
+	svc := NewService(config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "watch",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"watch": {Type: "watch", WatchFolder: watch},
+			"qbit": {
+				Type:          "qbit",
+				URL:           server.URL,
+				Username:      "user",
+				Password:      "pass",
+				AllowFallback: &allowFallback,
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "video.mkv"}, api.TorrentResult{URL: "https://aither.cc/torrent/download/374352.382"}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if addCalled {
+		t.Fatalf("did not expect qbit client with fallback disabled to receive URL fallback")
+	}
+}
+
 func TestInjectWatchFolderCopiesFileWhenURLAlsoPresent(t *testing.T) {
 	t.Parallel()
 
