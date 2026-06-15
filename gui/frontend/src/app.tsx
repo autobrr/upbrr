@@ -2785,18 +2785,14 @@ export default function App() {
     setDupeChecked(false);
     setDupeSummary(emptyDupeSummary);
     setDupeLoading(true);
+    let jobID = "";
     try {
-      const jobID = await starter(
+      jobID = await starter(
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
       );
-      setDupeCheckJobID(jobID);
-      if (snapshotLoader) {
-        const snapshot = await snapshotLoader(jobID);
-        applyDupeCheckSnapshot(snapshot);
-      }
     } catch (err) {
       const message = String(err);
       // Starter failures do not create a durable job, so clear the polling gates.
@@ -2808,6 +2804,18 @@ export default function App() {
         setDupeError("Fetch metadata first to cache a preview before checking dupes.");
       } else {
         setDupeError(message);
+      }
+      return;
+    }
+    setDupeCheckJobID(jobID);
+    // The first snapshot is best-effort; once a job exists, events and fallback
+    // polling own lifecycle updates.
+    if (snapshotLoader) {
+      try {
+        const snapshot = await snapshotLoader(jobID);
+        applyDupeCheckSnapshot(snapshot);
+      } catch {
+        // Keep tracking the job even when this initial fetch is transiently unavailable.
       }
     }
   };
