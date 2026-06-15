@@ -34,6 +34,11 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 	return &Service{cfg: cfg, logger: logger}
 }
 
+// Inject dispatches a prepared torrent to the configured injection clients.
+// URL-only torrents require a URL-capable client unless global/default fallback
+// can select one; explicit tracker or caller selections that resolve only to
+// watch-folder clients return [internalerrors.ErrInvalidInput] instead of a
+// successful no-op.
 func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent api.TorrentResult) error {
 	select {
 	case <-ctx.Done():
@@ -76,6 +81,8 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 	}
 	sort.Strings(clientNames)
 
+	injected := false
+	skippedURLOnlyClients := 0
 	for _, name := range clientNames {
 		client := applyClientOverrides(clients[name], clientOverrides)
 		clientType := strings.ToLower(strings.TrimSpace(client.ClientType()))
@@ -85,6 +92,7 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 		// a skipped client cannot fail a successful URL add.
 		if clientType == "watch" && torrentPath == "" && torrentURL != "" {
 			s.logger.Debugf("clients: skipping watch folder client %s for URL injection", name)
+			skippedURLOnlyClients++
 			continue
 		}
 		if err := s.waitInjectDelay(ctx, torrent.Tracker); err != nil {
@@ -98,15 +106,21 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 			if err := s.injectWatchFolder(ctx, name, client.WatchFolder, torrent.Path); err != nil {
 				return err
 			}
+			injected = true
 		case "qbit", "qbittorrent", "qui":
 			if err := s.injectQbit(ctx, name, client, meta, torrent); err != nil {
 				return err
 			}
+			injected = true
 		case "":
 			return fmt.Errorf("clients: %s type is required", name)
 		default:
 			return fmt.Errorf("clients: type %q not yet supported: %w", client.ClientType(), internalerrors.ErrNotImplemented)
 		}
+	}
+
+	if effectiveClientOverride && torrentPath == "" && torrentURL != "" && skippedURLOnlyClients > 0 && !injected {
+		return fmt.Errorf("clients: no selected torrent client supports URL injection: %w", internalerrors.ErrInvalidInput)
 	}
 
 	s.logger.Debugf("clients: injection dispatch complete for %s", meta.SourcePath)
@@ -375,31 +389,32 @@ func hasNonBlankSelector(selected []string) bool {
 	return false
 }
 
-// selectTorrentClients returns configured clients selected by name. Blank,
-// unknown, normalized duplicate, and ambiguous selectors are ignored rather than
-// allowing map iteration order to choose a target. Failed lookups do not consume
-// the normalized selector, so a later exact selector remains eligible.
+// selectTorrentClients returns configured clients selected by name. Blank and
+// unknown selectors are ignored; ambiguous case-insensitive selectors are
+// ignored rather than letting map iteration order choose a target. Duplicate
+// selectors are collapsed only after they resolve to the same configured client,
+// so exact case-variant client names can both be selected.
 func selectTorrentClients(clients map[string]config.TorrentClientConfig, selected []string) map[string]config.TorrentClientConfig {
 	if len(clients) == 0 || len(selected) == 0 {
 		return nil
 	}
 
 	matches := make(map[string]config.TorrentClientConfig)
-	seenSelectors := make(map[string]struct{}, len(selected))
+	seenClients := make(map[string]struct{}, len(selected))
 	for _, value := range selected {
 		trimmed := strings.TrimSpace(value)
 		if trimmed == "" {
 			continue
 		}
-		normalized := strings.ToLower(trimmed)
-		if _, ok := seenSelectors[normalized]; ok {
+		name, client, ok := lookupTorrentClientConfig(clients, trimmed)
+		if !ok {
 			continue
 		}
-		name, client, ok := lookupTorrentClientConfig(clients, trimmed)
-		if ok {
-			seenSelectors[normalized] = struct{}{}
-			matches[name] = client
+		if _, ok := seenClients[name]; ok {
+			continue
 		}
+		seenClients[name] = struct{}{}
+		matches[name] = client
 	}
 	if len(matches) == 0 {
 		return nil
@@ -445,9 +460,11 @@ func lookupTorrentClientConfig(clients map[string]config.TorrentClientConfig, se
 	return "", config.TorrentClientConfig{}, false
 }
 
-// withURLCapableInjectFallback adds configured qbit/qui clients for URL-only
-// injection when a global/default selection exists but cannot consume URLs.
-// Selected none/disabled clients are authoritative and suppress fallback fanout.
+// withURLCapableInjectFallback replaces URL-incompatible global/default
+// selections with configured qbit/qui clients for URL-only injection. The
+// original selection is not merged into the fallback set, so unsupported client
+// types cannot fail an otherwise valid URL fallback. Selected none/disabled
+// clients are authoritative and suppress fallback fanout.
 func withURLCapableInjectFallback(selected, configured map[string]config.TorrentClientConfig) map[string]config.TorrentClientConfig {
 	if len(selected) == 0 {
 		return selected
@@ -464,10 +481,7 @@ func withURLCapableInjectFallback(selected, configured map[string]config.Torrent
 		return selected
 	}
 
-	merged := make(map[string]config.TorrentClientConfig, len(selected)+len(fallback))
-	maps.Copy(merged, selected)
-	maps.Copy(merged, fallback)
-	return merged
+	return maps.Clone(fallback)
 }
 
 // hasDisabledTorrentClient reports whether the selected set explicitly disables
