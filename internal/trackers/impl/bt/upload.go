@@ -937,8 +937,10 @@ func parseMediaInfoDurationMinutes(content string) int {
 		return total
 	}
 
-	if ms, err := strconv.ParseFloat(strings.Fields(val)[0], 64); err == nil && ms > 10000 {
-		return int(math.Round(ms / 60000.0))
+	if fields := strings.Fields(val); len(fields) > 0 {
+		if ms, err := strconv.ParseFloat(fields[0], 64); err == nil && ms > 10000 {
+			return int(math.Round(ms / 60000.0))
+		}
 	}
 
 	return 0

@@ -86,3 +86,43 @@ func TestResolveVideoCodecMapsH264H265(t *testing.T) {
 		})
 	}
 }
+
+func TestParseMediaInfoDurationMinutes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		content  string
+		expected int
+	}{
+		{
+			name:     "valid hours and minutes",
+			content:  "duration : 2 h 15 m",
+			expected: 135,
+		},
+		{
+			name:     "valid milliseconds",
+			content:  "duration : 120000",
+			expected: 2,
+		},
+		{
+			name:     "empty fields (potential panic)",
+			content:  "duration :    ",
+			expected: 0,
+		},
+		{
+			name:     "no duration keyword",
+			content:  "something else",
+			expected: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseMediaInfoDurationMinutes(tc.content)
+			if got != tc.expected {
+				t.Fatalf("expected %d, got %d", tc.expected, got)
+			}
+		})
+	}
+}
