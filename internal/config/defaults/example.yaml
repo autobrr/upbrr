@@ -223,6 +223,10 @@ trackers:
     announce_url: ""
     anon: false
     check_for_rules: true
+  CZT:
+    link_dir_name: ""
+    passkey: ""
+    url: "https://czteam.me"
   DC:
     link_dir_name: ""
     api_key: ""
