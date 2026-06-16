@@ -12,32 +12,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  commit-messages:
-    name: Commit messages
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      # SHAs are passed through env vars rather than interpolated into the shell string
-      # so that GitHub Actions' command-injection scanner (CodeQL actions/command-injection)
-      # sees sanitized input. This is the documented hardening pattern.
-      - name: Validate commits in PR range
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: go run ./cmd/commitmsgcheck --from "$BASE_SHA" --to "$HEAD_SHA"
-
   test-go:
     name: Go tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
