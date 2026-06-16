@@ -48,14 +48,9 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
         CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="$goarm" \
             go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildIdentifier=${BUILD_ID}" -o /out/upbrr ./cmd/upbrr
 
-FROM debian:bookworm-slim
+FROM alpine:3.21
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=mwader/static-ffmpeg:8.1.1 /ffmpeg /bin/
-COPY --from=mwader/static-ffmpeg:8.1.1 /ffprobe /bin/
+RUN apk add --no-cache ca-certificates ffmpeg mesa-vulkan-swrast vulkan-loader
 
 COPY --from=cli-builder /out/upbrr /usr/local/bin/upbrr
 
