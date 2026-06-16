@@ -51,9 +51,11 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=mwader/static-ffmpeg:8.1.1 /ffmpeg /bin/
+COPY --from=mwader/static-ffmpeg:8.1.1 /ffprobe /bin/
 
 COPY --from=cli-builder /out/upbrr /usr/local/bin/upbrr
 
