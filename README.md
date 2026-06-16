@@ -47,6 +47,11 @@ By default, upbrr stores its database at:
 %USERPROFILE%\.upbrr\db.sqlite
 ```
 
+Otherwise, if the `XDG_CONFIG_HOME` environment variable is set (normally `~/.config`), the path is:
+```
+$XDG_CONFIG_HOME/upbrr/db.sqlite
+```
+
 Cookie files live beside that database:
 
 ```text
