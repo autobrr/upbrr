@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
         CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="$goarm" \
             go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildIdentifier=${BUILD_ID}" -o /out/upbrr ./cmd/upbrr
 
-FROM alpine:3.21
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates ffmpeg mesa-vulkan-swrast vulkan-loader
 
