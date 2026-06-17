@@ -18,6 +18,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// BuildUploadReview returns dupe, rule, dry-run, and banned-group review data
+// for one prepared source path, committing GUI cache updates only after review work succeeds.
+// Partial GUI reviews preserve unreviewed tracker cache state and can commit from
+// a request-refreshed cache entry only when that entry matches the current request.
 func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.UploadReview, error) {
 	req = normalizeExecutionRequest(req)
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
@@ -71,13 +75,28 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 
 	signature := overrideSignature(singleReq.ExternalIDOverrides, singleReq.ReleaseNameOverrides, singleReq.MetadataOverrides, singleReq.TrackerConfigOverrides, singleReq.TrackerSiteOverrides, singleReq.ClientOverrides, singleReq.TorrentOverrides, singleReq.ImageHostOverrides, singleReq.ScreenshotOverrides)
 	var (
-		meta api.PreparedMetadata
-		ok   bool
+		baseMeta   api.PreparedMetadata
+		baseMetaOK bool
+		meta       api.PreparedMetadata
+		ok         bool
 	)
 	if req.Mode == api.ModeGUI {
-		meta, ok, err = c.resolveGUICachedPreparedMeta(ctx, singleReq, uniquePaths[0])
-		if err != nil {
-			return api.UploadReview{}, err
+		entry, _, found := c.lookupGUICachedMetaEntry(singleReq, uniquePaths[0])
+		if found {
+			ok = true
+			entryMatchesRequest := entry.requestRefreshed && cachedPreparedMetaMatchesRequest(entry.meta, singleReq, uniquePaths[0])
+			baseMetaOK = !entry.requestRefreshed || entryMatchesRequest
+			if baseMetaOK {
+				baseMeta = deepCopyPreparedMetadata(entry.meta)
+			}
+			if entryMatchesRequest {
+				meta = deepCopyPreparedMetadata(entry.meta)
+			} else {
+				meta, err = c.applyRequestToCachedPreparedMeta(ctx, entry.meta, singleReq)
+				if err != nil {
+					return api.UploadReview{}, err
+				}
+			}
 		}
 	} else {
 		meta, ok = c.getDupeCache(uniquePaths[0], signature)
@@ -92,7 +111,13 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		return api.UploadReview{}, fmt.Errorf("core: upload review requires prepared metadata for %s", uniquePaths[0])
 	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, singleReq.Trackers, meta.TrackersRemove, c.logger)
+	resolvedTrackers, explicitEmpty := c.resolveUploadReviewTrackers(singleReq, meta)
+	if explicitEmpty {
+		return api.UploadReview{
+			SourcePath: meta.SourcePath,
+			Trackers:   []api.TrackerReview{},
+		}, nil
+	}
 
 	dupeResults := make(map[string]api.DupeCheckResult)
 	if singleReq.SkipDupeCheck {
@@ -121,8 +146,21 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		meta.CrossSeedTorrents = removeCrossSeedTorrentsForTrackers(meta.CrossSeedTorrents, singleReq.IgnoreDupesFor)
 		dupeResults = mapDupeResults(summary.Results)
 	}
+	var cacheCommit func()
 	if req.Mode == api.ModeGUI && cacheableGUIPreparedMetaRequest(singleReq) {
-		c.storeRefreshedDupeCache(uniquePaths[0], signature, meta)
+		if len(singleReq.Trackers) > 0 {
+			if baseMetaOK {
+				cacheMeta := mergeUploadReviewCacheMeta(baseMeta, meta, resolvedTrackers)
+				cacheCommit = func() {
+					c.storeDupeCache(uniquePaths[0], signature, cacheMeta)
+				}
+			}
+		} else {
+			cacheMeta := deepCopyPreparedMetadata(meta)
+			cacheCommit = func() {
+				c.storeRefreshedDupeCache(uniquePaths[0], signature, cacheMeta)
+			}
+		}
 	}
 
 	dryRunMeta := meta
@@ -189,10 +227,33 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		reviews = append(reviews, review)
 	}
 
+	if cacheCommit != nil {
+		cacheCommit()
+	}
+
 	return api.UploadReview{
 		SourcePath: meta.SourcePath,
 		Trackers:   reviews,
 	}, nil
+}
+
+// resolveUploadReviewTrackers applies GUI replacement semantics while allowing
+// non-GUI review flows to include or fall back to configured defaults unless
+// site upload pins one tracker.
+func (c *Core) resolveUploadReviewTrackers(req api.Request, meta api.PreparedMetadata) ([]string, bool) {
+	includeDefaults := req.Mode != api.ModeGUI && strings.TrimSpace(req.Execution.SiteUploadTracker) == ""
+	remove := meta.TrackersRemove
+	if req.Mode == api.ModeGUI && len(req.Trackers) > 0 && len(meta.MatchedTrackers) > 0 {
+		reviewedMatchedTrackers := make([]string, 0, len(req.Trackers))
+		for _, tracker := range req.Trackers {
+			if containsTrackerName(meta.MatchedTrackers, tracker) {
+				reviewedMatchedTrackers = append(reviewedMatchedTrackers, tracker)
+			}
+		}
+		remove = removeReviewedTrackerNames(remove, reviewedMatchedTrackers)
+		remove = mergeTrackerRemovals(remove, req.TrackersRemove)
+	}
+	return resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, remove, c.logger, includeDefaults, includeDefaults)
 }
 
 func formatBlockedReasons(reasons []api.TrackerBlockReason) string {
@@ -229,8 +290,7 @@ func applyRequestToPreparedMetaBeforeRefresh(meta api.PreparedMetadata, req api.
 func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req api.Request, cfg config.Config, logger api.Logger, rebuildDerivedFields bool) api.PreparedMetadata {
 	meta = deepCopyPreparedMetadata(meta)
 	existingTrackerIDs := cloneStringMap(meta.TrackerIDs)
-	existingTrackersRemove := append([]string{}, meta.TrackersRemove...)
-	existingMatchedTrackers := append([]string{}, meta.MatchedTrackers...)
+	existingTrackersRemove, existingMatchedTrackers := duplicateTrackerStateForRequest(meta, req)
 	meta.Mode = req.Mode
 	meta.Options = req.Options
 	meta.Paths = append([]string{}, req.Paths...)
@@ -238,6 +298,7 @@ func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req 
 		meta.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
 	}
 	meta.Trackers = append([]string{}, req.Trackers...)
+	meta.MatchedTrackers = existingMatchedTrackers
 	meta.TrackersRemove = mergeTrackerRemovals(req.TrackersRemove, existingTrackersRemove)
 	meta.TrackersRemove = mergeTrackerRemovals(meta.TrackersRemove, existingMatchedTrackers)
 	meta.TrackerIDs = mergeTrackerIDOverrides(existingTrackerIDs, req.TrackerIDOverrides)
@@ -269,6 +330,21 @@ func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req 
 		meta.CrossSeedTorrents = removeCrossSeedTorrentsForTrackers(meta.CrossSeedTorrents, req.IgnoreDupesFor)
 	}
 	return meta
+}
+
+// duplicateTrackerStateForRequest returns cached duplicate removal state after
+// applying the request's dupe bypass semantics. Ignored or skipped matched
+// trackers are removed from suppression state before later tracker resolution.
+func duplicateTrackerStateForRequest(meta api.PreparedMetadata, req api.Request) ([]string, []string) {
+	remove := append([]string(nil), meta.TrackersRemove...)
+	matched := append([]string(nil), meta.MatchedTrackers...)
+	if req.SkipDupeCheck {
+		return removeReviewedTrackerNames(remove, matched), nil
+	}
+	if len(req.IgnoreDupesFor) > 0 {
+		return removeReviewedTrackerNames(remove, req.IgnoreDupesFor), removeReviewedTrackerNames(matched, req.IgnoreDupesFor)
+	}
+	return remove, matched
 }
 
 func mergeTrackerIDOverrides(existing map[string]string, overrides map[string]string) map[string]string {
@@ -651,4 +727,181 @@ func removeCrossSeedTorrentsForTrackers(torrents []api.UploadedTorrent, trackers
 		filtered = append(filtered, torrent)
 	}
 	return filtered
+}
+
+// mergeUploadReviewCacheMeta preserves unreviewed GUI cache state while
+// replacing refreshed tracker-scoped review state for the trackers reviewed by
+// this request, including matched-tracker and removal state.
+func mergeUploadReviewCacheMeta(base api.PreparedMetadata, updated api.PreparedMetadata, reviewedTrackers []string) api.PreparedMetadata {
+	merged := deepCopyPreparedMetadata(base)
+	merged.BlockedTrackers = mergeReviewedTrackerBlocks(base.BlockedTrackers, updated.BlockedTrackers, reviewedTrackers)
+	merged.CrossSeedTorrents = mergeReviewedTrackerCrossSeeds(base.CrossSeedTorrents, updated.CrossSeedTorrents, reviewedTrackers)
+	merged.TrackerRuleFailures = mergeReviewedTrackerRuleFailures(base.TrackerRuleFailures, updated.TrackerRuleFailures, reviewedTrackers)
+	merged.TrackersRemove = mergeReviewedTrackerNames(base.TrackersRemove, updated.TrackersRemove, reviewedTrackers)
+	merged.MatchedTrackers = mergeReviewedTrackerNames(base.MatchedTrackers, updated.MatchedTrackers, reviewedTrackers)
+	return merged
+}
+
+// mergeReviewedTrackerBlocks keeps base tracker blocks for unreviewed trackers
+// and replaces only reviewed trackers with refreshed block results.
+func mergeReviewedTrackerBlocks(
+	base map[string][]api.TrackerBlockReason,
+	updated map[string][]api.TrackerBlockReason,
+	reviewedTrackers []string,
+) map[string][]api.TrackerBlockReason {
+	merged := removeReviewedTrackerMapEntries(cloneBlockedTrackers(base), reviewedTrackers)
+	for _, tracker := range reviewedTrackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		reasons := append([]api.TrackerBlockReason(nil), lookupTrackerMapValue(updated, name)...)
+		if len(reasons) == 0 {
+			continue
+		}
+		if merged == nil {
+			merged = make(map[string][]api.TrackerBlockReason)
+		}
+		merged[name] = reasons
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+// mergeReviewedTrackerCrossSeeds keeps base cross-seed torrents for unreviewed
+// trackers and replaces only reviewed trackers with updated cross-seed results.
+func mergeReviewedTrackerCrossSeeds(
+	base []api.UploadedTorrent,
+	updated []api.UploadedTorrent,
+	reviewedTrackers []string,
+) []api.UploadedTorrent {
+	merged := removeCrossSeedTorrentsForTrackers(base, reviewedTrackers)
+	for _, torrent := range updated {
+		name := strings.ToUpper(strings.TrimSpace(torrent.Tracker))
+		if name == "" || !containsTrackerName(reviewedTrackers, name) {
+			continue
+		}
+		merged = append(merged, torrent)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+// mergeReviewedTrackerRuleFailures keeps base rule failures for unreviewed
+// trackers and replaces only reviewed trackers with refreshed failures.
+func mergeReviewedTrackerRuleFailures(
+	base map[string][]api.RuleFailure,
+	updated map[string][]api.RuleFailure,
+	reviewedTrackers []string,
+) map[string][]api.RuleFailure {
+	merged := removeReviewedTrackerMapEntries(deepCopyTrackerRuleFailures(base), reviewedTrackers)
+	for _, tracker := range reviewedTrackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		failures := cloneRuleFailures(lookupTrackerMapValue(updated, name))
+		if len(failures) == 0 {
+			continue
+		}
+		if merged == nil {
+			merged = make(map[string][]api.RuleFailure)
+		}
+		merged[name] = failures
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func mergeReviewedTrackerNames(base []string, updated []string, reviewedTrackers []string) []string {
+	merged := removeReviewedTrackerNames(base, reviewedTrackers)
+	for _, tracker := range updated {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" || !containsTrackerName(reviewedTrackers, name) || containsTrackerName(merged, name) {
+			continue
+		}
+		merged = append(merged, name)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func removeReviewedTrackerNames(trackers []string, reviewedTrackers []string) []string {
+	if len(trackers) == 0 {
+		return nil
+	}
+	if len(reviewedTrackers) == 0 {
+		return append([]string(nil), trackers...)
+	}
+	filtered := make([]string, 0, len(trackers))
+	for _, tracker := range trackers {
+		if strings.TrimSpace(tracker) == "" || containsTrackerName(reviewedTrackers, tracker) {
+			continue
+		}
+		filtered = append(filtered, tracker)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+// removeReviewedTrackerMapEntries deletes reviewed tracker entries using
+// case-insensitive tracker names so stale mixed-case cache keys cannot survive.
+func removeReviewedTrackerMapEntries[T any](input map[string]T, reviewedTrackers []string) map[string]T {
+	if len(input) == 0 {
+		return nil
+	}
+	reviewed := make(map[string]struct{}, len(reviewedTrackers))
+	for _, tracker := range reviewedTrackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		reviewed[name] = struct{}{}
+	}
+	if len(reviewed) == 0 {
+		return input
+	}
+	for key := range input {
+		name := strings.ToUpper(strings.TrimSpace(key))
+		if _, ok := reviewed[name]; ok {
+			delete(input, key)
+		}
+	}
+	if len(input) == 0 {
+		return nil
+	}
+	return input
+}
+
+func containsTrackerName(trackers []string, target string) bool {
+	for _, tracker := range trackers {
+		if strings.EqualFold(strings.TrimSpace(tracker), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
+func lookupTrackerMapValue[T any](input map[string]T, tracker string) T {
+	var zero T
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if name == "" {
+		return zero
+	}
+	for key, value := range input {
+		if strings.EqualFold(strings.TrimSpace(key), name) {
+			return value
+		}
+	}
+	return zero
 }
