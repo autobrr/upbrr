@@ -2536,6 +2536,46 @@ func TestRunUploadPreparedUsesCachedMetadata(t *testing.T) {
 	}
 }
 
+func TestRunUploadPreparedUsesOnlySelectedTrackers(t *testing.T) {
+	t.Parallel()
+
+	tracker := &stubTrackers{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Trackers:           config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: dryRunPreviewRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a", Trackers: []string{"BLU", "AITHER"}})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if result.UploadedCount != 1 {
+		t.Fatalf("expected 1 upload, got %d", result.UploadedCount)
+	}
+	if !reflect.DeepEqual(tracker.lastMeta.Trackers, []string{"AITHER"}) {
+		t.Fatalf("expected only selected tracker in upload metadata, got %v", tracker.lastMeta.Trackers)
+	}
+}
+
 func TestRunUploadPreparedInjectsEachUploadedTrackerURL(t *testing.T) {
 	t.Parallel()
 
