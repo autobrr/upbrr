@@ -1873,8 +1873,8 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 }
 
 // FetchPreparationPreview builds the tracker preparation preview for one validated
-// source path. Explicit tracker selections include configured defaults unless all
-// selected trackers resolve as removed, which returns an empty preview.
+// source path. Explicit tracker selections limit preparation to those trackers;
+// selections that resolve empty return an empty preview.
 func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (api.PreparationPreview, error) {
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
@@ -1915,7 +1915,7 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.PreparationPreview{}, err
 		} else if ok {
-			resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, requestPreparedMetaTrackersRemove(cached, req), c.logger, true, false)
+			resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, requestPreparedMetaTrackersRemove(cached, req), c.logger, false, false)
 			if explicitEmpty {
 				c.logger.Debugf("core: preparation explicit trackers resolved empty source=%s", cached.SourcePath)
 				return api.PreparationPreview{SourcePath: cached.SourcePath}, nil
@@ -1942,7 +1942,7 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 	}
 	meta = applyRequestToPreparedMeta(meta, singleReq, c.cfg, c.logger)
 
-	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, true, false)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
 	if explicitEmpty {
 		c.logger.Debugf("core: preparation explicit trackers resolved empty after prepare source=%s", meta.SourcePath)
 		return api.PreparationPreview{SourcePath: meta.SourcePath}, nil
@@ -2176,8 +2176,9 @@ func annotateDryRunReleaseNames(meta api.PreparedMetadata, entries []api.Tracker
 }
 
 // FetchDescriptionBuilderPreview builds editable description groups from cached
-// or freshly prepared metadata. Explicit tracker selections that resolve empty
-// return an empty preview instead of falling back to configured defaults.
+// or freshly prepared metadata. When request trackers are provided, only that
+// selected set contributes groups; selections that resolve empty return an empty
+// preview instead of falling back to configured defaults.
 func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Request) (api.DescriptionBuilderPreview, error) {
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
@@ -2282,7 +2283,7 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 		meta = applyRequestToPreparedMeta(meta, singleReq, c.cfg, c.logger)
 		storePreparedCache = req.Mode == api.ModeGUI
 	}
-	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, true, false)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
 	if explicitEmpty {
 		c.logger.Debugf("core: description builder explicit trackers resolved empty source=%s", meta.SourcePath)
 		return api.DescriptionBuilderPreview{SourcePath: meta.SourcePath}, nil
@@ -2404,7 +2405,8 @@ func normalizeDescriptionBuilderGroupKey(groupKey string, trackersList []string)
 }
 
 // FetchDescriptionBuilderGroupPreview rebuilds one description group from cached
-// or freshly prepared metadata while honoring tracker removals from the request.
+// or freshly prepared metadata. Request trackers limit the rebuild to the
+// selected set while tracker removals still suppress removed selections.
 func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.Request) (api.DescriptionBuilderGroup, error) {
 	targetGroup := strings.TrimSpace(req.DescriptionOverrideGroup)
 	if targetGroup == "" && len(req.Trackers) > 0 {
@@ -4507,8 +4509,9 @@ func normalizeExecutionRequest(req api.Request) api.Request {
 }
 
 // resolveCanonicalDescriptionGroups returns request or cached description groups
-// before rebuilding groups from tracker preparation for the resolved tracker set.
-// Explicit tracker selections that resolve empty do not fall back to defaults.
+// before rebuilding groups from tracker preparation for the selected tracker set.
+// Explicit tracker selections constrain the rebuild and do not fall back to
+// configured defaults when they resolve empty.
 func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.PreparedMetadata, req api.Request) ([]api.DescriptionBuilderGroup, error) {
 	if len(req.DescriptionGroups) > 0 {
 		return api.CloneDescriptionBuilderGroups(req.DescriptionGroups), nil

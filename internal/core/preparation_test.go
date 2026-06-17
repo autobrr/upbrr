@@ -157,7 +157,7 @@ func TestFetchPreparationPreviewUsesIgnoredMatchedTrackerFromCache(t *testing.T)
 	}
 }
 
-func TestFetchPreparationPreviewAddsDefaultsForExplicitTrackers(t *testing.T) {
+func TestFetchPreparationPreviewUsesOnlyExplicitTrackers(t *testing.T) {
 	t.Parallel()
 
 	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
@@ -183,8 +183,8 @@ func TestFetchPreparationPreviewAddsDefaultsForExplicitTrackers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if !slices.Equal(trackerSvc.trackers, []string{"BLU", "AITHER"}) {
-		t.Fatalf("expected default plus explicit trackers, got %v", trackerSvc.trackers)
+	if !slices.Equal(trackerSvc.trackers, []string{"AITHER"}) {
+		t.Fatalf("expected explicit tracker only, got %v", trackerSvc.trackers)
 	}
 }
 

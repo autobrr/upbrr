@@ -209,7 +209,7 @@ func TestFetchDescriptionBuilderPreviewFallsBackToPrepareInGUI(t *testing.T) {
 	}
 }
 
-func TestFetchDescriptionBuilderPreviewAddsDefaultsForExplicitTrackers(t *testing.T) {
+func TestFetchDescriptionBuilderPreviewUsesOnlyExplicitTrackers(t *testing.T) {
 	t.Parallel()
 
 	repo := &stubDescriptionRepo{}
@@ -243,8 +243,8 @@ func TestFetchDescriptionBuilderPreviewAddsDefaultsForExplicitTrackers(t *testin
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if !reflect.DeepEqual(trackerSvc.prepareTrackers, []string{"BLU", "AITHER"}) {
-		t.Fatalf("expected default plus explicit trackers, got %v", trackerSvc.prepareTrackers)
+	if !reflect.DeepEqual(trackerSvc.prepareTrackers, []string{"AITHER"}) {
+		t.Fatalf("expected explicit tracker only, got %v", trackerSvc.prepareTrackers)
 	}
 }
 
