@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -377,6 +379,9 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	if visitedFlags["persist-listen"] && !hasServeListenOverrides(visitedFlags) {
+		return errors.New("--persist-listen requires --addr, --host, or --port")
+	}
 
 	configFlagProvided := visitedFlags["config"]
 	resolvedConfigPath, err := configstore.ResolveYAMLPath(opts.ConfigPath, configFlagProvided)
@@ -393,9 +398,11 @@ func runServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
 	}
-	if err := webserver.SaveCLIConfig(dbPath, webCfg); err != nil {
-		return fmt.Errorf("upbrr: %w", err)
+	webCfg, err = applyServeOptionOverrides(webCfg, opts, visitedFlags)
+	if err != nil {
+		return err
 	}
+	persistWebCfg := webCfg
 	if opts.DevNoAuth {
 		webCfg.OpenBrowser = false
 	}
@@ -410,7 +417,185 @@ func runServe(args []string) error {
 	}
 	defer server.Close()
 
+	if visitedFlags["persist-listen"] {
+		return wrapUpbrrError(server.RunAfterListen(context.Background(), func() error {
+			if err := webserver.SaveCLIConfig(dbPath, persistWebCfg); err != nil {
+				return fmt.Errorf("save web config: %w", err)
+			}
+			return nil
+		}))
+	}
+
 	return wrapUpbrrError(server.Run(context.Background()))
+}
+
+// hasServeListenOverrides reports whether serve bind flags were provided.
+// These flags affect the current process, and --persist-listen makes them durable.
+func hasServeListenOverrides(visited map[string]bool) bool {
+	return visited["addr"] || visited["host"] || visited["port"]
+}
+
+// applyServeOptionOverrides returns webCfg with explicitly supplied serve listen
+// flags applied. --addr replaces both host and port; --host and --port may
+// update either field independently.
+func applyServeOptionOverrides(webCfg webserver.CLIConfig, opts serveOptions, visited map[string]bool) (webserver.CLIConfig, error) {
+	if visited["addr"] && (visited["host"] || visited["port"]) {
+		return webserver.CLIConfig{}, errors.New("--addr cannot be used with --host or --port")
+	}
+
+	if visited["addr"] {
+		host, port, err := parseServeAddress(opts.Addr)
+		if err != nil {
+			return webserver.CLIConfig{}, err
+		}
+		webCfg.Host = host
+		webCfg.Port = port
+		return webCfg, nil
+	}
+
+	if visited["host"] {
+		host, err := parseServeHost(opts.Host)
+		if err != nil {
+			return webserver.CLIConfig{}, err
+		}
+		webCfg.Host = host
+	}
+	if visited["port"] {
+		port, err := parseServePort(strconv.Itoa(opts.Port))
+		if err != nil {
+			return webserver.CLIConfig{}, err
+		}
+		webCfg.Port = port
+	}
+
+	return webCfg, nil
+}
+
+// parseServeAddress splits a serve listen address into normalized host and
+// validated TCP port parts.
+func parseServeAddress(value string) (string, int, error) {
+	host, portValue, err := net.SplitHostPort(strings.TrimSpace(value))
+	if err != nil {
+		return "", 0, fmt.Errorf("parse serve options: --addr must be host:port: %w", err)
+	}
+	parsedHost, err := parseServeAddressHost(host)
+	if err != nil {
+		return "", 0, err
+	}
+	parsedPort, err := parseServePort(portValue)
+	if err != nil {
+		return "", 0, err
+	}
+	return parsedHost, parsedPort, nil
+}
+
+// parseServeAddressHost normalizes the host part of --addr. An empty host is
+// the supported :port shorthand and maps to the TCP wildcard bind host.
+func parseServeAddressHost(value string) (string, error) {
+	host := strings.TrimSpace(value)
+	if host == "" {
+		return "0.0.0.0", nil
+	}
+	return parseServeHost(host)
+}
+
+// parseServeHost normalizes a serve bind host. Bracketed IPv6 literals are
+// unwrapped, valid IPv6 literals stay valid, and host:port values are rejected
+// so port ownership stays explicit.
+func parseServeHost(value string) (string, error) {
+	host := strings.TrimSpace(value)
+	if host == "" {
+		return "", errors.New("parse serve options: --host cannot be empty")
+	}
+	host, err := normalizeServeHostBrackets(host)
+	if err != nil {
+		return "", err
+	}
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return "", errors.New("parse serve options: --host cannot include a port; use --addr or --port")
+	}
+	if looksLikeUnbracketedIPv6HostPort(host) {
+		return "", errors.New("parse serve options: --host cannot include a port; use bracketed IPv6 with --addr")
+	}
+	if strings.Contains(host, ":") && !isValidServeIPv6Host(host) {
+		return "", errors.New("parse serve options: --host cannot include a port; use bracketed IPv6 with --addr")
+	}
+	return host, nil
+}
+
+// normalizeServeHostBrackets unwraps bracketed IPv6 literals and rejects any
+// other bracket syntax before the host is persisted or passed to JoinHostPort.
+func normalizeServeHostBrackets(host string) (string, error) {
+	if !strings.ContainsAny(host, "[]") {
+		return host, nil
+	}
+	if !strings.HasPrefix(host, "[") || !strings.HasSuffix(host, "]") {
+		return "", errors.New("parse serve options: --host has invalid bracket syntax")
+	}
+	inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
+	if inner == "" || strings.ContainsAny(inner, "[]") {
+		return "", errors.New("parse serve options: --host has invalid bracket syntax")
+	}
+	if !isValidServeIPv6Host(inner) {
+		return "", errors.New("parse serve options: --host brackets are only valid for IPv6 literals")
+	}
+	return inner, nil
+}
+
+func isValidServeIPv6Host(host string) bool {
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.Is6()
+}
+
+// looksLikeUnbracketedIPv6HostPort detects ambiguous IPv6-ish host text whose
+// final colon-separated segment looks like a port suffix, including scoped
+// literals where netip.ParseAddr would otherwise treat the suffix as part of
+// the zone. IPv4-mapped IPv6 literals stay valid because their trailing dotted
+// IPv4 text is address data, not a port suffix.
+func looksLikeUnbracketedIPv6HostPort(host string) bool {
+	if strings.ContainsAny(host, "[]") || strings.Count(host, ":") < 2 {
+		return false
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if addr.Is4In6() {
+			return false
+		}
+		if addr.Is6() && !strings.Contains(addr.Zone(), ":") {
+			return false
+		}
+	}
+	idx := strings.LastIndex(host, ":")
+	if idx <= 0 || idx == len(host)-1 {
+		return false
+	}
+	suffix := host[idx+1:]
+	if suffix == "" {
+		return false
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return isValidServeIPv6Host(host[:idx])
+}
+
+// parseServePort validates a serve TCP port in the user-assignable range.
+func parseServePort(value string) (int, error) {
+	port, err := parseServePortValue(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse serve options: %w", err)
+	}
+	return port, nil
+}
+
+// parseServePortValue accepts decimal TCP ports in the user-assignable range.
+func parseServePortValue(value string) (int, error) {
+	port, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("invalid port %q", value)
+	}
+	return port, nil
 }
 
 func loadCLIConfig(configPath string, configProvided bool) (config.Config, string, error) {
