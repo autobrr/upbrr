@@ -1851,6 +1851,58 @@ func TestRunUploadPersistsInfoHash(t *testing.T) {
 	}
 }
 
+func TestRunUploadPersistsInfoHashWithoutClearingHistoryMetadata(t *testing.T) {
+	t.Parallel()
+
+	repo := &recordingRepo{
+		existing: db.FileMetadata{
+			Path:       "/tmp/a",
+			Title:      "Fixture Title",
+			Source:     "BluRay",
+			Resolution: "1080p",
+			Year:       2026,
+		},
+	}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrentWithHash{hash: "hash123"},
+			Clients:    &stubClient{},
+			Trackers:   &stubTrackers{},
+		},
+		Repository: repo,
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	_, err = core.RunUpload(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("run upload: %v", err)
+	}
+	if len(repo.saved) != 1 {
+		t.Fatalf("expected 1 metadata save, got %d", len(repo.saved))
+	}
+	if repo.saved[0].InfoHash != "hash123" {
+		t.Fatalf("expected info hash saved, got %q", repo.saved[0].InfoHash)
+	}
+	if repo.saved[0].Title != "Fixture Title" {
+		t.Fatalf("expected release title preserved, got %q", repo.saved[0].Title)
+	}
+	if repo.saved[0].Source != "BluRay" {
+		t.Fatalf("expected release source preserved, got %q", repo.saved[0].Source)
+	}
+	if repo.saved[0].Resolution != "1080p" {
+		t.Fatalf("expected release resolution preserved, got %q", repo.saved[0].Resolution)
+	}
+}
+
 func TestExportGUICachedPreparedMetaExactSignature(t *testing.T) {
 	t.Parallel()
 
@@ -3502,12 +3554,20 @@ func (trackerRepo) ListTrackerMetadataByPath(context.Context, string) ([]db.Trac
 
 type recordingRepo struct {
 	saved       []db.FileMetadata
+	existing    db.FileMetadata
+	getErr      error
 	purgeCalls  int
 	purgedPaths []string
 }
 
 func (r *recordingRepo) GetByPath(context.Context, string) (db.FileMetadata, error) {
-	return db.FileMetadata{}, internalerrors.ErrNotImplemented
+	if r.getErr != nil {
+		return db.FileMetadata{}, r.getErr
+	}
+	if strings.TrimSpace(r.existing.Path) != "" {
+		return r.existing, nil
+	}
+	return db.FileMetadata{}, internalerrors.ErrNotFound
 }
 
 func (r *recordingRepo) Save(_ context.Context, metadata db.FileMetadata) error {

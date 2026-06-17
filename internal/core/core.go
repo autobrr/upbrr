@@ -300,7 +300,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 			return 0, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
-		if err := c.repo.Save(ctx, db.FileMetadata{Path: meta.SourcePath, InfoHash: torrent.InfoHash, UpdatedAt: time.Now().UTC()}); err != nil {
+		if err := c.persistPreparedInfoHash(ctx, meta.SourcePath, torrent.InfoHash); err != nil {
 			return 0, fmt.Errorf("metadata: persist info hash: %w", err)
 		}
 	}
@@ -363,6 +363,33 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 
 	return summary.Uploaded, nil
+}
+
+func (c *Core) persistPreparedInfoHash(ctx context.Context, sourcePath string, infoHash string) error {
+	if c == nil || c.repo == nil {
+		return nil
+	}
+	trimmedPath := strings.TrimSpace(sourcePath)
+	trimmedHash := strings.TrimSpace(infoHash)
+	if trimmedPath == "" || trimmedHash == "" {
+		return nil
+	}
+
+	metadata, err := c.repo.GetByPath(ctx, trimmedPath)
+	if err != nil {
+		if !errors.Is(err, internalerrors.ErrNotFound) {
+			return fmt.Errorf("lookup existing metadata: %w", err)
+		}
+		metadata = db.FileMetadata{Path: trimmedPath}
+	} else if strings.TrimSpace(metadata.Path) == "" {
+		metadata.Path = trimmedPath
+	}
+	metadata.InfoHash = trimmedHash
+	metadata.UpdatedAt = time.Now().UTC()
+	if err := c.repo.Save(ctx, metadata); err != nil {
+		return fmt.Errorf("save metadata: %w", err)
+	}
+	return nil
 }
 
 func (c *Core) injectCrossSeedTorrents(ctx context.Context, req api.Request, meta api.PreparedMetadata) error {
