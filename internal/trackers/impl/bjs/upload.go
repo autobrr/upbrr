@@ -347,9 +347,13 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 			}
 		}
 	}
-	if strings.TrimSpace(epOverview) != "" {
-		parts = append(parts, "[align=center]"+strings.TrimSpace(epTitle)+"[/align]")
-		parts = append(parts, "[align=center]"+strings.TrimSpace(epOverview)+"[/align]")
+	epTitle = strings.TrimSpace(epTitle)
+	epOverview = strings.TrimSpace(epOverview)
+	if epOverview != "" {
+		if epTitle != "" {
+			parts = append(parts, "[align=center]"+epTitle+"[/align]")
+		}
+		parts = append(parts, "[align=center]"+epOverview+"[/align]")
 	}
 
 	// File information
@@ -700,8 +704,10 @@ func resolveIDLink(meta api.PreparedMetadata) string {
 	return ""
 }
 
+// resolveOverview prefers localized episode synopsis for TV uploads, then
+// localized title-level overview, then TMDB or IMDB fallback text.
 func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
-	if categoryOf(meta) == "TV" && ptBR.EpisodeOverview != "" {
+	if strings.EqualFold(categoryOf(meta), "TV") && ptBR.EpisodeOverview != "" {
 		return strings.TrimSpace(ptBR.EpisodeOverview)
 	}
 	if ptBR.Overview != "" {
@@ -716,6 +722,8 @@ func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) stri
 	return ""
 }
 
+// resolveTags returns BJS tag text from localized genres or translated fallback
+// genres, preserving unknown fallback genre names after tag normalization.
 func resolveTags(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
 	// 1. Use localized if available
 	if ptBR.Genres != "" {
@@ -749,14 +757,20 @@ func resolveTags(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
 	genres := strings.Split(genreText, ",")
 	out := make([]string, 0, len(genres))
 	for _, g := range genres {
+		g = strings.TrimSpace(g)
+		if g == "" {
+			continue
+		}
 		translated := metautil.TranslateGenreToPortugueseStrict(g)
 		if translated == "" {
-			continue // discard if translation fails
+			translated = g
 		}
 		t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
 		tag, _, _ := transform.String(t, translated)
-		tag = strings.ReplaceAll(tag, " ", ".")
-		out = append(out, strings.ToLower(tag))
+		tag = strings.ReplaceAll(strings.TrimSpace(tag), " ", ".")
+		if tag != "" {
+			out = append(out, strings.ToLower(tag))
+		}
 	}
 	return strings.Join(out, ", ")
 }

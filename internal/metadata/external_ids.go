@@ -74,6 +74,9 @@ type TVmazeClient interface {
 	GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate string) (*tvmaze.EpisodeData, error)
 }
 
+// ResolveExternalIDs resolves and persists external IDs and metadata for prepared media.
+// Source-matched fresh stored data is reused, while selected BJS, BT, or ASC
+// targets trigger pt-BR TMDB localized metadata when a TMDB ID is known.
 func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():

@@ -287,7 +287,9 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 		epOverview = ptBR.EpisodeOverview
 	}
 	if episode := strings.TrimSpace(epOverview); episode != "" {
-		parts = append(parts, "[center]"+strings.TrimSpace(epTitle)+"[/center]")
+		if title := strings.TrimSpace(epTitle); title != "" {
+			parts = append(parts, "[center]"+title+"[/center]")
+		}
 		parts = append(parts, "[center]"+episode+"[/center]")
 	}
 
@@ -1057,6 +1059,8 @@ func isSeen(seen map[string]struct{}, url string) bool {
 	return ok
 }
 
+// resolveOverview prefers localized episode synopsis for TV uploads, then
+// localized title-level overview, then TMDB or IMDB fallback text.
 func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
 	if strings.EqualFold(categoryOf(meta), "TV") && ptBR.EpisodeOverview != "" {
 		return strings.TrimSpace(ptBR.EpisodeOverview)

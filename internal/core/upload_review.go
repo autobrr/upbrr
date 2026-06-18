@@ -118,6 +118,10 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 			Trackers:   []api.TrackerReview{},
 		}, nil
 	}
+	meta, err = c.resolveUploadReviewPTBRMetadata(ctx, meta, resolvedTrackers)
+	if err != nil {
+		return api.UploadReview{}, err
+	}
 
 	dupeResults := make(map[string]api.DupeCheckResult)
 	if singleReq.SkipDupeCheck {
@@ -254,6 +258,57 @@ func (c *Core) resolveUploadReviewTrackers(req api.Request, meta api.PreparedMet
 		remove = mergeTrackerRemovals(remove, req.TrackersRemove)
 	}
 	return resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, remove, c.logger, includeDefaults, includeDefaults)
+}
+
+// resolveUploadReviewPTBRMetadata refreshes localized TMDB metadata after review
+// tracker resolution when selected or default tracker targets require pt-BR data.
+func (c *Core) resolveUploadReviewPTBRMetadata(ctx context.Context, meta api.PreparedMetadata, resolvedTrackers []string) (api.PreparedMetadata, error) {
+	if c.services.Metadata == nil || !uploadReviewNeedsPTBRMetadata(meta, resolvedTrackers) {
+		return meta, nil
+	}
+	refreshMeta := deepCopyPreparedMetadata(meta)
+	refreshMeta.Trackers = append([]string(nil), resolvedTrackers...)
+	refreshed, err := c.services.Metadata.ResolveExternalIDs(ctx, refreshMeta)
+	if err != nil {
+		return api.PreparedMetadata{}, fmt.Errorf("core: %w", err)
+	}
+	return refreshed, nil
+}
+
+// uploadReviewNeedsPTBRMetadata reports whether a review dry-run needs a pt-BR refresh.
+func uploadReviewNeedsPTBRMetadata(meta api.PreparedMetadata, resolvedTrackers []string) bool {
+	if !hasPTBRTracker(resolvedTrackers) || hasLocalizedPTBR(meta) {
+		return false
+	}
+	return hasKnownTMDBID(meta)
+}
+
+// hasPTBRTracker reports whether any tracker consumes localized pt-BR TMDB data.
+func hasPTBRTracker(trackers []string) bool {
+	for _, tracker := range trackers {
+		switch strings.ToLower(strings.TrimSpace(tracker)) {
+		case "bjs", "bt", "asc":
+			return true
+		}
+	}
+	return false
+}
+
+// hasLocalizedPTBR reports whether TMDB metadata already contains the pt-BR localized entry.
+func hasLocalizedPTBR(meta api.PreparedMetadata) bool {
+	if meta.ExternalMetadata.TMDB == nil || meta.ExternalMetadata.TMDB.Localized == nil {
+		return false
+	}
+	_, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]
+	return ok
+}
+
+// hasKnownTMDBID reports whether metadata has a source-current TMDB ID available for refresh.
+func hasKnownTMDBID(meta api.PreparedMetadata) bool {
+	if meta.StoredDataFresh && strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.SourcePath), strings.TrimSpace(meta.SourcePath)) && meta.ExternalIDs.TMDBID != 0 {
+		return true
+	}
+	return meta.MediaInfoTMDBID != 0 || meta.SceneTMDBID != 0 || meta.ArrTMDBID != 0
 }
 
 func formatBlockedReasons(reasons []api.TrackerBlockReason) string {

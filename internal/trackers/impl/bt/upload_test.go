@@ -4,8 +4,10 @@
 package bt
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -62,6 +64,81 @@ func TestResolveTagsPreservesUnknownGenres(t *testing.T) {
 	expected := "ficcao.cientifica, mycustomgenre"
 	if got != expected {
 		t.Fatalf("expected tags %q, got %q", expected, got)
+	}
+}
+
+func TestBuildDescriptionOmitsBlankLocalizedEpisodeTitleRow(t *testing.T) {
+	t.Parallel()
+
+	description := buildDescription(trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Localized: map[string]api.TMDBLocalizedData{
+						"pt-BR": {EpisodeOverview: "Resumo do episodio"},
+					},
+				},
+			},
+		},
+	}, trackers.DescriptionAssets{})
+
+	if strings.Contains(description, "[center][/center]") {
+		t.Fatalf("expected no blank centered title row, got %q", description)
+	}
+	if !strings.Contains(description, "[center]Resumo do episodio[/center]") {
+		t.Fatalf("expected localized episode overview, got %q", description)
+	}
+}
+
+func TestBuildDescriptionKeepsLocalizedEpisodeTitleWhenPresent(t *testing.T) {
+	t.Parallel()
+
+	description := buildDescription(trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Localized: map[string]api.TMDBLocalizedData{
+						"pt-BR": {
+							EpisodeTitle:    "Titulo do episodio",
+							EpisodeOverview: "Resumo do episodio",
+						},
+					},
+				},
+			},
+		},
+	}, trackers.DescriptionAssets{})
+
+	if !strings.Contains(description, "[center]Titulo do episodio[/center]") {
+		t.Fatalf("expected localized episode title, got %q", description)
+	}
+	if !strings.Contains(description, "[center]Resumo do episodio[/center]") {
+		t.Fatalf("expected localized episode overview, got %q", description)
+	}
+}
+
+func TestBuildDescriptionTreatsWhitespaceLocalizedEpisodeTitleAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	description := buildDescription(trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Localized: map[string]api.TMDBLocalizedData{
+						"pt-BR": {
+							EpisodeTitle:    " \t ",
+							EpisodeOverview: "Resumo do episodio",
+						},
+					},
+				},
+			},
+		},
+	}, trackers.DescriptionAssets{})
+
+	if strings.Contains(description, "[center][/center]") {
+		t.Fatalf("expected no blank centered title row, got %q", description)
+	}
+	if !strings.Contains(description, "[center]Resumo do episodio[/center]") {
+		t.Fatalf("expected localized episode overview, got %q", description)
 	}
 }
 

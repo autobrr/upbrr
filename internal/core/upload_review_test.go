@@ -42,6 +42,7 @@ func (reviewTrackers) BuildUploadDryRun(context.Context, api.PreparedMetadata, [
 
 type recordingReviewTrackers struct {
 	calls        int
+	lastMeta     api.PreparedMetadata
 	lastTrackers []string
 	entries      []api.TrackerDryRunEntry
 	err          error
@@ -55,8 +56,9 @@ func (*recordingReviewTrackers) BuildPreparation(context.Context, api.PreparedMe
 	return api.PreparationPreview{}, nil
 }
 
-func (r *recordingReviewTrackers) BuildUploadDryRun(_ context.Context, _ api.PreparedMetadata, trackers []string) ([]api.TrackerDryRunEntry, error) {
+func (r *recordingReviewTrackers) BuildUploadDryRun(_ context.Context, meta api.PreparedMetadata, trackers []string) ([]api.TrackerDryRunEntry, error) {
 	r.calls++
+	r.lastMeta = deepCopyPreparedMetadata(meta)
 	r.lastTrackers = append([]string{}, trackers...)
 	if r.err != nil {
 		return nil, r.err
@@ -65,6 +67,47 @@ func (r *recordingReviewTrackers) BuildUploadDryRun(_ context.Context, _ api.Pre
 		return []api.TrackerDryRunEntry{}, nil
 	}
 	return append([]api.TrackerDryRunEntry(nil), r.entries...), nil
+}
+
+type recordingReviewMetadata struct {
+	refreshCalls  int
+	resolveCalls  int
+	resolveInputs []api.PreparedMetadata
+	resolveFn     func(api.PreparedMetadata) api.PreparedMetadata
+}
+
+func (r *recordingReviewMetadata) Prepare(_ context.Context, req api.Request) (api.PreparedMetadata, error) {
+	return api.PreparedMetadata{SourcePath: req.Paths[0], Paths: req.Paths, Mode: req.Mode, Options: req.Options}, nil
+}
+
+func (r *recordingReviewMetadata) RefreshPreparedMetadata(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	r.refreshCalls++
+	return meta, nil
+}
+
+func (*recordingReviewMetadata) EnrichTrackerData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return meta, nil
+}
+
+func (*recordingReviewMetadata) ApplyMediaInfoIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return meta, nil
+}
+
+func (*recordingReviewMetadata) ApplyArrData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return meta, nil
+}
+
+func (r *recordingReviewMetadata) ResolveExternalIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	r.resolveCalls++
+	r.resolveInputs = append(r.resolveInputs, deepCopyPreparedMetadata(meta))
+	if r.resolveFn != nil {
+		return r.resolveFn(meta), nil
+	}
+	return meta, nil
+}
+
+func (*recordingReviewMetadata) ApplyMediaDetails(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return meta, nil
 }
 
 type recordingReviewTorrent struct {
@@ -546,6 +589,220 @@ func TestBuildUploadReviewFallsBackToDefaultsWhenExplicitTrackersRemovedOutsideG
 	}
 	if len(review.Trackers) != 1 || review.Trackers[0].Tracker != "BLU" {
 		t.Fatalf("expected one BLU review row, got %#v", review.Trackers)
+	}
+}
+
+func TestBuildUploadReviewRefreshesLocalizedMetadataForGUICachedPTBRSelection(t *testing.T) {
+	t.Parallel()
+
+	for _, tracker := range []string{"BJS", "BT", "ASC"} {
+		t.Run(tracker, func(t *testing.T) {
+			t.Parallel()
+
+			path := "/tmp/" + strings.ToLower(tracker)
+			metadataSvc := &recordingReviewMetadata{
+				resolveFn: func(meta api.PreparedMetadata) api.PreparedMetadata {
+					if meta.ExternalMetadata.TMDB == nil {
+						meta.ExternalMetadata.TMDB = &api.TMDBMetadata{TMDBID: meta.ExternalIDs.TMDBID}
+					}
+					if meta.ExternalMetadata.TMDB.Localized == nil {
+						meta.ExternalMetadata.TMDB.Localized = make(map[string]api.TMDBLocalizedData)
+					}
+					meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{Title: "Titulo " + tracker}
+					return meta
+				},
+			}
+			trackersSvc := &recordingReviewTrackers{
+				entries: []api.TrackerDryRunEntry{{Tracker: tracker, Status: "ready"}},
+			}
+			coreSvc, err := New(api.CoreDependencies{
+				Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+				Services: api.ServiceSet{
+					Filesystem: &stubFS{},
+					Metadata:   metadataSvc,
+					Dupes:      &reviewDupes{},
+					Torrents:   &stubTorrent{},
+					Trackers:   trackersSvc,
+				},
+				Repository: &stubRepo{},
+			})
+			if err != nil {
+				t.Fatalf("new core: %v", err)
+			}
+			coreSvc.storeDupeCache(path, "", api.PreparedMetadata{
+				SourcePath:      path,
+				StoredDataFresh: true,
+				Trackers:        []string{"AITHER"},
+				ExternalIDs: api.ExternalIDs{
+					SourcePath: path,
+					TMDBID:     42,
+					Category:   "MOVIE",
+				},
+				ExternalMetadata: api.ExternalMetadata{
+					SourcePath: path,
+					TMDB:       &api.TMDBMetadata{TMDBID: 42},
+				},
+			})
+
+			review, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
+				Paths:    []string{path},
+				Mode:     api.ModeGUI,
+				Trackers: []string{tracker},
+			})
+			if err != nil {
+				t.Fatalf("build upload review: %v", err)
+			}
+
+			if metadataSvc.resolveCalls != 1 {
+				t.Fatalf("expected one localized metadata refresh, got %d", metadataSvc.resolveCalls)
+			}
+			if got := metadataSvc.resolveInputs[0].Trackers; !slices.Equal(got, []string{tracker}) {
+				t.Fatalf("expected resolve to receive selected tracker, got %v", got)
+			}
+			if localized := api.ExtractLocalizedPTBR(trackersSvc.lastMeta); localized.Title != "Titulo "+tracker {
+				t.Fatalf("expected dry-run metadata to include pt-BR title, got %#v", localized)
+			}
+			if len(review.Trackers) != 1 || review.Trackers[0].Tracker != tracker {
+				t.Fatalf("expected one %s review row, got %#v", tracker, review.Trackers)
+			}
+		})
+	}
+}
+
+func TestBuildUploadReviewRefreshesLocalizedMetadataForDefaultPTBRTracker(t *testing.T) {
+	t.Parallel()
+
+	for _, tracker := range []string{"BJS", "BT", "ASC"} {
+		t.Run(tracker, func(t *testing.T) {
+			t.Parallel()
+
+			path := "/tmp/default-" + strings.ToLower(tracker)
+			metadataSvc := &recordingReviewMetadata{
+				resolveFn: func(meta api.PreparedMetadata) api.PreparedMetadata {
+					if meta.ExternalMetadata.TMDB == nil {
+						meta.ExternalMetadata.TMDB = &api.TMDBMetadata{TMDBID: meta.ExternalIDs.TMDBID}
+					}
+					if meta.ExternalMetadata.TMDB.Localized == nil {
+						meta.ExternalMetadata.TMDB.Localized = make(map[string]api.TMDBLocalizedData)
+					}
+					meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{Title: "Default " + tracker}
+					return meta
+				},
+			}
+			trackersSvc := &recordingReviewTrackers{
+				entries: []api.TrackerDryRunEntry{{Tracker: tracker, Status: "ready"}},
+			}
+			coreSvc, err := New(api.CoreDependencies{
+				Config: config.Config{
+					MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+					ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+					Trackers:           config.TrackersConfig{DefaultTrackers: config.CSVList{tracker}},
+				},
+				Services: api.ServiceSet{
+					Filesystem: &stubFS{},
+					Metadata:   metadataSvc,
+					Dupes:      &reviewDupes{},
+					Torrents:   &stubTorrent{},
+					Trackers:   trackersSvc,
+				},
+				Repository: &stubRepo{},
+			})
+			if err != nil {
+				t.Fatalf("new core: %v", err)
+			}
+			coreSvc.storeDupeCache(path, "", api.PreparedMetadata{
+				SourcePath:      path,
+				StoredDataFresh: true,
+				ExternalIDs: api.ExternalIDs{
+					SourcePath: path,
+					TMDBID:     42,
+					Category:   "MOVIE",
+				},
+				ExternalMetadata: api.ExternalMetadata{
+					SourcePath: path,
+					TMDB:       &api.TMDBMetadata{TMDBID: 42},
+				},
+			})
+
+			review, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
+				Paths: []string{path},
+				Mode:  api.ModeCLI,
+			})
+			if err != nil {
+				t.Fatalf("build upload review: %v", err)
+			}
+
+			if metadataSvc.resolveCalls != 1 {
+				t.Fatalf("expected one localized metadata refresh, got %d", metadataSvc.resolveCalls)
+			}
+			if got := metadataSvc.resolveInputs[0].Trackers; !slices.Equal(got, []string{tracker}) {
+				t.Fatalf("expected resolve to receive default tracker, got %v", got)
+			}
+			if localized := api.ExtractLocalizedPTBR(trackersSvc.lastMeta); localized.Title != "Default "+tracker {
+				t.Fatalf("expected dry-run metadata to include pt-BR title, got %#v", localized)
+			}
+			if len(review.Trackers) != 1 || review.Trackers[0].Tracker != tracker {
+				t.Fatalf("expected one %s review row, got %#v", tracker, review.Trackers)
+			}
+		})
+	}
+}
+
+func TestBuildUploadReviewDoesNotRefreshLocalizedMetadataForNonPTBRDefault(t *testing.T) {
+	t.Parallel()
+
+	metadataSvc := &recordingReviewMetadata{}
+	trackersSvc := &recordingReviewTrackers{
+		entries: []api.TrackerDryRunEntry{{Tracker: "AITHER", Status: "ready"}},
+	}
+	coreSvc, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Trackers:           config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metadataSvc,
+			Dupes:      &reviewDupes{},
+			Torrents:   &stubTorrent{},
+			Trackers:   trackersSvc,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	coreSvc.storeDupeCache("/tmp/a", "", api.PreparedMetadata{
+		SourcePath:      "/tmp/a",
+		StoredDataFresh: true,
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/tmp/a",
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/tmp/a",
+			TMDB:       &api.TMDBMetadata{TMDBID: 42},
+		},
+	})
+
+	review, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("build upload review: %v", err)
+	}
+
+	if metadataSvc.resolveCalls != 0 {
+		t.Fatalf("expected no localized metadata refresh, got %d", metadataSvc.resolveCalls)
+	}
+	if !slices.Equal(trackersSvc.lastTrackers, []string{"AITHER"}) {
+		t.Fatalf("expected AITHER dry-run only, got %v", trackersSvc.lastTrackers)
+	}
+	if len(review.Trackers) != 1 || review.Trackers[0].Tracker != "AITHER" {
+		t.Fatalf("expected one AITHER review row, got %#v", review.Trackers)
 	}
 }
 

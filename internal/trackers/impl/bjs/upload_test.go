@@ -6,8 +6,10 @@ package bjs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -262,6 +264,15 @@ func TestResolveOverviewPrefersEpisodeOverviewForTV(t *testing.T) {
 		t.Fatalf("expected episode overview, got %q", got)
 	}
 
+	metaTVLower := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{
+			Category: "tv",
+		},
+	}
+	if got := resolveOverview(metaTVLower, ptBR); got != "Episode Overview" {
+		t.Fatalf("expected episode overview for lowercase tv, got %q", got)
+	}
+
 	// For Movie, it should prefer the series overview
 	metaMovie := api.PreparedMetadata{
 		ExternalIDs: api.ExternalIDs{
@@ -270,5 +281,70 @@ func TestResolveOverviewPrefersEpisodeOverviewForTV(t *testing.T) {
 	}
 	if got := resolveOverview(metaMovie, ptBR); got != "Series Overview" {
 		t.Fatalf("expected series overview for movie, got %q", got)
+	}
+}
+
+func TestBuildDescriptionOmitsBlankEpisodeTitle(t *testing.T) {
+	t.Parallel()
+
+	req := trackers.UploadRequest{Meta: api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {
+						EpisodeOverview: "Overview Localizado",
+					},
+				},
+			},
+		},
+	}}
+
+	got := buildDescription(req, trackers.DescriptionAssets{})
+	if strings.Contains(got, "[align=center][/align]") {
+		t.Fatalf("expected blank episode title row to be omitted, got %q", got)
+	}
+	if !strings.Contains(got, "[align=center]Overview Localizado[/align]") {
+		t.Fatalf("expected localized episode overview row, got %q", got)
+	}
+}
+
+func TestBuildDescriptionKeepsEpisodeTitleWhenPresent(t *testing.T) {
+	t.Parallel()
+
+	req := trackers.UploadRequest{Meta: api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {
+						EpisodeTitle:    "Titulo Localizado",
+						EpisodeOverview: "Overview Localizado",
+					},
+				},
+			},
+		},
+	}}
+
+	got := buildDescription(req, trackers.DescriptionAssets{})
+	if !strings.Contains(got, "[align=center]Titulo Localizado[/align]") {
+		t.Fatalf("expected localized episode title row, got %q", got)
+	}
+	if !strings.Contains(got, "[align=center]Overview Localizado[/align]") {
+		t.Fatalf("expected localized episode overview row, got %q", got)
+	}
+}
+
+func TestResolveTagsPreservesUnknownFallbackGenres(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{
+			Genre: "Sci-Fi, MyCustomGenre",
+		},
+	}
+
+	got := resolveTags(meta, api.TMDBLocalizedData{})
+	expected := "ficcao.cientifica, mycustomgenre"
+	if got != expected {
+		t.Fatalf("expected tags %q, got %q", expected, got)
 	}
 }

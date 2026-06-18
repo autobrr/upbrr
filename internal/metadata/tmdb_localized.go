@@ -4,12 +4,16 @@
 package metadata
 
 import (
+	"net/url"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const tmdbOriginalImageBaseURL = "https://image.tmdb.org/t/p/original"
+
+// parseTMDBLocalizedData extracts the pt-BR TMDB fields used by localized tracker uploads.
 func parseTMDBLocalizedData(mainData, seasonData, episodeData map[string]any) api.TMDBLocalizedData {
 	var result api.TMDBLocalizedData
 
@@ -24,8 +28,8 @@ func parseTMDBLocalizedData(mainData, seasonData, episodeData map[string]any) ap
 			result.Overview = overview
 		}
 
-		if posterPath, ok := mainData["poster_path"].(string); ok && posterPath != "" {
-			result.Poster = "https://image.tmdb.org/t/p/original" + posterPath
+		if posterPath, ok := mainData["poster_path"].(string); ok {
+			result.Poster = localizedPosterURL(posterPath)
 		}
 
 		if genres, ok := mainData["genres"].([]any); ok {
@@ -42,14 +46,14 @@ func parseTMDBLocalizedData(mainData, seasonData, episodeData map[string]any) ap
 
 		if videos, ok := mainData["videos"].(map[string]any); ok {
 			if results, ok := videos["results"].([]any); ok {
-				for i := len(results) - 1; i >= 0; i-- {
-					if video, ok := results[i].(map[string]any); ok {
-						if site, ok := video["site"].(string); ok && site == "YouTube" {
-							if key, ok := video["key"].(string); ok && key != "" {
-								result.TrailerURL = "https://www.youtube.com/watch?v=" + key
-								break
-							}
-						}
+				for _, item := range results {
+					video, ok := item.(map[string]any)
+					if !ok {
+						continue
+					}
+					if trailerURL := localizedTrailerURL(video); trailerURL != "" {
+						result.TrailerURL = trailerURL
+						break
 					}
 				}
 			}
@@ -107,4 +111,48 @@ func parseTMDBLocalizedData(mainData, seasonData, episodeData map[string]any) ap
 	}
 
 	return result
+}
+
+// localizedPosterURL returns a usable poster URL from a TMDB poster_path value.
+// Relative paths are resolved against the TMDB original image base; absolute
+// http and https URLs are preserved for callers that pass already-expanded data.
+func localizedPosterURL(posterPath string) string {
+	posterPath = strings.TrimSpace(posterPath)
+	if posterPath == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(posterPath)
+	if err != nil {
+		return ""
+	}
+	if parsed.IsAbs() {
+		if (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
+			return posterPath
+		}
+		return ""
+	}
+	if strings.Contains(posterPath, "://") || strings.HasPrefix(posterPath, "//") || strings.Contains(posterPath, "\\") {
+		return ""
+	}
+
+	return tmdbOriginalImageBaseURL + "/" + strings.TrimPrefix(posterPath, "/")
+}
+
+// localizedTrailerURL returns the YouTube watch URL for official TMDB trailer entries only.
+func localizedTrailerURL(video map[string]any) string {
+	site, ok := video["site"].(string)
+	if !ok || site != "YouTube" {
+		return ""
+	}
+	videoType, ok := video["type"].(string)
+	if !ok || videoType != "Trailer" {
+		return ""
+	}
+	key, ok := video["key"].(string)
+	if !ok || key == "" {
+		return ""
+	}
+
+	return "https://www.youtube.com/watch?v=" + key
 }
