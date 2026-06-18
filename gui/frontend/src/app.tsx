@@ -214,6 +214,46 @@ export const hasExplicitEmptyReleaseTrackerSelection = (
   );
 };
 
+const hasOwnSelection = (value: Record<string, boolean>, key: string) =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+/**
+ * Normalizes source paths for lightweight context comparisons.
+ *
+ * This keeps host path identity checks independent of slash direction and
+ * trailing separators without replacing the runtime-aware same-path helper.
+ */
+const normalizePathContext = (value: string, caseInsensitive: boolean) => {
+  let normalized = value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  if (caseInsensitive) {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+};
+
+const normalizeBdmvPathContext = (value: string, caseInsensitive: boolean) =>
+  normalizePathContext(value, caseInsensitive).replace(/(^|\/)bdmv(?=\/|$)/gi, "$1BDMV");
+
+/**
+ * Returns true when two source paths refer to the same eligibility context.
+ *
+ * A selected Blu-ray folder may be represented by either the release root or
+ * its BDMV child folder; both must share dupe/rule tracker eligibility.
+ */
+const isSourcePathContextMatch = (left: string, right: string, caseInsensitive: boolean) => {
+  if (sameSourcePath(left, right, caseInsensitive)) {
+    return true;
+  }
+  const normalizedLeft = normalizeBdmvPathContext(left, caseInsensitive);
+  const normalizedRight = normalizeBdmvPathContext(right, caseInsensitive);
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+  return (
+    normalizedLeft === `${normalizedRight}/BDMV` || normalizedRight === `${normalizedLeft}/BDMV`
+  );
+};
+
 const upsertBuilderGroup = (
   preview: DescriptionBuilderPreview,
   nextGroup: DescriptionBuilderPreview["Groups"][number],
@@ -1295,23 +1335,108 @@ export default function App() {
     handleDeleteTrackerImageURL,
   } = screenshots;
 
-  const selectedUploadImageTrackers = useMemo(() => {
-    return resolveSelectedUploadTrackers({
-      trackerUploadItems,
-      releasePageTrackerSelection,
-      uploadToggles,
+  /**
+   * Resolves upload-eligible trackers for the requested source path.
+   *
+   * Dupe and rule-failure filters apply only when their snapshot source path
+   * matches the requested path context, preventing stale blocks from a previous
+   * source path from changing metadata fetch or playlist preparation payloads.
+   */
+  const resolveUploadTrackerEligibilityForPath = useCallback(
+    (sourcePath: string) => {
+      const targetPath = sourcePath.trim();
+      const currentPath = path.trim();
+      const dupeSourcePath = String(
+        dupeSummary.SourcePath || dupeCheckSnapshot?.sourcePath || "",
+      ).trim();
+      const pathCaseInsensitive = isRuntimePathCaseInsensitive();
+      const dupeSourceMatchesTarget =
+        targetPath !== "" &&
+        dupeSourcePath !== "" &&
+        isSourcePathContextMatch(dupeSourcePath, targetPath, pathCaseInsensitive);
+      const uploadTogglesMatchTarget =
+        targetPath === "" ||
+        currentPath === "" ||
+        isSourcePathContextMatch(currentPath, targetPath, pathCaseInsensitive);
+      const effectiveUploadToggles: Record<string, boolean> = {};
+
+      trackerUploadItems.forEach((item) => {
+        const normalized = item.name.toLowerCase().trim();
+        if (uploadTogglesMatchTarget && hasOwnSelection(uploadToggles, item.name)) {
+          effectiveUploadToggles[item.name] = uploadToggles[item.name];
+          return;
+        }
+        if (hasOwnSelection(releasePageTrackerSelection, item.name)) {
+          effectiveUploadToggles[item.name] = releasePageTrackerSelection[item.name];
+          return;
+        }
+        effectiveUploadToggles[item.name] = defaultTrackerSet.has(normalized);
+      });
+
+      const emptyTrackerSet = new Set<string>();
+      const scopedDupedTrackerSet = dupeSourceMatchesTarget ? dupedTrackerSet : emptyTrackerSet;
+      const scopedRuleSkippedTrackerSet = dupeSourceMatchesTarget
+        ? ruleSkippedTrackerSet
+        : emptyTrackerSet;
+      const scopedFailedDupeTrackerSet = dupeSourceMatchesTarget
+        ? failedDupeTrackerSet
+        : emptyTrackerSet;
+      const selectedTrackers = resolveSelectedUploadTrackers({
+        trackerUploadItems,
+        releasePageTrackerSelection,
+        uploadToggles: effectiveUploadToggles,
+        dupedTrackerSet: scopedDupedTrackerSet,
+        ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
+        failedDupeTrackerSet: scopedFailedDupeTrackerSet,
+      });
+
+      return {
+        selectedTrackers,
+        emptySelection:
+          hasExplicitEmptyReleaseTrackerSelection(
+            trackerUploadItems,
+            releasePageTrackerSelection,
+          ) ||
+          hasFilteredEmptyUploadTrackerSelectionState({
+            trackerUploadItems,
+            releasePageTrackerSelection,
+            uploadToggles: effectiveUploadToggles,
+            dupedTrackerSet: scopedDupedTrackerSet,
+            ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
+            failedDupeTrackerSet: scopedFailedDupeTrackerSet,
+          }),
+      };
+    },
+    [
+      defaultTrackerSet,
+      dupeCheckSnapshot?.sourcePath,
+      dupeSummary.SourcePath,
       dupedTrackerSet,
-      ruleSkippedTrackerSet,
       failedDupeTrackerSet,
-    });
-  }, [
-    releasePageTrackerSelection,
-    uploadToggles,
-    trackerUploadItems,
-    dupedTrackerSet,
-    ruleSkippedTrackerSet,
-    failedDupeTrackerSet,
-  ]);
+      path,
+      releasePageTrackerSelection,
+      ruleSkippedTrackerSet,
+      trackerUploadItems,
+      uploadToggles,
+    ],
+  );
+
+  const selectedUploadTrackerEligibility = useMemo(
+    () => resolveUploadTrackerEligibilityForPath(path),
+    [path, resolveUploadTrackerEligibilityForPath],
+  );
+  const selectedUploadImageTrackers = selectedUploadTrackerEligibility.selectedTrackers;
+  const dupeFiltersMatchCurrentPath = useMemo(() => {
+    const currentPath = path.trim();
+    const dupeSourcePath = String(
+      dupeSummary.SourcePath || dupeCheckSnapshot?.sourcePath || "",
+    ).trim();
+    return (
+      currentPath !== "" &&
+      dupeSourcePath !== "" &&
+      isSourcePathContextMatch(dupeSourcePath, currentPath, isRuntimePathCaseInsensitive())
+    );
+  }, [dupeCheckSnapshot?.sourcePath, dupeSummary.SourcePath, path]);
 
   // Upload images workflow hook
   const uploadImages = useUploadImages({
@@ -1978,20 +2103,13 @@ export default function App() {
       bdmvPath = `${trimmedPath}/BDMV`;
     }
 
+    const playlistTrackerEligibility = resolveUploadTrackerEligibilityForPath(trimmedPath);
+
     // Set the path for playlist discovery (component will discover the playlists)
     setPlaylistSelectionPath(bdmvPath);
     setPlaylistPreparationTrackerSnapshot({
-      selectedTrackers: selectedUploadImageTrackers,
-      emptySelection:
-        hasExplicitEmptyReleaseTrackerSelection(trackerUploadItems, releasePageTrackerSelection) ||
-        hasFilteredEmptyUploadTrackerSelectionState({
-          trackerUploadItems,
-          releasePageTrackerSelection,
-          uploadToggles,
-          dupedTrackerSet,
-          ruleSkippedTrackerSet,
-          failedDupeTrackerSet,
-        }),
+      selectedTrackers: playlistTrackerEligibility.selectedTrackers,
+      emptySelection: playlistTrackerEligibility.emptySelection,
     });
     setShowPlaylistSelection(true);
     return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: true };
@@ -2014,18 +2132,11 @@ export default function App() {
       return false;
     }
     const selectedTrackers =
-      playlistPreparationTrackerSnapshot?.selectedTrackers ?? selectedUploadImageTrackers;
+      playlistPreparationTrackerSnapshot?.selectedTrackers ??
+      selectedUploadTrackerEligibility.selectedTrackers;
     const emptySelection =
       playlistPreparationTrackerSnapshot?.emptySelection ??
-      (hasExplicitEmptyReleaseTrackerSelection(trackerUploadItems, releasePageTrackerSelection) ||
-        hasFilteredEmptyUploadTrackerSelectionState({
-          trackerUploadItems,
-          releasePageTrackerSelection,
-          uploadToggles,
-          dupedTrackerSet,
-          ruleSkippedTrackerSet,
-          failedDupeTrackerSet,
-        }));
+      selectedUploadTrackerEligibility.emptySelection;
     if (selectedTrackers.length === 0 && emptySelection) {
       setPlaylistPreparationError("Select at least one tracker before preparing playlists.");
       return false;
@@ -2080,19 +2191,9 @@ export default function App() {
       setError("Please select a file or folder.");
       return;
     }
-    const selectedTrackers = selectedUploadImageTrackers;
-    if (
-      selectedTrackers.length === 0 &&
-      (hasExplicitEmptyReleaseTrackerSelection(trackerUploadItems, releasePageTrackerSelection) ||
-        hasFilteredEmptyUploadTrackerSelectionState({
-          trackerUploadItems,
-          releasePageTrackerSelection,
-          uploadToggles,
-          dupedTrackerSet,
-          ruleSkippedTrackerSet,
-          failedDupeTrackerSet,
-        }))
-    ) {
+    const trackerEligibility = resolveUploadTrackerEligibilityForPath(targetPath);
+    const selectedTrackers = trackerEligibility.selectedTrackers;
+    if (selectedTrackers.length === 0 && trackerEligibility.emptySelection) {
       setError("Select at least one tracker before fetching metadata.");
       return;
     }
@@ -2201,18 +2302,7 @@ export default function App() {
       return;
     }
     const selectedTrackers = selectedUploadImageTrackers;
-    if (
-      selectedTrackers.length === 0 &&
-      (hasExplicitEmptyReleaseTrackerSelection(trackerUploadItems, releasePageTrackerSelection) ||
-        hasFilteredEmptyUploadTrackerSelectionState({
-          trackerUploadItems,
-          releasePageTrackerSelection,
-          uploadToggles,
-          dupedTrackerSet,
-          ruleSkippedTrackerSet,
-          failedDupeTrackerSet,
-        }))
-    ) {
+    if (selectedTrackers.length === 0 && selectedUploadTrackerEligibility.emptySelection) {
       setError("Select at least one tracker before resetting metadata.");
       return;
     }
@@ -2551,18 +2641,7 @@ export default function App() {
       return;
     }
     const selectedTrackers = selectedUploadImageTrackers;
-    if (
-      selectedTrackers.length === 0 &&
-      (hasExplicitEmptyReleaseTrackerSelection(trackerUploadItems, releasePageTrackerSelection) ||
-        hasFilteredEmptyUploadTrackerSelectionState({
-          trackerUploadItems,
-          releasePageTrackerSelection,
-          uploadToggles,
-          dupedTrackerSet,
-          ruleSkippedTrackerSet,
-          failedDupeTrackerSet,
-        }))
-    ) {
+    if (selectedTrackers.length === 0 && selectedUploadTrackerEligibility.emptySelection) {
       return;
     }
     await fetcher(
@@ -3140,11 +3219,14 @@ export default function App() {
           delete next[item.name];
           return;
         }
-        if (failedDupeTrackerSet.has(normalized)) {
+        if (dupeFiltersMatchCurrentPath && failedDupeTrackerSet.has(normalized)) {
           next[item.name] = false;
           return;
         }
-        if (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) {
+        if (
+          dupeFiltersMatchCurrentPath &&
+          (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized))
+        ) {
           next[item.name] = false;
           return;
         }
@@ -3175,6 +3257,7 @@ export default function App() {
   }, [
     trackerUploadItems,
     defaultTrackerSet,
+    dupeFiltersMatchCurrentPath,
     dupedTrackerSet,
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,

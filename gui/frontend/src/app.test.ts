@@ -9,12 +9,14 @@ import App, { hasExplicitEmptyReleaseTrackerSelection } from "./app";
 import type {
   DescriptionBuilderPreview,
   DupeCheckResult,
+  DupeCheckSnapshot,
   DupeEntry,
   DupeMatch,
   MetadataPreview,
   ScreenshotPlan,
   TrackerUploadSnapshot,
 } from "./types";
+import { isRuntimePathCaseInsensitive, updateBrowserCSRFToken } from "./utils/runtime";
 import { hasFilteredEmptyUploadTrackerSelection } from "./utils/trackerSelection";
 
 vi.mock("../wailsjs/runtime/runtime", () => ({
@@ -23,10 +25,13 @@ vi.mock("../wailsjs/runtime/runtime", () => ({
   OnFileDropOff: vi.fn(),
 }));
 
+const defaultPathCaseInsensitive = isRuntimePathCaseInsensitive();
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  updateBrowserCSRFToken("", defaultPathCaseInsensitive);
   delete (globalThis as typeof globalThis & { go?: any }).go;
 });
 
@@ -55,6 +60,7 @@ type FetchPreparation = (
   trackers: string[],
   ignoreDupesFor: string[],
 ) => Promise<unknown>;
+type DetectDiscType = (sourcePath: string) => Promise<string>;
 type StartTrackerUpload = (...args: unknown[]) => Promise<string>;
 type RetryFailedTrackerUpload = (jobID: string) => Promise<string>;
 type CancelTrackerUpload = (jobID: string) => Promise<void>;
@@ -184,6 +190,23 @@ const dupeResult = (tracker: string, hasDupes: boolean): DupeCheckResult => ({
   CheckedAt: "2026-06-17T00:00:00Z",
 });
 
+const dupeCheckSnapshot = (sourcePath = "C:\\media\\Example"): DupeCheckSnapshot => ({
+  jobID: "dupe-job-1",
+  sourcePath,
+  status: "completed",
+  trackers: [],
+  completedCount: 2,
+  totalCount: 2,
+  summary: {
+    SourcePath: sourcePath,
+    Results: [dupeResult("AITHER", false), dupeResult("BLU", true)],
+    Notes: [],
+  },
+  error: "",
+  startedAt: "2026-06-17T00:00:00Z",
+  finishedAt: "2026-06-17T00:00:01Z",
+});
+
 const installAppBridge = (
   fetchMetadata: FetchMetadata,
   options: {
@@ -192,6 +215,9 @@ const installAppBridge = (
     fetchScreenshotPlan?: FetchScreenshotPlan;
     fetchDescriptionBuilder?: FetchDescriptionBuilder;
     fetchPreparation?: FetchPreparation;
+    browseFolder?: () => Promise<string>;
+    getDupeCheckSnapshot?: () => Promise<DupeCheckSnapshot>;
+    detectDiscType?: DetectDiscType;
     startTrackerUpload?: StartTrackerUpload;
     retryFailedTrackerUpload?: RetryFailedTrackerUpload;
     cancelTrackerUpload?: CancelTrackerUpload;
@@ -228,9 +254,10 @@ const installAppBridge = (
               ProcessLimit: 1,
             },
           }),
-        BrowseFolder: async () => "C:\\media\\Example\\BDMV",
+        BrowseFolder: options.browseFolder ?? (async () => "C:\\media\\Example\\BDMV"),
         GetDefaultConfig: async () => JSON.stringify({ Trackers: { Trackers: {} } }),
         FetchMetadata: fetchMetadata,
+        DetectDiscType: options.detectDiscType,
         ResetMetadata:
           options.resetMetadata ?? (async (sourcePath: string) => metadataPreview(sourcePath)),
         SaveConfig: options.saveConfig ?? (async () => undefined),
@@ -252,22 +279,7 @@ const installAppBridge = (
         ],
         SavePlaylistSelection: async () => undefined,
         StartDupeCheck: async () => "dupe-job-1",
-        GetDupeCheckSnapshot: async () => ({
-          jobID: "dupe-job-1",
-          sourcePath: "C:\\media\\Example",
-          status: "completed",
-          trackers: [],
-          completedCount: 2,
-          totalCount: 2,
-          summary: {
-            SourcePath: "C:\\media\\Example",
-            Results: [dupeResult("AITHER", false), dupeResult("BLU", true)],
-            Notes: [],
-          },
-          error: "",
-          startedAt: "2026-06-17T00:00:00Z",
-          finishedAt: "2026-06-17T00:00:01Z",
-        }),
+        GetDupeCheckSnapshot: options.getDupeCheckSnapshot ?? (async () => dupeCheckSnapshot()),
         StartTrackerUpload: options.startTrackerUpload ?? (async () => "upload-job-1"),
         RetryFailedTrackerUpload: options.retryFailedTrackerUpload ?? (async () => "upload-job-2"),
         CancelTrackerUpload: options.cancelTrackerUpload ?? (async () => undefined),
@@ -425,6 +437,82 @@ describe("metadata tracker payloads", () => {
     expect(fetchMetadata.mock.calls[2][4]).toEqual(["AITHER"]);
   });
 
+  it("does not apply dupe blocks from a previous path to metadata fetches", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Other" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][0]).toBe("C:\\media\\Other");
+    expect(fetchMetadata.mock.calls[1][4]).toEqual(["AITHER", "BLU"]);
+  });
+
+  it("keeps current upload disables when stale dupe state came from another path", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Other" },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Source path")).toHaveValue("C:\\media\\Other"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][4]).toEqual(["AITHER", "BLU"]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(await screen.findByRole("button", { name: "Description Builder" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Tracker Upload" }));
+    await screen.findByRole("heading", { name: "Upload Targets" });
+    const aitherUploadSwitch = screen.getByRole("switch", { name: "Enable upload for AITHER" });
+    expect(aitherUploadSwitch).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(aitherUploadSwitch);
+    await waitFor(() => expect(aitherUploadSwitch).toHaveAttribute("aria-checked", "false"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(3));
+    expect(fetchMetadata.mock.calls[2][0]).toBe("C:\\media\\Other");
+    expect(fetchMetadata.mock.calls[2][4]).toEqual(["BLU"]);
+  });
+
   it("blocks metadata fetch when all selected trackers are filtered out", async () => {
     const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
     installAppBridge(fetchMetadata);
@@ -537,6 +625,86 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Input" }));
     fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
 
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
+
+    await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
+    expect(fetchPreparation.mock.calls[0][3]).toEqual(["AITHER"]);
+    expect(fetchPreparation.mock.calls[0][4]).toEqual([]);
+  });
+
+  it("does not apply previous path dupe blocks when preparing selected playlists", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchPreparation = vi.fn<FetchPreparation>(async () => ({}));
+    installAppBridge(fetchMetadata, {
+      browseFolder: async () => "C:\\media\\Other\\BDMV",
+      fetchPreparation,
+    });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
+
+    await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
+    expect(fetchPreparation.mock.calls[0][3]).toEqual(["AITHER", "BLU"]);
+    expect(fetchPreparation.mock.calls[0][4]).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "root to lowercase child",
+      dupeSourcePath: "C:\\media\\Example",
+      browsePath: "C:\\media\\Example\\bdmv",
+    },
+    {
+      name: "lowercase child to root",
+      dupeSourcePath: "C:\\media\\Example\\bdmv",
+      browsePath: "C:\\media\\Example",
+      detectDiscType: async () => "BDMV",
+    },
+    {
+      name: "trailing slash root to lowercase child",
+      dupeSourcePath: "C:\\media\\Example\\",
+      browsePath: "C:\\media\\Example\\bdmv\\",
+    },
+  ])("matches lowercase BDMV context for playlist preparation: $name", async (testCase) => {
+    updateBrowserCSRFToken("", false);
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchPreparation = vi.fn<FetchPreparation>(async () => ({}));
+    installAppBridge(fetchMetadata, {
+      browseFolder: async () => testCase.browsePath,
+      getDupeCheckSnapshot: async () => dupeCheckSnapshot(testCase.dupeSourcePath),
+      detectDiscType: testCase.detectDiscType,
+      fetchPreparation,
+    });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: testCase.dupeSourcePath },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
     await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
