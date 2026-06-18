@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -74,6 +75,116 @@ func TestFetchPreparationPreviewFromCache(t *testing.T) {
 	}
 	if preview.SourcePath != meta.SourcePath {
 		t.Fatalf("expected source path %q, got %q", meta.SourcePath, preview.SourcePath)
+	}
+}
+
+func TestFetchPreparationPreviewReturnsEmptyWhenCachedSelectedTrackersResolveEmpty(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		SourcePath:     "/tmp/source",
+		TrackersRemove: []string{"AITHER"},
+	}
+	trackerSvc := &stubPreparationTrackers{}
+	core := &Core{
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{meta.SourcePath}},
+			Trackers:   trackerSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeDupeCache(meta.SourcePath, "", meta)
+
+	preview, err := core.FetchPreparationPreview(context.Background(), api.Request{
+		Paths:    []string{meta.SourcePath},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if trackerSvc.called {
+		t.Fatal("expected tracker preparation to be skipped when selected trackers resolve empty")
+	}
+	if preview.SourcePath != meta.SourcePath {
+		t.Fatalf("expected source path %q, got %q", meta.SourcePath, preview.SourcePath)
+	}
+}
+
+func TestFetchPreparationPreviewUsesIgnoredMatchedTrackerFromCache(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		SourcePath:      "/tmp/source",
+		TrackersRemove:  []string{"AITHER", "BLU"},
+		MatchedTrackers: []string{"AITHER", "BLU"},
+	}
+	trackerSvc := &stubPreparationTrackers{}
+	core := &Core{
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{meta.SourcePath}},
+			Trackers:   trackerSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeDupeCache(meta.SourcePath, "", meta)
+
+	preview, err := core.FetchPreparationPreview(context.Background(), api.Request{
+		Paths:          []string{meta.SourcePath},
+		Mode:           api.ModeGUI,
+		Trackers:       []string{"AITHER"},
+		IgnoreDupesFor: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if preview.SourcePath != meta.SourcePath {
+		t.Fatalf("expected source path %q, got %q", meta.SourcePath, preview.SourcePath)
+	}
+	if !slices.Equal(trackerSvc.trackers, []string{"AITHER"}) {
+		t.Fatalf("expected ignored matched tracker without default fallback, got %v", trackerSvc.trackers)
+	}
+	if slices.Contains(trackerSvc.meta.TrackersRemove, "AITHER") || !slices.Contains(trackerSvc.meta.TrackersRemove, "BLU") {
+		t.Fatalf("expected only unignored duplicate removal to remain, got %v", trackerSvc.meta.TrackersRemove)
+	}
+	if slices.Contains(trackerSvc.meta.MatchedTrackers, "AITHER") || !slices.Contains(trackerSvc.meta.MatchedTrackers, "BLU") {
+		t.Fatalf("expected only unignored matched tracker to remain, got %v", trackerSvc.meta.MatchedTrackers)
+	}
+}
+
+func TestFetchPreparationPreviewUsesOnlyExplicitTrackers(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	trackerSvc := &stubPreparationTrackers{}
+	core := &Core{
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{meta.SourcePath}},
+			Trackers:   trackerSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeDupeCache(meta.SourcePath, "", meta)
+
+	_, err := core.FetchPreparationPreview(context.Background(), api.Request{
+		Paths:    []string{meta.SourcePath},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !slices.Equal(trackerSvc.trackers, []string{"AITHER"}) {
+		t.Fatalf("expected explicit tracker only, got %v", trackerSvc.trackers)
 	}
 }
 
@@ -182,5 +293,45 @@ func TestFetchPreparationPreviewCachesMergedExternalIDSelections(t *testing.T) {
 	}
 	if exported.ExternalIDOverrides.TMDBID == nil || *exported.ExternalIDOverrides.TMDBID != tmdbID {
 		t.Fatalf("expected exported cached metadata to preserve merged TMDB selection, got %#v", exported.ExternalIDOverrides)
+	}
+}
+
+func TestFetchPreparationPreviewReturnsEmptyWhenPreparedSelectedTrackersResolveEmpty(t *testing.T) {
+	t.Parallel()
+
+	trackerSvc := &stubPreparationTrackers{}
+	core := &Core{
+		cfg: config.Config{
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Trackers:           config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Metadata: &stubMeta{prepared: api.PreparedMetadata{
+				SourcePath:     "/tmp/source",
+				TrackersRemove: []string{"AITHER"},
+			}},
+			Trackers: trackerSvc,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	preview, err := core.FetchPreparationPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if trackerSvc.called {
+		t.Fatal("expected tracker preparation to be skipped when prepared selected trackers resolve empty")
+	}
+	if preview.SourcePath != "/tmp/source" {
+		t.Fatalf("expected source path to be preserved, got %q", preview.SourcePath)
+	}
+	if _, ok := core.getDupeCache("/tmp/source", ""); ok {
+		t.Fatal("expected explicit-empty preparation not to seed GUI cache")
 	}
 }

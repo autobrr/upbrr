@@ -102,8 +102,14 @@ type Core interface {
 	RunUpload(ctx context.Context, req Request) (Result, error)
 	RunUploadPrepared(ctx context.Context, req Request) (Result, error)
 	FetchMetadataPreview(ctx context.Context, req Request) (MetadataPreview, error)
+	// FetchDescriptionBuilderPreview returns editable description groups for one
+	// source path. Non-empty request trackers limit group generation to that set.
 	FetchDescriptionBuilderPreview(ctx context.Context, req Request) (DescriptionBuilderPreview, error)
+	// FetchDescriptionBuilderGroupPreview rebuilds one editable description group
+	// for the requested source path and selected tracker set.
 	FetchDescriptionBuilderGroupPreview(ctx context.Context, req Request) (DescriptionBuilderGroup, error)
+	// FetchPreparationPreview returns tracker preparation details for one source
+	// path. Non-empty request trackers limit preparation to that set.
 	FetchPreparationPreview(ctx context.Context, req Request) (PreparationPreview, error)
 	FetchTrackerDryRunPreview(ctx context.Context, req Request) (TrackerDryRunPreview, error)
 	CheckDupes(ctx context.Context, req Request) (DupeCheckSummary, error)
