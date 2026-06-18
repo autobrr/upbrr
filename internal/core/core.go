@@ -365,6 +365,8 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	return summary.Uploaded, nil
 }
 
+// persistPreparedInfoHash stores the prepared torrent hash without replacing
+// existing release metadata used by history views.
 func (c *Core) persistPreparedInfoHash(ctx context.Context, sourcePath string, infoHash string) error {
 	if c == nil || c.repo == nil {
 		return nil
