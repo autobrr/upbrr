@@ -466,6 +466,8 @@ def build_output(template: dict[str, Any]) -> dict[str, Any]:
     for key in SECTION_ORDER:
         if key in template:
             out[key] = copy.deepcopy(template[key])
+    # Template clients are examples, not imported user configuration.
+    out["torrent_clients"] = {}
     return out
 
 

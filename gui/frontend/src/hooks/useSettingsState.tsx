@@ -429,6 +429,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
+    trackerFieldMeta.TagForCustomRelease,
   ],
   LDU: [
     trackerFieldMeta.FaviconURL,

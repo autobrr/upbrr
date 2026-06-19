@@ -153,6 +153,8 @@ func Convert(legacy *Config, template *config.Config) (*config.Config, []string,
 	if err != nil {
 		return nil, nil, fmt.Errorf("copy template: %w", err)
 	}
+	// Template clients are examples, not imported user configuration.
+	out.TorrentClients = make(map[string]config.TorrentClientConfig)
 	outMap, err := configToSectionMaps(out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build output map: %w", err)

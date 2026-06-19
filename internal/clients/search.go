@@ -348,42 +348,38 @@ func resolvePieceConstraints(cfg config.Config) pieceConstraints {
 	return pieceConstraints{}
 }
 
+// resolveSearchClients returns configured qbit/qui client names for pathed
+// search. Explicit overrides, searching_client_list, and default_torrent_client
+// are authoritative after normalization. Blank search list entries do not block
+// default_torrent_client, while "none" disables implicit fallback. The boolean
+// reports only whether the implicit all qbit/qui fallback was used.
 func resolveSearchClients(cfg config.Config, overrides api.ClientOverrides) ([]string, bool) {
 	if overrides.Client != nil {
 		requested := strings.TrimSpace(*overrides.Client)
 		if requested == "" || strings.EqualFold(requested, "none") {
 			return nil, false
 		}
-		for name := range cfg.TorrentClients {
-			if strings.EqualFold(name, requested) {
-				return []string{name}, false
-			}
+		if name, _, ok := lookupTorrentClientConfig(cfg.TorrentClients, requested); ok {
+			return []string{name}, false
 		}
 		return nil, false
 	}
 
 	values := make([]string, 0)
-	if len(cfg.ClientSetup.SearchClients) > 0 {
+	if hasSearchDisableSelector(cfg.ClientSetup.SearchClients) {
+		return selectSearchClientNames(cfg.TorrentClients, cfg.ClientSetup.SearchClients), false
+	}
+	if hasNonBlankSearchSelector(cfg.ClientSetup.SearchClients) {
 		values = append(values, cfg.ClientSetup.SearchClients...)
 	} else if strings.TrimSpace(cfg.ClientSetup.DefaultClient) != "" {
 		values = append(values, cfg.ClientSetup.DefaultClient)
 	}
 
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" || strings.EqualFold(trimmed, "none") {
-			continue
-		}
-		if _, ok := seen[trimmed]; ok {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-		result = append(result, trimmed)
+	if hasSearchDisableSelector(values) {
+		return selectSearchClientNames(cfg.TorrentClients, values), false
 	}
-	if len(result) > 0 {
-		return result, false
+	if hasNonBlankSearchSelector(values) {
+		return selectSearchClientNames(cfg.TorrentClients, values), false
 	}
 
 	clientNames := make([]string, 0, len(cfg.TorrentClients))
@@ -391,6 +387,7 @@ func resolveSearchClients(cfg config.Config, overrides api.ClientOverrides) ([]s
 		clientNames = append(clientNames, name)
 	}
 	sort.Strings(clientNames)
+	result := make([]string, 0, len(clientNames))
 	for _, name := range clientNames {
 		clientType := strings.ToLower(strings.TrimSpace(cfg.TorrentClients[name].ClientType()))
 		if clientType != "qbit" && clientType != "qbittorrent" && clientType != "qui" {
@@ -400,6 +397,63 @@ func resolveSearchClients(cfg config.Config, overrides api.ClientOverrides) ([]s
 	}
 
 	return result, len(result) > 0
+}
+
+// hasNonBlankSearchSelector reports whether configured search selectors should
+// suppress lower-priority selectors after blank and "none" entries are ignored.
+func hasNonBlankSearchSelector(selected []string) bool {
+	for _, value := range selected {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" && !strings.EqualFold(trimmed, "none") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSearchDisableSelector reports whether a selector list explicitly disables
+// search. "none" is authoritative when no usable client selector accompanies it.
+func hasSearchDisableSelector(selected []string) bool {
+	hasNone := false
+	for _, value := range selected {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.EqualFold(trimmed, "none") {
+			return false
+		}
+		hasNone = true
+	}
+	return hasNone
+}
+
+// selectSearchClientNames resolves configured search selectors to canonical map
+// keys. Unknown and ambiguous selectors are ignored rather than returned as raw
+// names for callers to skip later.
+func selectSearchClientNames(clients map[string]config.TorrentClientConfig, selected []string) []string {
+	if len(clients) == 0 || len(selected) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(selected))
+	result := make([]string, 0, len(selected))
+	for _, value := range selected {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || strings.EqualFold(trimmed, "none") {
+			continue
+		}
+		name, _, ok := lookupTorrentClientConfig(clients, trimmed)
+		if !ok {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		result = append(result, name)
+	}
+	return result
 }
 
 func (s *Service) searchQbitClient(ctx context.Context, name string, clientCfg config.TorrentClientConfig, meta api.PreparedMetadata, constraints pieceConstraints) (api.ClientSearchResult, []api.TorrentMatch, error) {

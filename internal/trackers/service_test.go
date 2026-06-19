@@ -61,6 +61,48 @@ func TestUploadOverrideTrackers(t *testing.T) {
 	}
 }
 
+func TestUploadOverrideTrackersReplaceDefaults(t *testing.T) {
+	t.Parallel()
+
+	requests := make(chan UploadRequest, 2)
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		trackingUploadDefinition{name: "BLU", requests: requests},
+		trackingUploadDefinition{name: "AITHER", requests: requests},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}}}
+	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	summary, err := svc.Upload(context.Background(), api.PreparedMetadata{
+		SourcePath: "/tmp/file",
+		Trackers:   []string{"aither"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected 1 upload, got %d", summary.Uploaded)
+	}
+
+	select {
+	case req := <-requests:
+		if req.Tracker != "AITHER" {
+			t.Fatalf("expected AITHER upload, got %q", req.Tracker)
+		}
+	default:
+		t.Fatal("expected upload request")
+	}
+	select {
+	case req := <-requests:
+		t.Fatalf("expected defaults excluded from override upload, got extra %q", req.Tracker)
+	default:
+	}
+}
+
 func TestUploadRemovesTrackers(t *testing.T) {
 	t.Parallel()
 

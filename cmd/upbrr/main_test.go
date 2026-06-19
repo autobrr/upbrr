@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,8 +184,9 @@ func TestRunHelpFlagsPrintUsageAndSucceed(t *testing.T) {
 			}
 			for _, expected := range []string{
 				"Commands:",
-				"  serve",
+				"  serve [options]",
 				"Start the embedded web UI server",
+				"Options: --addr, --host, --port, --persist-listen, --dev-no-auth",
 				"Config:",
 				"Execution:",
 				"Tracker Selection:",
@@ -220,10 +222,78 @@ func TestRunServeHelpPrintsUsageAndSucceeds(t *testing.T) {
 	if !strings.Contains(output, "Usage: upbrr serve [options]") {
 		t.Fatalf("expected serve usage in output, got %q", output)
 	}
-	for _, expected := range []string{"Config:", "Development:", "-config, --config string", "-dev-no-auth, --dev-no-auth"} {
+	for _, expected := range []string{"Config:", "Server:", "Development:", "-config, --config string", "-addr, --addr string", "-host, --host string", "-port, --port int", "-persist-listen, --persist-listen", "-dev-no-auth, --dev-no-auth"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)
 		}
+	}
+}
+
+func TestRunServePersistListenRequiresListenOverride(t *testing.T) {
+	err := runServe([]string{"--persist-listen"})
+	if err == nil || !strings.Contains(err.Error(), "--persist-listen requires --addr, --host, or --port") {
+		t.Fatalf("expected persist-listen requirement error, got %v", err)
+	}
+}
+
+func TestRunServeRejectedDevelopmentNoAuthHostDoesNotPersistListenOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	dbPath := filepath.Join(tmpDir, "state", "upbrr.db")
+	body := "main_settings:\n  db_path: " + filepath.ToSlash(dbPath) + "\nscreenshot_handling:\n  screens: 1\n"
+	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	err := runServe([]string{"--config", configPath, "--dev-no-auth", "--host", "0.0.0.0", "--persist-listen"})
+	if err == nil || !strings.Contains(err.Error(), "--dev-no-auth requires a loopback host") {
+		t.Fatalf("expected dev-no-auth loopback error, got %v", err)
+	}
+
+	cfg, err := webserver.LoadCLIConfig(dbPath)
+	if err != nil {
+		t.Fatalf("load web config: %v", err)
+	}
+	if cfg.Host != "localhost" || cfg.Port != 7480 {
+		t.Fatalf("rejected listen override persisted: %#v", cfg)
+	}
+}
+
+func TestRunServePersistListenBindFailureDoesNotWriteWebConfig(t *testing.T) {
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen fixture: %v", err)
+	}
+	defer listener.Close()
+
+	tmpDir := t.TempDir()
+	distPath := filepath.Join(tmpDir, "gui", "frontend", "dist")
+	if err := os.MkdirAll(distPath, 0o755); err != nil {
+		t.Fatalf("create web assets fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(distPath, "index.html"), []byte("<!doctype html><title>upbrr</title>"), 0o600); err != nil {
+		t.Fatalf("write web assets fixture: %v", err)
+	}
+	t.Chdir(tmpDir)
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	dbPath := filepath.Join(tmpDir, "state", "upbrr.db")
+	body := "main_settings:\n  db_path: " + filepath.ToSlash(dbPath) + "\nscreenshot_handling:\n  screens: 1\n"
+	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener addr: %v", err)
+	}
+	err = runServe([]string{"--config", configPath, "--dev-no-auth", "--host", "127.0.0.1", "--port", port, "--persist-listen"})
+	if err == nil || !strings.Contains(err.Error(), "webserver: listen") {
+		t.Fatalf("expected listen error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dbPath), "web-config.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no persisted web config after bind failure, stat error: %v", err)
 	}
 }
 

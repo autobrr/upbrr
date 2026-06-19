@@ -81,6 +81,12 @@ import {
   sourcePathHistoryStorageKey,
 } from "./utils/inputHistory";
 import { handleExternalLinkClick } from "./utils/externalLinks";
+import { normalizeJobStatus } from "./utils/jobStatus";
+import { isMetadataProgressPathMatch } from "./utils/metadataProgress";
+import {
+  hasFilteredEmptyUploadTrackerSelection as hasFilteredEmptyUploadTrackerSelectionState,
+  resolveSelectedUploadTrackers,
+} from "./utils/trackerSelection";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -189,6 +195,65 @@ const emptyDescriptionBuilder: DescriptionBuilderPreview = {
   Groups: [],
 };
 
+/**
+ * Returns true when every available release tracker has an explicit false selection.
+ *
+ * Missing tracker keys are treated as uninitialized state, not user deselection.
+ */
+export const hasExplicitEmptyReleaseTrackerSelection = (
+  trackerUploadItems: Array<{ name: string }>,
+  releasePageTrackerSelection: Record<string, boolean>,
+) => {
+  if (trackerUploadItems.length === 0) {
+    return false;
+  }
+  return trackerUploadItems.every(
+    (item) =>
+      Object.prototype.hasOwnProperty.call(releasePageTrackerSelection, item.name) &&
+      !releasePageTrackerSelection[item.name],
+  );
+};
+
+const hasOwnSelection = (value: Record<string, boolean>, key: string) =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+/**
+ * Normalizes source paths for lightweight context comparisons.
+ *
+ * This keeps host path identity checks independent of slash direction and
+ * trailing separators without replacing the runtime-aware same-path helper.
+ */
+const normalizePathContext = (value: string, caseInsensitive: boolean) => {
+  let normalized = value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  if (caseInsensitive) {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+};
+
+const normalizeBdmvPathContext = (value: string, caseInsensitive: boolean) =>
+  normalizePathContext(value, caseInsensitive).replace(/(^|\/)bdmv(?=\/|$)/gi, "$1BDMV");
+
+/**
+ * Returns true when two source paths refer to the same eligibility context.
+ *
+ * A selected Blu-ray folder may be represented by either the release root or
+ * its BDMV child folder; both must share dupe/rule tracker eligibility.
+ */
+const isSourcePathContextMatch = (left: string, right: string, caseInsensitive: boolean) => {
+  if (sameSourcePath(left, right, caseInsensitive)) {
+    return true;
+  }
+  const normalizedLeft = normalizeBdmvPathContext(left, caseInsensitive);
+  const normalizedRight = normalizeBdmvPathContext(right, caseInsensitive);
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+  return (
+    normalizedLeft === `${normalizedRight}/BDMV` || normalizedRight === `${normalizedLeft}/BDMV`
+  );
+};
+
 const upsertBuilderGroup = (
   preview: DescriptionBuilderPreview,
   nextGroup: DescriptionBuilderPreview["Groups"][number],
@@ -261,6 +326,12 @@ const upsertProgressLine = (lines: string[], line: string) => {
   const next = [...lines];
   next[existingIndex] = line;
   return next;
+};
+
+/** Returns whether a background job status should keep progress recovery active. */
+const isRunningJobStatus = (status: string) => {
+  const normalized = normalizeJobStatus(status);
+  return normalized === "queued" || normalized === "running";
 };
 
 declare global {
@@ -606,12 +677,20 @@ export default function App() {
   const [playlistSelectionPath, setPlaylistSelectionPath] = useState("");
   const [playlistAutoPreparing, setPlaylistAutoPreparing] = useState(false);
   const [playlistPreparationError, setPlaylistPreparationError] = useState("");
+  const [playlistPreparationTrackerSnapshot, setPlaylistPreparationTrackerSnapshot] = useState<{
+    selectedTrackers: string[];
+    emptySelection: boolean;
+  } | null>(null);
   const [bdinfoProgressLines, setBdinfoProgressLines] = useState<string[]>([]);
-  const [metadataProgressTarget, setMetadataProgressTarget] = useState("");
+  const bdinfoProgressActiveRef = useRef(false);
   const [metadataProgressActive, setMetadataProgressActive] = useState(false);
   const [metadataProgressUpdates, setMetadataProgressUpdates] = useState<MetadataProgressUpdate[]>(
     [],
   );
+  // Mirrors metadata progress state synchronously so events emitted during the
+  // same tick as a fetch/reset request are not dropped by a stale React closure.
+  const metadataProgressActiveRef = useRef(false);
+  const metadataProgressTargetRef = useRef("");
   const [dupeSummary, setDupeSummary] = useState<DupeCheckSummary>(emptyDupeSummary);
   const [dupeLoading, setDupeLoading] = useState(false);
   const [dupeError, setDupeError] = useState("");
@@ -868,10 +947,12 @@ export default function App() {
   }, [lightboxImage]);
 
   useEffect(() => {
-    if (!playlistAutoPreparing) {
-      return;
-    }
+    // Keep BDInfo progress subscribed before preparation starts; the backend
+    // can emit first lines before React commits playlistAutoPreparing state.
     const off = EventsOn(bdinfoProgressEvent, (payload: any) => {
+      if (!bdinfoProgressActiveRef.current) {
+        return;
+      }
       const line = typeof payload === "string" ? payload : payload?.line;
       if (typeof line !== "string") {
         return;
@@ -888,19 +969,18 @@ export default function App() {
         off();
       }
     };
-  }, [playlistAutoPreparing]);
+  }, []);
 
   useEffect(() => {
-    const normalizePath = (value: string) => value.trim().replaceAll("\\", "/").toLowerCase();
+    // Keep one stable metadata progress listener for the app lifetime; refs
+    // carry the active request state without resubscribing mid-fetch.
     const off = EventsOn(metadataProgressEvent, (payload: any) => {
-      if (!metadataProgressActive) {
+      if (!metadataProgressActiveRef.current) {
         return;
       }
       const eventPath = typeof payload?.path === "string" ? payload.path : "";
-      if (
-        metadataProgressTarget &&
-        normalizePath(eventPath) !== normalizePath(metadataProgressTarget)
-      ) {
+      const progressTarget = metadataProgressTargetRef.current;
+      if (!isMetadataProgressPathMatch(eventPath, progressTarget)) {
         return;
       }
 
@@ -914,8 +994,9 @@ export default function App() {
       };
 
       if (update.phase === "complete" && update.status === "completed") {
+        metadataProgressActiveRef.current = false;
+        metadataProgressTargetRef.current = "";
         setMetadataProgressActive(false);
-        setMetadataProgressTarget("");
         setMetadataProgressUpdates([]);
         return;
       }
@@ -931,7 +1012,7 @@ export default function App() {
         off();
       }
     };
-  }, [metadataProgressActive, metadataProgressTarget]);
+  }, []);
 
   const getThemeIcon = () => {
     if (theme === "auto") return "🔄";
@@ -1254,27 +1335,108 @@ export default function App() {
     handleDeleteTrackerImageURL,
   } = screenshots;
 
-  const selectedUploadImageTrackers = useMemo(() => {
-    const validTrackers = new Set(trackerUploadItems.map((item) => item.name));
-    return Object.entries(uploadToggles)
-      .filter(([name, enabled]) => {
-        if (!enabled) return false;
-        if (!validTrackers.has(name)) return false;
-        const normalized = name.toLowerCase().trim();
-        if (!normalized) return false;
-        if (dupedTrackerSet.has(normalized)) return false;
-        if (ruleSkippedTrackerSet.has(normalized)) return false;
-        if (failedDupeTrackerSet.has(normalized)) return false;
-        return true;
-      })
-      .map(([name]) => name);
-  }, [
-    uploadToggles,
-    trackerUploadItems,
-    dupedTrackerSet,
-    ruleSkippedTrackerSet,
-    failedDupeTrackerSet,
-  ]);
+  /**
+   * Resolves upload-eligible trackers for the requested source path.
+   *
+   * Dupe and rule-failure filters apply only when their snapshot source path
+   * matches the requested path context, preventing stale blocks from a previous
+   * source path from changing metadata fetch or playlist preparation payloads.
+   */
+  const resolveUploadTrackerEligibilityForPath = useCallback(
+    (sourcePath: string) => {
+      const targetPath = sourcePath.trim();
+      const currentPath = path.trim();
+      const dupeSourcePath = String(
+        dupeSummary.SourcePath || dupeCheckSnapshot?.sourcePath || "",
+      ).trim();
+      const pathCaseInsensitive = isRuntimePathCaseInsensitive();
+      const dupeSourceMatchesTarget =
+        targetPath !== "" &&
+        dupeSourcePath !== "" &&
+        isSourcePathContextMatch(dupeSourcePath, targetPath, pathCaseInsensitive);
+      const uploadTogglesMatchTarget =
+        targetPath === "" ||
+        currentPath === "" ||
+        isSourcePathContextMatch(currentPath, targetPath, pathCaseInsensitive);
+      const effectiveUploadToggles: Record<string, boolean> = {};
+
+      trackerUploadItems.forEach((item) => {
+        const normalized = item.name.toLowerCase().trim();
+        if (uploadTogglesMatchTarget && hasOwnSelection(uploadToggles, item.name)) {
+          effectiveUploadToggles[item.name] = uploadToggles[item.name];
+          return;
+        }
+        if (hasOwnSelection(releasePageTrackerSelection, item.name)) {
+          effectiveUploadToggles[item.name] = releasePageTrackerSelection[item.name];
+          return;
+        }
+        effectiveUploadToggles[item.name] = defaultTrackerSet.has(normalized);
+      });
+
+      const emptyTrackerSet = new Set<string>();
+      const scopedDupedTrackerSet = dupeSourceMatchesTarget ? dupedTrackerSet : emptyTrackerSet;
+      const scopedRuleSkippedTrackerSet = dupeSourceMatchesTarget
+        ? ruleSkippedTrackerSet
+        : emptyTrackerSet;
+      const scopedFailedDupeTrackerSet = dupeSourceMatchesTarget
+        ? failedDupeTrackerSet
+        : emptyTrackerSet;
+      const selectedTrackers = resolveSelectedUploadTrackers({
+        trackerUploadItems,
+        releasePageTrackerSelection,
+        uploadToggles: effectiveUploadToggles,
+        dupedTrackerSet: scopedDupedTrackerSet,
+        ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
+        failedDupeTrackerSet: scopedFailedDupeTrackerSet,
+      });
+
+      return {
+        selectedTrackers,
+        emptySelection:
+          hasExplicitEmptyReleaseTrackerSelection(
+            trackerUploadItems,
+            releasePageTrackerSelection,
+          ) ||
+          hasFilteredEmptyUploadTrackerSelectionState({
+            trackerUploadItems,
+            releasePageTrackerSelection,
+            uploadToggles: effectiveUploadToggles,
+            dupedTrackerSet: scopedDupedTrackerSet,
+            ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
+            failedDupeTrackerSet: scopedFailedDupeTrackerSet,
+          }),
+      };
+    },
+    [
+      defaultTrackerSet,
+      dupeCheckSnapshot?.sourcePath,
+      dupeSummary.SourcePath,
+      dupedTrackerSet,
+      failedDupeTrackerSet,
+      path,
+      releasePageTrackerSelection,
+      ruleSkippedTrackerSet,
+      trackerUploadItems,
+      uploadToggles,
+    ],
+  );
+
+  const selectedUploadTrackerEligibility = useMemo(
+    () => resolveUploadTrackerEligibilityForPath(path),
+    [path, resolveUploadTrackerEligibilityForPath],
+  );
+  const selectedUploadImageTrackers = selectedUploadTrackerEligibility.selectedTrackers;
+  const dupeFiltersMatchCurrentPath = useMemo(() => {
+    const currentPath = path.trim();
+    const dupeSourcePath = String(
+      dupeSummary.SourcePath || dupeCheckSnapshot?.sourcePath || "",
+    ).trim();
+    return (
+      currentPath !== "" &&
+      dupeSourcePath !== "" &&
+      isSourcePathContextMatch(dupeSourcePath, currentPath, isRuntimePathCaseInsensitive())
+    );
+  }, [dupeCheckSnapshot?.sourcePath, dupeSummary.SourcePath, path]);
 
   // Upload images workflow hook
   const uploadImages = useUploadImages({
@@ -1359,9 +1521,11 @@ export default function App() {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
       setPlaylistAutoPreparing(false);
+      bdinfoProgressActiveRef.current = false;
       setPlaylistPreparationError("");
       setBdinfoProgressLines([]);
-      setMetadataProgressTarget("");
+      metadataProgressTargetRef.current = "";
+      metadataProgressActiveRef.current = false;
       setMetadataProgressActive(false);
       setMetadataProgressUpdates([]);
       setDupeSummary(emptyDupeSummary);
@@ -1914,10 +2078,12 @@ export default function App() {
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
     setPlaylistAutoPreparing(false);
+    bdinfoProgressActiveRef.current = false;
 
     if (selectedMode === "file") {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
+      setPlaylistPreparationTrackerSnapshot(null);
       setActiveTab("input");
       return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: false };
     }
@@ -1925,6 +2091,7 @@ export default function App() {
     if (discType !== "BDMV") {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
+      setPlaylistPreparationTrackerSnapshot(null);
       setActiveTab("input");
       return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: false };
     }
@@ -1936,8 +2103,14 @@ export default function App() {
       bdmvPath = `${trimmedPath}/BDMV`;
     }
 
+    const playlistTrackerEligibility = resolveUploadTrackerEligibilityForPath(trimmedPath);
+
     // Set the path for playlist discovery (component will discover the playlists)
     setPlaylistSelectionPath(bdmvPath);
+    setPlaylistPreparationTrackerSnapshot({
+      selectedTrackers: playlistTrackerEligibility.selectedTrackers,
+      emptySelection: playlistTrackerEligibility.emptySelection,
+    });
     setShowPlaylistSelection(true);
     return { path: trimmedPath, mode: selectedMode, waitsForPlaylistSelection: true };
   };
@@ -1958,8 +2131,18 @@ export default function App() {
       setPlaylistPreparationError("Please select a file or folder.");
       return false;
     }
+    const selectedTrackers =
+      playlistPreparationTrackerSnapshot?.selectedTrackers ??
+      selectedUploadTrackerEligibility.selectedTrackers;
+    const emptySelection =
+      playlistPreparationTrackerSnapshot?.emptySelection ??
+      selectedUploadTrackerEligibility.emptySelection;
+    if (selectedTrackers.length === 0 && emptySelection) {
+      setPlaylistPreparationError("Select at least one tracker before preparing playlists.");
+      return false;
+    }
     try {
-      await fetcher(path.trim(), {}, {}, getSelectedTrackers(), []);
+      await fetcher(path.trim(), {}, {}, selectedTrackers, []);
       return true;
     } catch (err) {
       setPlaylistPreparationError(String(err));
@@ -1970,12 +2153,15 @@ export default function App() {
   const handlePlaylistSelectionComplete = async () => {
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
+    bdinfoProgressActiveRef.current = true;
     setPlaylistAutoPreparing(true);
     const completed = await runPlaylistBDInfo();
+    bdinfoProgressActiveRef.current = false;
     setPlaylistAutoPreparing(false);
     if (completed) {
       setShowPlaylistSelection(false);
       setPlaylistSelectionPath("");
+      setPlaylistPreparationTrackerSnapshot(null);
       setActiveTab("input");
     }
   };
@@ -2005,7 +2191,14 @@ export default function App() {
       setError("Please select a file or folder.");
       return;
     }
-    setMetadataProgressTarget(targetPath);
+    const trackerEligibility = resolveUploadTrackerEligibilityForPath(targetPath);
+    const selectedTrackers = trackerEligibility.selectedTrackers;
+    if (selectedTrackers.length === 0 && trackerEligibility.emptySelection) {
+      setError("Select at least one tracker before fetching metadata.");
+      return;
+    }
+    metadataProgressTargetRef.current = targetPath;
+    metadataProgressActiveRef.current = true;
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
     setLoading(true);
@@ -2015,7 +2208,7 @@ export default function App() {
         sourceLookupURL.trim(),
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
-        getSelectedTrackers(),
+        selectedTrackers,
       );
       applyPreviewResult(result, { switchToInput: options.switchToInput });
       rememberSourcePath(
@@ -2026,6 +2219,7 @@ export default function App() {
     } catch (err) {
       setError(String(err));
     } finally {
+      metadataProgressActiveRef.current = false;
       setMetadataProgressActive(false);
       setLoading(false);
     }
@@ -2107,6 +2301,11 @@ export default function App() {
       setError("Please select a file or folder.");
       return;
     }
+    const selectedTrackers = selectedUploadImageTrackers;
+    if (selectedTrackers.length === 0 && selectedUploadTrackerEligibility.emptySelection) {
+      setError("Select at least one tracker before resetting metadata.");
+      return;
+    }
     if (
       !globalThis.confirm(
         "Remove cached metadata and temporary files for this content, then refetch metadata?",
@@ -2116,27 +2315,23 @@ export default function App() {
     }
     const targetPath = path.trim();
     clearEditAttributesState();
-    setMetadataProgressTarget(targetPath);
+    metadataProgressTargetRef.current = targetPath;
+    metadataProgressActiveRef.current = true;
     setMetadataProgressUpdates([]);
     setMetadataProgressActive(true);
     setLoading(true);
     setMetadataResetting(true);
     try {
-      const result = await resetter(
-        targetPath,
-        sourceLookupURL.trim(),
-        {},
-        {},
-        getSelectedTrackers(),
-      );
+      const result = await resetter(targetPath, sourceLookupURL.trim(), {}, {}, selectedTrackers);
       applyPreviewResult(result);
       setShowExternalIDInputUI(true);
     } catch (err) {
       setError(String(err));
     } finally {
+      metadataProgressActiveRef.current = false;
       setMetadataProgressActive(false);
-      setMetadataResetting(false);
       setLoading(false);
+      setMetadataResetting(false);
     }
   };
 
@@ -2182,6 +2377,18 @@ export default function App() {
         setBuilderError("Please select a file or folder.");
         return;
       }
+      const selectedTrackers = selectedUploadImageTrackers;
+      if (
+        selectedTrackers.length === 0 &&
+        hasExplicitEmptyReleaseTrackerSelection(trackerUploadItems, releasePageTrackerSelection)
+      ) {
+        setBuilderError("Select at least one tracker before building descriptions.");
+        return;
+      }
+      if (selectedTrackers.length === 0) {
+        setBuilderError("Enable at least one tracker in Upload Targets.");
+        return;
+      }
       setBuilderLoading(true);
       setBuilderProgressMessage("Preparing metadata and tracker selection...");
       builderProgressTimers.current = [
@@ -2212,9 +2419,7 @@ export default function App() {
           path.trim(),
           normalizeOverrides(overrides),
           normalizeReleaseOverrides(nameOverrides),
-          Object.entries(releasePageTrackerSelection)
-            .filter(([, selected]) => selected)
-            .map(([name]) => name),
+          selectedTrackers,
           ignoredDupeTrackers,
         );
         setBuilderPreview(result);
@@ -2247,7 +2452,14 @@ export default function App() {
         setBuilderLoading(false);
       }
     },
-    [path, releasePageTrackerSelection, ignoredDupeTrackers, refreshUploadedImages],
+    [
+      path,
+      releasePageTrackerSelection,
+      trackerUploadItems,
+      selectedUploadImageTrackers,
+      ignoredDupeTrackers,
+      refreshUploadedImages,
+    ],
   );
 
   const refreshDescriptionBuilder = useCallback(async () => {
@@ -2428,12 +2640,16 @@ export default function App() {
     if (!path.trim()) {
       return;
     }
+    const selectedTrackers = selectedUploadImageTrackers;
+    if (selectedTrackers.length === 0 && selectedUploadTrackerEligibility.emptySelection) {
+      return;
+    }
     await fetcher(
       path.trim(),
       sourceLookupURL.trim(),
       normalizeOverrides(idOverrideState?.overrides || {}),
       normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-      getSelectedTrackers(),
+      selectedTrackers,
     );
   };
 
@@ -2722,10 +2938,8 @@ export default function App() {
     setDupeCheckSnapshot(snapshot);
     setDupeSummary(snapshot.summary || emptyDupeSummary);
 
-    const normalized = String(snapshot.status || "")
-      .toLowerCase()
-      .trim();
-    const running = normalized === "queued" || normalized === "running";
+    const normalized = normalizeJobStatus(snapshot.status);
+    const running = isRunningJobStatus(normalized);
     setDupeLoading(running);
 
     if (normalized === "completed") {
@@ -2764,25 +2978,37 @@ export default function App() {
     setDupeChecked(false);
     setDupeSummary(emptyDupeSummary);
     setDupeLoading(true);
+    let jobID = "";
     try {
-      const jobID = await starter(
+      jobID = await starter(
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
         selectedTrackers,
       );
-      setDupeCheckJobID(jobID);
-      if (snapshotLoader) {
-        const snapshot = await snapshotLoader(jobID);
-        applyDupeCheckSnapshot(snapshot);
-      }
     } catch (err) {
       const message = String(err);
+      // Starter failures do not create a durable job, so clear the polling gates.
+      setDupeLoading(false);
+      setDupeCheckJobID("");
+      setDupeCheckSnapshot(null);
       setDupeChecked(false);
       if (message.includes("dupe check requires metadata preview")) {
         setDupeError("Fetch metadata first to cache a preview before checking dupes.");
       } else {
         setDupeError(message);
+      }
+      return;
+    }
+    setDupeCheckJobID(jobID);
+    // The first snapshot is best-effort; once a job exists, events and fallback
+    // polling own lifecycle updates.
+    if (snapshotLoader) {
+      try {
+        const snapshot = await snapshotLoader(jobID);
+        applyDupeCheckSnapshot(snapshot);
+      } catch {
+        // Keep tracking the job even when this initial fetch is transiently unavailable.
       }
     }
   };
@@ -2808,6 +3034,43 @@ export default function App() {
   }, [applyDupeCheckSnapshot, dupeCheckJobID]);
 
   useEffect(() => {
+    // Poll active jobs as a fallback for missed early job events; live events
+    // still drive updates when the runtime stream is healthy.
+    const currentStatus = String(dupeCheckSnapshot?.status || "");
+    if (!dupeCheckJobID || (!dupeLoading && !isRunningJobStatus(currentStatus))) {
+      return;
+    }
+    const snapshotLoader = globalThis.go?.guiapp?.App?.GetDupeCheckSnapshot;
+    if (!snapshotLoader) {
+      return;
+    }
+
+    let stopped = false;
+    let timer: number | undefined;
+    const loadSnapshot = async () => {
+      try {
+        const snapshot = await snapshotLoader(dupeCheckJobID);
+        if (!stopped) {
+          applyDupeCheckSnapshot(snapshot);
+        }
+      } catch {
+        // Event delivery remains primary; transient polling failures should not replace UI errors.
+      }
+      if (!stopped) {
+        timer = window.setTimeout(loadSnapshot, 1000);
+      }
+    };
+
+    timer = window.setTimeout(loadSnapshot, 1000);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [applyDupeCheckSnapshot, dupeCheckJobID, dupeCheckSnapshot?.status, dupeLoading]);
+
+  useEffect(() => {
     setDupeChecked(false);
     setDupeCheckJobID("");
     setDupeCheckSnapshot(null);
@@ -2831,7 +3094,9 @@ export default function App() {
     setTrackerDryRunError("");
     setTrackerDryRunPreview(emptyTrackerDryRun);
     setTrackerDryRunProgress(null);
-    setMetadataProgressTarget("");
+    bdinfoProgressActiveRef.current = false;
+    metadataProgressTargetRef.current = "";
+    metadataProgressActiveRef.current = false;
     setMetadataProgressActive(false);
     setMetadataProgressUpdates([]);
     resetScreenshotState();
@@ -2946,21 +3211,45 @@ export default function App() {
       const next = { ...prev };
       trackerUploadItems.forEach((item) => {
         const normalized = item.name.toLowerCase();
-        if (failedDupeTrackerSet.has(normalized)) {
+        const hasReleaseSelection = Object.prototype.hasOwnProperty.call(
+          releasePageTrackerSelection,
+          item.name,
+        );
+        if (hasReleaseSelection && !releasePageTrackerSelection[item.name]) {
+          delete next[item.name];
+          return;
+        }
+        if (dupeFiltersMatchCurrentPath && failedDupeTrackerSet.has(normalized)) {
           next[item.name] = false;
           return;
         }
-        if (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized)) {
+        if (
+          dupeFiltersMatchCurrentPath &&
+          (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized))
+        ) {
           next[item.name] = false;
           return;
         }
         if (next[item.name] === undefined) {
           // Prioritize release page selection, then fall back to defaults
-          if (releasePageTrackerSelection[item.name] !== undefined) {
+          if (hasReleaseSelection) {
             next[item.name] = releasePageTrackerSelection[item.name];
           } else {
             next[item.name] = defaultTrackerSet.has(normalized);
           }
+        }
+      });
+      const trackerNames = new Set(trackerUploadItems.map((item) => item.name));
+      Object.keys(next).forEach((name) => {
+        if (!trackerNames.has(name)) {
+          delete next[name];
+          return;
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(releasePageTrackerSelection, name) &&
+          !releasePageTrackerSelection[name]
+        ) {
+          delete next[name];
         }
       });
       return next;
@@ -2968,6 +3257,7 @@ export default function App() {
   }, [
     trackerUploadItems,
     defaultTrackerSet,
+    dupeFiltersMatchCurrentPath,
     dupedTrackerSet,
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,
@@ -3035,12 +3325,8 @@ export default function App() {
     setTrackerDryRunProgress(null);
   }, [path]);
 
-  // NOTE: releasePageTrackerSelection is memory-only state tracking which trackers
-  // the user has selected for the current release on the input page.
-  // During final upload handling, use the trackers selected here combined with
-  // dupe-check filtering and any special rules (e.g., banned groups).
-
-  // Helper to get selected tracker names
+  // releasePageTrackerSelection is raw input-page state. Workflows that must
+  // honor upload eligibility use selectedUploadImageTrackers instead.
   const getSelectedTrackers = () => {
     return Object.entries(releasePageTrackerSelection)
       .filter(([, selected]) => selected)
@@ -3067,6 +3353,23 @@ export default function App() {
     },
     [],
   );
+
+  /** Applies an upload job snapshot from either live events or polling fallback. */
+  const applyTrackerUploadSnapshot = useCallback((snapshot: TrackerUploadSnapshot) => {
+    setTrackerUploadSnapshot(snapshot);
+    const normalized = normalizeJobStatus(snapshot.status);
+    const running = isRunningJobStatus(normalized);
+    setTrackerUploadRunning(running);
+    if (normalized === "completed") {
+      setTrackerUploadError("");
+    } else if (
+      normalized === "completed_with_errors" ||
+      normalized === "failed" ||
+      normalized === "canceled"
+    ) {
+      setTrackerUploadError(snapshot.error || "Upload finished with errors.");
+    }
+  }, []);
 
   const handleStartTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
@@ -3119,8 +3422,9 @@ export default function App() {
     }
     setTrackerUploadRunning(true);
     setTrackerUploadSnapshot(null);
+    let jobID = "";
     try {
-      const jobID = await starter(
+      jobID = await starter(
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
@@ -3132,14 +3436,19 @@ export default function App() {
         uploadSkipClientInjection,
         runLogLevel,
       );
-      setTrackerUploadJobID(jobID);
-      if (snapshotLoader) {
-        const snapshot = await snapshotLoader(jobID);
-        setTrackerUploadSnapshot(snapshot);
-      }
     } catch (err) {
       setTrackerUploadRunning(false);
       setTrackerUploadError(String(err));
+      return;
+    }
+    setTrackerUploadJobID(jobID);
+    if (snapshotLoader) {
+      try {
+        const snapshot = await snapshotLoader(jobID);
+        applyTrackerUploadSnapshot(snapshot);
+      } catch {
+        // Events and polling continue tracking the started job when bootstrap refresh fails.
+      }
     }
   }, [
     path,
@@ -3153,6 +3462,7 @@ export default function App() {
     runDebug,
     uploadSkipClientInjection,
     runLogLevel,
+    applyTrackerUploadSnapshot,
   ]);
 
   const runTrackerDryRun = useCallback(
@@ -3312,18 +3622,25 @@ export default function App() {
       return;
     }
     setTrackerUploadRunning(true);
+    let nextJobID = "";
     try {
-      const nextJobID = await retry(trackerUploadJobID);
-      setTrackerUploadJobID(nextJobID);
-      if (snapshotLoader) {
-        const snapshot = await snapshotLoader(nextJobID);
-        setTrackerUploadSnapshot(snapshot);
-      }
+      nextJobID = await retry(trackerUploadJobID);
     } catch (err) {
       setTrackerUploadRunning(false);
       setTrackerUploadError(String(err));
+      return;
     }
-  }, [trackerUploadJobID]);
+    setTrackerUploadJobID(nextJobID);
+    setTrackerUploadSnapshot(null);
+    if (snapshotLoader) {
+      try {
+        const snapshot = await snapshotLoader(nextJobID);
+        applyTrackerUploadSnapshot(snapshot);
+      } catch {
+        // Events and polling continue tracking the replacement job when bootstrap refresh fails.
+      }
+    }
+  }, [applyTrackerUploadSnapshot, trackerUploadJobID]);
 
   useEffect(() => {
     if (!trackerUploadJobID) {
@@ -3335,16 +3652,7 @@ export default function App() {
       if (payload?.jobID !== trackerUploadJobID) {
         return;
       }
-      const snapshot = payload as TrackerUploadSnapshot;
-      setTrackerUploadSnapshot(snapshot);
-      const normalized = String(snapshot.status || "").toLowerCase();
-      const running = normalized === "queued" || normalized === "running";
-      setTrackerUploadRunning(running);
-      if (normalized === "completed") {
-        setTrackerUploadError("");
-      } else if (normalized === "completed_with_errors" || normalized === "canceled") {
-        setTrackerUploadError(snapshot.error || "Upload finished with errors.");
-      }
+      applyTrackerUploadSnapshot(payload as TrackerUploadSnapshot);
     });
 
     return () => {
@@ -3352,7 +3660,48 @@ export default function App() {
         off();
       }
     };
-  }, [trackerUploadJobID]);
+  }, [applyTrackerUploadSnapshot, trackerUploadJobID]);
+
+  useEffect(() => {
+    // Poll active upload jobs as a fallback for missed upload snapshot events.
+    const currentStatus = String(trackerUploadSnapshot?.status || "");
+    if (!trackerUploadJobID || (!trackerUploadRunning && !isRunningJobStatus(currentStatus))) {
+      return;
+    }
+    const snapshotLoader = globalThis.go?.guiapp?.App?.GetTrackerUploadSnapshot;
+    if (!snapshotLoader) {
+      return;
+    }
+
+    let stopped = false;
+    let timer: number | undefined;
+    const loadSnapshot = async () => {
+      try {
+        const snapshot = await snapshotLoader(trackerUploadJobID);
+        if (!stopped) {
+          applyTrackerUploadSnapshot(snapshot);
+        }
+      } catch {
+        // Event delivery remains primary; transient polling failures should not replace UI errors.
+      }
+      if (!stopped) {
+        timer = window.setTimeout(loadSnapshot, 1000);
+      }
+    };
+
+    timer = window.setTimeout(loadSnapshot, 1000);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [
+    applyTrackerUploadSnapshot,
+    trackerUploadJobID,
+    trackerUploadRunning,
+    trackerUploadSnapshot?.status,
+  ]);
 
   const markReleaseTouched = (key: keyof ReleaseNameTouchedState) => {
     setReleaseTouched((prev) => ({ ...prev, [key]: true }));
@@ -3697,7 +4046,10 @@ export default function App() {
           {showPlaylistSelection ? (
             <PlaylistSelectionPage
               path={playlistSelectionPath}
-              onBack={() => setShowPlaylistSelection(false)}
+              onBack={() => {
+                setShowPlaylistSelection(false);
+                setPlaylistPreparationTrackerSnapshot(null);
+              }}
               onConfirm={handlePlaylistSelectionComplete}
               preparing={playlistAutoPreparing}
               progressLines={bdinfoProgressLines}

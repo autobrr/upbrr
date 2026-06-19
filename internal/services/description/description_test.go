@@ -200,7 +200,9 @@ func TestRenderLinkedWidthImageBBCode(t *testing.T) {
 	if !strings.Contains(rendered, "<a href=\"https://pixhost.to/fv71hr.png\">") {
 		t.Fatalf("expected linked image wrapper, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "<img src=\"https://pixhost.to/fv71hr.png\" width=\"350\"") {
+	if !strings.Contains(rendered, "<img ") ||
+		!strings.Contains(rendered, "src=\"https://pixhost.to/fv71hr.png\"") ||
+		!strings.Contains(rendered, "width=\"350\"") {
 		t.Fatalf("expected image width preserved, got %q", rendered)
 	}
 	if strings.Contains(rendered, "&lt;img") || strings.Contains(rendered, "https://pixhost.to/fv71hr.png</a>") {

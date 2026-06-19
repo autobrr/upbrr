@@ -83,12 +83,16 @@ func finalize(cfg *config.Config, warnings []string, err error) (*config.Config,
 // parseNative handles .yaml/.yml/.json exports by overlaying the user's data
 // onto the embedded default config. This mirrors the legacy conversion flow
 // and guarantees that fields absent from the import keep sensible defaults,
-// including any new settings added since the file was written.
+// including any new settings added since the file was written. Template torrent
+// clients are stripped, but an omitted or null torrent_clients section is
+// normalized to an empty map so exports and UI consumers see {} instead of null.
 func parseNative(filename string, data []byte) (*config.Config, error) {
 	cfg, err := config.LoadEmbeddedDefaultConfig()
 	if err != nil {
 		return nil, fmt.Errorf("import config: load defaults: %w", err)
 	}
+	// Template clients are examples, not imported user configuration.
+	cfg.TorrentClients = make(map[string]config.TorrentClientConfig)
 
 	ext := strings.ToLower(filepath.Ext(filename))
 	switch ext {
@@ -108,6 +112,9 @@ func parseNative(filename string, data []byte) (*config.Config, error) {
 		}
 	default:
 		return nil, fmt.Errorf("import config: unsupported file extension %q (supported: .py, .yaml, .yml, .json)", ext)
+	}
+	if cfg.TorrentClients == nil {
+		cfg.TorrentClients = make(map[string]config.TorrentClientConfig)
 	}
 
 	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {

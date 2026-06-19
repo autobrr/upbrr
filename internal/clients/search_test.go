@@ -939,6 +939,137 @@ func TestResolveSearchClientsUsesClientOverride(t *testing.T) {
 	}
 }
 
+func TestResolveSearchClientsSkipsFallbackWhenDefaultClientUnknown(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "missing",
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {Type: "qbit"},
+		},
+	}
+
+	clients, usedFallback := resolveSearchClients(cfg, api.ClientOverrides{})
+	if usedFallback {
+		t.Fatalf("expected unknown default selector to suppress fallback")
+	}
+	if len(clients) != 0 {
+		t.Fatalf("expected no search clients, got %v", clients)
+	}
+}
+
+func TestResolveSearchClientsSkipsFallbackWhenSearchClientUnknown(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{"missing"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {Type: "qbit"},
+		},
+	}
+
+	clients, usedFallback := resolveSearchClients(cfg, api.ClientOverrides{})
+	if usedFallback {
+		t.Fatalf("expected unknown search selector to suppress fallback")
+	}
+	if len(clients) != 0 {
+		t.Fatalf("expected no search clients, got %v", clients)
+	}
+}
+
+func TestResolveSearchClientsNoneSearchListDisablesFallback(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{" none "},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {Type: "qbit"},
+		},
+	}
+
+	clients, usedFallback := resolveSearchClients(cfg, api.ClientOverrides{})
+	if usedFallback {
+		t.Fatalf("expected none search selector to suppress fallback")
+	}
+	if len(clients) != 0 {
+		t.Fatalf("expected no search clients, got %v", clients)
+	}
+}
+
+func TestResolveSearchClientsBlankSearchListUsesDefaultClient(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{" ", ""},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit":  {Type: "qbit"},
+			"other": {Type: "qbit"},
+		},
+	}
+
+	clients, usedFallback := resolveSearchClients(cfg, api.ClientOverrides{})
+	if usedFallback {
+		t.Fatalf("expected blank search list to use default without fallback")
+	}
+	if len(clients) != 1 || clients[0] != "qbit" {
+		t.Fatalf("expected default qbit selector, got %v", clients)
+	}
+}
+
+func TestResolveSearchClientsBlankSearchListWithoutDefaultUsesFallback(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			SearchClients: config.CSVList{" "},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit":  {Type: "qbit"},
+			"watch": {Type: "watch"},
+		},
+	}
+
+	clients, usedFallback := resolveSearchClients(cfg, api.ClientOverrides{})
+	if !usedFallback {
+		t.Fatalf("expected blank search list without default to use implicit fallback")
+	}
+	if len(clients) != 1 || clients[0] != "qbit" {
+		t.Fatalf("expected qbit fallback only, got %v", clients)
+	}
+}
+
+func TestResolveSearchClientsNormalizesSelectorCase(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		ClientSetup: config.ClientSetupConfig{
+			SearchClients: config.CSVList{" QBIT ", "qbit"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {Type: "qbit"},
+		},
+	}
+
+	clients, usedFallback := resolveSearchClients(cfg, api.ClientOverrides{})
+	if usedFallback {
+		t.Fatalf("expected configured selector to avoid fallback")
+	}
+	if len(clients) != 1 || clients[0] != "qbit" {
+		t.Fatalf("expected normalized qbit selector, got %v", clients)
+	}
+}
+
 func TestBuildTrackerIDPatternsIncludesUnit3DBaseURLs(t *testing.T) {
 	for _, tracker := range trackers.Unit3DTrackers() {
 		baseURL, ok := unit3dmeta.BaseURL(tracker)
@@ -1091,7 +1222,7 @@ func padTorrentData(t *testing.T, data []byte, minSize int, expectedHash string)
 	}
 
 	padding := bytes.Repeat([]byte("p"), minSize-len(data)+32)
-	entry := []byte(fmt.Sprintf("7:padding%d:", len(padding)))
+	entry := fmt.Appendf(nil, "7:padding%d:", len(padding))
 	padded := make([]byte, 0, len(data)+len(entry)+len(padding))
 	padded = append(padded, data[:len(data)-1]...)
 	padded = append(padded, entry...)

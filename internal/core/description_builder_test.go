@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -15,12 +16,13 @@ import (
 )
 
 type stubDescriptionBuilderTrackers struct {
-	called      bool
-	prepareMeta api.PreparedMetadata
-	preview     api.PreparationPreview
-	dryRunMeta  api.PreparedMetadata
-	uploadMeta  api.PreparedMetadata
-	dryRunItems []api.TrackerDryRunEntry
+	called          bool
+	prepareMeta     api.PreparedMetadata
+	prepareTrackers []string
+	preview         api.PreparationPreview
+	dryRunMeta      api.PreparedMetadata
+	uploadMeta      api.PreparedMetadata
+	dryRunItems     []api.TrackerDryRunEntry
 }
 
 func (s *stubDescriptionBuilderTrackers) Upload(_ context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
@@ -31,6 +33,7 @@ func (s *stubDescriptionBuilderTrackers) Upload(_ context.Context, meta api.Prep
 func (s *stubDescriptionBuilderTrackers) BuildPreparation(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.PreparationPreview, error) {
 	s.called = true
 	s.prepareMeta = meta
+	s.prepareTrackers = append([]string{}, trackers...)
 	if strings.TrimSpace(s.preview.SourcePath) == "" {
 		s.preview.SourcePath = meta.SourcePath
 	}
@@ -203,6 +206,141 @@ func TestFetchDescriptionBuilderPreviewFallsBackToPrepareInGUI(t *testing.T) {
 	}
 	if preview.SourcePath != "/tmp/source" {
 		t.Fatalf("expected source path to be set, got %q", preview.SourcePath)
+	}
+}
+
+func TestFetchDescriptionBuilderPreviewUsesOnlyExplicitTrackers(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{}
+	metaSvc := &stubMeta{prepared: api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Trackers:   []string{"BLU"},
+	}}
+	core := &Core{
+		cfg: config.Config{
+			Description:        config.DescriptionSettingsConfig{AddLogo: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Trackers:           config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	_, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+		Options:  api.UploadOptions{Screens: 1},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !reflect.DeepEqual(trackerSvc.prepareTrackers, []string{"AITHER"}) {
+		t.Fatalf("expected explicit tracker only, got %v", trackerSvc.prepareTrackers)
+	}
+}
+
+func TestFetchDescriptionBuilderPreviewReturnsEmptyWhenSelectedTrackersResolveEmpty(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{}
+	metaSvc := &stubMeta{prepared: api.PreparedMetadata{
+		SourcePath:     "/tmp/source",
+		TrackersRemove: []string{"AITHER"},
+	}}
+	core := &Core{
+		cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	preview, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+		Options:  api.UploadOptions{Screens: 1},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if trackerSvc.called {
+		t.Fatal("expected tracker preparation to be skipped when selected trackers resolve empty")
+	}
+	if metaSvc.resolveCalls != 0 {
+		t.Fatalf("expected external metadata refresh to be skipped when selected trackers resolve empty, got %d", metaSvc.resolveCalls)
+	}
+	if preview.SourcePath != "/tmp/source" {
+		t.Fatalf("expected source path to be preserved, got %q", preview.SourcePath)
+	}
+	if len(preview.Groups) != 0 {
+		t.Fatalf("expected no description groups, got %d", len(preview.Groups))
+	}
+	if _, ok := core.getDupeCache("/tmp/source", ""); ok {
+		t.Fatal("expected explicit-empty preview not to seed GUI cache")
+	}
+}
+
+func TestFetchDescriptionBuilderGroupPreviewReturnsEmptyWhenSelectedTrackersResolveEmpty(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{}
+	metaSvc := &stubMeta{prepared: api.PreparedMetadata{
+		SourcePath:     "/tmp/source",
+		TrackersRemove: []string{"AITHER"},
+	}}
+	core := &Core{
+		cfg: config.Config{
+			Description:        config.DescriptionSettingsConfig{AddLogo: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Trackers:           config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	group, err := core.FetchDescriptionBuilderGroupPreview(context.Background(), api.Request{
+		Paths:                    []string{"/tmp/source"},
+		Mode:                     api.ModeGUI,
+		Trackers:                 []string{"AITHER"},
+		DescriptionOverrideGroup: "AITHER",
+		Options:                  api.UploadOptions{Screens: 1},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if trackerSvc.called {
+		t.Fatal("expected tracker preparation to be skipped when selected trackers resolve empty")
+	}
+	if metaSvc.resolveCalls != 0 {
+		t.Fatalf("expected external metadata refresh to be skipped when selected trackers resolve empty, got %d", metaSvc.resolveCalls)
+	}
+	if !reflect.DeepEqual(group, api.DescriptionBuilderGroup{}) {
+		t.Fatalf("expected empty group, got %#v", group)
+	}
+	if _, ok := core.getDupeCache("/tmp/source", ""); ok {
+		t.Fatal("expected explicit-empty group preview not to seed GUI cache")
 	}
 }
 
@@ -509,6 +647,61 @@ func TestFetchDescriptionBuilderPreviewAppliesIgnoredDupesToCachedMeta(t *testin
 	}
 }
 
+func TestFetchDescriptionBuilderPreviewUsesIgnoredMatchedTracker(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{
+		preview: api.PreparationPreview{
+			SourcePath: "/tmp/source",
+			Descriptions: []api.PreparationDescription{
+				{GroupKey: "aither", Trackers: []string{"AITHER"}, Description: "aither body"},
+			},
+		},
+	}
+	core := &Core{
+		cfg: config.Config{
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Trackers:           config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	core.storeRefreshedDupeCache("/tmp/source", "", api.PreparedMetadata{
+		SourcePath:      "/tmp/source",
+		TrackersRemove:  []string{"AITHER", "BLU"},
+		MatchedTrackers: []string{"AITHER", "BLU"},
+	})
+
+	preview, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+		Paths:          []string{"/tmp/source"},
+		Mode:           api.ModeGUI,
+		Trackers:       []string{"AITHER"},
+		IgnoreDupesFor: []string{"AITHER"},
+		Options:        api.UploadOptions{Screens: 1},
+	})
+	if err != nil {
+		t.Fatalf("fetch description builder preview: %v", err)
+	}
+	if len(preview.Groups) != 1 {
+		t.Fatalf("expected one description group, got %d", len(preview.Groups))
+	}
+	if !reflect.DeepEqual(trackerSvc.prepareTrackers, []string{"AITHER"}) {
+		t.Fatalf("expected ignored matched tracker without default fallback, got %v", trackerSvc.prepareTrackers)
+	}
+	if containsTrackerName(trackerSvc.prepareMeta.TrackersRemove, "AITHER") || !containsTrackerName(trackerSvc.prepareMeta.TrackersRemove, "BLU") {
+		t.Fatalf("expected only unignored duplicate removal to remain, got %v", trackerSvc.prepareMeta.TrackersRemove)
+	}
+	if containsTrackerName(trackerSvc.prepareMeta.MatchedTrackers, "AITHER") || !containsTrackerName(trackerSvc.prepareMeta.MatchedTrackers, "BLU") {
+		t.Fatalf("expected only unignored matched tracker to remain, got %v", trackerSvc.prepareMeta.MatchedTrackers)
+	}
+}
+
 func TestFetchDescriptionBuilderGroupPreviewAppliesIgnoredFailuresToRefreshedCache(t *testing.T) {
 	t.Parallel()
 
@@ -776,6 +969,38 @@ func TestFetchTrackerDryRunPreviewUsesCanonicalDescriptionGroups(t *testing.T) {
 	}
 	if trackerSvc.dryRunMeta.DescriptionGroups[0].RawDescription != "saved canonical body" {
 		t.Fatalf("expected dry-run to use canonical description group, got %q", trackerSvc.dryRunMeta.DescriptionGroups[0].RawDescription)
+	}
+}
+
+func TestResolveCanonicalDescriptionGroupsSkipsDefaultsWhenExplicitSelectionResolvesEmpty(t *testing.T) {
+	t.Parallel()
+
+	trackerSvc := &stubDescriptionBuilderTrackers{}
+	core := &Core{
+		cfg: config.Config{
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Trackers:           config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Trackers: trackerSvc,
+		},
+	}
+
+	groups, err := core.resolveCanonicalDescriptionGroups(context.Background(), api.PreparedMetadata{
+		SourcePath:     "/tmp/source",
+		TrackersRemove: []string{"AITHER"},
+	}, api.Request{
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if trackerSvc.called {
+		t.Fatal("expected tracker preparation to be skipped when selected trackers resolve empty")
+	}
+	if len(groups) != 0 {
+		t.Fatalf("expected no canonical groups, got %#v", groups)
 	}
 }
 
