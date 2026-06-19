@@ -541,6 +541,89 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	}
 }
 
+func TestTrackersConfigCZTAuthFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+		Trackers: TrackersConfig{
+			DefaultTrackers: CSVList{"CZT"},
+			Trackers: map[string]TrackerConfig{
+				"CZT": {
+					URL:         "https://czteam.example",
+					APIKey:      "service-token",
+					Passkey:     "user-passkey",
+					AnnounceURL: "https://should-not-be-here",
+				},
+			},
+		},
+	}
+
+	jsonPayload, err := ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("export json: %v", err)
+	}
+	jsonRoundTrip, err := ImportFromJSON(jsonPayload)
+	if err != nil {
+		t.Fatalf("import json: %v", err)
+	}
+	jsonCZT := jsonRoundTrip.Trackers.Trackers["CZT"]
+	if jsonCZT.URL != "https://czteam.example" {
+		t.Fatalf("json CZT URL mismatch: got %q", jsonCZT.URL)
+	}
+	if jsonCZT.APIKey != "service-token" {
+		t.Fatalf("json CZT APIKey mismatch: got %q", jsonCZT.APIKey)
+	}
+	if jsonCZT.Passkey != "user-passkey" {
+		t.Fatalf("json CZT Passkey mismatch: got %q", jsonCZT.Passkey)
+	}
+	if jsonCZT.AnnounceURL != "" {
+		t.Fatalf("json CZT should not include AnnounceURL, got %q", jsonCZT.AnnounceURL)
+	}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.yaml")
+	if err := ExportToPlaintextYAML(cfg, path); err != nil {
+		t.Fatalf("export yaml: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read yaml: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"url: https://czteam.example",
+		"api_key: service-token",
+		"passkey: user-passkey",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("yaml export missing %q in:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "announce_url: https://should-not-be-here") {
+		t.Fatalf("yaml CZT should not include announce_url")
+	}
+
+	yamlRoundTrip, err := ImportFromYAML(path)
+	if err != nil {
+		t.Fatalf("import yaml: %v", err)
+	}
+	yamlCZT := yamlRoundTrip.Trackers.Trackers["CZT"]
+	if yamlCZT.URL != "https://czteam.example" {
+		t.Fatalf("yaml CZT URL mismatch: got %q", yamlCZT.URL)
+	}
+	if yamlCZT.APIKey != "service-token" {
+		t.Fatalf("yaml CZT APIKey mismatch: got %q", yamlCZT.APIKey)
+	}
+	if yamlCZT.Passkey != "user-passkey" {
+		t.Fatalf("yaml CZT Passkey mismatch: got %q", yamlCZT.Passkey)
+	}
+	if yamlCZT.AnnounceURL != "" {
+		t.Fatalf("yaml CZT should not include AnnounceURL, got %q", yamlCZT.AnnounceURL)
+	}
+}
+
 func TestTrackersConfigPreferredTrackerRoundTripJSON(t *testing.T) {
 	t.Parallel()
 

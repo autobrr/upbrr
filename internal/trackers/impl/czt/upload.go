@@ -16,13 +16,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -63,7 +68,7 @@ type uploadState struct {
 }
 
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
-	state, err := prepareUploadState(ctx, req)
+	state, err := prepareUploadState(ctx, req, true)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -89,27 +94,42 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: CZT upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(resp.Body)
-
-	var parsed uploadResponse
-	_ = json.Unmarshal(responseBody, &parsed)
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: CZT read upload response: %w", err)
+	}
 
 	// Only a fresh 201 with a torrent id is a successful upload. A 409 means the
 	// release name already exists; surface it as an error (the response still
 	// carries the existing torrent for callers who want to cross-seed).
-	if resp.StatusCode != http.StatusCreated || parsed.ID <= 0 {
+	if resp.StatusCode != http.StatusCreated {
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName, "upload_failure", responseBody, ".json")
+		return api.UploadSummary{}, commonhttp.UploadHTTPError(trackerName, resp.StatusCode, responseBody)
+	}
+
+	var parsed uploadResponse
+	if err := json.Unmarshal(responseBody, &parsed); err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: CZT parse upload response: %w", err)
+	}
+	if parsed.ID <= 0 {
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName, "upload_failure", responseBody, ".json")
 		return api.UploadSummary{}, commonhttp.UploadHTTPError(trackerName, resp.StatusCode, responseBody)
 	}
 
 	torrentID := strconv.Itoa(parsed.ID)
 	torrentURL := state.baseURL + "/details.php?id=" + torrentID
-	downloadURL := state.baseURL + parsed.DownloadURL
+	downloadURL, err := joinCZTURL(state.baseURL, parsed.DownloadURL)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: CZT upload response download_url: %w", err)
+	}
 
 	// The endpoint returns the registered .torrent inline (base64), already
 	// personalized with the uploader's announce passkey and source=CzT, so we
 	// persist that directly rather than re-deriving an announce URL.
-	artifactPath := persistReturnedTorrent(req, parsed.TorrentB64)
+	artifactPath, err := persistReturnedTorrent(req, parsed.TorrentB64)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: CZT persist returned torrent: %w", err)
+	}
 
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 		Tracker:     trackerName,
@@ -121,14 +141,20 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
-	state, err := prepareUploadState(ctx, req)
+	state, err := prepareUploadState(ctx, req, false)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
+	status := "ready"
+	message := "dry-run payload generated"
+	if missingRequiredCategory(state) {
+		status = "blocked"
+		message = "answer the category questionnaire to continue"
+	}
 	return api.TrackerDryRunEntry{
 		Tracker:          trackerName,
-		Status:           "ready",
-		Message:          "dry-run payload generated",
+		Status:           status,
+		Message:          message,
 		ReleaseName:      state.releaseName,
 		DescriptionGroup: descGroup,
 		Description:      state.description,
@@ -139,17 +165,13 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
+func prepareUploadState(ctx context.Context, req trackers.UploadRequest, requireCategory bool) (uploadState, error) {
 	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
-	if err != nil {
-		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
-		assets = trackers.DescriptionAssets{}
-	}
+	assets := uploadDescriptionAssets(ctx, req)
 
 	// CZTeam stores two description fields separately: `descr` holds the raw
 	// MediaInfo/BDInfo dump, and `user_descr` holds the free-form BBCode body
@@ -159,9 +181,19 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	releaseName := resolveName(req.Meta)
 	baseURL := resolveBaseURL(req.TrackerConfig)
 
+	category, err := resolveCategory(req.Meta)
+	if err != nil {
+		if requireCategory {
+			return uploadState{}, err
+		}
+		category = ""
+	}
+
 	fields := map[string]string{
-		"name":     releaseName,
-		"category": resolveCategory(req.Meta),
+		"name": releaseName,
+	}
+	if category != "" {
+		fields["category"] = category
 	}
 	if strings.TrimSpace(mediaInfo) != "" {
 		fields["descr"] = mediaInfo
@@ -213,22 +245,49 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}, nil
 }
 
-func persistReturnedTorrent(req trackers.UploadRequest, b64 string) string {
+// uploadDescriptionAssets uses caller-prepared assets when available, falling
+// back to local resolution and an empty asset set on resolution failure.
+func uploadDescriptionAssets(ctx context.Context, req trackers.UploadRequest) trackers.DescriptionAssets {
+	if req.Assets != nil {
+		return *req.Assets
+	}
+	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	if err != nil {
+		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
+		return trackers.DescriptionAssets{}
+	}
+	return assets
+}
+
+// persistReturnedTorrent decodes the tracker-returned base64 torrent, verifies
+// it parses as metainfo, and writes the registered torrent artifact with user
+// read/write permissions only.
+func persistReturnedTorrent(req trackers.UploadRequest, b64 string) (string, error) {
 	if strings.TrimSpace(b64) == "" {
-		return ""
+		return "", errors.New("empty torrent_b64")
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
-	if err != nil || len(decoded) == 0 {
-		return ""
+	if err != nil {
+		return "", fmt.Errorf("decode torrent_b64: %w", err)
+	}
+	if len(decoded) == 0 {
+		return "", errors.New("decoded torrent_b64 is empty")
+	}
+	torrentMeta, err := metainfo.Load(bytes.NewReader(decoded))
+	if err != nil {
+		return "", fmt.Errorf("load returned torrent: %w", err)
+	}
+	if _, err := torrentMeta.UnmarshalInfo(); err != nil {
+		return "", fmt.Errorf("unmarshal returned torrent info: %w", err)
 	}
 	path, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("resolve returned torrent path: %w", err)
 	}
 	if err := os.WriteFile(path, decoded, 0o600); err != nil {
-		return ""
+		return "", fmt.Errorf("write returned torrent: %w", err)
 	}
-	return path
+	return path, nil
 }
 
 // buildMediaInfo returns the raw MediaInfo/BDInfo text for the CZTeam `descr`
@@ -285,6 +344,37 @@ func resolveBaseURL(cfg config.TrackerConfig) string {
 		return strings.TrimRight(value, "/")
 	}
 	return defaultBaseURL
+}
+
+// joinCZTURL resolves a tracker-provided download URL against the configured
+// CZTeam base URL and rejects empty, non-addressable, or cross-host results.
+func joinCZTURL(baseURL string, rawRef string) (string, error) {
+	trimmedRef := strings.TrimSpace(rawRef)
+	if trimmedRef == "" {
+		return "", errors.New("empty URL")
+	}
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/")
+	if err != nil {
+		return "", fmt.Errorf("parse base URL: %w", err)
+	}
+	if base.Scheme == "" || base.Host == "" {
+		return "", errors.New("base URL must be absolute")
+	}
+	ref, err := url.Parse(trimmedRef)
+	if err != nil {
+		return "", fmt.Errorf("parse URL: %w", err)
+	}
+	resolved := base.ResolveReference(ref)
+	if resolved.Scheme == "" || resolved.Host == "" {
+		return "", errors.New("resolved URL must be absolute")
+	}
+	if !strings.EqualFold(resolved.Scheme, base.Scheme) || !strings.EqualFold(resolved.Host, base.Host) {
+		return "", errors.New("resolved URL must stay on configured CZT host")
+	}
+	if strings.TrimSpace(resolved.Path) == "" && strings.TrimSpace(resolved.RawQuery) == "" {
+		return "", errors.New("resolved URL has no path or query")
+	}
+	return resolved.String(), nil
 }
 
 func resolveName(meta api.PreparedMetadata) string {
@@ -369,6 +459,7 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 // with the auto-detected category, so the user can override it for content
 // upbrr can't classify from video metadata.
 func categoryQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
+	auto := autoCategory(meta)
 	return &api.TrackerQuestionnaire{
 		Tracker: trackerName,
 		Fields: []api.TrackerQuestionnaireField{{
@@ -376,27 +467,50 @@ func categoryQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire 
 			Label:    "Category",
 			Kind:     "select",
 			Options:  categoryNames(),
-			Value:    categoryNameForID(autoCategory(meta)),
+			Value:    categoryNameForID(auto),
 			Help:     "Auto-detected from video metadata. Override for software, games, music, XXX, etc.",
-			Required: false,
+			Required: auto == "",
 		}},
 	}
 }
 
 // resolveCategory returns the CZTeam category id: an explicit questionnaire
 // override when the user picked one, otherwise the auto-detected video category.
-func resolveCategory(meta api.PreparedMetadata) string {
-	if id := categoryIDForName(questionnaireAnswers(meta)["category"]); id != "" {
-		return id
+func resolveCategory(meta api.PreparedMetadata) (string, error) {
+	if id := resolveQuestionnaireCategory(questionnaireAnswers(meta)["category"]); id != "" {
+		return id, nil
 	}
-	return autoCategory(meta)
+	if id := autoCategory(meta); id != "" {
+		return id, nil
+	}
+	return "", errors.New("trackers: CZT category requires explicit questionnaire selection for non-video content")
 }
 
-// autoCategory maps prepared metadata to a CZTeam numeric categories.id.
-// CZTeam has no UNIT3D-style slug map, so this mirrors the auto-uploader's
-// buckets, routes Romanian-subtitled releases to the -RO categories, and always
-// returns a non-zero id (the endpoint requires one).
+func resolveQuestionnaireCategory(value string) string {
+	if id := categoryIDForName(value); id != "" {
+		return id
+	}
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	for _, c := range cztCategories {
+		if c.id == trimmed {
+			return c.id
+		}
+	}
+	return ""
+}
+
+// autoCategory maps prepared metadata to a CZTeam numeric categories.id when
+// metadata supports automatic classification. Unknown non-video content returns
+// empty so callers can require an explicit questionnaire category instead of
+// falling back to a movie bucket.
 func autoCategory(meta api.PreparedMetadata) string {
+	if id, ok := nonVideoCategory(meta); ok {
+		return id
+	}
+
 	ro := hasRomanianSubs(meta)
 	hd := isHD(meta.Release.Resolution)
 
@@ -441,6 +555,99 @@ func autoCategory(meta api.PreparedMetadata) string {
 	default:
 		return "29" // default to Movies/HD
 	}
+}
+
+// nonVideoCategory classifies explicit non-video category hints. The boolean
+// reports whether a non-video hint was found even when it still requires a
+// manual questionnaire answer.
+func nonVideoCategory(meta api.PreparedMetadata) (string, bool) {
+	hints := []string{
+		meta.ExternalIDs.Category,
+		meta.MediaInfoCategory,
+		meta.Release.Category,
+	}
+	for _, hint := range hints {
+		normalized := normalizeCategoryHint(hint)
+		if normalized == "" {
+			continue
+		}
+		if isMusicVideoCategoryHint(normalized) {
+			return "30", true
+		}
+		if isVideoCategoryHint(normalized) {
+			continue
+		}
+		switch {
+		case strings.Contains(normalized, "xxx"), strings.Contains(normalized, "adult"):
+			return "1", true
+		case strings.Contains(normalized, "console"):
+			return "12", true
+		case strings.Contains(normalized, "game"):
+			return "4", true
+		case strings.Contains(normalized, "lossless"), strings.Contains(normalized, "flac"):
+			return "35", true
+		case strings.Contains(normalized, "music"), strings.Contains(normalized, "audio"):
+			return "6", true
+		case strings.Contains(normalized, "software"), strings.Contains(normalized, "app"):
+			return "22", true
+		case strings.Contains(normalized, "mobile"), strings.Contains(normalized, "android"), strings.Contains(normalized, "ios"):
+			return "9", true
+		case strings.Contains(normalized, "image"), strings.Contains(normalized, "photo"):
+			return "24", true
+		case strings.Contains(normalized, "doc"), strings.Contains(normalized, "book"), strings.Contains(normalized, "ebook"):
+			return "25", true
+		case strings.Contains(normalized, "mac"):
+			return "31", true
+		case strings.Contains(normalized, "sport"):
+			return "32", true
+		default:
+			return "", true
+		}
+	}
+	return "", false
+}
+
+func missingRequiredCategory(state uploadState) bool {
+	if state.questionnaire == nil {
+		return false
+	}
+	if strings.TrimSpace(state.fields["category"]) != "" {
+		return false
+	}
+	for _, field := range state.questionnaire.Fields {
+		if field.Key == "category" && field.Required {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeCategoryHint(value string) string {
+	replacer := strings.NewReplacer("-", " ", "_", " ", ".", " ", "/", " ", "\\", " ", ":", " ")
+	return strings.ToLower(strings.TrimSpace(replacer.Replace(value)))
+}
+
+func isMusicVideoCategoryHint(value string) bool {
+	fields := strings.Fields(value)
+	for i, field := range fields {
+		if field == "mvid" {
+			return true
+		}
+		if field == "music" && i+1 < len(fields) && fields[i+1] == "video" {
+			return true
+		}
+	}
+	compact := strings.Join(fields, "")
+	return strings.Contains(compact, "musicvideo") || strings.Contains(compact, "mvid")
+}
+
+func isVideoCategoryHint(value string) bool {
+	for _, token := range []string{"movie", "film", "tv", "episode", "anime", "video"} {
+		if strings.Contains(value, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasRomanianSubs(meta api.PreparedMetadata) bool {
@@ -494,8 +701,6 @@ func imdbID(meta api.PreparedMetadata) string {
 
 func cloneFields(input map[string]string) map[string]string {
 	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
