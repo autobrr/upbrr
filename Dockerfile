@@ -9,7 +9,7 @@ ARG VERSION=dev
 ARG BUILD_ID=
 ARG GO_VERSION=1.26.4
 
-FROM --platform=$BUILDPLATFORM node:20-bookworm AS frontend
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
 
 WORKDIR /src/gui/frontend
 
@@ -19,7 +19,7 @@ RUN corepack enable && pnpm install --frozen-lockfile
 COPY gui/frontend/ ./
 RUN pnpm run build:bundle
 
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS cli-builder
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS cli-builder
 
 WORKDIR /src
 
