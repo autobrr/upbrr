@@ -6,6 +6,7 @@ package czt
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
@@ -24,36 +27,11 @@ import (
 
 func TestUploadSuccessPersistsReturnedTorrentAndUsesProvidedAssets(t *testing.T) {
 	returnedTorrent := validTorrentBytes(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != uploadPath {
-			t.Fatalf("expected upload path %q, got %q", uploadPath, r.URL.Path)
-		}
-		if err := r.ParseMultipartForm(5 << 20); err != nil {
-			t.Fatalf("parse multipart: %v", err)
-		}
-		if got := r.FormValue("user_descr"); !strings.Contains(got, "https://img.example/rehosted.jpg") {
-			t.Fatalf("expected provided screenshot URL in payload, got %q", got)
-		}
-		files := r.MultipartForm.File["file"]
-		if len(files) != 1 {
-			t.Fatalf("expected one torrent file, got %d", len(files))
-		}
-		file, err := files[0].Open()
-		if err != nil {
-			t.Fatalf("open multipart file: %v", err)
-		}
-		_, _ = io.ReadAll(file)
-		_ = file.Close()
-		w.WriteHeader(http.StatusCreated)
-		_, _ = fmt.Fprintf(
-			w,
-			`{"id":123,"name":"Release","download_url":"download.php?id=123","torrent_b64":%q}`,
-			base64.StdEncoding.EncodeToString(returnedTorrent),
-		)
-	}))
+	server := newCZTUploadTestServer(t, returnedTorrent, uploadPath)
 	defer server.Close()
 
 	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
+	server.assertNoHandlerError(t)
 	if err != nil {
 		t.Fatalf("unexpected upload error: %v", err)
 	}
@@ -79,7 +57,25 @@ func TestUploadSuccessPersistsReturnedTorrentAndUsesProvidedAssets(t *testing.T)
 	}
 }
 
-func TestUploadRejectsInvalidReturnedTorrentB64(t *testing.T) {
+func TestUploadTestServerReportsHandlerAssertionOnTestGoroutine(t *testing.T) {
+	returnedTorrent := validTorrentBytes(t)
+	server := newCZTUploadTestServer(t, returnedTorrent, "/wrong-upload-path")
+	defer server.Close()
+
+	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
+	server.assertHandlerErrorContains(t, `expected upload path "/wrong-upload-path"`)
+	if err == nil {
+		t.Fatal("expected upload error")
+	}
+	if !strings.Contains(err.Error(), "status=400") {
+		t.Fatalf("expected HTTP 400 upload error, got %v", err)
+	}
+	if result.Uploaded != 0 || len(result.UploadedTorrents) != 0 {
+		t.Fatalf("expected no uploaded result on handler assertion failure, got %+v", result)
+	}
+}
+
+func TestUploadReportsRemoteSuccessWhenReturnedTorrentB64IsInvalid(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id":123,"name":"Release","download_url":"/download.php?id=123","torrent_b64":"not-base64"}`))
@@ -87,18 +83,21 @@ func TestUploadRejectsInvalidReturnedTorrentB64(t *testing.T) {
 	defer server.Close()
 
 	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
-	if err == nil {
-		t.Fatal("expected invalid returned torrent error")
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
 	}
-	if result.Uploaded != 0 || len(result.UploadedTorrents) != 0 {
-		t.Fatalf("expected no uploaded result on persistence failure, got %+v", result)
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 {
+		t.Fatalf("expected remote success without artifact failure, got %+v", result)
 	}
-	if !strings.Contains(err.Error(), "persist returned torrent") {
-		t.Fatalf("expected persistence error, got %v", err)
+	if result.UploadedTorrents[0].TorrentPath != "" {
+		t.Fatalf("expected no persisted torrent path, got %q", result.UploadedTorrents[0].TorrentPath)
+	}
+	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
+		t.Fatalf("expected download URL fallback, got %q", result.UploadedTorrents[0].DownloadURL)
 	}
 }
 
-func TestUploadRejectsEmptyReturnedTorrentB64(t *testing.T) {
+func TestUploadReportsRemoteSuccessWhenReturnedTorrentB64IsEmpty(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"id":123,"name":"Release","download_url":"/download.php?id=123","torrent_b64":" "}`))
@@ -106,18 +105,21 @@ func TestUploadRejectsEmptyReturnedTorrentB64(t *testing.T) {
 	defer server.Close()
 
 	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
-	if err == nil {
-		t.Fatal("expected empty returned torrent error")
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
 	}
-	if result.Uploaded != 0 || len(result.UploadedTorrents) != 0 {
-		t.Fatalf("expected no uploaded result on empty returned torrent, got %+v", result)
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 {
+		t.Fatalf("expected remote success without artifact failure, got %+v", result)
 	}
-	if !strings.Contains(err.Error(), "empty torrent_b64") {
-		t.Fatalf("expected empty torrent_b64 error, got %v", err)
+	if result.UploadedTorrents[0].TorrentPath != "" {
+		t.Fatalf("expected no persisted torrent path, got %q", result.UploadedTorrents[0].TorrentPath)
+	}
+	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
+		t.Fatalf("expected download URL fallback, got %q", result.UploadedTorrents[0].DownloadURL)
 	}
 }
 
-func TestUploadRejectsCorruptReturnedTorrent(t *testing.T) {
+func TestUploadReportsRemoteSuccessWhenReturnedTorrentIsCorrupt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = fmt.Fprintf(
@@ -129,18 +131,21 @@ func TestUploadRejectsCorruptReturnedTorrent(t *testing.T) {
 	defer server.Close()
 
 	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
-	if err == nil {
-		t.Fatal("expected corrupt returned torrent error")
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
 	}
-	if result.Uploaded != 0 || len(result.UploadedTorrents) != 0 {
-		t.Fatalf("expected no uploaded result on corrupt returned torrent, got %+v", result)
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 {
+		t.Fatalf("expected remote success without artifact failure, got %+v", result)
 	}
-	if !strings.Contains(err.Error(), "returned torrent") {
-		t.Fatalf("expected returned torrent validation error, got %v", err)
+	if result.UploadedTorrents[0].TorrentPath != "" {
+		t.Fatalf("expected no persisted torrent path, got %q", result.UploadedTorrents[0].TorrentPath)
+	}
+	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
+		t.Fatalf("expected download URL fallback, got %q", result.UploadedTorrents[0].DownloadURL)
 	}
 }
 
-func TestUploadRejectsOffsiteDownloadURL(t *testing.T) {
+func TestUploadReportsRemoteSuccessWhenDownloadURLIsOffsite(t *testing.T) {
 	returnedTorrent := validTorrentBytes(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
@@ -153,14 +158,36 @@ func TestUploadRejectsOffsiteDownloadURL(t *testing.T) {
 	defer server.Close()
 
 	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
-	if err == nil {
-		t.Fatal("expected offsite download URL error")
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
 	}
-	if result.Uploaded != 0 || len(result.UploadedTorrents) != 0 {
-		t.Fatalf("expected no uploaded result on offsite download URL, got %+v", result)
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 {
+		t.Fatalf("expected remote success with artifact, got %+v", result)
 	}
-	if !strings.Contains(err.Error(), "download_url") {
-		t.Fatalf("expected download_url error, got %v", err)
+	if result.UploadedTorrents[0].DownloadURL != "" {
+		t.Fatalf("expected rejected download URL to be omitted, got %q", result.UploadedTorrents[0].DownloadURL)
+	}
+	if strings.TrimSpace(result.UploadedTorrents[0].TorrentPath) == "" {
+		t.Fatal("expected persisted returned torrent path")
+	}
+}
+
+func TestUploadKeepsRemoteSuccessWhenNoInjectableArtifactExists(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":123,"name":"Release","download_url":"https://evil.example/download.php?id=123","torrent_b64":"not-base64"}`))
+	}))
+	defer server.Close()
+
+	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.Uploaded != 1 {
+		t.Fatalf("expected remote success count without injectable artifacts, got %+v", result)
+	}
+	if len(result.UploadedTorrents) != 0 {
+		t.Fatalf("expected no injectable artifact entry, got %+v", result.UploadedTorrents)
 	}
 }
 
@@ -175,12 +202,6 @@ func TestUploadResponseParseBoundaries(t *testing.T) {
 			name:       "malformed 201",
 			statusCode: http.StatusCreated,
 			body:       `{`,
-			want:       "parse upload response",
-		},
-		{
-			name:       "partial positive id with bad field type",
-			statusCode: http.StatusCreated,
-			body:       `{"id":123,"download_url":"/download.php?id=123","torrent_b64":123}`,
 			want:       "parse upload response",
 		},
 		{
@@ -210,6 +231,402 @@ func TestUploadResponseParseBoundaries(t *testing.T) {
 	}
 }
 
+func TestUploadResponseBadLocalFieldPreservesRemoteSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":123,"download_url":"/download.php?id=123","torrent_b64":123}`))
+	}))
+	defer server.Close()
+
+	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 {
+		t.Fatalf("expected remote success without artifact, got %+v", result)
+	}
+	if result.UploadedTorrents[0].TorrentID != "123" || result.UploadedTorrents[0].TorrentPath != "" {
+		t.Fatalf("unexpected uploaded torrent: %+v", result.UploadedTorrents[0])
+	}
+	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
+		t.Fatalf("expected usable download URL despite bad local field, got %q", result.UploadedTorrents[0].DownloadURL)
+	}
+}
+
+func TestUploadNormalizesBaseURLPathAndQuery(t *testing.T) {
+	returnedTorrent := validTorrentBytes(t)
+	server := newCZTUploadTestServer(t, returnedTorrent, uploadPath)
+	defer server.Close()
+
+	result, err := upload(context.Background(), cztUploadRequest(t, server.URL+"/nested/path?token=ignored"))
+	server.assertNoHandlerError(t)
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.UploadedTorrents[0].TorrentURL != server.URL+"/details.php?id=123" {
+		t.Fatalf("unexpected torrent URL: %q", result.UploadedTorrents[0].TorrentURL)
+	}
+	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
+		t.Fatalf("unexpected download URL: %q", result.UploadedTorrents[0].DownloadURL)
+	}
+}
+
+func TestUploadNormalizesBaseURLUserinfo(t *testing.T) {
+	returnedTorrent := validTorrentBytes(t)
+	server := newCZTUploadTestServer(t, returnedTorrent, uploadPath)
+	defer server.Close()
+
+	result, err := upload(context.Background(), cztUploadRequest(t, withUserinfo(server.URL)+"/nested/path?token=ignored"))
+	server.assertNoHandlerError(t)
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.UploadedTorrents[0].TorrentURL != server.URL+"/details.php?id=123" {
+		t.Fatalf("unexpected torrent URL: %q", result.UploadedTorrents[0].TorrentURL)
+	}
+	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
+		t.Fatalf("unexpected download URL: %q", result.UploadedTorrents[0].DownloadURL)
+	}
+	if strings.Contains(result.UploadedTorrents[0].TorrentURL, "user:pass@") || strings.Contains(result.UploadedTorrents[0].DownloadURL, "user:pass@") {
+		t.Fatalf("expected userinfo stripped from URLs, got %+v", result.UploadedTorrents[0])
+	}
+}
+
+func TestUploadPreCanceledContextStopsBeforeRemoteRequest(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := upload(ctx, cztUploadRequest(t, server.URL))
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("expected context cancellation error, got %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("expected no remote request after pre-send cancellation, got %d", requests.Load())
+	}
+	if result.Uploaded != 0 || len(result.UploadedTorrents) != 0 {
+		t.Fatalf("expected no uploaded result after pre-send cancellation, got %+v", result)
+	}
+}
+
+func TestUploadCancellationAfterRequestBuildStopsBeforeRemoteRequest(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	originalFactory := newCZTUploadHTTPClient
+	newCZTUploadHTTPClient = func() *http.Client {
+		cancel()
+		return server.Client()
+	}
+	t.Cleanup(func() {
+		newCZTUploadHTTPClient = originalFactory
+	})
+
+	result, err := upload(ctx, cztUploadRequest(t, server.URL))
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation error, got %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("expected no remote request after post-build cancellation, got %d", requests.Load())
+	}
+	if result.Uploaded != 0 || len(result.UploadedTorrents) != 0 {
+		t.Fatalf("expected no uploaded result after post-build cancellation, got %+v", result)
+	}
+}
+
+func TestUploadCancellationAfterResponsePreservesRemoteSuccessWithoutPersistingArtifact(t *testing.T) {
+	returnedTorrent := validTorrentBytes(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(
+			w,
+			`{"id":123,"name":"Release","download_url":"download.php?id=123","torrent_b64":%q}`,
+			base64.StdEncoding.EncodeToString(returnedTorrent),
+		)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		cancel()
+	}))
+	defer server.Close()
+
+	req := cztUploadRequest(t, server.URL)
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
+	if err != nil {
+		t.Fatalf("resolve artifact path: %v", err)
+	}
+	result, err := upload(ctx, req)
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 {
+		t.Fatalf("expected remote success after cancellation, got %+v", result)
+	}
+	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
+		t.Fatalf("expected download URL preserved, got %q", result.UploadedTorrents[0].DownloadURL)
+	}
+	if result.UploadedTorrents[0].TorrentPath != "" {
+		t.Fatalf("expected no persisted artifact path, got %q", result.UploadedTorrents[0].TorrentPath)
+	}
+	if _, statErr := os.Stat(artifactPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no persisted artifact, stat err=%v", statErr)
+	}
+}
+
+func TestUploadCancellationBeforeNonCreatedResponseReturnsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		cancel()
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"failed"}`))
+	}))
+	defer server.Close()
+
+	result, err := upload(ctx, cztUploadRequest(t, server.URL))
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "status=500") {
+		t.Fatalf("expected cancellation before HTTP error, got %v", err)
+	}
+	if result.Uploaded != 0 || len(result.UploadedTorrents) != 0 {
+		t.Fatalf("expected no uploaded result after non-201 cancellation, got %+v", result)
+	}
+}
+
+func TestUploadCancellationDuringPostCancelsBeforeUploadTimeout(t *testing.T) {
+	oldGrace := cztPostCancelGrace.Swap(int64(25 * time.Millisecond))
+	t.Cleanup(func() {
+		cztPostCancelGrace.Store(oldGrace)
+	})
+
+	requestStarted := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		select {
+		case <-r.Context().Done():
+		case <-releaseHandler:
+		}
+	}))
+	defer server.Close()
+	defer close(releaseHandler)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := cztUploadRequest(t, server.URL)
+	done := make(chan struct {
+		summary api.UploadSummary
+		err     error
+	}, 1)
+	go func() {
+		summary, err := upload(ctx, req)
+		done <- struct {
+			summary api.UploadSummary
+			err     error
+		}{summary: summary, err: err}
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("expected remote request to start")
+	}
+
+	started := time.Now()
+	cancel()
+	select {
+	case result := <-done:
+		if result.err == nil {
+			t.Fatal("expected cancellation error")
+		}
+		if !errors.Is(result.err, context.Canceled) {
+			t.Fatalf("expected context cancellation error, got %v", result.err)
+		}
+		if result.summary.Uploaded != 0 || len(result.summary.UploadedTorrents) != 0 {
+			t.Fatalf("expected no uploaded result after canceled POST, got %+v", result.summary)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected canceled POST to return before upload timeout")
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("expected canceled POST below upload timeout, elapsed %s", elapsed)
+	}
+}
+
+func TestUploadCancellationAfterPersistPreservesArtifactSummary(t *testing.T) {
+	returnedTorrent := validTorrentBytes(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	server := newCZTUploadTestServer(t, returnedTorrent, uploadPath)
+	defer server.Close()
+
+	req := cztUploadRequest(t, server.URL)
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
+	if err != nil {
+		t.Fatalf("resolve artifact path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatalf("create artifact dir: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("existing artifact"), 0o600); err != nil {
+		t.Fatalf("write existing artifact: %v", err)
+	}
+
+	oldRemove := removeReturnedTorrentBackup
+	removeReturnedTorrentBackup = func(path string) error {
+		err := oldRemove(path)
+		if strings.Contains(filepath.Base(path), ".backup-") {
+			cancel()
+		}
+		return err
+	}
+	defer func() {
+		removeReturnedTorrentBackup = oldRemove
+	}()
+
+	result, err := upload(ctx, req)
+	server.assertNoHandlerError(t)
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 {
+		t.Fatalf("expected remote success with artifact after cancellation, got %+v", result)
+	}
+	if result.UploadedTorrents[0].TorrentPath != artifactPath {
+		t.Fatalf("expected artifact path %q, got %q", artifactPath, result.UploadedTorrents[0].TorrentPath)
+	}
+}
+
+func TestReplaceStagedReturnedTorrentRestoresExistingOnFailure(t *testing.T) {
+	tmp := t.TempDir()
+	outputPath := filepath.Join(tmp, "registered.torrent")
+	original := []byte("existing artifact")
+	if err := os.WriteFile(outputPath, original, 0o600); err != nil {
+		t.Fatalf("write existing artifact: %v", err)
+	}
+
+	err := replaceStagedReturnedTorrent(filepath.Join(tmp, "missing.tmp"), outputPath)
+	if err == nil {
+		t.Fatal("expected replacement error")
+	}
+	got, readErr := os.ReadFile(outputPath)
+	if readErr != nil {
+		t.Fatalf("read restored artifact: %v", readErr)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("expected existing artifact preserved, got %q", got)
+	}
+}
+
+func TestUploadOmitsArtifactPathWhenBackupCleanupFails(t *testing.T) {
+	returnedTorrent := validTorrentBytes(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(
+			w,
+			`{"id":123,"name":"Release","torrent_b64":%q}`,
+			base64.StdEncoding.EncodeToString(returnedTorrent),
+		)
+	}))
+	defer server.Close()
+
+	req := cztUploadRequest(t, server.URL)
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
+	if err != nil {
+		t.Fatalf("resolve artifact path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatalf("create artifact dir: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("existing artifact"), 0o600); err != nil {
+		t.Fatalf("write existing artifact: %v", err)
+	}
+
+	oldRemove := removeReturnedTorrentBackup
+	removeReturnedTorrentBackup = func(path string) error {
+		if strings.Contains(filepath.Base(path), ".backup-") {
+			return os.ErrPermission
+		}
+		return oldRemove(path)
+	}
+	defer func() {
+		removeReturnedTorrentBackup = oldRemove
+	}()
+
+	result, err := upload(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 0 {
+		t.Fatalf("expected cleanup-error artifact omitted while preserving remote success, got %+v", result)
+	}
+}
+
+func TestPersistReturnedTorrentReturnsPathWhenBackupCleanupFails(t *testing.T) {
+	req := cztUploadRequest(t, defaultBaseURL)
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
+	if err != nil {
+		t.Fatalf("resolve artifact path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatalf("create artifact dir: %v", err)
+	}
+	original := []byte("existing artifact")
+	if err := os.WriteFile(artifactPath, original, 0o600); err != nil {
+		t.Fatalf("write existing artifact: %v", err)
+	}
+
+	oldRemove := removeReturnedTorrentBackup
+	removeReturnedTorrentBackup = func(path string) error {
+		if strings.Contains(filepath.Base(path), ".backup-") {
+			return os.ErrPermission
+		}
+		return oldRemove(path)
+	}
+	defer func() {
+		removeReturnedTorrentBackup = oldRemove
+	}()
+
+	gotPath, err := persistReturnedTorrent(req, base64.StdEncoding.EncodeToString(validTorrentBytes(t)))
+	if err == nil {
+		t.Fatal("expected cleanup error")
+	}
+	var cleanupErr returnedTorrentCleanupError
+	if !errors.As(err, &cleanupErr) {
+		t.Fatalf("expected cleanup error, got %v", err)
+	}
+	if gotPath != artifactPath {
+		t.Fatalf("expected artifact path %q, got %q", artifactPath, gotPath)
+	}
+	payload, readErr := os.ReadFile(artifactPath)
+	if readErr != nil {
+		t.Fatalf("read artifact: %v", readErr)
+	}
+	if string(payload) == string(original) {
+		t.Fatal("expected replacement artifact to remain after cleanup failure")
+	}
+}
+
 func TestJoinCZTURL(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -221,10 +638,16 @@ func TestJoinCZTURL(t *testing.T) {
 		{name: "leading slash", base: "https://czteam.me", raw: "/download.php?id=1", want: "https://czteam.me/download.php?id=1"},
 		{name: "no leading slash", base: "https://czteam.me", raw: "download.php?id=1", want: "https://czteam.me/download.php?id=1"},
 		{name: "same host absolute", base: "https://czteam.me", raw: "https://czteam.me/download.php?id=1", want: "https://czteam.me/download.php?id=1"},
+		{name: "base userinfo stripped", base: "https://user:pass@czteam.me", raw: "download.php?id=1", want: "https://czteam.me/download.php?id=1"},
+		{name: "same host absolute userinfo stripped", base: "https://czteam.me", raw: "https://user:pass@czteam.me/download.php?id=1", want: "https://czteam.me/download.php?id=1"},
 		{name: "same host scheme relative", base: "https://czteam.me", raw: "//czteam.me/download.php?id=1", want: "https://czteam.me/download.php?id=1"},
+		{name: "base path ignored", base: "https://czteam.me/nested/path?x=1", raw: "download.php?id=1", want: "https://czteam.me/download.php?id=1"},
 		{name: "absolute offsite", base: "https://czteam.me", raw: "https://cdn.example/download/1", wantErr: true},
 		{name: "scheme-relative offsite", base: "https://czteam.me", raw: "//cdn.example/download/1", wantErr: true},
 		{name: "same host wrong scheme", base: "https://czteam.me", raw: "http://czteam.me/download.php?id=1", wantErr: true},
+		{name: "root path", base: "https://czteam.me", raw: "/", wantErr: true},
+		{name: "root query", base: "https://czteam.me", raw: "/?id=1", wantErr: true},
+		{name: "query only", base: "https://czteam.me", raw: "?id=1", wantErr: true},
 		{name: "pathless", base: "https://czteam.me", raw: "https://czteam.me", wantErr: true},
 		{name: "empty", base: "https://czteam.me", raw: " ", wantErr: true},
 	}
@@ -260,12 +683,26 @@ func TestResolveCategoryMatrix(t *testing.T) {
 		{name: "movie hd", meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "MOVIE"}, Release: api.ReleaseInfo{Resolution: "1080p"}}, want: "29"},
 		{name: "tv hd ro", meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "TV"}, Release: api.ReleaseInfo{Resolution: "1080p"}, SeasonInt: 1, SubtitleLanguages: []string{"ro"}}, want: "34"},
 		{name: "anime", meta: api.PreparedMetadata{Anime: true}, want: "23"},
+		{name: "anime hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Anime-Video"}}, want: "23"},
+		{name: "video game hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "video-game"}}, want: "29"},
+		{name: "game video hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "game-video"}}, want: "29"},
+		{name: "game movie hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "game movie"}}, want: "29"},
+		{name: "videogame compound", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "videogame"}}, wantErr: true},
+		{name: "gameplay compound", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "gameplay"}}, wantErr: true},
+		{name: "console hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Games/Consoles"}}, want: "12"},
+		{name: "release source dvd", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Source: "DVD"}}, want: "20"},
+		{name: "documentary hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Documentary"}}, want: "29"},
+		{name: "movie documentary hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Movie Documentary"}}, want: "29"},
+		{name: "docs hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Docs"}}, want: "25"},
+		{name: "ebook hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "eBook"}}, want: "25"},
 		{name: "software", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Software"}}, want: "22"},
 		{name: "music", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Music/Audio"}}, want: "6"},
 		{name: "music video phrase", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Music Video"}}, want: "30"},
 		{name: "music video separator", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "music-video"}}, want: "30"},
+		{name: "music video dotted uppercase", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "MUSIC.VIDEO"}}, want: "30"},
 		{name: "mvid", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "MVID"}}, want: "30"},
 		{name: "generic video hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Video", Resolution: "1080p"}}, want: "29"},
+		{name: "no hints unknown metadata", meta: api.PreparedMetadata{}, wantErr: true},
 		{name: "unknown non-video", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Other Data"}}, wantErr: true},
 	}
 
@@ -384,6 +821,95 @@ func validTorrentBytes(t *testing.T) []byte {
 		t.Fatalf("read torrent: %v", err)
 	}
 	return payload
+}
+
+func withUserinfo(rawURL string) string {
+	return strings.Replace(rawURL, "://", "://user:pass@", 1)
+}
+
+type cztUploadTestServer struct {
+	*httptest.Server
+	handlerErr chan error
+}
+
+func newCZTUploadTestServer(t *testing.T, returnedTorrent []byte, expectedPath string) *cztUploadTestServer {
+	t.Helper()
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := assertCZTUploadRequest(r, expectedPath); err != nil {
+			recordCZTUploadHandlerError(handlerErr, err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(
+			w,
+			`{"id":123,"name":"Release","download_url":"download.php?id=123","torrent_b64":%q}`,
+			base64.StdEncoding.EncodeToString(returnedTorrent),
+		)
+	}))
+	return &cztUploadTestServer{Server: server, handlerErr: handlerErr}
+}
+
+func assertCZTUploadRequest(r *http.Request, expectedPath string) error {
+	if r.URL.Path != expectedPath {
+		return fmt.Errorf("expected upload path %q, got %q", expectedPath, r.URL.Path)
+	}
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		return fmt.Errorf("parse multipart: %w", err)
+	}
+	if got := r.FormValue("user_descr"); !strings.Contains(got, "https://img.example/rehosted.jpg") {
+		return fmt.Errorf("expected provided screenshot URL in payload, got %q", got)
+	}
+	files := r.MultipartForm.File["file"]
+	if len(files) != 1 {
+		return fmt.Errorf("expected one torrent file, got %d", len(files))
+	}
+	file, err := files[0].Open()
+	if err != nil {
+		return fmt.Errorf("open multipart file: %w", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	if _, err := io.ReadAll(file); err != nil {
+		return fmt.Errorf("read multipart file: %w", err)
+	}
+	return nil
+}
+
+func recordCZTUploadHandlerError(handlerErr chan<- error, err error) {
+	select {
+	case handlerErr <- err:
+	default:
+	}
+}
+
+func (s *cztUploadTestServer) assertNoHandlerError(t *testing.T) {
+	t.Helper()
+	if err := s.handlerError(); err != nil {
+		t.Fatalf("upload handler assertion: %v", err)
+	}
+}
+
+func (s *cztUploadTestServer) assertHandlerErrorContains(t *testing.T, want string) {
+	t.Helper()
+	err := s.handlerError()
+	if err == nil {
+		t.Fatal("expected upload handler assertion error")
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected upload handler assertion containing %q, got %v", want, err)
+	}
+}
+
+func (s *cztUploadTestServer) handlerError() error {
+	select {
+	case err := <-s.handlerErr:
+		return err
+	default:
+		return nil
+	}
 }
 
 func cztUploadRequest(t *testing.T, trackerURL string) trackers.UploadRequest {

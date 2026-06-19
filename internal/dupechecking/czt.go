@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -41,7 +42,10 @@ func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	passkey := strings.TrimSpace(tracker.Passkey)
 	if passkey == "" {
 		if strings.TrimSpace(tracker.APIKey) != "" {
-			return nil, []string{noteSkip("CZT dupe search requires passkey credentials; API key upload token is not supported by the search API")}, nil
+			return nil, []string{
+				noteSkip("CZT dupe search requires passkey credentials; API key upload token is not supported by the search API"),
+				noteSkipCode(api.DupeSkipCodeCZTAPIKeyOnly),
+			}, nil
 		}
 		return nil, []string{noteSkip("missing passkey for tracker")}, nil
 	}
@@ -58,6 +62,7 @@ func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	if base == "" {
 		base = cztDefaultBaseURL
 	}
+	base = normalizeCZTSearchBaseURL(base)
 
 	params := url.Values{}
 	params.Set("action", "search-torrents")
@@ -68,7 +73,10 @@ func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 
 	status, payload, err := doJSONGetAny(ctx, h.http, base+"/api.php", params, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("CZT search failed: %w", err)
+		return nil, nil, fmt.Errorf("CZT search failed: %w", redactedError(err))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("context canceled: %w", err)
 	}
 	if status < 200 || status >= 300 {
 		return nil, nil, fmt.Errorf("CZT search failed: HTTP status %d", status)
@@ -86,6 +94,9 @@ func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 
 	entries := make([]api.DupeEntry, 0, len(items))
 	for _, raw := range items {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, fmt.Errorf("context canceled: %w", err)
+		}
 		item, ok := raw.(map[string]any)
 		if !ok {
 			continue
@@ -106,4 +117,33 @@ func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		entries = append(entries, entry)
 	}
 	return entries, nil, nil
+}
+
+// normalizeCZTSearchBaseURL returns the CZTeam origin used for API searches.
+// Absolute URLs discard userinfo, path, query, and fragment; malformed values
+// fall back to trimming trailing slashes so existing raw endpoint behavior is
+// preserved.
+func normalizeCZTSearchBaseURL(value string) string {
+	trimmed := strings.TrimSpace(value)
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return strings.TrimRight(trimmed, "/")
+	}
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.User = nil
+	return strings.TrimRight(parsed.String(), "/")
+}
+
+// redactedError returns an error whose text has passed through the repository
+// redactor, preventing passkeys embedded in transport errors from surfacing in
+// duplicate-check results or progress messages.
+func redactedError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(redaction.RedactValue(err.Error(), nil))
 }

@@ -194,10 +194,6 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 
 		preflight := s.preflightDescriptionImageHosts(ctx, meta, trackers)
 		results, err := s.uploadTrackersConcurrently(ctx, meta, trackers, preflight)
-		if err != nil {
-			finalizePending("canceled")
-			return api.UploadSummary{}, err
-		}
 
 		summary := api.UploadSummary{}
 		notImplemented := make([]string, 0)
@@ -211,6 +207,9 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 				continue
 			}
 			if result.err != nil {
+				if err != nil && isContextCancellation(result.err) {
+					continue
+				}
 				failedTrackers = append(failedTrackers, result.tracker)
 				failedMessages = append(failedMessages, fmt.Sprintf("%s: %v", result.tracker, result.err))
 				updateRecordStatus(result.tracker, "failed")
@@ -224,6 +223,9 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 			}
 		}
 
+		if err != nil {
+			finalizePending("canceled")
+		}
 		if len(failedMessages) > 0 {
 			s.logger.Warnf("trackers: upload failures: %s", strings.Join(failedMessages, "; "))
 		}
@@ -232,7 +234,10 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 		}
 
 		if summary.Uploaded > 0 {
-			return summary, nil
+			return summary, err
+		}
+		if err != nil {
+			return summary, err
 		}
 		if len(failedTrackers) > 0 {
 			return summary, fmt.Errorf("trackers: %s", strings.Join(failedMessages, "; "))
@@ -246,9 +251,6 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 
 	preflight := s.preflightDescriptionImageHosts(ctx, meta, trackers)
 	results, err := s.uploadTrackersConcurrently(ctx, meta, trackers, preflight)
-	if err != nil {
-		return api.UploadSummary{}, err
-	}
 
 	summary := api.UploadSummary{}
 	notImplemented := make([]string, 0)
@@ -260,6 +262,9 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 			continue
 		}
 		if result.err != nil {
+			if err != nil && isContextCancellation(result.err) {
+				continue
+			}
 			failedTrackers = append(failedTrackers, result.tracker)
 			failedMessages = append(failedMessages, fmt.Sprintf("%s: %v", result.tracker, result.err))
 			continue
@@ -278,7 +283,10 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 	}
 
 	if summary.Uploaded > 0 {
-		return summary, nil
+		return summary, err
+	}
+	if err != nil {
+		return summary, err
 	}
 	if len(failedTrackers) > 0 {
 		return summary, fmt.Errorf("trackers: %s", strings.Join(failedMessages, "; "))
@@ -408,7 +416,12 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 		case <-ctx.Done():
 			close(jobs)
 			wg.Wait()
-			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+			for canceledIdx := idx; canceledIdx < len(trackers); canceledIdx++ {
+				if results[canceledIdx].tracker == "" {
+					results[canceledIdx] = trackerUploadResult{tracker: trackers[canceledIdx], err: ctx.Err()}
+				}
+			}
+			return results, fmt.Errorf("context canceled: %w", ctx.Err())
 		case jobs <- idx:
 		}
 	}
@@ -417,10 +430,14 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 	wg.Wait()
 
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+		return results, fmt.Errorf("context canceled: %w", ctx.Err())
 	}
 
 	return results, nil
+}
+
+func isContextCancellation(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func (s *Service) maxConcurrentTrackerUploads(total int) int {

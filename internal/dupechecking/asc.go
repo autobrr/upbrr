@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -261,12 +262,7 @@ func processASCListItem(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDeta
 }
 
 func ascContainsAnyStrict(s string, terms []string) bool {
-	for _, t := range terms {
-		if s == t {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(terms, s)
 }
 
 func ascContainsAny(s string, terms []string) bool {
@@ -290,8 +286,7 @@ func ascIsDigit(s string) bool {
 func ascHasClass(n *html.Node, class string) bool {
 	for _, attr := range n.Attr {
 		if strings.EqualFold(attr.Key, "class") {
-			classes := strings.Fields(attr.Val)
-			for _, c := range classes {
+			for c := range strings.FieldsSeq(attr.Val) {
 				if strings.EqualFold(c, class) {
 					return true
 				}

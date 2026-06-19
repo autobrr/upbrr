@@ -432,7 +432,7 @@ func TestHDBMediumIDTypePrecedence(t *testing.T) {
 			meta: api.PreparedMetadata{
 				Type: "WEBDL",
 				ReleaseNameOverrides: api.ReleaseNameOverrides{
-					Type: stringPtr("WEBRIP"),
+					Type: new("WEBRIP"),
 				},
 				Release: api.ReleaseInfo{Type: "REMUX"},
 			},
@@ -442,7 +442,7 @@ func TestHDBMediumIDTypePrecedence(t *testing.T) {
 			name: "falls back to override type",
 			meta: api.PreparedMetadata{
 				ReleaseNameOverrides: api.ReleaseNameOverrides{
-					Type: stringPtr("WEBRIP"),
+					Type: new("WEBRIP"),
 				},
 				Release: api.ReleaseInfo{Type: "REMUX"},
 			},
@@ -461,7 +461,7 @@ func TestHDBMediumIDTypePrecedence(t *testing.T) {
 				DiscType: "BDMV",
 				Type:     "WEBDL",
 				ReleaseNameOverrides: api.ReleaseNameOverrides{
-					Type: stringPtr("WEBRIP"),
+					Type: new("WEBRIP"),
 				},
 				Release: api.ReleaseInfo{Type: "REMUX"},
 			},
@@ -505,8 +505,4 @@ func TestHDBMediumIDTypePrecedence(t *testing.T) {
 			}
 		})
 	}
-}
-
-func stringPtr(value string) *string {
-	return &value
 }

@@ -5,6 +5,12 @@ package api
 
 import "time"
 
+// DupeSkipCodeCZTAPIKeyOnly marks CZTeam duplicate checks skipped because
+// upload auth can use an API key while duplicate search still requires a passkey.
+const DupeSkipCodeCZTAPIKeyOnly = "czt_api_key_only" //nolint:gosec // Stable skip code, not a credential.
+
+// DupeEntry describes one tracker duplicate-search hit before or after local
+// filtering.
 type DupeEntry struct {
 	Name        string
 	SizeBytes   int64
@@ -24,6 +30,8 @@ type DupeEntry struct {
 	Description string
 }
 
+// DupeEpisodeMatch identifies an episode-level match found inside a duplicate
+// search result, including season packs that contain the requested episode.
 type DupeEpisodeMatch struct {
 	ID       string
 	Name     string
@@ -32,6 +40,8 @@ type DupeEpisodeMatch struct {
 	Internal bool
 }
 
+// DupeMatch records why duplicate filtering matched an entry and which tracker
+// result can be reused for cross-seed injection.
 type DupeMatch struct {
 	FilenameMatch             string
 	FileCountMatch            int
@@ -50,6 +60,11 @@ type DupeMatch struct {
 	MatchedEpisodeIDs         []DupeEpisodeMatch
 }
 
+// DupeCheckResult is the duplicate-search outcome for one tracker. Raw contains
+// tracker results before filtering, Filtered contains blocking matches, and
+// skipped or failed checks carry Status plus SkipReason or Error. SkipCode is a
+// stable machine-readable reason, while SkipRules names upload rules that caused
+// rule-failure skips.
 type DupeCheckResult struct {
 	Tracker     string
 	Raw         []DupeEntry
@@ -60,12 +75,17 @@ type DupeCheckResult struct {
 	Notes       []string
 	Skipped     bool
 	SkipReason  string
-	SkipRules   []string
-	Status      string
-	Error       string
-	CheckedAt   time.Time `ts_type:"string"`
+	// SkipCode is a stable machine-readable skip reason.
+	SkipCode string
+	// SkipRules are upload rule keys that produced a rule-failure skip.
+	SkipRules []string
+	Status    string
+	Error     string
+	CheckedAt time.Time `ts_type:"string"`
 }
 
+// DupeCheckSummary groups duplicate-search results for one prepared source
+// path.
 type DupeCheckSummary struct {
 	SourcePath string
 	Results    []DupeCheckResult

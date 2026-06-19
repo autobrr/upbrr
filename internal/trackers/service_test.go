@@ -187,6 +187,12 @@ type blockingUploadDefinition struct {
 	uploadErr error
 }
 
+type cancelAfterUploadDefinition struct {
+	name     string
+	cancel   context.CancelFunc
+	uploaded int
+}
+
 type testHDBPreparationDefinition struct{}
 
 func (b blockingUploadDefinition) Name() string {
@@ -204,6 +210,17 @@ func (b blockingUploadDefinition) Upload(context.Context, UploadRequest) (api.Up
 		return api.UploadSummary{}, b.uploadErr
 	}
 	return api.UploadSummary{Uploaded: b.uploaded}, nil
+}
+
+func (d cancelAfterUploadDefinition) Name() string {
+	return d.name
+}
+
+func (d cancelAfterUploadDefinition) Upload(context.Context, UploadRequest) (api.UploadSummary, error) {
+	if d.cancel != nil {
+		d.cancel()
+	}
+	return api.UploadSummary{Uploaded: d.uploaded}, nil
 }
 
 func (s stubUploadArtifactDefinition) Name() string {
@@ -1205,6 +1222,89 @@ func TestUploadRunsTrackersConcurrentlyWithLimit(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out waiting for upload result")
+	}
+}
+
+func TestUploadReportsCancellationAfterCompletedTrackerUpload(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	registry := NewRegistry()
+	if err := registry.Register(cancelAfterUploadDefinition{name: "AITHER", cancel: cancel, uploaded: 1}); err != nil {
+		t.Fatalf("register AITHER: %v", err)
+	}
+
+	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
+	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+
+	summary, err := svc.Upload(ctx, api.PreparedMetadata{SourcePath: "/tmp/file"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation after upload, got %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected completed upload to be preserved, got %d", summary.Uploaded)
+	}
+}
+
+func TestUploadCanceledBeforeStartReturnsZeroUpload(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	registry := NewRegistry()
+	if err := registry.Register(blockingUploadDefinition{name: "AITHER", uploaded: 1}); err != nil {
+		t.Fatalf("register AITHER: %v", err)
+	}
+
+	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
+	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+
+	summary, err := svc.Upload(ctx, api.PreparedMetadata{SourcePath: "/tmp/file"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if summary.Uploaded != 0 {
+		t.Fatalf("expected zero uploads, got %d", summary.Uploaded)
+	}
+}
+
+func TestUploadCancellationKeepsCompletedTrackerOnly(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	registry := NewRegistry()
+	if err := registry.Register(cancelAfterUploadDefinition{name: "AITHER", cancel: cancel, uploaded: 1}); err != nil {
+		t.Fatalf("register AITHER: %v", err)
+	}
+	if err := registry.Register(blockingUploadDefinition{name: "BLU", uploaded: 1}); err != nil {
+		t.Fatalf("register BLU: %v", err)
+	}
+
+	repo := &stubRepo{}
+	cfg := config.Config{
+		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 1},
+		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
+	}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+
+	summary, err := svc.Upload(ctx, api.PreparedMetadata{SourcePath: "/tmp/file"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected only completed tracker upload, got %d", summary.Uploaded)
+	}
+
+	finalStatus := make(map[string]string)
+	for _, update := range repo.statusUpdates {
+		finalStatus[update.tracker] = update.status
+	}
+	if finalStatus["AITHER"] != "uploaded" {
+		t.Fatalf("expected AITHER to remain uploaded, got %q", finalStatus["AITHER"])
+	}
+	if finalStatus["BLU"] != "canceled" {
+		t.Fatalf("expected BLU to be canceled, got %q", finalStatus["BLU"])
 	}
 }
 

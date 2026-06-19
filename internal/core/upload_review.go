@@ -542,6 +542,9 @@ func cloneTrackerQuestionnaireAnswers(input map[string]map[string]string) map[st
 	return cloned
 }
 
+// applyDupeSummaryToPreparedMeta refreshes duplicate block and cross-seed
+// state from a dupe-check summary. Previous dupe block reasons are replaced,
+// while unrelated block reasons remain untouched.
 func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.DupeCheckSummary) {
 	if meta == nil {
 		return
@@ -551,27 +554,26 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 	crossSeeds := make([]api.UploadedTorrent, 0)
 	seenCrossSeeds := make(map[string]struct{})
 	for _, result := range summary.Results {
-		if !dupeResultBlocksTracker(result) {
-			continue
-		}
-
 		trackers := splitTrackerLabel(result.Tracker)
 		if len(trackers) == 0 {
 			trackers = []string{result.Tracker}
 		}
 		for _, tracker := range trackers {
+			if !dupeResultBlocksTracker(result, tracker) {
+				continue
+			}
 			blocked = addTrackerBlockReason(blocked, tracker, api.TrackerBlockReasonDupe)
-		}
-		if !result.HasDupes {
-			continue
-		}
-		downloadURL := strings.TrimSpace(result.Match.MatchedDownload)
-		if downloadURL == "" {
-			continue
 		}
 		for _, tracker := range trackers {
 			name := strings.ToUpper(strings.TrimSpace(tracker))
 			if name == "" {
+				continue
+			}
+			if !result.HasDupes {
+				continue
+			}
+			downloadURL := strings.TrimSpace(result.Match.MatchedDownload)
+			if downloadURL == "" {
 				continue
 			}
 			key := name + "\x00" + downloadURL
@@ -591,14 +593,29 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 	meta.CrossSeedTorrents = crossSeeds
 }
 
-func dupeResultBlocksTracker(result api.DupeCheckResult) bool {
-	if result.HasDupes || result.Skipped {
+// dupeResultBlocksTracker reports whether a duplicate-check result should
+// suppress upload for one tracker. CZT passkey-only search skips caused by
+// API-key-only upload auth remain advisory.
+func dupeResultBlocksTracker(result api.DupeCheckResult, tracker string) bool {
+	if result.HasDupes {
 		return true
+	}
+	if result.Skipped {
+		return !isCZTAPIKeyOnlyDupeSkip(result, tracker)
 	}
 	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
 		return true
 	}
 	return strings.TrimSpace(result.Error) != ""
+}
+
+// isCZTAPIKeyOnlyDupeSkip identifies the CZT skip emitted when upload auth can
+// use a bearer API key but the duplicate-search API still requires a passkey.
+func isCZTAPIKeyOnlyDupeSkip(result api.DupeCheckResult, tracker string) bool {
+	if !strings.EqualFold(strings.TrimSpace(tracker), "CZT") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(result.SkipCode), api.DupeSkipCodeCZTAPIKeyOnly)
 }
 
 func cloneBlockedTrackers(input map[string][]api.TrackerBlockReason) map[string][]api.TrackerBlockReason {

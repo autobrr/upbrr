@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import App, { hasExplicitEmptyReleaseTrackerSelection } from "./app";
+import App, { hasExplicitEmptyReleaseTrackerSelection, ruleBlockingTrackerLabels } from "./app";
 import type {
   DescriptionBuilderPreview,
   DupeCheckResult,
@@ -185,6 +185,8 @@ const dupeResult = (tracker: string, hasDupes: boolean): DupeCheckResult => ({
   Notes: [],
   Skipped: false,
   SkipReason: "",
+  SkipCode: "",
+  SkipRules: [],
   Status: "completed",
   Error: "",
   CheckedAt: "2026-06-17T00:00:00Z",
@@ -338,6 +340,31 @@ describe("hasExplicitEmptyReleaseTrackerSelection", () => {
         BLU: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("ruleBlockingTrackerLabels", () => {
+  const labelsFor = (result: Partial<DupeCheckResult> & Pick<DupeCheckResult, "Tracker">) =>
+    Array.from(
+      ruleBlockingTrackerLabels({
+        ...dupeResult(result.Tracker, false),
+        Skipped: true,
+        ...result,
+      }),
+    ).sort();
+
+  it("does not block CZT for API-key-only advisory skips", () => {
+    expect(labelsFor({ Tracker: " CZT ", SkipCode: " CZT_API_KEY_ONLY " })).toEqual([]);
+  });
+
+  it("continues blocking non-advisory and non-CZT skipped trackers", () => {
+    expect(labelsFor({ Tracker: "CZT" })).toEqual(["czt"]);
+    expect(labelsFor({ Tracker: "HDB", SkipCode: "czt_api_key_only" })).toEqual(["hdb"]);
+  });
+
+  it("applies CZT advisory skips per split tracker label", () => {
+    expect(labelsFor({ Tracker: "CZT, HDB", SkipCode: "czt_api_key_only" })).toEqual(["hdb"]);
+    expect(labelsFor({ Tracker: ", CZT,, ", SkipCode: "czt_api_key_only" })).toEqual([]);
   });
 });
 
