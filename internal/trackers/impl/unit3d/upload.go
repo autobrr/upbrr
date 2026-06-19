@@ -65,7 +65,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	if originalName == "" {
 		originalName = strings.TrimSpace(req.Meta.ReleaseNameNoTag)
 	}
-	name := buildUnit3DName(trackerName, req.Meta)
+	name := buildUnit3DName(trackerName, req.Meta, req.TrackerConfig)
 	if name != originalName {
 		logger.Infof("trackers: %s name formatting applied", trackerName)
 		logger.Infof("  Original: %s", originalName)
@@ -369,7 +369,7 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 	if originalName == "" {
 		originalName = strings.TrimSpace(req.Meta.ReleaseNameNoTag)
 	}
-	name := buildUnit3DName(trackerName, req.Meta)
+	name := buildUnit3DName(trackerName, req.Meta, req.TrackerConfig)
 	if name != originalName {
 		logger.Infof("trackers: %s dry-run name formatting applied", trackerName)
 	}

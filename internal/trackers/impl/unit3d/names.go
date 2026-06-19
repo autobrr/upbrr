@@ -11,6 +11,7 @@ import (
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -21,7 +22,7 @@ var (
 	languageTagLookup     map[string]language.Tag
 )
 
-func buildUnit3DName(tracker string, meta api.PreparedMetadata) string {
+func buildUnit3DName(tracker string, meta api.PreparedMetadata, cfg config.TrackerConfig) string {
 	name := baseReleaseName(meta)
 	if name == "" {
 		return ""
@@ -33,15 +34,19 @@ func buildUnit3DName(tracker string, meta api.PreparedMetadata) string {
 	case "ACM":
 		return buildACMName(meta)
 	case "CBR":
-		return addNoGroupSuffix(name, meta, "NoGroup")
+		return BuildCBRName(meta, cfg.TagForCustomRelease)
 	case "DP":
 		return buildDPName(name, meta)
+	case "LCD":
+		return BuildCBRName(meta, cfg.TagForCustomRelease)
 	case "LDU":
 		return buildLDUName(name, meta)
 	case "RF":
 		return addNoGroupSuffix(name, meta, "NoGroup")
 	case "RHD":
 		return buildRHDName(meta)
+	case "SAM":
+		return BuildCBRName(meta, cfg.TagForCustomRelease)
 	case "OE":
 		return addNoGroupSuffix(name, meta, "NOGRP")
 	case "ULCX":

@@ -163,10 +163,10 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if !s.isLocalWebUIRequest(r) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "bootstrap is only available from localhost web sessions"})
-		return
-	}
+	// First-run setup uses trust-on-first-use: it is reachable from any host so
+	// containerized/LAN deployments can complete setup remotely. The
+	// "user already exists" guard in auth.Bootstrap closes this window once the
+	// admin account is created.
 	if !s.allowAuthRequest(r) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
 		return
