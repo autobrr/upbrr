@@ -43,6 +43,9 @@ const (
 
 var authPattern = regexp.MustCompile(`name="auth"\s+value="([^"]+)"`)
 var groupPattern = regexp.MustCompile(`groupid=(\d+)|torrents\.php\?id=(\d+)`)
+var mediaInfoDurationLinePattern = regexp.MustCompile(`(?im)^\s*duration(?:\s*/\s*string[123]?)?\s*:\s*(.+)$`)
+var mediaInfoDurationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|m|seconds?|secs?|sec|s)\b`)
+var isoDurationPattern = regexp.MustCompile(`(?i)^pt(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$`)
 
 type uploadState struct {
 	torrentPath   string
@@ -913,39 +916,117 @@ func resolveRuntime(meta api.PreparedMetadata) int {
 	return 0
 }
 
+// parseMediaInfoDurationMinutes returns rounded minutes from the first parseable
+// MediaInfo Duration or Duration/String[1-3] line.
 func parseMediaInfoDurationMinutes(content string) int {
-	re := regexp.MustCompile(`(?im)^duration\s*:\s*(.+)$`)
-	match := re.FindStringSubmatch(content)
-	if len(match) < 2 {
+	for _, match := range mediaInfoDurationLinePattern.FindAllStringSubmatch(content, -1) {
+		if len(match) != 2 {
+			continue
+		}
+		if minutes := parseMediaInfoDurationValueMinutes(match[1]); minutes > 0 {
+			return minutes
+		}
+	}
+	return 0
+}
+
+// parseMediaInfoDurationValueMinutes accepts colon time, unit-token text, or
+// raw millisecond values as emitted by MediaInfo duration fields.
+func parseMediaInfoDurationValueMinutes(value string) int {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
 		return 0
 	}
-	val := strings.ToLower(strings.TrimSpace(match[1]))
-
-	hours := 0
-	minutes := 0
-
-	hRe := regexp.MustCompile(`(\d+)\s*h`)
-	mRe := regexp.MustCompile(`(\d+)\s*m`)
-
-	if hMatch := hRe.FindStringSubmatch(val); len(hMatch) == 2 {
-		hours, _ = strconv.Atoi(hMatch[1])
+	if matches := isoDurationPattern.FindStringSubmatch(trimmed); len(matches) == 4 {
+		return mediaInfoDurationSecondsToMinutes(durationComponentSeconds(matches[1], matches[2], matches[3], ""))
 	}
-	if mMatch := mRe.FindStringSubmatch(val); len(mMatch) == 2 {
-		minutes, _ = strconv.Atoi(mMatch[1])
+	if strings.Contains(trimmed, ":") {
+		return mediaInfoDurationSecondsToMinutes(parseMediaInfoDurationColonSeconds(trimmed))
 	}
-
-	total := hours*60 + minutes
-	if total > 0 {
-		return total
+	if seconds := parseMediaInfoDurationTokenSeconds(trimmed); seconds > 0 {
+		return mediaInfoDurationSecondsToMinutes(seconds)
 	}
-
-	if fields := strings.Fields(val); len(fields) > 0 {
-		if ms, err := strconv.ParseFloat(fields[0], 64); err == nil && ms > 10000 {
+	if fields := strings.Fields(trimmed); len(fields) > 0 {
+		if ms, err := strconv.ParseFloat(strings.ReplaceAll(fields[0], ",", ""), 64); err == nil && ms > 10000 {
 			return int(math.Round(ms / 60000.0))
 		}
 	}
-
 	return 0
+}
+
+// parseMediaInfoDurationTokenSeconds sums h/m/s/ms duration tokens into seconds.
+func parseMediaInfoDurationTokenSeconds(value string) float64 {
+	var total float64
+	for _, match := range mediaInfoDurationTokenPattern.FindAllStringSubmatch(value, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(match[1], ",", ""), 64)
+		if err != nil || amount <= 0 {
+			continue
+		}
+		switch strings.ToLower(match[2]) {
+		case "h", "hr", "hrs", "hour", "hours":
+			total += amount * 3600
+		case "m", "min", "mins", "minute", "minutes":
+			total += amount * 60
+		case "s", "sec", "secs", "second", "seconds":
+			total += amount
+		case "ms", "msec", "msecs", "millisecond", "milliseconds":
+			total += amount / 1000
+		}
+	}
+	return total
+}
+
+// parseMediaInfoDurationColonSeconds parses MediaInfo colon duration values into seconds.
+func parseMediaInfoDurationColonSeconds(value string) float64 {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) < 2 {
+		return 0
+	}
+	var seconds float64
+	multiplier := 1.0
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
+		if part == "" {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(part, ",", ""), 64)
+		if err != nil || amount < 0 {
+			return 0
+		}
+		seconds += amount * multiplier
+		multiplier *= 60
+	}
+	return seconds
+}
+
+func mediaInfoDurationSecondsToMinutes(seconds float64) int {
+	if seconds <= 0 {
+		return 0
+	}
+	return int(math.Round(seconds / 60.0))
+}
+
+func durationComponentSeconds(hours string, minutes string, seconds string, milliseconds string) float64 {
+	totalSeconds := parseDurationComponent(hours) * 3600
+	totalSeconds += parseDurationComponent(minutes) * 60
+	totalSeconds += parseDurationComponent(seconds)
+	totalSeconds += parseDurationComponent(milliseconds) / 1000
+	return totalSeconds
+}
+
+func parseDurationComponent(value string) float64 {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil || parsed < 0 {
+		return 0
+	}
+	return parsed
 }
 
 func parseBDInfoLengthMinutes(value any) int {
@@ -1059,10 +1140,10 @@ func isSeen(seen map[string]struct{}, url string) bool {
 	return ok
 }
 
-// resolveOverview prefers localized episode synopsis for TV uploads, then
-// localized title-level overview, then TMDB or IMDB fallback text.
+// resolveOverview prefers scoped TV synopsis for episode/season-pack uploads,
+// then localized title-level overview, then TMDB or IMDB fallback text.
 func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
-	if strings.EqualFold(categoryOf(meta), "TV") && ptBR.EpisodeOverview != "" {
+	if shouldUseScopedTVOverview(meta) && ptBR.EpisodeOverview != "" {
 		return strings.TrimSpace(ptBR.EpisodeOverview)
 	}
 	if ptBR.Overview != "" {
@@ -1075,6 +1156,33 @@ func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) stri
 		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Plot)
 	}
 	return ""
+}
+
+// shouldUseScopedTVOverview reports whether BT should prefer season or
+// episode localized overview over title-level synopsis text.
+func shouldUseScopedTVOverview(meta api.PreparedMetadata) bool {
+	if meta.SeasonInt <= 0 {
+		return false
+	}
+	if !isTVUpload(meta) {
+		return false
+	}
+	if meta.TVPack {
+		return true
+	}
+	return meta.EpisodeInt > 0
+}
+
+// isTVUpload reports whether BT should treat the upload as TV from category or episode fields.
+func isTVUpload(meta api.PreparedMetadata) bool {
+	category := strings.TrimSpace(categoryOf(meta))
+	if strings.EqualFold(category, "TV") {
+		return true
+	}
+	if category == "" {
+		return meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0
+	}
+	return false
 }
 
 func resolveYouTube(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {

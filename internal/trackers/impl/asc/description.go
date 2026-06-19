@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -508,10 +509,66 @@ func buildTechnicalSheet(meta api.PreparedMetadata, richMedia *richMediaResponse
 	if releaseDate := resolveReleaseDate(meta); releaseDate != "" {
 		items = append(items, "Data de Lançamento: "+formatDate(releaseDate))
 	}
-	if richMedia != nil && richMedia.Homepage != "" {
-		items = append(items, fmt.Sprintf("Site: [url=%s]Clique aqui[/url]", richMedia.Homepage))
+	if richMedia != nil {
+		if homepageURL := sanitizeHomepageURL(richMedia.Homepage); homepageURL != "" {
+			items = append(items, fmt.Sprintf("Site: [url=%s]Clique aqui[/url]", homepageURL))
+		}
 	}
 	return strings.Join(items, "\n")
+}
+
+// sanitizeHomepageURL returns an absolute http or https homepage safe for ASC
+// BBCode URL attributes, rejecting literal or escaped URL-attribute delimiters.
+func sanitizeHomepageURL(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" || containsBBCodeURLAttributeUnsafeChar(trimmed) {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || !parsed.IsAbs() || strings.TrimSpace(parsed.Host) == "" {
+		return ""
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return ""
+	}
+	normalized := parsed.String()
+	if containsBBCodeURLAttributeUnsafeChar(normalized) || hasEscapedBBCodeURLAttributeUnsafeChar(parsed) {
+		return ""
+	}
+	return normalized
+}
+
+func containsBBCodeURLAttributeUnsafeChar(value string) bool {
+	if strings.ContainsAny(value, "[]\"'") {
+		return true
+	}
+	for _, r := range value {
+		if r < ' ' || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEscapedBBCodeURLAttributeUnsafeChar(parsed *url.URL) bool {
+	if slices.ContainsFunc([]string{parsed.Path, parsed.Fragment}, containsBBCodeURLAttributeUnsafeChar) {
+		return true
+	}
+	encodedValues := []string{parsed.RawQuery}
+	if parsed.User != nil {
+		encodedValues = append(encodedValues, parsed.User.String())
+	}
+	for _, encoded := range encodedValues {
+		if encoded == "" {
+			continue
+		}
+		decoded, err := url.QueryUnescape(encoded)
+		if err != nil || containsBBCodeURLAttributeUnsafeChar(decoded) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildProductionCompanies(meta api.PreparedMetadata) string {
@@ -553,8 +610,7 @@ func buildCastSection(meta api.PreparedMetadata, richCast []richCreditItem) stri
 
 	limit := min(len(richCast), 10)
 	var parts []string
-	for idx := range limit {
-		person := richCast[idx]
+	for _, person := range richCast[:limit] {
 		profileURL := "https://i.imgur.com/eCCCtFA.png"
 		if strings.TrimSpace(person.ProfilePath) != "" {
 			profileURL = "https://image.tmdb.org/t/p/w45" + strings.TrimSpace(person.ProfilePath)

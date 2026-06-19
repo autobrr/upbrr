@@ -313,7 +313,7 @@ func resolveOverview(meta api.PreparedMetadata, answers map[string]string) strin
 		return strings.TrimSpace(answers["overview"])
 	}
 	ptBR := api.ExtractLocalizedPTBR(meta)
-	if categoryOf(meta) == "TV" && ptBR.EpisodeOverview != "" {
+	if shouldUseScopedTVOverview(meta) && ptBR.EpisodeOverview != "" {
 		return strings.TrimSpace(ptBR.EpisodeOverview)
 	}
 	if ptBR.Overview != "" {
@@ -331,6 +331,21 @@ func resolveOverview(meta api.PreparedMetadata, answers map[string]string) strin
 	default:
 		return strings.TrimSpace(meta.EpisodeOverview)
 	}
+}
+
+// shouldUseScopedTVOverview reports whether ASC should prefer season or
+// episode localized overview over title-level synopsis text.
+func shouldUseScopedTVOverview(meta api.PreparedMetadata) bool {
+	if meta.SeasonInt <= 0 {
+		return false
+	}
+	if categoryOf(meta) != "TV" {
+		return false
+	}
+	if meta.TVPack {
+		return true
+	}
+	return meta.EpisodeInt > 0
 }
 
 func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string {

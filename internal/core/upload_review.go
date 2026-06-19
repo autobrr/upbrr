@@ -14,7 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/metadata"
-	"github.com/autobrr/upbrr/internal/trackers"
+	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -189,7 +189,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		dryRunByTracker[name] = entry
 	}
 
-	bannedChecker := trackers.NewBannedGroupChecker(c.cfg.MainSettings.DBPath)
+	bannedChecker := trackerspkg.NewBannedGroupChecker(c.cfg.MainSettings.DBPath)
 	group := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-")))
 	if strings.Contains(group, "taoe") {
 		group = "taoe"
@@ -285,22 +285,16 @@ func uploadReviewNeedsPTBRMetadata(meta api.PreparedMetadata, resolvedTrackers [
 
 // hasPTBRTracker reports whether any tracker consumes localized pt-BR TMDB data.
 func hasPTBRTracker(trackers []string) bool {
-	for _, tracker := range trackers {
-		switch strings.ToLower(strings.TrimSpace(tracker)) {
-		case "bjs", "bt", "asc":
-			return true
-		}
-	}
-	return false
+	return trackerspkg.AnyNeedsPTBRLocalizedMetadata(trackers)
 }
 
-// hasLocalizedPTBR reports whether TMDB metadata already contains the pt-BR localized entry.
+// hasLocalizedPTBR reports whether TMDB metadata already contains complete pt-BR localized data.
 func hasLocalizedPTBR(meta api.PreparedMetadata) bool {
 	if meta.ExternalMetadata.TMDB == nil || meta.ExternalMetadata.TMDB.Localized == nil {
 		return false
 	}
-	_, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]
-	return ok
+	localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]
+	return ok && localizedPTBRComplete(meta, localized)
 }
 
 // hasKnownTMDBID reports whether metadata has a source-current TMDB ID available for refresh.
@@ -308,7 +302,49 @@ func hasKnownTMDBID(meta api.PreparedMetadata) bool {
 	if meta.StoredDataFresh && strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.SourcePath), strings.TrimSpace(meta.SourcePath)) && meta.ExternalIDs.TMDBID != 0 {
 		return true
 	}
+	if meta.StoredDataFresh &&
+		strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) &&
+		meta.ExternalMetadata.TMDB != nil &&
+		meta.ExternalMetadata.TMDB.TMDBID != 0 {
+		return true
+	}
 	return meta.MediaInfoTMDBID != 0 || meta.SceneTMDBID != 0 || meta.ArrTMDBID != 0
+}
+
+// localizedPTBRComplete reports whether review metadata has the pt-BR title,
+// genre, and overview fields needed to avoid another localized refresh for
+// selected upload trackers.
+func localizedPTBRComplete(meta api.PreparedMetadata, localized api.TMDBLocalizedData) bool {
+	if strings.TrimSpace(localized.Title) == "" || strings.TrimSpace(localized.Genres) == "" {
+		return false
+	}
+	if localizedPTBRNeedsScopedOverview(meta) {
+		return strings.TrimSpace(localized.EpisodeOverview) != ""
+	}
+	return strings.TrimSpace(localized.Overview) != ""
+}
+
+func localizedPTBRNeedsScopedOverview(meta api.PreparedMetadata) bool {
+	if !localizedPTBRIsTV(meta) {
+		return false
+	}
+	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.TVPack {
+		return true
+	}
+	return strings.TrimSpace(meta.SeasonStr) != "" ||
+		strings.TrimSpace(meta.EpisodeStr) != "" ||
+		strings.TrimSpace(meta.DailyEpisodeDate) != ""
+}
+
+func localizedPTBRIsTV(meta api.PreparedMetadata) bool {
+	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV") {
+		return true
+	}
+	if meta.ExternalMetadata.TMDB != nil {
+		return strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.TMDB.Category), "TV")
+	}
+	return false
 }
 
 func formatBlockedReasons(reasons []api.TrackerBlockReason) string {
@@ -789,6 +825,7 @@ func removeCrossSeedTorrentsForTrackers(torrents []api.UploadedTorrent, trackers
 // this request, including matched-tracker and removal state.
 func mergeUploadReviewCacheMeta(base api.PreparedMetadata, updated api.PreparedMetadata, reviewedTrackers []string) api.PreparedMetadata {
 	merged := deepCopyPreparedMetadata(base)
+	merged.ExternalMetadata = deepCopyExternalMetadata(updated.ExternalMetadata)
 	merged.BlockedTrackers = mergeReviewedTrackerBlocks(base.BlockedTrackers, updated.BlockedTrackers, reviewedTrackers)
 	merged.CrossSeedTorrents = mergeReviewedTrackerCrossSeeds(base.CrossSeedTorrents, updated.CrossSeedTorrents, reviewedTrackers)
 	merged.TrackerRuleFailures = mergeReviewedTrackerRuleFailures(base.TrackerRuleFailures, updated.TrackerRuleFailures, reviewedTrackers)

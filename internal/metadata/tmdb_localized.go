@@ -13,7 +13,9 @@ import (
 
 const tmdbOriginalImageBaseURL = "https://image.tmdb.org/t/p/original"
 
-// parseTMDBLocalizedData extracts the pt-BR TMDB fields used by localized tracker uploads.
+// parseTMDBLocalizedData extracts the pt-BR TMDB fields used by localized
+// tracker uploads, keeping season or episode overview text even when TMDB does
+// not return a localized scoped title.
 func parseTMDBLocalizedData(mainData, seasonData, episodeData map[string]any) api.TMDBLocalizedData {
 	var result api.TMDBLocalizedData
 
@@ -59,38 +61,10 @@ func parseTMDBLocalizedData(mainData, seasonData, episodeData map[string]any) ap
 			}
 		}
 
-		if contentRatings, ok := mainData["content_ratings"].(map[string]any); ok {
-			if results, ok := contentRatings["results"].([]any); ok {
-				validBRRatings := map[string]struct{}{"L": {}, "10": {}, "12": {}, "14": {}, "16": {}, "18": {}}
-				var brRating string
-				var usRating string
-				for _, r := range results {
-					if ratingObj, ok := r.(map[string]any); ok {
-						iso := ""
-						if i, ok := ratingObj["iso_3166_1"].(string); ok {
-							iso = i
-						}
-						rating := ""
-						if val, ok := ratingObj["rating"].(string); ok {
-							rating = val
-						}
-						if iso == "BR" {
-							if _, valid := validBRRatings[rating]; valid {
-								if rating == "L" {
-									brRating = "Livre"
-								} else {
-									brRating = rating + " anos"
-								}
-								break
-							}
-						}
-						if iso == "US" && usRating == "" {
-							usRating = rating
-						}
-					}
-				}
-				result.ContentRating = metautil.FirstNonEmptyTrimmed(brRating, usRating)
-			}
+		if contentRating := localizedTVContentRating(mainData); contentRating != "" {
+			result.ContentRating = contentRating
+		} else if releaseRating := localizedMovieReleaseRating(mainData); releaseRating != "" {
+			result.ContentRating = releaseRating
 		}
 	}
 
@@ -111,6 +85,98 @@ func parseTMDBLocalizedData(mainData, seasonData, episodeData map[string]any) ap
 	}
 
 	return result
+}
+
+// localizedTVContentRating extracts a Brazilian TV rating from TMDB
+// content_ratings data, falling back to the first US rating when needed.
+func localizedTVContentRating(mainData map[string]any) string {
+	contentRatings, ok := mainData["content_ratings"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	results, ok := contentRatings["results"].([]any)
+	if !ok {
+		return ""
+	}
+	var brRating string
+	var usRating string
+	for _, r := range results {
+		ratingObj, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		iso, _ := ratingObj["iso_3166_1"].(string)
+		rating, _ := ratingObj["rating"].(string)
+		if iso == "BR" {
+			if formatted := formatBRContentRating(rating); formatted != "" {
+				brRating = formatted
+				break
+			}
+		}
+		if iso == "US" && usRating == "" {
+			usRating = rating
+		}
+	}
+	return metautil.FirstNonEmptyTrimmed(brRating, usRating)
+}
+
+// localizedMovieReleaseRating extracts a Brazilian movie certification from
+// TMDB release_dates data, falling back to the first US certification.
+func localizedMovieReleaseRating(mainData map[string]any) string {
+	releaseDates, ok := mainData["release_dates"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	results, ok := releaseDates["results"].([]any)
+	if !ok {
+		return ""
+	}
+	var brRating string
+	var usRating string
+	for _, r := range results {
+		country, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		iso, _ := country["iso_3166_1"].(string)
+		dates, _ := country["release_dates"].([]any)
+		certification := firstCertification(dates)
+		if iso == "BR" {
+			if formatted := formatBRContentRating(certification); formatted != "" {
+				brRating = formatted
+				break
+			}
+		}
+		if iso == "US" && usRating == "" {
+			usRating = certification
+		}
+	}
+	return metautil.FirstNonEmptyTrimmed(brRating, usRating)
+}
+
+func firstCertification(releaseDates []any) string {
+	for _, item := range releaseDates {
+		releaseDate, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		certification, _ := releaseDate["certification"].(string)
+		if strings.TrimSpace(certification) != "" {
+			return certification
+		}
+	}
+	return ""
+}
+
+func formatBRContentRating(rating string) string {
+	switch strings.TrimSpace(rating) {
+	case "L":
+		return "Livre"
+	case "10", "12", "14", "16", "18":
+		return strings.TrimSpace(rating) + " anos"
+	default:
+		return ""
+	}
 }
 
 // localizedPosterURL returns a usable poster URL from a TMDB poster_path value.

@@ -461,6 +461,154 @@ func TestFetchDescriptionBuilderPreviewRefreshesLocalizedPTBRMetadata(t *testing
 	}
 }
 
+func TestFetchDescriptionBuilderPreviewDocumentsRefreshAndPreparedCacheLineage(t *testing.T) {
+	t.Parallel()
+
+	req := api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"ASC"},
+		Options:  api.UploadOptions{Screens: 1},
+	}
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Paths:      []string{"/tmp/source"},
+		Mode:       api.ModeGUI,
+		Options:    api.UploadOptions{Screens: 1},
+		Trackers:   []string{"ASC"},
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/tmp/source",
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/tmp/source",
+			TMDB: &api.TMDBMetadata{
+				TMDBID: 42,
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {Title: "Titulo"},
+				},
+			},
+		},
+	}
+	refreshed := prepared
+	refreshed.ExternalMetadata.TMDB = &api.TMDBMetadata{
+		TMDBID: 42,
+		Localized: map[string]api.TMDBLocalizedData{
+			"pt-BR": {Title: "Titulo", Overview: "Resumo", Genres: "Drama"},
+		},
+	}
+
+	refreshMeta := &stubMeta{prepared: prepared, resolved: refreshed}
+	refreshTrackers := &stubDescriptionBuilderTrackers{}
+	refreshCore := &Core{
+		cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   refreshTrackers,
+			Metadata:   refreshMeta,
+		},
+		repo:      &stubDescriptionRepo{},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	if _, err := refreshCore.FetchDescriptionBuilderPreview(context.Background(), req); err != nil {
+		t.Fatalf("refreshing description preview: %v", err)
+	}
+	if refreshMeta.resolveCalls != 1 {
+		t.Fatalf("expected refresh path to resolve metadata once, got %d", refreshMeta.resolveCalls)
+	}
+	entry, _, ok := refreshCore.lookupGUICachedMetaEntry(req, "/tmp/source")
+	if !ok {
+		t.Fatal("expected refreshed GUI cache entry")
+	}
+	if !entry.requestRefreshed {
+		t.Fatal("expected refresh path to keep request-refreshed cache lineage")
+	}
+	if _, err := refreshCore.FetchDescriptionBuilderPreview(context.Background(), req); err != nil {
+		t.Fatalf("reopening refreshed description preview: %v", err)
+	}
+	if refreshMeta.resolveCalls != 1 {
+		t.Fatalf("expected refreshed cache reopen to avoid another resolve, got %d", refreshMeta.resolveCalls)
+	}
+
+	preparedMeta := &stubMeta{prepared: refreshed}
+	preparedCore := &Core{
+		cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   &stubDescriptionBuilderTrackers{},
+			Metadata:   preparedMeta,
+		},
+		repo:      &stubDescriptionRepo{},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	if _, err := preparedCore.FetchDescriptionBuilderPreview(context.Background(), req); err != nil {
+		t.Fatalf("prepared description preview: %v", err)
+	}
+	if preparedMeta.resolveCalls != 0 {
+		t.Fatalf("expected prepared path to skip metadata resolve, got %d", preparedMeta.resolveCalls)
+	}
+	entry, _, ok = preparedCore.lookupGUICachedMetaEntry(req, "/tmp/source")
+	if !ok {
+		t.Fatal("expected prepared GUI cache entry")
+	}
+	if entry.requestRefreshed {
+		t.Fatal("expected no-refresh path to store stable prepared cache lineage")
+	}
+}
+
+func TestDescriptionBuilderNeedsPTBRMetadataRequiresCompleteLocalizedFields(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				TMDBID: 42,
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {Title: "Titulo", Overview: "Resumo"},
+				},
+			},
+		},
+	}
+	if !descriptionBuilderNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected partial pt-BR metadata to need description-builder refresh")
+	}
+
+	meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{
+		Title:    "Titulo",
+		Overview: "Resumo",
+		Genres:   "Drama",
+	}
+	if descriptionBuilderNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected complete pt-BR metadata to skip description-builder refresh")
+	}
+
+	meta.ExternalIDs.Category = "TV"
+	meta.SeasonInt = 1
+	meta.EpisodeInt = 2
+	meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{
+		Title:           "Titulo",
+		Overview:        "Resumo da serie",
+		EpisodeOverview: "Resumo do episodio",
+		Genres:          "Drama",
+	}
+	if descriptionBuilderNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected complete episode pt-BR metadata to skip description-builder refresh")
+	}
+
+	meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{
+		Title:    "Titulo",
+		Overview: "Resumo da serie",
+		Genres:   "Drama",
+	}
+	if !descriptionBuilderNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected episode pt-BR metadata without scoped overview to need refresh")
+	}
+}
+
 func TestFetchDescriptionBuilderPreviewSkipsLocalizedRefreshForNonlocalizedTracker(t *testing.T) {
 	t.Parallel()
 

@@ -669,6 +669,101 @@ func TestBuildUploadReviewRefreshesLocalizedMetadataForGUICachedPTBRSelection(t 
 	}
 }
 
+func TestBuildUploadReviewRefreshesPartialLocalizedPTBRBeforeDryRun(t *testing.T) {
+	t.Parallel()
+
+	path := "/tmp/partial-ptbr"
+	metadataSvc := &recordingReviewMetadata{
+		resolveFn: func(meta api.PreparedMetadata) api.PreparedMetadata {
+			meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{
+				Title:    "Titulo atualizado",
+				Overview: "Resumo atualizado",
+				Genres:   "Drama",
+			}
+			return meta
+		},
+	}
+	trackersSvc := &recordingReviewTrackers{
+		entries: []api.TrackerDryRunEntry{{Tracker: "BJS", Status: "ready"}},
+	}
+	coreSvc, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metadataSvc,
+			Dupes:      &reviewDupes{},
+			Torrents:   &stubTorrent{},
+			Trackers:   trackersSvc,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	coreSvc.storeDupeCache(path, "", api.PreparedMetadata{
+		SourcePath:      path,
+		StoredDataFresh: true,
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: path,
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: path,
+			TMDB: &api.TMDBMetadata{
+				TMDBID: 42,
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {Title: "Titulo antigo"},
+				},
+			},
+		},
+	})
+
+	if _, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
+		Paths:    []string{path},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"BJS"},
+	}); err != nil {
+		t.Fatalf("build upload review: %v", err)
+	}
+
+	if metadataSvc.resolveCalls != 1 {
+		t.Fatalf("expected partial pt-BR metadata to refresh once, got %d calls", metadataSvc.resolveCalls)
+	}
+	localized := api.ExtractLocalizedPTBR(trackersSvc.lastMeta)
+	if localized.Title != "Titulo atualizado" || localized.Overview != "Resumo atualizado" || localized.Genres != "Drama" {
+		t.Fatalf("expected dry-run metadata to use refreshed localized fields, got %#v", localized)
+	}
+}
+
+func TestPTBRTrackerPredicatesShareTrimCaseContract(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"BJS", " bjs ", "BT", "bt", "ASC", "asc"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if !hasPTBRTracker([]string{name}) {
+				t.Fatalf("expected upload review predicate to accept %q", name)
+			}
+			if !descriptionBuilderTrackersNeedPTBR([]string{name}) {
+				t.Fatalf("expected description builder predicate to accept %q", name)
+			}
+		})
+	}
+
+	for _, name := range []string{"", "BJSX", "XBT", "AITHER"} {
+		t.Run("reject_"+name, func(t *testing.T) {
+			t.Parallel()
+			if hasPTBRTracker([]string{name}) {
+				t.Fatalf("expected upload review predicate to reject %q", name)
+			}
+			if descriptionBuilderTrackersNeedPTBR([]string{name}) {
+				t.Fatalf("expected description builder predicate to reject %q", name)
+			}
+		})
+	}
+}
+
 func TestBuildUploadReviewRefreshesLocalizedMetadataForDefaultPTBRTracker(t *testing.T) {
 	t.Parallel()
 
@@ -803,6 +898,130 @@ func TestBuildUploadReviewDoesNotRefreshLocalizedMetadataForNonPTBRDefault(t *te
 	}
 	if len(review.Trackers) != 1 || review.Trackers[0].Tracker != "AITHER" {
 		t.Fatalf("expected one AITHER review row, got %#v", review.Trackers)
+	}
+}
+
+func TestUploadReviewNeedsPTBRMetadataRequiresCompleteLocalizedFields(t *testing.T) {
+	t.Parallel()
+
+	base := api.PreparedMetadata{
+		SourcePath:      "/tmp/a",
+		StoredDataFresh: true,
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/tmp/a",
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/tmp/a",
+			TMDB:       &api.TMDBMetadata{TMDBID: 42},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		localized api.TMDBLocalizedData
+		category  string
+		season    int
+		episode   int
+		tvPack    bool
+		trackers  []string
+		want      bool
+	}{
+		{
+			name:     "blank entry refreshes",
+			trackers: []string{"ASC"},
+			want:     true,
+		},
+		{
+			name:      "partial movie entry refreshes",
+			localized: api.TMDBLocalizedData{Title: "Titulo", Overview: "Resumo"},
+			trackers:  []string{"BT"},
+			want:      true,
+		},
+		{
+			name:      "complete movie entry skips",
+			localized: api.TMDBLocalizedData{Title: "Titulo", Overview: "Resumo", Genres: "Drama"},
+			trackers:  []string{"BJS"},
+			want:      false,
+		},
+		{
+			name:      "complete tv series entry uses series overview",
+			localized: api.TMDBLocalizedData{Title: "Titulo", Overview: "Resumo serie", Genres: "Drama"},
+			category:  "TV",
+			trackers:  []string{"ASC"},
+			want:      false,
+		},
+		{
+			name:      "complete tv episode entry can use episode overview without episode title",
+			localized: api.TMDBLocalizedData{Title: "Titulo", EpisodeOverview: "Resumo episodio", Genres: "Drama"},
+			category:  "TV",
+			season:    1,
+			episode:   2,
+			trackers:  []string{"ASC"},
+			want:      false,
+		},
+		{
+			name:      "tv episode entry with only series overview refreshes",
+			localized: api.TMDBLocalizedData{Title: "Titulo", Overview: "Resumo serie", Genres: "Drama"},
+			category:  "TV",
+			season:    1,
+			episode:   2,
+			trackers:  []string{"ASC"},
+			want:      true,
+		},
+		{
+			name:      "season pack entry with only series overview refreshes",
+			localized: api.TMDBLocalizedData{Title: "Titulo", Overview: "Resumo serie", Genres: "Drama"},
+			category:  "TV",
+			season:    1,
+			tvPack:    true,
+			trackers:  []string{"BT"},
+			want:      true,
+		},
+		{
+			name:      "tracker prefix does not refresh",
+			localized: api.TMDBLocalizedData{},
+			trackers:  []string{"ASCx"},
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meta := deepCopyPreparedMetadata(base)
+			if tt.category != "" {
+				meta.ExternalIDs.Category = tt.category
+			}
+			meta.SeasonInt = tt.season
+			meta.EpisodeInt = tt.episode
+			meta.TVPack = tt.tvPack
+			meta.ExternalMetadata.TMDB.Localized = map[string]api.TMDBLocalizedData{"pt-BR": tt.localized}
+			if got := uploadReviewNeedsPTBRMetadata(meta, tt.trackers); got != tt.want {
+				t.Fatalf("uploadReviewNeedsPTBRMetadata() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUploadReviewNeedsPTBRMetadataUsesFreshCachedTMDBMetadataID(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		SourcePath:      "/tmp/a",
+		StoredDataFresh: true,
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/tmp/a",
+			TMDB:       &api.TMDBMetadata{TMDBID: 42},
+		},
+	}
+	if !uploadReviewNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected source-current cached TMDB metadata ID to enable pt-BR refresh")
+	}
+
+	meta.ExternalMetadata.SourcePath = "/tmp/other"
+	if uploadReviewNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected stale cached TMDB metadata ID to skip pt-BR refresh")
 	}
 }
 
@@ -968,6 +1187,86 @@ func TestBuildUploadReviewPartialGUIReviewPreservesOmittedCacheState(t *testing.
 	}
 	if len(imported.CrossSeedTorrents) != 2 {
 		t.Fatalf("expected imported cross-seed torrents to survive, got %#v", imported.CrossSeedTorrents)
+	}
+}
+
+func TestBuildUploadReviewPartialGUIReviewRetainsRefreshedExternalMetadata(t *testing.T) {
+	t.Parallel()
+
+	path := "/tmp/selected-ptbr"
+	metadataSvc := &recordingReviewMetadata{
+		resolveFn: func(meta api.PreparedMetadata) api.PreparedMetadata {
+			meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{
+				Title:    "Selecionado",
+				Overview: "Resumo selecionado",
+				Genres:   "Drama",
+			}
+			return meta
+		},
+	}
+	trackersSvc := &recordingReviewTrackers{
+		entries: []api.TrackerDryRunEntry{{Tracker: "ASC", Status: "ready"}},
+	}
+	coreSvc, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metadataSvc,
+			Dupes:      &reviewDupes{},
+			Torrents:   &stubTorrent{},
+			Trackers:   trackersSvc,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	coreSvc.storeDupeCache(path, "", api.PreparedMetadata{
+		SourcePath:      path,
+		StoredDataFresh: true,
+		Trackers:        []string{"ASC", "BLU"},
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"BLU": {api.TrackerBlockReasonDupe},
+		},
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: path,
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: path,
+			TMDB: &api.TMDBMetadata{
+				TMDBID: 42,
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {Title: "Antigo"},
+				},
+			},
+		},
+	})
+
+	if _, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
+		Paths:    []string{path},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"ASC"},
+	}); err != nil {
+		t.Fatalf("build upload review: %v", err)
+	}
+	exported, ok, err := coreSvc.ExportGUICachedPreparedMeta(context.Background(), api.Request{
+		Paths: []string{path},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("export gui cached prepared meta: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected exported cached metadata")
+	}
+	localized := api.ExtractLocalizedPTBR(exported)
+	if localized.Title != "Selecionado" || localized.Overview != "Resumo selecionado" || localized.Genres != "Drama" {
+		t.Fatalf("expected selected review cache to retain refreshed external metadata, got %#v", localized)
+	}
+	if got := exported.BlockedTrackers["BLU"]; len(got) != 1 || got[0] != api.TrackerBlockReasonDupe {
+		t.Fatalf("expected unreviewed BLU state preserved, got %#v", exported.BlockedTrackers)
 	}
 }
 

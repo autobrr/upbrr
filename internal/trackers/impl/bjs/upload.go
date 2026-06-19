@@ -41,17 +41,11 @@ const (
 )
 
 var (
-	authPattern      = regexp.MustCompile(`name="auth"\s+value="([^"]+)"`)
-	idPattern        = regexp.MustCompile(`action=download&id=(\d+)|torrentid=(\d+)`)
-	durationPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(?im)^duration(?:\s*/string\d*)?\s*:\s*(.+)$`),
-		regexp.MustCompile(`(?im)^duration\s*:\s*(.+)$`),
-	}
-	isoDurationPattern  = regexp.MustCompile(`(?i)^pt(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$`)
-	hoursPattern        = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|hr|h)\b`)
-	minutesPattern      = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|min|mn)\b`)
-	secondsPattern      = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|sec|s)\b`)
-	millisecondsPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*ms\b`)
+	authPattern                   = regexp.MustCompile(`name="auth"\s+value="([^"]+)"`)
+	idPattern                     = regexp.MustCompile(`action=download&id=(\d+)|torrentid=(\d+)`)
+	mediaInfoDurationLinePattern  = regexp.MustCompile(`(?im)^\s*duration(?:\s*/\s*string[123]?)?\s*:\s*(.+)$`)
+	mediaInfoDurationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|hr|h|minutes?|mins?|min|mn|m|seconds?|secs?|sec|s)\b`)
+	isoDurationPattern            = regexp.MustCompile(`(?i)^pt(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$`)
 )
 
 type uploadState struct {
@@ -627,48 +621,101 @@ func parseBDInfoLengthMinutes(value any) int {
 	return int(math.Round(totalSeconds / 60))
 }
 
+// parseMediaInfoDurationMinutes returns rounded minutes from the first parseable
+// MediaInfo Duration or Duration/String[1-3] line, including ISO-8601-like values.
 func parseMediaInfoDurationMinutes(text string) int {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return 0
-	}
-	for _, pattern := range durationPatterns {
-		matches := pattern.FindStringSubmatch(trimmed)
-		if len(matches) < 2 {
+	for _, matches := range mediaInfoDurationLinePattern.FindAllStringSubmatch(text, -1) {
+		if len(matches) != 2 {
 			continue
 		}
-		if minutes := parseDurationComponentString(matches[1]); minutes > 0 {
+		if minutes := parseMediaInfoDurationValueMinutes(matches[1]); minutes > 0 {
 			return minutes
 		}
 	}
 	return 0
 }
 
-func parseDurationComponentString(value string) int {
+func parseMediaInfoDurationValueMinutes(value string) int {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return 0
 	}
 	if matches := isoDurationPattern.FindStringSubmatch(trimmed); len(matches) == 4 {
-		return roundedDurationMinutes(matches[1], matches[2], matches[3], "")
+		return mediaInfoDurationSecondsToMinutes(durationComponentSeconds(matches[1], matches[2], matches[3], ""))
 	}
-	return roundedDurationMinutes(
-		firstMatch(hoursPattern, trimmed),
-		firstMatch(minutesPattern, trimmed),
-		firstMatch(secondsPattern, trimmed),
-		firstMatch(millisecondsPattern, trimmed),
-	)
+	if strings.Contains(trimmed, ":") {
+		return mediaInfoDurationSecondsToMinutes(parseMediaInfoDurationColonSeconds(trimmed))
+	}
+	if seconds := parseMediaInfoDurationTokenSeconds(trimmed); seconds > 0 {
+		return mediaInfoDurationSecondsToMinutes(seconds)
+	}
+	if fields := strings.Fields(trimmed); len(fields) > 0 {
+		if ms, err := strconv.ParseFloat(strings.ReplaceAll(fields[0], ",", ""), 64); err == nil && ms > 10000 {
+			return int(math.Round(ms / 60000.0))
+		}
+	}
+	return 0
 }
 
-func roundedDurationMinutes(hours string, minutes string, seconds string, milliseconds string) int {
+func parseMediaInfoDurationTokenSeconds(value string) float64 {
+	var total float64
+	for _, matches := range mediaInfoDurationTokenPattern.FindAllStringSubmatch(value, -1) {
+		if len(matches) != 3 {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(matches[1], ",", ""), 64)
+		if err != nil || amount <= 0 {
+			continue
+		}
+		switch strings.ToLower(matches[2]) {
+		case "h", "hr", "hrs", "hour", "hours":
+			total += amount * 3600
+		case "m", "mn", "min", "mins", "minute", "minutes":
+			total += amount * 60
+		case "s", "sec", "secs", "second", "seconds":
+			total += amount
+		case "ms", "msec", "msecs", "millisecond", "milliseconds":
+			total += amount / 1000
+		}
+	}
+	return total
+}
+
+func parseMediaInfoDurationColonSeconds(value string) float64 {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) < 2 {
+		return 0
+	}
+	var total float64
+	multiplier := 1.0
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
+		if part == "" {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(part, ",", ""), 64)
+		if err != nil || amount < 0 {
+			return 0
+		}
+		total += amount * multiplier
+		multiplier *= 60
+	}
+	return total
+}
+
+func durationComponentSeconds(hours string, minutes string, seconds string, milliseconds string) float64 {
 	totalSeconds := parseDurationComponent(hours) * 3600
 	totalSeconds += parseDurationComponent(minutes) * 60
 	totalSeconds += parseDurationComponent(seconds)
 	totalSeconds += parseDurationComponent(milliseconds) / 1000
-	if totalSeconds <= 0 {
+	return totalSeconds
+}
+
+func mediaInfoDurationSecondsToMinutes(seconds float64) int {
+	if seconds <= 0 {
 		return 0
 	}
-	return int(math.Round(totalSeconds / 60))
+	return int(math.Round(seconds / 60.0))
 }
 
 func parseDurationComponent(value string) float64 {
@@ -681,14 +728,6 @@ func parseDurationComponent(value string) float64 {
 		return 0
 	}
 	return parsed
-}
-
-func firstMatch(pattern *regexp.Regexp, value string) string {
-	matches := pattern.FindStringSubmatch(value)
-	if len(matches) < 2 {
-		return ""
-	}
-	return matches[1]
 }
 
 func resolveIDLink(meta api.PreparedMetadata) string {
@@ -704,10 +743,10 @@ func resolveIDLink(meta api.PreparedMetadata) string {
 	return ""
 }
 
-// resolveOverview prefers localized episode synopsis for TV uploads, then
-// localized title-level overview, then TMDB or IMDB fallback text.
+// resolveOverview prefers scoped TV synopsis for episode/season-pack uploads,
+// then localized title-level overview, then TMDB or IMDB fallback text.
 func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
-	if strings.EqualFold(categoryOf(meta), "TV") && ptBR.EpisodeOverview != "" {
+	if shouldUseScopedTVOverview(meta) && ptBR.EpisodeOverview != "" {
 		return strings.TrimSpace(ptBR.EpisodeOverview)
 	}
 	if ptBR.Overview != "" {
@@ -720,6 +759,33 @@ func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) stri
 		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Plot)
 	}
 	return ""
+}
+
+// shouldUseScopedTVOverview reports whether BJS should prefer season or
+// episode localized overview over title-level synopsis text.
+func shouldUseScopedTVOverview(meta api.PreparedMetadata) bool {
+	if meta.SeasonInt <= 0 {
+		return false
+	}
+	if !isTVUpload(meta) {
+		return false
+	}
+	if meta.TVPack {
+		return true
+	}
+	return meta.EpisodeInt > 0
+}
+
+// isTVUpload reports whether BJS should treat the upload as TV from category or episode fields.
+func isTVUpload(meta api.PreparedMetadata) bool {
+	category := strings.TrimSpace(categoryOf(meta))
+	if strings.EqualFold(category, "TV") {
+		return true
+	}
+	if category == "" {
+		return meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0
+	}
+	return false
 }
 
 // resolveTags returns BJS tag text from localized genres or translated fallback
@@ -744,9 +810,12 @@ func resolveTags(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
 
 	// 2. Use metautil.TranslateGenreToPortugueseStrict to translate
 	var genreText string
-	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "" {
+	switch {
+	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "":
 		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
-	} else {
+	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres) != "":
+		genreText = strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres)
+	default:
 		genreText = strings.TrimSpace(meta.Release.Genre)
 	}
 
@@ -920,22 +989,35 @@ func resolveYear(meta api.PreparedMetadata) int {
 	return meta.Release.Year
 }
 
+// resolveAdult returns the BJS adult flag from localized, TMDB, IMDB, and
+// release genre text after accent-insensitive keyword matching.
 func resolveAdult(meta api.PreparedMetadata) string {
 	ptBR := api.ExtractLocalizedPTBR(meta)
-	keywords := ""
+	parts := []string{resolveTags(meta, ptBR), ptBR.Genres}
 	if meta.ExternalMetadata.TMDB != nil {
-		keywords = metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Keywords, "")
+		parts = append(parts, meta.ExternalMetadata.TMDB.Keywords, meta.ExternalMetadata.TMDB.Genres)
 	}
-	genres := strings.ToLower(resolveTags(meta, ptBR) + " " + keywords)
+	if meta.ExternalMetadata.IMDB != nil {
+		parts = append(parts, meta.ExternalMetadata.IMDB.Genres)
+	}
+	parts = append(parts, meta.Release.Genre)
+	genres := normalizeAdultText(strings.Join(parts, " "))
 	if meta.Anime && strings.Contains(genres, "hentai") {
 		return "1"
 	}
-	for _, keyword := range []string{"xxx", "erotic", "porn", "adult", "orgy"} {
+	for _, keyword := range []string{"xxx", "erotic", "erotico", "porn", "adult", "adulto", "orgy", "orgia"} {
 		if strings.Contains(genres, keyword) {
 			return "1"
 		}
 	}
 	return "2"
+}
+
+// normalizeAdultText folds case and diacritics before adult keyword matching.
+func normalizeAdultText(value string) string {
+	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	normalized, _, _ := transform.String(t, strings.ToLower(value))
+	return normalized
 }
 
 func resolveDirectors(meta api.PreparedMetadata) string {

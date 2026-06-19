@@ -102,6 +102,56 @@ func TestParseTMDBLocalizedData(t *testing.T) {
 		}
 	})
 
+	t.Run("movie release dates rating", func(t *testing.T) {
+		main := map[string]any{
+			"release_dates": map[string]any{
+				"results": []any{
+					map[string]any{
+						"iso_3166_1": "US",
+						"release_dates": []any{
+							map[string]any{"certification": "R"},
+						},
+					},
+					map[string]any{
+						"iso_3166_1": "BR",
+						"release_dates": []any{
+							map[string]any{"certification": "14"},
+						},
+					},
+				},
+			},
+		}
+		res := parseTMDBLocalizedData(main, nil, nil)
+		if res.ContentRating != "14 anos" {
+			t.Errorf("ContentRating: expected '14 anos', got '%s'", res.ContentRating)
+		}
+	})
+
+	t.Run("movie release dates us fallback", func(t *testing.T) {
+		main := map[string]any{
+			"release_dates": map[string]any{
+				"results": []any{
+					map[string]any{
+						"iso_3166_1": "BR",
+						"release_dates": []any{
+							map[string]any{"certification": ""},
+						},
+					},
+					map[string]any{
+						"iso_3166_1": "US",
+						"release_dates": []any{
+							map[string]any{"certification": "PG-13"},
+						},
+					},
+				},
+			},
+		}
+		res := parseTMDBLocalizedData(main, nil, nil)
+		if res.ContentRating != "PG-13" {
+			t.Errorf("ContentRating fallback: expected 'PG-13', got '%s'", res.ContentRating)
+		}
+	})
+
 	t.Run("trailer selection", func(t *testing.T) {
 		tests := []struct {
 			name string

@@ -11,41 +11,72 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestResolveOverviewPrefersEpisodeOverviewForTV(t *testing.T) {
+func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{
-			Category: "TV",
-		},
-	}
 	ptBR := api.TMDBLocalizedData{
 		Overview:        "Series Overview",
 		EpisodeOverview: "Episode Overview",
 	}
 
-	if got := resolveOverview(meta, ptBR); got != "Episode Overview" {
-		t.Fatalf("expected episode overview, got %q", got)
-	}
-
-	// For lowercase tv category, it should still prefer the episode overview
-	metaTVLower := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{
-			Category: "tv",
+	tests := []struct {
+		name string
+		meta api.PreparedMetadata
+		want string
+	}{
+		{
+			name: "episode upload uses episode overview",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+				SeasonInt:   1,
+				EpisodeInt:  2,
+			},
+			want: "Episode Overview",
+		},
+		{
+			name: "lowercase episode upload uses episode overview",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "tv"},
+				SeasonInt:   1,
+				EpisodeInt:  2,
+			},
+			want: "Episode Overview",
+		},
+		{
+			name: "season pack uses season overview from episode field",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+				SeasonInt:   1,
+				TVPack:      true,
+			},
+			want: "Episode Overview",
+		},
+		{
+			name: "series upload uses title overview",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+			},
+			want: "Series Overview",
+		},
+		{
+			name: "movie ignores episode overview",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+				SeasonInt:   1,
+				EpisodeInt:  2,
+			},
+			want: "Series Overview",
 		},
 	}
-	if got := resolveOverview(metaTVLower, ptBR); got != "Episode Overview" {
-		t.Fatalf("expected episode overview for lowercase tv, got %q", got)
-	}
 
-	// For Movie, it should prefer the series overview
-	metaMovie := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{
-			Category: "MOVIE",
-		},
-	}
-	if got := resolveOverview(metaMovie, ptBR); got != "Series Overview" {
-		t.Fatalf("expected series overview for movie, got %q", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := resolveOverview(tc.meta, ptBR); got != tc.want {
+				t.Fatalf("expected overview %q, got %q", tc.want, got)
+			}
+		})
 	}
 }
 
@@ -188,6 +219,31 @@ func TestParseMediaInfoDurationMinutes(t *testing.T) {
 			expected: 135,
 		},
 		{
+			name:     "duration string label",
+			content:  "Duration/String : 2 h 5 min 2 s",
+			expected: 125,
+		},
+		{
+			name:     "duration string1 label",
+			content:  "\tDuRaTiOn/String1   : 2 h 5 min 2 s",
+			expected: 125,
+		},
+		{
+			name:     "duration spaced slash label",
+			content:  "Duration / String2 : 2 hrs 5 mins 2 secs",
+			expected: 125,
+		},
+		{
+			name:     "duration string3 colon label",
+			content:  "Duration/String3 : 02:05:02.000",
+			expected: 125,
+		},
+		{
+			name:     "iso duration value",
+			content:  "Duration/String : PT2H5M2S",
+			expected: 125,
+		},
+		{
 			name:     "valid milliseconds",
 			content:  "duration : 120000",
 			expected: 2,
@@ -195,6 +251,21 @@ func TestParseMediaInfoDurationMinutes(t *testing.T) {
 		{
 			name:     "empty fields (potential panic)",
 			content:  "duration :    ",
+			expected: 0,
+		},
+		{
+			name:     "invalid string1 skips to later duration",
+			content:  "Duration/String1 : not a duration\nDuration/String2 : 01:30:00.000",
+			expected: 90,
+		},
+		{
+			name:     "duration string4 remains ignored",
+			content:  "Duration/String4 : 01:30:00.000",
+			expected: 0,
+		},
+		{
+			name:     "adjacent duration fields remain ignored",
+			content:  "Source_Duration : 01:30:00.000\nDuration_Start : 01:30:00.000",
 			expected: 0,
 		},
 		{
@@ -211,5 +282,21 @@ func TestParseMediaInfoDurationMinutes(t *testing.T) {
 				t.Fatalf("expected %d, got %d", tc.expected, got)
 			}
 		})
+	}
+}
+
+func TestResolveRuntimeFallsBackWhenMediaInfoDurationInvalid(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		DVDVOBMediaInfoText: "Duration/String : not a duration",
+		DiscType:            "BDMV",
+		BDInfo: map[string]any{
+			"length": "01:30:00.000",
+		},
+	}
+
+	if got := resolveRuntime(meta); got != 90 {
+		t.Fatalf("expected BDInfo runtime fallback, got %d", got)
 	}
 }

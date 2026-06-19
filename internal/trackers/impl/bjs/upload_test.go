@@ -60,6 +60,86 @@ func TestResolveRuntimePrefersBDInfoLengthForBDMV(t *testing.T) {
 	}
 }
 
+func TestParseMediaInfoDurationMinutes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		content  string
+		expected int
+	}{
+		{
+			name:     "valid hours and minutes",
+			content:  "duration : 2 h 15 m",
+			expected: 135,
+		},
+		{
+			name:     "duration string label",
+			content:  "Duration/String : 2 h 5 min 2 s",
+			expected: 125,
+		},
+		{
+			name:     "duration string1 label",
+			content:  "\tDuRaTiOn/String1   : 2 h 5 min 2 s",
+			expected: 125,
+		},
+		{
+			name:     "duration spaced slash label",
+			content:  "Duration / String2 : 2 hrs 5 mins 2 secs",
+			expected: 125,
+		},
+		{
+			name:     "duration string3 colon label",
+			content:  "Duration/String3 : 02:05:02.000",
+			expected: 125,
+		},
+		{
+			name:     "iso duration value",
+			content:  "Duration/String : PT2H5M2S",
+			expected: 125,
+		},
+		{
+			name:     "valid milliseconds",
+			content:  "duration : 120000",
+			expected: 2,
+		},
+		{
+			name:     "empty fields",
+			content:  "duration :    ",
+			expected: 0,
+		},
+		{
+			name:     "invalid string1 skips to later duration",
+			content:  "Duration/String1 : not a duration\nDuration/String2 : 01:30:00.000",
+			expected: 90,
+		},
+		{
+			name:     "duration string4 remains ignored",
+			content:  "Duration/String4 : 01:30:00.000",
+			expected: 0,
+		},
+		{
+			name:     "adjacent duration fields remain ignored",
+			content:  "Source_Duration : 01:30:00.000\nDuration_Start : 01:30:00.000",
+			expected: 0,
+		},
+		{
+			name:     "no duration keyword",
+			content:  "something else",
+			expected: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseMediaInfoDurationMinutes(tc.content)
+			if got != tc.expected {
+				t.Fatalf("expected %d, got %d", tc.expected, got)
+			}
+		})
+	}
+}
+
 func TestBuildFieldsLimitsDirectorCreatorAndSetsRepack(t *testing.T) {
 	t.Parallel()
 
@@ -247,40 +327,72 @@ func TestBuildFieldsWithTMDBLocalizedAndIMDBNil(t *testing.T) {
 	}
 }
 
-func TestResolveOverviewPrefersEpisodeOverviewForTV(t *testing.T) {
+func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{
-			Category: "TV",
-		},
-	}
 	ptBR := api.TMDBLocalizedData{
 		Overview:        "Series Overview",
 		EpisodeOverview: "Episode Overview",
 	}
 
-	if got := resolveOverview(meta, ptBR); got != "Episode Overview" {
-		t.Fatalf("expected episode overview, got %q", got)
-	}
-
-	metaTVLower := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{
-			Category: "tv",
+	tests := []struct {
+		name string
+		meta api.PreparedMetadata
+		want string
+	}{
+		{
+			name: "episode upload uses episode overview",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+				SeasonInt:   1,
+				EpisodeInt:  2,
+			},
+			want: "Episode Overview",
+		},
+		{
+			name: "lowercase episode upload uses episode overview",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "tv"},
+				SeasonInt:   1,
+				EpisodeInt:  2,
+			},
+			want: "Episode Overview",
+		},
+		{
+			name: "season pack uses season overview from episode field",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+				SeasonInt:   1,
+				TVPack:      true,
+			},
+			want: "Episode Overview",
+		},
+		{
+			name: "series upload uses title overview",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+			},
+			want: "Series Overview",
+		},
+		{
+			name: "movie ignores episode overview",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+				SeasonInt:   1,
+				EpisodeInt:  2,
+			},
+			want: "Series Overview",
 		},
 	}
-	if got := resolveOverview(metaTVLower, ptBR); got != "Episode Overview" {
-		t.Fatalf("expected episode overview for lowercase tv, got %q", got)
-	}
 
-	// For Movie, it should prefer the series overview
-	metaMovie := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{
-			Category: "MOVIE",
-		},
-	}
-	if got := resolveOverview(metaMovie, ptBR); got != "Series Overview" {
-		t.Fatalf("expected series overview for movie, got %q", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := resolveOverview(tc.meta, ptBR); got != tc.want {
+				t.Fatalf("expected overview %q, got %q", tc.want, got)
+			}
+		})
 	}
 }
 
@@ -346,5 +458,102 @@ func TestResolveTagsPreservesUnknownFallbackGenres(t *testing.T) {
 	expected := "ficcao.cientifica, mycustomgenre"
 	if got != expected {
 		t.Fatalf("expected tags %q, got %q", expected, got)
+	}
+}
+
+func TestResolveTagsFallbackPriority(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Genre: "ReleaseGenre"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{Genres: "Drama"},
+			IMDB: &api.IMDBMetadata{Genres: "Comedy"},
+		},
+	}
+
+	if got := resolveTags(meta, api.TMDBLocalizedData{Genres: "Ação"}); got != "acao" {
+		t.Fatalf("expected localized tags to win, got %q", got)
+	}
+	if got := resolveTags(meta, api.TMDBLocalizedData{}); got != "drama" {
+		t.Fatalf("expected TMDB tags to beat IMDb and release, got %q", got)
+	}
+
+	meta.ExternalMetadata.TMDB = nil
+	if got := resolveTags(meta, api.TMDBLocalizedData{}); got != "comedia" {
+		t.Fatalf("expected IMDb tags to beat release, got %q", got)
+	}
+}
+
+func TestBuildFieldsTagsAnswerOverridesComputedTags(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Genre: "Drama"},
+	}
+
+	fields := buildFields(meta, "description", "auth", map[string]string{"tags": "manual.tag"})
+	if got := fields["tags"]; got != "manual.tag" {
+		t.Fatalf("expected manual tags answer, got %q", got)
+	}
+}
+
+func TestResolveAdultLocalizedAndCanonicalGenres(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		meta api.PreparedMetadata
+		want string
+	}{
+		{
+			name: "localized Portuguese adult genre",
+			meta: api.PreparedMetadata{
+				ExternalMetadata: api.ExternalMetadata{
+					TMDB: &api.TMDBMetadata{Localized: map[string]api.TMDBLocalizedData{
+						"pt-BR": {Genres: "Adulto"},
+					}},
+				},
+			},
+			want: "1",
+		},
+		{
+			name: "IMDb-only adult genre",
+			meta: api.PreparedMetadata{
+				ExternalMetadata: api.ExternalMetadata{
+					IMDB: &api.IMDBMetadata{Genres: "Adult"},
+				},
+			},
+			want: "1",
+		},
+		{
+			name: "anime hentai detection remains adult",
+			meta: api.PreparedMetadata{
+				Anime:   true,
+				Release: api.ReleaseInfo{Genre: "Hentai"},
+			},
+			want: "1",
+		},
+		{
+			name: "nonadult Portuguese genre stays nonadult",
+			meta: api.PreparedMetadata{
+				ExternalMetadata: api.ExternalMetadata{
+					TMDB: &api.TMDBMetadata{Localized: map[string]api.TMDBLocalizedData{
+						"pt-BR": {Genres: "Drama"},
+					}},
+				},
+			},
+			want: "2",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := resolveAdult(tc.meta); got != tc.want {
+				t.Fatalf("expected adulto=%q, got %q", tc.want, got)
+			}
+		})
 	}
 }

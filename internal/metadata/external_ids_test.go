@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -206,24 +207,26 @@ func (f *fakeRepo) PurgeContentData(_ context.Context, _ string) error {
 }
 
 type stubTMDB struct {
-	searchOutcome tmdb.SearchOutcome
-	findResult    tmdb.FindResult
-	metadata      tmdb.MetadataResult
-	metadataErr   error
-	searchFn      func(tmdb.SearchInput) (tmdb.SearchOutcome, error)
-	dailySeason   int
-	dailyEpisode  int
-	dailyErr      error
-	localizedData map[string]any
-	localizedErr  error
-	searchErr     error
-	findErr       error
-	searchCalls   int
-	findCalls     int
-	metaCalls     int
-	searchInputs  []tmdb.SearchInput
-	findInputs    []tmdb.FindInput
-	metaInputs    []tmdb.MetadataInput
+	searchOutcome   tmdb.SearchOutcome
+	findResult      tmdb.FindResult
+	metadata        tmdb.MetadataResult
+	metadataErr     error
+	searchFn        func(tmdb.SearchInput) (tmdb.SearchOutcome, error)
+	dailySeason     int
+	dailyEpisode    int
+	dailyErr        error
+	localizedData   map[string]any
+	localizedByType map[string]map[string]any
+	localizedErr    error
+	searchErr       error
+	findErr         error
+	searchCalls     int
+	findCalls       int
+	metaCalls       int
+	localizedInputs []tmdb.LocalizedDataInput
+	searchInputs    []tmdb.SearchInput
+	findInputs      []tmdb.FindInput
+	metaInputs      []tmdb.MetadataInput
 }
 
 func (s *stubTMDB) FindByExternalID(_ context.Context, input tmdb.FindInput) (tmdb.FindResult, error) {
@@ -268,7 +271,11 @@ func (s *stubTMDB) DailyToSeasonEpisode(_ context.Context, _ int, _ time.Time) (
 	return s.dailySeason, s.dailyEpisode, s.dailyErr
 }
 
-func (s *stubTMDB) GetLocalizedData(_ context.Context, _ tmdb.LocalizedDataInput) (map[string]any, error) {
+func (s *stubTMDB) GetLocalizedData(_ context.Context, input tmdb.LocalizedDataInput) (map[string]any, error) {
+	s.localizedInputs = append(s.localizedInputs, input)
+	if s.localizedByType != nil {
+		return s.localizedByType[input.DataType], s.localizedErr
+	}
 	return s.localizedData, s.localizedErr
 }
 
@@ -2085,5 +2092,284 @@ func TestResolveExternalIDsLocalizedFetchSucceedsWhenTMDBMetadataIsNil(t *testin
 	ptBR, ok := result.ExternalMetadata.TMDB.Localized["pt-BR"]
 	if !ok || ptBR.Title != "Título Localizado" {
 		t.Fatalf("expected localized title, got %#v", ptBR)
+	}
+	if len(tmdbClient.localizedInputs) != 1 || tmdbClient.localizedInputs[0].AppendToResponse != "credits,videos,release_dates" {
+		t.Fatalf("expected movie localized fetch to append release_dates, got %#v", tmdbClient.localizedInputs)
+	}
+}
+
+func TestResolveExternalIDsSkipsIncompleteLocalizedPTBR(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "MOVIE"},
+		metadataErr:   errors.New("tmdb metadata fetch failed"),
+		localizedData: map[string]any{
+			"overview": "Sinopse sem titulo",
+		},
+	}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: "/media/file.mkv",
+		Release:    api.ReleaseInfo{Title: "Example", Year: 2024},
+		Trackers:   []string{"BJS"},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if result.ExternalMetadata.TMDB != nil && result.ExternalMetadata.TMDB.Localized != nil {
+		if got, ok := result.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			t.Fatalf("expected incomplete localized data to stay unstored, got %#v", got)
+		}
+	}
+}
+
+func TestResolveExternalIDsStoresEpisodeOverviewWithoutEpisodeTitle(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "TV"},
+		metadataErr:   errors.New("tmdb metadata fetch failed"),
+		localizedByType: map[string]map[string]any{
+			"main": {
+				"name": "Serie localizada",
+				"genres": []any{
+					map[string]any{"name": "Drama"},
+				},
+			},
+			"episode": {
+				"overview": "Resumo do episodio",
+			},
+		},
+	}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: "/media/show.s01e02.mkv",
+		Release:    api.ReleaseInfo{Title: "Example", Year: 2024},
+		SeasonInt:  1,
+		EpisodeInt: 2,
+		Trackers:   []string{"BJS"},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	got := result.ExternalMetadata.TMDB.Localized["pt-BR"]
+	if got.Title != "Serie localizada" || got.EpisodeOverview != "Resumo do episodio" {
+		t.Fatalf("expected localized episode overview to be stored, got %#v", got)
+	}
+	if got.EpisodeTitle != "" {
+		t.Fatalf("expected blank episode title to stay blank, got %q", got.EpisodeTitle)
+	}
+}
+
+func TestResolveExternalIDsSkipsEpisodeLocalizedPTBRWithoutScopedOverview(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "TV"},
+		metadataErr:   errors.New("tmdb metadata fetch failed"),
+		localizedByType: map[string]map[string]any{
+			"main": {
+				"name":     "Serie localizada",
+				"overview": "Resumo da serie",
+			},
+		},
+	}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: "/media/show.s01e02.mkv",
+		Release:    api.ReleaseInfo{Title: "Example", Year: 2024},
+		SeasonInt:  1,
+		EpisodeInt: 2,
+		Trackers:   []string{"BJS"},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if result.ExternalMetadata.TMDB != nil && result.ExternalMetadata.TMDB.Localized != nil {
+		if got, ok := result.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			t.Fatalf("expected episode localized data without scoped overview to stay unstored, got %#v", got)
+		}
+	}
+}
+
+func TestResolveExternalIDsMergesLocalizedPTBRWithoutBlankOverwrite(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "MOVIE"},
+		metadataErr:   errors.New("tmdb metadata fetch failed"),
+		localizedData: map[string]any{
+			"title": "Titulo novo",
+		},
+	}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+	existing := api.TMDBLocalizedData{
+		Title:    "Titulo antigo",
+		Overview: "Sinopse existente",
+		Genres:   "Drama",
+	}
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:      "/media/file.mkv",
+		StoredDataFresh: true,
+		Release:         api.ReleaseInfo{Title: "Example", Year: 2024},
+		Trackers:        []string{"BJS"},
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/media/file.mkv",
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/media/file.mkv",
+			TMDB: &api.TMDBMetadata{
+				TMDBID: 42,
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": existing,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	got := result.ExternalMetadata.TMDB.Localized["pt-BR"]
+	if got.Title != "Titulo novo" {
+		t.Fatalf("expected new title merged, got %#v", got)
+	}
+	if got.Overview != existing.Overview || got.Genres != existing.Genres {
+		t.Fatalf("expected existing fields preserved, got %#v", got)
+	}
+}
+
+func TestResolveExternalIDsPreservesExistingLocalizedPTBRWhenEpisodeFetchFails(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "TV"},
+		metadataErr:   errors.New("tmdb metadata fetch failed"),
+		localizedErr:  errors.New("localized fetch failed"),
+		localizedByType: map[string]map[string]any{
+			"main": {
+				"name": "Serie nova",
+				"genres": []any{
+					map[string]any{"name": "Drama"},
+				},
+			},
+		},
+	}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+	existing := api.TMDBLocalizedData{
+		Title:           "Serie antiga",
+		Overview:        "Resumo antigo",
+		EpisodeOverview: "Resumo antigo do episodio",
+		Genres:          "Acao",
+	}
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:      "/media/show.s01e02.mkv",
+		StoredDataFresh: true,
+		Release:         api.ReleaseInfo{Title: "Example", Year: 2024},
+		SeasonInt:       1,
+		EpisodeInt:      2,
+		Trackers:        []string{"BJS"},
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/media/show.s01e02.mkv",
+			TMDBID:     42,
+			Category:   "TV",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/media/show.s01e02.mkv",
+			TMDB: &api.TMDBMetadata{
+				TMDBID: 42,
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": existing,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(tmdbClient.localizedInputs) != 3 {
+		t.Fatalf("expected main, season, episode localized fetch attempts, got %#v", tmdbClient.localizedInputs)
+	}
+	got := result.ExternalMetadata.TMDB.Localized["pt-BR"]
+	if got.Title != "Serie nova" || got.Genres != "Drama" {
+		t.Fatalf("expected nonblank main localized fields to merge, got %#v", got)
+	}
+	if got.Overview != existing.Overview || got.EpisodeOverview != existing.EpisodeOverview {
+		t.Fatalf("expected failed scoped fetch to preserve existing localized text, got %#v", got)
+	}
+}
+
+func TestResolveExternalIDsLocalizedFetchUsesVariantCachePaths(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "TV"},
+		metadataErr:   errors.New("tmdb metadata fetch failed"),
+		localizedData: map[string]any{
+			"name":     "Serie",
+			"overview": "Sinopse",
+		},
+	}
+	svc := NewService(repo,
+		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	_, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: "/media/show.mkv",
+		Release:    api.ReleaseInfo{Title: "Example", Year: 2024},
+		Trackers:   []string{"ASC"},
+		SeasonInt:  1,
+		EpisodeInt: 2,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(tmdbClient.localizedInputs) != 3 {
+		t.Fatalf("expected main, season, episode localized fetches, got %#v", tmdbClient.localizedInputs)
+	}
+	seen := make(map[string]struct{}, len(tmdbClient.localizedInputs))
+	for _, input := range tmdbClient.localizedInputs {
+		if strings.TrimSpace(input.CachePath) == "" {
+			t.Fatalf("expected cache path for input %#v", input)
+		}
+		if _, ok := seen[input.CachePath]; ok {
+			t.Fatalf("expected distinct cache paths, got duplicate %q in %#v", input.CachePath, tmdbClient.localizedInputs)
+		}
+		seen[input.CachePath] = struct{}{}
+	}
+	if tmdbClient.localizedInputs[0].AppendToResponse != "credits,videos,content_ratings" {
+		t.Fatalf("expected TV content_ratings append, got %q", tmdbClient.localizedInputs[0].AppendToResponse)
 	}
 }
