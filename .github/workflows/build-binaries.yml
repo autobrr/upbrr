@@ -386,7 +386,7 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
             type=semver,pattern={{major}}.{{minor}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
-            type=raw,value=latest,enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref_type == 'tag' }}
 
       - name: Derive amd64 image tags
         id: amd64_tags
@@ -468,7 +468,7 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
             type=semver,pattern={{major}}.{{minor}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
-            type=raw,value=latest,enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref_type == 'tag' }}
 
       - name: Derive arm64 image tags
         id: arm64_tags
@@ -553,7 +553,7 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
             type=semver,pattern={{major}}.{{minor}},value=${{ inputs.release_tag || github.ref_name }},enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' }}
-            type=raw,value=latest,enable=${{ inputs.release_tag != '' || github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref_type == 'tag' }}
 
       - name: Create and push multi-arch manifests
         if: github.event_name != 'pull_request'
