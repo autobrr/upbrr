@@ -637,25 +637,21 @@ func buildDescription(_ trackers.UploadRequest, assets trackers.DescriptionAsset
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
-// bbcodeScreenshotBlock renders uploaded screenshots as a centered BBCode block
-// (CZTeam's comment formatter supports [img]/[url]). Screenshots without an
-// uploaded image URL are skipped.
+// bbcodeScreenshotBlock renders at most two raw screenshot image URLs. CZTeam's
+// formatter accepts plain [img] tags here; linked/thumbnail URLs are ignored.
 func bbcodeScreenshotBlock(images []api.ScreenshotImage) string {
-	var b strings.Builder
-	count := 0
+	parts := make([]string, 0, 2)
 	for _, image := range images {
-		img := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL))
-		if img == "" {
+		raw := strings.TrimSpace(image.RawURL)
+		if raw == "" {
 			continue
 		}
-		web := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.WebURL, img))
-		b.WriteString("[url=" + web + "][img]" + img + "[/img][/url]")
-		count++
+		parts = append(parts, "[img]"+raw+"[/img]")
+		if len(parts) == 2 {
+			break
+		}
 	}
-	if count == 0 {
-		return ""
-	}
-	return "[center]" + b.String() + "[/center]"
+	return strings.Join(parts, "\n")
 }
 
 // resolveBaseURL returns the fixed CZTeam origin used for upload, details, and

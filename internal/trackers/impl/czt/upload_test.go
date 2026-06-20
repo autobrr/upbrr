@@ -779,11 +779,14 @@ func TestBuildDescriptionAndDryRunUseProvidedAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected dry-run error: %v", err)
 	}
-	if !strings.Contains(entry.Description, "https://img.example/rehosted.jpg") {
+	if !strings.Contains(entry.Description, "[img]https://img.example/raw.jpg[/img]") {
 		t.Fatalf("expected provided screenshot in dry-run description, got %q", entry.Description)
 	}
-	if !strings.Contains(entry.Payload["user_descr"], "https://img.example/rehosted.jpg") {
+	if !strings.Contains(entry.Payload["user_descr"], "[img]https://img.example/raw.jpg[/img]") {
 		t.Fatalf("expected provided screenshot in dry-run payload, got %q", entry.Payload["user_descr"])
+	}
+	if strings.Contains(entry.Payload["user_descr"], "[url=") || strings.Contains(entry.Payload["user_descr"], "[center]") {
+		t.Fatalf("expected CZT screenshot BBCode to use only img tags, got %q", entry.Payload["user_descr"])
 	}
 
 	result, err := (definition{}).BuildDescription(context.Background(), trackers.DescriptionRequest{
@@ -803,6 +806,25 @@ func TestBuildDescriptionAndDryRunUseProvidedAssets(t *testing.T) {
 	}
 	if result.Description != "[center]final rewritten body[/center]" {
 		t.Fatalf("expected final description verbatim, got %q", result.Description)
+	}
+}
+
+func TestBBCODEScreenshotBlockUsesRawURLsAndCapsAtTwo(t *testing.T) {
+	got := bbcodeScreenshotBlock([]api.ScreenshotImage{
+		{ImgURL: "https://img.example/rehosted-only.jpg", WebURL: "https://img.example/page-only"},
+		{ImgURL: "https://img.example/rehosted-1.jpg", WebURL: "https://img.example/page-1", RawURL: "https://img.example/raw-1.jpg"},
+		{ImgURL: "https://img.example/rehosted-2.jpg", WebURL: "https://img.example/page-2", RawURL: "https://img.example/raw-2.jpg"},
+		{ImgURL: "https://img.example/rehosted-3.jpg", WebURL: "https://img.example/page-3", RawURL: "https://img.example/raw-3.jpg"},
+	})
+	want := "[img]https://img.example/raw-1.jpg[/img]\n[img]https://img.example/raw-2.jpg[/img]"
+	if got != want {
+		t.Fatalf("unexpected screenshot block:\nwant %q\ngot  %q", want, got)
+	}
+	if strings.Contains(got, "[url=") || strings.Contains(got, "[center]") {
+		t.Fatalf("expected only img BBCode, got %q", got)
+	}
+	if strings.Contains(got, "rehosted") || strings.Contains(got, "page-") || strings.Contains(got, "raw-3") {
+		t.Fatalf("expected raw-only first two images, got %q", got)
 	}
 }
 
@@ -866,8 +888,10 @@ func assertCZTUploadRequest(r *http.Request, expectedPath string) error {
 	if got := r.FormValue("passkey"); got != "pass" {
 		return fmt.Errorf("expected passkey form field, got %q", got)
 	}
-	if got := r.FormValue("user_descr"); !strings.Contains(got, "https://img.example/rehosted.jpg") {
-		return fmt.Errorf("expected provided screenshot URL in payload, got %q", got)
+	if got := r.FormValue("user_descr"); !strings.Contains(got, "[img]https://img.example/raw.jpg[/img]") {
+		return fmt.Errorf("expected raw screenshot img tag in payload, got %q", got)
+	} else if strings.Contains(got, "[url=") || strings.Contains(got, "[center]") || strings.Contains(got, "rehosted.jpg") || strings.Contains(got, "page") {
+		return fmt.Errorf("expected only raw screenshot img tags in payload, got %q", got)
 	}
 	files := r.MultipartForm.File["file"]
 	if len(files) != 1 {
@@ -954,6 +978,14 @@ func cztUploadRequest(t *testing.T, trackerURL string) trackers.UploadRequest {
 				ImgURL: "https://img.example/rehosted.jpg",
 				WebURL: "https://img.example/page",
 				RawURL: "https://img.example/raw.jpg",
+			}, {
+				ImgURL: "https://img.example/rehosted-2.jpg",
+				WebURL: "https://img.example/page-2",
+				RawURL: "https://img.example/raw-2.jpg",
+			}, {
+				ImgURL: "https://img.example/rehosted-3.jpg",
+				WebURL: "https://img.example/page-3",
+				RawURL: "https://img.example/raw-3.jpg",
 			}},
 		},
 	}
