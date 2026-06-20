@@ -123,6 +123,8 @@ func parseNative(filename string, data []byte) (*config.Config, error) {
 	return cfg, nil
 }
 
+// parseNativeYAML merges YAML input into defaults using YAML tag names, then
+// decrypts any encrypted secret fields before returning the runtime config.
 func parseNativeYAML(data []byte, defaults *config.Config) (*config.Config, error) {
 	defaultRaw := map[string]any{}
 	defaultData, err := yaml.Marshal(defaults)
@@ -156,6 +158,8 @@ func parseNativeYAML(data []byte, defaults *config.Config) (*config.Config, erro
 	return decrypted, nil
 }
 
+// parseNativeJSON merges JSON input into defaults using exported Go field
+// names, matching the shape produced by config.ExportToJSON.
 func parseNativeJSON(data []byte, defaults *config.Config) (*config.Config, error) {
 	defaultRaw := map[string]any{}
 	defaultData, err := json.Marshal(defaults)
@@ -189,6 +193,8 @@ func parseNativeJSON(data []byte, defaults *config.Config) (*config.Config, erro
 	return decrypted, nil
 }
 
+// mergeConfigMap recursively overlays user-supplied maps onto default maps.
+// Non-map values, including nil, replace the default at the same key.
 func mergeConfigMap(base map[string]any, overlay map[string]any) {
 	for key, overlayValue := range overlay {
 		overlayMap, overlayOK := overlayValue.(map[string]any)

@@ -760,6 +760,8 @@ func (b *Backend) exportableConfig() (*config.Config, error) {
 	cfg, err := config.LoadFromDatabase(context.Background(), b.repo)
 	if err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
+			// Fresh web installs can run from embedded defaults before any config
+			// rows exist, so export the runtime config until the user saves setup.
 			cfg := b.currentConfig()
 			return normalizeExportableConfig(&cfg, b.currentConfig().MainSettings.DBPath), nil
 		}
@@ -768,6 +770,8 @@ func (b *Backend) exportableConfig() (*config.Config, error) {
 	return normalizeExportableConfig(cfg, b.currentConfig().MainSettings.DBPath), nil
 }
 
+// normalizeExportableConfig fills legacy nils and missing DB path values so
+// browser config consumers receive stable JSON shapes.
 func normalizeExportableConfig(cfg *config.Config, dbPath string) *config.Config {
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
 		cfg.MainSettings.DBPath = dbPath
