@@ -95,6 +95,92 @@ func TestCZTHandlerSearchUsesPasskeyAndParsesArray(t *testing.T) {
 	}
 }
 
+func TestCZTHandlerSearchPrefersFullReleaseName(t *testing.T) {
+	t.Parallel()
+
+	const releaseName = "Movie.2024.1080p.WEB-DL-GRP"
+
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := assertCZTSearchRequest(r, releaseName); err != nil {
+			select {
+			case handlerErr <- err:
+			default:
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.WriteString(w, `[{"id":"77","name":"Movie.2024.1080p.WEB-DL-GRP","url":"https://czteam.me/details.php?id=77"}]`)
+	}))
+	defer server.Close()
+
+	handler := cztHandler{
+		cfg:     cztTestConfig(config.TrackerConfig{Passkey: "passkey123"}),
+		http:    server.Client(),
+		logger:  api.NopLogger{},
+		baseURL: server.URL,
+	}
+	entries, notes, err := handler.Search(context.Background(), api.PreparedMetadata{
+		ReleaseName: releaseName,
+		Release:     api.ReleaseInfo{Title: "Movie"},
+	}, "CZT")
+	select {
+	case err := <-handlerErr:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("unexpected notes: %v", notes)
+	}
+	if len(entries) != 1 || entries[0].Name != releaseName {
+		t.Fatalf("expected release-name result, got %#v", entries)
+	}
+}
+
+func TestCZTHandlerSearchParsesWrappedAndAliasedResults(t *testing.T) {
+	t.Parallel()
+
+	const title = "Movie.2024.1080p.WEB-DL-GRP"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := assertCZTSearchRequest(r, title); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{"results":[{"torrent_id":77,"torrent_name":"Movie.2024.1080p.WEB-DL-GRP","details_url":"https://czteam.me/details.php?id=77","size_bytes":12345}]}}`)
+	}))
+	defer server.Close()
+
+	handler := cztHandler{
+		cfg:     cztTestConfig(config.TrackerConfig{Passkey: "passkey123"}),
+		http:    server.Client(),
+		logger:  api.NopLogger{},
+		baseURL: server.URL,
+	}
+	entries, notes, err := handler.Search(context.Background(), api.PreparedMetadata{
+		ReleaseName: title,
+	}, "CZT")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("unexpected notes: %v", notes)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one entry, got %#v", entries)
+	}
+	entry := entries[0]
+	if entry.ID != "77" || entry.Name != title || entry.Link != "https://czteam.me/details.php?id=77" {
+		t.Fatalf("unexpected entry: %#v", entry)
+	}
+	if !entry.SizeKnown || entry.SizeBytes != 12345 {
+		t.Fatalf("unexpected size fields: %#v", entry)
+	}
+}
+
 func TestCZTHandlerSearchCancellationAfterResponseReturnsNoEntries(t *testing.T) {
 	t.Parallel()
 
