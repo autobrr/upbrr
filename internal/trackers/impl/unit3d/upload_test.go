@@ -16,13 +16,191 @@ import (
 )
 
 func TestResolveUnit3DCategory(t *testing.T) {
-	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "movie"}}
-	if got := resolveUnit3DCategory(meta); got != "MOVIE" {
-		t.Fatalf("expected MOVIE, got %q", got)
+	tests := []struct {
+		name string
+		meta api.PreparedMetadata
+		want string
+	}{
+		{
+			name: "external movie",
+			meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "movie"}},
+			want: "MOVIE",
+		},
+		{
+			name: "external tv",
+			meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "TV"}},
+			want: "TV",
+		},
+		{
+			name: "external tv alias",
+			meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: " tv-show "}},
+			want: "TV",
+		},
+		{
+			name: "external movie alias",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: " film "},
+				Release:     api.ReleaseInfo{Category: "TV"},
+			},
+			want: "MOVIE",
+		},
+		{
+			name: "external wins over release",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+				Release:     api.ReleaseInfo{Category: "TV"},
+			},
+			want: "MOVIE",
+		},
+		{
+			name: "mediainfo wins over release",
+			meta: api.PreparedMetadata{
+				MediaInfoCategory: "movie",
+				Release:           api.ReleaseInfo{Category: "episode"},
+			},
+			want: "MOVIE",
+		},
+		{
+			name: "unknown external uses mediainfo",
+			meta: api.PreparedMetadata{
+				ExternalIDs:       api.ExternalIDs{Category: "documentary"},
+				MediaInfoCategory: "TV",
+			},
+			want: "TV",
+		},
+		{
+			name: "unknown external uses release",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "documentary"},
+				Release:     api.ReleaseInfo{Category: "series"},
+			},
+			want: "TV",
+		},
+		{
+			name: "release category tv alias",
+			meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: " series "}},
+			want: "TV",
+		},
+		{
+			name: "release category movie alias",
+			meta: api.PreparedMetadata{
+				ReleaseName: "S1m0ne.2002.1080p.WEB-DL-GRP",
+				Release:     api.ReleaseInfo{Category: "film"},
+			},
+			want: "MOVIE",
+		},
+		{
+			name: "structured episode fields",
+			meta: api.PreparedMetadata{
+				ReleaseName: "Show.1x01.1080p.WEB-DL-GRP",
+				SeasonInt:   1,
+				EpisodeInt:  1,
+			},
+			want: "TV",
+		},
+		{
+			name: "unknown mediainfo uses release name fallback",
+			meta: api.PreparedMetadata{
+				MediaInfoCategory: "documentary",
+				ReleaseName:       "Show.S01E01.1080p.WEB-DL-GRP",
+			},
+			want: "TV",
+		},
+		{
+			name: "whitespace external uses structured episode fields",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: " \t "},
+				SeasonInt:   1,
+				EpisodeInt:  1,
+			},
+			want: "TV",
+		},
+		{
+			name: "release name fallback",
+			meta: api.PreparedMetadata{ReleaseName: "Show.S01E01.1080p.WEB-DL-GRP"},
+			want: "TV",
+		},
 	}
-	meta.ExternalIDs.Category = "TV"
-	if got := resolveUnit3DCategory(meta); got != "TV" {
-		t.Fatalf("expected TV, got %q", got)
+
+	for _, tc := range tests {
+		got := resolveUnit3DCategory(tc.meta)
+		if got != tc.want {
+			t.Fatalf("%s: expected %q, got %q", tc.name, tc.want, got)
+		}
+	}
+}
+
+func TestBuildUnit3DDataUsesParsedCategoryWhenExplicitCategoryUnsupported(t *testing.T) {
+	tvReq := trackers.UploadRequest{
+		Tracker: "AITHER",
+		Meta: api.PreparedMetadata{
+			ReleaseName: "Show.S02E03.Episode.Title.1080p.WEB-DL-GRP",
+			ExternalIDs: api.ExternalIDs{
+				Category: "documentary",
+				TMDBID:   123,
+				IMDBID:   456,
+				TVDBID:   789,
+			},
+			Type:       "WEBDL",
+			SeasonInt:  2,
+			EpisodeInt: 3,
+			Release: api.ReleaseInfo{
+				Category:   "TV",
+				Season:     2,
+				Episode:    3,
+				Resolution: "1080p",
+			},
+		},
+	}
+
+	tvData, err := buildUnit3DData(tvReq, "name", "desc", "mi", "")
+	if err != nil {
+		t.Fatalf("expected TV payload, got error: %v", err)
+	}
+	if got := tvData["category_id"]; got != "2" {
+		t.Fatalf("expected TV category_id=2, got %q", got)
+	}
+	if got := tvData["season_number"]; got != "2" {
+		t.Fatalf("expected season_number=2, got %q", got)
+	}
+	if got := tvData["episode_number"]; got != "3" {
+		t.Fatalf("expected episode_number=3, got %q", got)
+	}
+	if got := tvData["tvdb"]; got != "789" {
+		t.Fatalf("expected tvdb=789, got %q", got)
+	}
+
+	movieReq := trackers.UploadRequest{
+		Tracker: "AITHER",
+		Meta: api.PreparedMetadata{
+			ReleaseName: "Movie.2025.1080p.WEB-DL-GRP",
+			ExternalIDs: api.ExternalIDs{
+				Category: "documentary",
+				TVDBID:   789,
+			},
+			Type: "WEBDL",
+			Release: api.ReleaseInfo{
+				Category:   "MOVIE",
+				Resolution: "1080p",
+			},
+		},
+	}
+
+	movieData, err := buildUnit3DData(movieReq, "name", "desc", "mi", "")
+	if err != nil {
+		t.Fatalf("expected movie payload, got error: %v", err)
+	}
+	if got := movieData["category_id"]; got != "1" {
+		t.Fatalf("expected MOVIE category_id=1, got %q", got)
+	}
+	if _, ok := movieData["season_number"]; ok {
+		t.Fatalf("season_number should be omitted for movie payload")
+	}
+	if _, ok := movieData["episode_number"]; ok {
+		t.Fatalf("episode_number should be omitted for movie payload")
+	}
+	if _, ok := movieData["tvdb"]; ok {
+		t.Fatalf("tvdb should be omitted for movie payload")
 	}
 }
 
@@ -293,6 +471,73 @@ func TestBuildUnit3DDataSkipsTVFieldsWhenMovieSignalsExist(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DDataUsesParsedCategoryWhenExplicitCategoriesBlank(t *testing.T) {
+	tvReq := trackers.UploadRequest{
+		Tracker: "AITHER",
+		Meta: api.PreparedMetadata{
+			ReleaseName: "Show.1x01.Episode.Title.1080p.WEB-DL-GRP",
+			ExternalIDs: api.ExternalIDs{TVDBID: 789},
+			Type:        "WEBDL",
+			SeasonInt:   1,
+			EpisodeInt:  1,
+			Release: api.ReleaseInfo{
+				Category:   "TV",
+				Season:     1,
+				Episode:    1,
+				Resolution: "1080p",
+			},
+		},
+	}
+
+	tvData, err := buildUnit3DData(tvReq, "name", "desc", "mi", "")
+	if err != nil {
+		t.Fatalf("expected TV payload, got error: %v", err)
+	}
+	if got := tvData["category_id"]; got != "2" {
+		t.Fatalf("expected TV category_id=2, got %q", got)
+	}
+	if got := tvData["season_number"]; got != "1" {
+		t.Fatalf("expected season_number=1, got %q", got)
+	}
+	if got := tvData["episode_number"]; got != "1" {
+		t.Fatalf("expected episode_number=1, got %q", got)
+	}
+	if got := tvData["tvdb"]; got != "789" {
+		t.Fatalf("expected tvdb=789, got %q", got)
+	}
+
+	movieReq := trackers.UploadRequest{
+		Tracker: "AITHER",
+		Meta: api.PreparedMetadata{
+			ReleaseName: "S1m0ne.2002.1080p.WEB-DL-GRP",
+			ExternalIDs: api.ExternalIDs{TVDBID: 789},
+			Type:        "WEBDL",
+			Release: api.ReleaseInfo{
+				Category:   "MOVIE",
+				Year:       2002,
+				Resolution: "1080p",
+			},
+		},
+	}
+
+	movieData, err := buildUnit3DData(movieReq, "name", "desc", "mi", "")
+	if err != nil {
+		t.Fatalf("expected movie payload, got error: %v", err)
+	}
+	if got := movieData["category_id"]; got != "1" {
+		t.Fatalf("expected MOVIE category_id=1, got %q", got)
+	}
+	if _, ok := movieData["season_number"]; ok {
+		t.Fatalf("season_number should be omitted for parsed movie payload")
+	}
+	if _, ok := movieData["episode_number"]; ok {
+		t.Fatalf("episode_number should be omitted for parsed movie payload")
+	}
+	if _, ok := movieData["tvdb"]; ok {
+		t.Fatalf("tvdb should be omitted for parsed movie payload")
+	}
+}
+
 func TestParseUnit3DUploadArtifactDownloadURL(t *testing.T) {
 	t.Parallel()
 
@@ -416,6 +661,203 @@ func TestBuildZNTHNameMovieYearMismatch(t *testing.T) {
 	expected := "Movie.2025.1080p.WEB-DL-GRP"
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestBuildZNTHNameBlankCategoryUsesParsedTVCategory(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ReleaseName:  "Show.1x01.Episode.Title.1080p.WEB-DL-GRP",
+		EpisodeTitle: "Episode Title",
+		SeasonInt:    1,
+		EpisodeInt:   1,
+		Release: api.ReleaseInfo{
+			Category:   "TV",
+			Resolution: "1080p",
+		},
+	}
+
+	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
+	expected := "Show.1x01.1080p.WEB-DL-GRP"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestBuildZNTHNameUnknownExplicitCategoryUsesParsedTVCategory(t *testing.T) {
+	tests := []struct {
+		name string
+		meta api.PreparedMetadata
+	}{
+		{
+			name: "external unknown",
+			meta: api.PreparedMetadata{
+				ExternalIDs: api.ExternalIDs{Category: "animation"},
+			},
+		},
+		{
+			name: "mediainfo unknown",
+			meta: api.PreparedMetadata{
+				MediaInfoCategory: "animation",
+			},
+		},
+		{
+			name: "external unknown falls through to mediainfo tv",
+			meta: api.PreparedMetadata{
+				ExternalIDs:       api.ExternalIDs{Category: "animation"},
+				MediaInfoCategory: "TV",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		tc.meta.ReleaseName = "Show.S01E01.2024.Episode.Title.1080p.WEB-DL-GRP"
+		tc.meta.EpisodeTitle = "Episode Title"
+		tc.meta.SeasonInt = 1
+		tc.meta.EpisodeInt = 1
+		tc.meta.Release = api.ReleaseInfo{
+			Category:   "TV",
+			Resolution: "1080p",
+			Year:       2024,
+		}
+		tc.meta.ExternalMetadata = api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{Year: 2025},
+		}
+
+		got := buildUnit3DName("ZNTH", tc.meta, config.TrackerConfig{})
+		expected := "Show.S01E01.2024.1080p.WEB-DL-GRP"
+		if got != expected {
+			t.Fatalf("%s: expected %q, got %q", tc.name, expected, got)
+		}
+	}
+}
+
+func TestBuildZNTHNameExplicitMoviePreservesMovieBranchOverParsedTV(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ReleaseName:  "Show.S01E01.2024.Episode.Title.1080p.WEB-DL-GRP",
+		EpisodeTitle: "Episode Title",
+		ExternalIDs:  api.ExternalIDs{Category: "MOVIE"},
+		SeasonInt:    1,
+		EpisodeInt:   1,
+		Release: api.ReleaseInfo{
+			Category:   "TV",
+			Resolution: "1080p",
+			Year:       2024,
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{Year: 2025},
+		},
+	}
+
+	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
+	expected := "Show.S01E01.2025.Episode.Title.1080p.WEB-DL-GRP"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestBuildZNTHNameBlankCategoryUsesParsedMovieCategory(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ReleaseName: "S1m0ne.2002.1080p.WEB-DL-GRP",
+		Release: api.ReleaseInfo{
+			Category: "MOVIE",
+			Year:     2002,
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{Year: 2003},
+		},
+	}
+
+	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
+	expected := "S1m0ne.2003.1080p.WEB-DL-GRP"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestBuildZNTHNameMovieYearMismatchNoResolutionHyphenatedTitle(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ReleaseName: "Movie - Part One 2024",
+		Release:     api.ReleaseInfo{Year: 2024},
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{Year: 2025},
+		},
+	}
+	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
+	expected := "Movie - Part One 2025"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestBuildZNTHNameMovieYearMismatchNoResolutionGroupSuffix(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ReleaseName: "Movie.Title.2024-GRP2024",
+		Release:     api.ReleaseInfo{Year: 2024, Group: "GRP2024"},
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{Year: 2025},
+		},
+	}
+	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
+	expected := "Movie.Title.2025-GRP2024"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestBuildZNTHNameTVUnicodePrefix(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ReleaseName:  "\u212aShow.S01E01.Episode.Title.1080p.WEB-DL-GRP",
+		EpisodeTitle: "Episode Title",
+		ExternalIDs:  api.ExternalIDs{Category: "TV"},
+		Release:      api.ReleaseInfo{Resolution: "1080p"},
+	}
+	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
+	expected := "\u212aShow.S01E01.1080p.WEB-DL-GRP"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestBuildZNTHNameMovieYearMismatchUnicodeTitle(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ReleaseName: "\u212aMovie.2024",
+		Release:     api.ReleaseInfo{Year: 2024},
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{Year: 2025},
+		},
+	}
+	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
+	expected := "\u212aMovie.2025"
+	if got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestFindZNTHTokenIndexesUnicodeBoundaries(t *testing.T) {
+	got := findZNTHTokenIndexes("Title.\u212a.1080p.Source", "1080p")
+	expected := len("Title.\u212a.")
+	if len(got) != 1 || got[0] != expected {
+		t.Fatalf("expected index %d, got %#v", expected, got)
+	}
+
+	if got := findZNTHTokenIndexes("Title.\u06611080p.Source", "1080p"); len(got) != 0 {
+		t.Fatalf("expected adjacent Unicode digit prefix to reject token, got %#v", got)
+	}
+	if got := findZNTHTokenIndexes("Title.1080p\u0661.Source", "1080p"); len(got) != 0 {
+		t.Fatalf("expected adjacent Unicode digit suffix to reject token, got %#v", got)
+	}
+}
+
+func TestZNTHEmptyTokenInputs(t *testing.T) {
+	name := "Show.S01E01.1080p.WEB-DL-GRP"
+	if got := replaceZNTHEpisodeTitle(name, "", "1080p"); got != name {
+		t.Fatalf("expected empty episode title to leave name unchanged, got %q", got)
+	}
+	if got := findZNTHTokenIndexes(name, " "); got != nil {
+		t.Fatalf("expected empty token indexes to be nil, got %#v", got)
 	}
 }
 
