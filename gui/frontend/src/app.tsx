@@ -191,37 +191,16 @@ const splitTrackerLabel = (value: string) =>
     .map((entry) => entry.toLowerCase().trim())
     .filter((entry) => entry.length > 0);
 
-const cztApiKeyOnlySkipCode = "czt_api_key_only";
-
-const isCztApiKeyOnlyAdvisorySkip = (result: Pick<DupeCheckResult, "SkipCode">, tracker: string) =>
-  tracker === "czt" &&
-  String(result.SkipCode || "")
-    .toLowerCase()
-    .trim() === cztApiKeyOnlySkipCode;
-
-/**
- * Returns normalized tracker labels whose skipped duplicate-check result should
- * block upload. CZT API-key-only duplicate-search skips are advisory and are
- * excluded per split tracker label.
- */
-export const ruleBlockingTrackerLabels = (
-  result: Pick<DupeCheckResult, "Tracker" | "SkipCode">,
-) => {
+/** Returns normalized tracker labels whose skipped duplicate-check result should block upload. */
+export const ruleBlockingTrackerLabels = (result: Pick<DupeCheckResult, "Tracker">) => {
   const next = new Set<string>();
   const normalized = result.Tracker.toLowerCase().trim();
   const splitLabels = splitTrackerLabel(result.Tracker);
-  const blockingSplitLabels = splitLabels.filter(
-    (tracker) => !isCztApiKeyOnlyAdvisorySkip(result, tracker),
-  );
 
-  if (
-    normalized &&
-    !isCztApiKeyOnlyAdvisorySkip(result, normalized) &&
-    (!result.Tracker.includes(",") || blockingSplitLabels.length === splitLabels.length)
-  ) {
+  if (normalized) {
     next.add(normalized);
   }
-  blockingSplitLabels.forEach((tracker) => next.add(tracker));
+  splitLabels.forEach((tracker) => next.add(tracker));
   return next;
 };
 

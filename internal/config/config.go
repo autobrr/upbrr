@@ -1033,6 +1033,12 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 			cfg.Trackers.Trackers[trackerName] = trackerCfg
 			continue
 		}
+		if strings.EqualFold(strings.TrimSpace(trackerName), "CZT") {
+			existing.URL = ""
+			existing.APIKey = ""
+			cfg.Trackers.Trackers[trackerName] = existing
+			continue
+		}
 		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
 			existing.URL = trackerCfg.URL
 			cfg.Trackers.Trackers[trackerName] = existing
@@ -1044,6 +1050,17 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 			btnCfg.APIKey = token
 			cfg.Trackers.Trackers["BTN"] = btnCfg
 		}
+	}
+	for trackerName, trackerCfg := range cfg.Trackers.Trackers {
+		if !strings.EqualFold(strings.TrimSpace(trackerName), "CZT") {
+			continue
+		}
+		if strings.TrimSpace(trackerCfg.APIKey) == "" && strings.TrimSpace(trackerCfg.URL) == "" {
+			continue
+		}
+		trackerCfg.APIKey = ""
+		trackerCfg.URL = ""
+		cfg.Trackers.Trackers[trackerName] = trackerCfg
 	}
 	return nil
 }

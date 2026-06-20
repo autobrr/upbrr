@@ -5,10 +5,9 @@
 // endpoint takeupload_api.php.
 //
 // Unlike most impls in this repo CZTeam is not a UNIT3D site and does not need a
-// cookie jar: a single Authorization: Bearer <token> header (bot/admin service
-// accounts) or a passkey form field (regular users) authenticates the multipart
-// POST. The endpoint returns the registered .torrent inline as base64, already
-// personalized with the uploader's announce passkey and source=CzT.
+// cookie jar: the user's passkey authenticates the multipart POST. The endpoint
+// returns the registered .torrent inline as base64, already personalized with
+// the uploader's announce passkey and source=CzT.
 package czt
 
 import (
@@ -33,7 +32,6 @@ import (
 
 	"github.com/anacrolix/torrent/metainfo"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -55,9 +53,12 @@ func init() {
 	cztPostCancelGrace.Store(int64(defaultCZTPostCancelGrace))
 }
 
-var newCZTUploadHTTPClient = func() *http.Client {
-	return &http.Client{Timeout: uploadTimeout}
-}
+var (
+	newCZTUploadHTTPClient = func() *http.Client {
+		return &http.Client{Timeout: uploadTimeout}
+	}
+	cztBaseURL = defaultBaseURL
+)
 
 // uploadResponse mirrors the JSON returned by takeupload_api.php. A 201 carries
 // the full set; a 409 duplicate still returns id/name/download_url/torrent_b64.
@@ -78,7 +79,6 @@ type uploadState struct {
 	files         []commonhttp.FileField
 	endpoint      string
 	baseURL       string
-	token         string
 	questionnaire *api.TrackerQuestionnaire
 }
 
@@ -103,9 +103,6 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
-	if state.token != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+state.token)
-	}
 
 	// Once the CZT upload POST is sent, cancellation can race with an
 	// irreversible remote 201. Give the tracker a short grace to return that
@@ -392,7 +389,11 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, require
 	mediaInfo := buildMediaInfo(req)
 	userDescr := buildDescription(req, assets)
 	releaseName := resolveName(req.Meta)
-	baseURL := resolveBaseURL(req.TrackerConfig)
+	baseURL := resolveBaseURL()
+	passkey := strings.TrimSpace(req.TrackerConfig.Passkey)
+	if passkey == "" {
+		return uploadState{}, errors.New("trackers: CZT missing passkey")
+	}
 
 	category, err := resolveCategory(req.Meta)
 	if err != nil {
@@ -431,15 +432,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, require
 	if source := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(req.Meta.Source, req.Meta.Release.Source)); source != "" {
 		fields["source"] = source
 	}
-
-	token := strings.TrimSpace(req.TrackerConfig.APIKey)
-	// Passkey auth is the documented path for regular users (the Bearer token is
-	// for bot/admin service accounts); both target the same endpoint.
-	if token == "" {
-		if passkey := strings.TrimSpace(req.TrackerConfig.Passkey); passkey != "" {
-			fields["passkey"] = passkey
-		}
-	}
+	fields["passkey"] = passkey
 
 	return uploadState{
 		torrentPath: torrentPath,
@@ -453,7 +446,6 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, require
 		}},
 		endpoint:      baseURL + uploadPath,
 		baseURL:       baseURL,
-		token:         token,
 		questionnaire: categoryQuestionnaire(req.Meta),
 	}, nil
 }
@@ -666,35 +658,17 @@ func bbcodeScreenshotBlock(images []api.ScreenshotImage) string {
 	return "[center]" + b.String() + "[/center]"
 }
 
-// resolveBaseURL returns the CZTeam origin used for upload, details, and
-// returned download URLs.
-func resolveBaseURL(cfg config.TrackerConfig) string {
-	if value := strings.TrimSpace(cfg.URL); value != "" {
-		return normalizeCZTBaseURL(value, strings.TrimRight(value, "/"))
+// resolveBaseURL returns the fixed CZTeam origin used for upload, details, and
+// returned download URLs. CZTeam is not a tracker family/configurable endpoint.
+func resolveBaseURL() string {
+	if trimmed := strings.TrimRight(strings.TrimSpace(cztBaseURL), "/"); trimmed != "" {
+		return trimmed
 	}
 	return defaultBaseURL
 }
 
-// normalizeCZTBaseURL strips userinfo, paths, query strings, and fragments from
-// absolute CZTeam URLs. Malformed values return fallback for legacy raw URL
-// handling.
-func normalizeCZTBaseURL(value string, fallback string) string {
-	trimmed := strings.TrimSpace(value)
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fallback
-	}
-	parsed.Path = ""
-	parsed.RawPath = ""
-	parsed.RawQuery = ""
-	parsed.ForceQuery = false
-	parsed.Fragment = ""
-	parsed.User = nil
-	return strings.TrimRight(parsed.String(), "/")
-}
-
-// joinCZTURL resolves a tracker-provided download URL against the configured
-// CZTeam base URL, strips URL userinfo, and rejects empty, non-addressable, or
+// joinCZTURL resolves a tracker-provided download URL against the CZTeam base
+// URL, strips URL userinfo, and rejects empty, non-addressable, or
 // cross-host results.
 func joinCZTURL(baseURL string, rawRef string) (string, error) {
 	trimmedRef := strings.TrimSpace(rawRef)
@@ -735,7 +709,17 @@ func hasUsableCZTDownloadPath(path string) bool {
 // relative download URLs against it.
 func resolveCZTURLBase(baseURL string) string {
 	trimmed := strings.TrimSpace(baseURL)
-	return normalizeCZTBaseURL(trimmed, strings.TrimRight(trimmed, "/"))
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return strings.TrimRight(trimmed, "/")
+	}
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.User = nil
+	return strings.TrimRight(parsed.String(), "/")
 }
 
 func resolveName(meta api.PreparedMetadata) string {

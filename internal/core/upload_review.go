@@ -594,28 +594,18 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 }
 
 // dupeResultBlocksTracker reports whether a duplicate-check result should
-// suppress upload for one tracker. CZT passkey-only search skips caused by
-// API-key-only upload auth remain advisory.
-func dupeResultBlocksTracker(result api.DupeCheckResult, tracker string) bool {
+// suppress upload for one tracker.
+func dupeResultBlocksTracker(result api.DupeCheckResult, _ string) bool {
 	if result.HasDupes {
 		return true
 	}
 	if result.Skipped {
-		return !isCZTAPIKeyOnlyDupeSkip(result, tracker)
+		return true
 	}
 	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
 		return true
 	}
 	return strings.TrimSpace(result.Error) != ""
-}
-
-// isCZTAPIKeyOnlyDupeSkip identifies the CZT skip emitted when upload auth can
-// use a bearer API key but the duplicate-search API still requires a passkey.
-func isCZTAPIKeyOnlyDupeSkip(result api.DupeCheckResult, tracker string) bool {
-	if !strings.EqualFold(strings.TrimSpace(tracker), "CZT") {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(result.SkipCode), api.DupeSkipCodeCZTAPIKeyOnly)
 }
 
 func cloneBlockedTrackers(input map[string][]api.TrackerBlockReason) map[string][]api.TrackerBlockReason {

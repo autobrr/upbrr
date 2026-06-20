@@ -57,6 +57,51 @@ func TestUploadSuccessPersistsReturnedTorrentAndUsesProvidedAssets(t *testing.T)
 	}
 }
 
+func TestUploadIgnoresStaleConfigURLAndAPIKey(t *testing.T) {
+	returnedTorrent := validTorrentBytes(t)
+	server := newCZTUploadTestServer(t, returnedTorrent, uploadPath)
+	defer server.Close()
+
+	req := cztUploadRequest(t, server.URL)
+	req.TrackerConfig.URL = "https://unused.example"
+	req.TrackerConfig.APIKey = "stale-api-key"
+
+	result, err := upload(context.Background(), req)
+	server.assertNoHandlerError(t)
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.Uploaded != 1 {
+		t.Fatalf("expected upload success, got %+v", result)
+	}
+}
+
+func TestUploadRequiresPasskey(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	req := cztUploadRequest(t, server.URL)
+	req.TrackerConfig.Passkey = ""
+
+	result, err := upload(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected missing passkey error")
+	}
+	if !strings.Contains(err.Error(), "missing passkey") {
+		t.Fatalf("expected missing passkey error, got %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("expected no remote request without passkey, got %d", requests.Load())
+	}
+	if result.Uploaded != 0 || len(result.UploadedTorrents) != 0 {
+		t.Fatalf("expected no uploaded result, got %+v", result)
+	}
+}
+
 func TestUploadTestServerReportsHandlerAssertionOnTestGoroutine(t *testing.T) {
 	returnedTorrent := validTorrentBytes(t)
 	server := newCZTUploadTestServer(t, returnedTorrent, "/wrong-upload-path")
@@ -250,45 +295,6 @@ func TestUploadResponseBadLocalFieldPreservesRemoteSuccess(t *testing.T) {
 	}
 	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
 		t.Fatalf("expected usable download URL despite bad local field, got %q", result.UploadedTorrents[0].DownloadURL)
-	}
-}
-
-func TestUploadNormalizesBaseURLPathAndQuery(t *testing.T) {
-	returnedTorrent := validTorrentBytes(t)
-	server := newCZTUploadTestServer(t, returnedTorrent, uploadPath)
-	defer server.Close()
-
-	result, err := upload(context.Background(), cztUploadRequest(t, server.URL+"/nested/path?token=ignored"))
-	server.assertNoHandlerError(t)
-	if err != nil {
-		t.Fatalf("unexpected upload error: %v", err)
-	}
-	if result.UploadedTorrents[0].TorrentURL != server.URL+"/details.php?id=123" {
-		t.Fatalf("unexpected torrent URL: %q", result.UploadedTorrents[0].TorrentURL)
-	}
-	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
-		t.Fatalf("unexpected download URL: %q", result.UploadedTorrents[0].DownloadURL)
-	}
-}
-
-func TestUploadNormalizesBaseURLUserinfo(t *testing.T) {
-	returnedTorrent := validTorrentBytes(t)
-	server := newCZTUploadTestServer(t, returnedTorrent, uploadPath)
-	defer server.Close()
-
-	result, err := upload(context.Background(), cztUploadRequest(t, withUserinfo(server.URL)+"/nested/path?token=ignored"))
-	server.assertNoHandlerError(t)
-	if err != nil {
-		t.Fatalf("unexpected upload error: %v", err)
-	}
-	if result.UploadedTorrents[0].TorrentURL != server.URL+"/details.php?id=123" {
-		t.Fatalf("unexpected torrent URL: %q", result.UploadedTorrents[0].TorrentURL)
-	}
-	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
-		t.Fatalf("unexpected download URL: %q", result.UploadedTorrents[0].DownloadURL)
-	}
-	if strings.Contains(result.UploadedTorrents[0].TorrentURL, "user:pass@") || strings.Contains(result.UploadedTorrents[0].DownloadURL, "user:pass@") {
-		t.Fatalf("expected userinfo stripped from URLs, got %+v", result.UploadedTorrents[0])
 	}
 }
 
@@ -823,10 +829,6 @@ func validTorrentBytes(t *testing.T) []byte {
 	return payload
 }
 
-func withUserinfo(rawURL string) string {
-	return strings.Replace(rawURL, "://", "://user:pass@", 1)
-}
-
 type cztUploadTestServer struct {
 	*httptest.Server
 	handlerErr chan error
@@ -855,8 +857,14 @@ func assertCZTUploadRequest(r *http.Request, expectedPath string) error {
 	if r.URL.Path != expectedPath {
 		return fmt.Errorf("expected upload path %q, got %q", expectedPath, r.URL.Path)
 	}
+	if got := r.Header.Get("Authorization"); got != "" {
+		return fmt.Errorf("expected no authorization header, got %q", got)
+	}
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
 		return fmt.Errorf("parse multipart: %w", err)
+	}
+	if got := r.FormValue("passkey"); got != "pass" {
+		return fmt.Errorf("expected passkey form field, got %q", got)
 	}
 	if got := r.FormValue("user_descr"); !strings.Contains(got, "https://img.example/rehosted.jpg") {
 		return fmt.Errorf("expected provided screenshot URL in payload, got %q", got)
@@ -914,6 +922,9 @@ func (s *cztUploadTestServer) handlerError() error {
 
 func cztUploadRequest(t *testing.T, trackerURL string) trackers.UploadRequest {
 	t.Helper()
+	if strings.TrimSpace(trackerURL) != "" {
+		withCZTBaseURL(t, trackerURL)
+	}
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "Release.torrent")
 	if err := os.WriteFile(torrentPath, []byte("source-torrent"), 0o600); err != nil {
@@ -933,7 +944,6 @@ func cztUploadRequest(t *testing.T, trackerURL string) trackers.UploadRequest {
 			Release:     api.ReleaseInfo{Resolution: "1080p"},
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:     trackerURL,
 			Passkey: "pass",
 		},
 		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "state", "upbrr.db")}},
@@ -947,4 +957,13 @@ func cztUploadRequest(t *testing.T, trackerURL string) trackers.UploadRequest {
 			}},
 		},
 	}
+}
+
+func withCZTBaseURL(t *testing.T, baseURL string) {
+	t.Helper()
+	old := cztBaseURL
+	cztBaseURL = baseURL
+	t.Cleanup(func() {
+		cztBaseURL = old
+	})
 }

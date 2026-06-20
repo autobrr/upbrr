@@ -63,11 +63,11 @@ func TestCZTHandlerSearchUsesPasskeyAndParsesArray(t *testing.T) {
 			}))
 			defer server.Close()
 
-			tc.cfg.URL = server.URL
 			handler := cztHandler{
-				cfg:    cztTestConfig(tc.cfg),
-				http:   server.Client(),
-				logger: api.NopLogger{},
+				cfg:     cztTestConfig(tc.cfg),
+				http:    server.Client(),
+				logger:  api.NopLogger{},
+				baseURL: server.URL,
 			}
 			entries, notes, err := handler.Search(context.Background(), tc.meta, "CZT")
 			select {
@@ -95,83 +95,6 @@ func TestCZTHandlerSearchUsesPasskeyAndParsesArray(t *testing.T) {
 	}
 }
 
-func TestCZTHandlerSearchNormalizesBaseURLPathAndQuery(t *testing.T) {
-	t.Parallel()
-
-	const title = "Movie"
-
-	handlerErr := make(chan error, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := assertCZTSearchRequest(r, title); err != nil {
-			select {
-			case handlerErr <- err:
-			default:
-			}
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		_, _ = io.WriteString(w, `[{"id":"77","name":"Movie","url":"https://czteam.me/details.php?id=77"}]`)
-	}))
-	defer server.Close()
-
-	tests := []struct {
-		name string
-		url  string
-	}{
-		{name: "path and query", url: server.URL + "/nested/path?token=ignored"},
-		{name: "username only", url: strings.Replace(server.URL, "://", "://username@", 1) + "/nested/path?token=ignored"},
-		{name: "username password", url: strings.Replace(server.URL, "://", "://username:password@", 1) + "/nested/path?token=ignored"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			handler := cztHandler{
-				cfg:    cztTestConfig(config.TrackerConfig{URL: tc.url, Passkey: "passkey123"}),
-				http:   server.Client(),
-				logger: api.NopLogger{},
-			}
-			entries, notes, err := handler.Search(context.Background(), api.PreparedMetadata{
-				Release: api.ReleaseInfo{Title: title},
-			}, "CZT")
-			select {
-			case err := <-handlerErr:
-				t.Fatalf("handler: %v", err)
-			default:
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if len(notes) != 0 || len(entries) != 1 {
-				t.Fatalf("expected one entry and no notes, got entries=%v notes=%v", entries, notes)
-			}
-		})
-	}
-}
-
-func TestNormalizeCZTSearchBaseURL(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		value string
-		want  string
-	}{
-		{name: "origin path query fragment", value: " https://czteam.me/nested/path?token=ignored#frag ", want: "https://czteam.me"},
-		{name: "username only", value: "https://username@czteam.me/nested/path?token=ignored", want: "https://czteam.me"},
-		{name: "username password", value: "https://username:password@czteam.me/nested/path?token=ignored", want: "https://czteam.me"},
-		{name: "schemeless fallback", value: "czteam.me/nested/path/", want: "czteam.me/nested/path"},
-		{name: "malformed fallback", value: "://czteam.me/nested/path/", want: "://czteam.me/nested/path"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := normalizeCZTSearchBaseURL(tc.value); got != tc.want {
-				t.Fatalf("normalizeCZTSearchBaseURL(%q) = %q, want %q", tc.value, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestCZTHandlerSearchCancellationAfterResponseReturnsNoEntries(t *testing.T) {
 	t.Parallel()
 
@@ -186,7 +109,7 @@ func TestCZTHandlerSearchCancellationAfterResponseReturnsNoEntries(t *testing.T)
 		}, nil
 	})}
 	handler := cztHandler{
-		cfg:    cztTestConfig(config.TrackerConfig{URL: "https://czteam.me", Passkey: "passkey123"}),
+		cfg:    cztTestConfig(config.TrackerConfig{Passkey: "passkey123"}),
 		http:   client,
 		logger: api.NopLogger{},
 	}
@@ -282,7 +205,6 @@ func TestCZTHandlerSearchCredentialMatrix(t *testing.T) {
 		name      string
 		cfg       config.TrackerConfig
 		wantSkip  string
-		wantCode  string
 		wantError string
 	}{
 		{
@@ -291,16 +213,14 @@ func TestCZTHandlerSearchCredentialMatrix(t *testing.T) {
 			wantSkip: "missing passkey",
 		},
 		{
-			name:     "api key only skips",
+			name:     "api key only is ignored",
 			cfg:      config.TrackerConfig{APIKey: "bearer-token"},
-			wantSkip: "requires passkey",
-			wantCode: api.DupeSkipCodeCZTAPIKeyOnly,
+			wantSkip: "missing passkey",
 		},
 		{
-			name:     "padded api key only skips",
+			name:     "padded api key only is ignored",
 			cfg:      config.TrackerConfig{APIKey: " bearer-token "},
-			wantSkip: "requires passkey",
-			wantCode: api.DupeSkipCodeCZTAPIKeyOnly,
+			wantSkip: "missing passkey",
 		},
 	}
 
@@ -328,8 +248,8 @@ func TestCZTHandlerSearchCredentialMatrix(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			code, displayNotes := splitSkipCodeNotes(notes)
-			if code != tc.wantCode {
-				t.Fatalf("expected skip code %q, got %q from notes %v", tc.wantCode, code, notes)
+			if code != "" {
+				t.Fatalf("expected no skip code, got %q from notes %v", code, notes)
 			}
 			if len(displayNotes) != 1 || !strings.Contains(displayNotes[0], tc.wantSkip) {
 				t.Fatalf("expected display skip note containing %q, got %v", tc.wantSkip, displayNotes)
@@ -364,9 +284,10 @@ func TestCZTHandlerSearchRemoteFailuresReturnErrors(t *testing.T) {
 			defer server.Close()
 
 			handler := cztHandler{
-				cfg:    cztTestConfig(config.TrackerConfig{URL: server.URL, Passkey: "passkey123"}),
-				http:   server.Client(),
-				logger: api.NopLogger{},
+				cfg:     cztTestConfig(config.TrackerConfig{URL: "https://unused.example", Passkey: "passkey123"}),
+				http:    server.Client(),
+				logger:  api.NopLogger{},
+				baseURL: server.URL,
 			}
 			_, notes, err := handler.Search(context.Background(), api.PreparedMetadata{
 				Release: api.ReleaseInfo{Title: "Movie"},
@@ -394,9 +315,10 @@ func TestCZTHandlerSearchMissingTitleSkipsWithoutHTTP(t *testing.T) {
 	defer server.Close()
 
 	handler := cztHandler{
-		cfg:    cztTestConfig(config.TrackerConfig{URL: server.URL, Passkey: "passkey123"}),
-		http:   server.Client(),
-		logger: api.NopLogger{},
+		cfg:     cztTestConfig(config.TrackerConfig{URL: "https://unused.example", Passkey: "passkey123"}),
+		http:    server.Client(),
+		logger:  api.NopLogger{},
+		baseURL: server.URL,
 	}
 	_, notes, err := handler.Search(context.Background(), api.PreparedMetadata{}, "CZT")
 	if err != nil {
@@ -410,7 +332,7 @@ func TestCZTHandlerSearchMissingTitleSkipsWithoutHTTP(t *testing.T) {
 	}
 }
 
-func TestCZTServiceMarksAPIKeyOnlySearchSkipped(t *testing.T) {
+func TestCZTServiceIgnoresAPIKeyOnlyConfig(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService(cztTestConfig(config.TrackerConfig{APIKey: "bearer-token"}), api.NopLogger{})
@@ -431,13 +353,13 @@ func TestCZTServiceMarksAPIKeyOnlySearchSkipped(t *testing.T) {
 	if result.Error != "" {
 		t.Fatalf("expected no error, got %q", result.Error)
 	}
-	if result.SkipCode != api.DupeSkipCodeCZTAPIKeyOnly {
-		t.Fatalf("expected structured skip code, got %q", result.SkipCode)
+	if result.SkipCode != "" {
+		t.Fatalf("expected no structured skip code, got %q", result.SkipCode)
 	}
 	if len(result.SkipRules) != 0 {
-		t.Fatalf("expected api-key-only skip not to use rule grouping keys, got %#v", result.SkipRules)
+		t.Fatalf("expected missing-passkey skip not to use rule grouping keys, got %#v", result.SkipRules)
 	}
-	if !strings.Contains(result.SkipReason, "requires passkey") {
+	if !strings.Contains(result.SkipReason, "missing passkey") {
 		t.Fatalf("expected passkey skip, got %q", result.SkipReason)
 	}
 	if strings.Contains(strings.Join(result.Notes, " "), "skip-code:") {

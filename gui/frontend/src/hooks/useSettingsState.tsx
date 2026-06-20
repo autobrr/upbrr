@@ -332,13 +332,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
     trackerFieldMeta.CheckForRules,
   ],
-  CZT: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.URL,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Passkey,
-  ],
+  CZT: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.Passkey],
   DC: [
     trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
@@ -1030,6 +1024,51 @@ export const normalizeTorrentClientsForSave = (input: ConfigMap) => {
   return { ...input, TorrentClients: nextClients };
 };
 
+export const normalizeCZTTrackerForSave = (input: ConfigMap) => {
+  const trackerRoot = input.Trackers;
+  if (!trackerRoot || typeof trackerRoot !== "object" || Array.isArray(trackerRoot)) {
+    return input;
+  }
+  const trackerEntries = (trackerRoot as ConfigMap).Trackers;
+  if (!trackerEntries || typeof trackerEntries !== "object" || Array.isArray(trackerEntries)) {
+    return input;
+  }
+
+  let changed = false;
+  const nextEntries: ConfigMap = {};
+  Object.entries(trackerEntries as ConfigMap).forEach(([name, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      nextEntries[name] = value;
+      return;
+    }
+    if (name.trim().toUpperCase() !== "CZT") {
+      nextEntries[name] = value;
+      return;
+    }
+    const next = { ...(value as ConfigMap) };
+    if ("APIKey" in next) {
+      delete next.APIKey;
+      changed = true;
+    }
+    if ("URL" in next) {
+      delete next.URL;
+      changed = true;
+    }
+    nextEntries[name] = next;
+  });
+
+  if (!changed) {
+    return input;
+  }
+  return {
+    ...input,
+    Trackers: {
+      ...(trackerRoot as ConfigMap),
+      Trackers: nextEntries,
+    },
+  };
+};
+
 /**
  * Owns settings-screen state, Wails config loading, sensitive-value masking,
  * render helpers, and save payload construction for tabs that need config data.
@@ -1151,8 +1190,8 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (!configData) {
       return null;
     }
-    const restored = normalizeTorrentClientsForSave(
-      restoreSensitiveConfig(configData, sensitiveValues),
+    const restored = normalizeCZTTrackerForSave(
+      normalizeTorrentClientsForSave(restoreSensitiveConfig(configData, sensitiveValues)),
     );
     return JSON.stringify(restored, null, 2);
   };

@@ -22,18 +22,19 @@ const cztDefaultBaseURL = "https://czteam.me"
 //
 //	GET {base}/api.php?action=search-torrents&type=name&query=...&passkey=<16-hex>
 //
-// The endpoint authenticates with the user's 16-hex passkey (the same one used
-// by announce/download and the upload fallback) and returns a bare JSON array
-// of torrent objects.
+// The endpoint authenticates with the user's passkey (the same one used by
+// upload, announce, and download) and returns a bare JSON array of torrent
+// objects.
 type cztHandler struct {
-	cfg    config.Config
-	http   *http.Client
-	logger api.Logger
+	cfg     config.Config
+	http    *http.Client
+	logger  api.Logger
+	baseURL string
 }
 
-// Search queries CZTeam by release title. Missing tracker config, unsupported
-// auth, or title returns skip notes; remote or response-shape failures return
-// errors so duplicate filtering fails closed.
+// Search queries CZTeam by release title. Missing tracker config, passkey, or
+// title returns skip notes; remote or response-shape failures return errors so
+// duplicate filtering fails closed.
 func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ string) ([]api.DupeEntry, []string, error) {
 	tracker, ok := trackerCfg(h.cfg, "CZT")
 	if !ok {
@@ -41,12 +42,6 @@ func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	}
 	passkey := strings.TrimSpace(tracker.Passkey)
 	if passkey == "" {
-		if strings.TrimSpace(tracker.APIKey) != "" {
-			return nil, []string{
-				noteSkip("CZT dupe search requires passkey credentials; API key upload token is not supported by the search API"),
-				noteSkipCode(api.DupeSkipCodeCZTAPIKeyOnly),
-			}, nil
-		}
 		return nil, []string{noteSkip("missing passkey for tracker")}, nil
 	}
 
@@ -58,11 +53,10 @@ func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		return nil, []string{noteSkip("missing title for CZT dupe search")}, nil
 	}
 
-	base := strings.TrimRight(strings.TrimSpace(tracker.URL), "/")
+	base := strings.TrimRight(strings.TrimSpace(h.baseURL), "/")
 	if base == "" {
 		base = cztDefaultBaseURL
 	}
-	base = normalizeCZTSearchBaseURL(base)
 
 	params := url.Values{}
 	params.Set("action", "search-torrents")
@@ -117,25 +111,6 @@ func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 		entries = append(entries, entry)
 	}
 	return entries, nil, nil
-}
-
-// normalizeCZTSearchBaseURL returns the CZTeam origin used for API searches.
-// Absolute URLs discard userinfo, path, query, and fragment; malformed values
-// fall back to trimming trailing slashes so existing raw endpoint behavior is
-// preserved.
-func normalizeCZTSearchBaseURL(value string) string {
-	trimmed := strings.TrimSpace(value)
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return strings.TrimRight(trimmed, "/")
-	}
-	parsed.Path = ""
-	parsed.RawPath = ""
-	parsed.RawQuery = ""
-	parsed.ForceQuery = false
-	parsed.Fragment = ""
-	parsed.User = nil
-	return strings.TrimRight(parsed.String(), "/")
 }
 
 // redactedError returns an error whose text has passed through the repository

@@ -541,7 +541,7 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	}
 }
 
-func TestTrackersConfigCZTAuthFieldsRoundTrip(t *testing.T) {
+func TestTrackersConfigCZTPasskeyFieldsRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
@@ -569,11 +569,11 @@ func TestTrackersConfigCZTAuthFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("import json: %v", err)
 	}
 	jsonCZT := jsonRoundTrip.Trackers.Trackers["CZT"]
-	if jsonCZT.URL != "https://czteam.example" {
-		t.Fatalf("json CZT URL mismatch: got %q", jsonCZT.URL)
+	if jsonCZT.URL != "" {
+		t.Fatalf("json CZT should not include URL, got %q", jsonCZT.URL)
 	}
-	if jsonCZT.APIKey != "service-token" {
-		t.Fatalf("json CZT APIKey mismatch: got %q", jsonCZT.APIKey)
+	if jsonCZT.APIKey != "" {
+		t.Fatalf("json CZT should not include APIKey, got %q", jsonCZT.APIKey)
 	}
 	if jsonCZT.Passkey != "user-passkey" {
 		t.Fatalf("json CZT Passkey mismatch: got %q", jsonCZT.Passkey)
@@ -592,14 +592,14 @@ func TestTrackersConfigCZTAuthFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("read yaml: %v", err)
 	}
 	text := string(data)
-	for _, want := range []string{
-		"url: https://czteam.example",
-		"api_key: service-token",
-		"passkey: user-passkey",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("yaml export missing %q in:\n%s", want, text)
-		}
+	if !strings.Contains(text, "passkey: user-passkey") {
+		t.Fatalf("yaml export missing CZT passkey in:\n%s", text)
+	}
+	if strings.Contains(text, "url: https://czteam.example") {
+		t.Fatalf("yaml CZT should not include url")
+	}
+	if strings.Contains(text, "api_key: service-token") {
+		t.Fatalf("yaml CZT should not include api_key")
 	}
 	if strings.Contains(text, "announce_url: https://should-not-be-here") {
 		t.Fatalf("yaml CZT should not include announce_url")
@@ -610,11 +610,11 @@ func TestTrackersConfigCZTAuthFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("import yaml: %v", err)
 	}
 	yamlCZT := yamlRoundTrip.Trackers.Trackers["CZT"]
-	if yamlCZT.URL != "https://czteam.example" {
-		t.Fatalf("yaml CZT URL mismatch: got %q", yamlCZT.URL)
+	if yamlCZT.URL != "" {
+		t.Fatalf("yaml CZT should not include URL, got %q", yamlCZT.URL)
 	}
-	if yamlCZT.APIKey != "service-token" {
-		t.Fatalf("yaml CZT APIKey mismatch: got %q", yamlCZT.APIKey)
+	if yamlCZT.APIKey != "" {
+		t.Fatalf("yaml CZT should not include APIKey, got %q", yamlCZT.APIKey)
 	}
 	if yamlCZT.Passkey != "user-passkey" {
 		t.Fatalf("yaml CZT Passkey mismatch: got %q", yamlCZT.Passkey)
@@ -770,6 +770,32 @@ func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *te
 
 	if got := cfg.Trackers.Trackers["BTN"].APIKey; got != "legacy-token" {
 		t.Fatalf("expected legacy BTN api token to backfill tracker config, got %q", got)
+	}
+}
+
+func TestMergeMissingTrackerDefaultsClearsCZTAPIKeyAndURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"CZT": {APIKey: "stale-token", URL: "https://stale.example", Passkey: "passkey"},
+			},
+		},
+	}
+
+	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	czt := cfg.Trackers.Trackers["CZT"]
+	if czt.APIKey != "" {
+		t.Fatalf("expected CZT APIKey to be cleared, got %q", czt.APIKey)
+	}
+	if czt.URL != "" {
+		t.Fatalf("expected CZT URL to be cleared, got %q", czt.URL)
+	}
+	if czt.Passkey != "passkey" {
+		t.Fatalf("expected CZT passkey preserved, got %q", czt.Passkey)
 	}
 }
 

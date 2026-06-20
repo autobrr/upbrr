@@ -223,69 +223,6 @@ func TestApplyDupeSummaryBlocksSkippedAndFailedTrackers(t *testing.T) {
 	}
 }
 
-func TestApplyDupeSummaryUsesStructuredCZTAPIKeyOnlySkip(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		results     []api.DupeCheckResult
-		wantBlocked map[string]bool
-	}{
-		{
-			name: "czt api key only skip with changed wording does not block",
-			results: []api.DupeCheckResult{{
-				Tracker:    "CZT",
-				Skipped:    true,
-				SkipReason: "CZT search skipped because upload auth uses an API token",
-				SkipCode:   api.DupeSkipCodeCZTAPIKeyOnly,
-			}},
-			wantBlocked: map[string]bool{"CZT": false},
-		},
-		{
-			name: "czt skip without structured code blocks",
-			results: []api.DupeCheckResult{{
-				Tracker:    "CZT",
-				Skipped:    true,
-				SkipReason: "missing passkey for tracker",
-			}},
-			wantBlocked: map[string]bool{"CZT": true},
-		},
-		{
-			name: "non czt skip with czt-like wording still blocks",
-			results: []api.DupeCheckResult{{
-				Tracker:    "BLU",
-				Skipped:    true,
-				SkipReason: "requires passkey; API key upload token is not supported by the search API",
-			}},
-			wantBlocked: map[string]bool{"BLU": true},
-		},
-		{
-			name: "grouped czt api key only skip splits decisions per tracker",
-			results: []api.DupeCheckResult{{
-				Tracker:    "CZT, HDB",
-				Skipped:    true,
-				SkipReason: "CZT search skipped because upload auth uses an API token",
-				SkipCode:   api.DupeSkipCodeCZTAPIKeyOnly,
-			}},
-			wantBlocked: map[string]bool{"CZT": false, "HDB": true},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			meta := api.PreparedMetadata{}
-			applyDupeSummaryToPreparedMeta(&meta, api.DupeCheckSummary{Results: tc.results})
-
-			for tracker, wantBlocked := range tc.wantBlocked {
-				got := len(meta.BlockedTrackers[tracker]) > 0
-				if got != wantBlocked {
-					t.Fatalf("blocked[%s]=%t, want %t; blocks=%#v", tracker, got, wantBlocked, meta.BlockedTrackers)
-				}
-			}
-		})
-	}
-}
-
 func TestApplyDupeSummaryStoresMatchedDownloadsForCrossSeedInjection(t *testing.T) {
 	t.Parallel()
 

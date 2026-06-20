@@ -434,7 +434,7 @@ describe("ClientSetup client selectors", () => {
 });
 
 describe("Tracker client selectors", () => {
-  it("renders CZT URL, API key, and passkey fields", async () => {
+  it("renders CZT passkey field without preserving stale URL or API key", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
       guiapp: {
         App: {
@@ -469,21 +469,21 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("CZT", { selector: ".settings-card__summary-name" }));
 
-    expect(screen.getByLabelText("URL")).toHaveValue("https://czteam.example");
-    expect(screen.getByLabelText("API key")).toHaveValue("[REDACTED]");
+    expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Passkey")).toHaveValue("[REDACTED]");
 
     const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     };
     expect(payload.Trackers?.Trackers?.CZT).toMatchObject({
-      URL: "https://czteam.example",
-      APIKey: "service-token",
       Passkey: "user-passkey",
     });
+    expect(payload.Trackers?.Trackers?.CZT?.URL).toBeUndefined();
+    expect(payload.Trackers?.Trackers?.CZT?.APIKey).toBeUndefined();
   });
 
-  it("creates CZT entries with URL, API key, and passkey defaults", async () => {
+  it("creates CZT entries with passkey defaults", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
       guiapp: {
         App: {
@@ -521,10 +521,10 @@ describe("Tracker client selectors", () => {
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     };
     expect(payload.Trackers?.Trackers?.CZT).toMatchObject({
-      URL: "",
-      APIKey: "",
       Passkey: "",
     });
+    expect(payload.Trackers?.Trackers?.CZT?.URL).toBeUndefined();
+    expect(payload.Trackers?.Trackers?.CZT?.APIKey).toBeUndefined();
   });
 
   it("renders tracker torrent client as a configured client dropdown", async () => {

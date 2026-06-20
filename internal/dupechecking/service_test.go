@@ -644,8 +644,8 @@ func TestCheckPreservesVisibleSkipCodeMarkerNotes(t *testing.T) {
 		},
 		{
 			name:        "metadata plus visible skip reason",
-			notes:       []string{noteSkipCode(api.DupeSkipCodeCZTAPIKeyOnly), noteSkip("tracker skipped"), "skip-code: tracker-visible note"},
-			wantCode:    api.DupeSkipCodeCZTAPIKeyOnly,
+			notes:       []string{noteSkipCode("test_skip_code"), noteSkip("tracker skipped"), "skip-code: tracker-visible note"},
+			wantCode:    "test_skip_code",
 			wantSkipped: true,
 		},
 	}
@@ -726,15 +726,15 @@ func TestSplitSkipCodeNotesOnlyRemovesInternalMetadata(t *testing.T) {
 	t.Parallel()
 
 	notes := []string{
-		noteSkipCode(api.DupeSkipCodeCZTAPIKeyOnly),
+		noteSkipCode("test_skip_code"),
 		"skip-code: tracker-visible note",
 		"  SKIP-CODE: tracker-visible mixed case  ",
 		noteSkipCode("secondary_code"),
 	}
 
 	code, displayNotes := splitSkipCodeNotes(notes)
-	if code != api.DupeSkipCodeCZTAPIKeyOnly {
-		t.Fatalf("expected first skip code %q, got %q", api.DupeSkipCodeCZTAPIKeyOnly, code)
+	if code != "test_skip_code" {
+		t.Fatalf("expected first skip code %q, got %q", "test_skip_code", code)
 	}
 	if len(displayNotes) != 2 {
 		t.Fatalf("expected 2 display notes, got %#v", displayNotes)

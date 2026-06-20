@@ -225,9 +225,7 @@ trackers:
     check_for_rules: true
   CZT:
     link_dir_name: ""
-    api_key: ""
     passkey: ""
-    url: "https://czteam.me"
   DC:
     link_dir_name: ""
     api_key: ""

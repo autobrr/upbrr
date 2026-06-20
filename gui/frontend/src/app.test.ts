@@ -353,18 +353,18 @@ describe("ruleBlockingTrackerLabels", () => {
       }),
     ).sort();
 
-  it("does not block CZT for API-key-only advisory skips", () => {
-    expect(labelsFor({ Tracker: " CZT ", SkipCode: " CZT_API_KEY_ONLY " })).toEqual([]);
-  });
-
-  it("continues blocking non-advisory and non-CZT skipped trackers", () => {
+  it("blocks skipped trackers", () => {
     expect(labelsFor({ Tracker: "CZT" })).toEqual(["czt"]);
-    expect(labelsFor({ Tracker: "HDB", SkipCode: "czt_api_key_only" })).toEqual(["hdb"]);
+    expect(labelsFor({ Tracker: "HDB", SkipCode: "legacy_code" })).toEqual(["hdb"]);
   });
 
-  it("applies CZT advisory skips per split tracker label", () => {
-    expect(labelsFor({ Tracker: "CZT, HDB", SkipCode: "czt_api_key_only" })).toEqual(["hdb"]);
-    expect(labelsFor({ Tracker: ", CZT,, ", SkipCode: "czt_api_key_only" })).toEqual([]);
+  it("blocks each split tracker label", () => {
+    expect(labelsFor({ Tracker: "CZT, HDB", SkipCode: "legacy_code" })).toEqual([
+      "czt",
+      "czt, hdb",
+      "hdb",
+    ]);
+    expect(labelsFor({ Tracker: ", CZT,, ", SkipCode: "legacy_code" })).toEqual([", czt,,", "czt"]);
   });
 });
 

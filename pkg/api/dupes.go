@@ -5,10 +5,6 @@ package api
 
 import "time"
 
-// DupeSkipCodeCZTAPIKeyOnly marks CZTeam duplicate checks skipped because
-// upload auth can use an API key while duplicate search still requires a passkey.
-const DupeSkipCodeCZTAPIKeyOnly = "czt_api_key_only" //nolint:gosec // Stable skip code, not a credential.
-
 // DupeEntry describes one tracker duplicate-search hit before or after local
 // filtering.
 type DupeEntry struct {
