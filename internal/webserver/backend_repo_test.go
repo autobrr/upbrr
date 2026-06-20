@@ -5,6 +5,7 @@ package webserver
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -132,6 +134,51 @@ func TestBackendGetLogExclusionsReturnsEmptySliceWhenMissing(t *testing.T) {
 	}
 	if len(patterns) != 0 {
 		t.Fatalf("expected no exclusions, got %#v", patterns)
+	}
+}
+
+func TestBackendGetConfigFallsBackToRuntimeConfigWhenDatabaseConfigMissing(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "backend-empty-config.db")
+	repo, err := db.OpenWithLogger(repoPath, nil)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("load embedded config: %v", err)
+	}
+	cfg.MainSettings.DBPath = repoPath
+	backend := &Backend{
+		cfg:  *cfg,
+		repo: repo,
+		hub:  newEventHub(),
+	}
+
+	payload, err := backend.GetConfig()
+	if err != nil {
+		t.Fatalf("get config: %v", err)
+	}
+	exported, err := config.ImportFromJSONEncrypted(payload)
+	if err != nil {
+		t.Fatalf("parse exported config: %v", err)
+	}
+	if exported.MainSettings.DBPath != repoPath {
+		t.Fatalf("DBPath: got %q want %q", exported.MainSettings.DBPath, repoPath)
+	}
+	if len(exported.Trackers.Trackers) == 0 {
+		t.Fatal("expected runtime tracker defaults in fallback config")
+	}
+	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); !errors.Is(loadErr, internalerrors.ErrNotFound) {
+		t.Fatalf("fallback should not persist config rows, load err=%v", loadErr)
 	}
 }
 

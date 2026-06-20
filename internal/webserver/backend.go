@@ -759,10 +759,18 @@ func (b *Backend) exportableConfig() (*config.Config, error) {
 	}
 	cfg, err := config.LoadFromDatabase(context.Background(), b.repo)
 	if err != nil {
+		if errors.Is(err, internalerrors.ErrNotFound) {
+			cfg := b.currentConfig()
+			return normalizeExportableConfig(&cfg, b.currentConfig().MainSettings.DBPath), nil
+		}
 		return nil, fmt.Errorf("web: %w", err)
 	}
+	return normalizeExportableConfig(cfg, b.currentConfig().MainSettings.DBPath), nil
+}
+
+func normalizeExportableConfig(cfg *config.Config, dbPath string) *config.Config {
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
-		cfg.MainSettings.DBPath = b.currentConfig().MainSettings.DBPath
+		cfg.MainSettings.DBPath = dbPath
 	}
 	if cfg.Trackers.Trackers == nil {
 		cfg.Trackers.Trackers = map[string]config.TrackerConfig{}
@@ -770,7 +778,7 @@ func (b *Backend) exportableConfig() (*config.Config, error) {
 	if cfg.Trackers.DefaultTrackers == nil {
 		cfg.Trackers.DefaultTrackers = config.CSVList{}
 	}
-	return cfg, nil
+	return cfg
 }
 
 func (b *Backend) allowUnencryptedExport() (bool, error) {
