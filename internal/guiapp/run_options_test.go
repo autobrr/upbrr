@@ -5,9 +5,11 @@ package guiapp
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
@@ -34,6 +36,14 @@ type closeCounterCore struct {
 	importedMeta api.PreparedMetadata
 	importedReq  api.Request
 	fetchReq     api.Request
+	uploads      []uploadPreparedResponse
+	uploadCalls  int
+}
+
+type uploadPreparedResponse struct {
+	result       api.Result
+	err          error
+	beforeReturn func()
 }
 
 func (c *closeCounterCore) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -41,6 +51,14 @@ func (c *closeCounterCore) RunUpload(context.Context, api.Request) (api.Result, 
 }
 
 func (c *closeCounterCore) RunUploadPrepared(context.Context, api.Request) (api.Result, error) {
+	if c.uploadCalls < len(c.uploads) {
+		response := c.uploads[c.uploadCalls]
+		c.uploadCalls++
+		if response.beforeReturn != nil {
+			response.beforeReturn()
+		}
+		return response.result, response.err
+	}
 	return api.Result{}, nil
 }
 
@@ -284,6 +302,111 @@ func TestTrackerUploadJobCloseResourcesIsIdempotent(t *testing.T) {
 	if got := loggerCloser.count.Load(); got != 1 {
 		t.Fatalf("expected logger close once, got %d", got)
 	}
+}
+
+func TestRunTrackerUploadJobCountsPartialErrorAndContinues(t *testing.T) {
+	app := &App{}
+	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
+		{
+			result: api.Result{UploadedCount: 1},
+			err:    errors.New("tracker failed after upload"),
+		},
+		{
+			result: api.Result{UploadedCount: 2},
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU", "AITHER"})
+
+	app.runTrackerUploadJob(context.Background(), nil, job)
+
+	if got := job.uploadedCount; got != 3 {
+		t.Fatalf("expected total uploaded count 3, got %d", got)
+	}
+	if got := job.states["BLU"].UploadedCount; got != 1 {
+		t.Fatalf("expected failed tracker partial count 1, got %d", got)
+	}
+	if got := job.states["BLU"].Status; got != "failed" {
+		t.Fatalf("expected partial error tracker to remain failed, got %q", got)
+	}
+	if got := job.states["AITHER"].UploadedCount; got != 2 {
+		t.Fatalf("expected success tracker count 2, got %d", got)
+	}
+	if got := job.status; got != "completed_with_errors" {
+		t.Fatalf("expected completed_with_errors status, got %q", got)
+	}
+	if len(job.failedTrackers) != 1 || job.failedTrackers[0] != "BLU" {
+		t.Fatalf("expected failed tracker BLU, got %#v", job.failedTrackers)
+	}
+}
+
+func TestRunTrackerUploadJobIgnoresNegativeUploadedCount(t *testing.T) {
+	app := &App{}
+	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
+		{
+			result: api.Result{UploadedCount: -1},
+			err:    errors.New("tracker failed after invalid count"),
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU"})
+
+	app.runTrackerUploadJob(context.Background(), nil, job)
+
+	if got := job.uploadedCount; got != 0 {
+		t.Fatalf("expected negative count to leave total unchanged, got %d", got)
+	}
+	if got := job.states["BLU"].UploadedCount; got != 0 {
+		t.Fatalf("expected negative count to leave tracker count unchanged, got %d", got)
+	}
+	if got := job.states["BLU"].Status; got != "failed" {
+		t.Fatalf("expected tracker error handling to remain failed, got %q", got)
+	}
+	if len(job.failedTrackers) != 1 || job.failedTrackers[0] != "BLU" {
+		t.Fatalf("expected failed tracker BLU, got %#v", job.failedTrackers)
+	}
+}
+
+func TestRunTrackerUploadJobCountsCanceledPartialWithoutFailedTracker(t *testing.T) {
+	app := &App{}
+	ctx, cancel := context.WithCancel(context.Background())
+	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
+		{
+			result:       api.Result{UploadedCount: 1},
+			err:          context.Canceled,
+			beforeReturn: cancel,
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU"})
+
+	app.runTrackerUploadJob(ctx, nil, job)
+
+	if got := job.uploadedCount; got != 1 {
+		t.Fatalf("expected canceled partial count 1, got %d", got)
+	}
+	if got := job.states["BLU"].UploadedCount; got != 1 {
+		t.Fatalf("expected tracker partial count 1, got %d", got)
+	}
+	if got := job.status; got != "canceled" {
+		t.Fatalf("expected canceled job status, got %q", got)
+	}
+	if len(job.failedTrackers) != 0 {
+		t.Fatalf("expected no failed trackers after cancellation, got %#v", job.failedTrackers)
+	}
+}
+
+func newTrackerUploadJobTestJob(coreSvc api.Core, trackers []string) *trackerUploadJob {
+	job := &trackerUploadJob{
+		id:         "job",
+		sourcePath: `C:\Media\Movie.mkv`,
+		core:       coreSvc,
+		trackers:   trackers,
+		states:     make(map[string]TrackerUploadTrackerState, len(trackers)),
+		status:     "queued",
+		startedAt:  time.Now().UTC(),
+	}
+	for _, tracker := range trackers {
+		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
+	}
+	return job
 }
 
 func TestSeedRunCorePreparedMetaCopiesPreparedMetadata(t *testing.T) {

@@ -196,6 +196,8 @@ func (c *Core) RunUpload(ctx context.Context, req api.Request) (api.Result, erro
 // RunUploadPrepared uploads from cached prepared metadata for each requested path.
 // Explicit tracker selections that resolve empty return without tracker upload
 // side effects, while omitted tracker selections retain configured default behavior.
+// If a later path fails or the context is canceled after earlier uploads complete,
+// the returned result preserves the uploaded count accumulated before the error.
 func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Result, error) {
 	req = normalizeExecutionRequest(req)
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
@@ -234,7 +236,7 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 	for _, path := range uniquePaths {
 		select {
 		case <-ctx.Done():
-			return api.Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
+			return api.Result{UploadedCount: totalUploaded}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -249,26 +251,28 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 			meta, ok = c.getGUICachedMeta(path, signature, singleReq.ExternalIDOverrides)
 		}
 		if !ok {
-			return api.Result{}, fmt.Errorf("core: upload-only requires prepared metadata for %s", path)
+			return api.Result{UploadedCount: totalUploaded}, fmt.Errorf("core: upload-only requires prepared metadata for %s", path)
 		}
 
 		if len(singleReq.ScreenshotOverrides.MenuPaths) > 0 {
 			if err := c.ImportMenuImages(ctx, singleReq, singleReq.ScreenshotOverrides.MenuPaths); err != nil {
-				return api.Result{}, fmt.Errorf("core: import menu images failed: %w", err)
+				return api.Result{UploadedCount: totalUploaded}, fmt.Errorf("core: import menu images failed: %w", err)
 			}
 		}
 
 		uploaded, err := c.executePreparedUpload(ctx, singleReq, meta)
-		if err != nil {
-			return api.Result{}, err
-		}
 		totalUploaded += uploaded
+		if err != nil {
+			return api.Result{UploadedCount: totalUploaded}, err
+		}
 	}
 
 	c.logger.Debugf("core: upload-only complete with %d uploaded", totalUploaded)
 	return api.Result{UploadedCount: totalUploaded}, nil
 }
 
+// executePreparedUpload returns the number of tracker uploads accepted before any
+// later upload, injection, validation, or cancellation error.
 func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta api.PreparedMetadata) (int, error) {
 	var err error
 	meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, req)
@@ -318,24 +322,32 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 
 	c.logger.Debugf("core: uploading to trackers for %s", meta.SourcePath)
 	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "running", "Uploading to tracker")
-	summary, err := c.services.Trackers.Upload(ctx, meta)
-	if err != nil {
-		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
-		return 0, fmt.Errorf("core: %w", err)
+	summary, uploadErr := c.services.Trackers.Upload(ctx, meta)
+	if summary.Uploaded < 0 {
+		return 0, fmt.Errorf("upload summary invalid: %d", summary.Uploaded)
 	}
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "completed", "Tracker upload complete")
+	if uploadErr != nil && summary.Uploaded == 0 {
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
+		return 0, fmt.Errorf("core: %w", uploadErr)
+	}
 
 	if !meta.Options.NoSeed {
 		// Cross-seed torrents come from dupe matches and should be injected even when
 		// the tracker upload summary later reports no successful uploads.
 		if err := c.injectCrossSeedTorrents(ctx, req, meta); err != nil {
-			return 0, err
+			if uploadErr != nil {
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
+				return summary.Uploaded, fmt.Errorf("core: %w", errors.Join(uploadErr, err))
+			}
+			return summary.Uploaded, err
 		}
 	}
 
-	if summary.Uploaded < 0 {
-		return 0, fmt.Errorf("upload summary invalid: %d", summary.Uploaded)
+	if uploadErr != nil {
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
+		return summary.Uploaded, fmt.Errorf("core: %w", uploadErr)
 	}
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "completed", "Tracker upload complete")
 
 	if !meta.Options.NoSeed {
 		if len(summary.UploadedTorrents) == 0 {
@@ -355,7 +367,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 					Tracker: uploaded.Tracker,
 				}); err != nil {
 					emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "failed", "Client injection failed")
-					return 0, fmt.Errorf("core: %w", err)
+					return summary.Uploaded, fmt.Errorf("core: %w", err)
 				}
 				emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "completed", "Client injection complete")
 			}

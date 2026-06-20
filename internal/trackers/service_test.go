@@ -188,9 +188,10 @@ type blockingUploadDefinition struct {
 }
 
 type cancelAfterUploadDefinition struct {
-	name     string
-	cancel   context.CancelFunc
-	uploaded int
+	name             string
+	cancel           context.CancelFunc
+	uploaded         int
+	uploadedTorrents []api.UploadedTorrent
 }
 
 type testHDBPreparationDefinition struct{}
@@ -220,7 +221,86 @@ func (d cancelAfterUploadDefinition) Upload(context.Context, UploadRequest) (api
 	if d.cancel != nil {
 		d.cancel()
 	}
-	return api.UploadSummary{Uploaded: d.uploaded}, nil
+	return api.UploadSummary{Uploaded: d.uploaded, UploadedTorrents: d.uploadedTorrents}, nil
+}
+
+type failingStatusUpdateRepo struct {
+	stubRepo
+	failTracker string
+	failStatus  string
+	failed      bool
+}
+
+func (r *failingStatusUpdateRepo) UpdateLatestUploadRecordStatus(_ context.Context, _ string, tracker string, status string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.statusUpdates = append(r.statusUpdates, uploadStatusUpdate{tracker: tracker, status: status})
+	if !r.failed && tracker == r.failTracker && status == r.failStatus {
+		r.failed = true
+		return errors.New("status update failed")
+	}
+	return nil
+}
+
+type recordingStatusContextRepo struct {
+	stubRepo
+	cancel  context.CancelFunc
+	updates []recordedStatusContext
+}
+
+type recordedStatusContext struct {
+	tracker     string
+	status      string
+	ctxErr      error
+	hasDeadline bool
+	deadline    time.Time
+}
+
+func (r *recordingStatusContextRepo) UpdateLatestUploadRecordStatus(ctx context.Context, _ string, tracker string, status string) error {
+	if r.cancel != nil {
+		r.cancel()
+	}
+	deadline, hasDeadline := ctx.Deadline()
+	update := recordedStatusContext{
+		tracker:     tracker,
+		status:      status,
+		ctxErr:      ctx.Err(),
+		hasDeadline: hasDeadline,
+		deadline:    deadline,
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.updates = append(r.updates, update)
+	if update.ctxErr != nil {
+		return update.ctxErr
+	}
+	return nil
+}
+
+type transientStatusUpdateRepo struct {
+	*dbsvc.SQLiteRepository
+	mu          sync.Mutex
+	failTracker string
+	failStatus  string
+	failed      bool
+}
+
+func (r *transientStatusUpdateRepo) UpdateLatestUploadRecordStatus(ctx context.Context, sourcePath string, tracker string, status string) error {
+	r.mu.Lock()
+	shouldFail := !r.failed && tracker == r.failTracker && status == r.failStatus
+	if shouldFail {
+		r.failed = true
+	}
+	r.mu.Unlock()
+	if shouldFail {
+		return errors.New("transient status update failure")
+	}
+	if err := r.SQLiteRepository.UpdateLatestUploadRecordStatus(ctx, sourcePath, tracker, status); err != nil {
+		return fmt.Errorf("update latest upload record status: %w", err)
+	}
+	return nil
 }
 
 func (s stubUploadArtifactDefinition) Name() string {
@@ -1308,6 +1388,160 @@ func TestUploadCancellationKeepsCompletedTrackerOnly(t *testing.T) {
 	}
 }
 
+func TestUploadStatusFailureDoesNotCancelCompletedTracker(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	registry := NewRegistry()
+	if err := registry.Register(cancelAfterUploadDefinition{
+		name:     "AITHER",
+		cancel:   cancel,
+		uploaded: 1,
+		uploadedTorrents: []api.UploadedTorrent{
+			{Tracker: "AITHER", TorrentID: "1", DownloadURL: "https://aither.cc/torrent/download/1"},
+		},
+	}); err != nil {
+		t.Fatalf("register AITHER: %v", err)
+	}
+	if err := registry.Register(blockingUploadDefinition{name: "BLU", uploaded: 1}); err != nil {
+		t.Fatalf("register BLU: %v", err)
+	}
+
+	repo := &failingStatusUpdateRepo{failTracker: "AITHER", failStatus: "uploaded"}
+	cfg := config.Config{
+		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 1},
+		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
+	}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+
+	summary, err := svc.Upload(ctx, api.PreparedMetadata{SourcePath: "/tmp/file"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected completed tracker upload to be preserved, got %d", summary.Uploaded)
+	}
+	if len(summary.UploadedTorrents) != 1 {
+		t.Fatalf("expected uploaded torrent artifact to be preserved, got %d", len(summary.UploadedTorrents))
+	}
+
+	var aitherUploaded bool
+	var aitherCanceled bool
+	var bluCanceled bool
+	for _, update := range repo.statusUpdates {
+		switch {
+		case update.tracker == "AITHER" && update.status == "uploaded":
+			aitherUploaded = true
+		case update.tracker == "AITHER" && update.status == "canceled":
+			aitherCanceled = true
+		case update.tracker == "BLU" && update.status == "canceled":
+			bluCanceled = true
+		}
+	}
+	if !repo.failed {
+		t.Fatal("expected uploaded status update to fail")
+	}
+	if !aitherUploaded {
+		t.Fatal("expected uploaded status update for AITHER")
+	}
+	if aitherCanceled {
+		t.Fatal("expected completed AITHER not to be finalized as canceled")
+	}
+	if !bluCanceled {
+		t.Fatal("expected truly pending BLU to be finalized as canceled")
+	}
+}
+
+func TestUploadCancellationFinalizesPendingWithCleanupContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	registry := NewRegistry()
+	if err := registry.Register(cancelAfterUploadDefinition{name: "AITHER", cancel: cancel, uploaded: 1}); err != nil {
+		t.Fatalf("register AITHER: %v", err)
+	}
+	if err := registry.Register(blockingUploadDefinition{name: "BLU", uploaded: 1}); err != nil {
+		t.Fatalf("register BLU: %v", err)
+	}
+
+	repo := &recordingStatusContextRepo{}
+	cfg := config.Config{
+		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 1},
+		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
+	}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+
+	summary, err := svc.Upload(ctx, api.PreparedMetadata{SourcePath: "/tmp/file"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected completed upload to be preserved, got %d", summary.Uploaded)
+	}
+
+	finalStatus := make(map[string]recordedStatusContext)
+	for _, update := range repo.updates {
+		finalStatus[update.tracker] = update
+	}
+	for tracker, wantStatus := range map[string]string{"AITHER": "uploaded", "BLU": "canceled"} {
+		update, ok := finalStatus[tracker]
+		if !ok {
+			t.Fatalf("expected status update for %s", tracker)
+		}
+		if update.status != wantStatus {
+			t.Fatalf("expected %s status %q, got %q", tracker, wantStatus, update.status)
+		}
+		if update.ctxErr != nil {
+			t.Fatalf("expected cleanup context for %s to remain active, got %v", tracker, update.ctxErr)
+		}
+		if !update.hasDeadline {
+			t.Fatalf("expected cleanup context for %s to have a deadline", tracker)
+		}
+		if until := time.Until(update.deadline); until <= 0 || until > uploadRecordFinalizationTimeout {
+			t.Fatalf("expected cleanup deadline within %s for %s, got %s", uploadRecordFinalizationTimeout, tracker, until)
+		}
+	}
+}
+
+func TestUploadLateCancellationUsesCleanupContextForStatusWrites(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	registry := NewRegistry()
+	if err := registry.Register(blockingUploadDefinition{name: "AITHER", uploaded: 1}); err != nil {
+		t.Fatalf("register AITHER: %v", err)
+	}
+
+	repo := &recordingStatusContextRepo{cancel: cancel}
+	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+
+	summary, err := svc.Upload(ctx, api.PreparedMetadata{SourcePath: "/tmp/file"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected completed upload to be preserved, got %d", summary.Uploaded)
+	}
+
+	if len(repo.updates) != 1 {
+		t.Fatalf("expected one status update, got %#v", repo.updates)
+	}
+	update := repo.updates[0]
+	if update.tracker != "AITHER" || update.status != "uploaded" {
+		t.Fatalf("expected AITHER uploaded status, got %#v", update)
+	}
+	if update.ctxErr != nil {
+		t.Fatalf("expected cleanup context to remain active after late cancel, got %v", update.ctxErr)
+	}
+	if !update.hasDeadline {
+		t.Fatal("expected cleanup context to have a deadline")
+	}
+	if until := time.Until(update.deadline); until <= 0 || until > uploadRecordFinalizationTimeout {
+		t.Fatalf("expected cleanup deadline within %s, got %s", uploadRecordFinalizationTimeout, until)
+	}
+}
+
 func TestUploadBestEffortWithFailures(t *testing.T) {
 	t.Parallel()
 
@@ -1329,11 +1563,108 @@ func TestUploadBestEffortWithFailures(t *testing.T) {
 	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
 
 	summary, err := svc.Upload(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/file"})
-	if err != nil {
-		t.Fatalf("expected nil error for best-effort upload, got %v", err)
+	if err == nil {
+		t.Fatal("expected failed tracker error for best-effort upload")
+	}
+	if !strings.Contains(err.Error(), "BHD: tracker boom") {
+		t.Fatalf("expected BHD failure in error, got %v", err)
 	}
 	if summary.Uploaded != 2 {
 		t.Fatalf("expected 2 successful uploads, got %d", summary.Uploaded)
+	}
+}
+
+func TestUploadBestEffortWithFailuresAndRepoReturnsError(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(blockingUploadDefinition{name: "BLU", uploaded: 1}); err != nil {
+		t.Fatalf("register BLU: %v", err)
+	}
+	if err := registry.Register(blockingUploadDefinition{name: "BHD", uploadErr: errors.New("tracker boom")}); err != nil {
+		t.Fatalf("register BHD: %v", err)
+	}
+	if err := registry.Register(blockingUploadDefinition{name: "AITHER", uploaded: 1}); err != nil {
+		t.Fatalf("register AITHER: %v", err)
+	}
+
+	repo := &stubRepo{}
+	cfg := config.Config{
+		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 3},
+		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU", "BHD", "AITHER"}},
+	}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+
+	summary, err := svc.Upload(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/file"})
+	if err == nil {
+		t.Fatal("expected failed tracker error for best-effort upload")
+	}
+	if !strings.Contains(err.Error(), "BHD: tracker boom") {
+		t.Fatalf("expected BHD failure in error, got %v", err)
+	}
+	if summary.Uploaded != 2 {
+		t.Fatalf("expected 2 successful uploads, got %d", summary.Uploaded)
+	}
+
+	finalStatus := make(map[string]string)
+	for _, update := range repo.statusUpdates {
+		finalStatus[update.tracker] = update.status
+	}
+	for tracker, wantStatus := range map[string]string{"BLU": "uploaded", "BHD": "failed", "AITHER": "uploaded"} {
+		if finalStatus[tracker] != wantStatus {
+			t.Fatalf("expected %s status %q, got %q", tracker, wantStatus, finalStatus[tracker])
+		}
+	}
+}
+
+func TestUploadRetriesTransientUploadedStatusFailure(t *testing.T) {
+	t.Parallel()
+
+	sqliteRepo, err := dbsvc.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqliteRepo.Close()
+	})
+	if err := sqliteRepo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	registry := NewRegistry()
+	if err := registry.Register(blockingUploadDefinition{name: "AITHER", uploaded: 1}); err != nil {
+		t.Fatalf("register AITHER: %v", err)
+	}
+
+	repo := &transientStatusUpdateRepo{
+		SQLiteRepository: sqliteRepo,
+		failTracker:      "AITHER",
+		failStatus:       "uploaded",
+	}
+	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
+	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+
+	ctx := context.Background()
+	summary, err := svc.Upload(ctx, api.PreparedMetadata{SourcePath: "/tmp/file"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected completed upload to be preserved, got %d", summary.Uploaded)
+	}
+	if !repo.failed {
+		t.Fatal("expected first uploaded status update to fail")
+	}
+
+	history, err := sqliteRepo.ListUploadHistoryByPath(ctx, "/tmp/file")
+	if err != nil {
+		t.Fatalf("list upload history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("expected one upload record, got %d", len(history))
+	}
+	if history[0].Status != "uploaded" {
+		t.Fatalf("expected final upload record status to be uploaded, got %q", history[0].Status)
 	}
 }
 
