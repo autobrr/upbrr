@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/cookies"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -52,7 +53,7 @@ func ResolveYAMLPath(path string, provided bool) (string, error) {
 func LoadFromPathOrEmbedded(path string) (*config.Config, error) {
 	if strings.TrimSpace(path) != "" {
 		if _, err := os.Stat(path); err == nil {
-			loaded, err := config.ImportFromYAML(path)
+			loaded, _, err := importer.ImportFromFile(path)
 			if err != nil {
 				return nil, fmt.Errorf("load config from yaml: %w", err)
 			}
@@ -132,22 +133,29 @@ func SaveToDBPath(ctx context.Context, cfg *config.Config, dbPath string) error 
 // Bootstrap resolves the effective config and database path at process
 // startup. It prefers the sqlite database (with YAML used only as a bootstrap
 // source when the database is empty). The persistYAML flag controls whether a
-// YAML import is written back to the database: CLI/GUI persist so subsequent
-// runs reuse the imported config, while the web server does not, because
-// writing an incomplete YAML back would overwrite previously valid database
-// state with zero-valued fields.
+// YAML import is written back to the database. Callers that accept incomplete
+// setup config can pass false or omit validation; CLI callers validate before
+// saving so bad --config input cannot overwrite valid database state.
 //
 // Environment overrides are applied to the returned runtime config but not to
 // the config written to the database. This keeps the persisted state free of
 // env-specific values so unsetting an env var later does not leave a stale
 // override sitting in the database.
 func Bootstrap(ctx context.Context, configPath string, configProvided, persistYAML bool) (config.Config, string, error) {
+	return BootstrapWithValidator(ctx, configPath, configProvided, persistYAML, nil)
+}
+
+// BootstrapWithValidator is Bootstrap plus an optional validation hook that
+// runs before a provided config is persisted. CLI callers use it so a bad
+// --config file cannot be written to the database before startup validation
+// fails, while GUI/web callers can still start with incomplete setup config.
+func BootstrapWithValidator(ctx context.Context, configPath string, configProvided, persistYAML bool, validateBeforePersist func(*config.Config) error) (config.Config, string, error) {
 	if configProvided {
 		resolved, err := ResolveYAMLPath(configPath, configProvided)
 		if err != nil {
 			return config.Config{}, "", err
 		}
-		loaded, err := config.ImportFromYAML(resolved)
+		loaded, _, err := importer.ImportFromFile(resolved)
 		if err != nil {
 			return config.Config{}, "", fmt.Errorf("config store: %w", err)
 		}
@@ -159,6 +167,11 @@ func Bootstrap(ctx context.Context, configPath string, configProvided, persistYA
 		loaded.MainSettings.DBPath = dbPath
 
 		if persistYAML {
+			if validateBeforePersist != nil {
+				if err := validateBeforePersist(loaded); err != nil {
+					return config.Config{}, "", fmt.Errorf("config store: validate provided config: %w", err)
+				}
+			}
 			if err := SaveToDBPath(ctx, loaded, dbPath); err != nil {
 				return config.Config{}, "", err
 			}

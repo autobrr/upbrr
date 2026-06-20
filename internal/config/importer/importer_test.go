@@ -29,6 +29,9 @@ func TestImportFromContentYAMLOverlaysDefaults(t *testing.T) {
 	if cfg.MainSettings.TMDBAPI != "test-key" {
 		t.Fatalf("expected tmdb_api to be overwritten, got %q", cfg.MainSettings.TMDBAPI)
 	}
+	if cfg.MainSettings.TrackerPassChecks != 1 {
+		t.Fatalf("expected tracker_pass_checks default to be preserved, got %d", cfg.MainSettings.TrackerPassChecks)
+	}
 	if len(cfg.Trackers.Trackers) == 0 {
 		t.Fatal("expected tracker defaults to be merged in")
 	}
@@ -46,6 +49,9 @@ func TestImportFromContentJSONOverlaysDefaults(t *testing.T) {
 	}
 	if cfg.MainSettings.TMDBAPI != "json-key" {
 		t.Fatalf("expected TMDBAPI to be overwritten, got %q", cfg.MainSettings.TMDBAPI)
+	}
+	if cfg.MainSettings.TrackerPassChecks != 1 {
+		t.Fatalf("expected TrackerPassChecks default to be preserved, got %d", cfg.MainSettings.TrackerPassChecks)
 	}
 	if len(cfg.Trackers.Trackers) == 0 {
 		t.Fatal("expected tracker defaults to be merged in")

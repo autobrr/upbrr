@@ -599,7 +599,9 @@ func parseServePortValue(value string) (int, error) {
 }
 
 func loadCLIConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	cfg, dbPath, err := configstore.Bootstrap(context.Background(), configPath, configProvided, true)
+	cfg, dbPath, err := configstore.BootstrapWithValidator(context.Background(), configPath, configProvided, true, func(cfg *config.Config) error {
+		return cfg.Validate()
+	})
 	if err != nil {
 		return config.Config{}, "", fmt.Errorf("upbrr: %w", err)
 	}
@@ -613,7 +615,7 @@ func loadCLIConfig(configPath string, configProvided bool) (config.Config, strin
 // valid config (e.g. tmdb_api). The web UI handles initial setup, so the
 // server must be able to start even on a fresh install with no config yet.
 func loadServeConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	return wrapUpbrrResult2(configstore.Bootstrap(context.Background(), configPath, configProvided, false))
+	return wrapUpbrrResult2(configstore.Bootstrap(context.Background(), configPath, configProvided, configProvided))
 }
 
 func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string, plaintext bool) error {

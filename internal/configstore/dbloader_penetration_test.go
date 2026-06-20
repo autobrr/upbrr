@@ -246,6 +246,36 @@ func TestBootstrapProvidedYAMLPersistsToDB(t *testing.T) {
 	if stored.ScreenshotHandling.Screens != 2 {
 		t.Fatalf("persisted screens: got %d want 2 (env override leaked into DB)", stored.ScreenshotHandling.Screens)
 	}
+	if stored.MainSettings.TrackerPassChecks != 1 {
+		t.Fatalf("persisted tracker_pass_checks default: got %d want 1", stored.MainSettings.TrackerPassChecks)
+	}
+}
+
+func TestBootstrapWithValidatorRejectsInvalidProvidedYAMLBeforePersist(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "invalid.db")
+	yamlPath := filepath.Join(tmp, "config.yaml")
+
+	body := "main_settings:\n  tmdb_api: provided\n  db_path: " + dbPath + "\nscreenshot_handling:\n  screens: 0\n"
+	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	_, _, err := configstore.BootstrapWithValidator(ctx, yamlPath, true, true, func(cfg *config.Config) error {
+		return cfg.Validate()
+	})
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "screenshot_handling.screens") {
+		t.Fatalf("expected screens validation error, got %v", err)
+	}
+	if _, statErr := os.Stat(dbPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("invalid provided config should not create database file, stat err=%v", statErr)
+	}
 }
 
 func TestBootstrapProvidedYAMLPersistsPlaintextSecretsWithoutWebAuth(t *testing.T) {

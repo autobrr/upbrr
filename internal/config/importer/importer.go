@@ -97,9 +97,7 @@ func parseNative(filename string, data []byte) (*config.Config, error) {
 	ext := strings.ToLower(filepath.Ext(filename))
 	switch ext {
 	case ".yaml", ".yml":
-		if err := yaml.Unmarshal(data, cfg); err != nil {
-			return nil, fmt.Errorf("import config: unmarshal yaml: %w", err)
-		}
+		cfg, err = parseNativeYAML(data, cfg)
 	case ".json":
 		// The export path (ExportToJSON) uses json.MarshalIndent, which
 		// uses Go field names because the config structs have no json
@@ -107,11 +105,12 @@ func parseNative(filename string, data []byte) (*config.Config, error) {
 		// symmetric — yaml.Unmarshal would look for yaml tag names
 		// (e.g. "tmdb_api") which do not match the exported keys
 		// (e.g. "TMDBAPI").
-		if err := json.Unmarshal(data, cfg); err != nil {
-			return nil, fmt.Errorf("import config: unmarshal json: %w", err)
-		}
+		cfg, err = parseNativeJSON(data, cfg)
 	default:
 		return nil, fmt.Errorf("import config: unsupported file extension %q (supported: .py, .yaml, .yml, .json)", ext)
+	}
+	if err != nil {
+		return nil, err
 	}
 	if cfg.TorrentClients == nil {
 		cfg.TorrentClients = make(map[string]config.TorrentClientConfig)
@@ -122,6 +121,84 @@ func parseNative(filename string, data []byte) (*config.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func parseNativeYAML(data []byte, defaults *config.Config) (*config.Config, error) {
+	defaultRaw := map[string]any{}
+	defaultData, err := yaml.Marshal(defaults)
+	if err != nil {
+		return nil, fmt.Errorf("import config: marshal yaml defaults: %w", err)
+	}
+	if err := yaml.Unmarshal(defaultData, &defaultRaw); err != nil {
+		return nil, fmt.Errorf("import config: unmarshal yaml defaults: %w", err)
+	}
+	defaultRaw["torrent_clients"] = map[string]any{}
+
+	overlay := map[string]any{}
+	if err := yaml.Unmarshal(data, &overlay); err != nil {
+		return nil, fmt.Errorf("import config: unmarshal yaml: %w", err)
+	}
+	mergeConfigMap(defaultRaw, overlay)
+
+	merged, err := yaml.Marshal(defaultRaw)
+	if err != nil {
+		return nil, fmt.Errorf("import config: marshal merged yaml: %w", err)
+	}
+
+	var cfg config.Config
+	if err := yaml.Unmarshal(merged, &cfg); err != nil {
+		return nil, fmt.Errorf("import config: unmarshal merged yaml: %w", err)
+	}
+	decrypted, err := config.DecryptConfigSecrets(&cfg)
+	if err != nil {
+		return nil, fmt.Errorf("import config: decrypt secrets: %w", err)
+	}
+	return decrypted, nil
+}
+
+func parseNativeJSON(data []byte, defaults *config.Config) (*config.Config, error) {
+	defaultRaw := map[string]any{}
+	defaultData, err := json.Marshal(defaults)
+	if err != nil {
+		return nil, fmt.Errorf("import config: marshal json defaults: %w", err)
+	}
+	if err := json.Unmarshal(defaultData, &defaultRaw); err != nil {
+		return nil, fmt.Errorf("import config: unmarshal json defaults: %w", err)
+	}
+	defaultRaw["TorrentClients"] = map[string]any{}
+
+	overlay := map[string]any{}
+	if err := json.Unmarshal(data, &overlay); err != nil {
+		return nil, fmt.Errorf("import config: unmarshal json: %w", err)
+	}
+	mergeConfigMap(defaultRaw, overlay)
+
+	merged, err := json.Marshal(defaultRaw)
+	if err != nil {
+		return nil, fmt.Errorf("import config: marshal merged json: %w", err)
+	}
+
+	var cfg config.Config
+	if err := json.Unmarshal(merged, &cfg); err != nil {
+		return nil, fmt.Errorf("import config: unmarshal merged json: %w", err)
+	}
+	decrypted, err := config.DecryptConfigSecrets(&cfg)
+	if err != nil {
+		return nil, fmt.Errorf("import config: decrypt secrets: %w", err)
+	}
+	return decrypted, nil
+}
+
+func mergeConfigMap(base map[string]any, overlay map[string]any) {
+	for key, overlayValue := range overlay {
+		overlayMap, overlayOK := overlayValue.(map[string]any)
+		baseMap, baseOK := base[key].(map[string]any)
+		if overlayOK && baseOK {
+			mergeConfigMap(baseMap, overlayMap)
+			continue
+		}
+		base[key] = overlayValue
+	}
 }
 
 func isPythonFile(filename string) bool {
