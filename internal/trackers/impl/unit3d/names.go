@@ -262,6 +262,9 @@ func isNoGroupTag(tag string) bool {
 	}
 }
 
+// buildZNTHName applies ZNTH release-name policy before upload.
+// TV names drop episode-title text when it appears before the resolution, while
+// non-TV names prefer the IMDb year when it disagrees with the parsed release year.
 func buildZNTHName(name string, meta api.PreparedMetadata) string {
 	category := resolveUnit3DCategory(meta)
 	if category == "TV" && strings.TrimSpace(meta.EpisodeTitle) != "" {

@@ -5,10 +5,14 @@ package unit3d
 
 import "github.com/autobrr/upbrr/pkg/api"
 
+// siteZNTHProfile registers ZNTH's custom Unit3D type-id resolver.
 func siteZNTHProfile() unit3DSiteProfile {
 	return unit3DSiteProfile{resolveTypeID: resolveUnit3DZNTHTypeID}
 }
 
+// resolveUnit3DZNTHTypeID maps inferred release types to ZNTH type_id values.
+// Unsupported or unknown types return an empty id for the shared Unit3D resolver
+// to reject.
 func resolveUnit3DZNTHTypeID(meta api.PreparedMetadata) string {
 	mapping := map[string]string{
 		"DISC":   "1",

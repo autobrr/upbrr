@@ -246,6 +246,7 @@ func rulesULCX() RuleSet {
 	}
 }
 
+// rulesZNTH blocks adult uploads using ZNTH's tracker-facing rejection text.
 func rulesZNTH() RuleSet {
 	return RuleSet{
 		BlockAdult:   true,

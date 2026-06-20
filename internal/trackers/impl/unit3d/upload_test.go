@@ -396,7 +396,7 @@ func TestBuildZNTHNameTV(t *testing.T) {
 		ExternalIDs:  api.ExternalIDs{Category: "TV"},
 		Release:      api.ReleaseInfo{Resolution: "1080p"},
 	}
-	got := buildUnit3DName("ZNTH", meta)
+	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
 	expected := "Show.S01E01.1080p.WEB-DL-GRP"
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
@@ -412,7 +412,7 @@ func TestBuildZNTHNameMovieYearMismatch(t *testing.T) {
 			IMDB: &api.IMDBMetadata{Year: 2025},
 		},
 	}
-	got := buildUnit3DName("ZNTH", meta)
+	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
 	expected := "Movie.2025.1080p.WEB-DL-GRP"
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
