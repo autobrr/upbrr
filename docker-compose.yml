@@ -1,0 +1,41 @@
+# Minimal docker-compose example for upbrr.
+#
+# The image defaults to `serve --host 0.0.0.0`, persists its config/database under
+# /config, and runs as a non-root user (uid 1000).
+#
+# IMPORTANT (Linux): the bind-mounted ./config and /data dirs must be owned by the uid
+# the container runs as. Docker auto-creates a missing bind-mount dir as root, which the
+# non-root app cannot write — so create and chown them before the first start:
+#     mkdir -p ./config /path/to/torrents
+#     sudo chown -R 1000:1000 ./config /path/to/torrents
+# ...or set `user:` below to a uid:gid that already owns them. (On Docker Desktop for
+# macOS/Windows this is handled for you.)
+#
+# After first start, open http://<host>:7480 to complete the trust-on-first-use setup.
+# Do this promptly and avoid exposing port 7480 to untrusted networks (or put it behind a
+# reverse proxy) until setup is done — first-run admin account creation is reachable by
+# anyone who can reach the port.
+
+services:
+  upbrr:
+    image: ghcr.io/autobrr/upbrr:latest # pin a release tag for production, e.g. :0.1.2 (see the repo's Packages page)
+    container_name: upbrr
+    restart: unless-stopped
+
+    # Run as a uid:gid that owns the bind-mounted dirs below (defaults to the image's
+    # 1000:1000 if omitted). Match it to your host user, e.g. "$(id -u):$(id -g)".
+    # user: "1000:1000"
+
+    environment:
+      - TZ=America/Chicago
+      # If you change the served port, also update the healthcheck target, e.g.:
+      # - UPBRR_HEALTHCHECK_URL=http://127.0.0.1:8080/api/auth/status
+
+    # Published on all interfaces so the UI is reachable from your LAN. To restrict it,
+    # scope the host side, e.g. "127.0.0.1:7480:7480" (this host only).
+    ports:
+      - 7480:7480
+
+    volumes:
+      - ./config:/config # config + SQLite database (must be writable by the run uid)
+      - /path/to/torrents:/data # your torrent / download data (same ownership rule)

@@ -1,12 +1,9 @@
 # syntax=docker/dockerfile:1
 
-ARG BUILDPLATFORM
-ARG TARGETPLATFORM
-ARG TARGETOS
-ARG TARGETARCH
-ARG TARGETVARIANT
-ARG VERSION=dev
-ARG BUILD_ID=
+# GO_VERSION is the only global ARG: it is a custom arg interpolated into a FROM
+# below. The predefined platform args (BUILDPLATFORM, TARGET*) are auto-available
+# to FROM, and VERSION/BUILD_ID are declared inside the build stage where they are
+# consumed (see below), so they do not need global declarations.
 ARG GO_VERSION=1.26.4
 
 FROM --platform=$BUILDPLATFORM node:20-bookworm AS frontend
@@ -50,11 +47,35 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM debian:bookworm-slim
 
+# curl is used by the HEALTHCHECK below; debian-slim ships no HTTP client.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Run as a non-root user and give it a writable config dir. chown happens before
+# VOLUME so anonymous/named volumes inherit the ownership.
+RUN groupadd --gid 1000 upbrr \
+    && useradd --uid 1000 --gid 1000 --shell /usr/sbin/nologin --no-create-home upbrr \
+    && mkdir -p /config \
+    && chown upbrr:upbrr /config
 
 COPY --from=cli-builder /out/upbrr /usr/local/bin/upbrr
 
+# Persist config + database under /config (upbrr resolves XDG_CONFIG_HOME/upbrr).
+ENV XDG_CONFIG_HOME=/config
+# Probed by the HEALTHCHECK below. Uses loopback (works regardless of the serve bind
+# host); override this env if you change the served --port so the probe stays accurate.
+ENV UPBRR_HEALTHCHECK_URL=http://127.0.0.1:7480/api/auth/status
+VOLUME /config
+EXPOSE 7480
+USER upbrr
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
+    CMD curl -fsS "$UPBRR_HEALTHCHECK_URL"
+
 ENTRYPOINT ["/usr/local/bin/upbrr"]
+# Default to serving the web UI on all interfaces so published ports are reachable.
+# Override the command (e.g. `docker run ... upbrr <cli args>`) for one-off CLI use.
+CMD ["serve", "--host", "0.0.0.0"]

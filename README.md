@@ -146,6 +146,31 @@ Useful CLI checks:
 
 NOTE: with cli `--debug` works as expected. Additionally, the printed feedback (even with debug) can be adjusted with `--log-level`. See `upbrr.exe --help`
 
+### Run with Docker Compose
+
+A ready-to-use example lives in [`docker-compose.yml`](docker-compose.yml). The image
+serves the web UI on all interfaces by default and stores its config and database in the
+`/config` volume:
+
+```bash
+docker compose up -d
+```
+
+Then open `http://<host>:7480` to complete the first-run setup.
+
+Notes:
+
+- The container runs as **uid:gid 1000:1000**. The bind-mounted `./config` and `/data`
+  directories must be owned by that uid — create and `chown` them before the first start
+  (`mkdir -p config && sudo chown -R 1000:1000 config`, same for your data dir), or set
+  `user:` in the compose file to a uid that already owns them. Docker auto-creates a
+  missing bind-mount dir as `root`, which the non-root app can't write, so pre-create it.
+  The `/data` mount (and any hardlink/reflink staging target) needs the same. (On Docker
+  Desktop for macOS/Windows this is handled automatically.)
+- First-run setup is reachable by anyone who can reach port `7480`. Complete it promptly,
+  and don't expose the port to untrusted networks (scope it to `127.0.0.1:7480:7480` or
+  use a reverse proxy) until you have.
+
 ## Typical Upload Flow
 
 1. Open upbrr.
