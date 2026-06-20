@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -337,10 +338,8 @@ func hasBTClass(n *html.Node, class string) bool {
 	for _, a := range n.Attr {
 		if a.Key == "class" {
 			classes := strings.Fields(a.Val)
-			for _, c := range classes {
-				if c == class {
-					return true
-				}
+			if slices.Contains(classes, class) {
+				return true
 			}
 		}
 	}

@@ -797,6 +797,15 @@ func TestMatchTrackerURLsMatchesBTNLandOfTVAnnounce(t *testing.T) {
 	}
 }
 
+func TestMatchTrackerURLsMatchesCZTAnnounce(t *testing.T) {
+	t.Parallel()
+
+	matched := matchTrackerURLs([]string{"https://czteam.me/announce.php?passkey=redacted"})
+	if !containsString(matched, "CZT") {
+		t.Fatalf("expected CZT in matched trackers, got %v", matched)
+	}
+}
+
 func TestEnsureMatchedTrackersForKnownIDsAddsBTN(t *testing.T) {
 	t.Parallel()
 

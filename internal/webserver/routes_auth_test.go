@@ -88,7 +88,7 @@ func TestBootstrapRetainedSessionSetsPersistentCookie(t *testing.T) {
 	}
 }
 
-func TestBootstrapRejectsRemoteFirstRunRequest(t *testing.T) {
+func TestBootstrapAllowsRemoteFirstRunRequest(t *testing.T) {
 	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
 
 	body := `{"username":"admin","password":"very-secure-password","retainLogin":true}`
@@ -100,11 +100,40 @@ func TestBootstrapRejectsRemoteFirstRunRequest(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	server.handleBootstrap(recorder, req, session{})
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected remote bootstrap to return 403, got %d: %s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected remote first-run bootstrap to return 200, got %d: %s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "bootstrap is only available from localhost") {
-		t.Fatalf("unexpected bootstrap rejection: %s", recorder.Body.String())
+}
+
+func TestBootstrapRejectsRemoteRequestWhenUserExists(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	body := `{"username":"admin","password":"very-secure-password","retainLogin":true}`
+
+	first := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	first.Header.Set("Content-Type", "application/json")
+	first.Host = "192.168.1.20:7480"
+	first.RemoteAddr = "192.168.1.25:5000"
+
+	firstRecorder := httptest.NewRecorder()
+	server.handleBootstrap(firstRecorder, first, session{})
+	if firstRecorder.Code != http.StatusOK {
+		t.Fatalf("expected initial bootstrap to return 200, got %d: %s", firstRecorder.Code, firstRecorder.Body.String())
+	}
+
+	second := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	second.Header.Set("Content-Type", "application/json")
+	second.Host = "192.168.1.20:7480"
+	second.RemoteAddr = "192.168.1.25:5000"
+
+	secondRecorder := httptest.NewRecorder()
+	server.handleBootstrap(secondRecorder, second, session{})
+
+	if secondRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bootstrap after user exists to return 400, got %d: %s", secondRecorder.Code, secondRecorder.Body.String())
+	}
+	if !strings.Contains(secondRecorder.Body.String(), "user already exists") {
+		t.Fatalf("unexpected bootstrap rejection: %s", secondRecorder.Body.String())
 	}
 }
 

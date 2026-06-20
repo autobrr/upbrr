@@ -69,6 +69,9 @@ type dupeCheckJob struct {
 	cancel         context.CancelFunc
 }
 
+// TrackerUploadTrackerState reports frontend-visible state for one tracker in
+// an upload job. UploadedCount includes accepted uploads returned before a later
+// tracker error or cancellation.
 type TrackerUploadTrackerState struct {
 	Tracker         string  `json:"tracker"`
 	Status          string  `json:"status"`
@@ -84,6 +87,9 @@ type TrackerUploadTrackerState struct {
 	FinishedAt      string  `json:"finishedAt"`
 }
 
+// TrackerUploadSnapshot reports frontend-visible state for a tracker upload
+// job. UploadedCount is the sum of per-tracker accepted uploads, including
+// partial counts returned with non-nil errors.
 type TrackerUploadSnapshot struct {
 	JobID                  string                      `json:"jobID"`
 	SourcePath             string                      `json:"sourcePath"`
@@ -395,6 +401,9 @@ func (j *trackerUploadJob) closeResources() {
 	})
 }
 
+// StartTrackerUpload starts an upload job owned by sessionID for selected
+// trackers and returns its job ID. Snapshots preserve partial upload counts
+// returned with later tracker errors or cancellation.
 func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
 	if err := b.requireCore(); err != nil {
 		return "", err
@@ -522,6 +531,8 @@ func (b *Backend) GetTrackerUploadSnapshot(sessionID string, jobID string) (Trac
 	return buildTrackerUploadSnapshot(job), nil
 }
 
+// runTrackerUploadJob records UploadedCount before error handling so partial
+// successes returned with non-nil errors remain visible in snapshots.
 func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob) {
 	defer b.uploadWG.Done()
 
@@ -547,6 +558,14 @@ func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob
 			b.applyTrackerUploadProgress(job, update)
 		})
 		result, err := b.runSingleTrackerUpload(progressCtx, job, tracker)
+		if result.UploadedCount > 0 {
+			job.mu.Lock()
+			state = job.states[tracker]
+			state.UploadedCount += result.UploadedCount
+			job.states[tracker] = state
+			job.uploadedCount += result.UploadedCount
+			job.mu.Unlock()
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				break
@@ -568,10 +587,8 @@ func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob
 		state = job.states[tracker]
 		state.Status = "success"
 		state.Message = "uploaded"
-		state.UploadedCount += result.UploadedCount
 		state.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 		job.states[tracker] = state
-		job.uploadedCount += result.UploadedCount
 		job.mu.Unlock()
 		b.emitTrackerUploadSnapshot(job)
 	}
@@ -582,6 +599,15 @@ func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob
 	case ctx.Err() != nil:
 		job.status = "canceled"
 		job.errorMessage = "upload canceled"
+		for _, tracker := range job.trackers {
+			state := job.states[tracker]
+			if state.Status == "queued" || state.Status == "running" {
+				state.Status = "canceled"
+				state.Message = "canceled"
+				state.FinishedAt = job.finishedAt.Format(time.RFC3339)
+				job.states[tracker] = state
+			}
+		}
 	case len(job.failedTrackers) > 0:
 		job.status = "completed_with_errors"
 	default:

@@ -37,9 +37,15 @@ type stubRepo struct {
 	uploadsCalls        int
 	deletedUploads      []string
 	createdUploads      []api.UploadRecord
+	statusUpdates       []uploadStatusUpdate
 	descriptionOverride string
 	overrideGroupKey    string
 	overrideCalls       int
+}
+
+type uploadStatusUpdate struct {
+	tracker string
+	status  string
 }
 
 func (s *stubRepo) GetByPath(context.Context, string) (api.FileMetadata, error) {
@@ -109,7 +115,10 @@ func (s *stubRepo) CreateUploadRecord(_ context.Context, record api.UploadRecord
 	s.createdUploads = append(s.createdUploads, record)
 	return nil
 }
-func (s *stubRepo) UpdateLatestUploadRecordStatus(context.Context, string, string, string) error {
+func (s *stubRepo) UpdateLatestUploadRecordStatus(_ context.Context, _ string, tracker string, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.statusUpdates = append(s.statusUpdates, uploadStatusUpdate{tracker: tracker, status: status})
 	return nil
 }
 func (s *stubRepo) SaveTrackerRuleFailures(context.Context, string, string, []api.TrackerRuleFailure) error {
