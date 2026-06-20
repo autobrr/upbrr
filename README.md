@@ -162,7 +162,8 @@ Notes:
 
 - The container runs as **uid:gid 1000:1000**. The bind-mounted `./config` and `/data`
   directories must be owned by that uid — create and `chown` them before the first start
-  (`mkdir -p config && sudo chown -R 1000:1000 config`, same for your data dir), or set
+  (`mkdir -p /path/to/config && sudo chown -R 1000:1000 /path/to/config`, same for your
+  data dir), or set
   `user:` in the compose file to a uid that already owns them. Docker auto-creates a
   missing bind-mount dir as `root`, which the non-root app can't write, so pre-create it.
   The `/data` mount (and any hardlink/reflink staging target) needs the same. (On Docker

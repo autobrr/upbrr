@@ -6,8 +6,8 @@
 # IMPORTANT (Linux): the bind-mounted ./config and /data dirs must be owned by the uid
 # the container runs as. Docker auto-creates a missing bind-mount dir as root, which the
 # non-root app cannot write — so create and chown them before the first start:
-#     mkdir -p ./config /path/to/torrents
-#     sudo chown -R 1000:1000 ./config /path/to/torrents
+#     mkdir -p /path/to/config /path/to/torrents
+#     sudo chown -R 1000:1000 /path/to/config /path/to/torrents
 # ...or set `user:` below to a uid:gid that already owns them. (On Docker Desktop for
 # macOS/Windows this is handled for you.)
 #
@@ -37,5 +37,5 @@ services:
       - 7480:7480
 
     volumes:
-      - ./config:/config # config + SQLite database (must be writable by the run uid)
+      - /path/to/config:/config # config + SQLite database (must be writable by the run uid)
       - /path/to/torrents:/data # your torrent / download data (same ownership rule)
