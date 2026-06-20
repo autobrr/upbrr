@@ -773,13 +773,14 @@ func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *te
 	}
 }
 
-func TestMergeMissingTrackerDefaultsClearsCZTAPIKeyAndURL(t *testing.T) {
+func TestMergeMissingTrackerDefaultsClearsCZTSensitiveFields(t *testing.T) {
 	t.Parallel()
 
 	cfg := &Config{
 		Trackers: TrackersConfig{
 			Trackers: map[string]TrackerConfig{
-				"CZT": {APIKey: "stale-token", URL: "https://stale.example", Passkey: "passkey"},
+				"CZT": {APIKey: "stale-token", URL: "https://stale.example", AnnounceURL: "https://czteam.me/announce.php?passkey=stale", Passkey: "passkey"},
+				"czt": {AnnounceURL: "https://czteam.me/announce.php?passkey=lowercase"},
 			},
 		},
 	}
@@ -794,8 +795,14 @@ func TestMergeMissingTrackerDefaultsClearsCZTAPIKeyAndURL(t *testing.T) {
 	if czt.URL != "" {
 		t.Fatalf("expected CZT URL to be cleared, got %q", czt.URL)
 	}
+	if czt.AnnounceURL != "" {
+		t.Fatalf("expected CZT AnnounceURL to be cleared, got %q", czt.AnnounceURL)
+	}
 	if czt.Passkey != "passkey" {
 		t.Fatalf("expected CZT passkey preserved, got %q", czt.Passkey)
+	}
+	if lower := cfg.Trackers.Trackers["czt"]; lower.AnnounceURL != "" {
+		t.Fatalf("expected lowercase CZT AnnounceURL to be cleared, got %q", lower.AnnounceURL)
 	}
 }
 

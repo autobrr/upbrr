@@ -211,6 +211,34 @@ func TestCZTHandlerSearchCancellationAfterResponseReturnsNoEntries(t *testing.T)
 	}
 }
 
+func TestCZTHandlerSearchCancellationDuringRequestPropagatesContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &http.Client{Transport: cztRoundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		cancel()
+		return nil, context.Canceled
+	})}
+	handler := cztHandler{
+		cfg:    cztTestConfig(config.TrackerConfig{Passkey: "passkey123"}),
+		http:   client,
+		logger: api.NopLogger{},
+	}
+
+	entries, notes, err := handler.Search(ctx, api.PreparedMetadata{
+		Release: api.ReleaseInfo{Title: "Movie"},
+	}, "CZT")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation error, got %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "CZT search failed") {
+		t.Fatalf("expected cancellation before CZT search wrapping, got %v", err)
+	}
+	if len(entries) != 0 || len(notes) != 0 {
+		t.Fatalf("expected no entries or notes after cancellation, got entries=%v notes=%v", entries, notes)
+	}
+}
+
 type cztRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f cztRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

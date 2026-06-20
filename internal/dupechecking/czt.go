@@ -36,6 +36,8 @@ type cztHandler struct {
 // Search queries CZTeam by the most specific prepared release name available.
 // Missing tracker config, passkey, or title returns skip notes; remote or
 // response-shape failures return errors so duplicate filtering fails closed.
+// Context cancellation is returned before transport errors are redacted or
+// wrapped as CZT failures so callers can preserve cancellation semantics.
 func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ string) ([]api.DupeEntry, []string, error) {
 	tracker, ok := trackerCfg(h.cfg, "CZT")
 	if !ok {
@@ -65,6 +67,9 @@ func (h cztHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 
 	status, payload, err := doJSONGetAny(ctx, h.http, base+"/api.php", params, nil)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, fmt.Errorf("context canceled: %w", ctxErr)
+		}
 		return nil, nil, fmt.Errorf("CZT search failed: %w", redactedError(err))
 	}
 	if err := ctx.Err(); err != nil {
