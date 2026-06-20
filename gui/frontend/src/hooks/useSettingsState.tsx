@@ -1024,7 +1024,7 @@ export const normalizeTorrentClientsForSave = (input: ConfigMap) => {
   return { ...input, TorrentClients: nextClients };
 };
 
-export const normalizeCZTTrackerForSave = (input: ConfigMap) => {
+const normalizeCZTTrackerForSave = (input: ConfigMap) => {
   const trackerRoot = input.Trackers;
   if (!trackerRoot || typeof trackerRoot !== "object" || Array.isArray(trackerRoot)) {
     return input;
