@@ -1054,6 +1054,10 @@ const normalizeCZTTrackerForSave = (input: ConfigMap) => {
       delete next.URL;
       changed = true;
     }
+    if ("AnnounceURL" in next) {
+      delete next.AnnounceURL;
+      changed = true;
+    }
     nextEntries[name] = next;
   });
 

@@ -448,6 +448,7 @@ describe("Tracker client selectors", () => {
                     LinkDirName: "",
                     URL: "https://czteam.example",
                     APIKey: "service-token",
+                    AnnounceURL: "https://czteam.me/announce.php?passkey=stale",
                     Passkey: "user-passkey",
                   },
                 },
@@ -481,6 +482,7 @@ describe("Tracker client selectors", () => {
     });
     expect(payload.Trackers?.Trackers?.CZT?.URL).toBeUndefined();
     expect(payload.Trackers?.Trackers?.CZT?.APIKey).toBeUndefined();
+    expect(payload.Trackers?.Trackers?.CZT?.AnnounceURL).toBeUndefined();
   });
 
   it("creates CZT entries with passkey defaults", async () => {
