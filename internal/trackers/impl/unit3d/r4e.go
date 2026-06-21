@@ -20,7 +20,7 @@ func resolveUnit3DR4ECategoryID(meta api.PreparedMetadata) string {
 	}
 	isDoc := false
 	if genreIDs != "" {
-		for _, value := range strings.Split(genreIDs, ",") {
+		for value := range strings.SplitSeq(genreIDs, ",") {
 			if strings.TrimSpace(value) == "99" {
 				isDoc = true
 				break

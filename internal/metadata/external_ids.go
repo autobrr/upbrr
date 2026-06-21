@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -44,6 +45,7 @@ var (
 	genericEpisodePattern  = regexp.MustCompile(`(?i)^episode\s*#?\s*\d+\s*$`)
 )
 
+// TMDBClient is the TMDB metadata surface used by external-ID resolution.
 type TMDBClient interface {
 	FindByExternalID(ctx context.Context, input tmdb.FindInput) (tmdb.FindResult, error)
 	SearchID(ctx context.Context, input tmdb.SearchInput) (tmdb.SearchOutcome, error)
@@ -53,11 +55,13 @@ type TMDBClient interface {
 	DailyToSeasonEpisode(ctx context.Context, tmdbID int, date time.Time) (int, int, error)
 }
 
+// IMDBClient is the IMDb metadata surface used by external-ID resolution.
 type IMDBClient interface {
 	Search(ctx context.Context, input imdb.SearchInput) (imdb.SearchResult, error)
 	GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (imdb.Info, error)
 }
 
+// TVDBClient is the TVDB metadata surface used by external-ID resolution.
 type TVDBClient interface {
 	GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error)
 	GetSeriesMetadata(ctx context.Context, seriesID int) (tvdb.SeriesMetadata, error)
@@ -67,12 +71,16 @@ type TVDBClient interface {
 	GetEpisodeTranslation(ctx context.Context, episodeID int, language string) (tvdb.EpisodeTranslation, error)
 }
 
+// TVmazeClient is the TVmaze metadata surface used by external-ID resolution.
 type TVmazeClient interface {
 	Search(ctx context.Context, input tvmaze.SearchInput) (tvmaze.SearchResult, error)
 	GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episode int, lookup tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error)
 	GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate string) (*tvmaze.EpisodeData, error)
 }
 
+// ResolveExternalIDs resolves and persists cross-provider IDs and metadata for
+// a prepared item, honoring fresh stored data, overrides, scene IDs, and tracker
+// matches before falling back to provider searches.
 func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
@@ -1171,15 +1179,11 @@ func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBM
 	}
 }
 
-// cloneStringMap returns a detached copy of values, preserving nil for empty input.
+// cloneStringMap returns a detached copy of values, normalizing nil to an
+// empty map so API callers observe the same object shape before JSON marshal.
 func cloneStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
 	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, values)
 	return cloned
 }
 

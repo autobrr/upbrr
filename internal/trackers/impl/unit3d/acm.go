@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -426,10 +427,8 @@ func acmSubtitleTag(subtitles []string) string {
 	if len(subtitles) == 0 {
 		return " [No subs]"
 	}
-	for _, subtitle := range subtitles {
-		if subtitle == "Eng" {
-			return ""
-		}
+	if slices.Contains(subtitles, "Eng") {
+		return ""
 	}
 	if len(subtitles) > 1 {
 		return " [No Eng subs]"
@@ -437,6 +436,9 @@ func acmSubtitleTag(subtitles []string) string {
 	return " [" + subtitles[0] + " subs only]"
 }
 
+// convertACMComparisonToCollapse rewrites UNIT3D comparison blocks into ACM
+// spoiler markup while leaving malformed blocks unchanged when no image URLs
+// can be paired with the source labels.
 func convertACMComparisonToCollapse(value string, maxWidth int) string {
 	re := regexp.MustCompile(`(?is)\[comparison=[\s\S]*?\[/comparison\]`)
 	return re.ReplaceAllStringFunc(value, func(block string) string {
@@ -448,10 +450,7 @@ func convertACMComparisonToCollapse(value string, maxWidth int) string {
 		if len(sources) == 0 {
 			return block
 		}
-		imgSize := maxWidth / len(sources)
-		if imgSize > 350 {
-			imgSize = 350
-		}
+		imgSize := min(maxWidth/len(sources), 350)
 		body := strings.TrimSuffix(parts[1], "[/comparison]")
 		fields := strings.Fields(strings.ReplaceAll(body, ",", " "))
 		images := make([]string, 0, len(fields))

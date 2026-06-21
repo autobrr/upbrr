@@ -416,21 +416,71 @@ func TestResolveExternalIDsPrecedence(t *testing.T) {
 func TestMapTMDBMetadataClonesLocalizedTitles(t *testing.T) {
 	t.Parallel()
 
-	localizedTitles := map[string]string{"de": "Titel"}
-	result := tmdb.MetadataResult{LocalizedTitles: localizedTitles}
-
-	mapped := mapTMDBMetadata(api.ExternalIDs{TMDBID: 123}, result)
-	if mapped == nil {
-		t.Fatal("expected mapped metadata")
+	tests := []struct {
+		name            string
+		localizedTitles map[string]string
+		want            map[string]string
+	}{
+		{
+			name: "nil",
+			want: map[string]string{},
+		},
+		{
+			name:            "empty",
+			localizedTitles: map[string]string{},
+			want:            map[string]string{},
+		},
+		{
+			name:            "preserves keys",
+			localizedTitles: map[string]string{"de": "Titel"},
+			want:            map[string]string{"de": "Titel"},
+		},
 	}
-	localizedTitles["de"] = "Changed"
-	localizedTitles["fr"] = "Titre"
 
-	if got := mapped.LocalizedTitles["de"]; got != "Titel" {
-		t.Fatalf("expected cloned localized title, got %q", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tmdb.MetadataResult{LocalizedTitles: tt.localizedTitles}
+
+			mapped := mapTMDBMetadata(api.ExternalIDs{TMDBID: 123}, result)
+			if mapped == nil {
+				t.Fatal("expected mapped metadata")
+			}
+			if mapped.LocalizedTitles == nil {
+				t.Fatal("expected nonnil localized titles")
+			}
+			if len(mapped.LocalizedTitles) != len(tt.want) {
+				t.Fatalf("localized titles len = %d, want %d", len(mapped.LocalizedTitles), len(tt.want))
+			}
+			for key, want := range tt.want {
+				if got := mapped.LocalizedTitles[key]; got != want {
+					t.Fatalf("localized title %q = %q, want %q", key, got, want)
+				}
+			}
+
+			mapped.LocalizedTitles["fr"] = "Titre"
+			if tt.localizedTitles != nil {
+				if _, ok := tt.localizedTitles["fr"]; ok {
+					t.Fatalf("expected cloned localized titles to ignore mapped mutation, got %#v", tt.localizedTitles)
+				}
+				tt.localizedTitles["de"] = "Changed"
+				if got, ok := mapped.LocalizedTitles["de"]; ok && got == "Changed" {
+					t.Fatalf("expected cloned localized title to ignore source mutation, got %#v", mapped.LocalizedTitles)
+				}
+			}
+		})
 	}
-	if _, ok := mapped.LocalizedTitles["fr"]; ok {
-		t.Fatalf("expected cloned localized titles to ignore source mutation, got %#v", mapped.LocalizedTitles)
+}
+
+func TestCloneStringMapReturnsDetachedEmptyMapForNil(t *testing.T) {
+	t.Parallel()
+
+	cloned := cloneStringMap(nil)
+	if cloned == nil {
+		t.Fatal("expected nonnil empty map")
+	}
+	cloned["de"] = "Titel"
+	if got := cloned["de"]; got != "Titel" {
+		t.Fatalf("localized title = %q, want Titel", got)
 	}
 }
 

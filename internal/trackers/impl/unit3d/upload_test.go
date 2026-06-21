@@ -4,6 +4,7 @@
 package unit3d
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -842,6 +843,122 @@ func TestBuildUnit3DNameRHDFullDiscOmitsLanguageTag(t *testing.T) {
 	}
 	if strings.Contains(got, "GERMAN") || strings.Contains(got, " DL") || strings.Contains(got, " ML") {
 		t.Fatalf("expected RHD full-disc name to omit language tag, got %q", got)
+	}
+}
+
+func TestBuildUnit3DNameRHDFullDiscUsesDiscTypeWhenTypeEmpty(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	mediaInfoPath := filepath.Join(dir, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nComplete name: Movie"), 0o600); err != nil {
+		t.Fatalf("write mediainfo fixture: %v", err)
+	}
+	torrentPath := filepath.Join(dir, "movie.torrent")
+	if err := os.WriteFile(torrentPath, []byte("torrent"), 0o600); err != nil {
+		t.Fatalf("write torrent fixture: %v", err)
+	}
+
+	meta := api.PreparedMetadata{
+		ReleaseName:            "Movie.2024.1080p.COMPLETE.Blu-ray.BD50.DTS-HD.MA.5.1.AVC-GRP",
+		DiscType:               " bdmv ",
+		Region:                 "GER",
+		Tag:                    "-GRP",
+		Audio:                  "DTS-HD MA 5.1",
+		VideoCodec:             "AVC",
+		AudioLanguages:         []string{"German", "English"},
+		ValidMediaInfoSettings: true,
+		MediaInfoTextPath:      mediaInfoPath,
+		TorrentPath:            torrentPath,
+		ExternalIDs:            api.ExternalIDs{Category: "MOVIE"},
+		Release: api.ReleaseInfo{
+			Title:      "Movie",
+			Year:       2024,
+			Resolution: "1080p",
+			Source:     "Blu-ray",
+			Size:       "BD50",
+		},
+	}
+
+	want := "Movie 2024 1080p COMPLETE GER Blu-ray BD50 DTS-HD MA 5.1 AVC-GRP"
+	got := buildUnit3DName("RHD", meta, config.TrackerConfig{})
+	if got != want {
+		t.Fatalf("expected RHD DiscType-only full-disc name %q, got %q", want, got)
+	}
+	if strings.Contains(got, "GERMAN") || strings.Contains(got, " DL") || strings.Contains(got, " ML") {
+		t.Fatalf("expected RHD DiscType-only full-disc name to omit language tag, got %q", got)
+	}
+
+	entry, err := buildUploadDryRunUnit3D(context.Background(), trackers.UploadRequest{
+		Tracker: "RHD",
+		Meta:    meta,
+		TrackerConfig: config.TrackerConfig{
+			APIKey: "test-key",
+		},
+		Assets: &trackers.DescriptionAssets{
+			Description: "description",
+			Final:       true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build RHD dry-run: %v", err)
+	}
+	if entry.ReleaseName != want {
+		t.Fatalf("expected RHD dry-run release name %q, got %q", want, entry.ReleaseName)
+	}
+	if entry.Payload["name"] != want {
+		t.Fatalf("expected RHD dry-run payload name %q, got %q", want, entry.Payload["name"])
+	}
+}
+
+func TestResolveRHDTypeAndSourcePreservesExistingTypeOrdering(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		meta api.PreparedMetadata
+		want []string
+	}{
+		{
+			name: "webdl",
+			meta: api.PreparedMetadata{Type: "WEBDL"},
+			want: []string{"WEB-DL"},
+		},
+		{
+			name: "encode",
+			meta: api.PreparedMetadata{Type: "ENCODE", Source: "Blu-ray"},
+			want: []string{"Blu-ray"},
+		},
+		{
+			name: "remux",
+			meta: api.PreparedMetadata{Type: "REMUX", Source: "Blu-ray"},
+			want: []string{"Blu-ray", "REMUX"},
+		},
+		{
+			name: "disc type populated",
+			meta: api.PreparedMetadata{
+				Type:    "DISC",
+				Region:  "GER",
+				Release: api.ReleaseInfo{Source: "Blu-ray", Size: "BD50"},
+			},
+			want: []string{"COMPLETE", "GER", "Blu-ray", "BD50"},
+		},
+		{
+			name: "empty type non disc",
+			meta: api.PreparedMetadata{},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := resolveRHDTypeAndSource(tt.meta)
+			if strings.Join(got, "|") != strings.Join(tt.want, "|") {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+		})
 	}
 }
 

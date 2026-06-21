@@ -24,6 +24,8 @@ const imageBaseURL = "https://image.tmdb.org/t/p/original"
 
 var yearPattern = regexp.MustCompile(`(18|19|20)\d{2}`)
 
+// FetchMetadata loads the primary TMDB record plus optional external IDs,
+// translations, media assets, credits, keywords, and anime enrichment.
 func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (MetadataResult, error) {
 	if input.TMDBID == 0 {
 		return MetadataResult{}, errNotFound
@@ -207,13 +209,12 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	}
 
 	if translationsErr == nil {
-		result.LocalizedTitles = make(map[string]string)
-		for _, t := range translations.Translations {
-			title := metautil.FirstNonEmptyTrimmed(t.Data.Title, t.Data.Name)
-			if title != "" {
-				for _, key := range localizedTitleKeys(t) {
-					result.LocalizedTitles[key] = title
-				}
+		result.LocalizedTitles = buildLocalizedTitles(translations.Translations)
+		if !hasUsableLocalizedTitle(result.LocalizedTitles, "de") {
+			if title, err := c.fetchLocalizedTitle(requestCtx, path, "de-DE"); err == nil && title != "" {
+				result.LocalizedTitles["de"] = title
+			} else if err != nil && c.logger != nil {
+				c.logger.Warnf("tmdb: german title fallback lookup failed: %v", err)
 			}
 		}
 	} else {
@@ -265,6 +266,92 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	}
 
 	return result, nil
+}
+
+// buildLocalizedTitles returns a non-nil title map keyed by generic language
+// code and regional language tag. Neutral translations own the generic key.
+func buildLocalizedTitles(translations []Translation) map[string]string {
+	titles := make(map[string]string)
+	genericCandidates := make(map[string]localizedTitleCandidate)
+
+	for _, t := range translations {
+		title := metautil.FirstNonEmptyTrimmed(t.Data.Title, t.Data.Name)
+		if title == "" {
+			continue
+		}
+		language, regionalKey := localizedTitleKeys(t)
+		if language == "" {
+			continue
+		}
+		if regionalKey == "" {
+			genericCandidates[language] = localizedTitleCandidate{title: title}
+			continue
+		}
+		titles[regionalKey] = title
+		addRegionalGenericCandidate(genericCandidates, language, regionalKey, title)
+	}
+
+	for language, candidate := range genericCandidates {
+		titles[language] = candidate.title
+	}
+	return titles
+}
+
+type localizedTitleCandidate struct {
+	title       string
+	regionalKey string
+	priority    int
+}
+
+var genericRegionalTitleKeys = map[string][]string{
+	"de": {"de-DE"},
+	"en": {"en-US"},
+	"es": {"es-ES", "es-MX"},
+	"fr": {"fr-FR", "fr-CA"},
+	"pt": {"pt-PT"},
+}
+
+// addRegionalGenericCandidate records accepted regional tags as fallback
+// candidates for the generic key.
+func addRegionalGenericCandidate(candidates map[string]localizedTitleCandidate, language, regionalKey, title string) {
+	current, currentOK := candidates[language]
+	if currentOK && current.regionalKey == "" {
+		return
+	}
+	priority, ok := regionalGenericTitlePriority(language, regionalKey)
+	if !ok {
+		return
+	}
+	if currentOK && current.priority < priority {
+		return
+	}
+	candidates[language] = localizedTitleCandidate{title: title, regionalKey: regionalKey, priority: priority}
+}
+
+// defaultRegionalTitleKey returns the language's conventional same-region tag
+// used when no explicit regional fallback order is configured.
+func defaultRegionalTitleKey(language string) string {
+	return language + "-" + strings.ToUpper(language)
+}
+
+// regionalGenericTitlePriority reports whether regionalKey may backfill the
+// generic language key and how it ranks against other regional candidates.
+func regionalGenericTitlePriority(language, regionalKey string) (int, bool) {
+	keys := genericRegionalTitleKeys[language]
+	if len(keys) == 0 {
+		keys = []string{defaultRegionalTitleKey(language)}
+	}
+	for i, key := range keys {
+		if regionalKey == key {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func hasUsableLocalizedTitle(titles map[string]string, key string) bool {
+	title, ok := titles[key]
+	return ok && strings.TrimSpace(title) != ""
 }
 
 func (c *Client) GetKeywords(ctx context.Context, tmdbID int, category string) (string, error) {
@@ -590,19 +677,19 @@ func (c *Client) fetchLocalizedTitle(ctx context.Context, path, language string)
 	return strings.TrimSpace(metautil.FirstNonEmpty(localized.Title, localized.Name)), nil
 }
 
-// localizedTitleKeys returns the historical generic language key and adds a
-// regional alias when TMDB supplies a country code for variant-specific titles.
-func localizedTitleKeys(t Translation) []string {
+// localizedTitleKeys returns the generic language key and regional key for a
+// TMDB translation. Regional translations are not allowed to overwrite generic
+// aliases until all same-language candidates can be compared deterministically.
+func localizedTitleKeys(t Translation) (string, string) {
 	language := strings.ToLower(strings.TrimSpace(t.ISO6391))
 	if language == "" {
-		return nil
+		return "", ""
 	}
-	keys := []string{language}
 	region := strings.ToUpper(strings.TrimSpace(t.ISO31661))
-	if region != "" {
-		keys = append(keys, language+"-"+region)
+	if region == "" {
+		return language, ""
 	}
-	return keys
+	return language, language + "-" + region
 }
 
 func isAnime(language string, genres []genre) bool {

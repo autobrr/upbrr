@@ -5,6 +5,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -437,7 +439,8 @@ type TMDBMetadata struct {
 	RetrievedAKA     string
 	Keywords         string
 	// LocalizedTitles maps lowercase language codes and optional regional tags
-	// such as "de" or "pt-BR" to TMDB translation titles.
+	// such as "de" or "pt-BR" to TMDB translation titles. Nil values marshal as
+	// an empty JSON object for Wails and embedded-web callers.
 	LocalizedTitles     map[string]string
 	YouTube             string
 	Certification       string
@@ -446,6 +449,21 @@ type TMDBMetadata struct {
 	Networks            []TMDBNetwork
 	IMDbMismatch        bool
 	MismatchedIMDbID    int
+}
+
+// MarshalJSON preserves the shared TMDBMetadata shape while emitting
+// LocalizedTitles as an object instead of null.
+func (m TMDBMetadata) MarshalJSON() ([]byte, error) {
+	type tmdbMetadata TMDBMetadata
+	payload := tmdbMetadata(m)
+	if payload.LocalizedTitles == nil {
+		payload.LocalizedTitles = map[string]string{}
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("api: marshal TMDB metadata: %w", err)
+	}
+	return data, nil
 }
 
 type TMDBCompany struct {

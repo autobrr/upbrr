@@ -5,6 +5,7 @@ package unit3d
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -57,7 +58,7 @@ func resolveUnit3DRHDResolutionID(meta api.PreparedMetadata) string {
 // language tag segment even though RHD upload rules still require German audio.
 func buildRHDName(meta api.PreparedMetadata) string {
 	parts := make([]string, 0)
-	isFullDisc := meta.Type == "DISC" || isDiscType(meta.DiscType)
+	isFullDisc := strings.EqualFold(strings.TrimSpace(meta.Type), "DISC") || isDiscType(meta.DiscType)
 	markerText := rhdMarkerText(meta)
 
 	// 1. Title (German title preferred)
@@ -192,13 +193,18 @@ func buildRHDName(meta api.PreparedMetadata) string {
 	return name + "-" + group
 }
 
+// resolveRHDTypeAndSource formats RHD source/type segments, promoting an empty
+// type with a disc-like DiscType to the full-disc COMPLETE form.
 func resolveRHDTypeAndSource(meta api.PreparedMetadata) []string {
 	var parts []string
-	if meta.Type == "" {
+	typeName := strings.TrimSpace(meta.Type)
+	if typeName == "" && isDiscType(meta.DiscType) {
+		typeName = "DISC"
+	}
+	if typeName == "" {
 		return nil
 	}
 
-	typeName := meta.Type
 	switch strings.ToUpper(typeName) {
 	case "WEBDL":
 		typeName = "WEB-DL"
@@ -257,13 +263,7 @@ func rhdMarkerText(meta api.PreparedMetadata) string {
 // languages, with German subtitle-only and dubbed markers handled separately.
 func resolveRHDLanguage(meta api.PreparedMetadata) string {
 	audioLanguages := normalizedRHDAudioLanguages(meta.AudioLanguages)
-	hasGermanAudio := false
-	for _, l := range audioLanguages {
-		if isGermanLanguage(l) {
-			hasGermanAudio = true
-			break
-		}
-	}
+	hasGermanAudio := slices.ContainsFunc(audioLanguages, isGermanLanguage)
 
 	numAudio := len(audioLanguages)
 	var baseTag string
@@ -272,13 +272,7 @@ func resolveRHDLanguage(meta api.PreparedMetadata) string {
 		baseTag = "GERMAN"
 	} else {
 		// No German audio, check subs
-		hasGermanSubs := false
-		for _, l := range meta.SubtitleLanguages {
-			if isGermanLanguage(l) {
-				hasGermanSubs = true
-				break
-			}
-		}
+		hasGermanSubs := slices.ContainsFunc(meta.SubtitleLanguages, isGermanLanguage)
 		if hasGermanSubs {
 			return "GERMAN SUBBED"
 		}
@@ -319,6 +313,9 @@ func normalizedRHDAudioLanguages(values []string) []string {
 		if key == "" || key == "und" {
 			continue
 		}
+		if isGermanLanguage(key) {
+			key = "de"
+		}
 		if _, exists := seen[key]; exists {
 			continue
 		}
@@ -328,21 +325,25 @@ func normalizedRHDAudioLanguages(values []string) []string {
 	return languages
 }
 
+// isGermanLanguage accepts common German names, ISO codes, and Swiss German
+// tags for RHD audio and subtitle language decisions.
 func isGermanLanguage(l string) bool {
 	tag, ok := parseLanguageTag(l)
 	if !ok {
 		l = strings.ToLower(strings.TrimSpace(l))
-		for _, g := range []string{"german", "ger", "de", "deu", "gsw"} {
-			if l == g {
-				return true
-			}
-		}
-		return false
+		return slices.Contains([]string{"german", "ger", "de", "deu", "gsw"}, l)
 	}
 	base, _ := tag.Base()
-	return base.String() == "de"
+	switch base.String() {
+	case "de", "gsw":
+		return true
+	default:
+		return false
+	}
 }
 
+// getRHDLanguageName returns the English display name RHD expects for a
+// parseable language tag, falling back to the uppercased input.
 func getRHDLanguageName(l string) string {
 	tag, ok := parseLanguageTag(l)
 	if !ok {
