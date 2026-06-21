@@ -146,7 +146,7 @@ func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, baseA
 		return nil
 	}
 
-	if !req.Options.Debug && !req.Options.DryRun {
+	if req.Options.Debug || !req.Options.DryRun {
 		if err := runCLIScreenshotHandling(ctx, coreSvc, req); err != nil {
 			return err
 		}
