@@ -50,9 +50,7 @@ func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ ses
 			return
 		}
 		if s.backend != nil {
-			if logger := s.backend.currentLogger(); logger != nil {
-				logger.Errorf("trackericon: get tracker icon %s: %v", sanitized, err)
-			}
+			s.backend.logErrorf("trackericon: get tracker icon %s: %v", sanitized, err)
 		}
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return

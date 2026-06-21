@@ -6,17 +6,30 @@ package webserver
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
 )
+
+type serverCloseCore struct {
+	preparedMetaTestCore
+	closed *bool
+}
+
+func (c *serverCloseCore) Close() error {
+	*c.closed = true
+	return nil
+}
 
 func TestNewRejectsDevelopmentNoAuthOnNonLoopbackHost(t *testing.T) {
 	_, err := New(Options{
@@ -57,6 +70,103 @@ func TestIsDevelopmentNoAuthHost(t *testing.T) {
 				t.Fatalf("isDevelopmentNoAuthHost(%q) = %v, want %v", tc.host, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestNewClosesBackendWhenAssetSetupFails(t *testing.T) {
+	oldNewBackend := newBackendWithContextForServer
+	oldResolveAssets := resolveWebAssetsForServer
+	oldNewSessionManager := newSessionManagerForServer
+	oldRandomString := randomStringForServer
+	t.Cleanup(func() {
+		newBackendWithContextForServer = oldNewBackend
+		resolveWebAssetsForServer = oldResolveAssets
+		newSessionManagerForServer = oldNewSessionManager
+		randomStringForServer = oldRandomString
+	})
+
+	closed := false
+	newBackendWithContextForServer = func(_ context.Context, cfg config.Config, _ *eventHub) (*Backend, error) {
+		return &Backend{
+			cfg:  cfg,
+			core: &serverCloseCore{closed: &closed},
+		}, nil
+	}
+	resolveWebAssetsForServer = func() (fs.FS, error) {
+		return nil, errors.New("asset setup failed")
+	}
+	newSessionManagerForServer = func(int, string) (*sessionManager, error) {
+		t.Fatal("session manager should not be created after asset setup failure")
+		return nil, nil
+	}
+
+	_, err := New(Options{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "state.db")},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Logging:            config.LoggingConfig{Level: "info"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected asset setup failure")
+	}
+	if !closed {
+		t.Fatal("expected backend core to close after post-construction startup failure")
+	}
+}
+
+func TestNewClosesSessionManagerWhenDevelopmentCSRFFails(t *testing.T) {
+	oldNewBackend := newBackendWithContextForServer
+	oldResolveAssets := resolveWebAssetsForServer
+	oldNewSessionManager := newSessionManagerForServer
+	oldRandomString := randomStringForServer
+	t.Cleanup(func() {
+		newBackendWithContextForServer = oldNewBackend
+		resolveWebAssetsForServer = oldResolveAssets
+		newSessionManagerForServer = oldNewSessionManager
+		randomStringForServer = oldRandomString
+	})
+
+	newBackendWithContextForServer = func(_ context.Context, cfg config.Config, _ *eventHub) (*Backend, error) {
+		return &Backend{cfg: cfg}, nil
+	}
+	resolveWebAssetsForServer = func() (fs.FS, error) {
+		return fstest.MapFS{"index.html": {Data: []byte("ok")}}, nil
+	}
+	sessionClosed := make(chan struct{})
+	newSessionManagerForServer = func(int, string) (*sessionManager, error) {
+		manager := &sessionManager{
+			stopCh:   make(chan struct{}),
+			doneCh:   make(chan struct{}),
+			sessions: make(map[string]session),
+		}
+		go func() {
+			<-manager.stopCh
+			close(sessionClosed)
+			close(manager.doneCh)
+		}()
+		return manager, nil
+	}
+	randomStringForServer = func(int) (string, error) {
+		return "", errors.New("csrf failure")
+	}
+
+	_, err := New(Options{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "state.db")},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Logging:            config.LoggingConfig{Level: "info"},
+		},
+		CLIConfig:         CLIConfig{Host: "127.0.0.1"},
+		DevelopmentNoAuth: true,
+	})
+	if err == nil {
+		t.Fatal("expected CSRF failure")
+	}
+	select {
+	case <-sessionClosed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for session manager close")
 	}
 }
 
@@ -145,6 +255,58 @@ func TestLogServeAddressRedactsBrowserURLSecrets(t *testing.T) {
 	}
 	if !strings.Contains(message, "https://example.test/upbrr/") {
 		t.Fatalf("expected safe browser URL host/path retained, got %q", message)
+	}
+}
+
+func TestServerLoggerAccessSynchronizedDuringRuntimeReplacement(t *testing.T) {
+	t.Parallel()
+
+	loggingConfig := config.LoggingConfig{
+		Level:          "info",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       1,
+	}
+	loggerA, err := logging.NewWithLevel(loggingConfig, filepath.Join(t.TempDir(), "runtime-a.db"), "")
+	if err != nil {
+		t.Fatalf("new logger A: %v", err)
+	}
+
+	backend := &Backend{logger: loggerA}
+	server := &Server{backend: backend}
+	addr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 7480}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				logger, err := logging.NewWithLevel(loggingConfig, filepath.Join(t.TempDir(), "runtime-replacement.db"), "")
+				if err != nil {
+					t.Errorf("new replacement logger: %v", err)
+					return
+				}
+				_, oldLogger := backend.replaceRuntime(config.Config{}, nil, logger)
+				if oldLogger != nil {
+					_ = oldLogger.Close()
+				}
+			}
+		}
+	})
+	defer func() {
+		close(stop)
+		wg.Wait()
+		if logger := backend.currentLogger(); logger != nil {
+			_ = logger.Close()
+		}
+	}()
+
+	for range 2000 {
+		server.logServeAddress(addr, "http://127.0.0.1:7480")
+		backend.logWarnf("web: retained session persistence check")
 	}
 }
 

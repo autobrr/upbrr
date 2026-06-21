@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -50,7 +51,9 @@ func ImportFromFile(path string) (*config.Config, []string, error) {
 }
 
 // ImportFromContent parses raw file content. The filename is used only to
-// decide which parser to invoke; its directory (if any) is ignored.
+// decide which parser to invoke; its directory (if any) is ignored. Native
+// YAML/JSON imports with encrypted secret envelopes are decrypted and marked so
+// later database saves require helper-backed re-encryption.
 func ImportFromContent(filename string, data []byte) (*config.Config, []string, error) {
 	if len(data) > MaxFileBytes {
 		return nil, nil, fmt.Errorf("import config: file is too large (%d bytes, limit %d)", len(data), MaxFileBytes)
@@ -124,7 +127,8 @@ func parseNative(filename string, data []byte) (*config.Config, error) {
 }
 
 // parseNativeYAML merges YAML input into defaults using YAML tag names, then
-// decrypts any encrypted secret fields before returning the runtime config.
+// decrypts imported encrypted secret fields and preserves the later persistence
+// guard for helper-backed re-encryption.
 func parseNativeYAML(data []byte, defaults *config.Config) (*config.Config, error) {
 	defaultRaw := map[string]any{}
 	defaultData, err := yaml.Marshal(defaults)
@@ -140,7 +144,9 @@ func parseNativeYAML(data []byte, defaults *config.Config) (*config.Config, erro
 	if err := yaml.Unmarshal(data, &overlay); err != nil {
 		return nil, fmt.Errorf("import config: unmarshal yaml: %w", err)
 	}
-	mergeConfigMap(defaultRaw, overlay)
+	if err := mergeConfigMap(defaultRaw, overlay); err != nil {
+		return nil, fmt.Errorf("import config: merge yaml: %w", err)
+	}
 
 	merged, err := yaml.Marshal(defaultRaw)
 	if err != nil {
@@ -151,7 +157,7 @@ func parseNativeYAML(data []byte, defaults *config.Config) (*config.Config, erro
 	if err := yaml.Unmarshal(merged, &cfg); err != nil {
 		return nil, fmt.Errorf("import config: unmarshal merged yaml: %w", err)
 	}
-	decrypted, err := config.DecryptConfigSecrets(&cfg)
+	decrypted, err := config.DecryptImportedConfigSecrets(&cfg)
 	if err != nil {
 		return nil, fmt.Errorf("import config: decrypt secrets: %w", err)
 	}
@@ -159,7 +165,8 @@ func parseNativeYAML(data []byte, defaults *config.Config) (*config.Config, erro
 }
 
 // parseNativeJSON merges JSON input into defaults using exported Go field
-// names, matching the shape produced by config.ExportToJSON.
+// names, matching the shape produced by config.ExportToJSON. Encrypted secret
+// envelopes are decrypted with the same persistence guard used for YAML.
 func parseNativeJSON(data []byte, defaults *config.Config) (*config.Config, error) {
 	defaultRaw := map[string]any{}
 	defaultData, err := json.Marshal(defaults)
@@ -175,7 +182,9 @@ func parseNativeJSON(data []byte, defaults *config.Config) (*config.Config, erro
 	if err := json.Unmarshal(data, &overlay); err != nil {
 		return nil, fmt.Errorf("import config: unmarshal json: %w", err)
 	}
-	mergeConfigMap(defaultRaw, overlay)
+	if err := mergeConfigMap(defaultRaw, overlay); err != nil {
+		return nil, fmt.Errorf("import config: merge json: %w", err)
+	}
 
 	merged, err := json.Marshal(defaultRaw)
 	if err != nil {
@@ -186,7 +195,7 @@ func parseNativeJSON(data []byte, defaults *config.Config) (*config.Config, erro
 	if err := json.Unmarshal(merged, &cfg); err != nil {
 		return nil, fmt.Errorf("import config: unmarshal merged json: %w", err)
 	}
-	decrypted, err := config.DecryptConfigSecrets(&cfg)
+	decrypted, err := config.DecryptImportedConfigSecrets(&cfg)
 	if err != nil {
 		return nil, fmt.Errorf("import config: decrypt secrets: %w", err)
 	}
@@ -194,17 +203,105 @@ func parseNativeJSON(data []byte, defaults *config.Config) (*config.Config, erro
 }
 
 // mergeConfigMap recursively overlays user-supplied maps onto default maps.
-// Non-map values, including nil, replace the default at the same key.
-func mergeConfigMap(base map[string]any, overlay map[string]any) {
+// Unknown sections and fields are rejected except tracker extension fields, and
+// dynamically named torrent clients are validated against the client schema.
+// Null or empty object overlays leave default objects intact; scalar or array
+// overlays cannot replace an object section.
+func mergeConfigMap(base map[string]any, overlay map[string]any) error {
+	return mergeConfigMapAt(base, overlay, "")
+}
+
+func mergeConfigMapAt(base map[string]any, overlay map[string]any, path string) error {
 	for key, overlayValue := range overlay {
-		overlayMap, overlayOK := overlayValue.(map[string]any)
-		baseMap, baseOK := base[key].(map[string]any)
-		if overlayOK && baseOK {
-			mergeConfigMap(baseMap, overlayMap)
+		field := key
+		if path != "" {
+			field = path + "." + key
+		}
+		baseValue, exists := base[key]
+		baseMap, baseOK := baseValue.(map[string]any)
+		if baseOK {
+			if overlayValue == nil {
+				continue
+			}
+			overlayMap, overlayOK := overlayValue.(map[string]any)
+			if !overlayOK {
+				return fmt.Errorf("cannot replace config object %q with %T", field, overlayValue)
+			}
+			if err := mergeConfigMapAt(baseMap, overlayMap, field); err != nil {
+				return err
+			}
 			continue
+		}
+		if !exists {
+			switch {
+			case isTrackerEntryPath(path):
+				base[key] = overlayValue
+				continue
+			case isTrackerCollectionPath(path):
+				entry, ok := overlayValue.(map[string]any)
+				if overlayValue == nil {
+					continue
+				}
+				if !ok {
+					return fmt.Errorf("cannot replace config object %q with %T", field, overlayValue)
+				}
+				target := map[string]any{}
+				base[key] = target
+				if err := mergeConfigMapAt(target, entry, field); err != nil {
+					return err
+				}
+				continue
+			case isTorrentClientCollectionPath(path):
+				entry, ok := overlayValue.(map[string]any)
+				if overlayValue == nil {
+					continue
+				}
+				if !ok {
+					return fmt.Errorf("cannot replace config object %q with %T", field, overlayValue)
+				}
+				target := torrentClientSchemaMap(path)
+				base[key] = target
+				if err := mergeConfigMapAt(target, entry, field); err != nil {
+					return err
+				}
+				continue
+			case path == "":
+				return fmt.Errorf("unknown config section %q", key)
+			default:
+				return fmt.Errorf("unknown config key %q", field)
+			}
 		}
 		base[key] = overlayValue
 	}
+	return nil
+}
+
+func isTrackerCollectionPath(path string) bool {
+	return path == "trackers" || path == "Trackers.Trackers"
+}
+
+func isTrackerEntryPath(path string) bool {
+	return strings.HasPrefix(path, "trackers.") || strings.HasPrefix(path, "Trackers.Trackers.")
+}
+
+func isTorrentClientCollectionPath(path string) bool {
+	return path == "torrent_clients" || path == "TorrentClients"
+}
+
+func torrentClientSchemaMap(path string) map[string]any {
+	t := reflect.TypeFor[config.TorrentClientConfig]()
+	schema := make(map[string]any, t.NumField())
+	for field := range t.Fields() {
+		key := field.Name
+		if path == "torrent_clients" {
+			key = strings.TrimSpace(strings.Split(field.Tag.Get("yaml"), ",")[0])
+		}
+		if key == "" || key == "-" {
+			continue
+		}
+		schema[key] = nil
+	}
+	return schema
 }
 
 func isPythonFile(filename string) bool {

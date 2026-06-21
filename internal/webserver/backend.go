@@ -6,6 +6,7 @@ package webserver
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,8 @@ import (
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/config/importer"
+	"github.com/autobrr/upbrr/internal/configstore"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -35,6 +38,7 @@ import (
 
 const previewTimeout = 30 * time.Minute
 
+// Backend owns the embedded web API runtime and request-scoped background jobs.
 type Backend struct {
 	runtimeMu   sync.RWMutex
 	cfg         config.Config
@@ -72,10 +76,14 @@ type runOptions struct {
 	RunLogLevel string
 }
 
+// NewBackend constructs a Backend using a background context.
 func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
 	return NewBackendWithContext(context.Background(), cfg, hub)
 }
 
+// NewBackendWithContext opens the shared repository, creates the logger, and
+// starts the core service when cfg validates. Invalid config keeps settings
+// routes usable while core-backed routes report the initialization error.
 func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub) (*Backend, error) {
 	if ctx == nil {
 		return nil, errors.New("webserver: context is required")
@@ -130,6 +138,7 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 	}, nil
 }
 
+// Close stops active background work and releases runtime, repository, and log resources.
 func (b *Backend) Close() error {
 	b.stopAllLogStreams()
 	b.stopAllDupeJobs()
@@ -169,7 +178,8 @@ func (b *Backend) DetectDiscType(ctx context.Context, path string) (string, erro
 }
 
 func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
-	if err := b.requireCore(); err != nil {
+	rt, err := b.requireRuntime()
+	if err != nil {
 		return api.MetadataPreview{}, err
 	}
 	trimmedPath := strings.TrimSpace(path)
@@ -194,14 +204,14 @@ func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL s
 		Mode:            api.ModeGUI,
 		Trackers:        append([]string{}, trackersList...),
 		SourceLookupURL: strings.TrimSpace(sourceLookupURL),
-		Options:         b.baseUploadOptions(),
+		Options:         rt.baseUploadOptions(),
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 		ConfirmBDMVRescan:    confirmBDMVRescan,
 	}
 
-	return wrapWebResult(b.currentCore().FetchMetadataPreview(progressCtx, req))
+	return wrapWebResult(rt.core.FetchMetadataPreview(progressCtx, req))
 }
 
 type blurayCandidateSelector interface {
@@ -375,17 +385,16 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 }
 
 func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
-	if err := b.requireCore(); err != nil {
+	rt, err := b.requireRuntime()
+	if err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
 	runOpts, err := b.buildRunOptions(debug, noSeed, runLogLevel)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
-	if logger := b.currentLogger(); logger != nil {
-		logger.Debugf("web: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", strings.TrimSpace(path), debug, noSeed, runOpts.RunLogLevel)
-	}
-	runCore, runLogger, err := b.buildRunCore(runOpts)
+	b.logDebugf("web: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", strings.TrimSpace(path), debug, noSeed, runOpts.RunLogLevel)
+	runCore, runLogger, err := b.buildRunCoreFromSnapshot(rt, runOpts)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -402,13 +411,13 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 		Trackers:                    append([]string{}, trackersList...),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   false,
-		Options:                     buildRunUploadOptions(b.currentConfig(), runOpts),
+		Options:                     buildRunUploadOptions(rt.cfg, runOpts),
 		ExternalIDOverrides:         overrides,
 		ReleaseNameOverrides:        nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 	}
 	req.Options.DryRun = true
-	if err := guishared.SeedRunCorePreparedMeta(ctx, b.currentCore(), runCore, req); err != nil {
+	if err := guishared.SeedRunCorePreparedMeta(ctx, rt.core, runCore, req); err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("web: %w", err)
 	}
 	progressCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
@@ -656,15 +665,16 @@ func (b *Backend) ReadScreenshotImage(path string) (string, error) {
 }
 
 func (b *Backend) ListUploadCandidates(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.ScreenshotImage, error) {
-	if err := b.requireCore(); err != nil {
+	rt, err := b.requireRuntime()
+	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return wrapWebResult(b.currentCore().ListUploadCandidates(ctx, api.Request{
+	return wrapWebResult(rt.core.ListUploadCandidates(ctx, api.Request{
 		Paths:   []string{path},
 		Mode:    api.ModeGUI,
-		Options: b.baseUploadOptions(),
+		Options: rt.baseUploadOptions(),
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
@@ -672,15 +682,16 @@ func (b *Backend) ListUploadCandidates(path string, overrides api.ExternalIDOver
 }
 
 func (b *Backend) ListUploadedImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.UploadedImageLink, error) {
-	if err := b.requireCore(); err != nil {
+	rt, err := b.requireRuntime()
+	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return wrapWebResult(b.currentCore().ListUploadedImages(ctx, api.Request{
+	return wrapWebResult(rt.core.ListUploadedImages(ctx, api.Request{
 		Paths:   []string{path},
 		Mode:    api.ModeGUI,
-		Options: b.baseUploadOptions(),
+		Options: rt.baseUploadOptions(),
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
@@ -688,15 +699,16 @@ func (b *Backend) ListUploadedImages(path string, overrides api.ExternalIDOverri
 }
 
 func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
-	if err := b.requireCore(); err != nil {
+	rt, err := b.requireRuntime()
+	if err != nil {
 		return api.UploadImagesResult{}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
-	return wrapWebResult(b.currentCore().UploadImages(ctx, api.Request{
+	return wrapWebResult(rt.core.UploadImages(ctx, api.Request{
 		Paths:   []string{path},
 		Mode:    api.ModeGUI,
-		Options: b.baseUploadOptions(),
+		Options: rt.baseUploadOptions(),
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
@@ -716,8 +728,10 @@ func (b *Backend) DeleteUploadedImage(path string, imagePath string, host string
 	}, imagePath, host))
 }
 
+// GetConfig returns the current exportable config as JSON with encrypted
+// secret fields for browser settings consumers.
 func (b *Backend) GetConfig() (string, error) {
-	cfg, err := b.exportableConfig()
+	cfg, _, err := b.exportableConfig()
 	if err != nil {
 		return "", err
 	}
@@ -728,13 +742,16 @@ func (b *Backend) GetApplicationInfo() (api.ApplicationInfo, error) {
 	return api.CurrentApplicationInfo(), nil
 }
 
+// ExportConfig returns the exportable config, using plaintext secrets only
+// when auth material for the exported snapshot's DB path explicitly allows
+// unencrypted export.
 func (b *Backend) ExportConfig() (string, error) {
-	cfg, err := b.exportableConfig()
+	cfg, authDBPath, err := b.exportableConfig()
 	if err != nil {
 		return "", err
 	}
 
-	allowPlaintext, err := b.allowUnencryptedExport()
+	allowPlaintext, err := b.allowUnencryptedExport(authDBPath)
 	if err != nil {
 		return "", err
 	}
@@ -753,40 +770,74 @@ func (b *Backend) GetDefaultConfig() (string, error) {
 	return wrapWebResult(config.ExportToJSON(cfg))
 }
 
-func (b *Backend) exportableConfig() (*config.Config, error) {
+// exportableConfig returns the normalized config snapshot and the DB path that
+// must authorize plaintext export for that exact snapshot. Fresh installs with
+// no persisted config export the current runtime config without saving it.
+func (b *Backend) exportableConfig() (*config.Config, string, error) {
 	if b.repo == nil {
-		return nil, errors.New("config repository not initialized")
+		return nil, "", errors.New("config repository not initialized")
 	}
+	rt := b.runtimeSnapshot()
 	cfg, err := config.LoadFromDatabase(context.Background(), b.repo)
 	if err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
 			// Fresh web installs can run from embedded defaults before any config
 			// rows exist, so export the runtime config until the user saves setup.
-			cfg := b.currentConfig()
-			return normalizeExportableConfig(&cfg, b.currentConfig().MainSettings.DBPath), nil
+			cfg, normalizeErr := normalizeExportableConfig(&rt.cfg, rt.cfg.MainSettings.DBPath)
+			if normalizeErr != nil {
+				return nil, "", normalizeErr
+			}
+			return cfg, cfg.MainSettings.DBPath, nil
 		}
+		return nil, "", fmt.Errorf("web: %w", err)
+	}
+	cfg, err = normalizeExportableConfig(cfg, rt.cfg.MainSettings.DBPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return cfg, cfg.MainSettings.DBPath, nil
+}
+
+// normalizeExportableConfig returns a cloned config with tracker defaults,
+// legacy nils, and missing DB path values filled so browser consumers receive
+// stable JSON shapes without mutating the loaded runtime or database config.
+func normalizeExportableConfig(cfg *config.Config, dbPath string) (*config.Config, error) {
+	normalized, err := cloneConfigForExport(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := config.MergeMissingTrackerDefaults(normalized); err != nil {
 		return nil, fmt.Errorf("web: %w", err)
 	}
-	return normalizeExportableConfig(cfg, b.currentConfig().MainSettings.DBPath), nil
+	if strings.TrimSpace(normalized.MainSettings.DBPath) == "" {
+		normalized.MainSettings.DBPath = dbPath
+	}
+	if normalized.Trackers.Trackers == nil {
+		normalized.Trackers.Trackers = map[string]config.TrackerConfig{}
+	}
+	if normalized.Trackers.DefaultTrackers == nil {
+		normalized.Trackers.DefaultTrackers = config.CSVList{}
+	}
+	return normalized, nil
 }
 
-// normalizeExportableConfig fills legacy nils and missing DB path values so
-// browser config consumers receive stable JSON shapes.
-func normalizeExportableConfig(cfg *config.Config, dbPath string) *config.Config {
-	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
-		cfg.MainSettings.DBPath = dbPath
+func cloneConfigForExport(cfg *config.Config) (*config.Config, error) {
+	payload, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("web: clone config for export: marshal: %w", err)
 	}
-	if cfg.Trackers.Trackers == nil {
-		cfg.Trackers.Trackers = map[string]config.TrackerConfig{}
+	var cloned config.Config
+	if err := json.Unmarshal(payload, &cloned); err != nil {
+		return nil, fmt.Errorf("web: clone config for export: unmarshal: %w", err)
 	}
-	if cfg.Trackers.DefaultTrackers == nil {
-		cfg.Trackers.DefaultTrackers = config.CSVList{}
-	}
-	return cfg
+	return &cloned, nil
 }
 
-func (b *Backend) allowUnencryptedExport() (bool, error) {
-	material, err := authmaterial.LoadFromDBPath(b.currentConfig().MainSettings.DBPath)
+// allowUnencryptedExport reports whether the auth material for dbPath permits
+// plaintext config export. Missing auth material denies plaintext export;
+// malformed material is returned as an error.
+func (b *Backend) allowUnencryptedExport(dbPath string) (bool, error) {
+	material, err := authmaterial.LoadFromDBPath(dbPath)
 	if err == nil {
 		return material.AllowUnencryptedExport, nil
 	}
@@ -796,6 +847,10 @@ func (b *Backend) allowUnencryptedExport() (bool, error) {
 	return false, fmt.Errorf("web: %w", err)
 }
 
+// SaveConfig validates encrypted browser settings, builds the replacement
+// runtime, then syncs cookie encryption metadata and saves the non-env config.
+// Runtime build or save failures leave the persisted config and active runtime
+// unchanged; env overrides apply only to the installed runtime config.
 func (b *Backend) SaveConfig(payload string) error {
 	if b.repo == nil {
 		return errors.New("config repository not initialized")
@@ -811,9 +866,10 @@ func (b *Backend) SaveConfig(payload string) error {
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
 		cfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
 	}
-	if cfg.MainSettings.DBPath != currentCfg.MainSettings.DBPath {
+	if !pathutil.SamePath(cfg.MainSettings.DBPath, currentCfg.MainSettings.DBPath) {
 		return errors.New("changing main_settings.db_path requires restart")
 	}
+	cfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("web: %w", err)
 	}
@@ -823,14 +879,15 @@ func (b *Backend) SaveConfig(payload string) error {
 	if err := runtimeCfg.Validate(); err != nil {
 		return fmt.Errorf("web: %w", err)
 	}
-	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
-		return fmt.Errorf("web: %w", err)
-	}
-	return b.applyConfig(runtimeCfg)
+	return b.saveAndApplyConfig(context.Background(), cfg, runtimeCfg, cfg.MainSettings.DBPath)
 }
 
 const configImportMaxBytes = importer.MaxFileBytes
 
+// ImportConfig imports browser-uploaded config content, validates the saved and
+// env-applied runtime forms, builds the replacement runtime, then syncs cookie
+// encryption metadata and saves the non-env config. Runtime build or save
+// failures leave the persisted config and active runtime unchanged.
 func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, error) {
 	if b.repo == nil {
 		return "", nil, errors.New("config repository not initialized")
@@ -860,11 +917,7 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 		return "", nil, fmt.Errorf("validate imported config: %w", err)
 	}
 
-	if err := config.SaveToDatabase(context.Background(), cfg, b.repo); err != nil {
-		return "", nil, fmt.Errorf("web: %w", err)
-	}
-
-	if err := b.applyConfig(runtimeCfg); err != nil {
+	if err := b.saveAndApplyConfig(context.Background(), cfg, runtimeCfg, cfg.MainSettings.DBPath); err != nil {
 		return "", nil, err
 	}
 
@@ -873,6 +926,89 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 		result += fmt.Sprintf(" (%d warnings)", len(warnings))
 	}
 	return result, warnings, nil
+}
+
+// saveAndApplyConfig builds the replacement runtime before any repository
+// writes, then persists cfg and installs the runtime as one ordered transition.
+// If persistence fails, the built runtime is closed and the active runtime is
+// left untouched.
+func (b *Backend) saveAndApplyConfig(ctx context.Context, cfg *config.Config, runtimeCfg config.Config, dbPath string) error {
+	if err := validateCookieAuthMaterial(dbPath); err != nil {
+		if !errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+			return fmt.Errorf("web: validate cookie auth before config save: %w", err)
+		}
+	}
+
+	rt, err := b.buildConfigRuntime(ctx, runtimeCfg)
+	if err != nil {
+		return err
+	}
+	if err := b.saveConfigToRepository(ctx, cfg, dbPath); err != nil {
+		closeBuiltRuntime(rt)
+		return err
+	}
+	b.installConfigRuntime(runtimeCfg, rt)
+	return nil
+}
+
+// saveConfigToRepository enforces the shared pre-save cookie encryption sync
+// before persisting browser config changes through the already-open repository.
+func (b *Backend) saveConfigToRepository(ctx context.Context, cfg *config.Config, dbPath string) error {
+	if err := configstore.SaveToRepository(ctx, cfg, b.repo, dbPath); err != nil {
+		return fmt.Errorf("web: %w", err)
+	}
+	return nil
+}
+
+// validateCookieAuthMaterial returns ErrAuthHelperUnavailable only when auth
+// material is absent; malformed material remains an error so callers can abort
+// before cookie encryption metadata is initialized.
+func validateCookieAuthMaterial(dbPath string) error {
+	material, err := authmaterial.LoadFromDBPath(dbPath)
+	if err != nil {
+		if errors.Is(err, authmaterial.ErrUnavailable) {
+			return cookies.ErrAuthHelperUnavailable
+		}
+		return fmt.Errorf("load auth helper: %w", err)
+	}
+	if _, _, err := material.PrimaryHelper(); err != nil {
+		if errors.Is(err, authmaterial.ErrUnavailable) {
+			return cookies.ErrAuthHelperUnavailable
+		}
+		return fmt.Errorf("derive auth helper: %w", err)
+	}
+	return nil
+}
+
+func (b *Backend) buildConfigRuntime(ctx context.Context, cfg config.Config) (guishared.Runtime, error) {
+	rt, err := guishared.BuildRuntime(ctx, cfg, b.repo)
+	if err != nil {
+		return guishared.Runtime{}, fmt.Errorf("web: %w", err)
+	}
+	return rt, nil
+}
+
+func (b *Backend) installConfigRuntime(cfg config.Config, rt guishared.Runtime) {
+	oldCore, oldLogger := b.replaceRuntime(cfg, rt.Core, rt.Logger)
+	if b.hub != nil {
+		b.hub.SetLogger(rt.Logger)
+	}
+	b.rebindLogStreams(oldLogger, rt.Logger)
+	if oldCore != nil {
+		_ = oldCore.Close()
+	}
+	if oldLogger != nil {
+		_ = oldLogger.Close()
+	}
+}
+
+func closeBuiltRuntime(rt guishared.Runtime) {
+	if rt.Core != nil {
+		_ = rt.Core.Close()
+	}
+	if rt.Logger != nil {
+		_ = rt.Logger.Close()
+	}
 }
 
 func (b *Backend) ListKnownTrackers() ([]string, error) {
@@ -949,14 +1085,26 @@ func (b *Backend) UpdateLogExclusions(patterns []string) error {
 	}, b.repo))
 }
 
+// StartLogStream subscribes the browser session to live log events. Active
+// streams are rebound when settings replace the runtime logger. If no logger or
+// event hub is installed, it returns an error without registering a stream.
 func (b *Backend) StartLogStream(sessionID string) (string, error) {
-	logger := b.currentLogger()
-	if logger == nil {
-		return "", errors.New("logger not initialized")
-	}
 	streamID, err := randomString(12)
 	if err != nil {
 		return "", err
+	}
+	if b == nil {
+		return "", errors.New("logger not initialized")
+	}
+	if b.hub == nil {
+		return "", errors.New("event hub not initialized")
+	}
+
+	b.runtimeMu.RLock()
+	logger := b.logger
+	if logger == nil {
+		b.runtimeMu.RUnlock()
+		return "", errors.New("logger not initialized")
 	}
 	session := &backendLogStream{
 		id:        streamID,
@@ -964,31 +1112,86 @@ func (b *Backend) StartLogStream(sessionID string) (string, error) {
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
 	}
+	b.streamMu.Lock()
+	b.streams[streamID] = session
+	b.startLogStreamWorker(session, logger)
+	b.streamMu.Unlock()
+	b.runtimeMu.RUnlock()
+
+	return streamID, nil
+}
+
+func (b *Backend) startLogStreamWorker(session *backendLogStream, logger *logging.Logger) {
 	subID, ch := logger.Subscribe(0)
+	stop := session.stop
+	done := session.done
 	session.logger = logger
 	session.subID = subID
 
-	b.streamMu.Lock()
-	b.streams[streamID] = session
-	b.streamMu.Unlock()
-
 	b.streamWG.Go(func() {
-		defer close(session.done)
+		defer close(done)
 		for {
 			select {
 			case entry, ok := <-ch:
 				if !ok {
 					return
 				}
-				b.hub.Emit(sessionID, "log:stream:"+streamID, entry)
-			case <-session.stop:
-				session.logger.Unsubscribe(session.subID)
+				b.hub.Emit(session.sessionID, "log:stream:"+session.id, entry)
+			case <-stop:
+				logger.Unsubscribe(subID)
 				return
 			}
 		}
 	})
+}
 
-	return streamID, nil
+// rebindLogStreams moves streams attached to oldLogger onto newLogger without
+// changing their browser-visible stream IDs.
+func (b *Backend) rebindLogStreams(oldLogger *logging.Logger, newLogger *logging.Logger) {
+	if b == nil || oldLogger == nil || newLogger == nil || oldLogger == newLogger {
+		return
+	}
+
+	type stoppedStream struct {
+		session *backendLogStream
+		done    <-chan struct{}
+	}
+
+	b.streamMu.Lock()
+	stopped := make([]stoppedStream, 0, len(b.streams))
+	for _, session := range b.streams {
+		if session == nil || session.logger != oldLogger {
+			continue
+		}
+		stopped = append(stopped, stoppedStream{
+			session: session,
+			done:    session.done,
+		})
+		select {
+		case <-session.stop:
+		default:
+			close(session.stop)
+		}
+	}
+	b.streamMu.Unlock()
+
+	for _, stream := range stopped {
+		if stream.done != nil {
+			<-stream.done
+		}
+	}
+
+	b.streamMu.Lock()
+	for _, stream := range stopped {
+		session := stream.session
+		if session == nil || b.streams[session.id] != session {
+			continue
+		}
+		session.stop = make(chan struct{})
+		session.done = make(chan struct{})
+		b.startLogStreamWorker(session, newLogger)
+	}
+	b.streamMu.Unlock()
 }
 
 // StopLogStream stops streamID only when it belongs to sessionID.
@@ -1047,11 +1250,7 @@ func (b *Backend) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (
 	return runOptions{Debug: debug, NoSeed: noSeed, RunLogLevel: normalized}, nil
 }
 
-func (b *Backend) buildRunCore(opts runOptions) (api.Core, *logging.Logger, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return nil, nil, err
-	}
+func (b *Backend) buildRunCoreFromSnapshot(rt backendRuntimeSnapshot, opts runOptions) (api.Core, *logging.Logger, error) {
 	effectiveLogLevel := logging.ResolveEffectiveLevel(rt.cfg.Logging.Level, opts.RunLogLevel, opts.Debug)
 	logger, err := logging.NewWithLevel(rt.cfg.Logging, rt.cfg.MainSettings.DBPath, effectiveLogLevel)
 	if err != nil {
@@ -1091,17 +1290,11 @@ func buildBaseMetadataOptions(cfg config.Config) api.UploadOptions {
 }
 
 func (b *Backend) applyConfig(cfg config.Config) error {
-	rt, err := guishared.BuildRuntime(context.Background(), cfg, b.repo)
+	rt, err := b.buildConfigRuntime(context.Background(), cfg)
 	if err != nil {
-		return fmt.Errorf("web: %w", err)
+		return err
 	}
-	oldCore, oldLogger := b.replaceRuntime(cfg, rt.Core, rt.Logger)
-	if oldCore != nil {
-		_ = oldCore.Close()
-	}
-	if oldLogger != nil {
-		_ = oldLogger.Close()
-	}
+	b.installConfigRuntime(cfg, rt)
 	return nil
 }
 

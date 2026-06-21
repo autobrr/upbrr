@@ -17,6 +17,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -71,6 +72,7 @@ type trackerUploadJob struct {
 	cleanupOnce          sync.Once
 	id                   string
 	sourcePath           string
+	cfg                  config.Config
 	runOptions           runOptions
 	core                 api.Core
 	logger               interface{ Close() error }
@@ -123,7 +125,8 @@ func (j *trackerUploadJob) closeResources() {
 // returns its job ID. Snapshots preserve partial upload counts returned with
 // later tracker errors or cancellation.
 func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
-	if err := a.requireCore(); err != nil {
+	rt, err := a.requireRuntime()
+	if err != nil {
 		return "", err
 	}
 	trimmedPath := strings.TrimSpace(path)
@@ -140,7 +143,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	}
 	baseCtx := a.runtimeContext()
 
-	runCore, runLogger, err := a.buildRunCore(runOpts)
+	runCore, runLogger, err := a.buildRunCoreFromSnapshot(rt, runOpts)
 	if err != nil {
 		return "", err
 	}
@@ -154,7 +157,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
-	if err := guishared.SeedRunCorePreparedMeta(baseCtx, a.currentCore(), runCore, seedReq); err != nil {
+	if err := guishared.SeedRunCorePreparedMeta(baseCtx, rt.core, runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
 		return "", fmt.Errorf("gui: %w", err)
@@ -164,6 +167,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	job := &trackerUploadJob{
 		id:                   jobID,
 		sourcePath:           trimmedPath,
+		cfg:                  rt.cfg,
 		runOptions:           runOpts,
 		core:                 runCore,
 		logger:               runLogger,
@@ -420,7 +424,7 @@ func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob,
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
 		IgnoreTrackerRuleFailures:   false,
-		Options:                     buildRunUploadOptions(a.currentConfig(), job.runOptions),
+		Options:                     buildRunUploadOptions(job.cfg, job.runOptions),
 		ExternalIDOverrides:         job.overrides,
 		ReleaseNameOverrides:        job.nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),

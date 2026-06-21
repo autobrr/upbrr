@@ -115,7 +115,7 @@ func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 		repo = sqliteRepo
 		ownsRepo = true
 	}
-	if sqliteRepo, ok := repo.(*db.SQLiteRepository); ok {
+	if sqliteRepo, ok := repo.(*db.SQLiteRepository); ok && !deps.SkipCookieMigration {
 		if err := migrateLegacyCookies(ctx, sqliteRepo.RawDB(), cfg.MainSettings.DBPath, logger); err != nil {
 			logger.Warnf("core: cookie migration failed: %v (continuing)", err)
 		}

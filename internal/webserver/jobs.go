@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -115,6 +116,7 @@ type trackerUploadJob struct {
 	sessionID            string
 	id                   string
 	sourcePath           string
+	cfg                  config.Config
 	runOptions           runOptions
 	core                 api.Core
 	logger               interface{ Close() error }
@@ -405,7 +407,8 @@ func (j *trackerUploadJob) closeResources() {
 // trackers and returns its job ID. Snapshots preserve partial upload counts
 // returned with later tracker errors or cancellation.
 func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
-	if err := b.requireCore(); err != nil {
+	rt, err := b.requireRuntime()
+	if err != nil {
 		return "", err
 	}
 	trimmedPath := strings.TrimSpace(path)
@@ -420,7 +423,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	if err != nil {
 		return "", err
 	}
-	runCore, runLogger, err := b.buildRunCore(runOpts)
+	runCore, runLogger, err := b.buildRunCoreFromSnapshot(rt, runOpts)
 	if err != nil {
 		return "", err
 	}
@@ -435,7 +438,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	}
 	seedCtx, cancel := context.WithTimeout(context.Background(), seedPreparedMetaTimeout)
 	defer cancel()
-	if err := guishared.SeedRunCorePreparedMeta(seedCtx, b.currentCore(), runCore, seedReq); err != nil {
+	if err := guishared.SeedRunCorePreparedMeta(seedCtx, rt.core, runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
 		return "", fmt.Errorf("web: %w", err)
@@ -446,6 +449,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 		sessionID:            sessionID,
 		id:                   jobID,
 		sourcePath:           trimmedPath,
+		cfg:                  rt.cfg,
 		runOptions:           runOpts,
 		core:                 runCore,
 		logger:               runLogger,
@@ -696,7 +700,7 @@ func (b *Backend) runSingleTrackerUpload(ctx context.Context, job *trackerUpload
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
 		IgnoreTrackerRuleFailures:   false,
-		Options:                     buildRunUploadOptions(b.currentConfig(), job.runOptions),
+		Options:                     buildRunUploadOptions(job.cfg, job.runOptions),
 		ExternalIDOverrides:         job.overrides,
 		ReleaseNameOverrides:        job.nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),

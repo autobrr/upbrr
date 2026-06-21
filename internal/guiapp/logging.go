@@ -4,6 +4,7 @@
 package guiapp
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -21,6 +22,8 @@ import (
 
 const logStreamEventPrefix = "log:stream:"
 const logExclusionsSection = "log_exclusions"
+
+var emitLogStreamEvent = runtime.EventsEmit
 
 // LogExclusions stores muted log patterns for the UI.
 type LogExclusions struct {
@@ -67,7 +70,7 @@ func (a *App) StartLogStream() (string, error) {
 		done:      make(chan struct{}),
 	}
 	a.streams[streamID] = session
-	a.startStreamLocked(session)
+	a.startStreamLocked(a.runtimeContext(), session)
 	return streamID, nil
 }
 
@@ -126,17 +129,19 @@ func (a *App) UpdateLogExclusions(patterns []string) error {
 	return nil
 }
 
-func (a *App) startStreamLocked(session *logStreamSession) {
+func (a *App) startStreamLocked(ctx context.Context, session *logStreamSession) {
+	if session == nil {
+		return
+	}
 	logger := a.currentLogger()
-	if session == nil || logger == nil {
+	if logger == nil {
+		close(session.done)
 		return
 	}
 
 	subID, ch := logger.Subscribe(0)
 	session.logger = logger
 	session.subID = subID
-
-	ctx := a.runtimeContext()
 
 	stop := session.stop
 	done := session.done
@@ -150,11 +155,9 @@ func (a *App) startStreamLocked(session *logStreamSession) {
 				if !ok {
 					return
 				}
-				runtime.EventsEmit(ctx, eventName, entry)
+				emitLogStreamEvent(ctx, eventName, entry)
 			case <-stop:
-				if session.logger != nil {
-					session.logger.Unsubscribe(session.subID)
-				}
+				logger.Unsubscribe(subID)
 				return
 			}
 		}
@@ -186,7 +189,10 @@ func (a *App) stopAllLogStreams() {
 	a.streamMu.Unlock()
 }
 
-func (a *App) rebindLogStreams(oldLogger *logging.Logger, newLogger *logging.Logger) {
+// rebindLogStreams moves active UI log streams from oldLogger to newLogger.
+// Existing stream goroutines are stopped and waited on before replacement
+// subscriptions start, so old subscriptions cannot emit after the rebind.
+func (a *App) rebindLogStreams(ctx context.Context, oldLogger *logging.Logger, newLogger *logging.Logger) {
 	if a == nil {
 		return
 	}
@@ -194,15 +200,40 @@ func (a *App) rebindLogStreams(oldLogger *logging.Logger, newLogger *logging.Log
 		return
 	}
 
+	type stoppedStream struct {
+		session *logStreamSession
+		done    <-chan struct{}
+	}
+
 	a.streamMu.Lock()
+	stopped := make([]stoppedStream, 0, len(a.streams))
 	for _, session := range a.streams {
 		if session == nil {
 			continue
 		}
+		stopped = append(stopped, stoppedStream{
+			session: session,
+			done:    session.done,
+		})
 		a.stopStreamLocked(session)
+	}
+	a.streamMu.Unlock()
+
+	for _, stream := range stopped {
+		if stream.done != nil {
+			<-stream.done
+		}
+	}
+
+	a.streamMu.Lock()
+	for _, stream := range stopped {
+		session := stream.session
+		if session == nil || a.streams[session.id] != session {
+			continue
+		}
 		session.stop = make(chan struct{})
 		session.done = make(chan struct{})
-		a.startStreamLocked(session)
+		a.startStreamLocked(ctx, session)
 	}
 	a.streamMu.Unlock()
 }

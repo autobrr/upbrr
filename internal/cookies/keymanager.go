@@ -38,12 +38,18 @@ type authHelperCandidate struct {
 	Fingerprint string
 }
 
-// KeyManager manages the encryption key for cookies.
+// KeyManager derives and rotates encrypted-cookie keys from web auth material.
 type KeyManager struct {
 	db *sql.DB
 }
 
-// NewKeyManager creates a new KeyManager instance.
+type cookieDBExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// NewKeyManager creates a KeyManager backed by db. It panics when db is nil.
 func NewKeyManager(db *sql.DB) *KeyManager {
 	if db == nil {
 		panic("nil db passed to NewKeyManager")
@@ -54,19 +60,18 @@ func NewKeyManager(db *sql.DB) *KeyManager {
 	}
 }
 
-// InitializeEncryptionKey derives the cookie encryption key from existing web auth details.
-// ctx must be non-nil.
-// and transparently rotates encrypted cookie rows when the source auth changes.
+// InitializeEncryptionKey derives the current cookie encryption key from web
+// auth details and transparently rotates encrypted cookie rows when the auth
+// fingerprint changes. ctx must be non-nil.
 func (km *KeyManager) InitializeEncryptionKey(ctx context.Context, dbPath string) ([]byte, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
 	}
 
-	salt, err := ensureSalt(ctx, km.db)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ensure salt: %w", err)
-	}
+	return initializeEncryptionKey(ctx, km.db, dbPath, km.reencryptCookies)
+}
 
+func initializeEncryptionKey(ctx context.Context, db cookieDBExecutor, dbPath string, reencrypt func(context.Context, []byte, []byte) error) ([]byte, error) {
 	helpers, err := loadAuthHelpers(dbPath)
 	if err != nil {
 		if errors.Is(err, ErrAuthHelperUnavailable) {
@@ -77,7 +82,12 @@ func (km *KeyManager) InitializeEncryptionKey(ctx context.Context, dbPath string
 	currentHelper := helpers[0].Helper
 	currentFingerprint := helpers[0].Fingerprint
 
-	state, err := getAuthStateFromDB(ctx, km.db)
+	salt, err := ensureSalt(ctx, db)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ensure salt: %w", err)
+	}
+
+	state, err := getAuthStateFromDB(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load auth state: %w", err)
 	}
@@ -86,7 +96,7 @@ func (km *KeyManager) InitializeEncryptionKey(ctx context.Context, dbPath string
 
 	switch {
 	case state.Fingerprint == "":
-		if err := storeAuthStateInDB(ctx, km.db, authState{Fingerprint: currentFingerprint}); err != nil {
+		if err := storeAuthStateInDB(ctx, db, authState{Fingerprint: currentFingerprint}); err != nil {
 			return nil, fmt.Errorf("failed to store initial auth state: %w", err)
 		}
 	case state.Fingerprint != currentFingerprint:
@@ -105,17 +115,17 @@ func (km *KeyManager) InitializeEncryptionKey(ctx context.Context, dbPath string
 			return nil, fmt.Errorf("failed to derive new encryption key: %w", err)
 		}
 
-		if err := km.reencryptCookies(ctx, oldKey, newKey); err != nil {
+		if err := reencrypt(ctx, oldKey, newKey); err != nil {
 			return nil, fmt.Errorf("failed to re-encrypt cookies after auth update: %w", err)
 		}
 
-		if err := storeAuthStateInDB(ctx, km.db, authState{Fingerprint: currentFingerprint}); err != nil {
+		if err := storeAuthStateInDB(ctx, db, authState{Fingerprint: currentFingerprint}); err != nil {
 			return nil, fmt.Errorf("failed to persist updated auth state: %w", err)
 		}
 
 		key = newKey
 	case state.legacyHelperFound:
-		if err := storeAuthStateInDB(ctx, km.db, authState{Fingerprint: currentFingerprint}); err != nil {
+		if err := storeAuthStateInDB(ctx, db, authState{Fingerprint: currentFingerprint}); err != nil {
 			return nil, fmt.Errorf("failed to normalize auth state: %w", err)
 		}
 	}
@@ -130,7 +140,7 @@ func (km *KeyManager) InitializeEncryptionKey(ctx context.Context, dbPath string
 	return key, nil
 }
 
-func ensureSalt(ctx context.Context, db *sql.DB) (string, error) {
+func ensureSalt(ctx context.Context, db cookieDBExecutor) (string, error) {
 	salt, err := getSaltFromDB(ctx, db)
 	if err != nil {
 		return "", err
@@ -187,6 +197,8 @@ func loadAuthHelpers(dbPath string) ([]authHelperCandidate, error) {
 	return candidates, nil
 }
 
+// RewrapCookiesWithAuthChange re-encrypts stored cookies when web auth
+// material changes and records the new auth fingerprint.
 func RewrapCookiesWithAuthChange(ctx context.Context, db *sql.DB, oldMaterial, newMaterial authmaterial.Material) error {
 	if ctx == nil {
 		return ErrNilContext
@@ -245,6 +257,25 @@ func (km *KeyManager) reencryptCookies(ctx context.Context, oldKey, newKey []byt
 		_ = tx.Rollback()
 	}()
 
+	if err := reencryptCookiesTx(ctx, tx, oldKey, newKey); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit cookie re-encryption transaction: %w", err)
+	}
+
+	return nil
+}
+
+func reencryptCookiesTx(ctx context.Context, tx *sql.Tx, oldKey, newKey []byte) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	if tx == nil {
+		return errors.New("cookies: transaction is required")
+	}
+
 	rows, err := tx.QueryContext(ctx, `SELECT tracker_id, cookie_name, encrypted_value, nonce, auth_tag FROM tracker_cookies`)
 	if err != nil {
 		return fmt.Errorf("failed to query cookies: %w", err)
@@ -301,14 +332,10 @@ func (km *KeyManager) reencryptCookies(ctx context.Context, oldKey, newKey []byt
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit cookie re-encryption transaction: %w", err)
-	}
-
 	return nil
 }
 
-func getAuthStateFromDB(ctx context.Context, db *sql.DB) (authState, error) {
+func getAuthStateFromDB(ctx context.Context, db cookieDBExecutor) (authState, error) {
 	if ctx == nil {
 		return authState{}, ErrNilContext
 	}
@@ -336,7 +363,7 @@ func getAuthStateFromDB(ctx context.Context, db *sql.DB) (authState, error) {
 	}, nil
 }
 
-func storeAuthStateInDB(ctx context.Context, db *sql.DB, state authState) error {
+func storeAuthStateInDB(ctx context.Context, db cookieDBExecutor, state authState) error {
 	if ctx == nil {
 		return ErrNilContext
 	}
@@ -370,7 +397,7 @@ func findAuthHelperByFingerprint(helpers []authHelperCandidate, fingerprint stri
 }
 
 // getSaltFromDB retrieves the encryption salt from the database.
-func getSaltFromDB(ctx context.Context, db *sql.DB) (string, error) {
+func getSaltFromDB(ctx context.Context, db cookieDBExecutor) (string, error) {
 	if ctx == nil {
 		return "", ErrNilContext
 	}
@@ -400,12 +427,12 @@ func getSaltFromDB(ctx context.Context, db *sql.DB) (string, error) {
 }
 
 // storeSaltInDB stores the encryption salt in the database.
-func storeSaltInDB(ctx context.Context, db *sql.DB, salt string) error {
+func storeSaltInDB(ctx context.Context, db cookieDBExecutor, salt string) error {
 	if ctx == nil {
 		return ErrNilContext
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"salt": salt,
 	}
 

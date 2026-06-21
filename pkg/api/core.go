@@ -7,13 +7,18 @@ import (
 	"context"
 )
 
+// Mode identifies the entrypoint building a core request.
 type Mode string
 
 const (
+	// ModeCLI marks requests started from the command-line entrypoint.
 	ModeCLI Mode = "cli"
+	// ModeGUI marks requests started from GUI or embedded web entrypoints.
 	ModeGUI Mode = "gui"
 )
 
+// Request carries one core operation across CLI, Wails, and embedded web.
+// Paths and path-keyed maps use host filesystem source paths as keys.
 type Request struct {
 	Paths                        []string
 	Mode                         Mode
@@ -49,6 +54,7 @@ type Request struct {
 	ConfirmBDMVRescan            bool
 }
 
+// ExecutionOptions controls queued and site-check execution behavior.
 type ExecutionOptions struct {
 	QueueName         string
 	QueueLimit        int
@@ -56,6 +62,7 @@ type ExecutionOptions struct {
 	SiteUploadTracker string
 }
 
+// ExternalIDSelection records the external metadata IDs chosen for one source path.
 type ExternalIDSelection struct {
 	TMDBID   *int
 	IMDBID   *int
@@ -63,6 +70,7 @@ type ExternalIDSelection struct {
 	TVmazeID *int
 }
 
+// UploadOptions contains per-run upload and preview behavior flags.
 type UploadOptions struct {
 	Debug           bool
 	DryRun          bool
@@ -76,6 +84,7 @@ type UploadOptions struct {
 	InteractionMode InteractionMode
 }
 
+// TrackerConfigOverrides supplies optional per-request tracker setting overrides.
 type TrackerConfigOverrides struct {
 	Anon    *bool
 	Draft   *bool
@@ -83,10 +92,12 @@ type TrackerConfigOverrides struct {
 	Channel *string
 }
 
+// TrackerSiteOverrides groups tracker-specific site override payloads.
 type TrackerSiteOverrides struct {
 	TIK TIKOverrides
 }
 
+// TIKOverrides carries TIK-specific upload flags selected outside static config.
 type TIKOverrides struct {
 	Foreign  *bool
 	Opera    *bool
@@ -94,10 +105,13 @@ type TIKOverrides struct {
 	DiscType *string
 }
 
+// Result summarizes a completed core upload run.
 type Result struct {
 	UploadedCount int
 }
 
+// Core defines the shared upload, preview, history, screenshot, and description
+// operations used by CLI, Wails, and embedded web entrypoints.
 type Core interface {
 	RunUpload(ctx context.Context, req Request) (Result, error)
 	RunUploadPrepared(ctx context.Context, req Request) (Result, error)
@@ -143,13 +157,17 @@ type Config interface {
 	Validate() error
 }
 
+// CoreDependencies supplies the externally owned services used to construct a Core.
 type CoreDependencies struct {
-	Config     Config
-	Logger     Logger
-	Services   ServiceSet
-	Repository MetadataRepository
+	Config              Config
+	Logger              Logger
+	Services            ServiceSet
+	Repository          MetadataRepository
+	SkipCookieMigration bool
 }
 
+// CoreImpl is the exported concrete-core contract used by packages that accept
+// any current core implementation.
 type CoreImpl interface {
 	Core
 }

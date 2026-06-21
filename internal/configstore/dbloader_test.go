@@ -5,7 +5,9 @@ package configstore_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -157,5 +159,216 @@ func TestSaveToDBPathSyncsCookieEncryptionStateWhenWebAuthExists(t *testing.T) {
 	authPath := webserver.AuthFilePath(dbPath)
 	if _, err := os.Stat(authPath); err != nil {
 		t.Fatalf("expected auth file to remain present: %v", err)
+	}
+}
+
+func TestSaveToDBPathMalformedWebAuthFailsBeforeConfigSave(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	if err := os.WriteFile(webserver.AuthFilePath(dbPath), []byte(`{`), 0o600); err != nil {
+		t.Fatalf("write malformed auth file: %v", err)
+	}
+
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("load embedded config: %v", err)
+	}
+	cfg.MainSettings.DBPath = dbPath
+
+	err = configstore.SaveToDBPath(ctx, cfg, dbPath)
+	if err == nil {
+		t.Fatal("expected SaveToDBPath to fail for malformed web auth")
+	}
+
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	for _, section := range []string{
+		"MainSettings",
+		"cookies_encryption_salt",
+		"cookies_encryption_auth_state",
+	} {
+		var data string
+		err = repo.RawDB().QueryRowContext(ctx,
+			`SELECT data FROM config_settings WHERE section = ?`,
+			section,
+		).Scan(&data)
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("expected section %q to be absent after failed sync, got row=%q err=%v", section, data, err)
+		}
+	}
+}
+
+func TestSaveToDBPathRollsBackCookieSyncWhenConfigSaveFails(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	if err := webserver.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	if err := repo.Migrate(); err != nil {
+		_ = repo.Close()
+		t.Fatalf("migrate repo: %v", err)
+	}
+	for _, statement := range []string{
+		`CREATE TRIGGER fail_main_settings_insert BEFORE INSERT ON config_settings WHEN NEW.section = 'MainSettings' BEGIN SELECT RAISE(ABORT, 'forced main settings failure'); END`,
+		`CREATE TRIGGER fail_main_settings_update BEFORE UPDATE ON config_settings WHEN NEW.section = 'MainSettings' BEGIN SELECT RAISE(ABORT, 'forced main settings failure'); END`,
+	} {
+		if _, err := repo.RawDB().ExecContext(ctx, statement); err != nil {
+			_ = repo.Close()
+			t.Fatalf("create failure trigger: %v", err)
+		}
+	}
+	_ = repo.Close()
+
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("load embedded config: %v", err)
+	}
+	cfg.MainSettings.DBPath = dbPath
+
+	err = configstore.SaveToDBPath(ctx, cfg, dbPath)
+	if err == nil {
+		t.Fatal("expected SaveToDBPath to fail")
+	}
+
+	repo, err = db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	for _, section := range []string{
+		"cookies_encryption_salt",
+		"cookies_encryption_auth_state",
+	} {
+		var data string
+		err = repo.RawDB().QueryRowContext(ctx,
+			`SELECT data FROM config_settings WHERE section = ?`,
+			section,
+		).Scan(&data)
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("expected section %q to be absent after failed config save, got row=%q err=%v", section, data, err)
+		}
+	}
+}
+
+func TestSaveToDBPathCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	if err := webserver.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	installFailMainSettingsTrigger(ctx, t, dbPath)
+
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("load embedded config: %v", err)
+	}
+	cfg.MainSettings.DBPath = dbPath
+
+	err = configstore.SaveToDBPath(ctx, cfg, dbPath)
+	if err == nil {
+		t.Fatal("expected SaveToDBPath to fail")
+	}
+
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	assertConfigStoreSectionsAbsent(ctx, t, repo, "MainSettings", "cookies_encryption_salt", "cookies_encryption_auth_state")
+}
+
+func TestSaveToDBPathIncompleteWebAuthStillSavesConfig(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	if err := os.WriteFile(webserver.AuthFilePath(dbPath), []byte(`{"username":"tester"}`), 0o600); err != nil {
+		t.Fatalf("write incomplete auth file: %v", err)
+	}
+
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("load embedded config: %v", err)
+	}
+	cfg.MainSettings.DBPath = dbPath
+
+	if err := configstore.SaveToDBPath(ctx, cfg, dbPath); err != nil {
+		t.Fatalf("SaveToDBPath: %v", err)
+	}
+
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	var mainSettings string
+	if err := repo.RawDB().QueryRowContext(ctx,
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"MainSettings",
+	).Scan(&mainSettings); err != nil {
+		t.Fatalf("expected main_settings to be saved with unavailable auth helper: %v", err)
+	}
+}
+
+func installFailMainSettingsTrigger(ctx context.Context, t *testing.T, dbPath string) {
+	t.Helper()
+
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		CREATE TRIGGER fail_main_settings_save
+		BEFORE INSERT ON config_settings
+		WHEN NEW.section = 'MainSettings'
+		BEGIN
+			SELECT RAISE(FAIL, 'forced main settings failure');
+		END
+	`); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+}
+
+func assertConfigStoreSectionsAbsent(ctx context.Context, t *testing.T, repo *db.SQLiteRepository, sections ...string) {
+	t.Helper()
+
+	for _, section := range sections {
+		var data string
+		err := repo.RawDB().QueryRowContext(ctx,
+			`SELECT data FROM config_settings WHERE section = ?`,
+			section,
+		).Scan(&data)
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("expected section %q to be absent, got row=%q err=%v", section, data, err)
+		}
 	}
 }

@@ -238,25 +238,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 	if record.PendingUpgrade != nil {
 		target := record.PendingUpgrade.Target
 		if err := s.rewrapProtectedDataForAuthChange(r.Context(), record, target); err != nil {
-			if s.backend != nil && s.backend.logger != nil {
-				s.backend.logger.Errorf(
-					"web: auth upgrade failed incident=%s username=%s",
-					"auth_upgrade_resume_rewrap_failed",
-					redactAuthUsername(record.Username),
-				)
-			}
+			s.logErrorf(
+				"web: auth upgrade failed incident=%s username=%s",
+				"auth_upgrade_resume_rewrap_failed",
+				redactAuthUsername(record.Username),
+			)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
 			return
 		}
 		finalized, err := s.auth.FinalizePendingUpgrade(record.Username)
 		if err != nil {
-			if s.backend != nil && s.backend.logger != nil {
-				s.backend.logger.Errorf(
-					"web: auth upgrade failed incident=%s username=%s",
-					"auth_upgrade_resume_finalize_failed",
-					redactAuthUsername(record.Username),
-				)
-			}
+			s.logErrorf(
+				"web: auth upgrade failed incident=%s username=%s",
+				"auth_upgrade_resume_finalize_failed",
+				redactAuthUsername(record.Username),
+			)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
 			return
 		}
@@ -278,25 +274,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 			upgradedRecord.EncryptionKeySeed = seed
 		}
 		if err := s.rewrapProtectedDataForAuthChange(r.Context(), record, upgradedRecord); err != nil {
-			if s.backend != nil && s.backend.logger != nil {
-				s.backend.logger.Errorf(
-					"web: auth upgrade failed incident=%s username=%s",
-					"auth_upgrade_rewrap_failed",
-					redactAuthUsername(record.Username),
-				)
-			}
+			s.logErrorf(
+				"web: auth upgrade failed incident=%s username=%s",
+				"auth_upgrade_rewrap_failed",
+				redactAuthUsername(record.Username),
+			)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
 			return
 		}
 		finalized, err := s.auth.FinalizePendingUpgrade(record.Username)
 		if err != nil {
-			if s.backend != nil && s.backend.logger != nil {
-				s.backend.logger.Errorf(
-					"web: auth upgrade failed incident=%s username=%s",
-					"auth_upgrade_finalize_failed",
-					redactAuthUsername(record.Username),
-				)
-			}
+			s.logErrorf(
+				"web: auth upgrade failed incident=%s username=%s",
+				"auth_upgrade_finalize_failed",
+				redactAuthUsername(record.Username),
+			)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to refresh credentials"})
 			return
 		}
@@ -328,9 +320,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		return
 	}
 	if err := s.sessions.Delete(current.ID); err != nil {
-		if s != nil && s.backend != nil && s.backend.logger != nil {
-			s.backend.logger.Errorf("web: failed to delete session during logout: %v", err)
-		}
+		s.logErrorf("web: failed to delete session during logout: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to clear session"})
 		return
 	}
