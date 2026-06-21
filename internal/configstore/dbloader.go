@@ -86,6 +86,8 @@ func LoadFromDBPath(ctx context.Context, dbPath string) (*config.Config, error) 
 	return loadFromDBPath(ctx, dbPath, true)
 }
 
+// loadFromDBPath loads persisted config and optionally applies environment
+// overrides to the returned runtime copy.
 func loadFromDBPath(ctx context.Context, dbPath string, applyEnv bool) (*config.Config, error) {
 	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
@@ -164,6 +166,9 @@ func SaveToRepository(ctx context.Context, cfg *config.Config, repo *db.SQLiteRe
 	return nil
 }
 
+// syncCookieEncryptionBeforeConfigSaveTx updates cookie encryption metadata in
+// the caller's config-save transaction, treating missing auth material as a
+// plaintext-cookie install rather than a save failure.
 func syncCookieEncryptionBeforeConfigSaveTx(ctx context.Context, tx *sql.Tx, dbPath string) error {
 	if err := cookies.SyncCookieEncryptionWithAuthTx(ctx, tx, dbPath); err != nil {
 		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
@@ -307,6 +312,9 @@ func BootstrapWithValidator(ctx context.Context, configPath string, configProvid
 	return runtime, fallbackDBPath, nil
 }
 
+// validatePersistableConfig validates the exact config shape that would be
+// written to the database, including the resolved DB path and excluding env-only
+// runtime overrides.
 func validatePersistableConfig(cfg *config.Config, dbPath string, validate func(*config.Config) error) error {
 	candidate := *cfg
 	candidate.MainSettings.DBPath = dbPath
@@ -393,6 +401,8 @@ func mergeProvidedConfig(base *config.Config, configPath string, providedData []
 	}
 }
 
+// mergeYAMLConfig overlays provided YAML bytes onto a stored config using YAML
+// field names, then finalizes decrypted secrets and tracker defaults.
 func mergeYAMLConfig(base *config.Config, overlayData []byte) (*config.Config, error) {
 	baseRaw := map[string]any{}
 	baseData, err := yaml.Marshal(base)
@@ -422,6 +432,8 @@ func mergeYAMLConfig(base *config.Config, overlayData []byte) (*config.Config, e
 	return finalizeMergedConfig(&merged)
 }
 
+// mergeJSONConfig overlays provided JSON bytes onto a stored config using the
+// exported field-name shape produced by native JSON export.
 func mergeJSONConfig(base *config.Config, overlayData []byte) (*config.Config, error) {
 	baseRaw := map[string]any{}
 	baseData, err := json.Marshal(base)
@@ -460,6 +472,8 @@ func mergeConfigMap(base map[string]any, overlay map[string]any) error {
 	return mergeConfigMapAt(base, overlay, "")
 }
 
+// mergeConfigMapAt applies one overlay level and tracks a dotted schema path so
+// dynamic tracker and torrent-client entries can be validated by context.
 func mergeConfigMapAt(base map[string]any, overlay map[string]any, path string) error {
 	for key, overlayValue := range overlay {
 		field := key
@@ -502,6 +516,8 @@ func mergeConfigMapAt(base map[string]any, overlay map[string]any, path string) 
 	return nil
 }
 
+// allowsDynamicConfigEntry reports whether path accepts user-named child
+// entries such as tracker names or torrent-client names.
 func allowsDynamicConfigEntry(path string) bool {
 	switch path {
 	case "trackers", "Trackers.Trackers", "torrent_clients", "TorrentClients":
@@ -511,10 +527,14 @@ func allowsDynamicConfigEntry(path string) bool {
 	}
 }
 
+// allowsTrackerExtensionField reports whether path is inside a dynamic tracker
+// config, where tracker-specific extension fields are preserved.
 func allowsTrackerExtensionField(path string) bool {
 	return strings.HasPrefix(path, "trackers.") || strings.HasPrefix(path, "Trackers.Trackers.")
 }
 
+// configMapEntrySchema returns the schema for a dynamically named map entry
+// when the entry requires fixed field validation.
 func configMapEntrySchema(path string) (map[string]any, bool) {
 	switch path {
 	case "torrent_clients":
@@ -526,6 +546,8 @@ func configMapEntrySchema(path string) (map[string]any, bool) {
 	}
 }
 
+// torrentClientSchemaMap builds the allowed key set for a dynamic torrent
+// client entry using YAML tag names or exported JSON field names.
 func torrentClientSchemaMap(path string) map[string]any {
 	t := reflect.TypeFor[config.TorrentClientConfig]()
 	schema := make(map[string]any, t.NumField())

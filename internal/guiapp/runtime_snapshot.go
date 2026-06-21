@@ -74,6 +74,7 @@ func (a *App) currentCore() api.Core {
 	return a.core
 }
 
+// baseUploadOptions returns upload options from the current runtime config.
 func (a *App) baseUploadOptions() api.UploadOptions {
 	return buildBaseUploadOptions(a.currentConfig())
 }

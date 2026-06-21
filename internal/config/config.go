@@ -1015,6 +1015,8 @@ func ResolveBTNAPIToken(cfg Config) string {
 	return token
 }
 
+// trackerAPIKeyByName returns an exact tracker token before considering
+// deterministic ASCII-case aliases for the same canonical tracker name.
 func trackerAPIKeyByName(trackers map[string]TrackerConfig, name string) string {
 	if token := trackerAPIKeyForExactName(trackers, name); token != "" {
 		return token
@@ -1027,6 +1029,8 @@ func trackerAPIKeyByName(trackers map[string]TrackerConfig, name string) string 
 	return ""
 }
 
+// trackerAPIKeyForExactName returns the trimmed API key for name without any
+// case folding or alias lookup.
 func trackerAPIKeyForExactName(trackers map[string]TrackerConfig, name string) string {
 	if trackerCfg, ok := trackers[name]; ok {
 		return strings.TrimSpace(trackerCfg.APIKey)
@@ -1099,6 +1103,8 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 	return nil
 }
 
+// trackerDefaultMergeEntry returns the exact tracker entry when present, then
+// the first ASCII-case alias in sorted order.
 func trackerDefaultMergeEntry(trackers map[string]TrackerConfig, name string) (string, TrackerConfig, bool) {
 	if trackerCfg, ok := trackers[name]; ok {
 		return name, trackerCfg, true
@@ -1111,6 +1117,8 @@ func trackerDefaultMergeEntry(trackers map[string]TrackerConfig, name string) (s
 	return "", TrackerConfig{}, false
 }
 
+// trackerBTNMergeName selects the tracker map key that should receive a legacy
+// metadata BTN token during default backfill.
 func trackerBTNMergeName(trackers map[string]TrackerConfig) string {
 	if _, ok := trackers["BTN"]; ok {
 		return "BTN"
@@ -1122,6 +1130,8 @@ func trackerBTNMergeName(trackers map[string]TrackerConfig) string {
 	return "BTN"
 }
 
+// sortedASCIITrackerAliases returns non-exact tracker keys that match name
+// under ASCII-only case folding.
 func sortedASCIITrackerAliases(trackers map[string]TrackerConfig, name string) []string {
 	aliases := make([]string, 0, len(trackers))
 	for trackerName := range trackers {

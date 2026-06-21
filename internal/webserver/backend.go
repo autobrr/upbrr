@@ -821,6 +821,8 @@ func normalizeExportableConfig(cfg *config.Config, dbPath string) (*config.Confi
 	return normalized, nil
 }
 
+// cloneConfigForExport deep-copies config through JSON so export
+// normalization cannot mutate the source snapshot.
 func cloneConfigForExport(cfg *config.Config) (*config.Config, error) {
 	payload, err := json.Marshal(cfg)
 	if err != nil {
@@ -980,6 +982,8 @@ func validateCookieAuthMaterial(dbPath string) error {
 	return nil
 }
 
+// buildConfigRuntime wraps shared runtime construction with web-specific error
+// context.
 func (b *Backend) buildConfigRuntime(ctx context.Context, cfg config.Config) (guishared.Runtime, error) {
 	rt, err := guishared.BuildRuntime(ctx, cfg, b.repo)
 	if err != nil {
@@ -988,6 +992,8 @@ func (b *Backend) buildConfigRuntime(ctx context.Context, cfg config.Config) (gu
 	return rt, nil
 }
 
+// installConfigRuntime swaps in a newly built runtime, rebinds event/log
+// streams, and closes the previous core and logger after replacement.
 func (b *Backend) installConfigRuntime(cfg config.Config, rt guishared.Runtime) {
 	oldCore, oldLogger := b.replaceRuntime(cfg, rt.Core, rt.Logger)
 	if b.hub != nil {
@@ -1002,6 +1008,7 @@ func (b *Backend) installConfigRuntime(cfg config.Config, rt guishared.Runtime) 
 	}
 }
 
+// closeBuiltRuntime closes a runtime that was built but not installed.
 func closeBuiltRuntime(rt guishared.Runtime) {
 	if rt.Core != nil {
 		_ = rt.Core.Close()
@@ -1121,6 +1128,8 @@ func (b *Backend) StartLogStream(sessionID string) (string, error) {
 	return streamID, nil
 }
 
+// startLogStreamWorker subscribes session to logger and forwards entries to
+// the browser event hub until the stream is stopped.
 func (b *Backend) startLogStreamWorker(session *backendLogStream, logger *logging.Logger) {
 	subID, ch := logger.Subscribe(0)
 	stop := session.stop
@@ -1250,6 +1259,8 @@ func (b *Backend) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (
 	return runOptions{Debug: debug, NoSeed: noSeed, RunLogLevel: normalized}, nil
 }
 
+// buildRunCoreFromSnapshot creates a per-run core and logger from the same
+// runtime snapshot used to build upload options.
 func (b *Backend) buildRunCoreFromSnapshot(rt backendRuntimeSnapshot, opts runOptions) (api.Core, *logging.Logger, error) {
 	effectiveLogLevel := logging.ResolveEffectiveLevel(rt.cfg.Logging.Level, opts.RunLogLevel, opts.Debug)
 	logger, err := logging.NewWithLevel(rt.cfg.Logging, rt.cfg.MainSettings.DBPath, effectiveLogLevel)

@@ -129,6 +129,8 @@ func (a *App) UpdateLogExclusions(patterns []string) error {
 	return nil
 }
 
+// startStreamLocked subscribes session to the current logger while streamMu is
+// held; callers keep ownership of session registration and later shutdown.
 func (a *App) startStreamLocked(ctx context.Context, session *logStreamSession) {
 	if session == nil {
 		return

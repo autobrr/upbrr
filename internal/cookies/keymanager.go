@@ -43,6 +43,8 @@ type KeyManager struct {
 	db *sql.DB
 }
 
+// cookieDBExecutor is the shared DB surface used by both *sql.DB and *sql.Tx
+// cookie-auth operations.
 type cookieDBExecutor interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
@@ -71,6 +73,8 @@ func (km *KeyManager) InitializeEncryptionKey(ctx context.Context, dbPath string
 	return initializeEncryptionKey(ctx, km.db, dbPath, km.reencryptCookies)
 }
 
+// initializeEncryptionKey derives the current key and rotates existing cookie
+// rows when the stored auth fingerprint no longer matches web auth material.
 func initializeEncryptionKey(ctx context.Context, db cookieDBExecutor, dbPath string, reencrypt func(context.Context, []byte, []byte) error) ([]byte, error) {
 	helpers, err := loadAuthHelpers(dbPath)
 	if err != nil {
@@ -140,6 +144,8 @@ func initializeEncryptionKey(ctx context.Context, db cookieDBExecutor, dbPath st
 	return key, nil
 }
 
+// ensureSalt loads the cookie encryption salt or creates and persists one when
+// this database has no prior cookie encryption state.
 func ensureSalt(ctx context.Context, db cookieDBExecutor) (string, error) {
 	salt, err := getSaltFromDB(ctx, db)
 	if err != nil {
@@ -268,6 +274,8 @@ func (km *KeyManager) reencryptCookies(ctx context.Context, oldKey, newKey []byt
 	return nil
 }
 
+// reencryptCookiesTx rewrites encrypted cookie values inside tx after
+// decrypting with oldKey and encrypting with newKey.
 func reencryptCookiesTx(ctx context.Context, tx *sql.Tx, oldKey, newKey []byte) error {
 	if ctx == nil {
 		return ErrNilContext
@@ -335,6 +343,8 @@ func reencryptCookiesTx(ctx context.Context, tx *sql.Tx, oldKey, newKey []byte) 
 	return nil
 }
 
+// getAuthStateFromDB returns the stored web-auth fingerprint and notes whether
+// a legacy helper value was present in older auth state JSON.
 func getAuthStateFromDB(ctx context.Context, db cookieDBExecutor) (authState, error) {
 	if ctx == nil {
 		return authState{}, ErrNilContext
@@ -363,6 +373,8 @@ func getAuthStateFromDB(ctx context.Context, db cookieDBExecutor) (authState, er
 	}, nil
 }
 
+// storeAuthStateInDB persists the current web-auth fingerprint used for cookie
+// encryption key rotation.
 func storeAuthStateInDB(ctx context.Context, db cookieDBExecutor, state authState) error {
 	if ctx == nil {
 		return ErrNilContext

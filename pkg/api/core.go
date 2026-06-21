@@ -159,10 +159,16 @@ type Config interface {
 
 // CoreDependencies supplies the externally owned services used to construct a Core.
 type CoreDependencies struct {
-	Config              Config
-	Logger              Logger
-	Services            ServiceSet
-	Repository          MetadataRepository
+	// Config is validated before the core is created.
+	Config Config
+	// Logger receives core initialization and runtime messages. Nil uses NopLogger.
+	Logger Logger
+	// Services supplies optional service overrides; zero values use the core defaults.
+	Services ServiceSet
+	// Repository stores metadata and history. Nil opens and owns a SQLite repository from Config.
+	Repository MetadataRepository
+	// SkipCookieMigration skips legacy cookie migration for callers that already
+	// synchronize cookie encryption state with the shared repository.
 	SkipCookieMigration bool
 }
 

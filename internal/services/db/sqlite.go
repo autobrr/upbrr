@@ -2845,6 +2845,8 @@ func (r *SQLiteRepository) LoadConfigSection(ctx context.Context, section string
 	return nil
 }
 
+// prepareFullConfigSections converts a full config into per-section JSON
+// payloads matching config_settings section names.
 func prepareFullConfigSections(cfg any) (map[string]string, error) {
 	// Marshal the full config to inspect its structure.
 	cfgData, err := json.MarshalIndent(cfg, "", "  ")
@@ -2914,6 +2916,8 @@ func (r *SQLiteRepository) SaveFullConfigWithPreSave(ctx context.Context, cfg an
 	return nil
 }
 
+// saveFullConfigSections writes prepared section payloads in one transaction,
+// optionally running preSave in that same transaction before section writes.
 func (r *SQLiteRepository) saveFullConfigSections(ctx context.Context, sections map[string]string, preSave func(context.Context, *sql.Tx) error) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 

@@ -211,6 +211,8 @@ func mergeConfigMap(base map[string]any, overlay map[string]any) error {
 	return mergeConfigMapAt(base, overlay, "")
 }
 
+// mergeConfigMapAt applies one overlay level and tracks a dotted schema path
+// so dynamic tracker and torrent-client entries can be validated by context.
 func mergeConfigMapAt(base map[string]any, overlay map[string]any, path string) error {
 	for key, overlayValue := range overlay {
 		field := key
@@ -276,18 +278,26 @@ func mergeConfigMapAt(base map[string]any, overlay map[string]any, path string) 
 	return nil
 }
 
+// isTrackerCollectionPath reports whether path points at the map of dynamic
+// tracker configs for YAML or native JSON imports.
 func isTrackerCollectionPath(path string) bool {
 	return path == "trackers" || path == "Trackers.Trackers"
 }
 
+// isTrackerEntryPath reports whether path points inside one dynamic tracker
+// config, where tracker-specific extension fields are allowed.
 func isTrackerEntryPath(path string) bool {
 	return strings.HasPrefix(path, "trackers.") || strings.HasPrefix(path, "Trackers.Trackers.")
 }
 
+// isTorrentClientCollectionPath reports whether path points at the map of
+// dynamic torrent-client configs for YAML or native JSON imports.
 func isTorrentClientCollectionPath(path string) bool {
 	return path == "torrent_clients" || path == "TorrentClients"
 }
 
+// torrentClientSchemaMap builds the allowed key set for a dynamic torrent
+// client entry using YAML tag names or exported JSON field names.
 func torrentClientSchemaMap(path string) map[string]any {
 	t := reflect.TypeFor[config.TorrentClientConfig]()
 	schema := make(map[string]any, t.NumField())

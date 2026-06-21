@@ -45,6 +45,8 @@ func (a *App) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (runO
 	}, nil
 }
 
+// buildRunCoreFromSnapshot creates a per-run core and logger from the same
+// runtime snapshot used to build upload options.
 func (a *App) buildRunCoreFromSnapshot(rt appRuntimeSnapshot, opts runOptions) (api.Core, *logging.Logger, error) {
 	if a.repo == nil {
 		return nil, nil, errors.New("config repository not initialized")

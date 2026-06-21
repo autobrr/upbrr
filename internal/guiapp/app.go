@@ -1275,6 +1275,8 @@ func (a *App) SaveConfig(payload string) error {
 	return a.saveAndApplyConfig(ctx, cfg, runtimeCfg, cfg.MainSettings.DBPath)
 }
 
+// normalizeGUIConfigForExport clones cfg and fills tracker defaults, legacy
+// nils, and a missing DB path without mutating runtime or persisted config.
 func normalizeGUIConfigForExport(cfg *config.Config, dbPath string) (*config.Config, error) {
 	normalized, err := cloneGUIConfigForExport(cfg)
 	if err != nil {
@@ -1295,6 +1297,8 @@ func normalizeGUIConfigForExport(cfg *config.Config, dbPath string) (*config.Con
 	return normalized, nil
 }
 
+// cloneGUIConfigForExport deep-copies config through JSON so export
+// normalization cannot mutate the source snapshot.
 func cloneGUIConfigForExport(cfg *config.Config) (*config.Config, error) {
 	payload, err := json.Marshal(cfg)
 	if err != nil {
@@ -1581,6 +1585,8 @@ func (a *App) ImportConfig() (ImportResult, error) {
 	return a.importConfigFromPath(ctx, path)
 }
 
+// importConfigFromPath imports one selected config file, validates both
+// persisted and env-applied runtime forms, then atomically saves and applies it.
 func (a *App) importConfigFromPath(ctx context.Context, path string) (ImportResult, error) {
 	cfg, warnings, err := importer.ImportFromFile(path)
 	if err != nil {
@@ -1687,6 +1693,8 @@ func (a *App) saveAndApplyConfig(ctx context.Context, storedCfg *config.Config, 
 	return nil
 }
 
+// applyConfig builds and installs a runtime from cfg without writing cfg to the
+// repository; it is used for startup and explicit runtime refresh paths.
 func (a *App) applyConfig(ctx context.Context, cfg config.Config) error {
 	rt, err := guishared.BuildRuntime(ctx, cfg, a.repo)
 	if err != nil {
