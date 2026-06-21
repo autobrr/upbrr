@@ -170,7 +170,7 @@ func TestGUIRequestsUseSingleRuntimeSnapshot(t *testing.T) {
 	}
 }
 
-func TestRunSingleTrackerUploadUsesJobRuntimeConfig(t *testing.T) {
+func TestRunSingleTrackerUploadUsesJobUploadOptionsSnapshot(t *testing.T) {
 	t.Parallel()
 
 	errs := make(chan error, 1)
@@ -182,7 +182,7 @@ func TestRunSingleTrackerUploadUsesJobRuntimeConfig(t *testing.T) {
 	app := &App{cfg: currentCfg}
 	job := &trackerUploadJob{
 		sourcePath:           "C:\\releases\\Example.mkv",
-		cfg:                  jobCfg,
+		uploadOptions:        buildRunUploadOptions(jobCfg, runOptions{}),
 		runOptions:           runOptions{},
 		core:                 &guiSnapshotGuardCore{wantScreens: 1, errs: errs},
 		descriptionGroups:    nil,

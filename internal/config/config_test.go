@@ -865,6 +865,14 @@ func TestResolveBTNAPITokenDoesNotMatchUnicodeEquivalentTrackerNames(t *testing.
 	}
 }
 
+func TestASCIIEqualFoldComparesEveryByte(t *testing.T) {
+	t.Parallel()
+
+	if asciiEqualFold("é", "è") {
+		t.Fatal("expected non-ASCII strings with different continuation bytes not to match")
+	}
+}
+
 func TestResolveBTNAPITokenDoesNotMatchFuzzyTrackerNames(t *testing.T) {
 	t.Parallel()
 

@@ -59,6 +59,8 @@ type Backend struct {
 	uploadMu sync.Mutex
 	uploads  map[string]*trackerUploadJob
 	uploadWG sync.WaitGroup
+
+	sharedCookieMigrator func(context.Context, string, api.Logger) error
 }
 
 type backendLogStream struct {
@@ -850,9 +852,10 @@ func (b *Backend) allowUnencryptedExport(dbPath string) (bool, error) {
 }
 
 // SaveConfig validates encrypted browser settings, builds the replacement
-// runtime, then syncs cookie encryption metadata and saves the non-env config.
-// Runtime build or save failures leave the persisted config and active runtime
-// unchanged; env overrides apply only to the installed runtime config.
+// runtime, persists the non-env config, then attempts shared cookie migration
+// before installing the runtime. Runtime build or save failures leave the
+// persisted config and active runtime unchanged; env overrides apply only to
+// the installed runtime config.
 func (b *Backend) SaveConfig(payload string) error {
 	if b.repo == nil {
 		return errors.New("config repository not initialized")
@@ -887,9 +890,10 @@ func (b *Backend) SaveConfig(payload string) error {
 const configImportMaxBytes = importer.MaxFileBytes
 
 // ImportConfig imports browser-uploaded config content, validates the saved and
-// env-applied runtime forms, builds the replacement runtime, then syncs cookie
-// encryption metadata and saves the non-env config. Runtime build or save
-// failures leave the persisted config and active runtime unchanged.
+// env-applied runtime forms, builds the replacement runtime, persists the
+// non-env config, then attempts shared cookie migration before installing the
+// runtime. Runtime build or save failures leave the persisted config and active
+// runtime unchanged.
 func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, error) {
 	if b.repo == nil {
 		return "", nil, errors.New("config repository not initialized")
@@ -931,9 +935,9 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 }
 
 // saveAndApplyConfig builds the replacement runtime before any repository
-// writes, then persists cfg and installs the runtime as one ordered transition.
-// If persistence fails, the built runtime is closed and the active runtime is
-// left untouched.
+// writes, then persists cfg, attempts shared cookie migration, and installs the
+// runtime as one ordered transition. If persistence fails, the built runtime is
+// closed and the active runtime is left untouched.
 func (b *Backend) saveAndApplyConfig(ctx context.Context, cfg *config.Config, runtimeCfg config.Config, dbPath string) error {
 	if err := validateCookieAuthMaterial(dbPath); err != nil {
 		if !errors.Is(err, cookies.ErrAuthHelperUnavailable) {
@@ -949,12 +953,16 @@ func (b *Backend) saveAndApplyConfig(ctx context.Context, cfg *config.Config, ru
 		closeBuiltRuntime(rt)
 		return err
 	}
+	if err := b.ensureSharedCookieMigrationForRuntime(ctx, dbPath, rt.Logger); err != nil {
+		closeBuiltRuntime(rt)
+		return fmt.Errorf("web: cookie migration failed: %w", err)
+	}
 	b.installConfigRuntime(runtimeCfg, rt)
 	return nil
 }
 
-// saveConfigToRepository enforces the shared pre-save cookie encryption sync
-// before persisting browser config changes through the already-open repository.
+// saveConfigToRepository persists browser config changes through the already-open
+// repository.
 func (b *Backend) saveConfigToRepository(ctx context.Context, cfg *config.Config, dbPath string) error {
 	if err := configstore.SaveToRepository(ctx, cfg, b.repo, dbPath); err != nil {
 		return fmt.Errorf("web: %w", err)
@@ -990,6 +998,49 @@ func (b *Backend) buildConfigRuntime(ctx context.Context, cfg config.Config) (gu
 		return guishared.Runtime{}, fmt.Errorf("web: %w", err)
 	}
 	return rt, nil
+}
+
+// ensureSharedCookieMigration syncs cookie encryption metadata and migrates
+// legacy cookie files against the shared repository before SkipCookieMigration
+// runtimes serve uploads. Missing auth material is logged and treated as
+// retryable on a later settings save.
+func (b *Backend) ensureSharedCookieMigration(ctx context.Context, dbPath string, logger api.Logger) error {
+	if b.repo == nil {
+		return errors.New("repository not initialized")
+	}
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+	if err := cookies.SyncCookieEncryptionWithAuth(ctx, b.repo.RawDB(), dbPath); err != nil {
+		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+			logger.Debugf("web: cookie encryption sync skipped: web auth helper unavailable")
+		} else {
+			return fmt.Errorf("cookies encryption sync: %w", err)
+		}
+	}
+
+	cookiesDir, err := db.CookiePath(dbPath, "")
+	if err != nil {
+		logger.Debugf("web: failed to resolve cookies directory: %v", err)
+		return nil
+	}
+	if err := cookies.EnsureCookieMigration(ctx, b.repo.RawDB(), dbPath, cookiesDir, logger); err != nil {
+		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+			logger.Debugf("web: cookie migration skipped: web auth helper unavailable")
+			return nil
+		}
+		return fmt.Errorf("cookies migration: %w", err)
+	}
+	return nil
+}
+
+// ensureSharedCookieMigrationForRuntime runs the configured migration hook and
+// returns hard migration errors before the replacement runtime is installed.
+func (b *Backend) ensureSharedCookieMigrationForRuntime(ctx context.Context, dbPath string, logger api.Logger) error {
+	if b.sharedCookieMigrator != nil {
+		return b.sharedCookieMigrator(ctx, dbPath, logger)
+	}
+	return b.ensureSharedCookieMigration(ctx, dbPath, logger)
 }
 
 // installConfigRuntime swaps in a newly built runtime, rebinds event/log
@@ -1260,7 +1311,8 @@ func (b *Backend) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (
 }
 
 // buildRunCoreFromSnapshot creates a per-run core and logger from the same
-// runtime snapshot used to build upload options.
+// runtime snapshot used to build upload options. The transient core skips
+// startup-only legacy cookie migration while sharing the backend repository.
 func (b *Backend) buildRunCoreFromSnapshot(rt backendRuntimeSnapshot, opts runOptions) (api.Core, *logging.Logger, error) {
 	effectiveLogLevel := logging.ResolveEffectiveLevel(rt.cfg.Logging.Level, opts.RunLogLevel, opts.Debug)
 	logger, err := logging.NewWithLevel(rt.cfg.Logging, rt.cfg.MainSettings.DBPath, effectiveLogLevel)
@@ -1273,7 +1325,8 @@ func (b *Backend) buildRunCoreFromSnapshot(rt backendRuntimeSnapshot, opts runOp
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
-		Repository: b.repo,
+		Repository:          b.repo,
+		SkipCookieMigration: true,
 	})
 	if err != nil {
 		_ = logger.Close()

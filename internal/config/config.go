@@ -1149,7 +1149,7 @@ func asciiEqualFold(value string, target string) bool {
 	if len(value) != len(target) {
 		return false
 	}
-	for i := range value {
+	for i := 0; i < len(value); i++ {
 		left := value[i]
 		right := target[i]
 		if 'A' <= left && left <= 'Z' {

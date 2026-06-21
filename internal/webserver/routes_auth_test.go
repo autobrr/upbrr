@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/services/db"
 
 	"golang.org/x/crypto/argon2"
@@ -265,6 +266,87 @@ func TestLoginFinalizesPendingAuthUpgradeAfterInterruptedRewrap(t *testing.T) {
 	}
 	if !verifyPassword(password, updated.PasswordHash) {
 		t.Fatal("expected finalized hash to verify")
+	}
+}
+
+func TestRewrapProtectedDataForAuthChangeRecoversPreparedCookiesAfterPhasePersistFailure(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+	ctx := context.Background()
+
+	oldRecord := authRecord{
+		Username:     "admin",
+		PasswordHash: "old-password-hash",
+		CreatedAt:    time.Now().UTC(),
+	}
+	newRecord := authRecord{
+		Username:          "admin",
+		PasswordHash:      "new-password-hash",
+		EncryptionKeySeed: "stable-seed-after-interrupt",
+		CreatedAt:         oldRecord.CreatedAt,
+	}
+	oldRecord.PendingUpgrade = &authmaterial.PendingUpgrade{
+		Stage:     authmaterial.UpgradeStagePrepared,
+		Target:    newRecord,
+		UpdatedAt: time.Now().UTC(),
+	}
+	raw, err := json.MarshalIndent(oldRecord, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent: %v", err)
+	}
+	if err := os.WriteFile(AuthFilePath(dbPath), raw, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	rawDB := server.backend.repo.RawDB()
+	oldKey, err := cookies.NewKeyManager(rawDB).InitializeEncryptionKey(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("initialize old cookie key: %v", err)
+	}
+	store, err := cookies.NewCookieStore(rawDB)
+	if err != nil {
+		t.Fatalf("create cookie store: %v", err)
+	}
+	if err := store.SaveCookie(ctx, "tracker", "session", "cookie-value", oldKey); err != nil {
+		t.Fatalf("save old cookie: %v", err)
+	}
+	if err := cookies.RewrapCookiesWithAuthChange(ctx, rawDB, oldRecord.AuthMaterial(), newRecord.AuthMaterial()); err != nil {
+		t.Fatalf("simulate cookie rewrap before phase persistence: %v", err)
+	}
+
+	if err := server.rewrapProtectedDataForAuthChange(ctx, oldRecord, newRecord); err != nil {
+		t.Fatalf("retry prepared auth rewrap: %v", err)
+	}
+
+	updated, err := server.auth.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if updated.PendingUpgrade == nil {
+		t.Fatal("expected pending upgrade to remain until login finalizes it")
+	}
+	if updated.PendingUpgrade.Stage != authmaterial.UpgradeStageDataRewrapped {
+		t.Fatalf("pending stage = %q, want %q", updated.PendingUpgrade.Stage, authmaterial.UpgradeStageDataRewrapped)
+	}
+
+	newHelper, _, err := newRecord.AuthMaterial().PrimaryHelper()
+	if err != nil {
+		t.Fatalf("new auth helper: %v", err)
+	}
+	salt, err := loadCookieEncryptionSalt(ctx, rawDB)
+	if err != nil {
+		t.Fatalf("load cookie salt: %v", err)
+	}
+	newKey, err := cookies.DeriveEncryptionKey(newHelper, salt)
+	if err != nil {
+		t.Fatalf("derive new cookie key: %v", err)
+	}
+	value, err := store.GetCookie(ctx, "tracker", "session", newKey)
+	if err != nil {
+		t.Fatalf("decrypt recovered cookie with new key: %v", err)
+	}
+	if value != "cookie-value" {
+		t.Fatalf("recovered cookie = %q, want %q", value, "cookie-value")
 	}
 }
 

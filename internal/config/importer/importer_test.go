@@ -254,7 +254,7 @@ func TestImportFromContentEncryptedNativeSecretsRejectPlaintextFallback(t *testi
 	for name, filename := range formats {
 		t.Run(name, func(t *testing.T) {
 			sourceDB := filepath.Join(t.TempDir(), "source.db")
-			writeImportWebAuthFixture(t, sourceDB)
+			writeImportWebAuthFixture(t, sourceDB, "source")
 			payload := encryptedNativePayload(t, filename, importSecretConfig(sourceDB))
 
 			cfg, _, err := ImportFromContent(filename, payload)
@@ -287,7 +287,7 @@ func TestImportFromContentEncryptedNativeSecretsReencryptsWithDestinationHelper(
 	for name, filename := range formats {
 		t.Run(name, func(t *testing.T) {
 			sourceDB := filepath.Join(t.TempDir(), "source.db")
-			writeImportWebAuthFixture(t, sourceDB)
+			writeImportWebAuthFixture(t, sourceDB, "source")
 			payload := encryptedNativePayload(t, filename, importSecretConfig(sourceDB))
 
 			cfg, _, err := ImportFromContent(filename, payload)
@@ -297,7 +297,7 @@ func TestImportFromContentEncryptedNativeSecretsReencryptsWithDestinationHelper(
 			assertImportedSecretValues(t, cfg)
 
 			destDB := filepath.Join(t.TempDir(), "dest.db")
-			writeImportWebAuthFixture(t, destDB)
+			writeImportWebAuthFixture(t, destDB, "destination")
 			cfg.MainSettings.DBPath = destDB
 			repo := &importSecretRepo{}
 			if err := config.SaveToDatabase(context.Background(), cfg, repo); err != nil {
@@ -570,11 +570,20 @@ func TestImportFromContentDisablesUnsupportedImageRehost(t *testing.T) {
 	}
 }
 
-func writeImportWebAuthFixture(t *testing.T, dbPath string) {
+// writeImportWebAuthFixture writes auth material whose seed can differ between
+// source and destination databases in native encrypted import tests.
+func writeImportWebAuthFixture(t *testing.T, dbPath string, seedID string) {
 	t.Helper()
 	authPath := filepath.Join(filepath.Dir(dbPath), authmaterial.WebAuthFileName)
-	payload := `{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":"stable-seed-for-import-tests"}`
-	if err := os.WriteFile(authPath, []byte(payload), 0o600); err != nil {
+	payload, err := json.Marshal(map[string]string{
+		"username":            "tester",
+		"password_hash":       "very-secret-password-hash",
+		"encryption_key_seed": "stable-seed-for-import-tests-" + seedID,
+	})
+	if err != nil {
+		t.Fatalf("marshal web auth fixture: %v", err)
+	}
+	if err := os.WriteFile(authPath, payload, 0o600); err != nil {
 		t.Fatalf("write web auth fixture: %v", err)
 	}
 }

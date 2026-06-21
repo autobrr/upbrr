@@ -59,6 +59,7 @@ type App struct {
 	dupes       map[string]*dupeCheckJob
 	uploadMu    sync.Mutex
 	uploads     map[string]*trackerUploadJob
+	uploadWG    sync.WaitGroup
 }
 
 type blurayCandidateSelector interface {

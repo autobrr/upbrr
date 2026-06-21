@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -537,7 +538,7 @@ func TestBackendRequestsUseSingleRuntimeSnapshot(t *testing.T) {
 	}
 }
 
-func TestBackendRunSingleTrackerUploadUsesJobRuntimeConfig(t *testing.T) {
+func TestBackendRunSingleTrackerUploadUsesJobUploadOptionsSnapshot(t *testing.T) {
 	t.Parallel()
 
 	errs := make(chan error, 1)
@@ -549,7 +550,7 @@ func TestBackendRunSingleTrackerUploadUsesJobRuntimeConfig(t *testing.T) {
 	backend := &Backend{cfg: currentCfg}
 	job := &trackerUploadJob{
 		sourcePath:           "C:\\releases\\Example.mkv",
-		cfg:                  jobCfg,
+		uploadOptions:        buildRunUploadOptions(jobCfg, runOptions{}),
 		runOptions:           runOptions{},
 		core:                 &backendSnapshotGuardCore{wantScreens: 1, errs: errs},
 		descriptionGroups:    nil,
@@ -689,6 +690,94 @@ func TestBackendSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
 	options := buildRunUploadOptions(runtimeCfg, runOptions{})
 	if !options.SkipAutoTorrent || !options.KeepImages || options.Screens != 5 {
 		t.Fatalf("expected upload options from saved config, got %#v", options)
+	}
+}
+
+func TestBackendSaveConfigAfterInvalidStartupMigratesLegacyCookies(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "backend-save-invalid-startup-cookies.db")
+	if err := BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("bootstrap auth file: %v", err)
+	}
+	legacyPath := writeBackendLegacyCookieFile(t, repoPath, "BLU", `{"session":"from-legacy"}`)
+
+	startupCfg := backendConfigTestConfig(repoPath)
+	startupCfg.MainSettings.TMDBAPI = ""
+	backend, err := NewBackend(startupCfg, newEventHub())
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = backend.Close()
+	})
+	if backend.currentCore() != nil {
+		t.Fatal("expected invalid startup to leave core disabled")
+	}
+
+	repaired := backendConfigTestConfig(repoPath)
+	payload, err := config.ExportToJSON(&repaired)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+	if err := backend.SaveConfig(payload); err != nil {
+		t.Fatalf("save repaired config: %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected legacy cookie file to be removed after migration, err=%v", err)
+	}
+	values, err := cookies.LoadTrackerCookieMap(context.Background(), repoPath, "BLU")
+	if err != nil {
+		t.Fatalf("load migrated tracker cookies: %v", err)
+	}
+	if got := values["session"]; got != "from-legacy" {
+		t.Fatalf("migrated session cookie: got %q want %q", got, "from-legacy")
+	}
+}
+
+func TestBackendSaveConfigRetriesLegacyCookieMigrationAfterAuthAppears(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "backend-save-cookie-retry.db")
+	legacyPath := writeBackendLegacyCookieFile(t, repoPath, "BLU", `{"session":"from-retry"}`)
+
+	startupCfg := backendConfigTestConfig(repoPath)
+	startupCfg.MainSettings.TMDBAPI = ""
+	backend, err := NewBackend(startupCfg, newEventHub())
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = backend.Close()
+	})
+
+	repaired := backendConfigTestConfig(repoPath)
+	payload, err := config.ExportToJSON(&repaired)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+	if err := backend.SaveConfig(payload); err != nil {
+		t.Fatalf("save repaired config without auth: %v", err)
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("expected legacy cookie file to remain without auth helper: %v", err)
+	}
+
+	if err := BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("bootstrap auth file: %v", err)
+	}
+	if err := backend.SaveConfig(payload); err != nil {
+		t.Fatalf("retry save repaired config: %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected legacy cookie file to be removed after retry, err=%v", err)
+	}
+	values, err := cookies.LoadTrackerCookieMap(context.Background(), repoPath, "BLU")
+	if err != nil {
+		t.Fatalf("load migrated tracker cookies: %v", err)
+	}
+	if got := values["session"]; got != "from-retry" {
+		t.Fatalf("migrated session cookie after retry: got %q want %q", got, "from-retry")
 	}
 }
 
@@ -1080,6 +1169,82 @@ func TestBackendSaveConfigCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
 	}
 }
 
+func TestBackendSaveConfigHardCookieMigrationErrorDoesNotInstallRuntime(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-cookie-migration-hard-error.db")
+	initial := backendConfigTestConfig(repoPath)
+	if err := config.SaveToDatabase(context.Background(), &initial, repo); err != nil {
+		t.Fatalf("save initial config: %v", err)
+	}
+	backend := &Backend{
+		cfg:  initial,
+		repo: repo,
+		hub:  newEventHub(),
+		sharedCookieMigrator: func(context.Context, string, api.Logger) error {
+			return errors.New("forced migration failure")
+		},
+	}
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	err = backend.SaveConfig(payload)
+	if err == nil {
+		t.Fatal("expected hard cookie migration error")
+	}
+	if !strings.Contains(err.Error(), "forced migration failure") {
+		t.Fatalf("expected forced migration failure, got %v", err)
+	}
+	assertStoredSkipAutoTorrent(t, repo, true)
+	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
+		t.Fatal("expected runtime config not to be applied after hard migration failure")
+	}
+	if backend.currentCore() != nil {
+		t.Fatal("expected runtime core not to be installed after hard migration failure")
+	}
+}
+
+func TestBackendImportConfigHardCookieMigrationErrorPropagates(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openBackendConfigTestRepo(t, "backend-import-cookie-migration-hard-error.db")
+	initial := backendConfigTestConfig(repoPath)
+	if err := config.SaveToDatabase(context.Background(), &initial, repo); err != nil {
+		t.Fatalf("save initial config: %v", err)
+	}
+	backend := &Backend{
+		cfg:  initial,
+		repo: repo,
+		hub:  newEventHub(),
+		sharedCookieMigrator: func(context.Context, string, api.Logger) error {
+			return errors.New("forced migration failure")
+		},
+	}
+
+	imported := initial
+	imported.Metadata.SkipAutoTorrent = true
+	content := exportConfigYAMLString(t, &imported)
+
+	_, _, err := backend.ImportConfig("config.yaml", content)
+	if err == nil {
+		t.Fatal("expected hard cookie migration error")
+	}
+	if !strings.Contains(err.Error(), "forced migration failure") {
+		t.Fatalf("expected forced migration failure, got %v", err)
+	}
+	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
+		t.Fatal("expected runtime config not to be applied after imported hard migration failure")
+	}
+	if backend.currentCore() != nil {
+		t.Fatal("expected runtime core not to be installed after imported hard migration failure")
+	}
+}
+
 func TestBackendSaveConfigRepositoryRejectsAuthChangeAfterValidation(t *testing.T) {
 	t.Parallel()
 
@@ -1132,6 +1297,19 @@ func backendConfigTestConfig(repoPath string) config.Config {
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
 		Logging:            config.LoggingConfig{Level: "info"},
 	}
+}
+
+func writeBackendLegacyCookieFile(t *testing.T, repoPath, trackerID, payload string) string {
+	t.Helper()
+
+	legacyPath, err := db.CookiePath(repoPath, trackerID+".json")
+	if err != nil {
+		t.Fatalf("resolve legacy cookie path: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write legacy cookie file: %v", err)
+	}
+	return legacyPath
 }
 
 func exportConfigYAMLString(t *testing.T, cfg *config.Config) string {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -278,13 +279,14 @@ func TestServerLoggerAccessSynchronizedDuringRuntimeReplacement(t *testing.T) {
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
+	replacementLogDir := t.TempDir()
 	wg.Go(func() {
-		for {
+		for i := 0; ; i++ {
 			select {
 			case <-stop:
 				return
 			default:
-				logger, err := logging.NewWithLevel(loggingConfig, filepath.Join(t.TempDir(), "runtime-replacement.db"), "")
+				logger, err := logging.NewWithLevel(loggingConfig, filepath.Join(replacementLogDir, "runtime-replacement-"+strconv.Itoa(i)+".db"), "")
 				if err != nil {
 					t.Errorf("new replacement logger: %v", err)
 					return

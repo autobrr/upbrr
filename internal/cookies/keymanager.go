@@ -64,17 +64,39 @@ func NewKeyManager(db *sql.DB) *KeyManager {
 
 // InitializeEncryptionKey derives the current cookie encryption key from web
 // auth details and transparently rotates encrypted cookie rows when the auth
-// fingerprint changes. ctx must be non-nil.
+// fingerprint changes. Salt creation, cookie re-encryption, and auth-state
+// persistence commit atomically. ctx must be non-nil.
 func (km *KeyManager) InitializeEncryptionKey(ctx context.Context, dbPath string) ([]byte, error) {
 	if ctx == nil {
 		return nil, ErrNilContext
 	}
 
-	return initializeEncryptionKey(ctx, km.db, dbPath, km.reencryptCookies)
+	tx, err := km.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin cookie encryption transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	key, err := initializeEncryptionKey(ctx, tx, dbPath, func(ctx context.Context, oldKey, newKey []byte) error {
+		return reencryptCookiesTx(ctx, tx, oldKey, newKey)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit cookie encryption transaction: %w", err)
+	}
+
+	return key, nil
 }
 
 // initializeEncryptionKey derives the current key and rotates existing cookie
 // rows when the stored auth fingerprint no longer matches web auth material.
+// Callers that pass a transaction must also supply a reencrypt callback that
+// writes through that same transaction.
 func initializeEncryptionKey(ctx context.Context, db cookieDBExecutor, dbPath string, reencrypt func(context.Context, []byte, []byte) error) ([]byte, error) {
 	helpers, err := loadAuthHelpers(dbPath)
 	if err != nil {
@@ -204,7 +226,8 @@ func loadAuthHelpers(dbPath string) ([]authHelperCandidate, error) {
 }
 
 // RewrapCookiesWithAuthChange re-encrypts stored cookies when web auth
-// material changes and records the new auth fingerprint.
+// material changes and records the new auth fingerprint. Salt creation, cookie
+// re-encryption, and auth-state persistence commit atomically.
 func RewrapCookiesWithAuthChange(ctx context.Context, db *sql.DB, oldMaterial, newMaterial authmaterial.Material) error {
 	if ctx == nil {
 		return ErrNilContext
@@ -222,8 +245,15 @@ func RewrapCookiesWithAuthChange(ctx context.Context, db *sql.DB, oldMaterial, n
 		return fmt.Errorf("cookies: derive new auth helper: %w", err)
 	}
 
-	km := NewKeyManager(db)
-	salt, err := ensureSalt(ctx, db)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("cookies: begin transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	salt, err := ensureSalt(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("cookies: ensure salt: %w", err)
 	}
@@ -237,38 +267,17 @@ func RewrapCookiesWithAuthChange(ctx context.Context, db *sql.DB, oldMaterial, n
 		if err != nil {
 			return fmt.Errorf("cookies: derive new encryption key: %w", err)
 		}
-		if err := km.reencryptCookies(ctx, oldKey, newKey); err != nil {
+		if err := reencryptCookiesTx(ctx, tx, oldKey, newKey); err != nil {
 			return fmt.Errorf("cookies: re-encrypt cookies after auth update: %w", err)
 		}
 	}
 
-	if err := storeAuthStateInDB(ctx, db, authState{Fingerprint: newFingerprint}); err != nil {
+	if err := storeAuthStateInDB(ctx, tx, authState{Fingerprint: newFingerprint}); err != nil {
 		return fmt.Errorf("cookies: store auth state: %w", err)
 	}
 
-	return nil
-}
-
-func (km *KeyManager) reencryptCookies(ctx context.Context, oldKey, newKey []byte) error {
-	if ctx == nil {
-		return ErrNilContext
-	}
-
-	tx, err := km.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-
-	defer func() {
-		_ = tx.Rollback()
-	}()
-
-	if err := reencryptCookiesTx(ctx, tx, oldKey, newKey); err != nil {
-		return err
-	}
-
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit cookie re-encryption transaction: %w", err)
+		return fmt.Errorf("cookies: commit transaction: %w", err)
 	}
 
 	return nil

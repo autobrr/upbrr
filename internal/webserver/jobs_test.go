@@ -291,6 +291,42 @@ func TestTrackerUploadJobAccessRequiresOwningSession(t *testing.T) {
 	}
 }
 
+func TestTrackerUploadRetryRequestUsesStoredUploadOptions(t *testing.T) {
+	job := &trackerUploadJob{
+		sessionID:      "session-a",
+		sourcePath:     `C:\Media\Movie.mkv`,
+		uploadOptions:  api.UploadOptions{Screens: 1, SkipAutoTorrent: true},
+		runOptions:     runOptions{Debug: true, NoSeed: true, RunLogLevel: "debug"},
+		failedTrackers: []string{"BLU"},
+		ignoreDupesFor: []string{"AITHER"},
+	}
+
+	retry, err := trackerUploadRetryRequestFromJob(job)
+	if err != nil {
+		t.Fatalf("retry request: %v", err)
+	}
+
+	job.uploadOptions.Screens = 9
+	job.failedTrackers[0] = "MUTATED"
+	job.ignoreDupesFor[0] = "MUTATED"
+
+	if retry.sessionID != "session-a" {
+		t.Fatalf("expected retry session snapshot, got %q", retry.sessionID)
+	}
+	if retry.uploadOptions.Screens != 1 || !retry.uploadOptions.SkipAutoTorrent {
+		t.Fatalf("expected stored upload options snapshot, got %#v", retry.uploadOptions)
+	}
+	if len(retry.failedTrackers) != 1 || retry.failedTrackers[0] != "BLU" {
+		t.Fatalf("expected failed trackers snapshot, got %#v", retry.failedTrackers)
+	}
+	if len(retry.ignoreDupesFor) != 1 || retry.ignoreDupesFor[0] != "AITHER" {
+		t.Fatalf("expected ignore dupes snapshot, got %#v", retry.ignoreDupesFor)
+	}
+	if !retry.runOptions.Debug || !retry.runOptions.NoSeed || retry.runOptions.RunLogLevel != "debug" {
+		t.Fatalf("expected run options snapshot, got %#v", retry.runOptions)
+	}
+}
+
 func TestRunTrackerUploadJobCountsPartialErrorAndContinues(t *testing.T) {
 	backend := &Backend{hub: newEventHub()}
 	coreSvc := &preparedMetaTestCore{uploads: []uploadPreparedResponse{
