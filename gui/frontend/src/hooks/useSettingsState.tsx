@@ -651,6 +651,13 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
   ],
+  ZNTH: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+  ],
   MANUAL: [trackerFieldMeta.FaviconURL, trackerFieldMeta.Filebrowser],
 };
 

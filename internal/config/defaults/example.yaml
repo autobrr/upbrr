@@ -508,6 +508,12 @@ trackers:
     api_key: ""
     url: "https://yu-scene.net"
     anon: false
+  ZNTH:
+    link_dir_name: ""
+    api_key: ""
+    url: "https://znth.cx"
+    anon: false
+    modq: false
   MANUAL:
     filebrowser: ""
 

@@ -111,6 +111,7 @@ var trackerURLPatterns = map[string][]string{
 	"tvc":  {"https://tvchaosuk.com"},
 	"ulcx": {"https://upload.cx"},
 	"yus":  {"https://yu-scene.net"},
+	"znth": {"https://znth.cx"},
 }
 
 var lowerTrackerURLPatterns = buildLowerTrackerURLPatterns(trackerURLPatterns)
