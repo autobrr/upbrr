@@ -1010,6 +1010,8 @@ func ResolveBTNAPIToken(cfg Config) string {
 
 // MergeMissingTrackerDefaults backfills tracker stubs from the embedded example
 // config so older saved configs can discover newly added trackers in the GUI.
+// CZT keeps user credentials in Passkey only, so stale URL, APIKey, and
+// AnnounceURL values are removed while preserving the passkey.
 func MergeMissingTrackerDefaults(cfg *Config) error {
 	if cfg == nil {
 		return nil
@@ -1033,6 +1035,13 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 			cfg.Trackers.Trackers[trackerName] = trackerCfg
 			continue
 		}
+		if strings.EqualFold(strings.TrimSpace(trackerName), "CZT") {
+			existing.URL = ""
+			existing.APIKey = ""
+			existing.AnnounceURL = ""
+			cfg.Trackers.Trackers[trackerName] = existing
+			continue
+		}
 		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
 			existing.URL = trackerCfg.URL
 			cfg.Trackers.Trackers[trackerName] = existing
@@ -1044,6 +1053,18 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 			btnCfg.APIKey = token
 			cfg.Trackers.Trackers["BTN"] = btnCfg
 		}
+	}
+	for trackerName, trackerCfg := range cfg.Trackers.Trackers {
+		if !strings.EqualFold(strings.TrimSpace(trackerName), "CZT") {
+			continue
+		}
+		if strings.TrimSpace(trackerCfg.APIKey) == "" && strings.TrimSpace(trackerCfg.URL) == "" && strings.TrimSpace(trackerCfg.AnnounceURL) == "" {
+			continue
+		}
+		trackerCfg.APIKey = ""
+		trackerCfg.URL = ""
+		trackerCfg.AnnounceURL = ""
+		cfg.Trackers.Trackers[trackerName] = trackerCfg
 	}
 	return nil
 }

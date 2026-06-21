@@ -223,6 +223,9 @@ trackers:
     announce_url: ""
     anon: false
     check_for_rules: true
+  CZT:
+    link_dir_name: ""
+    passkey: ""
   DC:
     link_dir_name: ""
     api_key: ""
@@ -511,6 +514,12 @@ trackers:
     api_key: ""
     url: "https://yu-scene.net"
     anon: false
+  ZNTH:
+    link_dir_name: ""
+    api_key: ""
+    url: "https://znth.cx"
+    anon: false
+    modq: false
   MANUAL:
     filebrowser: ""
 

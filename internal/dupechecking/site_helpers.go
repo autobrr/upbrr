@@ -180,8 +180,7 @@ func firstNode(root *xhtml.Node, match func(*xhtml.Node) bool) *xhtml.Node {
 }
 
 func hasClass(node *xhtml.Node, want string) bool {
-	classes := strings.Fields(attrValueHTML(node, "class"))
-	for _, className := range classes {
+	for className := range strings.FieldsSeq(attrValueHTML(node, "class")) {
 		if strings.EqualFold(strings.TrimSpace(className), strings.TrimSpace(want)) {
 			return true
 		}

@@ -35,6 +35,7 @@ import type {
   ApplicationInfo,
   BrowseDirectoryResponse,
   DescriptionBuilderPreview,
+  DupeCheckResult,
   DupeCheckSnapshot,
   DupeCheckSummary,
   ExternalIDInfo,
@@ -189,6 +190,19 @@ const splitTrackerLabel = (value: string) =>
     .split(",")
     .map((entry) => entry.toLowerCase().trim())
     .filter((entry) => entry.length > 0);
+
+/** Returns normalized tracker labels whose skipped duplicate-check result should block upload. */
+export const ruleBlockingTrackerLabels = (result: Pick<DupeCheckResult, "Tracker">) => {
+  const next = new Set<string>();
+  const normalized = result.Tracker.toLowerCase().trim();
+  const splitLabels = splitTrackerLabel(result.Tracker);
+
+  if (normalized) {
+    next.add(normalized);
+  }
+  splitLabels.forEach((tracker) => next.add(tracker));
+  return next;
+};
 
 const emptyDescriptionBuilder: DescriptionBuilderPreview = {
   SourcePath: "",
@@ -1088,9 +1102,7 @@ export default function App() {
     const next = new Set<string>();
     (dupeSummary.Results || []).forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
-      const normalized = result.Tracker.toLowerCase().trim();
-      if (normalized) next.add(normalized);
-      splitTrackerLabel(result.Tracker).forEach((tracker) => next.add(tracker));
+      ruleBlockingTrackerLabels(result).forEach((tracker) => next.add(tracker));
     });
     return next;
   }, [dupeSummary]);
@@ -1115,11 +1127,8 @@ export default function App() {
     const next: Record<string, string> = {};
     (dupeSummary.Results || []).forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
-      const normalized = result.Tracker.toLowerCase().trim();
-      if (!normalized) return;
       const reason = (result.SkipReason || result.Notes?.join(" ") || "rule check failed").trim();
-      next[normalized] = reason || "rule check failed";
-      splitTrackerLabel(result.Tracker).forEach((tracker) => {
+      ruleBlockingTrackerLabels(result).forEach((tracker) => {
         next[tracker] = reason || "rule check failed";
       });
     });

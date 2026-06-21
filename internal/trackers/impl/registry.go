@@ -16,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/bjs"
 	"github.com/autobrr/upbrr/internal/trackers/impl/bt"
 	"github.com/autobrr/upbrr/internal/trackers/impl/btn"
+	"github.com/autobrr/upbrr/internal/trackers/impl/czt"
 	"github.com/autobrr/upbrr/internal/trackers/impl/dc"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ff"
 	"github.com/autobrr/upbrr/internal/trackers/impl/fl"
@@ -69,6 +70,9 @@ func NewRegistry() (*trackers.Registry, error) {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(bt.New()); err != nil {
+		return nil, fmt.Errorf("trackers: %w", err)
+	}
+	if err := registry.Register(czt.New()); err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(dc.New()); err != nil {

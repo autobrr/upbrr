@@ -14,7 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/metadata"
-	"github.com/autobrr/upbrr/internal/trackers"
+	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -118,6 +118,10 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 			Trackers:   []api.TrackerReview{},
 		}, nil
 	}
+	meta, err = c.resolveUploadReviewPTBRMetadata(ctx, meta, resolvedTrackers)
+	if err != nil {
+		return api.UploadReview{}, err
+	}
 
 	dupeResults := make(map[string]api.DupeCheckResult)
 	if singleReq.SkipDupeCheck {
@@ -185,7 +189,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		dryRunByTracker[name] = entry
 	}
 
-	bannedChecker := trackers.NewBannedGroupChecker(c.cfg.MainSettings.DBPath)
+	bannedChecker := trackerspkg.NewBannedGroupChecker(c.cfg.MainSettings.DBPath)
 	group := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-")))
 	if strings.Contains(group, "taoe") {
 		group = "taoe"
@@ -254,6 +258,93 @@ func (c *Core) resolveUploadReviewTrackers(req api.Request, meta api.PreparedMet
 		remove = mergeTrackerRemovals(remove, req.TrackersRemove)
 	}
 	return resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, remove, c.logger, includeDefaults, includeDefaults)
+}
+
+// resolveUploadReviewPTBRMetadata refreshes localized TMDB metadata after review
+// tracker resolution when selected or default tracker targets require pt-BR data.
+func (c *Core) resolveUploadReviewPTBRMetadata(ctx context.Context, meta api.PreparedMetadata, resolvedTrackers []string) (api.PreparedMetadata, error) {
+	if c.services.Metadata == nil || !uploadReviewNeedsPTBRMetadata(meta, resolvedTrackers) {
+		return meta, nil
+	}
+	refreshMeta := deepCopyPreparedMetadata(meta)
+	refreshMeta.Trackers = append([]string(nil), resolvedTrackers...)
+	refreshed, err := c.services.Metadata.ResolveExternalIDs(ctx, refreshMeta)
+	if err != nil {
+		return api.PreparedMetadata{}, fmt.Errorf("core: %w", err)
+	}
+	return refreshed, nil
+}
+
+// uploadReviewNeedsPTBRMetadata reports whether a review dry-run needs a pt-BR refresh.
+func uploadReviewNeedsPTBRMetadata(meta api.PreparedMetadata, resolvedTrackers []string) bool {
+	if !hasPTBRTracker(resolvedTrackers) || hasLocalizedPTBR(meta) {
+		return false
+	}
+	return hasKnownTMDBID(meta)
+}
+
+// hasPTBRTracker reports whether any tracker consumes localized pt-BR TMDB data.
+func hasPTBRTracker(trackers []string) bool {
+	return trackerspkg.AnyNeedsPTBRLocalizedMetadata(trackers)
+}
+
+// hasLocalizedPTBR reports whether TMDB metadata already contains complete pt-BR localized data.
+func hasLocalizedPTBR(meta api.PreparedMetadata) bool {
+	if meta.ExternalMetadata.TMDB == nil || meta.ExternalMetadata.TMDB.Localized == nil {
+		return false
+	}
+	localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]
+	return ok && localizedPTBRComplete(meta, localized)
+}
+
+// hasKnownTMDBID reports whether metadata has a source-current TMDB ID available for refresh.
+func hasKnownTMDBID(meta api.PreparedMetadata) bool {
+	if meta.StoredDataFresh && strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.SourcePath), strings.TrimSpace(meta.SourcePath)) && meta.ExternalIDs.TMDBID != 0 {
+		return true
+	}
+	if meta.StoredDataFresh &&
+		strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) &&
+		meta.ExternalMetadata.TMDB != nil &&
+		meta.ExternalMetadata.TMDB.TMDBID != 0 {
+		return true
+	}
+	return meta.MediaInfoTMDBID != 0 || meta.SceneTMDBID != 0 || meta.ArrTMDBID != 0
+}
+
+// localizedPTBRComplete reports whether review metadata has the pt-BR title,
+// genre, and overview fields needed to avoid another localized refresh for
+// selected upload trackers.
+func localizedPTBRComplete(meta api.PreparedMetadata, localized api.TMDBLocalizedData) bool {
+	if strings.TrimSpace(localized.Title) == "" || strings.TrimSpace(localized.Genres) == "" {
+		return false
+	}
+	if localizedPTBRNeedsScopedOverview(meta) {
+		return strings.TrimSpace(localized.EpisodeOverview) != ""
+	}
+	return strings.TrimSpace(localized.Overview) != ""
+}
+
+func localizedPTBRNeedsScopedOverview(meta api.PreparedMetadata) bool {
+	if !localizedPTBRIsTV(meta) {
+		return false
+	}
+	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.TVPack {
+		return true
+	}
+	return strings.TrimSpace(meta.SeasonStr) != "" ||
+		strings.TrimSpace(meta.EpisodeStr) != "" ||
+		strings.TrimSpace(meta.DailyEpisodeDate) != ""
+}
+
+func localizedPTBRIsTV(meta api.PreparedMetadata) bool {
+	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") ||
+		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV") {
+		return true
+	}
+	if meta.ExternalMetadata.TMDB != nil {
+		return strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.TMDB.Category), "TV")
+	}
+	return false
 }
 
 func formatBlockedReasons(reasons []api.TrackerBlockReason) string {
@@ -542,6 +633,9 @@ func cloneTrackerQuestionnaireAnswers(input map[string]map[string]string) map[st
 	return cloned
 }
 
+// applyDupeSummaryToPreparedMeta refreshes duplicate block and cross-seed
+// state from a dupe-check summary. Previous dupe block reasons are replaced,
+// while unrelated block reasons remain untouched.
 func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.DupeCheckSummary) {
 	if meta == nil {
 		return
@@ -551,27 +645,26 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 	crossSeeds := make([]api.UploadedTorrent, 0)
 	seenCrossSeeds := make(map[string]struct{})
 	for _, result := range summary.Results {
-		if !dupeResultBlocksTracker(result) {
-			continue
-		}
-
 		trackers := splitTrackerLabel(result.Tracker)
 		if len(trackers) == 0 {
 			trackers = []string{result.Tracker}
 		}
 		for _, tracker := range trackers {
+			if !dupeResultBlocksTracker(result, tracker) {
+				continue
+			}
 			blocked = addTrackerBlockReason(blocked, tracker, api.TrackerBlockReasonDupe)
-		}
-		if !result.HasDupes {
-			continue
-		}
-		downloadURL := strings.TrimSpace(result.Match.MatchedDownload)
-		if downloadURL == "" {
-			continue
 		}
 		for _, tracker := range trackers {
 			name := strings.ToUpper(strings.TrimSpace(tracker))
 			if name == "" {
+				continue
+			}
+			if !result.HasDupes {
+				continue
+			}
+			downloadURL := strings.TrimSpace(result.Match.MatchedDownload)
+			if downloadURL == "" {
 				continue
 			}
 			key := name + "\x00" + downloadURL
@@ -591,8 +684,13 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 	meta.CrossSeedTorrents = crossSeeds
 }
 
-func dupeResultBlocksTracker(result api.DupeCheckResult) bool {
-	if result.HasDupes || result.Skipped {
+// dupeResultBlocksTracker reports whether a duplicate-check result should
+// suppress upload for one tracker.
+func dupeResultBlocksTracker(result api.DupeCheckResult, _ string) bool {
+	if result.HasDupes {
+		return true
+	}
+	if result.Skipped {
 		return true
 	}
 	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
@@ -734,6 +832,7 @@ func removeCrossSeedTorrentsForTrackers(torrents []api.UploadedTorrent, trackers
 // this request, including matched-tracker and removal state.
 func mergeUploadReviewCacheMeta(base api.PreparedMetadata, updated api.PreparedMetadata, reviewedTrackers []string) api.PreparedMetadata {
 	merged := deepCopyPreparedMetadata(base)
+	merged.ExternalMetadata = deepCopyExternalMetadata(updated.ExternalMetadata)
 	merged.BlockedTrackers = mergeReviewedTrackerBlocks(base.BlockedTrackers, updated.BlockedTrackers, reviewedTrackers)
 	merged.CrossSeedTorrents = mergeReviewedTrackerCrossSeeds(base.CrossSeedTorrents, updated.CrossSeedTorrents, reviewedTrackers)
 	merged.TrackerRuleFailures = mergeReviewedTrackerRuleFailures(base.TrackerRuleFailures, updated.TrackerRuleFailures, reviewedTrackers)

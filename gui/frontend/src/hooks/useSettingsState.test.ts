@@ -434,6 +434,101 @@ describe("ClientSetup client selectors", () => {
 });
 
 describe("Tracker client selectors", () => {
+  it("renders CZT passkey field without preserving stale URL or API key", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  CZT: {
+                    LinkDirName: "",
+                    URL: "https://czteam.example",
+                    APIKey: "service-token",
+                    AnnounceURL: "https://czteam.me/announce.php?passkey=stale",
+                    Passkey: "user-passkey",
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["CZT"],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("CZT", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("CZT", { selector: ".settings-card__summary-name" }));
+
+    expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Passkey")).toHaveValue("[REDACTED]");
+
+    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    };
+    expect(payload.Trackers?.Trackers?.CZT).toMatchObject({
+      Passkey: "user-passkey",
+    });
+    expect(payload.Trackers?.Trackers?.CZT?.URL).toBeUndefined();
+    expect(payload.Trackers?.Trackers?.CZT?.APIKey).toBeUndefined();
+    expect(payload.Trackers?.Trackers?.CZT?.AnnounceURL).toBeUndefined();
+  });
+
+  it("creates CZT entries with passkey defaults", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {},
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["CZT"],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() => expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0));
+
+    const trackerSelects = screen.getAllByRole("combobox");
+    const trackerSelect = trackerSelects[trackerSelects.length - 1] as HTMLSelectElement;
+    fireEvent.change(trackerSelect, { target: { value: "CZT" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add entry" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("CZT", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+
+    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    };
+    expect(payload.Trackers?.Trackers?.CZT).toMatchObject({
+      Passkey: "",
+    });
+    expect(payload.Trackers?.Trackers?.CZT?.URL).toBeUndefined();
+    expect(payload.Trackers?.Trackers?.CZT?.APIKey).toBeUndefined();
+  });
+
   it("renders tracker torrent client as a configured client dropdown", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
       guiapp: {

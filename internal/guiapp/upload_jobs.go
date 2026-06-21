@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"strconv"
 	"strings"
@@ -25,6 +26,9 @@ const (
 	trackerUploadProgressEvent = "upload:progress"
 )
 
+// TrackerUploadTrackerState reports frontend-visible state for one tracker in
+// an upload job. UploadedCount includes accepted uploads returned before a later
+// tracker error or cancellation.
 type TrackerUploadTrackerState struct {
 	Tracker         string  `json:"tracker"`
 	Status          string  `json:"status"`
@@ -40,6 +44,9 @@ type TrackerUploadTrackerState struct {
 	FinishedAt      string  `json:"finishedAt"`
 }
 
+// TrackerUploadSnapshot reports frontend-visible state for a tracker upload
+// job. UploadedCount is the sum of per-tracker accepted uploads, including
+// partial counts returned with non-nil errors.
 type TrackerUploadSnapshot struct {
 	JobID                  string                      `json:"jobID"`
 	SourcePath             string                      `json:"sourcePath"`
@@ -112,6 +119,9 @@ func (j *trackerUploadJob) closeResources() {
 	})
 }
 
+// StartTrackerUpload starts a Wails upload job for selected trackers and
+// returns its job ID. Snapshots preserve partial upload counts returned with
+// later tracker errors or cancellation.
 func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
 	if err := a.requireCore(); err != nil {
 		return "", err
@@ -187,6 +197,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	return jobID, nil
 }
 
+// CancelTrackerUpload requests cancellation for a Wails tracker upload job.
 func (a *App) CancelTrackerUpload(jobID string) error {
 	if a == nil {
 		return errors.New("app not initialized")
@@ -211,6 +222,8 @@ func (a *App) CancelTrackerUpload(jobID string) error {
 	return nil
 }
 
+// RetryFailedTrackerUpload starts a new Wails upload job for trackers that
+// failed in the original job.
 func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
@@ -243,6 +256,7 @@ func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 	return a.StartTrackerUpload(sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.NoSeed, runOptions.RunLogLevel)
 }
 
+// GetTrackerUploadSnapshot returns the current Wails tracker upload job state.
 func (a *App) GetTrackerUploadSnapshot(jobID string) (TrackerUploadSnapshot, error) {
 	if a == nil {
 		return TrackerUploadSnapshot{}, errors.New("app not initialized")
@@ -260,6 +274,8 @@ func (a *App) GetTrackerUploadSnapshot(jobID string) (TrackerUploadSnapshot, err
 	return buildTrackerUploadSnapshot(job), nil
 }
 
+// runTrackerUploadJob records UploadedCount before error handling so partial
+// successes returned with non-nil errors remain visible in snapshots.
 func (a *App) runTrackerUploadJob(ctx context.Context, eventCtx context.Context, job *trackerUploadJob) {
 	if a == nil || job == nil {
 		return
@@ -288,6 +304,14 @@ func (a *App) runTrackerUploadJob(ctx context.Context, eventCtx context.Context,
 			a.applyTrackerUploadProgress(eventCtx, job, update)
 		})
 		result, err := a.runSingleTrackerUpload(progressCtx, job, tracker)
+		if result.UploadedCount > 0 {
+			job.mu.Lock()
+			state = job.states[tracker]
+			state.UploadedCount += result.UploadedCount
+			job.states[tracker] = state
+			job.uploadedCount += result.UploadedCount
+			job.mu.Unlock()
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				break
@@ -309,10 +333,8 @@ func (a *App) runTrackerUploadJob(ctx context.Context, eventCtx context.Context,
 		state = job.states[tracker]
 		state.Status = "success"
 		state.Message = "uploaded"
-		state.UploadedCount += result.UploadedCount
 		state.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 		job.states[tracker] = state
-		job.uploadedCount += result.UploadedCount
 		job.mu.Unlock()
 		a.emitTrackerUploadSnapshot(eventCtx, job)
 	}
@@ -525,9 +547,7 @@ func cloneQuestionnaireAnswers(input map[string]map[string]string) map[string]ma
 			continue
 		}
 		inner := make(map[string]string, len(values))
-		for key, value := range values {
-			inner[key] = value
-		}
+		maps.Copy(inner, values)
 		cloned[tracker] = inner
 	}
 	return cloned

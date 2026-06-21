@@ -397,6 +397,335 @@ func TestFetchDescriptionBuilderPreviewRefreshesMissingLogoMetadata(t *testing.T
 	}
 }
 
+func TestFetchDescriptionBuilderPreviewRefreshesLocalizedPTBRMetadata(t *testing.T) {
+	t.Parallel()
+
+	for _, tracker := range []string{"BJS", "BT", "ASC"} {
+		t.Run(tracker, func(t *testing.T) {
+			t.Parallel()
+
+			repo := &stubDescriptionRepo{}
+			trackerSvc := &stubDescriptionBuilderTrackers{}
+			prepared := api.PreparedMetadata{
+				SourcePath: "/tmp/source-" + strings.ToLower(tracker),
+				Paths:      []string{"/tmp/source-" + strings.ToLower(tracker)},
+				Mode:       api.ModeGUI,
+				ExternalIDs: api.ExternalIDs{
+					SourcePath: "/tmp/source-" + strings.ToLower(tracker),
+					TMDBID:     42,
+					Category:   "MOVIE",
+				},
+				ExternalMetadata: api.ExternalMetadata{
+					SourcePath: "/tmp/source-" + strings.ToLower(tracker),
+					TMDB:       &api.TMDBMetadata{TMDBID: 42, Logo: "https://image.tmdb.org/t/p/original/logo.png"},
+				},
+			}
+			refreshed := prepared
+			refreshed.ExternalMetadata.TMDB = &api.TMDBMetadata{
+				TMDBID: 42,
+				Logo:   "https://image.tmdb.org/t/p/original/logo.png",
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {Title: "Titulo " + tracker},
+				},
+			}
+			metaSvc := &stubMeta{prepared: prepared, resolved: refreshed}
+			core := &Core{
+				cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+				logger: api.NopLogger{},
+				services: api.ServiceSet{
+					Filesystem: stubFilesystem{paths: []string{prepared.SourcePath}},
+					Trackers:   trackerSvc,
+					Metadata:   metaSvc,
+				},
+				repo:      repo,
+				dupeCache: make(map[string]dupeCacheEntry),
+			}
+
+			_, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+				Paths:    []string{prepared.SourcePath},
+				Mode:     api.ModeGUI,
+				Trackers: []string{tracker},
+				Options:  api.UploadOptions{Screens: 1},
+			})
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if metaSvc.resolveCalls != 1 {
+				t.Fatalf("expected description builder to refresh pt-BR metadata for %s, got %d calls", tracker, metaSvc.resolveCalls)
+			}
+			got, ok := trackerSvc.prepareMeta.ExternalMetadata.TMDB.Localized["pt-BR"]
+			if !ok || got.Title == "" {
+				t.Fatalf("expected tracker preparation to receive refreshed pt-BR metadata, got %#v", trackerSvc.prepareMeta.ExternalMetadata.TMDB.Localized)
+			}
+		})
+	}
+}
+
+func TestFetchDescriptionBuilderPreviewDocumentsRefreshAndPreparedCacheLineage(t *testing.T) {
+	t.Parallel()
+
+	req := api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"ASC"},
+		Options:  api.UploadOptions{Screens: 1},
+	}
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Paths:      []string{"/tmp/source"},
+		Mode:       api.ModeGUI,
+		Options:    api.UploadOptions{Screens: 1},
+		Trackers:   []string{"ASC"},
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/tmp/source",
+			TMDBID:     42,
+			Category:   "MOVIE",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/tmp/source",
+			TMDB: &api.TMDBMetadata{
+				TMDBID: 42,
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {Title: "Titulo"},
+				},
+			},
+		},
+	}
+	refreshed := prepared
+	refreshed.ExternalMetadata.TMDB = &api.TMDBMetadata{
+		TMDBID: 42,
+		Localized: map[string]api.TMDBLocalizedData{
+			"pt-BR": {Title: "Titulo", Overview: "Resumo", Genres: "Drama"},
+		},
+	}
+
+	refreshMeta := &stubMeta{prepared: prepared, resolved: refreshed}
+	refreshTrackers := &stubDescriptionBuilderTrackers{}
+	refreshCore := &Core{
+		cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   refreshTrackers,
+			Metadata:   refreshMeta,
+		},
+		repo:      &stubDescriptionRepo{},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	if _, err := refreshCore.FetchDescriptionBuilderPreview(context.Background(), req); err != nil {
+		t.Fatalf("refreshing description preview: %v", err)
+	}
+	if refreshMeta.resolveCalls != 1 {
+		t.Fatalf("expected refresh path to resolve metadata once, got %d", refreshMeta.resolveCalls)
+	}
+	entry, _, ok := refreshCore.lookupGUICachedMetaEntry(req, "/tmp/source")
+	if !ok {
+		t.Fatal("expected refreshed GUI cache entry")
+	}
+	if !entry.requestRefreshed {
+		t.Fatal("expected refresh path to keep request-refreshed cache lineage")
+	}
+	if _, err := refreshCore.FetchDescriptionBuilderPreview(context.Background(), req); err != nil {
+		t.Fatalf("reopening refreshed description preview: %v", err)
+	}
+	if refreshMeta.resolveCalls != 1 {
+		t.Fatalf("expected refreshed cache reopen to avoid another resolve, got %d", refreshMeta.resolveCalls)
+	}
+
+	preparedMeta := &stubMeta{prepared: refreshed}
+	preparedCore := &Core{
+		cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   &stubDescriptionBuilderTrackers{},
+			Metadata:   preparedMeta,
+		},
+		repo:      &stubDescriptionRepo{},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+	if _, err := preparedCore.FetchDescriptionBuilderPreview(context.Background(), req); err != nil {
+		t.Fatalf("prepared description preview: %v", err)
+	}
+	if preparedMeta.resolveCalls != 0 {
+		t.Fatalf("expected prepared path to skip metadata resolve, got %d", preparedMeta.resolveCalls)
+	}
+	entry, _, ok = preparedCore.lookupGUICachedMetaEntry(req, "/tmp/source")
+	if !ok {
+		t.Fatal("expected prepared GUI cache entry")
+	}
+	if entry.requestRefreshed {
+		t.Fatal("expected no-refresh path to store stable prepared cache lineage")
+	}
+}
+
+func TestDescriptionBuilderNeedsPTBRMetadataRequiresCompleteLocalizedFields(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				TMDBID: 42,
+				Localized: map[string]api.TMDBLocalizedData{
+					"pt-BR": {Title: "Titulo", Overview: "Resumo"},
+				},
+			},
+		},
+	}
+	if !descriptionBuilderNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected partial pt-BR metadata to need description-builder refresh")
+	}
+
+	meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{
+		Title:    "Titulo",
+		Overview: "Resumo",
+		Genres:   "Drama",
+	}
+	if descriptionBuilderNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected complete pt-BR metadata to skip description-builder refresh")
+	}
+
+	meta.ExternalIDs.Category = "TV"
+	meta.SeasonInt = 1
+	meta.EpisodeInt = 2
+	meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{
+		Title:           "Titulo",
+		Overview:        "Resumo da serie",
+		EpisodeOverview: "Resumo do episodio",
+		Genres:          "Drama",
+	}
+	if descriptionBuilderNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected complete episode pt-BR metadata to skip description-builder refresh")
+	}
+
+	meta.ExternalMetadata.TMDB.Localized["pt-BR"] = api.TMDBLocalizedData{
+		Title:    "Titulo",
+		Overview: "Resumo da serie",
+		Genres:   "Drama",
+	}
+	if !descriptionBuilderNeedsPTBRMetadata(meta, []string{"ASC"}) {
+		t.Fatal("expected episode pt-BR metadata without scoped overview to need refresh")
+	}
+}
+
+func TestFetchDescriptionBuilderPreviewSkipsLocalizedRefreshForNonlocalizedTracker(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{}
+	metaSvc := &stubMeta{prepared: api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Paths:      []string{"/tmp/source"},
+		Mode:       api.ModeGUI,
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/tmp/source",
+			TMDB:       &api.TMDBMetadata{TMDBID: 42, Logo: "https://image.tmdb.org/t/p/original/logo.png"},
+		},
+	}}
+	core := &Core{
+		cfg: config.Config{
+			Description:        config.DescriptionSettingsConfig{AddLogo: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	_, err := core.FetchDescriptionBuilderPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"HDB"},
+		Options:  api.UploadOptions{Screens: 1},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if metaSvc.resolveCalls != 0 {
+		t.Fatalf("expected nonlocalized tracker to skip external metadata refresh, got %d calls", metaSvc.resolveCalls)
+	}
+	if !trackerSvc.called {
+		t.Fatal("expected tracker preparation to run")
+	}
+}
+
+func TestSaveDescriptionOverrideDeleteRefreshesLocalizedPTBRMetadata(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubDescriptionRepo{}
+	trackerSvc := &stubDescriptionBuilderTrackers{
+		preview: api.PreparationPreview{
+			SourcePath: "/tmp/source",
+			Descriptions: []api.PreparationDescription{
+				{GroupKey: "asc", Trackers: []string{"ASC"}, RawDescription: "generated raw", RawDescriptionHTML: "<p>generated raw</p>"},
+			},
+		},
+	}
+	prepared := api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Paths:      []string{"/tmp/source"},
+		Mode:       api.ModeGUI,
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "/tmp/source",
+			TMDBID:     42,
+			Category:   "TV",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "/tmp/source",
+			TMDB:       &api.TMDBMetadata{TMDBID: 42, Logo: "https://image.tmdb.org/t/p/original/logo.png"},
+		},
+	}
+	refreshed := prepared
+	refreshed.ExternalMetadata.TMDB = &api.TMDBMetadata{
+		TMDBID: 42,
+		Logo:   "https://image.tmdb.org/t/p/original/logo.png",
+		Localized: map[string]api.TMDBLocalizedData{
+			"pt-BR": {Overview: "Resumo ASC"},
+		},
+	}
+	metaSvc := &stubMeta{prepared: prepared, resolved: refreshed}
+	core := &Core{
+		cfg:    config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		logger: api.NopLogger{},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Trackers:   trackerSvc,
+			Metadata:   metaSvc,
+		},
+		repo:      repo,
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	group, err := core.SaveDescriptionOverride(context.Background(), api.Request{
+		Paths:                    []string{"/tmp/source"},
+		Mode:                     api.ModeGUI,
+		DescriptionOverrideGroup: "asc",
+		Trackers:                 []string{"ASC"},
+		Options:                  api.UploadOptions{Screens: 1},
+	}, "  ")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if group.GroupKey != "asc" {
+		t.Fatalf("expected reset group key, got %q", group.GroupKey)
+	}
+	if len(repo.deleted) != 1 {
+		t.Fatalf("expected delete to be called, got %d", len(repo.deleted))
+	}
+	if metaSvc.resolveCalls != 1 {
+		t.Fatalf("expected description override reset to refresh pt-BR metadata, got %d calls", metaSvc.resolveCalls)
+	}
+	if got := trackerSvc.prepareMeta.ExternalMetadata.TMDB.Localized["pt-BR"].Overview; got != "Resumo ASC" {
+		t.Fatalf("expected tracker preparation to receive refreshed pt-BR overview, got %q", got)
+	}
+}
+
 func TestSaveDescriptionOverrideDeletesOnEmpty(t *testing.T) {
 	t.Parallel()
 

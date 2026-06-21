@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import App, { hasExplicitEmptyReleaseTrackerSelection } from "./app";
+import App, { hasExplicitEmptyReleaseTrackerSelection, ruleBlockingTrackerLabels } from "./app";
 import type {
   DescriptionBuilderPreview,
   DupeCheckResult,
@@ -185,6 +185,8 @@ const dupeResult = (tracker: string, hasDupes: boolean): DupeCheckResult => ({
   Notes: [],
   Skipped: false,
   SkipReason: "",
+  SkipCode: "",
+  SkipRules: [],
   Status: "completed",
   Error: "",
   CheckedAt: "2026-06-17T00:00:00Z",
@@ -338,6 +340,31 @@ describe("hasExplicitEmptyReleaseTrackerSelection", () => {
         BLU: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("ruleBlockingTrackerLabels", () => {
+  const labelsFor = (result: Partial<DupeCheckResult> & Pick<DupeCheckResult, "Tracker">) =>
+    Array.from(
+      ruleBlockingTrackerLabels({
+        ...dupeResult(result.Tracker, false),
+        Skipped: true,
+        ...result,
+      }),
+    ).sort();
+
+  it("blocks skipped trackers", () => {
+    expect(labelsFor({ Tracker: "CZT" })).toEqual(["czt"]);
+    expect(labelsFor({ Tracker: "HDB", SkipCode: "legacy_code" })).toEqual(["hdb"]);
+  });
+
+  it("blocks each split tracker label", () => {
+    expect(labelsFor({ Tracker: "CZT, HDB", SkipCode: "legacy_code" })).toEqual([
+      "czt",
+      "czt, hdb",
+      "hdb",
+    ]);
+    expect(labelsFor({ Tracker: ", CZT,, ", SkipCode: "legacy_code" })).toEqual([", czt,,", "czt"]);
   });
 });
 
