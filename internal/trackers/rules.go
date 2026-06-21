@@ -562,6 +562,18 @@ func evaluateLanguageRule(meta api.PreparedMetadata, rule *additional.LanguageRu
 		}
 		return false, "requires audio and subtitles in " + strings.Join(required, ", ")
 	}
+	if checkAudio && !checkSubs {
+		if audioOK {
+			return true, ""
+		}
+		return false, "requires audio in " + strings.Join(required, ", ")
+	}
+	if checkSubs && !checkAudio {
+		if subOK {
+			return true, ""
+		}
+		return false, "requires subtitles in " + strings.Join(required, ", ")
+	}
 
 	if audioOK || subOK {
 		return true, ""

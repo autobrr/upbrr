@@ -764,6 +764,202 @@ func TestBuildUnit3DNameULCXRemovesHybridFromWebDV(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DNameRHDBuildsFromTMDBWhenBaseNameBlank(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Type:           "WEBDL",
+		Tag:            "-GRP",
+		Audio:          "DD+ 5.1",
+		VideoEncode:    "H.264",
+		AudioLanguages: []string{"German"},
+		Release: api.ReleaseInfo{
+			Resolution: "1080p",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				Year:            2025,
+				LocalizedTitles: map[string]string{"de": "Die Probe"},
+			},
+		},
+	}
+
+	got := buildUnit3DName("RHD", meta, config.TrackerConfig{})
+	want := "Die Probe 2025 GERMAN 1080p WEB-DL DD+ 5.1 H.264-GRP"
+	if got != want {
+		t.Fatalf("expected RHD TMDB-derived name %q, got %q", want, got)
+	}
+}
+
+func TestBuildUnit3DNameRHDUsesTMDBTitleFallback(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Type:           "WEBDL",
+		Tag:            "-GRP",
+		AudioLanguages: []string{"English"},
+		Release: api.ReleaseInfo{
+			Resolution: "720p",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				Title: "TMDB Title",
+				Year:  2024,
+			},
+		},
+	}
+
+	got := buildUnit3DName("RHD", meta, config.TrackerConfig{})
+	if !strings.HasPrefix(got, "TMDB Title 2024 ENGLISH 720p WEB-DL") {
+		t.Fatalf("expected RHD TMDB title fallback, got %q", got)
+	}
+}
+
+func TestBuildUnit3DNameRHDFullDiscOmitsLanguageTag(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName:    "Movie 2024 1080p Blu-ray AVC DTS-HD MA 5.1-GRP",
+		Type:           "DISC",
+		Region:         "GER",
+		Tag:            "-GRP",
+		Audio:          "DTS-HD MA 5.1",
+		VideoCodec:     "AVC",
+		AudioLanguages: []string{"German", "English"},
+		Release: api.ReleaseInfo{
+			Title:      "Movie",
+			Year:       2024,
+			Resolution: "1080p",
+			Source:     "Blu-ray",
+			Size:       "BD50",
+		},
+	}
+
+	got := buildUnit3DName("RHD", meta, config.TrackerConfig{})
+	want := "Movie 2024 1080p COMPLETE GER Blu-ray BD50 DTS-HD MA 5.1 AVC-GRP"
+	if got != want {
+		t.Fatalf("expected RHD full-disc name %q, got %q", want, got)
+	}
+	if strings.Contains(got, "GERMAN") || strings.Contains(got, " DL") || strings.Contains(got, " ML") {
+		t.Fatalf("expected RHD full-disc name to omit language tag, got %q", got)
+	}
+}
+
+func TestBuildUnit3DNameRHDDetectsMarkerTokensWithBroadDelimiters(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName:    "Marker.Movie.2024.[INTERNAL].(UPSCALED).1080p.WEB-DL.DDP5.1.H.264-GRP",
+		Type:           "WEBDL",
+		Tag:            "-GRP",
+		Audio:          "DDP5.1",
+		VideoEncode:    "H.264",
+		AudioLanguages: []string{"German"},
+		Release: api.ReleaseInfo{
+			Title:      "Marker Movie",
+			Year:       2024,
+			Resolution: "1080p",
+		},
+	}
+
+	got := buildUnit3DName("RHD", meta, config.TrackerConfig{})
+	want := "Marker Movie 2024 GERMAN 1080p UPSCALE WEB-DL DDP5.1 H.264 iNTERNAL-GRP"
+	if got != want {
+		t.Fatalf("expected RHD marker tokens with broad delimiters, got %q", got)
+	}
+}
+
+func TestBuildUnit3DNameRHDIgnoresMarkerSubstringsAndGroupTag(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName:    "Marker.Movie.2024.Regradedness.Internalized.Lineage.1080p.WEB-DL.DDP5.1.H.264-LD",
+		Type:           "WEBDL",
+		Tag:            "-LD",
+		Audio:          "DDP5.1",
+		VideoEncode:    "H.264",
+		AudioLanguages: []string{"English"},
+		Release: api.ReleaseInfo{
+			Title:      "Marker Movie",
+			Year:       2024,
+			Resolution: "1080p",
+		},
+	}
+
+	got := buildUnit3DName("RHD", meta, config.TrackerConfig{})
+	for _, marker := range []string{"REGRADED", "UPSCALE", "iNTERNAL", "DUBBED"} {
+		if strings.Contains(got, marker) {
+			t.Fatalf("expected marker substring/group tag not to emit %s, got %q", marker, got)
+		}
+	}
+}
+
+func TestBuildUnit3DNameRHDEmitsPreparedHDR(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Type:           "WEBDL",
+		Tag:            "-GRP",
+		Audio:          "DDP5.1",
+		HDR:            "DV HDR",
+		VideoEncode:    "H.265",
+		AudioLanguages: []string{"German"},
+		Release: api.ReleaseInfo{
+			Title:      "HDR Movie",
+			Year:       2026,
+			Resolution: "2160p",
+		},
+	}
+
+	got := buildUnit3DName("RHD", meta, config.TrackerConfig{})
+	want := "HDR Movie 2026 GERMAN 2160p WEB-DL DDP5.1 DV HDR H.265-GRP"
+	if got != want {
+		t.Fatalf("expected RHD name to include prepared HDR value %q, got %q", want, got)
+	}
+}
+
+func TestResolveRHDLanguageCountsUniqueValidAudioLanguages(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		language []string
+		want     string
+	}{
+		{
+			name:     "blank ignored",
+			language: []string{"", "French", "   "},
+			want:     "FRENCH",
+		},
+		{
+			name:     "duplicate aliases ignored",
+			language: []string{"English", "eng", "English"},
+			want:     "ENGLISH",
+		},
+		{
+			name:     "german aliases ignored",
+			language: []string{"German", "deu", "de-DE"},
+			want:     "GERMAN",
+		},
+		{
+			name:     "dual real languages tagged",
+			language: []string{"English", "French"},
+			want:     "ENGLISH DL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := resolveRHDLanguage(api.PreparedMetadata{AudioLanguages: tt.language})
+			if got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestResolveUnit3DCategoryIDForTrackerTIKForeignMovie(t *testing.T) {
 	meta := api.PreparedMetadata{
 		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},

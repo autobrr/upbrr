@@ -413,6 +413,27 @@ func TestResolveExternalIDsPrecedence(t *testing.T) {
 	}
 }
 
+func TestMapTMDBMetadataClonesLocalizedTitles(t *testing.T) {
+	t.Parallel()
+
+	localizedTitles := map[string]string{"de": "Titel"}
+	result := tmdb.MetadataResult{LocalizedTitles: localizedTitles}
+
+	mapped := mapTMDBMetadata(api.ExternalIDs{TMDBID: 123}, result)
+	if mapped == nil {
+		t.Fatal("expected mapped metadata")
+	}
+	localizedTitles["de"] = "Changed"
+	localizedTitles["fr"] = "Titre"
+
+	if got := mapped.LocalizedTitles["de"]; got != "Titel" {
+		t.Fatalf("expected cloned localized title, got %q", got)
+	}
+	if _, ok := mapped.LocalizedTitles["fr"]; ok {
+		t.Fatalf("expected cloned localized titles to ignore source mutation, got %#v", mapped.LocalizedTitles)
+	}
+}
+
 func TestResolveExternalIDsSkipAutoTorrentIgnoresTrackerSourcedIDs(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Example", Year: 2024}}

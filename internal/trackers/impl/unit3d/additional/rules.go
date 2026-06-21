@@ -190,6 +190,8 @@ func rulesRF() RuleSet {
 	}
 }
 
+// rulesRHD requires German audio for every upload type, including full discs
+// whose RHD release names do not carry language tags.
 func rulesRHD() RuleSet {
 	return RuleSet{
 		BlockAdult:    true,

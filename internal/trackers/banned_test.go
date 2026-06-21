@@ -4,6 +4,7 @@
 package trackers
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -63,6 +64,32 @@ func TestBannedGroupCheckerBHDBuiltins(t *testing.T) {
 		}
 		if !banned {
 			t.Fatalf("expected %s to be banned on BHD", group)
+		}
+	}
+}
+
+func TestBannedGroupCheckerMergesBuiltinsWithCacheFile(t *testing.T) {
+	t.Parallel()
+
+	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	if checker == nil {
+		t.Fatalf("expected checker")
+	}
+	if err := os.MkdirAll(checker.basePath, 0o700); err != nil {
+		t.Fatalf("create banned cache dir: %v", err)
+	}
+	filePath := filepath.Join(checker.basePath, "RHD_banned_groups.json")
+	if err := os.WriteFile(filePath, []byte(`{"banned_groups":"CustomRHD, Another.Custom"}`), 0o600); err != nil {
+		t.Fatalf("write banned groups: %v", err)
+	}
+
+	for _, group := range []string{"MagicX", "CustomRHD", "another.custom"} {
+		banned, err := checker.IsBanned("RHD", group)
+		if err != nil {
+			t.Fatalf("check %s: %v", group, err)
+		}
+		if !banned {
+			t.Fatalf("expected %s to be banned on RHD", group)
 		}
 	}
 }

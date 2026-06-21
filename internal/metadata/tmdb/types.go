@@ -89,8 +89,10 @@ type TranslationResponse struct {
 }
 
 type Translation struct {
-	ISO6391 string          `json:"iso_639_1"`
-	Data    TranslationData `json:"data"`
+	ISO6391 string `json:"iso_639_1"`
+	// ISO31661 identifies the regional translation variant when TMDB supplies one.
+	ISO31661 string          `json:"iso_3166_1"`
+	Data     TranslationData `json:"data"`
 }
 
 type TranslationData struct {
@@ -120,26 +122,27 @@ type MetadataInput struct {
 }
 
 type MetadataResult struct {
-	Title               string
-	Year                int
-	ReleaseDate         string
-	FirstAirDate        string
-	LastAirDate         string
-	IMDbID              int
-	TVDBID              int
-	OriginCountry       []string
-	OriginalLanguage    string
-	OriginalTitle       string
-	Keywords            string
-	Genres              string
-	GenreIDs            string
-	Creators            []string
-	Directors           []string
-	Cast                []string
-	MALID               int
-	Anime               bool
-	Demographic         string
-	RetrievedAKA        string
+	Title            string
+	Year             int
+	ReleaseDate      string
+	FirstAirDate     string
+	LastAirDate      string
+	IMDbID           int
+	TVDBID           int
+	OriginCountry    []string
+	OriginalLanguage string
+	OriginalTitle    string
+	Keywords         string
+	Genres           string
+	GenreIDs         string
+	Creators         []string
+	Directors        []string
+	Cast             []string
+	MALID            int
+	Anime            bool
+	Demographic      string
+	RetrievedAKA     string
+	// LocalizedTitles maps generic language keys and regional variants to TMDB translations.
 	LocalizedTitles     map[string]string
 	Poster              string
 	TMDBPosterPath      string

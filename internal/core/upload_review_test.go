@@ -1052,7 +1052,10 @@ func TestApplyRequestToPreparedMetaDoesNotMutateCachedExternalMetadata(t *testin
 
 	original := api.PreparedMetadata{
 		ExternalMetadata: api.ExternalMetadata{
-			TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
+			TMDB: &api.TMDBMetadata{
+				OriginalLanguage: "en",
+				LocalizedTitles:  map[string]string{"de": "Titel"},
+			},
 		},
 	}
 	updatedLanguage := "ja"
@@ -1065,6 +1068,14 @@ func TestApplyRequestToPreparedMetaDoesNotMutateCachedExternalMetadata(t *testin
 	}
 	if result.ExternalMetadata.TMDB == nil || result.ExternalMetadata.TMDB.OriginalLanguage != "ja" {
 		t.Fatalf("expected request-scoped metadata override to apply, got %#v", result.ExternalMetadata)
+	}
+	result.ExternalMetadata.TMDB.LocalizedTitles["de"] = "Changed"
+	result.ExternalMetadata.TMDB.LocalizedTitles["fr"] = "Titre"
+	if got := original.ExternalMetadata.TMDB.LocalizedTitles["de"]; got != "Titel" {
+		t.Fatalf("expected cached localized title unchanged, got %q", got)
+	}
+	if _, ok := original.ExternalMetadata.TMDB.LocalizedTitles["fr"]; ok {
+		t.Fatalf("expected cached localized titles to ignore request mutation, got %#v", original.ExternalMetadata.TMDB.LocalizedTitles)
 	}
 }
 

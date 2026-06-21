@@ -403,37 +403,41 @@ func (m *BlurayMetadata) SelectCandidate(releaseID string, auto bool, reason str
 	return true
 }
 
+// TMDBMetadata is the shared TMDB metadata snapshot returned to CLI, Wails, and
+// embedded web callers during upload preparation and review.
 type TMDBMetadata struct {
-	TMDBID              int
-	IMDBID              int
-	TVDBID              int
-	Category            string
-	Title               string
-	OriginalTitle       string
-	Year                int
-	ReleaseDate         string
-	FirstAirDate        string
-	LastAirDate         string
-	OriginCountry       []string
-	OriginalLanguage    string
-	Overview            string
-	Poster              string
-	TMDBPosterPath      string
-	Logo                string
-	TMDBLogo            string
-	Backdrop            string
-	TMDBType            string
-	Runtime             int
-	Genres              string
-	GenreIDs            string
-	Creators            []string
-	Directors           []string
-	Cast                []string
-	MALID               int
-	Anime               bool
-	Demographic         string
-	RetrievedAKA        string
-	Keywords            string
+	TMDBID           int
+	IMDBID           int
+	TVDBID           int
+	Category         string
+	Title            string
+	OriginalTitle    string
+	Year             int
+	ReleaseDate      string
+	FirstAirDate     string
+	LastAirDate      string
+	OriginCountry    []string
+	OriginalLanguage string
+	Overview         string
+	Poster           string
+	TMDBPosterPath   string
+	Logo             string
+	TMDBLogo         string
+	Backdrop         string
+	TMDBType         string
+	Runtime          int
+	Genres           string
+	GenreIDs         string
+	Creators         []string
+	Directors        []string
+	Cast             []string
+	MALID            int
+	Anime            bool
+	Demographic      string
+	RetrievedAKA     string
+	Keywords         string
+	// LocalizedTitles maps lowercase language codes and optional regional tags
+	// such as "de" or "pt-BR" to TMDB translation titles.
 	LocalizedTitles     map[string]string
 	YouTube             string
 	Certification       string

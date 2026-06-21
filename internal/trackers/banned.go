@@ -67,8 +67,6 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 				groups[cleaned] = struct{}{}
 			}
 		}
-		c.cache[tracker] = groups
-		return groups, nil
 	}
 
 	filePath := filepath.Join(c.basePath, tracker+"_banned_groups.json")

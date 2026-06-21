@@ -5,6 +5,8 @@ package metadata
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -404,6 +406,26 @@ func TestSourceAndTypeBareWebMissingTypeDefaultsToWebDL(t *testing.T) {
 	}
 	if typeValue != "WEBDL" {
 		t.Fatalf("expected WEBDL type, got %q", typeValue)
+	}
+}
+
+func TestApplyMediaDetailsDoesNotInferHDRFromName(t *testing.T) {
+	miPath := filepath.Join(t.TempDir(), "mediainfo.json")
+	if err := os.WriteFile(miPath, []byte(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Format":"HEVC","Width":"3840","Height":"2160"}]}}`), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	meta, err := svc.ApplyMediaDetails(context.Background(), api.PreparedMetadata{
+		SourcePath:        "Movie.2026.[DV].HDR10+.HLG.2160p.WEB-DL.H.265-GRP.mkv",
+		MediaInfoJSONPath: miPath,
+		Release:           api.ReleaseInfo{Resolution: "2160p"},
+	})
+	if err != nil {
+		t.Fatalf("apply media details: %v", err)
+	}
+	if meta.HDR != "" {
+		t.Fatalf("expected HDR to come only from MediaInfo/BDInfo, got %q", meta.HDR)
 	}
 }
 

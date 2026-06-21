@@ -15,12 +15,18 @@ import (
 )
 
 var (
-	rhdRegradedRegex   = regexp.MustCompile(`(?i)(^|[.\-_ ])regraded([.\-_ ]|$)`)
-	rhdUpscaleRegex    = regexp.MustCompile(`(?i)(^|[.\-_ ])(upscaled?|upscl|upsuhd)([.\-_ ]|$)`)
-	rhdInternalRegex   = regexp.MustCompile(`(?i)(^|[.\-_ ])internal([.\-_ ]|$)`)
-	rhdIncompleteRegex = regexp.MustCompile(`(?i)(^|[.\-_ ])incomplete([.\-_ ]|$)`)
-	rhdDubbedRegex     = regexp.MustCompile(`(?i)(^|[.\-_ ])(dubbed|synced|ac3d|ld|line|mic|md)([.\-_ ]|$)`)
+	rhdRegradedRegex   = rhdTokenRegex(`regraded`)
+	rhdUpscaleRegex    = rhdTokenRegex(`upscaled?`, `upscl`, `upsuhd`)
+	rhdInternalRegex   = rhdTokenRegex(`internal`)
+	rhdIncompleteRegex = rhdTokenRegex(`incomplete`)
+	rhdDubbedRegex     = rhdTokenRegex(`dubbed`, `synced`, `ac3d`, `ld`, `line`, `mic`, `md`)
 )
+
+// rhdTokenRegex matches RHD marker tokens only when they are delimited outside
+// alphanumeric release-name text.
+func rhdTokenRegex(tokens ...string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)(^|[^[:alnum:]])(?:` + strings.Join(tokens, "|") + `)([^[:alnum:]]|$)`)
+}
 
 func siteRHDProfile() unit3DSiteProfile {
 	return unit3DSiteProfile{
@@ -47,19 +53,29 @@ func resolveUnit3DRHDResolutionID(meta api.PreparedMetadata) string {
 	return "10"
 }
 
+// buildRHDName formats RocketHD names. Full-disc names intentionally omit the
+// language tag segment even though RHD upload rules still require German audio.
 func buildRHDName(meta api.PreparedMetadata) string {
 	parts := make([]string, 0)
 	isFullDisc := meta.Type == "DISC" || isDiscType(meta.DiscType)
+	markerText := rhdMarkerText(meta)
 
 	// 1. Title (German title preferred)
 	title := ""
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.LocalizedTitles != nil {
-		if t, ok := meta.ExternalMetadata.TMDB.LocalizedTitles["de"]; ok && t != "" {
-			title = t
+	tmdb := meta.ExternalMetadata.TMDB
+	if tmdb != nil && tmdb.LocalizedTitles != nil {
+		if t, ok := tmdb.LocalizedTitles["de"]; ok && strings.TrimSpace(t) != "" {
+			title = strings.TrimSpace(t)
 		}
 	}
 	if title == "" {
-		title = meta.Release.Title
+		title = strings.TrimSpace(meta.Release.Title)
+	}
+	if title == "" && tmdb != nil {
+		title = strings.TrimSpace(tmdb.Title)
+	}
+	if title == "" && tmdb != nil {
+		title = strings.TrimSpace(tmdb.OriginalTitle)
 	}
 	if title != "" {
 		parts = append(parts, title)
@@ -80,7 +96,7 @@ func buildRHDName(meta api.PreparedMetadata) string {
 	if meta.SeasonStr != "" || meta.EpisodeStr != "" {
 		parts = append(parts, strings.TrimSpace(meta.SeasonStr+meta.EpisodeStr))
 
-		if rhdIncompleteRegex.MatchString(meta.ReleaseName) {
+		if rhdIncompleteRegex.MatchString(markerText) {
 			parts = append(parts, "iNCOMPLETE")
 		}
 	}
@@ -93,7 +109,8 @@ func buildRHDName(meta api.PreparedMetadata) string {
 		parts = append(parts, meta.Is3D)
 	}
 
-	// 4. Language
+	// 4. Language. RHD full-disc naming uses COMPLETE/region/source details
+	// instead of GERMAN/DL/ML language tags.
 	if !isFullDisc {
 		parts = append(parts, resolveRHDLanguage(meta))
 	}
@@ -108,10 +125,10 @@ func buildRHDName(meta api.PreparedMetadata) string {
 		parts = append(parts, meta.Release.Resolution)
 
 		// Rocket-HD naming requires REGRADED and UPSCALE tags after resolution
-		if rhdRegradedRegex.MatchString(meta.ReleaseName) {
+		if rhdRegradedRegex.MatchString(markerText) {
 			parts = append(parts, "REGRADED")
 		}
-		if rhdUpscaleRegex.MatchString(meta.ReleaseName) {
+		if rhdUpscaleRegex.MatchString(markerText) {
 			parts = append(parts, "UPSCALE")
 		}
 	}
@@ -158,7 +175,7 @@ func buildRHDName(meta api.PreparedMetadata) string {
 	}
 
 	// 13. INTERNAL
-	if rhdInternalRegex.MatchString(meta.ReleaseName) {
+	if rhdInternalRegex.MatchString(markerText) {
 		parts = append(parts, "iNTERNAL")
 	}
 
@@ -216,16 +233,39 @@ func resolveRHDTypeAndSource(meta api.PreparedMetadata) []string {
 	return parts
 }
 
+// rhdMarkerText strips the terminal release group tag before scanning for RHD
+// marker tokens, so short group tags do not look like language or source flags.
+func rhdMarkerText(meta api.PreparedMetadata) string {
+	value := strings.TrimSpace(meta.ReleaseName)
+	tag := strings.TrimSpace(meta.Tag)
+	if value == "" || tag == "" {
+		return value
+	}
+	tag = strings.TrimPrefix(tag, "-")
+	if tag == "" {
+		return value
+	}
+	for _, suffix := range []string{"-" + tag, "." + tag, "_" + tag, " " + tag} {
+		if strings.HasSuffix(strings.ToLower(value), strings.ToLower(suffix)) {
+			return strings.TrimSpace(value[:len(value)-len(suffix)])
+		}
+	}
+	return value
+}
+
+// resolveRHDLanguage builds the RHD language segment from unique parseable audio
+// languages, with German subtitle-only and dubbed markers handled separately.
 func resolveRHDLanguage(meta api.PreparedMetadata) string {
+	audioLanguages := normalizedRHDAudioLanguages(meta.AudioLanguages)
 	hasGermanAudio := false
-	for _, l := range meta.AudioLanguages {
+	for _, l := range audioLanguages {
 		if isGermanLanguage(l) {
 			hasGermanAudio = true
 			break
 		}
 	}
 
-	numAudio := len(meta.AudioLanguages)
+	numAudio := len(audioLanguages)
 	var baseTag string
 
 	if hasGermanAudio {
@@ -245,13 +285,13 @@ func resolveRHDLanguage(meta api.PreparedMetadata) string {
 
 		// Use main language name
 		if numAudio > 0 {
-			baseTag = getRHDLanguageName(meta.AudioLanguages[0])
+			baseTag = getRHDLanguageName(audioLanguages[0])
 		} else {
 			baseTag = "ENGLISH"
 		}
 	}
 
-	isDubbed := rhdDubbedRegex.MatchString(meta.ReleaseName)
+	isDubbed := rhdDubbedRegex.MatchString(rhdMarkerText(meta))
 	if isDubbed {
 		baseTag += " DUBBED"
 	}
@@ -262,6 +302,30 @@ func resolveRHDLanguage(meta api.PreparedMetadata) string {
 		return baseTag + " ML"
 	}
 	return baseTag
+}
+
+// normalizedRHDAudioLanguages returns first-seen base language subtags, dropping
+// blank, unparsable, undefined, and duplicate audio entries before DL/ML counting.
+func normalizedRHDAudioLanguages(values []string) []string {
+	languages := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		tag, ok := parseLanguageTag(value)
+		if !ok {
+			continue
+		}
+		base, _ := tag.Base()
+		key := base.String()
+		if key == "" || key == "und" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		languages = append(languages, key)
+	}
+	return languages
 }
 
 func isGermanLanguage(l string) bool {

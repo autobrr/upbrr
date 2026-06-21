@@ -7,6 +7,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -71,6 +73,35 @@ func TestSceneDetectorSRRDBFetchesIMDbWhenSearchOmitsIt(t *testing.T) {
 	}
 	if result.IMDBID != 7654321 {
 		t.Fatalf("unexpected imdb id: %d", result.IMDBID)
+	}
+}
+
+func TestSceneDetectorSRRDBNFOFailureKeepsSceneWithoutNFOPath(t *testing.T) {
+	handler := http.NewServeMux()
+	handler.HandleFunc("/v1/search/r:Example.Release", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resultsCount":1,"results":[{"release":"Example.Release.2024.1080p-WEB","imdbId":"1234567","hasNFO":"yes"}]}`))
+	})
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	cacheDir := t.TempDir()
+	nfoDir := filepath.Join(t.TempDir(), "nfo-file")
+	if err := os.WriteFile(nfoDir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write nfo dir placeholder: %v", err)
+	}
+	detector := newSRRDBDetector(server.Client(), server.URL, cacheDir, nfoDir)
+
+	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene {
+		t.Fatalf("expected scene match")
+	}
+	if result.NFOPath != "" {
+		t.Fatalf("expected unavailable NFO path after save failure, got %q", result.NFOPath)
 	}
 }
 

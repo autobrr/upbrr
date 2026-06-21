@@ -134,6 +134,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		translationsErr error
 	)
 
+	requestCtx := ctx
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error {
 		endpoint := path + "/external_ids"
@@ -208,13 +209,22 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	if translationsErr == nil {
 		result.LocalizedTitles = make(map[string]string)
 		for _, t := range translations.Translations {
-			title := metautil.FirstNonEmpty(t.Data.Title, t.Data.Name)
+			title := metautil.FirstNonEmptyTrimmed(t.Data.Title, t.Data.Name)
 			if title != "" {
-				result.LocalizedTitles[t.ISO6391] = title
+				for _, key := range localizedTitleKeys(t) {
+					result.LocalizedTitles[key] = title
+				}
 			}
 		}
-	} else if c.logger != nil {
-		c.logger.Warnf("tmdb: translations lookup failed: %v", translationsErr)
+	} else {
+		if c.logger != nil {
+			c.logger.Warnf("tmdb: translations lookup failed: %v", translationsErr)
+		}
+		if title, err := c.fetchLocalizedTitle(requestCtx, path, "de-DE"); err == nil && title != "" {
+			result.LocalizedTitles = map[string]string{"de": title}
+		} else if err != nil && c.logger != nil {
+			c.logger.Warnf("tmdb: german title fallback lookup failed: %v", err)
+		}
 	}
 
 	if input.AddLogo && imagesErr == nil {
@@ -568,6 +578,31 @@ func parseYearFromTitle(title string) int {
 		return 0
 	}
 	return year
+}
+
+// fetchLocalizedTitle loads one TMDB detail response in a specific language and
+// returns the localized title/name value when present.
+func (c *Client) fetchLocalizedTitle(ctx context.Context, path, language string) (string, error) {
+	var localized mediaResponse
+	if err := c.getJSON(ctx, path, map[string]string{"api_key": c.apiKey, "language": language}, &localized); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(metautil.FirstNonEmpty(localized.Title, localized.Name)), nil
+}
+
+// localizedTitleKeys returns the historical generic language key and adds a
+// regional alias when TMDB supplies a country code for variant-specific titles.
+func localizedTitleKeys(t Translation) []string {
+	language := strings.ToLower(strings.TrimSpace(t.ISO6391))
+	if language == "" {
+		return nil
+	}
+	keys := []string{language}
+	region := strings.ToUpper(strings.TrimSpace(t.ISO31661))
+	if region != "" {
+		keys = append(keys, language+"-"+region)
+	}
+	return keys
 }
 
 func isAnime(language string, genres []genre) bool {

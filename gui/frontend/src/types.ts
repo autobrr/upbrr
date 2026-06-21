@@ -121,6 +121,8 @@ export type TMDBMetadata = {
   Demographic: string;
   RetrievedAKA: string;
   Keywords: string;
+  /** Maps TMDB translation language keys, such as "de" or "pt-BR", to localized titles. */
+  LocalizedTitles: Record<string, string>;
   YouTube: string;
   Certification: string;
   ProductionCompanies: TMDBCompany[];

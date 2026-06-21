@@ -1160,7 +1160,7 @@ func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBM
 		Demographic:         result.Demographic,
 		RetrievedAKA:        result.RetrievedAKA,
 		Keywords:            result.Keywords,
-		LocalizedTitles:     result.LocalizedTitles,
+		LocalizedTitles:     cloneStringMap(result.LocalizedTitles),
 		YouTube:             result.YouTube,
 		Certification:       result.Certification,
 		ProductionCompanies: mapTMDBCompanies(result.ProductionCompanies),
@@ -1169,6 +1169,18 @@ func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBM
 		IMDbMismatch:        result.IMDbMismatch,
 		MismatchedIMDbID:    result.MismatchedIMDbID,
 	}
+}
+
+// cloneStringMap returns a detached copy of values, preserving nil for empty input.
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func mapIMDBMetadata(info imdb.Info) *api.IMDBMetadata {
