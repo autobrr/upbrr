@@ -279,7 +279,8 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	if err != nil {
 		return 0, err
 	}
-	if _, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false); explicitEmpty {
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	if explicitEmpty {
 		c.logger.Debugf("core: upload prepared explicit trackers resolved empty source=%s", meta.SourcePath)
 		return 0, nil
 	}
@@ -311,8 +312,19 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 
 	if req.Options.DryRun || req.Options.Debug {
 		if !meta.Options.NoSeed {
-			if err := c.injectPreparedTorrent(ctx, req, meta, torrent); err != nil {
-				return 0, err
+			if len(resolvedTrackers) == 0 {
+				if err := c.injectPreparedTorrent(ctx, req, meta, torrent); err != nil {
+					return 0, err
+				}
+			} else {
+				entries, err := c.services.Trackers.BuildUploadDryRun(ctx, meta, resolvedTrackers)
+				if err != nil {
+					return 0, fmt.Errorf("core: %w", err)
+				}
+				annotateDryRunReleaseNames(meta, entries)
+				if err := c.injectTrackerDryRunTorrents(ctx, req, meta, entries, torrent); err != nil {
+					return 0, err
+				}
 			}
 		}
 		c.logger.Debugf("core: dry-run or debug enabled, skipping tracker upload")
