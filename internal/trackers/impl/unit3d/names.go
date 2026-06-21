@@ -268,7 +268,7 @@ func isNoGroupTag(tag string) bool {
 // TV names drop episode-title text when it appears before the resolution, while
 // non-TV names prefer the IMDb year when it disagrees with the parsed release year.
 func buildZNTHName(name string, meta api.PreparedMetadata) string {
-	category := resolveZNTHNameCategory(meta)
+	category := resolveUnit3DCategory(meta)
 	if category == "TV" && strings.TrimSpace(meta.EpisodeTitle) != "" {
 		resolution := resolveResolution(meta)
 		if resolution != "" {
@@ -287,27 +287,6 @@ func buildZNTHName(name string, meta api.PreparedMetadata) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
-}
-
-// resolveZNTHNameCategory uses the same recognized-explicit-then-parsed
-// category precedence as the Unit3D upload payload when applying ZNTH naming.
-func resolveZNTHNameCategory(meta api.PreparedMetadata) string {
-	if category := canonicalUnit3DCategory(meta.ExternalIDs.Category); category != "" {
-		return category
-	}
-	if category := canonicalUnit3DCategory(meta.MediaInfoCategory); category != "" {
-		return category
-	}
-	if category := canonicalUnit3DCategory(meta.Release.Category); category != "" {
-		return category
-	}
-	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
-		return "TV"
-	}
-	if hasSeasonEpisode(meta.ReleaseName) {
-		return "TV"
-	}
-	return "MOVIE"
 }
 
 // replaceZNTHEpisodeTitle removes the episode-title segment only when its
