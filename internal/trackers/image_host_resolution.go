@@ -112,11 +112,8 @@ func ensureDescriptionImageHostWithData(
 	}
 
 	if !policy.required {
-		preferredHost := firstPreferredDescriptionImageHost(preferredHosts)
-		selectionPolicy = imageHostPolicy{}
-		if preferredHost != "" {
-			selectionPolicy.preferred = []string{preferredHost}
-		}
+		selectionPolicy = optionalImageHostSelectionPolicy(policy, preferredHosts...)
+		preferredHost := preferredHost(selectionPolicy)
 		screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy)
 		if err == nil && len(screenshots) > 0 {
 			feedback.SelectedHost = host
@@ -132,7 +129,7 @@ func ensureDescriptionImageHostWithData(
 		if len(screenshots) > 0 || preferredHost == "" {
 			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
 		}
-		policy = newPreferredImageHostPolicy(preferredHost)
+		policy = optionalImageHostUploadPolicy(policy, preferredHosts...)
 		selectionPolicy = reusableImageHostSelectionPolicy(policy, preferredHosts...)
 	}
 
@@ -311,6 +308,39 @@ func firstPreferredDescriptionImageHost(hosts []string) string {
 		}
 	}
 	return ""
+}
+
+// optionalImageHostSelectionPolicy keeps preferred host ordering for optional
+// image-host reuse without restricting the set of acceptable screenshot hosts.
+func optionalImageHostSelectionPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
+	return imageHostPolicy{
+		preferred: optionalImageHostPreferredHosts(policy, preferredHosts...),
+	}
+}
+
+// optionalImageHostUploadPolicy promotes optional preferences into an upload
+// policy once reuse cannot satisfy the requested preferred host.
+func optionalImageHostUploadPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
+	hosts := optionalImageHostPreferredHosts(policy, preferredHosts...)
+	for _, host := range policy.uploadHosts {
+		if supportedUploadImageHost(host) {
+			hosts = appendUniqueHost(hosts, host)
+		}
+	}
+	if len(hosts) == 0 {
+		return policy
+	}
+	return newPreferredImageHostPolicy(hosts[0], hosts[1:]...)
+}
+
+// optionalImageHostPreferredHosts returns policy preferences with an explicit
+// preferred host first, preserving existing fallback order and deduping hosts.
+func optionalImageHostPreferredHosts(policy imageHostPolicy, preferredHosts ...string) []string {
+	hosts := append([]string(nil), policy.preferred...)
+	if host := firstPreferredDescriptionImageHost(preferredHosts); host != "" {
+		hosts = prependHost(host, hosts)
+	}
+	return hosts
 }
 
 func imageHostRequirementLabel(policy imageHostPolicy) string {
