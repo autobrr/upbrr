@@ -541,6 +541,89 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	}
 }
 
+func TestTrackersConfigCZTPasskeyFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+		Trackers: TrackersConfig{
+			DefaultTrackers: CSVList{"CZT"},
+			Trackers: map[string]TrackerConfig{
+				"CZT": {
+					URL:         "https://czteam.example",
+					APIKey:      "service-token",
+					Passkey:     "user-passkey",
+					AnnounceURL: "https://should-not-be-here",
+				},
+			},
+		},
+	}
+
+	jsonPayload, err := ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("export json: %v", err)
+	}
+	jsonRoundTrip, err := ImportFromJSON(jsonPayload)
+	if err != nil {
+		t.Fatalf("import json: %v", err)
+	}
+	jsonCZT := jsonRoundTrip.Trackers.Trackers["CZT"]
+	if jsonCZT.URL != "" {
+		t.Fatalf("json CZT should not include URL, got %q", jsonCZT.URL)
+	}
+	if jsonCZT.APIKey != "" {
+		t.Fatalf("json CZT should not include APIKey, got %q", jsonCZT.APIKey)
+	}
+	if jsonCZT.Passkey != "user-passkey" {
+		t.Fatalf("json CZT Passkey mismatch: got %q", jsonCZT.Passkey)
+	}
+	if jsonCZT.AnnounceURL != "" {
+		t.Fatalf("json CZT should not include AnnounceURL, got %q", jsonCZT.AnnounceURL)
+	}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.yaml")
+	if err := ExportToPlaintextYAML(cfg, path); err != nil {
+		t.Fatalf("export yaml: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read yaml: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "passkey: user-passkey") {
+		t.Fatalf("yaml export missing CZT passkey in:\n%s", text)
+	}
+	if strings.Contains(text, "url: https://czteam.example") {
+		t.Fatalf("yaml CZT should not include url")
+	}
+	if strings.Contains(text, "api_key: service-token") {
+		t.Fatalf("yaml CZT should not include api_key")
+	}
+	if strings.Contains(text, "announce_url: https://should-not-be-here") {
+		t.Fatalf("yaml CZT should not include announce_url")
+	}
+
+	yamlRoundTrip, err := ImportFromYAML(path)
+	if err != nil {
+		t.Fatalf("import yaml: %v", err)
+	}
+	yamlCZT := yamlRoundTrip.Trackers.Trackers["CZT"]
+	if yamlCZT.URL != "" {
+		t.Fatalf("yaml CZT should not include URL, got %q", yamlCZT.URL)
+	}
+	if yamlCZT.APIKey != "" {
+		t.Fatalf("yaml CZT should not include APIKey, got %q", yamlCZT.APIKey)
+	}
+	if yamlCZT.Passkey != "user-passkey" {
+		t.Fatalf("yaml CZT Passkey mismatch: got %q", yamlCZT.Passkey)
+	}
+	if yamlCZT.AnnounceURL != "" {
+		t.Fatalf("yaml CZT should not include AnnounceURL, got %q", yamlCZT.AnnounceURL)
+	}
+}
+
 func TestTrackersConfigPreferredTrackerRoundTripJSON(t *testing.T) {
 	t.Parallel()
 
@@ -687,6 +770,39 @@ func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *te
 
 	if got := cfg.Trackers.Trackers["BTN"].APIKey; got != "legacy-token" {
 		t.Fatalf("expected legacy BTN api token to backfill tracker config, got %q", got)
+	}
+}
+
+func TestMergeMissingTrackerDefaultsClearsCZTSensitiveFields(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"CZT": {APIKey: "stale-token", URL: "https://stale.example", AnnounceURL: "https://czteam.me/announce.php?passkey=stale", Passkey: "passkey"},
+				"czt": {AnnounceURL: "https://czteam.me/announce.php?passkey=lowercase"},
+			},
+		},
+	}
+
+	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	czt := cfg.Trackers.Trackers["CZT"]
+	if czt.APIKey != "" {
+		t.Fatalf("expected CZT APIKey to be cleared, got %q", czt.APIKey)
+	}
+	if czt.URL != "" {
+		t.Fatalf("expected CZT URL to be cleared, got %q", czt.URL)
+	}
+	if czt.AnnounceURL != "" {
+		t.Fatalf("expected CZT AnnounceURL to be cleared, got %q", czt.AnnounceURL)
+	}
+	if czt.Passkey != "passkey" {
+		t.Fatalf("expected CZT passkey preserved, got %q", czt.Passkey)
+	}
+	if lower := cfg.Trackers.Trackers["czt"]; lower.AnnounceURL != "" {
+		t.Fatalf("expected lowercase CZT AnnounceURL to be cleared, got %q", lower.AnnounceURL)
 	}
 }
 

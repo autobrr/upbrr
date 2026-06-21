@@ -4,6 +4,7 @@
 package trackers
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -30,6 +31,7 @@ var knownNonUnit3DTrackers = map[string]struct{}{
 	"BT":     {},
 	"BTN":    {},
 	"CZ":     {},
+	"CZT":    {},
 	"DC":     {},
 	"FF":     {},
 	"FL":     {},
@@ -126,6 +128,23 @@ func IsUnit3DTracker(name string) bool {
 
 func IsNonUnit3DTracker(name string) bool {
 	return TrackerKind(name) == KindNonUnit3D
+}
+
+// NeedsPTBRLocalizedMetadata reports whether a trimmed tracker name is one of
+// the exact trackers that consumes pt-BR TMDB data.
+func NeedsPTBRLocalizedMetadata(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bjs", "bt", "asc":
+		return true
+	default:
+		return false
+	}
+}
+
+// AnyNeedsPTBRLocalizedMetadata reports whether any tracker name resolves to an
+// exact pt-BR localized metadata consumer.
+func AnyNeedsPTBRLocalizedMetadata(names []string) bool {
+	return slices.ContainsFunc(names, NeedsPTBRLocalizedMetadata)
 }
 
 func TrackerKind(name string) Kind {

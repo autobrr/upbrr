@@ -6,7 +6,7 @@
 # consumed (see below), so they do not need global declarations.
 ARG GO_VERSION=1.26.4
 
-FROM --platform=$BUILDPLATFORM node:20-bookworm AS frontend
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
 
 WORKDIR /src/gui/frontend
 
@@ -16,7 +16,7 @@ RUN corepack enable && pnpm install --frozen-lockfile
 COPY gui/frontend/ ./
 RUN pnpm run build:bundle
 
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS cli-builder
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS cli-builder
 
 WORKDIR /src
 
@@ -45,19 +45,15 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
         CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="$goarm" \
             go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildIdentifier=${BUILD_ID}" -o /out/upbrr ./cmd/upbrr
 
-FROM debian:bookworm-slim
+FROM alpine:3.23
 
-# curl is used by the HEALTHCHECK below; debian-slim ships no HTTP client.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    ca-certificates \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# curl is used by the HEALTHCHECK below; the alpine base ships no HTTP client.
+RUN apk add --no-cache ca-certificates ffmpeg mesa-vulkan-swrast vulkan-loader curl
 
 # Run as a non-root user and give it a writable config dir. chown happens before
 # VOLUME so anonymous/named volumes inherit the ownership.
-RUN groupadd --gid 1000 upbrr \
-    && useradd --uid 1000 --gid 1000 --shell /usr/sbin/nologin --no-create-home upbrr \
+RUN addgroup -g 1000 upbrr \
+    && adduser -u 1000 -G upbrr -s /sbin/nologin -D -H upbrr \
     && mkdir -p /config \
     && chown upbrr:upbrr /config
 

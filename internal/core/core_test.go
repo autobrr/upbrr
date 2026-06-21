@@ -30,6 +30,15 @@ func containsCoreString(values []string, target string) bool {
 	return false
 }
 
+func hasUploadProgress(updates []api.UploadProgressUpdate, task string, status string) bool {
+	for _, update := range updates {
+		if update.Task == task && update.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFirstRequestedTracker(t *testing.T) {
 	t.Parallel()
 
@@ -294,6 +303,126 @@ func TestRunUploadMultiplePaths(t *testing.T) {
 	}
 	if trackerCalls := trackerSvc.calls; trackerCalls != 2 {
 		t.Fatalf("expected 2 tracker calls, got %d", trackerCalls)
+	}
+}
+
+func TestRunUploadPreparedReturnsAccumulatedCountWhenContextCancelsBetweenPaths(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := &stubTrackers{
+		uploadFunc: func(context.Context, api.PreparedMetadata) (api.UploadSummary, error) {
+			cancel()
+			return api.UploadSummary{Uploaded: 1}, nil
+		},
+	}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+	core.storeDupeCache("/tmp/b", "", api.PreparedMetadata{SourcePath: "/tmp/b"})
+
+	result, err := core.RunUploadPrepared(ctx, api.Request{
+		Paths: []string{"/tmp/a", "/tmp/b"},
+		Mode:  api.ModeGUI,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation error, got %v", err)
+	}
+	if result.UploadedCount != 1 {
+		t.Fatalf("expected first path upload to be counted, got %d", result.UploadedCount)
+	}
+	if tracker.calls != 1 {
+		t.Fatalf("expected upload to stop before second tracker call, got %d calls", tracker.calls)
+	}
+}
+
+func TestRunUploadPreparedReturnsAccumulatedCountWhenLaterCacheMisses(t *testing.T) {
+	t.Parallel()
+
+	tracker := &stubTrackers{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a", "/tmp/b"},
+		Mode:  api.ModeGUI,
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires prepared metadata") {
+		t.Fatalf("expected prepared metadata error, got %v", err)
+	}
+	if result.UploadedCount != 1 {
+		t.Fatalf("expected first path upload to be counted, got %d", result.UploadedCount)
+	}
+	if tracker.calls != 1 {
+		t.Fatalf("expected only first path upload, got %d calls", tracker.calls)
+	}
+}
+
+func TestRunUploadPreparedReturnsAccumulatedCountWhenLaterMenuImportFails(t *testing.T) {
+	t.Parallel()
+
+	tracker := &stubTrackers{}
+	repo := &menuImportRepo{failListOnCall: 2}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: t.TempDir()},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: repo,
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+	core.storeDupeCache("/tmp/b", "", api.PreparedMetadata{SourcePath: "/tmp/b"})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a", "/tmp/b"},
+		Mode:  api.ModeGUI,
+		ScreenshotOverrides: api.ScreenshotOverrides{
+			MenuPaths: []string{t.TempDir()},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "import menu images failed") {
+		t.Fatalf("expected menu import error, got %v", err)
+	}
+	if result.UploadedCount != 1 {
+		t.Fatalf("expected first path upload to be counted, got %d", result.UploadedCount)
+	}
+	if tracker.calls != 1 {
+		t.Fatalf("expected second path to fail before upload, got %d tracker calls", tracker.calls)
 	}
 }
 
@@ -2675,6 +2804,159 @@ func TestRunUploadPreparedInjectsEachUploadedTrackerURL(t *testing.T) {
 	}
 }
 
+func TestRunUploadPreparedPreservesUploadedCountWhenTrackerInjectionFails(t *testing.T) {
+	t.Parallel()
+
+	injectErr := errors.New("inject failed")
+	tracker := &stubTrackers{
+		summary: api.UploadSummary{
+			Uploaded: 2,
+			UploadedTorrents: []api.UploadedTorrent{
+				{Tracker: "AITHER", DownloadURL: "https://aither.cc/torrent/download/111"},
+			},
+		},
+	}
+	client := &stubClient{injectErr: injectErr}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a", Trackers: []string{"AITHER"}})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if !errors.Is(err, injectErr) {
+		t.Fatalf("expected injection error, got %v", err)
+	}
+	if result.UploadedCount != 2 {
+		t.Fatalf("expected accepted uploads to be counted, got %d", result.UploadedCount)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected one injection attempt, got %d", client.calls)
+	}
+}
+
+func TestRunUploadPreparedPreservesUploadedCountWithCancellationError(t *testing.T) {
+	t.Parallel()
+
+	meta := &stubMeta{}
+	tracker := &stubTrackers{
+		summary: api.UploadSummary{
+			Uploaded: 1,
+			UploadedTorrents: []api.UploadedTorrent{{
+				Tracker:     "AITHER",
+				DownloadURL: "https://aither.cc/torrent/download/1234",
+			}},
+		},
+		uploadErr: context.Canceled,
+	}
+	client := &stubClient{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   meta,
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	prepared := api.PreparedMetadata{SourcePath: "/tmp/a", Trackers: []string{"AITHER"}}
+	core.storeDupeCache("/tmp/a", "", prepared)
+
+	var progress []api.UploadProgressUpdate
+	ctx := api.WithUploadProgressReporter(context.Background(), func(update api.UploadProgressUpdate) {
+		progress = append(progress, update)
+	})
+	result, err := core.RunUploadPrepared(ctx, api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation error, got %v", err)
+	}
+	if result.UploadedCount != 1 {
+		t.Fatalf("expected completed upload to be counted, got %d", result.UploadedCount)
+	}
+	if client.calls != 0 {
+		t.Fatalf("expected no tracker artifact injection, got %d calls", client.calls)
+	}
+	if hasUploadProgress(progress, "tracker_upload", "completed") {
+		t.Fatalf("expected canceled tracker upload to skip completed progress, got %#v", progress)
+	}
+	if !hasUploadProgress(progress, "tracker_upload", "failed") {
+		t.Fatalf("expected canceled tracker upload to emit failed progress, got %#v", progress)
+	}
+	if hasUploadProgress(progress, "client_injection", "running") {
+		t.Fatalf("expected canceled tracker artifacts not to start client injection, got %#v", progress)
+	}
+}
+
+func TestRunUploadPreparedPreservesUploadedCountWhenCrossSeedInjectionFails(t *testing.T) {
+	t.Parallel()
+
+	injectErr := errors.New("cross-seed inject failed")
+	tracker := &stubTrackers{summary: api.UploadSummary{Uploaded: 1}}
+	client := &stubClient{injectErr: injectErr}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x"},
+			PostUpload:         config.PostUploadConfig{CrossSeeding: true},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Trackers:   []string{"AITHER"},
+		CrossSeedTorrents: []api.UploadedTorrent{{
+			Tracker:     "HDB",
+			DownloadURL: "https://hdbits.org/download.php/file?id=333&passkey=abc",
+		}},
+	})
+
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if !errors.Is(err, injectErr) {
+		t.Fatalf("expected cross-seed injection error, got %v", err)
+	}
+	if result.UploadedCount != 1 {
+		t.Fatalf("expected accepted upload to be counted, got %d", result.UploadedCount)
+	}
+	if client.calls != 1 {
+		t.Fatalf("expected one cross-seed injection attempt, got %d", client.calls)
+	}
+}
+
 func TestRunUploadPreparedForwardsTrackerTorrentPath(t *testing.T) {
 	t.Parallel()
 
@@ -2792,7 +3074,7 @@ func TestRunUploadPreparedInjectsDupeMatchedCrossSeedTorrents(t *testing.T) {
 	}
 }
 
-func TestRunUploadPreparedSkipsTrackerInjectionAfterFailedUploadButInjectsCrossSeed(t *testing.T) {
+func TestRunUploadPreparedRejectsNegativeUploadSummaryBeforeClientInjection(t *testing.T) {
 	t.Parallel()
 
 	meta := &stubMeta{}
@@ -2833,25 +3115,18 @@ func TestRunUploadPreparedSkipsTrackerInjectionAfterFailedUploadButInjectsCrossS
 	}
 	core.storeDupeCache("/tmp/a", "", prepared)
 
-	_, err = core.RunUploadPrepared(context.Background(), api.Request{
+	result, err := core.RunUploadPrepared(context.Background(), api.Request{
 		Paths: []string{"/tmp/a"},
 		Mode:  api.ModeGUI,
 	})
 	if err == nil || !strings.Contains(err.Error(), "upload summary invalid: -1") {
 		t.Fatalf("expected invalid upload summary error, got %v", err)
 	}
-	if len(client.injected) != 1 {
-		t.Fatalf("expected only cross-seed injection, got %#v", client.injected)
+	if result.UploadedCount != 0 {
+		t.Fatalf("expected invalid summary not to count uploads, got %d", result.UploadedCount)
 	}
-	injected := client.injected[0]
-	if !injected.CrossSeed {
-		t.Fatalf("expected cross-seed injection")
-	}
-	if injected.Tracker != "HDB" {
-		t.Fatalf("expected HDB cross-seed injection, got %q", injected.Tracker)
-	}
-	if injected.URL != "https://hdbits.org/download.php/file?id=333&passkey=abc" {
-		t.Fatalf("expected cross-seed download URL, got %q", injected.URL)
+	if len(client.injected) != 0 {
+		t.Fatalf("expected invalid summary to skip all client injection, got %#v", client.injected)
 	}
 }
 
@@ -3363,6 +3638,24 @@ func TestRunUploadPreparedFiltersRuleFailuresPerTracker(t *testing.T) {
 }
 
 type stubRepo struct{}
+
+type menuImportRepo struct {
+	stubRepo
+	listCalls      int
+	failListOnCall int
+}
+
+func (r *menuImportRepo) ListFinalSelections(context.Context, string) ([]db.ScreenshotFinalSelection, error) {
+	r.listCalls++
+	if r.failListOnCall > 0 && r.listCalls == r.failListOnCall {
+		return nil, errors.New("menu import list failed")
+	}
+	return nil, nil
+}
+
+func (r *menuImportRepo) SaveFinalSelections(context.Context, string, []db.ScreenshotFinalSelection) error {
+	return nil
+}
 
 type dryRunPreviewRepo struct {
 	stubRepo
@@ -3877,12 +4170,16 @@ type stubClient struct {
 	searchCalls  int
 	searchResult api.ClientSearchResult
 	searchErr    error
+	injectErr    error
 	injected     []api.TorrentResult
 }
 
 func (s *stubClient) Inject(_ context.Context, _ api.PreparedMetadata, torrent api.TorrentResult) error {
 	s.calls++
 	s.injected = append(s.injected, torrent)
+	if s.injectErr != nil {
+		return s.injectErr
+	}
 	return nil
 }
 
@@ -3913,11 +4210,19 @@ type stubTrackers struct {
 	lastTrackers  []string
 	dryRunEntries []api.TrackerDryRunEntry
 	summary       api.UploadSummary
+	uploadErr     error
+	uploadFunc    func(context.Context, api.PreparedMetadata) (api.UploadSummary, error)
 }
 
-func (s *stubTrackers) Upload(_ context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
+func (s *stubTrackers) Upload(ctx context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
 	s.calls++
 	s.lastMeta = meta
+	if s.uploadFunc != nil {
+		return s.uploadFunc(ctx, meta)
+	}
+	if s.uploadErr != nil {
+		return s.summary, s.uploadErr
+	}
 	if s.summary.Uploaded == 0 {
 		return api.UploadSummary{
 			Uploaded: 1,

@@ -148,11 +148,13 @@ NOTE: with cli `--debug` works as expected. Additionally, the printed feedback (
 
 ### Run with Docker Compose
 
-A ready-to-use example lives in [`docker-compose.yml`](docker-compose.yml). The image
-serves the web UI on all interfaces by default and stores its config and database in the
-`/config` volume:
+A ready-to-use example lives in
+[`example-docker-compose.yml`](example-docker-compose.yml). The image serves the web UI on
+all interfaces by default and stores its config and database in the `/config` volume. Copy
+the example to `docker-compose.yml` (or point `-f` at it) and start it:
 
 ```bash
+cp example-docker-compose.yml docker-compose.yml
 docker compose up -d
 ```
 

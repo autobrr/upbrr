@@ -441,6 +441,29 @@ type TMDBMetadata struct {
 	Networks            []TMDBNetwork
 	IMDbMismatch        bool
 	MismatchedIMDbID    int
+	Localized           map[string]TMDBLocalizedData
+}
+
+type TMDBLocalizedData struct {
+	Title           string
+	Overview        string
+	EpisodeTitle    string
+	EpisodeOverview string
+	TrailerURL      string
+	Genres          string
+	ContentRating   string
+	Poster          string
+}
+
+// ExtractLocalizedPTBR returns the pt-BR localized data from the given
+// metadata, or an empty value when none is available.
+func ExtractLocalizedPTBR(meta PreparedMetadata) TMDBLocalizedData {
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if v, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			return v
+		}
+	}
+	return TMDBLocalizedData{}
 }
 
 type TMDBCompany struct {

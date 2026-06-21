@@ -27,7 +27,7 @@ services:
     # user: "1000:1000"
 
     environment:
-      - TZ=America/Chicago
+      - TZ=UTC # set to your local timezone, e.g. America/Chicago
       # If you change the served port, also update the healthcheck target, e.g.:
       # - UPBRR_HEALTHCHECK_URL=http://127.0.0.1:8080/api/auth/status
 

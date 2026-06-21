@@ -37,6 +37,7 @@ var trackerUploadTorrentSpecs = map[string]trackerUploadTorrentSpec{
 	"BJS":   {source: "BJ"},
 	"BT":    {source: "BT"},
 	"CZ":    {source: "CinemaZ", defaultAnnounce: "https://tracker.cinemaz.to/announce"},
+	"CZT":   {source: "CzT"},
 	"DC":    {source: "DigitalCore.club"},
 	"FF":    {source: "FunFile"},
 	"FL":    {source: "FL"},

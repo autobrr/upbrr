@@ -77,8 +77,7 @@ func extractBJSResults(baseURL string, root *xhtml.Node, meta api.PreparedMetada
 }
 
 func updateBJSContext(row *xhtml.Node, currentSeason *string, currentResolution *string, currentEpisode *string, currentPack *bool) bool {
-	classes := strings.Fields(attrValueHTML(row, "class"))
-	for _, className := range classes {
+	for className := range strings.FieldsSeq(attrValueHTML(row, "class")) {
 		switch className {
 		case "resolution_header":
 			if match := regexp.MustCompile(`(?i)(\d{3,4}p|\d{3,4}i)`).FindStringSubmatch(nodeTextHTML(row)); len(match) == 2 {

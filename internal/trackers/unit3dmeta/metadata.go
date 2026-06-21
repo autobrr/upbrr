@@ -31,7 +31,7 @@ func initTrackers() {
 			"FRIKI", "HHD", "IHD", "ITT", "LCD", "LDU", "LST", "LT",
 			"LUME", "OE", "OTW", "PT", "PTT", "R4E", "RAS", "RF",
 			"SAM", "SHRI", "SP", "STC", "TIK", "TLZ", "TOS", "TTR",
-			"ULCX", "UTP", "YUS",
+			"ULCX", "UTP", "YUS", "ZNTH",
 		}
 
 		for _, name := range unit3DTrackers {
