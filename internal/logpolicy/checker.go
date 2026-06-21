@@ -159,6 +159,33 @@ func CheckRepository(root string) ([]Violation, error) {
 		return nil, fmt.Errorf("logpolicy: walk repository: %w", err)
 	}
 
+	cmdRoot := filepath.Join(root, "cmd", "upbrr")
+	if _, err := os.Stat(cmdRoot); err == nil {
+		err = filepath.WalkDir(cmdRoot, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+
+			fileViolations, err := checkCLISensitiveOutputFile(fset, root, path)
+			if err != nil {
+				return err
+			}
+			violations = append(violations, fileViolations...)
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("logpolicy: walk cmd/upbrr: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("logpolicy: stat cmd/upbrr root: %w", err)
+	}
+
 	sort.Slice(violations, func(i, j int) bool {
 		if violations[i].File != violations[j].File {
 			return violations[i].File < violations[j].File
@@ -169,6 +196,52 @@ func CheckRepository(root string) ([]Violation, error) {
 		return violations[i].Column < violations[j].Column
 	})
 
+	return violations, nil
+}
+
+// checkCLISensitiveOutputFile flags raw dry-run endpoint and payload printing in
+// cmd/upbrr, where stdout becomes user-shareable debug log material.
+func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) ([]Violation, error) {
+	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	aliases := importAliases(file)
+	relPath, err := filepath.Rel(root, path)
+	if err != nil {
+		relPath = path
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	violations := make([]Violation, 0)
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || !isFmtPrintSelector(selector, aliases) {
+			return true
+		}
+		if len(call.Args) == 0 {
+			return true
+		}
+		format := cliOutputFormat(call)
+		for _, arg := range call.Args[1:] {
+			if isDryRunPayloadValueExpr(arg) && !isSafeDryRunOutputExpr(arg) {
+				violations = append(violations, violationAt(fset, relPath, arg.Pos(), "dry-run payload output must be redacted before printing"))
+			}
+		}
+		if strings.Contains(strings.ToLower(format), "endpoint:") {
+			for _, arg := range call.Args[1:] {
+				if !isSafeDryRunOutputExpr(arg) && containsEndpointExpr(arg) {
+					violations = append(violations, violationAt(fset, relPath, arg.Pos(), "dry-run endpoint output must be redacted before printing"))
+				}
+			}
+		}
+		return true
+	})
 	return violations, nil
 }
 
@@ -464,6 +537,96 @@ func importAliases(file *ast.File) map[string]string {
 		aliases[name] = pathValue
 	}
 	return aliases
+}
+
+func isFmtPrintSelector(selector *ast.SelectorExpr, aliases map[string]string) bool {
+	pkg, ok := selector.X.(*ast.Ident)
+	if !ok || aliases[pkg.Name] != "fmt" {
+		return false
+	}
+	switch selector.Sel.Name {
+	case "Print", "Printf", "Println":
+		return true
+	default:
+		return false
+	}
+}
+
+func cliOutputFormat(call *ast.CallExpr) string {
+	if len(call.Args) == 0 {
+		return ""
+	}
+	firstArg, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || firstArg.Kind != token.STRING {
+		return ""
+	}
+	format, err := strconv.Unquote(firstArg.Value)
+	if err != nil {
+		return ""
+	}
+	return format
+}
+
+func containsEndpointExpr(expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if isDryRunEndpointExprNode(node) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func isDryRunEndpointExpr(expr ast.Expr) bool {
+	return isDryRunEndpointExprNode(expr)
+}
+
+func isDryRunEndpointExprNode(node ast.Node) bool {
+	selector, ok := node.(*ast.SelectorExpr)
+	return ok && selector.Sel.Name == "Endpoint"
+}
+
+// isDryRunPayloadValueExpr reports direct reads from TrackerDryRunEntry-style
+// Payload maps, which may contain tracker credentials or secret URLs.
+func isDryRunPayloadValueExpr(expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		index, ok := node.(*ast.IndexExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := index.X.(*ast.SelectorExpr)
+		if ok && selector.Sel.Name == "Payload" {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// isSafeDryRunOutputExpr recognizes the redaction wrappers allowed to print
+// dry-run endpoint and payload values.
+func isSafeDryRunOutputExpr(expr ast.Expr) bool {
+	if containsRedactionCall(expr) {
+		return true
+	}
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	ident, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	switch ident.Name {
+	case "safeDryRunEndpoint", "formatDryRunPayloadValue":
+		return true
+	default:
+		return false
+	}
 }
 
 func violationAt(fset *token.FileSet, file string, pos token.Pos, message string) Violation {

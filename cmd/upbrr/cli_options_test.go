@@ -878,6 +878,39 @@ func TestPrintDryRunDetails(t *testing.T) {
 	}
 }
 
+func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
+	output := captureStdout(t, func() {
+		printDryRunDetails(api.TrackerDryRunEntry{
+			Endpoint: "https://tracker.test/api/upload?api_key=secret-key&passkey=secret-pass",
+			Payload: map[string]string{
+				"api_key":  "secret-key",
+				"auth":     "secret-auth",
+				"name":     "Movie.2024",
+				"passkey":  "secret-pass",
+				"announce": "https://tracker.test/announce?passkey=secret-pass",
+			},
+		})
+	})
+
+	for _, secret := range []string{"secret-key", "secret-pass", "secret-auth"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("expected %q to be redacted, got %q", secret, output)
+		}
+	}
+	for _, expected := range []string{
+		"Endpoint: https://tracker.test/api/upload?api_key=[REDACTED]&passkey=[REDACTED]",
+		"- api_key: [REDACTED]",
+		"- auth: [REDACTED]",
+		"- name: Movie.2024",
+		"- passkey: [REDACTED]",
+		"- announce: https://tracker.test/announce?passkey=[REDACTED]",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected redacted output to contain %q, got %q", expected, output)
+		}
+	}
+}
+
 func TestPrintDryRunDetailsSummarizesDescriptionWithoutPayloadDescription(t *testing.T) {
 	output := captureStdout(t, func() {
 		printDryRunDetails(api.TrackerDryRunEntry{
