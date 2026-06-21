@@ -64,6 +64,9 @@ func ensureDescriptionImageHost(
 	return ensureDescriptionImageHostWithData(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, nil)
 }
 
+// ensureDescriptionImageHostWithData resolves description screenshots against a
+// tracker's image-host rules, uploading local-only slots when a preferred host
+// is supplied and no reusable hosted variant already exists.
 func ensureDescriptionImageHostWithData(
 	ctx context.Context,
 	tracker string,
@@ -109,15 +112,13 @@ func ensureDescriptionImageHostWithData(
 	}
 
 	if !policy.required {
-		selectionPolicy := imageHostPolicy{}
-		if host := firstPreferredDescriptionImageHost(preferredHosts); host != "" {
-			selectionPolicy.preferred = []string{host}
+		preferredHost := firstPreferredDescriptionImageHost(preferredHosts)
+		selectionPolicy = imageHostPolicy{}
+		if preferredHost != "" {
+			selectionPolicy.preferred = []string{preferredHost}
 		}
 		screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy)
-		if err != nil {
-			return descriptionImageHostResolution{}, err
-		}
-		if len(screenshots) > 0 {
+		if err == nil && len(screenshots) > 0 {
 			feedback.SelectedHost = host
 			feedback.Message = buildReuseMessage(tracker, host, usageScope, false)
 			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
@@ -128,7 +129,11 @@ func ensureDescriptionImageHostWithData(
 			feedback.SelectedHost = strings.ToLower(strings.TrimSpace(screenshots[0].Host))
 			feedback.Message = buildReuseMessage(tracker, feedback.SelectedHost, globalImageUsageScope, false)
 		}
-		return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
+		if len(screenshots) > 0 || preferredHost == "" {
+			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
+		}
+		policy = newPreferredImageHostPolicy(preferredHost)
+		selectionPolicy = reusableImageHostSelectionPolicy(policy, preferredHosts...)
 	}
 
 	if screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy); err == nil && len(screenshots) > 0 && reusableSelectionMatchesPolicy(host, selectionPolicy) {

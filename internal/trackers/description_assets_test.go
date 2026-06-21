@@ -1955,6 +1955,50 @@ func TestEnsureDescriptionImageHostFallsBackFromConfiguredHostForUnrestrictedTra
 	}
 }
 
+func TestEnsureDescriptionImageHostUploadsPreferredHostForUnrestrictedTracker(t *testing.T) {
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	images := &stubImageService{}
+
+	resolution, err := ensureDescriptionImageHostWithData(
+		context.Background(),
+		"RHD",
+		meta,
+		config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbb", Host2: "pixhost"}},
+		config.TrackerConfig{},
+		repo,
+		images,
+		api.NopLogger{},
+		nil,
+		"imgbb",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolution.blocking {
+		t.Fatalf("expected unrestricted preferred-host upload not to block")
+	}
+	if !resolution.feedback.Reuploaded || resolution.feedback.SelectedHost != "imgbb" {
+		t.Fatalf("expected imgbb reupload feedback, got %#v", resolution.feedback)
+	}
+	if len(images.calls) != 1 || images.calls[0] != "imgbb" {
+		t.Fatalf("expected one imgbb upload, got %#v", images.calls)
+	}
+	if len(resolution.screenshots) != 2 {
+		t.Fatalf("expected two rehosted screenshots, got %#v", resolution.screenshots)
+	}
+	for _, screenshot := range resolution.screenshots {
+		if screenshot.Host != "imgbb" || strings.TrimSpace(screenshot.RawURL) == "" {
+			t.Fatalf("expected imgbb screenshot URLs, got %#v", resolution.screenshots)
+		}
+	}
+}
+
 func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{

@@ -516,8 +516,12 @@ func (s *Service) maxConcurrentTrackerUploads(total int) int {
 	return limit
 }
 
+// preflightDescriptionImageHosts resolves hosted screenshot URLs before upload
+// workers run, using configured image-host preferences even for trackers without
+// a restricted image-host policy.
 func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.PreparedMetadata, trackers []string) imageHostPreflight {
-	return s.preflightDescriptionImageHostsWithPreferences(ctx, meta, trackers, nil, nil, true)
+	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, trackers, s.logger)
+	return s.preflightDescriptionImageHostsWithPreferences(ctx, meta, trackers, preferredImageHosts, nil, true)
 }
 
 func (s *Service) preflightDescriptionImageHostsWithPreferences(
@@ -857,6 +861,8 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 	return api.PreparationPreview{SourcePath: meta.SourcePath, Descriptions: results}, nil
 }
 
+// preparationImageHostPreferences returns the first upload host each tracker
+// should prefer when generated screenshots need hosted URLs.
 func preparationImageHostPreferences(appCfg config.Config, meta api.PreparedMetadata, trackers []string, logger api.Logger) map[string]string {
 	if meta.ImageHostOverrides.PreferredHost != nil {
 		return nil

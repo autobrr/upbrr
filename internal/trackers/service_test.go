@@ -1062,6 +1062,40 @@ func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
 	}
 }
 
+func TestUploadPreflightsUnrestrictedTrackerToFirstConfiguredImageHost(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubUploadArtifactDefinition{name: "RHD"}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+		},
+	}
+	images := &blockingImageService{}
+	cfg := config.Config{
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbb", Host2: "pixhost"},
+		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"RHD"}},
+	}
+	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+
+	summary, err := svc.Upload(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"})
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected 1 tracker upload, got %d", summary.Uploaded)
+	}
+	calls := images.Calls()
+	if len(calls) != 1 || calls[0] != "imgbb" {
+		t.Fatalf("expected unrestricted tracker to upload screenshots to first configured host, got %v", calls)
+	}
+}
+
 func TestUploadPreparesDistinctTrackerArtifactsBeforeConcurrentUploads(t *testing.T) {
 	t.Parallel()
 
