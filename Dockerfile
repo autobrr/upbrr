@@ -47,8 +47,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM alpine:3.23
 
-# curl is used by the HEALTHCHECK below; the alpine base ships no HTTP client.
-RUN apk add --no-cache ca-certificates ffmpeg mesa-vulkan-swrast vulkan-loader curl
+RUN apk add --no-cache ca-certificates ffmpeg mesa-vulkan-swrast vulkan-loader
 
 # Run as a non-root user and give it a writable config dir. chown happens before
 # VOLUME so anonymous/named volumes inherit the ownership.
@@ -61,15 +60,17 @@ COPY --from=cli-builder /out/upbrr /usr/local/bin/upbrr
 
 # Persist config + database under /config (upbrr resolves XDG_CONFIG_HOME/upbrr).
 ENV XDG_CONFIG_HOME=/config
-# Probed by the HEALTHCHECK below. Uses loopback (works regardless of the serve bind
-# host); override this env if you change the served --port so the probe stays accurate.
+# Probed by the HEALTHCHECK below via busybox wget (shipped in the alpine base, so no
+# extra package). Uses loopback (works regardless of the serve bind host); override this
+# env if you change the served --port so the probe stays accurate.
 ENV UPBRR_HEALTHCHECK_URL=http://127.0.0.1:7480/api/auth/status
 VOLUME /config
 EXPOSE 7480
 USER upbrr
 
+# busybox wget exits non-zero on connection failure or a non-2xx response.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
-    CMD curl -fsS "$UPBRR_HEALTHCHECK_URL"
+    CMD wget -q -O /dev/null "$UPBRR_HEALTHCHECK_URL"
 
 ENTRYPOINT ["/usr/local/bin/upbrr"]
 # Default to serving the web UI on all interfaces so published ports are reachable.
