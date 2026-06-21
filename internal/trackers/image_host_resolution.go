@@ -251,7 +251,15 @@ func ensureDescriptionImageHostWithData(
 		screenshots, _, _, err := selectScreenshotsFromSlots(tracker, candidateSlots, selectionPolicy)
 		if err != nil {
 			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
-			return descriptionImageHostResolution{}, err
+			lastErr = err
+			feedback.Warnings = append(feedback.Warnings, api.ImageHostWarning{
+				Host:    host,
+				Message: err.Error(),
+			})
+			if logger != nil {
+				logger.Warnf("trackers: image host upload produced unusable screenshots tracker=%s host=%s: %v", tracker, host, err)
+			}
+			continue
 		}
 		if len(screenshots) == 0 {
 			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)

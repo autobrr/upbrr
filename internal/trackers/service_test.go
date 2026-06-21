@@ -570,6 +570,77 @@ func TestBuildPreparationBlocksWhenImageHostFallbacksFail(t *testing.T) {
 	}
 }
 
+func TestBuildPreparationBlocksWhenUploadedImagesDoNotCoverRHDSlots(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubPreparationDefinition{name: "RHD", group: "rhd", description: "saveable description"}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	imagePath := filepath.Join(t.TempDir(), "screen.png")
+	if err := os.WriteFile(imagePath, []byte("png"), 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	repo := &stubRepo{
+		screenshotSlots: []api.ScreenshotSlot{
+			{
+				SourcePath:          sourcePath,
+				SlotOrder:           0,
+				SourceKind:          screenshotSlotSourceSelection,
+				SectionKind:         screenshotSectionWrapped,
+				RenderInScreenshots: true,
+			},
+			{
+				SourcePath:          sourcePath,
+				SlotOrder:           1,
+				SourceKind:          screenshotSlotSourceSelection,
+				OriginalKey:         imagePath,
+				ImagePath:           imagePath,
+				SectionKind:         screenshotSectionWrapped,
+				RenderInScreenshots: true,
+			},
+		},
+	}
+	images := &stubImageService{}
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"RHD": {ImageHost: "imgbb"},
+			},
+		},
+	}
+	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+
+	preview, err := svc.BuildPreparation(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, []string{"RHD"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("expected 1 blocked placeholder, got %d", len(preview.Descriptions))
+	}
+	entry := preview.Descriptions[0]
+	if entry.GroupKey != "rhd|blocked|image-host" {
+		t.Fatalf("expected blocked image-host group key, got %q", entry.GroupKey)
+	}
+	if entry.Description != "" || entry.RawDescription != "" || entry.DescriptionHTML != "" || entry.RawDescriptionHTML != "" {
+		t.Fatalf("expected no saveable prepared description, got %#v", entry)
+	}
+	if entry.ImageHost.Status != "blocked" {
+		t.Fatalf("expected blocked image host status, got %#v", entry.ImageHost)
+	}
+	if !strings.Contains(entry.ImageHost.Message, "could not upload screenshots") {
+		t.Fatalf("expected blocking image host message, got %q", entry.ImageHost.Message)
+	}
+	if len(entry.ImageHost.Warnings) != 1 || !strings.Contains(entry.ImageHost.Warnings[0].Message, "missing screenshot variant for slot 0") {
+		t.Fatalf("expected slot coverage warning, got %#v", entry.ImageHost.Warnings)
+	}
+	if got := strings.Join(images.calls, ","); got != "imgbb" {
+		t.Fatalf("expected one imgbb upload attempt, got %q", got)
+	}
+}
+
 func TestBuildUploadDryRunIncludesRuleFailedTrackersWhenOverrideEnabled(t *testing.T) {
 	t.Parallel()
 

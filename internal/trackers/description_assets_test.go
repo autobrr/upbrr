@@ -2176,9 +2176,18 @@ func TestEnsureDescriptionImageHostRollsBackUploadedImagesOnSelectionError(t *te
 		},
 	}
 
-	_, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, api.NopLogger{})
-	if err == nil {
-		t.Fatal("expected selection error after upload")
+	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resolution.blocking {
+		t.Fatalf("expected blocking image host resolution, got %#v", resolution)
+	}
+	if resolution.feedback.Status != "warning" {
+		t.Fatalf("expected warning feedback, got %#v", resolution.feedback)
+	}
+	if len(resolution.feedback.Warnings) != 1 || !strings.Contains(resolution.feedback.Warnings[0].Message, "missing eligible screenshot variant") {
+		t.Fatalf("expected slot selection warning, got %#v", resolution.feedback.Warnings)
 	}
 	if len(repo.deletedUploads) != 1 {
 		t.Fatalf("expected one uploaded image rollback, got %#v", repo.deletedUploads)
