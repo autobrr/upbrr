@@ -92,6 +92,8 @@ func TestLoadFromDBPathBackfillsMissingTrackerDefaults(t *testing.T) {
 	}
 }
 
+// TestLoadFromDBPathPersistsMergedTrackerDefaults verifies legacy metadata BTN
+// tokens remain available after being merged into tracker defaults.
 func TestLoadFromDBPathPersistsMergedTrackerDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -129,6 +131,9 @@ func TestLoadFromDBPathPersistsMergedTrackerDefaults(t *testing.T) {
 	}
 	if got := loaded.Trackers.Trackers["BTN"].APIKey; got != "legacy-btn-token" {
 		t.Fatalf("expected runtime BTN API key to be merged, got %q", got)
+	}
+	if got := loaded.Metadata.BTNAPI; got != "legacy-btn-token" {
+		t.Fatalf("expected legacy BTN metadata API key to be preserved, got %q", got)
 	}
 
 	repo, err = db.Open(dbPath)

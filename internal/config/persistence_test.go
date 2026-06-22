@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -637,6 +638,8 @@ func TestLoadFromDatabaseWithDefaultBackfillIgnoresExplicitZeroDefaultKey(t *tes
 	}
 }
 
+// TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName verifies stored
+// tracker names fold into canonical defaults and still report backfilled keys.
 func TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName(t *testing.T) {
 	t.Parallel()
 
@@ -655,9 +658,12 @@ func TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName(t *testing.T) {
 		"URL":    "https://stored.btn.example",
 	}
 
-	loaded, _, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
+	loaded, backfilledDefaults, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
 	if err != nil {
 		t.Fatalf("LoadFromDatabaseWithDefaultBackfill failed: %v", err)
+	}
+	if !backfilledDefaults {
+		t.Fatalf("expected case-normalized tracker entry to report backfilled defaults")
 	}
 	if _, ok := loaded.Trackers.Trackers["btn"]; ok {
 		t.Fatalf("expected lowercase stored tracker to merge into canonical BTN entry")
@@ -671,6 +677,8 @@ func TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName(t *testing.T) {
 	}
 }
 
+// TestMergeStoredConfigMapMergesCaseInsensitiveStoredTrackerField verifies
+// case-normalized tracker fields preserve the missing canonical default path.
 func TestMergeStoredConfigMapMergesCaseInsensitiveStoredTrackerField(t *testing.T) {
 	t.Parallel()
 
@@ -682,13 +690,49 @@ func TestMergeStoredConfigMapMergesCaseInsensitiveStoredTrackerField(t *testing.
 		"apikey": "stored-token",
 	}
 
-	mergeStoredConfigMap(base, overlay, "Trackers.Trackers.BTN")
+	missingDefaultPaths := mergeStoredConfigMap(base, overlay, "Trackers.Trackers.BTN")
 
 	if _, ok := base["apikey"]; ok {
 		t.Fatalf("expected lowercase tracker field to merge into canonical APIKey")
 	}
 	if got := base["APIKey"]; got != "stored-token" {
 		t.Fatalf("expected stored API key on canonical field, got %#v", got)
+	}
+	if !slices.Contains(missingDefaultPaths, "Trackers.Trackers.BTN.APIKey") {
+		t.Fatalf("expected case-normalized tracker field to report missing canonical default, got %#v", missingDefaultPaths)
+	}
+}
+
+// TestMergeStoredConfigMapUsesSortedOverlayOrderForTrackerCaseVariants verifies
+// duplicate tracker names differing only by case fold in sorted overlay order.
+func TestMergeStoredConfigMapUsesSortedOverlayOrderForTrackerCaseVariants(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{
+		"BTN": map[string]any{
+			"APIKey": "",
+		},
+	}
+	overlay := map[string]any{
+		"btn": map[string]any{
+			"apikey": "lower-token",
+		},
+		"BTN": map[string]any{
+			"APIKey": "upper-token",
+		},
+	}
+
+	mergeStoredConfigMap(base, overlay, "Trackers.Trackers")
+
+	if _, ok := base["btn"]; ok {
+		t.Fatalf("expected lowercase tracker to merge into canonical BTN")
+	}
+	btn, ok := base["BTN"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected canonical BTN map")
+	}
+	if got := btn["APIKey"]; got != "lower-token" {
+		t.Fatalf("expected sorted duplicate-case overlay to be stable, got %#v", got)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -286,7 +287,9 @@ func configJSONMap(cfg *Config) (map[string]any, error) {
 // mergeStoredConfigMap recursively overlays stored config onto defaults and
 // returns default-key paths absent from the stored JSON shape. Raw presence is
 // tracked before Config unmarshaling so explicit false, zero, and empty values
-// are not confused with omitted fields.
+// are not confused with omitted fields. Overlay keys are processed in sorted
+// order so duplicate tracker case variants fold into canonical entries
+// deterministically.
 func mergeStoredConfigMap(base map[string]any, overlay map[string]any, path string) []string {
 	var missingDefaultPaths []string
 	for key := range base {
@@ -295,7 +298,14 @@ func mergeStoredConfigMap(base map[string]any, overlay map[string]any, path stri
 		}
 	}
 
-	for key, overlayValue := range overlay {
+	overlayKeys := make([]string, 0, len(overlay))
+	for key := range overlay {
+		overlayKeys = append(overlayKeys, key)
+	}
+	sort.Strings(overlayKeys)
+
+	for _, key := range overlayKeys {
+		overlayValue := overlay[key]
 		baseValue, exists := base[key]
 		if !exists {
 			if allowsStoredDynamicConfigEntry(path) || isStoredTrackerEntryPath(path) {
