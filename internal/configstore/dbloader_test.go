@@ -92,6 +92,70 @@ func TestLoadFromDBPathBackfillsMissingTrackerDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadFromDBPathPersistsMergedTrackerDefaults(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	if err := repo.Migrate(); err != nil {
+		_ = repo.Close()
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		_ = repo.Close()
+		t.Fatalf("load embedded config: %v", err)
+	}
+	cfg.MainSettings.DBPath = dbPath
+	cfg.Metadata.BTNAPI = "legacy-btn-token"
+	btn := cfg.Trackers.Trackers["BTN"]
+	btn.APIKey = ""
+	cfg.Trackers.Trackers["BTN"] = btn
+
+	if err := config.SaveToDatabase(ctx, cfg, repo); err != nil {
+		_ = repo.Close()
+		t.Fatalf("save config: %v", err)
+	}
+	_ = repo.Close()
+
+	loaded, err := configstore.LoadFromDBPath(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("load config from database: %v", err)
+	}
+	if got := loaded.Trackers.Trackers["BTN"].APIKey; got != "legacy-btn-token" {
+		t.Fatalf("expected runtime BTN API key to be merged, got %q", got)
+	}
+
+	repo, err = db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	var trackersJSON string
+	if err := repo.RawDB().QueryRowContext(ctx,
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"Trackers",
+	).Scan(&trackersJSON); err != nil {
+		t.Fatalf("query trackers: %v", err)
+	}
+	var persisted struct {
+		Trackers map[string]config.TrackerConfig `json:"Trackers"`
+	}
+	if err := json.Unmarshal([]byte(trackersJSON), &persisted); err != nil {
+		t.Fatalf("unmarshal trackers: %v", err)
+	}
+	if got := persisted.Trackers["BTN"].APIKey; got != "legacy-btn-token" {
+		t.Fatalf("expected persisted BTN API key to be merged, got %q", got)
+	}
+}
+
 func TestLoadFromDBPathBackfillsMissingStoredOptions(t *testing.T) {
 	t.Parallel()
 

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -212,23 +211,14 @@ func LoadFromDatabase(ctx context.Context, repo fullConfigLoader) (*Config, erro
 
 // LoadFromDatabaseWithDefaultBackfill returns a loaded config plus a changed
 // flag indicating whether embedded defaults filled fields missing from storage.
-// The flag is computed after secret decryption so callers can persist only real
-// config backfills instead of encryption envelope differences.
+// The flag is based on raw stored JSON key presence before Config unmarshaling,
+// so explicit false, zero, and empty values do not look like missing fields.
 func LoadFromDatabaseWithDefaultBackfill(ctx context.Context, repo fullConfigLoader) (*Config, bool, error) {
 	if repo == nil {
 		return nil, false, errors.New("config load: nil repository")
 	}
 
-	var stored Config
-	if err := repo.LoadFullConfig(ctx, &stored); err != nil {
-		return nil, false, fmt.Errorf("config load from database: %w", err)
-	}
-	decryptedStored, err := DecryptConfigSecrets(&stored)
-	if err != nil {
-		return nil, false, fmt.Errorf("config load from database: decrypt secrets: %w", err)
-	}
-
-	cfg, err := loadFullConfigOverlayingDefaults(ctx, repo)
+	cfg, backfilledDefaults, err := loadFullConfigOverlayingDefaults(ctx, repo)
 	if err != nil {
 		return nil, false, err
 	}
@@ -238,44 +228,45 @@ func LoadFromDatabaseWithDefaultBackfill(ctx context.Context, repo fullConfigLoa
 		return nil, false, fmt.Errorf("config load from database: decrypt secrets: %w", err)
 	}
 
-	return decryptedCfg, !reflect.DeepEqual(decryptedStored, decryptedCfg), nil
+	return decryptedCfg, backfilledDefaults, nil
 }
 
 // loadFullConfigOverlayingDefaults overlays raw stored JSON sections onto the
-// embedded default config. Raw overlay is required because unmarshaled structs
-// cannot distinguish omitted fields from explicit false, zero, or empty values.
-func loadFullConfigOverlayingDefaults(ctx context.Context, repo fullConfigLoader) (Config, error) {
+// embedded default config and reports whether any default keys were absent from
+// storage. Raw overlay is required because unmarshaled structs cannot
+// distinguish omitted fields from explicit false, zero, or empty values.
+func loadFullConfigOverlayingDefaults(ctx context.Context, repo fullConfigLoader) (Config, bool, error) {
 	defaults, err := LoadEmbeddedDefaultConfig()
 	if err != nil {
-		return Config{}, fmt.Errorf("config load from database: load defaults: %w", err)
+		return Config{}, false, fmt.Errorf("config load from database: load defaults: %w", err)
 	}
 	// Template clients are examples, not persisted user configuration.
 	defaults.TorrentClients = map[string]TorrentClientConfig{}
 
 	base, err := configJSONMap(defaults)
 	if err != nil {
-		return Config{}, fmt.Errorf("config load from database: marshal defaults: %w", err)
+		return Config{}, false, fmt.Errorf("config load from database: marshal defaults: %w", err)
 	}
 
 	stored := map[string]any{}
 	if err := repo.LoadFullConfig(ctx, &stored); err != nil {
 		cfg := *defaults
 		if err := repo.LoadFullConfig(ctx, &cfg); err != nil {
-			return Config{}, fmt.Errorf("config load from database: %w", err)
+			return Config{}, false, fmt.Errorf("config load from database: %w", err)
 		}
-		return cfg, nil
+		return cfg, false, nil
 	}
-	mergeStoredConfigMap(base, stored, "")
+	missingDefaultPaths := mergeStoredConfigMap(base, stored, "")
 
 	merged, err := json.Marshal(base)
 	if err != nil {
-		return Config{}, fmt.Errorf("config load from database: marshal merged defaults: %w", err)
+		return Config{}, false, fmt.Errorf("config load from database: marshal merged defaults: %w", err)
 	}
 	var cfg Config
 	if err := json.Unmarshal(merged, &cfg); err != nil {
-		return Config{}, fmt.Errorf("config load from database: unmarshal merged defaults: %w", err)
+		return Config{}, false, fmt.Errorf("config load from database: unmarshal merged defaults: %w", err)
 	}
-	return cfg, nil
+	return cfg, len(missingDefaultPaths) > 0, nil
 }
 
 // configJSONMap converts cfg to the same exported-field JSON shape used by DB
@@ -292,15 +283,23 @@ func configJSONMap(cfg *Config) (map[string]any, error) {
 	return out, nil
 }
 
-// mergeStoredConfigMap recursively overlays stored config onto defaults,
-// preserving dynamic tracker and torrent-client entries while ignoring unknown
-// non-dynamic fields that are no longer part of the current schema.
-func mergeStoredConfigMap(base map[string]any, overlay map[string]any, path string) {
+// mergeStoredConfigMap recursively overlays stored config onto defaults and
+// returns default-key paths absent from the stored JSON shape. Raw presence is
+// tracked before Config unmarshaling so explicit false, zero, and empty values
+// are not confused with omitted fields.
+func mergeStoredConfigMap(base map[string]any, overlay map[string]any, path string) []string {
+	var missingDefaultPaths []string
+	for key := range base {
+		if _, exists := overlay[key]; !exists {
+			missingDefaultPaths = append(missingDefaultPaths, configMapPath(path, key))
+		}
+	}
+
 	for key, overlayValue := range overlay {
 		baseValue, exists := base[key]
 		if !exists {
 			if allowsStoredDynamicConfigEntry(path) || isStoredTrackerEntryPath(path) {
-				base[key] = overlayValue
+				missingDefaultPaths = append(missingDefaultPaths, mergeStoredDynamicConfigValue(base, key, overlayValue, path)...)
 			}
 			continue
 		}
@@ -315,11 +314,58 @@ func mergeStoredConfigMap(base map[string]any, overlay map[string]any, path stri
 			if path != "" {
 				childPath = path + "." + key
 			}
-			mergeStoredConfigMap(baseMap, overlayMap, childPath)
+			missingDefaultPaths = append(missingDefaultPaths, mergeStoredConfigMap(baseMap, overlayMap, childPath)...)
 			continue
 		}
 		base[key] = overlayValue
 	}
+	return missingDefaultPaths
+}
+
+// mergeStoredDynamicConfigValue inserts a stored dynamic entry or folds it into
+// an existing tracker entry that differs only by case.
+func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue any, path string) []string {
+	if usesCaseInsensitiveStoredTrackerKeys(path) {
+		if existingKey, ok := caseInsensitiveConfigMapKey(base, key); ok {
+			baseMap, baseOK := base[existingKey].(map[string]any)
+			overlayMap, overlayOK := overlayValue.(map[string]any)
+			if baseOK && overlayOK {
+				return mergeStoredConfigMap(baseMap, overlayMap, configMapPath(path, existingKey))
+			}
+			base[existingKey] = overlayValue
+			return nil
+		}
+	}
+
+	base[key] = overlayValue
+	return nil
+}
+
+// caseInsensitiveConfigMapKey returns the first map key equal to key under
+// Unicode case folding. Callers use it only where config keys are already
+// constrained by tracker schema paths.
+func caseInsensitiveConfigMapKey(values map[string]any, key string) (string, bool) {
+	for existingKey := range values {
+		if strings.EqualFold(existingKey, key) {
+			return existingKey, true
+		}
+	}
+	return "", false
+}
+
+// usesCaseInsensitiveStoredTrackerKeys reports whether a stored JSON path is a
+// tracker map or tracker field map where casing drift should not create
+// duplicate entries.
+func usesCaseInsensitiveStoredTrackerKeys(path string) bool {
+	return path == "Trackers.Trackers" || isStoredTrackerEntryPath(path)
+}
+
+// configMapPath appends key to a dotted raw-config path.
+func configMapPath(path, key string) string {
+	if path == "" {
+		return key
+	}
+	return path + "." + key
 }
 
 func allowsStoredDynamicConfigEntry(path string) bool {

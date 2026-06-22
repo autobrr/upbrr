@@ -1045,39 +1045,48 @@ func trackerAPIKeyForExactName(trackers map[string]TrackerConfig, name string) s
 // create a duplicate canonical "BTN" entry.
 // CZT keeps user credentials in Passkey only, so stale URL, APIKey, and
 // AnnounceURL values are removed while preserving the passkey.
-func MergeMissingTrackerDefaults(cfg *Config) error {
+// The returned flag reports whether cfg was modified.
+func MergeMissingTrackerDefaults(cfg *Config) (bool, error) {
 	if cfg == nil {
-		return nil
+		return false, nil
 	}
+	changed := false
 	if cfg.Trackers.Trackers == nil {
 		cfg.Trackers.Trackers = map[string]TrackerConfig{}
+		changed = true
 	}
 	if cfg.Trackers.DefaultTrackers == nil {
 		cfg.Trackers.DefaultTrackers = CSVList{}
+		changed = true
 	}
 	defaults, err := loadEmbeddedDefaultConfigRaw()
 	if err != nil || defaults == nil || len(defaults.Trackers.Trackers) == 0 {
 		if err != nil {
-			return fmt.Errorf("load embedded tracker defaults: %w", err)
+			return false, fmt.Errorf("load embedded tracker defaults: %w", err)
 		}
-		return errors.New("load embedded tracker defaults: embedded default trackers missing")
+		return false, errors.New("load embedded tracker defaults: embedded default trackers missing")
 	}
 	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
 		existingName, existing, ok := trackerDefaultMergeEntry(cfg.Trackers.Trackers, trackerName)
 		if !ok {
 			cfg.Trackers.Trackers[trackerName] = trackerCfg
+			changed = true
 			continue
 		}
 		if asciiEqualFold(trackerName, "CZT") {
-			existing.URL = ""
-			existing.APIKey = ""
-			existing.AnnounceURL = ""
-			cfg.Trackers.Trackers[existingName] = existing
+			if strings.TrimSpace(existing.URL) != "" || strings.TrimSpace(existing.APIKey) != "" || strings.TrimSpace(existing.AnnounceURL) != "" {
+				existing.URL = ""
+				existing.APIKey = ""
+				existing.AnnounceURL = ""
+				cfg.Trackers.Trackers[existingName] = existing
+				changed = true
+			}
 			continue
 		}
 		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
 			existing.URL = trackerCfg.URL
 			cfg.Trackers.Trackers[existingName] = existing
+			changed = true
 		}
 	}
 	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" && trackerAPIKeyByName(cfg.Trackers.Trackers, "BTN") == "" {
@@ -1086,6 +1095,7 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 		if strings.TrimSpace(btnCfg.APIKey) == "" {
 			btnCfg.APIKey = token
 			cfg.Trackers.Trackers[btnName] = btnCfg
+			changed = true
 		}
 	}
 	for trackerName, trackerCfg := range cfg.Trackers.Trackers {
@@ -1099,8 +1109,9 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 		trackerCfg.URL = ""
 		trackerCfg.AnnounceURL = ""
 		cfg.Trackers.Trackers[trackerName] = trackerCfg
+		changed = true
 	}
-	return nil
+	return changed, nil
 }
 
 // trackerDefaultMergeEntry returns the exact tracker entry when present, then

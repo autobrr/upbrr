@@ -808,7 +808,7 @@ func normalizeExportableConfig(cfg *config.Config, dbPath string) (*config.Confi
 	if err != nil {
 		return nil, err
 	}
-	if err := config.MergeMissingTrackerDefaults(normalized); err != nil {
+	if _, err := config.MergeMissingTrackerDefaults(normalized); err != nil {
 		return nil, fmt.Errorf("web: %w", err)
 	}
 	if strings.TrimSpace(normalized.MainSettings.DBPath) == "" {
@@ -864,7 +864,7 @@ func (b *Backend) SaveConfig(payload string) error {
 	if err != nil {
 		return fmt.Errorf("web: %w", err)
 	}
-	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
+	if _, err := config.MergeMissingTrackerDefaults(cfg); err != nil {
 		return fmt.Errorf("web: %w", err)
 	}
 	currentCfg := b.currentConfig()

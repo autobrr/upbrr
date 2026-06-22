@@ -87,9 +87,9 @@ func LoadFromDBPath(ctx context.Context, dbPath string) (*config.Config, error) 
 }
 
 // loadFromDBPath loads persisted config and optionally applies environment
-// overrides to the returned runtime copy. Missing defaults and sanitized
-// tracker settings are written before env overrides so persisted config remains
-// environment-neutral.
+// overrides to the returned runtime copy. Missing stored defaults, merged
+// tracker defaults, and sanitized tracker settings are written before env
+// overrides so persisted config remains environment-neutral.
 func loadFromDBPath(ctx context.Context, dbPath string, applyEnv bool) (*config.Config, error) {
 	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
@@ -105,11 +105,12 @@ func loadFromDBPath(ctx context.Context, dbPath string, applyEnv bool) (*config.
 	if err != nil {
 		return nil, fmt.Errorf("config store: %w", err)
 	}
-	if err := config.MergeMissingTrackerDefaults(loaded); err != nil {
+	mergedTrackerDefaults, err := config.MergeMissingTrackerDefaults(loaded)
+	if err != nil {
 		return nil, fmt.Errorf("config store: %w", err)
 	}
 	sanitizedTrackers := len(config.DisableUnsupportedTrackerImageRehosts(loaded)) > 0
-	if backfilledDefaults || sanitizedTrackers {
+	if backfilledDefaults || mergedTrackerDefaults || sanitizedTrackers {
 		if err := config.SaveToDatabase(ctx, loaded, repo); err != nil {
 			return nil, fmt.Errorf("config store: %w", err)
 		}
@@ -384,7 +385,7 @@ func loadStoredConfigForProvidedMerge(ctx context.Context, dbPath string) (*conf
 	if err != nil {
 		return nil, fmt.Errorf("config store: %w", err)
 	}
-	if err := config.MergeMissingTrackerDefaults(loaded); err != nil {
+	if _, err := config.MergeMissingTrackerDefaults(loaded); err != nil {
 		return nil, fmt.Errorf("config store: %w", err)
 	}
 	config.DisableUnsupportedTrackerImageRehosts(loaded)
@@ -601,7 +602,7 @@ func finalizeMergedConfig(cfg *config.Config) (*config.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config store: decrypt merged config: %w", err)
 	}
-	if err := config.MergeMissingTrackerDefaults(decrypted); err != nil {
+	if _, err := config.MergeMissingTrackerDefaults(decrypted); err != nil {
 		return nil, fmt.Errorf("config store: merge tracker defaults: %w", err)
 	}
 	config.DisableUnsupportedTrackerImageRehosts(decrypted)

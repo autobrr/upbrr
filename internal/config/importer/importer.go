@@ -119,7 +119,7 @@ func parseNative(filename string, data []byte) (*config.Config, error) {
 		cfg.TorrentClients = make(map[string]config.TorrentClientConfig)
 	}
 
-	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
+	if _, err := config.MergeMissingTrackerDefaults(cfg); err != nil {
 		return nil, fmt.Errorf("import config: merge tracker defaults: %w", err)
 	}
 

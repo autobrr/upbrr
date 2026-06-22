@@ -503,6 +503,10 @@ type jsonRoundTripRepo struct {
 	saved *Config
 }
 
+type rawConfigRepo struct {
+	raw map[string]any
+}
+
 func (r *secretRoundTripRepo) SaveFullConfig(_ context.Context, cfg any) error {
 	typed, ok := cfg.(*Config)
 	if !ok {
@@ -549,6 +553,33 @@ func (r *jsonRoundTripRepo) LoadFullConfig(_ context.Context, dest any) error {
 	return nil
 }
 
+func (r *rawConfigRepo) LoadFullConfig(_ context.Context, dest any) error {
+	payload, err := json.Marshal(r.raw)
+	if err != nil {
+		return fmt.Errorf("marshal raw config: %w", err)
+	}
+	if err := json.Unmarshal(payload, dest); err != nil {
+		return fmt.Errorf("unmarshal raw config: %w", err)
+	}
+	return nil
+}
+
+func defaultDatabaseConfigMap(t *testing.T) map[string]any {
+	t.Helper()
+
+	defaults, err := LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("LoadEmbeddedDefaultConfig failed: %v", err)
+	}
+	defaults.TorrentClients = map[string]TorrentClientConfig{}
+
+	raw, err := configJSONMap(defaults)
+	if err != nil {
+		t.Fatalf("configJSONMap failed: %v", err)
+	}
+	return raw
+}
+
 func writeWebAuthFixture(t *testing.T, dbPath string) {
 	t.Helper()
 	authPath := filepath.Join(filepath.Dir(dbPath), webAuthFileName)
@@ -563,6 +594,102 @@ func configureConfigSecretEncryption(t *testing.T, cfg *Config) {
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
 	writeWebAuthFixture(t, dbPath)
 	cfg.MainSettings.DBPath = dbPath
+}
+
+func TestLoadFromDatabaseWithDefaultBackfillReportsMissingZeroDefaultKey(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	torrentCreation, ok := raw["TorrentCreation"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected TorrentCreation defaults map")
+	}
+	delete(torrentCreation, "RehashCooldown")
+
+	loaded, backfilledDefaults, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithDefaultBackfill failed: %v", err)
+	}
+	if !backfilledDefaults {
+		t.Fatalf("expected missing zero-value default key to report backfilled defaults")
+	}
+	if loaded.TorrentCreation.RehashCooldown != 0 {
+		t.Fatalf("expected zero default rehash cooldown, got %d", loaded.TorrentCreation.RehashCooldown)
+	}
+}
+
+func TestLoadFromDatabaseWithDefaultBackfillIgnoresExplicitZeroDefaultKey(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	torrentCreation, ok := raw["TorrentCreation"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected TorrentCreation defaults map")
+	}
+	torrentCreation["RehashCooldown"] = float64(0)
+
+	_, backfilledDefaults, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithDefaultBackfill failed: %v", err)
+	}
+	if backfilledDefaults {
+		t.Fatalf("expected explicit zero-value key to avoid default backfill")
+	}
+}
+
+func TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	trackerSection, ok := raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected Trackers defaults map")
+	}
+	trackers, ok := trackerSection["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected Trackers.Trackers defaults map")
+	}
+	delete(trackers, "BTN")
+	trackers["btn"] = map[string]any{
+		"APIKey": "stored-token",
+		"URL":    "https://stored.btn.example",
+	}
+
+	loaded, _, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithDefaultBackfill failed: %v", err)
+	}
+	if _, ok := loaded.Trackers.Trackers["btn"]; ok {
+		t.Fatalf("expected lowercase stored tracker to merge into canonical BTN entry")
+	}
+	btn := loaded.Trackers.Trackers["BTN"]
+	if btn.APIKey != "stored-token" {
+		t.Fatalf("expected stored BTN API key, got %q", btn.APIKey)
+	}
+	if btn.URL != "https://stored.btn.example" {
+		t.Fatalf("expected stored BTN URL, got %q", btn.URL)
+	}
+}
+
+func TestMergeStoredConfigMapMergesCaseInsensitiveStoredTrackerField(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{
+		"APIKey": "",
+		"URL":    "https://default.example",
+	}
+	overlay := map[string]any{
+		"apikey": "stored-token",
+	}
+
+	mergeStoredConfigMap(base, overlay, "Trackers.Trackers.BTN")
+
+	if _, ok := base["apikey"]; ok {
+		t.Fatalf("expected lowercase tracker field to merge into canonical APIKey")
+	}
+	if got := base["APIKey"]; got != "stored-token" {
+		t.Fatalf("expected stored API key on canonical field, got %#v", got)
+	}
 }
 
 func TestExportToJSONFallsBackToPlaintextWithPermissiveWebAuthPermissions(t *testing.T) {
