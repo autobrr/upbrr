@@ -579,10 +579,6 @@ func containsEndpointExpr(expr ast.Expr) bool {
 	return found
 }
 
-func isDryRunEndpointExpr(expr ast.Expr) bool {
-	return isDryRunEndpointExprNode(expr)
-}
-
 func isDryRunEndpointExprNode(node ast.Node) bool {
 	selector, ok := node.(*ast.SelectorExpr)
 	return ok && selector.Sel.Name == "Endpoint"
