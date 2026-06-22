@@ -76,9 +76,9 @@ func LoadFromPathOrEmbedded(path string) (*config.Config, error) {
 }
 
 // LoadFromDBPath opens the sqlite database at dbPath, runs migrations, loads
-// the full configuration, backfills any missing tracker defaults, disables
-// unsupported tracker image rehosts (persisting the sanitized config back to
-// the database when changes are made), and applies environment overrides.
+// the full configuration, backfills missing embedded defaults, disables
+// unsupported tracker image rehosts, persists any load-time fixes back to the
+// database, and applies environment overrides.
 //
 // Callers decide whether to validate the returned config — the CLI fails fast
 // while the web/GUI start with invalid config so users can fix it via the UI.
@@ -87,7 +87,9 @@ func LoadFromDBPath(ctx context.Context, dbPath string) (*config.Config, error) 
 }
 
 // loadFromDBPath loads persisted config and optionally applies environment
-// overrides to the returned runtime copy.
+// overrides to the returned runtime copy. Missing defaults and sanitized
+// tracker settings are written before env overrides so persisted config remains
+// environment-neutral.
 func loadFromDBPath(ctx context.Context, dbPath string, applyEnv bool) (*config.Config, error) {
 	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
@@ -99,14 +101,15 @@ func loadFromDBPath(ctx context.Context, dbPath string, applyEnv bool) (*config.
 		return nil, fmt.Errorf("config store: %w", err)
 	}
 
-	loaded, err := config.LoadFromDatabase(ctx, repo)
+	loaded, backfilledDefaults, err := config.LoadFromDatabaseWithDefaultBackfill(ctx, repo)
 	if err != nil {
 		return nil, fmt.Errorf("config store: %w", err)
 	}
 	if err := config.MergeMissingTrackerDefaults(loaded); err != nil {
 		return nil, fmt.Errorf("config store: %w", err)
 	}
-	if len(config.DisableUnsupportedTrackerImageRehosts(loaded)) > 0 {
+	sanitizedTrackers := len(config.DisableUnsupportedTrackerImageRehosts(loaded)) > 0
+	if backfilledDefaults || sanitizedTrackers {
 		if err := config.SaveToDatabase(ctx, loaded, repo); err != nil {
 			return nil, fmt.Errorf("config store: %w", err)
 		}

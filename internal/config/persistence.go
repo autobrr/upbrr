@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -195,25 +196,138 @@ func BackupToYAML(cfg *Config, baseDir string) (string, error) {
 	return backupPath, nil
 }
 
-// LoadFromDatabase loads the full config from the repository.
-func LoadFromDatabase(ctx context.Context, repo interface {
+// fullConfigLoader reconstructs persisted config data into either the Config
+// struct or a raw section map. Production repositories support both forms.
+type fullConfigLoader interface {
 	LoadFullConfig(ctx context.Context, dest any) error
-}) (*Config, error) {
+}
+
+// LoadFromDatabase loads the full config from the repository, overlaying saved
+// sections onto embedded defaults so older persisted configs pick up newly
+// added options while preserving explicit zero values and decrypted secrets.
+func LoadFromDatabase(ctx context.Context, repo fullConfigLoader) (*Config, error) {
+	cfg, _, err := LoadFromDatabaseWithDefaultBackfill(ctx, repo)
+	return cfg, err
+}
+
+// LoadFromDatabaseWithDefaultBackfill returns a loaded config plus a changed
+// flag indicating whether embedded defaults filled fields missing from storage.
+// The flag is computed after secret decryption so callers can persist only real
+// config backfills instead of encryption envelope differences.
+func LoadFromDatabaseWithDefaultBackfill(ctx context.Context, repo fullConfigLoader) (*Config, bool, error) {
 	if repo == nil {
-		return nil, errors.New("config load: nil repository")
+		return nil, false, errors.New("config load: nil repository")
 	}
 
-	var cfg Config
-	if err := repo.LoadFullConfig(ctx, &cfg); err != nil {
-		return nil, fmt.Errorf("config load from database: %w", err)
+	var stored Config
+	if err := repo.LoadFullConfig(ctx, &stored); err != nil {
+		return nil, false, fmt.Errorf("config load from database: %w", err)
+	}
+	decryptedStored, err := DecryptConfigSecrets(&stored)
+	if err != nil {
+		return nil, false, fmt.Errorf("config load from database: decrypt secrets: %w", err)
+	}
+
+	cfg, err := loadFullConfigOverlayingDefaults(ctx, repo)
+	if err != nil {
+		return nil, false, err
 	}
 
 	decryptedCfg, err := DecryptConfigSecrets(&cfg)
 	if err != nil {
-		return nil, fmt.Errorf("config load from database: decrypt secrets: %w", err)
+		return nil, false, fmt.Errorf("config load from database: decrypt secrets: %w", err)
 	}
 
-	return decryptedCfg, nil
+	return decryptedCfg, !reflect.DeepEqual(decryptedStored, decryptedCfg), nil
+}
+
+// loadFullConfigOverlayingDefaults overlays raw stored JSON sections onto the
+// embedded default config. Raw overlay is required because unmarshaled structs
+// cannot distinguish omitted fields from explicit false, zero, or empty values.
+func loadFullConfigOverlayingDefaults(ctx context.Context, repo fullConfigLoader) (Config, error) {
+	defaults, err := LoadEmbeddedDefaultConfig()
+	if err != nil {
+		return Config{}, fmt.Errorf("config load from database: load defaults: %w", err)
+	}
+	// Template clients are examples, not persisted user configuration.
+	defaults.TorrentClients = map[string]TorrentClientConfig{}
+
+	base, err := configJSONMap(defaults)
+	if err != nil {
+		return Config{}, fmt.Errorf("config load from database: marshal defaults: %w", err)
+	}
+
+	stored := map[string]any{}
+	if err := repo.LoadFullConfig(ctx, &stored); err != nil {
+		cfg := *defaults
+		if err := repo.LoadFullConfig(ctx, &cfg); err != nil {
+			return Config{}, fmt.Errorf("config load from database: %w", err)
+		}
+		return cfg, nil
+	}
+	mergeStoredConfigMap(base, stored, "")
+
+	merged, err := json.Marshal(base)
+	if err != nil {
+		return Config{}, fmt.Errorf("config load from database: marshal merged defaults: %w", err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(merged, &cfg); err != nil {
+		return Config{}, fmt.Errorf("config load from database: unmarshal merged defaults: %w", err)
+	}
+	return cfg, nil
+}
+
+// configJSONMap converts cfg to the same exported-field JSON shape used by DB
+// section storage and native JSON exports.
+func configJSONMap(cfg *Config) (map[string]any, error) {
+	payload, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal config json map: %w", err)
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return nil, fmt.Errorf("unmarshal config json map: %w", err)
+	}
+	return out, nil
+}
+
+// mergeStoredConfigMap recursively overlays stored config onto defaults,
+// preserving dynamic tracker and torrent-client entries while ignoring unknown
+// non-dynamic fields that are no longer part of the current schema.
+func mergeStoredConfigMap(base map[string]any, overlay map[string]any, path string) {
+	for key, overlayValue := range overlay {
+		baseValue, exists := base[key]
+		if !exists {
+			if allowsStoredDynamicConfigEntry(path) || isStoredTrackerEntryPath(path) {
+				base[key] = overlayValue
+			}
+			continue
+		}
+
+		baseMap, baseOK := baseValue.(map[string]any)
+		overlayMap, overlayOK := overlayValue.(map[string]any)
+		if baseOK {
+			if !overlayOK {
+				continue
+			}
+			childPath := key
+			if path != "" {
+				childPath = path + "." + key
+			}
+			mergeStoredConfigMap(baseMap, overlayMap, childPath)
+			continue
+		}
+		base[key] = overlayValue
+	}
+}
+
+func allowsStoredDynamicConfigEntry(path string) bool {
+	return path == "Trackers.Trackers" || path == "TorrentClients"
+}
+
+func isStoredTrackerEntryPath(path string) bool {
+	return strings.HasPrefix(path, "Trackers.Trackers.")
 }
 
 // SaveToDatabase persists the config to the repository.

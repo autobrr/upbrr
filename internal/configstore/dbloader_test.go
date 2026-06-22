@@ -92,6 +92,68 @@ func TestLoadFromDBPathBackfillsMissingTrackerDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadFromDBPathBackfillsMissingStoredOptions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	if err := repo.Migrate(); err != nil {
+		_ = repo.Close()
+		t.Fatalf("migrate repo: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		INSERT INTO config_settings (section, data, updated_at)
+		VALUES ('PostUpload', '{"CrossSeeding":false}', datetime('now'))
+	`); err != nil {
+		_ = repo.Close()
+		t.Fatalf("insert partial config: %v", err)
+	}
+	_ = repo.Close()
+
+	loaded, err := configstore.LoadFromDBPath(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("load config from database: %v", err)
+	}
+	if got := loaded.PostUpload.MaxConcurrentTrackers; got != 4 {
+		t.Fatalf("expected max concurrent tracker uploads default, got %d", got)
+	}
+	if loaded.PostUpload.CrossSeeding {
+		t.Fatal("expected explicit cross_seeding=false to be preserved")
+	}
+	if len(loaded.TorrentClients) != 0 {
+		t.Fatalf("expected template torrent clients to stay stripped, got %d", len(loaded.TorrentClients))
+	}
+
+	repo, err = db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	var postUploadJSON string
+	if err := repo.RawDB().QueryRowContext(ctx,
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"PostUpload",
+	).Scan(&postUploadJSON); err != nil {
+		t.Fatalf("query post_upload: %v", err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal([]byte(postUploadJSON), &persisted); err != nil {
+		t.Fatalf("unmarshal post_upload: %v", err)
+	}
+	if got, ok := persisted["MaxConcurrentTrackers"].(float64); !ok || got != 4 {
+		t.Fatalf("expected persisted max concurrent tracker uploads default, got %#v", persisted["MaxConcurrentTrackers"])
+	}
+	if got, ok := persisted["CrossSeeding"].(bool); !ok || got {
+		t.Fatalf("expected persisted explicit cross_seeding=false, got %#v", persisted["CrossSeeding"])
+	}
+}
+
 func TestSaveToDBPathSyncsCookieEncryptionStateWhenWebAuthExists(t *testing.T) {
 	t.Parallel()
 
