@@ -1945,7 +1945,7 @@ func TestFetchMetadataPreviewRunsPathedSearchWithSourceURLOverride(t *testing.T)
 	}
 }
 
-func TestRunUploadPersistsInfoHash(t *testing.T) {
+func TestRunUploadSkipsInfoHashPersistenceWithoutHistoryMetadata(t *testing.T) {
 	t.Parallel()
 
 	repo := &recordingRepo{}
@@ -1972,11 +1972,8 @@ func TestRunUploadPersistsInfoHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run upload: %v", err)
 	}
-	if len(repo.saved) != 1 {
-		t.Fatalf("expected 1 metadata save, got %d", len(repo.saved))
-	}
-	if repo.saved[0].InfoHash != "hash123" {
-		t.Fatalf("expected info hash saved, got %q", repo.saved[0].InfoHash)
+	if len(repo.saved) != 0 {
+		t.Fatalf("expected no placeholder metadata save, got %d", len(repo.saved))
 	}
 }
 

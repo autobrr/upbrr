@@ -394,7 +394,8 @@ func (c *Core) persistPreparedInfoHash(ctx context.Context, sourcePath string, i
 		if !errors.Is(err, internalerrors.ErrNotFound) {
 			return fmt.Errorf("lookup existing metadata: %w", err)
 		}
-		metadata = db.FileMetadata{Path: trimmedPath}
+		c.logger.Debugf("metadata: skip info hash persistence without stored metadata for %s", trimmedPath)
+		return nil
 	} else if strings.TrimSpace(metadata.Path) == "" {
 		metadata.Path = trimmedPath
 	}
