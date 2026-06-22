@@ -1399,6 +1399,31 @@ func (r *SQLiteRepository) ListHistoryEntries(ctx context.Context) ([]HistoryEnt
 			ORDER BY created_at DESC, id DESC
 			LIMIT 1
 		)
+		WHERE NOT (
+			fm.source_size = 0
+			AND TRIM(fm.disc_type) = ""
+			AND TRIM(fm.video_path) = ""
+			AND TRIM(fm.file_list) IN ("", "[]")
+			AND TRIM(fm.release_type) = ""
+			AND TRIM(fm.release_artist) = ""
+			AND TRIM(fm.release_title) = ""
+			AND TRIM(fm.release_subtitle) = ""
+			AND TRIM(fm.release_alt) = ""
+			AND fm.release_year = 0
+			AND fm.release_month = 0
+			AND fm.release_day = 0
+			AND TRIM(fm.release_source) = ""
+			AND TRIM(fm.release_resolution) = ""
+			AND TRIM(fm.release_ext) = ""
+			AND TRIM(fm.release_site) = ""
+			AND TRIM(fm.release_genre) = ""
+			AND TRIM(fm.release_channels) = ""
+			AND TRIM(fm.release_collection) = ""
+			AND TRIM(fm.release_region) = ""
+			AND TRIM(fm.release_size) = ""
+			AND TRIM(fm.release_group) = ""
+			AND TRIM(fm.release_disc) = ""
+		)
 		ORDER BY fm.updated_at DESC, fm.path ASC
 	`)
 	if err != nil {
