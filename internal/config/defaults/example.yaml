@@ -383,6 +383,7 @@ trackers:
     password: ""
     url: "https://passthepopcorn.me"
     announce_url: ""
+    otp_uri: ""
   PTS:
     link_dir_name: ""
     url: "https://ptskit.org"

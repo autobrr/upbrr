@@ -512,6 +512,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Username,
     trackerFieldMeta.Password,
     trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.OTPURI,
   ],
   PTS: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL],
   PTT: [
