@@ -12,6 +12,10 @@ tmp/
 .trunk/
 *.exe
 /scripts/__pycache__/
+/scripts/*.yaml
+/scripts/*.yml
+/scripts/*.json
+/scripts/*.py
 
 # E2E / Playwright artifacts
 gui/frontend/playwright-report/
