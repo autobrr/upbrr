@@ -22,6 +22,7 @@ import (
 
 type closeCounter struct {
 	count      atomic.Int32
+	closeErr   error
 	panicValue any
 }
 
@@ -30,7 +31,7 @@ func (c *closeCounter) Close() error {
 	if c.panicValue != nil {
 		panic(c.panicValue)
 	}
-	return nil
+	return c.closeErr
 }
 
 type closeCounterCore struct {
@@ -310,6 +311,36 @@ func TestTrackerUploadJobCloseResourcesIsIdempotent(t *testing.T) {
 	}
 	if got := loggerCloser.count.Load(); got != 1 {
 		t.Fatalf("expected logger close once, got %d", got)
+	}
+}
+
+func TestCloseTrackerUploadResourceReturnsCloseError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("close failed")
+
+	err := closeTrackerUploadResource("logger", &closeCounter{closeErr: wantErr})
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected close error, got %v", err)
+	}
+}
+
+func TestCloseTrackerUploadResourceReturnsPanicError(t *testing.T) {
+	t.Parallel()
+
+	closeErr := errors.New("close failed")
+
+	err := closeTrackerUploadResource("logger", &closeCounter{closeErr: closeErr, panicValue: "close panic"})
+
+	if err == nil {
+		t.Fatal("expected panic error")
+	}
+	if !strings.Contains(err.Error(), "logger close panicked") {
+		t.Fatalf("expected panic context, got %v", err)
+	}
+	if errors.Is(err, closeErr) {
+		t.Fatalf("expected panic error to take precedence over close error, got %v", err)
 	}
 }
 

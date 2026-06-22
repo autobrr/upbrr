@@ -563,7 +563,9 @@ func closeTrackerUploadResource(name string, resource interface{ Close() error }
 			err = errors.New(trackerUploadPanicMessage(name+" close panicked", recovered))
 		}
 	}()
-	_ = resource.Close()
+	if closeErr := resource.Close(); closeErr != nil {
+		return fmt.Errorf("%s close failed: %w", name, closeErr)
+	}
 	return nil
 }
 
