@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ type Config struct {
 	Logging            LoggingConfig                  `yaml:"logging"`
 	Trackers           TrackersConfig                 `yaml:"trackers"`
 	TorrentClients     map[string]TorrentClientConfig `yaml:"torrent_clients"`
+
+	secretReencryptionRequired bool
 }
 
 const DefaultInputHistoryLimit = 20
@@ -814,6 +817,8 @@ func torrentClientConfigYAMLMap(c TorrentClientConfig) map[string]any {
 	return out
 }
 
+// Validate checks the loaded configuration values needed before runtime
+// services can safely start or save settings.
 func (c Config) Validate() error {
 	if c.MainSettings.TMDBAPI == "" {
 		return errors.New("config: main_settings.tmdb_api is required")
@@ -976,6 +981,8 @@ func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string
 	return len(foldMatches) == 1
 }
 
+// DisableUnsupportedTrackerImageRehosts turns off img_rehost for trackers that
+// have no image-host policy and returns the tracker names that changed.
 func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
 	if cfg == nil || len(cfg.Trackers.Trackers) == 0 {
 		return nil
@@ -997,19 +1004,45 @@ func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
 	return disabled
 }
 
+// ResolveBTNAPIToken returns the BTN tracker API key from ASCII case variants
+// of "BTN" before falling back to the legacy metadata-level token. Fuzzy or
+// Unicode-equivalent tracker names are not treated as aliases.
 func ResolveBTNAPIToken(cfg Config) string {
-	if trackerCfg, ok := cfg.Trackers.Trackers["BTN"]; ok {
-		token := strings.TrimSpace(trackerCfg.APIKey)
-		if token != "" {
-			return token
-		}
+	if token := trackerAPIKeyByName(cfg.Trackers.Trackers, "BTN"); token != "" {
+		return token
 	}
 	token := strings.TrimSpace(cfg.Metadata.BTNAPI)
 	return token
 }
 
+// trackerAPIKeyByName returns an exact tracker token before considering
+// deterministic ASCII-case aliases for the same canonical tracker name.
+func trackerAPIKeyByName(trackers map[string]TrackerConfig, name string) string {
+	if token := trackerAPIKeyForExactName(trackers, name); token != "" {
+		return token
+	}
+	for _, trackerName := range sortedASCIITrackerAliases(trackers, name) {
+		if token := strings.TrimSpace(trackers[trackerName].APIKey); token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+// trackerAPIKeyForExactName returns the trimmed API key for name without any
+// case folding or alias lookup.
+func trackerAPIKeyForExactName(trackers map[string]TrackerConfig, name string) string {
+	if trackerCfg, ok := trackers[name]; ok {
+		return strings.TrimSpace(trackerCfg.APIKey)
+	}
+	return ""
+}
+
 // MergeMissingTrackerDefaults backfills tracker stubs from the embedded example
 // config so older saved configs can discover newly added trackers in the GUI.
+// Existing exact tracker names are preserved; ASCII case variants of "BTN" are
+// treated as the BTN entry so default backfill and legacy metadata tokens do not
+// create a duplicate canonical "BTN" entry.
 // CZT keeps user credentials in Passkey only, so stale URL, APIKey, and
 // AnnounceURL values are removed while preserving the passkey.
 func MergeMissingTrackerDefaults(cfg *Config) error {
@@ -1030,32 +1063,33 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 		return errors.New("load embedded tracker defaults: embedded default trackers missing")
 	}
 	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
-		existing, ok := cfg.Trackers.Trackers[trackerName]
+		existingName, existing, ok := trackerDefaultMergeEntry(cfg.Trackers.Trackers, trackerName)
 		if !ok {
 			cfg.Trackers.Trackers[trackerName] = trackerCfg
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(trackerName), "CZT") {
+		if asciiEqualFold(trackerName, "CZT") {
 			existing.URL = ""
 			existing.APIKey = ""
 			existing.AnnounceURL = ""
-			cfg.Trackers.Trackers[trackerName] = existing
+			cfg.Trackers.Trackers[existingName] = existing
 			continue
 		}
 		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
 			existing.URL = trackerCfg.URL
-			cfg.Trackers.Trackers[trackerName] = existing
+			cfg.Trackers.Trackers[existingName] = existing
 		}
 	}
-	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" {
-		btnCfg := cfg.Trackers.Trackers["BTN"]
+	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" && trackerAPIKeyByName(cfg.Trackers.Trackers, "BTN") == "" {
+		btnName := trackerBTNMergeName(cfg.Trackers.Trackers)
+		btnCfg := cfg.Trackers.Trackers[btnName]
 		if strings.TrimSpace(btnCfg.APIKey) == "" {
 			btnCfg.APIKey = token
-			cfg.Trackers.Trackers["BTN"] = btnCfg
+			cfg.Trackers.Trackers[btnName] = btnCfg
 		}
 	}
 	for trackerName, trackerCfg := range cfg.Trackers.Trackers {
-		if !strings.EqualFold(strings.TrimSpace(trackerName), "CZT") {
+		if !asciiEqualFold(trackerName, "CZT") {
 			continue
 		}
 		if strings.TrimSpace(trackerCfg.APIKey) == "" && strings.TrimSpace(trackerCfg.URL) == "" && strings.TrimSpace(trackerCfg.AnnounceURL) == "" {
@@ -1067,6 +1101,68 @@ func MergeMissingTrackerDefaults(cfg *Config) error {
 		cfg.Trackers.Trackers[trackerName] = trackerCfg
 	}
 	return nil
+}
+
+// trackerDefaultMergeEntry returns the exact tracker entry when present, then
+// the first ASCII-case alias in sorted order.
+func trackerDefaultMergeEntry(trackers map[string]TrackerConfig, name string) (string, TrackerConfig, bool) {
+	if trackerCfg, ok := trackers[name]; ok {
+		return name, trackerCfg, true
+	}
+	aliases := sortedASCIITrackerAliases(trackers, name)
+	if len(aliases) > 0 {
+		trackerName := aliases[0]
+		return trackerName, trackers[trackerName], true
+	}
+	return "", TrackerConfig{}, false
+}
+
+// trackerBTNMergeName selects the tracker map key that should receive a legacy
+// metadata BTN token during default backfill.
+func trackerBTNMergeName(trackers map[string]TrackerConfig) string {
+	if _, ok := trackers["BTN"]; ok {
+		return "BTN"
+	}
+	aliases := sortedASCIITrackerAliases(trackers, "BTN")
+	if len(aliases) > 0 {
+		return aliases[0]
+	}
+	return "BTN"
+}
+
+// sortedASCIITrackerAliases returns non-exact tracker keys that match name
+// under ASCII-only case folding.
+func sortedASCIITrackerAliases(trackers map[string]TrackerConfig, name string) []string {
+	aliases := make([]string, 0, len(trackers))
+	for trackerName := range trackers {
+		if trackerName != name && asciiEqualFold(trackerName, name) {
+			aliases = append(aliases, trackerName)
+		}
+	}
+	sort.Strings(aliases)
+	return aliases
+}
+
+// asciiEqualFold compares fixed tracker names using ASCII-only case folding so
+// Unicode-equivalent names are not treated as tracker aliases.
+func asciiEqualFold(value string, target string) bool {
+	if len(value) != len(target) {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		left := value[i]
+		right := target[i]
+		if 'A' <= left && left <= 'Z' {
+			left += 'a' - 'A'
+		}
+		if 'A' <= right && right <= 'Z' {
+			right += 'a' - 'A'
+		}
+		if left != right {
+			return false
+		}
+	}
+	return true
 }
 
 func (c TorrentClientConfig) QbitHost() string {

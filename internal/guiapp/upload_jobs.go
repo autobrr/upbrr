@@ -18,6 +18,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -67,10 +68,13 @@ type TrackerUploadSnapshot struct {
 }
 
 type trackerUploadJob struct {
-	mu                   sync.Mutex
-	cleanupOnce          sync.Once
-	id                   string
-	sourcePath           string
+	mu          sync.Mutex
+	cleanupOnce sync.Once
+	id          string
+	sourcePath  string
+	// uploadOptions is the per-job runtime snapshot needed for upload requests;
+	// the full config may contain secrets and must not be retained in job state.
+	uploadOptions        api.UploadOptions
 	runOptions           runOptions
 	core                 api.Core
 	logger               interface{ Close() error }
@@ -97,11 +101,24 @@ type trackerUploadJob struct {
 	cancel               context.CancelFunc
 }
 
-func (j *trackerUploadJob) closeResources() {
+type trackerUploadRetryRequest struct {
+	sourcePath           string
+	overrides            api.ExternalIDOverrides
+	nameOverrides        api.ReleaseNameOverrides
+	questionnaireAnswers map[string]map[string]string
+	descriptionGroups    []api.DescriptionBuilderGroup
+	failedTrackers       []string
+	ignoreDupesFor       []string
+	runOptions           runOptions
+	uploadOptions        api.UploadOptions
+}
+
+func (j *trackerUploadJob) closeResources() error {
 	if j == nil {
-		return
+		return nil
 	}
 
+	var closeErr error
 	j.cleanupOnce.Do(func() {
 		j.mu.Lock()
 		coreSvc := j.core
@@ -111,19 +128,51 @@ func (j *trackerUploadJob) closeResources() {
 		j.mu.Unlock()
 
 		if coreSvc != nil {
-			_ = coreSvc.Close()
+			closeErr = errors.Join(closeErr, closeTrackerUploadResource("core", coreSvc))
 		}
 		if logger != nil {
-			_ = logger.Close()
+			closeErr = errors.Join(closeErr, closeTrackerUploadResource("logger", logger))
 		}
 	})
+	return closeErr
+}
+
+func trackerUploadRetryRequestFromJob(job *trackerUploadJob) (trackerUploadRetryRequest, error) {
+	if job == nil {
+		return trackerUploadRetryRequest{}, errors.New("upload job not found")
+	}
+
+	job.mu.Lock()
+	defer job.mu.Unlock()
+
+	if len(job.failedTrackers) == 0 {
+		return trackerUploadRetryRequest{}, errors.New("no failed trackers to retry")
+	}
+
+	return trackerUploadRetryRequest{
+		sourcePath:           job.sourcePath,
+		overrides:            job.overrides,
+		nameOverrides:        job.nameOverrides,
+		questionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
+		descriptionGroups:    api.CloneDescriptionBuilderGroups(job.descriptionGroups),
+		failedTrackers:       append([]string(nil), job.failedTrackers...),
+		ignoreDupesFor:       append([]string(nil), job.ignoreDupesFor...),
+		runOptions:           job.runOptions,
+		uploadOptions:        job.uploadOptions,
+	}, nil
 }
 
 // StartTrackerUpload starts a Wails upload job for selected trackers and
 // returns its job ID. Snapshots preserve partial upload counts returned with
-// later tracker errors or cancellation.
+// later tracker errors or cancellation. The job captures upload options at
+// start time so failed-tracker retries reuse the original option set.
 func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
-	if err := a.requireCore(); err != nil {
+	return a.startTrackerUpload(path, overrides, nameOverrides, trackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, debug, noSeed, runLogLevel, nil)
+}
+
+func (a *App) startTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string, uploadOptions *api.UploadOptions) (string, error) {
+	rt, err := a.requireRuntime()
+	if err != nil {
 		return "", err
 	}
 	trimmedPath := strings.TrimSpace(path)
@@ -140,7 +189,7 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	}
 	baseCtx := a.runtimeContext()
 
-	runCore, runLogger, err := a.buildRunCore(runOpts)
+	runCore, runLogger, err := a.buildRunCoreFromSnapshot(rt, runOpts)
 	if err != nil {
 		return "", err
 	}
@@ -154,16 +203,21 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
-	if err := guishared.SeedRunCorePreparedMeta(baseCtx, a.currentCore(), runCore, seedReq); err != nil {
+	if err := guishared.SeedRunCorePreparedMeta(baseCtx, rt.core, runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
 		return "", fmt.Errorf("gui: %w", err)
 	}
 
 	jobID := randomUploadJobID()
+	jobUploadOptions := buildRunUploadOptions(rt.cfg, runOpts)
+	if uploadOptions != nil {
+		jobUploadOptions = *uploadOptions
+	}
 	job := &trackerUploadJob{
 		id:                   jobID,
 		sourcePath:           trimmedPath,
+		uploadOptions:        jobUploadOptions,
 		runOptions:           runOpts,
 		core:                 runCore,
 		logger:               runLogger,
@@ -184,15 +238,8 @@ func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides,
 	jobCtx, cancel := context.WithCancel(baseCtx)
 	job.cancel = cancel
 
-	a.uploadMu.Lock()
-	a.uploads[jobID] = job
-	a.uploadMu.Unlock()
-
+	a.startTrackerUploadWorker(jobCtx, baseCtx, job, cancel)
 	a.emitTrackerUploadSnapshot(baseCtx, job)
-	go func() {
-		defer cancel()
-		a.runTrackerUploadJob(jobCtx, baseCtx, job)
-	}()
 
 	return jobID, nil
 }
@@ -218,12 +265,13 @@ func (a *App) CancelTrackerUpload(jobID string) error {
 	if cancel != nil {
 		cancel()
 	}
-	job.closeResources()
 	return nil
 }
 
 // RetryFailedTrackerUpload starts a new Wails upload job for trackers that
-// failed in the original job.
+// failed in the original job. The retry reuses the original job's run options,
+// upload options, questionnaire answers, description groups, and ignore-dupe
+// list instead of rebuilding them from current settings.
 func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
@@ -238,22 +286,12 @@ func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 		return "", errors.New("upload job not found")
 	}
 
-	job.mu.Lock()
-	failedTrackers := append([]string(nil), job.failedTrackers...)
-	sourcePath := job.sourcePath
-	overrides := job.overrides
-	nameOverrides := job.nameOverrides
-	questionnaireAnswers := cloneQuestionnaireAnswers(job.questionnaireAnswers)
-	descriptionGroups := api.CloneDescriptionBuilderGroups(job.descriptionGroups)
-	ignoreDupesFor := append([]string(nil), job.ignoreDupesFor...)
-	runOptions := job.runOptions
-	job.mu.Unlock()
-
-	if len(failedTrackers) == 0 {
-		return "", errors.New("no failed trackers to retry")
+	retry, err := trackerUploadRetryRequestFromJob(job)
+	if err != nil {
+		return "", err
 	}
 
-	return a.StartTrackerUpload(sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.NoSeed, runOptions.RunLogLevel)
+	return a.startTrackerUpload(retry.sourcePath, retry.overrides, retry.nameOverrides, retry.failedTrackers, retry.ignoreDupesFor, retry.questionnaireAnswers, retry.descriptionGroups, retry.runOptions.Debug, retry.runOptions.NoSeed, retry.runOptions.RunLogLevel, &retry.uploadOptions)
 }
 
 // GetTrackerUploadSnapshot returns the current Wails tracker upload job state.
@@ -280,6 +318,11 @@ func (a *App) runTrackerUploadJob(ctx context.Context, eventCtx context.Context,
 	if a == nil || job == nil {
 		return
 	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			a.failTrackerUploadJob(eventCtx, job, trackerUploadPanicMessage("upload worker panicked", recovered))
+		}
+	}()
 
 	job.mu.Lock()
 	job.status = "running"
@@ -362,7 +405,10 @@ func (a *App) runTrackerUploadJob(ctx context.Context, eventCtx context.Context,
 	}
 	job.cancel = nil
 	job.mu.Unlock()
-	job.closeResources()
+	if err := job.closeResources(); err != nil {
+		a.failTrackerUploadJob(eventCtx, job, err.Error())
+		return
+	}
 	a.emitTrackerUploadSnapshot(eventCtx, job)
 }
 
@@ -420,7 +466,7 @@ func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob,
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
 		IgnoreTrackerRuleFailures:   false,
-		Options:                     buildRunUploadOptions(a.currentConfig(), job.runOptions),
+		Options:                     job.uploadOptions,
 		ExternalIDOverrides:         job.overrides,
 		ReleaseNameOverrides:        job.nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
@@ -430,11 +476,107 @@ func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob,
 }
 
 func (a *App) emitTrackerUploadSnapshot(ctx context.Context, job *trackerUploadJob) {
-	if a == nil || ctx == nil || job == nil {
+	if a == nil || ctx == nil || job == nil || ctx.Value("events") == nil {
 		return
 	}
+	defer func() {
+		_ = recover()
+	}()
 	snapshot := buildTrackerUploadSnapshot(job)
 	runtime.EventsEmit(ctx, trackerUploadEventPrefix+job.id, snapshot)
+}
+
+// startTrackerUploadWorker publishes job only after WaitGroup enrollment so
+// shutdown waits for the worker before closing per-job resources.
+func (a *App) startTrackerUploadWorker(ctx context.Context, eventCtx context.Context, job *trackerUploadJob, cancel context.CancelFunc) {
+	a.publishTrackerUploadJob(job)
+
+	go func() {
+		defer a.uploadWG.Done()
+		defer cancel()
+		a.runTrackerUploadJob(ctx, eventCtx, job)
+	}()
+}
+
+// publishTrackerUploadJob enrolls job work and exposes the job under one lock
+// so stopAllUploadJobs observes both states together.
+func (a *App) publishTrackerUploadJob(job *trackerUploadJob) {
+	a.uploadMu.Lock()
+	a.uploadWG.Add(1)
+	a.uploads[job.id] = job
+	a.uploadMu.Unlock()
+}
+
+// failTrackerUploadJob marks unfinished tracker states failed, closes per-job
+// resources once, and emits the terminal snapshot.
+func (a *App) failTrackerUploadJob(eventCtx context.Context, job *trackerUploadJob, message string) {
+	if a == nil || job == nil {
+		return
+	}
+
+	job.mu.Lock()
+	now := time.Now().UTC()
+	if job.finishedAt.IsZero() {
+		job.finishedAt = now
+	}
+	job.status = "failed"
+	job.errorMessage = strings.TrimSpace(message)
+	if job.errorMessage == "" {
+		job.errorMessage = "upload failed"
+	}
+	for _, tracker := range job.trackers {
+		state := job.states[tracker]
+		if state.Status == "queued" || state.Status == "running" {
+			state.Status = "failed"
+			state.Message = job.errorMessage
+			state.FinishedAt = job.finishedAt.Format(time.RFC3339)
+			job.states[tracker] = state
+		}
+	}
+	job.cancel = nil
+	job.mu.Unlock()
+
+	if err := job.closeResources(); err != nil {
+		job.mu.Lock()
+		if job.errorMessage == "" {
+			job.errorMessage = err.Error()
+		} else if !strings.Contains(job.errorMessage, err.Error()) {
+			job.errorMessage += "; " + err.Error()
+		}
+		for _, tracker := range job.trackers {
+			state := job.states[tracker]
+			if state.Status == "failed" && state.Message == message {
+				state.Message = job.errorMessage
+				job.states[tracker] = state
+			}
+		}
+		job.mu.Unlock()
+	}
+	a.emitTrackerUploadSnapshot(eventCtx, job)
+}
+
+// closeTrackerUploadResource converts Close panics into redacted errors for
+// upload worker terminal state handling.
+func closeTrackerUploadResource(name string, resource interface{ Close() error }) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = errors.New(trackerUploadPanicMessage(name+" close panicked", recovered))
+		}
+	}()
+	if closeErr := resource.Close(); closeErr != nil {
+		return fmt.Errorf("%s close failed: %w", name, closeErr)
+	}
+	return nil
+}
+
+// trackerUploadPanicMessage redacts recovered panic text before it is stored in
+// upload job state or sent over the Wails event bridge.
+func trackerUploadPanicMessage(prefix string, recovered any) string {
+	detail := strings.TrimSpace(redaction.RedactValue(fmt.Sprint(recovered), nil))
+	if detail == "" {
+		return prefix
+	}
+	return prefix + ": " + detail
 }
 
 func buildTrackerUploadSnapshot(job *trackerUploadJob) TrackerUploadSnapshot {
@@ -514,7 +656,12 @@ func (a *App) stopAllUploadJobs() {
 		if cancel != nil {
 			cancel()
 		}
-		job.closeResources()
+	}
+	a.uploadWG.Wait()
+	for _, job := range jobs {
+		if job != nil {
+			_ = job.closeResources()
+		}
 	}
 }
 

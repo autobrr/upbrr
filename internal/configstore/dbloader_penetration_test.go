@@ -207,6 +207,73 @@ func TestLoadFromDBPathEnvOverrideNotPersisted(t *testing.T) {
 	}
 }
 
+func TestBootstrapDefaultDBPathRepairDoesNotPersistEnvOverrides(t *testing.T) {
+	ctx := context.Background()
+
+	for name, storedDBPath := range map[string]string{
+		"blank":      "",
+		"mismatched": "other.db",
+	} {
+		t.Run(name, func(t *testing.T) {
+			xdgRoot := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", xdgRoot)
+			defaultDBPath, err := db.DefaultPath()
+			if err != nil {
+				t.Fatalf("default db path: %v", err)
+			}
+
+			cfg, err := config.LoadEmbeddedDefaultConfig()
+			if err != nil {
+				t.Fatalf("embed: %v", err)
+			}
+			cfg.MainSettings.DBPath = storedDBPath
+			cfg.MainSettings.TMDBAPI = "persisted"
+			cfg.ScreenshotHandling.Screens = 2
+			if storedDBPath == "other.db" {
+				cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), storedDBPath)
+			}
+			if err := configstore.SaveToDBPath(ctx, cfg, defaultDBPath); err != nil {
+				t.Fatalf("seed default db: %v", err)
+			}
+
+			t.Setenv("UA_DEFAULT_TMDB_API", "from-env")
+			t.Setenv("UA_DEFAULT_SCREENS", "8")
+			runtime, resolvedDB, err := configstore.BootstrapWithValidator(ctx, "", false, false, nil)
+			if err != nil {
+				t.Fatalf("bootstrap: %v", err)
+			}
+			if resolvedDB != defaultDBPath {
+				t.Fatalf("resolved DB path: got %q want %q", resolvedDB, defaultDBPath)
+			}
+			if runtime.MainSettings.DBPath != defaultDBPath {
+				t.Fatalf("runtime DB path: got %q want %q", runtime.MainSettings.DBPath, defaultDBPath)
+			}
+			if runtime.MainSettings.TMDBAPI != "from-env" {
+				t.Fatalf("runtime env TMDBAPI missing: got %q", runtime.MainSettings.TMDBAPI)
+			}
+			if runtime.ScreenshotHandling.Screens != 8 {
+				t.Fatalf("runtime env screens missing: got %d", runtime.ScreenshotHandling.Screens)
+			}
+
+			t.Setenv("UA_DEFAULT_TMDB_API", "")
+			t.Setenv("UA_DEFAULT_SCREENS", "")
+			stored, err := configstore.LoadFromDBPath(ctx, defaultDBPath)
+			if err != nil {
+				t.Fatalf("reload default db: %v", err)
+			}
+			if stored.MainSettings.DBPath != defaultDBPath {
+				t.Fatalf("stored DB path repair missing: got %q want %q", stored.MainSettings.DBPath, defaultDBPath)
+			}
+			if stored.MainSettings.TMDBAPI != "persisted" {
+				t.Fatalf("env TMDBAPI leaked into stored config: got %q", stored.MainSettings.TMDBAPI)
+			}
+			if stored.ScreenshotHandling.Screens != 2 {
+				t.Fatalf("env screens leaked into stored config: got %d", stored.ScreenshotHandling.Screens)
+			}
+		})
+	}
+}
+
 // Bootstrap with a provided config path and persistYAML=true must import the
 // YAML, persist it to the DB, and return a runtime config with env overrides
 // applied.
@@ -245,6 +312,137 @@ func TestBootstrapProvidedYAMLPersistsToDB(t *testing.T) {
 	}
 	if stored.ScreenshotHandling.Screens != 2 {
 		t.Fatalf("persisted screens: got %d want 2 (env override leaked into DB)", stored.ScreenshotHandling.Screens)
+	}
+	if stored.MainSettings.TrackerPassChecks != 1 {
+		t.Fatalf("persisted tracker_pass_checks default: got %d want 1", stored.MainSettings.TrackerPassChecks)
+	}
+}
+
+func TestBootstrapWithValidatorRejectsInvalidProvidedYAMLBeforePersist(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "invalid.db")
+	yamlPath := filepath.Join(tmp, "config.yaml")
+
+	body := "main_settings:\n  tmdb_api: provided\n  db_path: " + dbPath + "\nscreenshot_handling:\n  screens: 0\n"
+	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	_, _, err := configstore.BootstrapWithValidator(ctx, yamlPath, true, true, func(cfg *config.Config) error {
+		return cfg.Validate()
+	})
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "screenshot_handling.screens") {
+		t.Fatalf("expected screens validation error, got %v", err)
+	}
+	if _, statErr := os.Stat(dbPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("invalid provided config should not create database file, stat err=%v", statErr)
+	}
+}
+
+func TestBootstrapWithValidatorRejectsEnvOnlyProvidedYAMLBeforePersist(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "env-rescue.db")
+	yamlPath := filepath.Join(tmp, "config.yaml")
+
+	body := "main_settings:\n  db_path: " + dbPath + "\nscreenshot_handling:\n  screens: 2\n"
+	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	t.Setenv("UA_DEFAULT_TMDB_API", "from-env")
+	_, _, err := configstore.BootstrapWithValidator(ctx, yamlPath, true, true, func(cfg *config.Config) error {
+		return cfg.Validate()
+	})
+	if err == nil {
+		t.Fatal("expected env-only valid config to fail before persistence")
+	}
+	if !strings.Contains(err.Error(), "tmdb_api") {
+		t.Fatalf("expected raw config validation error, got %v", err)
+	}
+	if _, statErr := os.Stat(dbPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("env-rescued provided config should not create database file, stat err=%v", statErr)
+	}
+}
+
+func TestBootstrapStoredEncryptedNativeMergeRejectsPlaintextFallback(t *testing.T) {
+	ctx := context.Background()
+	formats := map[string]string{
+		"yaml": "config.yaml",
+		"json": "config.json",
+	}
+
+	for name, filename := range formats {
+		t.Run(name, func(t *testing.T) {
+			sourceDir := t.TempDir()
+			destDir := t.TempDir()
+			sourceDB := filepath.Join(sourceDir, "source.db")
+			destDB := filepath.Join(destDir, "dest.db")
+			writeWebAuthFixture(t, sourceDB)
+
+			sourceCfg, err := config.LoadEmbeddedDefaultConfig()
+			if err != nil {
+				t.Fatalf("load source config: %v", err)
+			}
+			sourceCfg.MainSettings.DBPath = sourceDB
+			sourceCfg.MainSettings.TMDBAPI = "encrypted-source-token"
+			sourceCfg.ScreenshotHandling.Screens = 4
+			sourceCfg.TorrentClients = map[string]config.TorrentClientConfig{}
+			if err := sourceCfg.Validate(); err != nil {
+				t.Fatalf("source config should validate: %v", err)
+			}
+
+			configPath := filepath.Join(sourceDir, filename)
+			switch filepath.Ext(filename) {
+			case ".yaml":
+				if err := config.ExportToYAML(sourceCfg, configPath); err != nil {
+					t.Fatalf("export yaml: %v", err)
+				}
+			case ".json":
+				payload, err := config.ExportToJSON(sourceCfg)
+				if err != nil {
+					t.Fatalf("export json: %v", err)
+				}
+				if err := os.WriteFile(configPath, []byte(payload), 0o600); err != nil {
+					t.Fatalf("write json: %v", err)
+				}
+			default:
+				t.Fatalf("unsupported test filename %q", filename)
+			}
+			storedCfg, err := config.LoadEmbeddedDefaultConfig()
+			if err != nil {
+				t.Fatalf("load stored config: %v", err)
+			}
+			storedCfg.MainSettings.DBPath = destDB
+			storedCfg.MainSettings.TMDBAPI = "stored-token"
+			storedCfg.TorrentClients = map[string]config.TorrentClientConfig{}
+			if err := configstore.SaveToDBPath(ctx, storedCfg, destDB); err != nil {
+				t.Fatalf("seed destination DB: %v", err)
+			}
+
+			t.Setenv("UA_DEFAULT_DB_PATH", destDB)
+			_, _, err = configstore.Bootstrap(ctx, configPath, true, true)
+			if err == nil {
+				t.Fatal("expected helper-unavailable error for encrypted stored merge")
+			}
+			if !errors.Is(err, config.ErrSecretEncryptionHelperUnavailable) {
+				t.Fatalf("expected ErrSecretEncryptionHelperUnavailable, got %v", err)
+			}
+
+			reloaded, err := configstore.LoadFromDBPath(ctx, destDB)
+			if err != nil {
+				t.Fatalf("reload destination DB: %v", err)
+			}
+			if reloaded.MainSettings.TMDBAPI != "stored-token" {
+				t.Fatalf("stored config changed after failed encrypted merge: got %q", reloaded.MainSettings.TMDBAPI)
+			}
+		})
 	}
 }
 
@@ -309,6 +507,227 @@ func TestBootstrapProvidedYAMLNoPersist(t *testing.T) {
 		if loaded.MainSettings.TMDBAPI == "webserver-overlay" {
 			t.Fatalf("web bootstrap must not persist YAML to DB")
 		}
+	}
+}
+
+func TestBootstrapProvidedYAMLMergePreservesStoredConfig(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "merge.db")
+	yamlPath := filepath.Join(tmp, "config.yaml")
+
+	storedCfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("embed: %v", err)
+	}
+	storedCfg.MainSettings.DBPath = dbPath
+	storedCfg.MainSettings.TMDBAPI = "stored-key"
+	storedCfg.ScreenshotHandling.Screens = 7
+	storedCfg.TorrentClients = map[string]config.TorrentClientConfig{}
+	if err := configstore.SaveToDBPath(ctx, storedCfg, dbPath); err != nil {
+		t.Fatalf("seed db: %v", err)
+	}
+
+	body := "main_settings:\n  db_path: " + dbPath + "\nscreenshot_handling:\n  screens: 4\n"
+	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	runtime, resolvedDB, err := configstore.Bootstrap(ctx, yamlPath, true, true)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if resolvedDB != dbPath {
+		t.Fatalf("DB path: got %q want %q", resolvedDB, dbPath)
+	}
+	if runtime.MainSettings.TMDBAPI != "stored-key" {
+		t.Fatalf("runtime TMDBAPI clobbered: got %q", runtime.MainSettings.TMDBAPI)
+	}
+	if runtime.ScreenshotHandling.Screens != 4 {
+		t.Fatalf("runtime screens: got %d want 4", runtime.ScreenshotHandling.Screens)
+	}
+
+	reloaded, err := configstore.LoadFromDBPath(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("load stored: %v", err)
+	}
+	if reloaded.MainSettings.TMDBAPI != "stored-key" {
+		t.Fatalf("stored TMDBAPI clobbered: got %q", reloaded.MainSettings.TMDBAPI)
+	}
+	if reloaded.ScreenshotHandling.Screens != 4 {
+		t.Fatalf("stored screens: got %d want 4", reloaded.ScreenshotHandling.Screens)
+	}
+}
+
+func TestBootstrapProvidedYAMLMergeSkipsNilDynamicTorrentClientEntry(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "merge-nil-client.db")
+	yamlPath := filepath.Join(tmp, "config.yaml")
+
+	storedCfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("embed: %v", err)
+	}
+	storedCfg.MainSettings.DBPath = dbPath
+	storedCfg.MainSettings.TMDBAPI = "stored-key"
+	storedCfg.ScreenshotHandling.Screens = 7
+	storedCfg.TorrentClients = map[string]config.TorrentClientConfig{
+		"watch-client": {
+			Type:        "watch",
+			WatchFolder: "stored-watch",
+		},
+	}
+	if err := configstore.SaveToDBPath(ctx, storedCfg, dbPath); err != nil {
+		t.Fatalf("seed db: %v", err)
+	}
+
+	body := "main_settings:\n  db_path: " + dbPath + "\nscreenshot_handling:\n  screens: 4\ntorrent_clients:\n  watch-client: null\n"
+	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	runtime, resolvedDB, err := configstore.Bootstrap(ctx, yamlPath, true, true)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if resolvedDB != dbPath {
+		t.Fatalf("DB path: got %q want %q", resolvedDB, dbPath)
+	}
+	if got := runtime.TorrentClients["watch-client"].WatchFolder; got != "stored-watch" {
+		t.Fatalf("runtime nil dynamic overlay clobbered stored torrent client: got watch_folder %q", got)
+	}
+	if runtime.ScreenshotHandling.Screens != 4 {
+		t.Fatalf("runtime screens: got %d want 4", runtime.ScreenshotHandling.Screens)
+	}
+
+	reloaded, err := configstore.LoadFromDBPath(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("load stored: %v", err)
+	}
+	if got := reloaded.TorrentClients["watch-client"].WatchFolder; got != "stored-watch" {
+		t.Fatalf("stored nil dynamic overlay clobbered torrent client: got watch_folder %q", got)
+	}
+	if reloaded.ScreenshotHandling.Screens != 4 {
+		t.Fatalf("stored screens: got %d want 4", reloaded.ScreenshotHandling.Screens)
+	}
+}
+
+func TestBootstrapProvidedYAMLInvalidMergeDoesNotOverwriteStoredConfig(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "invalid-merge.db")
+	yamlPath := filepath.Join(tmp, "config.yaml")
+
+	storedCfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("embed: %v", err)
+	}
+	storedCfg.MainSettings.DBPath = dbPath
+	storedCfg.MainSettings.TMDBAPI = "stored-key"
+	storedCfg.ScreenshotHandling.Screens = 7
+	storedCfg.TorrentClients = map[string]config.TorrentClientConfig{}
+	if err := configstore.SaveToDBPath(ctx, storedCfg, dbPath); err != nil {
+		t.Fatalf("seed db: %v", err)
+	}
+
+	body := "main_settings:\n  tmdb_api: \"\"\n  db_path: " + dbPath + "\nscreenshot_handling:\n  screens: 4\n"
+	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	runtime, resolvedDB, err := configstore.Bootstrap(ctx, yamlPath, true, true)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if resolvedDB != dbPath {
+		t.Fatalf("DB path: got %q want %q", resolvedDB, dbPath)
+	}
+	if runtime.MainSettings.TMDBAPI != "stored-key" || runtime.ScreenshotHandling.Screens != 7 {
+		t.Fatalf("runtime should fall back to stored config, got tmdb=%q screens=%d", runtime.MainSettings.TMDBAPI, runtime.ScreenshotHandling.Screens)
+	}
+
+	reloaded, err := configstore.LoadFromDBPath(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("load stored: %v", err)
+	}
+	if reloaded.MainSettings.TMDBAPI != "stored-key" || reloaded.ScreenshotHandling.Screens != 7 {
+		t.Fatalf("stored config overwritten: tmdb=%q screens=%d", reloaded.MainSettings.TMDBAPI, reloaded.ScreenshotHandling.Screens)
+	}
+}
+
+func TestBootstrapProvidedYAMLInvalidFreshSetupDoesNotCreateDB(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "fresh-invalid.db")
+	yamlPath := filepath.Join(tmp, "config.yaml")
+
+	body := "main_settings:\n  tmdb_api: \"\"\n  db_path: " + dbPath + "\nscreenshot_handling:\n  screens: 4\n"
+	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	runtime, resolvedDB, err := configstore.Bootstrap(ctx, yamlPath, true, true)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if resolvedDB != dbPath {
+		t.Fatalf("DB path: got %q want %q", resolvedDB, dbPath)
+	}
+	if runtime.MainSettings.TMDBAPI != "" {
+		t.Fatalf("runtime TMDBAPI: got %q want empty setup value", runtime.MainSettings.TMDBAPI)
+	}
+	if _, statErr := os.Stat(dbPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("invalid fresh setup should not create database before validation succeeds, stat err=%v", statErr)
+	}
+}
+
+func TestBootstrapProvidedYAMLInvalidMergeDoesNotPersistStoredSanitization(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "invalid-merge-sanitize.db")
+	yamlPath := filepath.Join(tmp, "config.yaml")
+
+	storedCfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("embed: %v", err)
+	}
+	storedCfg.MainSettings.DBPath = dbPath
+	storedCfg.MainSettings.TMDBAPI = "stored-key"
+	storedCfg.ScreenshotHandling.Screens = 7
+	storedCfg.Trackers.Trackers["TL"] = config.TrackerConfig{ImgRehost: true}
+	if err := configstore.SaveToDBPath(ctx, storedCfg, dbPath); err != nil {
+		t.Fatalf("seed db: %v", err)
+	}
+
+	body := "main_settings:\n  tmdb_api: \"\"\n  db_path: " + dbPath + "\nscreenshot_handling:\n  screens: 4\n"
+	if err := os.WriteFile(yamlPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	runtime, resolvedDB, err := configstore.Bootstrap(ctx, yamlPath, true, true)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if resolvedDB != dbPath {
+		t.Fatalf("DB path: got %q want %q", resolvedDB, dbPath)
+	}
+	if runtime.MainSettings.TMDBAPI != "stored-key" || runtime.ScreenshotHandling.Screens != 7 {
+		t.Fatalf("runtime should fall back to stored config, got tmdb=%q screens=%d", runtime.MainSettings.TMDBAPI, runtime.ScreenshotHandling.Screens)
+	}
+
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer repo.Close()
+
+	reloaded, err := config.LoadFromDatabase(ctx, repo)
+	if err != nil {
+		t.Fatalf("load raw stored: %v", err)
+	}
+	if !reloaded.Trackers.Trackers["TL"].ImgRehost {
+		t.Fatalf("invalid provided config persisted unsupported TL img_rehost sanitization")
 	}
 }
 

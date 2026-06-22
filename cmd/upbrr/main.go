@@ -598,8 +598,12 @@ func parseServePortValue(value string) (int, error) {
 	return port, nil
 }
 
+// loadCLIConfig bootstraps CLI config and validates both the env-applied
+// pre-persist candidate and the returned runtime config.
 func loadCLIConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	cfg, dbPath, err := configstore.Bootstrap(context.Background(), configPath, configProvided, true)
+	cfg, dbPath, err := configstore.BootstrapWithValidator(context.Background(), configPath, configProvided, true, func(cfg *config.Config) error {
+		return cfg.Validate()
+	})
 	if err != nil {
 		return config.Config{}, "", fmt.Errorf("upbrr: %w", err)
 	}
@@ -611,9 +615,11 @@ func loadCLIConfig(configPath string, configProvided bool) (config.Config, strin
 
 // loadServeConfig loads config for the web server without requiring a fully
 // valid config (e.g. tmdb_api). The web UI handles initial setup, so the
-// server must be able to start even on a fresh install with no config yet.
+// server must be able to start even on a fresh install with no config yet. A
+// provided --config may seed or merge database config, but invalid env-applied
+// input is not persisted over stored settings.
 func loadServeConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	return wrapUpbrrResult2(configstore.Bootstrap(context.Background(), configPath, configProvided, false))
+	return wrapUpbrrResult2(configstore.Bootstrap(context.Background(), configPath, configProvided, configProvided))
 }
 
 func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string, plaintext bool) error {

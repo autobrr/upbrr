@@ -185,7 +185,7 @@ func TestInitializeEncryptionKeyChangedFingerprintWithoutRecoverableHelper(t *te
 		t.Fatalf("save cookie with old key: %v", err)
 	}
 
-	before := readCookieCiphertext(ctx, t, db, "tracker", "session")
+	before := readCookieCiphertext(ctx, t, db)
 
 	km := NewKeyManager(db)
 	_, err = km.InitializeEncryptionKey(ctx, dbPath)
@@ -193,7 +193,7 @@ func TestInitializeEncryptionKeyChangedFingerprintWithoutRecoverableHelper(t *te
 		t.Fatalf("expected ErrAuthHelperUnavailable, got %v", err)
 	}
 
-	after := readCookieCiphertext(ctx, t, db, "tracker", "session")
+	after := readCookieCiphertext(ctx, t, db)
 	if before != after {
 		t.Fatalf("expected encrypted cookie row to remain unchanged")
 	}
@@ -205,6 +205,29 @@ func TestInitializeEncryptionKeyChangedFingerprintWithoutRecoverableHelper(t *te
 
 	if _, err := store.GetCookie(ctx, "tracker", "session", oldKey); err != nil {
 		t.Fatalf("expected old key to continue decrypting cookie: %v", err)
+	}
+}
+
+func TestInitializeEncryptionKeyRollsBackSaltWhenAuthStateStoreFails(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := newTestCookieDB(t)
+	dbPath := writeWebAuthFile(t, "initial-user", "initial-password-hash")
+	rejectAuthStateWrites(ctx, t, db)
+
+	km := NewKeyManager(db)
+	_, err := km.InitializeEncryptionKey(ctx, dbPath)
+	if err == nil || !strings.Contains(err.Error(), "failed to store initial auth state") {
+		t.Fatalf("expected auth state store error, got %v", err)
+	}
+
+	salt, err := getSaltFromDB(ctx, db)
+	if err != nil {
+		t.Fatalf("get salt: %v", err)
+	}
+	if salt != "" {
+		t.Fatalf("expected salt insert to roll back, got %q", salt)
 	}
 }
 
@@ -269,6 +292,68 @@ func TestInitializeEncryptionKeyErrorCases(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRewrapCookiesWithAuthChangeRollsBackCookiesWhenAuthStateStoreFails(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := newTestCookieDB(t)
+
+	oldMaterial := authmaterial.Material{
+		Username:     "tester",
+		PasswordHash: "old-password-hash",
+	}
+	newMaterial := authmaterial.Material{
+		Username:          "tester",
+		PasswordHash:      "new-password-hash",
+		EncryptionKeySeed: "stable-seed-value",
+	}
+
+	salt, err := ensureSalt(ctx, db)
+	if err != nil {
+		t.Fatalf("ensure salt: %v", err)
+	}
+	oldHelper, oldFingerprint, err := oldMaterial.PrimaryHelper()
+	if err != nil {
+		t.Fatalf("old helper: %v", err)
+	}
+	oldKey, err := DeriveEncryptionKey(oldHelper, salt)
+	if err != nil {
+		t.Fatalf("derive old key: %v", err)
+	}
+
+	store, err := NewCookieStore(db)
+	if err != nil {
+		t.Fatalf("create cookie store: %v", err)
+	}
+	if err := store.SaveCookie(ctx, "tracker", "session", "cookie-value", oldKey); err != nil {
+		t.Fatalf("save legacy cookie: %v", err)
+	}
+	if err := storeAuthStateInDB(ctx, db, authState{Fingerprint: oldFingerprint}); err != nil {
+		t.Fatalf("store legacy auth state: %v", err)
+	}
+	before := readCookieCiphertext(ctx, t, db)
+	rejectAuthStateWrites(ctx, t, db)
+
+	err = RewrapCookiesWithAuthChange(ctx, db, oldMaterial, newMaterial)
+	if err == nil || !strings.Contains(err.Error(), "cookies: store auth state") {
+		t.Fatalf("expected auth state store error, got %v", err)
+	}
+
+	after := readCookieCiphertext(ctx, t, db)
+	if before != after {
+		t.Fatalf("expected cookie rewrap to roll back")
+	}
+
+	state, _ := readPersistedAuthState(ctx, t, db)
+	if state.Fingerprint != oldFingerprint {
+		t.Fatalf("expected auth state fingerprint to remain %q, got %q", oldFingerprint, state.Fingerprint)
+	}
+
+	if _, err := store.GetCookie(ctx, "tracker", "session", oldKey); err != nil {
+		t.Fatalf("expected old key to continue decrypting cookie: %v", err)
 	}
 }
 
@@ -490,13 +575,13 @@ func readPersistedAuthState(ctx context.Context, t *testing.T, db *sql.DB) (auth
 	return state, rawJSON
 }
 
-func readCookieCiphertext(ctx context.Context, t *testing.T, db *sql.DB, trackerID, cookieName string) string {
+func readCookieCiphertext(ctx context.Context, t *testing.T, db *sql.DB) string {
 	t.Helper()
 
 	var ciphertext, nonce, authTag string
 	if err := db.QueryRowContext(ctx,
 		`SELECT encrypted_value, nonce, auth_tag FROM tracker_cookies WHERE tracker_id = ? AND cookie_name = ?`,
-		trackerID, cookieName,
+		"tracker", "session",
 	).Scan(&ciphertext, &nonce, &authTag); err != nil {
 		t.Fatalf("query encrypted cookie row: %v", err)
 	}
@@ -514,4 +599,26 @@ func helperFingerprint(t *testing.T, helper string) string {
 
 	sum := sha256.Sum256([]byte(rawHelper))
 	return hex.EncodeToString(sum[:])
+}
+
+func rejectAuthStateWrites(ctx context.Context, t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	statements := []string{
+		`CREATE TRIGGER reject_auth_state_insert BEFORE INSERT ON config_settings
+			WHEN NEW.section = '` + cookieAuthStateConfigSection + `'
+			BEGIN
+				SELECT RAISE(ABORT, 'blocked auth state write');
+			END`,
+		`CREATE TRIGGER reject_auth_state_update BEFORE UPDATE ON config_settings
+			WHEN NEW.section = '` + cookieAuthStateConfigSection + `'
+			BEGIN
+				SELECT RAISE(ABORT, 'blocked auth state write');
+			END`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("create auth state rejection trigger: %v", err)
+		}
+	}
 }

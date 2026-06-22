@@ -39,10 +39,8 @@ func TestImportFromContentMalformedYAML(t *testing.T) {
 func TestImportFromContentMalformedJSON(t *testing.T) {
 	t.Parallel()
 
-	// JSON imports are dispatched through yaml.v3, which is stricter than
-	// encoding/json on structure but more permissive on trailing commas in
-	// flow maps (YAML flow style allows them). So we only assert on cases
-	// that are malformed in both JSON and YAML flow style.
+	// Keep cases structurally malformed for encoding/json rather than relying
+	// on semantic config validation.
 	cases := map[string]string{
 		"unterminated":     `{"MainSettings":{"TMDBAPI":"x"`,
 		"mapping in array": `[{"MainSettings":{"TMDBAPI":"x"}}]`,

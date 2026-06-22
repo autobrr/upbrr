@@ -42,7 +42,8 @@ func BuildRuntime(ctx context.Context, cfg config.Config, repo *db.SQLiteReposit
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
-		Repository: repo,
+		Repository:          repo,
+		SkipCookieMigration: true,
 	})
 	if err != nil {
 		_ = logger.Close()

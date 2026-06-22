@@ -6,6 +6,7 @@ package guiapp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -22,7 +23,9 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/configstore"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/core"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/internal/imagehostpolicy"
@@ -41,6 +44,7 @@ const previewTimeout = 30 * time.Minute
 const bdinfoProgressEvent = "bdinfo:progress"
 const metadataProgressEvent = "metadata:progress"
 
+// App owns the Wails-bound backend state for the desktop GUI.
 type App struct {
 	runtimeCtx  *appRuntimeContext
 	runtimeMu   sync.RWMutex
@@ -55,16 +59,21 @@ type App struct {
 	dupes       map[string]*dupeCheckJob
 	uploadMu    sync.Mutex
 	uploads     map[string]*trackerUploadJob
+	uploadWG    sync.WaitGroup
 }
 
 type blurayCandidateSelector interface {
 	SelectBlurayCandidate(ctx context.Context, sourcePath string, releaseID string) (api.MetadataPreview, error)
 }
 
+// NewApp creates a Wails backend using the default background context.
 func NewApp(configPath string, configProvided bool) (*App, error) {
 	return NewAppWithContext(context.Background(), configPath, configProvided)
 }
 
+// NewAppWithContext bootstraps config, logging, repository access, and the core
+// service used by Wails calls. Invalid runtime config leaves upload features
+// disabled until settings are saved, while config/settings calls remain usable.
 func NewAppWithContext(ctx context.Context, configPath string, configProvided bool) (*App, error) {
 	if ctx == nil {
 		return nil, errors.New("guiapp: context is required")
@@ -633,7 +642,8 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 }
 
 func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
-	if err := a.requireCore(); err != nil {
+	rt, err := a.requireRuntime()
+	if err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
 	if strings.TrimSpace(path) == "" {
@@ -654,7 +664,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 	if logger := a.currentLogger(); logger != nil {
 		logger.Debugf("gui: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", trimmedPath, debug, noSeed, runOpts.RunLogLevel)
 	}
-	runCore, runLogger, err := a.buildRunCore(runOpts)
+	runCore, runLogger, err := a.buildRunCoreFromSnapshot(rt, runOpts)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -670,13 +680,13 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		Trackers:                    slices.Clone(trackers),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   false,
-		Options:                     buildRunUploadOptions(a.currentConfig(), runOpts),
+		Options:                     buildRunUploadOptions(rt.cfg, runOpts),
 		ExternalIDOverrides:         overrides,
 		ReleaseNameOverrides:        nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 	}
 	req.Options.DryRun = true
-	if err := guishared.SeedRunCorePreparedMeta(ctx, a.currentCore(), runCore, req); err != nil {
+	if err := guishared.SeedRunCorePreparedMeta(ctx, rt.core, runCore, req); err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("gui: %w", err)
 	}
 
@@ -850,8 +860,9 @@ func (a *App) DeleteHistoryRelease(sourcePath string) error {
 }
 
 func (a *App) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.ScreenshotPlan, error) {
-	if a == nil || a.currentCore() == nil {
-		return api.ScreenshotPlan{}, errors.New("app not initialized")
+	rt, err := a.requireRuntime()
+	if err != nil {
+		return api.ScreenshotPlan{}, err
 	}
 	if strings.TrimSpace(path) == "" {
 		return api.ScreenshotPlan{}, errors.New("path is required")
@@ -864,18 +875,19 @@ func (a *App) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides
 	req := api.Request{
 		Paths:   []string{path},
 		Mode:    api.ModeGUI,
-		Options: a.baseUploadOptions(),
+		Options: rt.baseUploadOptions(),
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return wrapGUIResult(a.currentCore().FetchScreenshotPlan(ctx, req))
+	return wrapGUIResult(rt.core.FetchScreenshotPlan(ctx, req))
 }
 
 func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
-	if a == nil || a.currentCore() == nil {
-		return api.ScreenshotResult{}, errors.New("app not initialized")
+	rt, err := a.requireRuntime()
+	if err != nil {
+		return api.ScreenshotResult{}, err
 	}
 	if strings.TrimSpace(path) == "" {
 		return api.ScreenshotResult{}, errors.New("path is required")
@@ -888,18 +900,19 @@ func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides
 	req := api.Request{
 		Paths:   []string{path},
 		Mode:    api.ModeGUI,
-		Options: a.baseUploadOptions(),
+		Options: rt.baseUploadOptions(),
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return wrapGUIResult(a.currentCore().GenerateScreenshots(ctx, req, selections, purpose))
+	return wrapGUIResult(rt.core.GenerateScreenshots(ctx, req, selections, purpose))
 }
 
 func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.ScreenshotImage, error) {
-	if a == nil || a.currentCore() == nil {
-		return nil, errors.New("app not initialized")
+	rt, err := a.requireRuntime()
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("path is required")
@@ -912,18 +925,19 @@ func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverride
 	req := api.Request{
 		Paths:   []string{path},
 		Mode:    api.ModeGUI,
-		Options: a.baseUploadOptions(),
+		Options: rt.baseUploadOptions(),
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return wrapGUIResult(a.currentCore().ListUploadCandidates(ctx, req))
+	return wrapGUIResult(rt.core.ListUploadCandidates(ctx, req))
 }
 
 func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.UploadedImageLink, error) {
-	if a == nil || a.currentCore() == nil {
-		return nil, errors.New("app not initialized")
+	rt, err := a.requireRuntime()
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("path is required")
@@ -936,18 +950,19 @@ func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides,
 	req := api.Request{
 		Paths:   []string{path},
 		Mode:    api.ModeGUI,
-		Options: a.baseUploadOptions(),
+		Options: rt.baseUploadOptions(),
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 	}
 
-	return wrapGUIResult(a.currentCore().ListUploadedImages(ctx, req))
+	return wrapGUIResult(rt.core.ListUploadedImages(ctx, req))
 }
 
 func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
-	if a == nil || a.currentCore() == nil {
-		return api.UploadImagesResult{}, errors.New("app not initialized")
+	rt, err := a.requireRuntime()
+	if err != nil {
+		return api.UploadImagesResult{}, err
 	}
 	if strings.TrimSpace(path) == "" {
 		return api.UploadImagesResult{}, errors.New("path is required")
@@ -966,14 +981,14 @@ func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameO
 	req := api.Request{
 		Paths:   []string{path},
 		Mode:    api.ModeGUI,
-		Options: a.baseUploadOptions(),
+		Options: rt.baseUploadOptions(),
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
 		Trackers:             slices.Clone(trackers),
 	}
 
-	return wrapGUIResult(a.currentCore().UploadImages(ctx, req, host, images))
+	return wrapGUIResult(rt.core.UploadImages(ctx, req, host, images))
 }
 
 func (a *App) DeleteUploadedImage(path string, imagePath string, host string) error {
@@ -1152,6 +1167,8 @@ func (a *App) ReadScreenshotImage(path string) (string, error) {
 	return "data:image/png;base64," + encoded, nil
 }
 
+// GetConfig returns the GUI settings payload as encrypted JSON. If no config
+// rows exist yet, it exports the current runtime config without persisting it.
 func (a *App) GetConfig() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
@@ -1161,25 +1178,22 @@ func (a *App) GetConfig() (string, error) {
 	}
 
 	ctx := a.runtimeContext()
+	rt := a.runtimeSnapshot()
 
 	cfg, err := config.LoadFromDatabase(ctx, a.repo)
 	if err != nil {
-		return "", fmt.Errorf("gui: %w", err)
+		if errors.Is(err, internalerrors.ErrNotFound) {
+			cfg = &rt.cfg
+		} else {
+			return "", fmt.Errorf("gui: %w", err)
+		}
 	}
-	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
-		return "", fmt.Errorf("gui: %w", err)
-	}
-	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
-		cfg.MainSettings.DBPath = a.currentConfig().MainSettings.DBPath
-	}
-	if cfg.Trackers.Trackers == nil {
-		cfg.Trackers.Trackers = map[string]config.TrackerConfig{}
-	}
-	if cfg.Trackers.DefaultTrackers == nil {
-		cfg.Trackers.DefaultTrackers = config.CSVList{}
+	normalized, err := normalizeGUIConfigForExport(cfg, rt.cfg.MainSettings.DBPath)
+	if err != nil {
+		return "", err
 	}
 
-	return wrapGUIResult(config.ExportToJSON(cfg))
+	return wrapGUIResult(config.ExportToJSON(normalized))
 }
 
 func (a *App) GetApplicationInfo() (api.ApplicationInfo, error) {
@@ -1218,6 +1232,10 @@ func (a *App) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {
 	return imagehostpolicy.PolicyMetadata(), nil
 }
 
+// SaveConfig validates encrypted GUI settings, builds the replacement runtime,
+// then syncs cookie encryption metadata and saves the non-env config. Runtime
+// build or save failures leave the persisted config and active runtime unchanged;
+// env overrides apply only to the installed runtime config.
 func (a *App) SaveConfig(payload string) error {
 	if a == nil {
 		return errors.New("app not initialized")
@@ -1240,9 +1258,10 @@ func (a *App) SaveConfig(payload string) error {
 	if strings.TrimSpace(cfg.MainSettings.DBPath) == "" {
 		cfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
 	}
-	if cfg.MainSettings.DBPath != currentCfg.MainSettings.DBPath {
+	if !pathutil.SamePath(cfg.MainSettings.DBPath, currentCfg.MainSettings.DBPath) {
 		return errors.New("changing main_settings.db_path requires restart and is not supported in the GUI")
 	}
+	cfg.MainSettings.DBPath = currentCfg.MainSettings.DBPath
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("gui: %w", err)
 	}
@@ -1254,11 +1273,43 @@ func (a *App) SaveConfig(payload string) error {
 	}
 
 	ctx := a.runtimeContext()
-	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
-		return fmt.Errorf("gui: %w", err)
-	}
+	return a.saveAndApplyConfig(ctx, cfg, runtimeCfg, cfg.MainSettings.DBPath)
+}
 
-	return a.applyConfig(runtimeCfg)
+// normalizeGUIConfigForExport clones cfg and fills tracker defaults, legacy
+// nils, and a missing DB path without mutating runtime or persisted config.
+func normalizeGUIConfigForExport(cfg *config.Config, dbPath string) (*config.Config, error) {
+	normalized, err := cloneGUIConfigForExport(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := config.MergeMissingTrackerDefaults(normalized); err != nil {
+		return nil, fmt.Errorf("gui: %w", err)
+	}
+	if strings.TrimSpace(normalized.MainSettings.DBPath) == "" {
+		normalized.MainSettings.DBPath = dbPath
+	}
+	if normalized.Trackers.Trackers == nil {
+		normalized.Trackers.Trackers = map[string]config.TrackerConfig{}
+	}
+	if normalized.Trackers.DefaultTrackers == nil {
+		normalized.Trackers.DefaultTrackers = config.CSVList{}
+	}
+	return normalized, nil
+}
+
+// cloneGUIConfigForExport deep-copies config through JSON so export
+// normalization cannot mutate the source snapshot.
+func cloneGUIConfigForExport(cfg *config.Config) (*config.Config, error) {
+	payload, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("gui: clone config for export: marshal: %w", err)
+	}
+	var cloned config.Config
+	if err := json.Unmarshal(payload, &cloned); err != nil {
+		return nil, fmt.Errorf("gui: clone config for export: unmarshal: %w", err)
+	}
+	return &cloned, nil
 }
 
 // isDialogCancelledErr reports whether err is the result of the user closing a
@@ -1272,6 +1323,9 @@ func isDialogCancelledErr(err error) bool {
 	return strings.Contains(err.Error(), "shellItem is nil")
 }
 
+// ExportConfig opens a native save dialog and writes the GUI config as YAML.
+// It returns the written host path, or an empty string when the dialog is
+// canceled or yields a blank path.
 func (a *App) ExportConfig() (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
@@ -1306,31 +1360,74 @@ func (a *App) ExportConfig() (string, error) {
 		trimmedPath += ".yaml"
 	}
 
-	allowPlaintext, err := a.allowUnencryptedExport()
+	return a.exportConfigToPath(ctx, trimmedPath)
+}
+
+// exportConfigToPath writes the persisted config to trimmedPath, adding a YAML
+// extension when needed. Fresh installs with no config rows export the current
+// runtime config without persisting it.
+func (a *App) exportConfigToPath(ctx context.Context, trimmedPath string) (string, error) {
+	trimmedPath = strings.TrimSpace(trimmedPath)
+	if trimmedPath == "" {
+		return "", nil
+	}
+	if ext := strings.ToLower(filepath.Ext(trimmedPath)); ext == "" {
+		trimmedPath += ".yaml"
+	}
+
+	cfg, authDBPath, err := a.exportableConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	allowPlaintext, err := a.allowUnencryptedExport(authDBPath)
 	if err != nil {
 		return "", err
 	}
 
 	if allowPlaintext {
-		if err := config.ExportFromDatabaseToPlaintextYAML(ctx, trimmedPath, a.repo); err != nil {
+		if err := config.ExportToPlaintextYAML(cfg, trimmedPath); err != nil {
 			return "", fmt.Errorf("gui: %w", err)
 		}
 		return trimmedPath, nil
 	}
 
-	if err := config.ExportFromDatabaseToYAML(ctx, trimmedPath, a.repo); err != nil {
+	if err := config.ExportToYAML(cfg, trimmedPath); err != nil {
 		return "", fmt.Errorf("gui: %w", err)
 	}
 
 	return trimmedPath, nil
 }
 
-func (a *App) allowUnencryptedExport() (bool, error) {
+// exportableConfig returns the normalized GUI export snapshot and the DB path
+// embedded in that snapshot. Plaintext export authorization must use that same
+// DB path so runtime config changes cannot authorize a different persisted
+// config boundary.
+func (a *App) exportableConfig(ctx context.Context) (*config.Config, string, error) {
+	rt := a.runtimeSnapshot()
+	cfg, err := config.LoadFromDatabase(ctx, a.repo)
+	if err != nil {
+		if errors.Is(err, internalerrors.ErrNotFound) {
+			cfg = &rt.cfg
+		} else {
+			return nil, "", fmt.Errorf("gui: %w", err)
+		}
+	}
+	normalized, err := normalizeGUIConfigForExport(cfg, rt.cfg.MainSettings.DBPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return normalized, normalized.MainSettings.DBPath, nil
+}
+
+// allowUnencryptedExport reports whether the supplied DB auth material
+// permits plaintext config export. Missing auth material denies plaintext
+// export; malformed material is returned as an error.
+func (a *App) allowUnencryptedExport(dbPath string) (bool, error) {
 	if a == nil {
 		return false, errors.New("app not initialized")
 	}
 
-	dbPath := strings.TrimSpace(a.currentConfig().MainSettings.DBPath)
+	dbPath = strings.TrimSpace(dbPath)
 	if dbPath == "" {
 		return false, nil
 	}
@@ -1345,22 +1442,37 @@ func (a *App) allowUnencryptedExport() (bool, error) {
 	return false, fmt.Errorf("gui: %w", err)
 }
 
+// ImportResult is returned to the GUI after an interactive config import.
 type ImportResult struct {
-	Message  string   `json:"message"`
+	// Message is a user-displayable import summary.
+	Message string `json:"message"`
+	// Warnings contains non-fatal parser/import warnings.
 	Warnings []string `json:"warnings"`
 }
 
+// WebAuthStatus reports whether the current database has usable web auth
+// material for config secret encryption.
 type WebAuthStatus struct {
-	Path                    string `json:"path"`
-	Exists                  bool   `json:"exists"`
-	Usable                  bool   `json:"usable"`
-	CanCreate               bool   `json:"canCreate"`
-	Username                string `json:"username"`
-	AllowUnencryptedExport  bool   `json:"allowUnencryptedExport"`
-	BrowseRoot              string `json:"browseRoot"`
-	AllowUnrestrictedBrowse bool   `json:"allowUnrestrictedBrowse"`
-	EncryptionEnabled       bool   `json:"encryptionEnabled"`
-	Message                 string `json:"message"`
+	// Path is the host filesystem path to the web auth material file.
+	Path string `json:"path"`
+	// Exists reports whether web auth material was found on disk.
+	Exists bool `json:"exists"`
+	// Usable reports whether the auth material can decrypt/encrypt config secrets.
+	Usable bool `json:"usable"`
+	// CanCreate reports whether the GUI may create new auth material at Path.
+	CanCreate bool `json:"canCreate"`
+	// Username is populated only when usable auth material is loaded.
+	Username string `json:"username"`
+	// AllowUnencryptedExport mirrors the loaded auth policy.
+	AllowUnencryptedExport bool `json:"allowUnencryptedExport"`
+	// BrowseRoot is the host filesystem root enforced for browser file browsing.
+	BrowseRoot string `json:"browseRoot"`
+	// AllowUnrestrictedBrowse reports whether browser file browsing may ignore BrowseRoot.
+	AllowUnrestrictedBrowse bool `json:"allowUnrestrictedBrowse"`
+	// EncryptionEnabled reports whether config secret encryption is active.
+	EncryptionEnabled bool `json:"encryptionEnabled"`
+	// Message is a user-displayable status summary.
+	Message string `json:"message"`
 }
 
 func (a *App) GetWebAuthStatus() (WebAuthStatus, error) {
@@ -1438,6 +1550,10 @@ func (a *App) CreateWebAuth(username string, password string) (WebAuthStatus, er
 	return a.GetWebAuthStatus()
 }
 
+// ImportConfig opens a native file picker, imports the selected config, builds
+// the replacement runtime, then syncs cookie encryption metadata and saves the
+// non-env config. Runtime build or save failures leave the persisted config and
+// active runtime unchanged; env overrides apply only to the installed runtime.
 func (a *App) ImportConfig() (ImportResult, error) {
 	if a == nil {
 		return ImportResult{}, errors.New("app not initialized")
@@ -1467,6 +1583,12 @@ func (a *App) ImportConfig() (ImportResult, error) {
 		return ImportResult{}, nil
 	}
 
+	return a.importConfigFromPath(ctx, path)
+}
+
+// importConfigFromPath imports one selected config file, validates both
+// persisted and env-applied runtime forms, then atomically saves and applies it.
+func (a *App) importConfigFromPath(ctx context.Context, path string) (ImportResult, error) {
 	cfg, warnings, err := importer.ImportFromFile(path)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("gui: %w", err)
@@ -1485,11 +1607,7 @@ func (a *App) ImportConfig() (ImportResult, error) {
 		return ImportResult{}, fmt.Errorf("validate imported config: %w", err)
 	}
 
-	if err := config.SaveToDatabase(ctx, cfg, a.repo); err != nil {
-		return ImportResult{}, fmt.Errorf("gui: %w", err)
-	}
-
-	if err := a.applyConfig(runtimeCfg); err != nil {
+	if err := a.saveAndApplyConfig(ctx, cfg, runtimeCfg, cfg.MainSettings.DBPath); err != nil {
 		return ImportResult{}, err
 	}
 
@@ -1500,15 +1618,92 @@ func (a *App) ImportConfig() (ImportResult, error) {
 	return ImportResult{Message: message, Warnings: warnings}, nil
 }
 
-func (a *App) applyConfig(cfg config.Config) error {
-	ctx := a.runtimeContext()
+// saveConfigToRepository enforces the shared pre-save cookie encryption sync
+// before persisting GUI config changes through the already-open repository.
+func (a *App) saveConfigToRepository(ctx context.Context, cfg *config.Config, dbPath string) error {
+	if err := configstore.SaveToRepository(ctx, cfg, a.repo, dbPath); err != nil {
+		return fmt.Errorf("gui: %w", err)
+	}
+	return nil
+}
+
+// validateCookieAuthMaterial returns ErrAuthHelperUnavailable only when auth
+// material is absent; malformed material remains an error so callers can abort
+// before cookie encryption metadata is initialized.
+func validateCookieAuthMaterial(dbPath string) error {
+	material, err := authmaterial.LoadFromDBPath(dbPath)
+	if err != nil {
+		if errors.Is(err, authmaterial.ErrUnavailable) {
+			return cookies.ErrAuthHelperUnavailable
+		}
+		return fmt.Errorf("load auth helper: %w", err)
+	}
+	if _, _, err := material.PrimaryHelper(); err != nil {
+		if errors.Is(err, authmaterial.ErrUnavailable) {
+			return cookies.ErrAuthHelperUnavailable
+		}
+		return fmt.Errorf("derive auth helper: %w", err)
+	}
+	return nil
+}
+
+// saveAndApplyConfig builds the replacement runtime before any repository
+// writes, then persists cfg and installs the runtime as one ordered transition.
+// If persistence fails, the built runtime is closed and the active runtime is
+// left untouched.
+func (a *App) saveAndApplyConfig(ctx context.Context, storedCfg *config.Config, runtimeCfg config.Config, dbPath string) error {
+	if err := validateCookieAuthMaterial(dbPath); err != nil {
+		if !errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+			return fmt.Errorf("gui: validate cookie auth before config save: %w", err)
+		}
+	}
+
+	rt, err := guishared.BuildRuntime(ctx, runtimeCfg, a.repo)
+	if err != nil {
+		return fmt.Errorf("gui: %w", err)
+	}
+
+	applied := false
+	defer func() {
+		if applied {
+			return
+		}
+		if rt.Core != nil {
+			_ = rt.Core.Close()
+		}
+		if rt.Logger != nil {
+			_ = rt.Logger.Close()
+		}
+	}()
+
+	if err := a.saveConfigToRepository(ctx, storedCfg, dbPath); err != nil {
+		return err
+	}
+
+	oldCore, oldLogger := a.replaceRuntime(runtimeCfg, rt.Core, rt.Logger)
+	applied = true
+	a.rebindLogStreams(ctx, oldLogger, rt.Logger)
+
+	if oldCore != nil {
+		_ = oldCore.Close()
+	}
+	if oldLogger != nil {
+		_ = oldLogger.Close()
+	}
+
+	return nil
+}
+
+// applyConfig builds and installs a runtime from cfg without writing cfg to the
+// repository; it is used for startup and explicit runtime refresh paths.
+func (a *App) applyConfig(ctx context.Context, cfg config.Config) error {
 	rt, err := guishared.BuildRuntime(ctx, cfg, a.repo)
 	if err != nil {
 		return fmt.Errorf("gui: %w", err)
 	}
 
 	oldCore, oldLogger := a.replaceRuntime(cfg, rt.Core, rt.Logger)
-	a.rebindLogStreams(oldLogger, rt.Logger)
+	a.rebindLogStreams(ctx, oldLogger, rt.Logger)
 
 	if oldCore != nil {
 		_ = oldCore.Close()

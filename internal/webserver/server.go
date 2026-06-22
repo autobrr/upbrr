@@ -58,6 +58,13 @@ type Server struct {
 	developmentSession session
 }
 
+var (
+	newBackendWithContextForServer = NewBackendWithContext
+	resolveWebAssetsForServer      = resolveWebAssets
+	newSessionManagerForServer     = newSessionManager
+	randomStringForServer          = randomString
+)
+
 // New constructs a server from application and web CLI configuration.
 // It rejects development no-auth mode for non-loopback hosts.
 func New(opts Options) (*Server, error) {
@@ -72,19 +79,31 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	backend, err := NewBackendWithContext(context.Background(), cfg, hub)
+	backend, err := newBackendWithContextForServer(context.Background(), cfg, hub)
 	if err != nil {
 		return nil, err
 	}
-	hub.SetLogger(backend.logger)
-	assets, err := resolveWebAssets()
+	backendClosed := false
+	defer func() {
+		if !backendClosed {
+			_ = backend.Close()
+		}
+	}()
+	hub.SetLogger(backend.currentLogger())
+	assets, err := resolveWebAssetsForServer()
 	if err != nil {
 		return nil, err
 	}
-	sessions, err := newSessionManager(cliCfg.SessionTTL, cfg.MainSettings.DBPath)
+	sessions, err := newSessionManagerForServer(cliCfg.SessionTTL, cfg.MainSettings.DBPath)
 	if err != nil {
 		return nil, err
 	}
+	sessionsClosed := false
+	defer func() {
+		if !sessionsClosed {
+			sessions.Close()
+		}
+	}()
 	srv := &Server{
 		cfg:            cfg,
 		cliCfg:         cliCfg,
@@ -99,7 +118,7 @@ func New(opts Options) (*Server, error) {
 		assets:         assets,
 	}
 	if opts.DevelopmentNoAuth {
-		csrf, err := randomString(24)
+		csrf, err := randomStringForServer(24)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +131,7 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 	sessions.SetLogger(func(format string, args ...any) {
-		backend.logger.Warnf(format, args...)
+		backend.logWarnf(format, args...)
 	})
 	mux := http.NewServeMux()
 	srv.registerRoutes(mux)
@@ -121,6 +140,8 @@ func New(opts Options) (*Server, error) {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	backendClosed = true
+	sessionsClosed = true
 	return srv, nil
 }
 
@@ -223,17 +244,24 @@ func (s *Server) serve(ctx context.Context, listener net.Listener) error {
 }
 
 // logServeAddress records the effective listener address after a successful
-// bind, along with a redacted browser URL when one is available.
+// bind, along with a redacted browser URL when one is available. It writes
+// while holding the backend runtime read lock so runtime replacement cannot
+// close the selected logger during the log call.
 func (s *Server) logServeAddress(addr net.Addr, browserURL string) {
-	if s == nil || s.backend == nil || s.backend.logger == nil || addr == nil {
+	if addr == nil {
 		return
 	}
+	addrText := addr.String()
 	loggedBrowserURL := redactLoggedBrowserURL(browserURL)
-	if loggedBrowserURL == "" {
-		s.backend.logger.Infof("web: serving web UI on %s", addr.String())
+	if s == nil || s.backend == nil {
 		return
 	}
-	s.backend.logger.Infof("web: serving web UI on %s (browser URL %s)", addr.String(), loggedBrowserURL)
+
+	if loggedBrowserURL == "" {
+		s.backend.logInfof("web: serving web UI on %s", addrText)
+		return
+	}
+	s.backend.logInfof("web: serving web UI on %s (browser URL %s)", addrText, loggedBrowserURL)
 }
 
 // redactLoggedBrowserURL returns a log-safe browser URL, removing userinfo and

@@ -2845,6 +2845,32 @@ func (r *SQLiteRepository) LoadConfigSection(ctx context.Context, section string
 	return nil
 }
 
+// prepareFullConfigSections converts a full config into per-section JSON
+// payloads matching config_settings section names.
+func prepareFullConfigSections(cfg any) (map[string]string, error) {
+	// Marshal the full config to inspect its structure.
+	cfgData, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("db save full config: marshal: %w", err)
+	}
+
+	var cfgMap map[string]any
+	if err := json.Unmarshal(cfgData, &cfgMap); err != nil {
+		return nil, fmt.Errorf("db save full config: unmarshal to map: %w", err)
+	}
+
+	sections := make(map[string]string, len(cfgMap))
+	for section, value := range cfgMap {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("db save full config: marshal section %s: %w", section, err)
+		}
+		sections[section] = string(payload)
+	}
+
+	return sections, nil
+}
+
 // SaveFullConfig persists the entire config to all sections.
 // This is called when exporting to database from YAML or UI updates.
 func (r *SQLiteRepository) SaveFullConfig(ctx context.Context, cfg any) error {
@@ -2855,28 +2881,52 @@ func (r *SQLiteRepository) SaveFullConfig(ctx context.Context, cfg any) error {
 		return internalerrors.ErrInvalidInput
 	}
 
-	// Marshal the full config to inspect its structure.
-	cfgData, err := json.MarshalIndent(cfg, "", "  ")
+	sections, err := prepareFullConfigSections(cfg)
 	if err != nil {
-		return fmt.Errorf("db save full config: marshal: %w", err)
+		return err
 	}
 
-	var cfgMap map[string]any
-	if err := json.Unmarshal(cfgData, &cfgMap); err != nil {
-		return fmt.Errorf("db save full config: unmarshal to map: %w", err)
+	if err := r.saveFullConfigSections(ctx, sections, nil); err != nil {
+		return err
 	}
 
+	return nil
+}
+
+// SaveFullConfigWithPreSave persists the entire config and runs preSave in the
+// same write transaction immediately before config sections are written. If
+// preSave or any section write fails, the transaction is rolled back.
+func (r *SQLiteRepository) SaveFullConfigWithPreSave(ctx context.Context, cfg any, preSave func(context.Context, *sql.Tx) error) error {
+	if r == nil || r.db == nil {
+		return errors.New("db: repository not initialized")
+	}
+	if cfg == nil {
+		return internalerrors.ErrInvalidInput
+	}
+
+	sections, err := prepareFullConfigSections(cfg)
+	if err != nil {
+		return err
+	}
+
+	if err := r.saveFullConfigSections(ctx, sections, preSave); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// saveFullConfigSections writes prepared section payloads in one transaction,
+// optionally running preSave in that same transaction before section writes.
+func (r *SQLiteRepository) saveFullConfigSections(ctx context.Context, sections map[string]string, preSave func(context.Context, *sql.Tx) error) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	sections := make(map[string]string, len(cfgMap))
-	for section, value := range cfgMap {
-		payload, err := json.Marshal(value)
-		if err != nil {
-			return fmt.Errorf("db save full config: marshal section %s: %w", section, err)
-		}
-		sections[section] = string(payload)
-	}
 
 	if err := r.withWriteTx(ctx, "save full config", func(tx *sql.Tx) error {
+		if preSave != nil {
+			if err := preSave(ctx, tx); err != nil {
+				return err
+			}
+		}
 		for section, payload := range sections {
 			if _, err := tx.ExecContext(ctx, `
 			INSERT INTO config_settings (section, data, updated_at) VALUES (?, ?, ?)
