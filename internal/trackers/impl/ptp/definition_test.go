@@ -397,6 +397,61 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}
 }
 
+func TestLoginAndFetchAntiCsrfTokenHandles2FA(t *testing.T) {
+	tmp := t.TempDir()
+	secondLogin := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RequestURI() != ptpLoginPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse login: %v", err)
+		}
+		if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("passkey") != "passkey" || r.FormValue("keeplogged") != "1" {
+			t.Fatalf("unexpected login form: %v", r.Form)
+		}
+		if r.FormValue("TfaCode") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"Result": "TfaRequired"})
+			return
+		}
+		secondLogin = true
+		if r.FormValue("TfaType") != "normal" {
+			t.Fatalf("expected TfaType normal, got %q", r.FormValue("TfaType"))
+		}
+		code := r.FormValue("TfaCode")
+		if len(code) != 6 || strings.Trim(code, "0123456789") != "" {
+			t.Fatalf("expected six digit TfaCode, got %q", code)
+		}
+		http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookievalue", Path: "/"})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"Result":        "Ok",
+			"AntiCsrfToken": "csrf-token",
+		})
+	}))
+	defer server.Close()
+
+	client, token, err := loginAndFetchAntiCsrfToken(context.Background(), config.TrackerConfig{
+		Username:    "user",
+		Password:    "pass",
+		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+		OTPURI:      "otpauth://totp/PTP:user?secret=JBSWY3DPEHPK3PXP&issuer=PTP",
+	}, filepath.Join(tmp, "ua.db"), server.URL, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if token != "csrf-token" {
+		t.Fatalf("expected csrf token, got %q", token)
+	}
+	if client == nil {
+		t.Fatal("expected authenticated client")
+	}
+	if !secondLogin {
+		t.Fatal("expected second 2FA login request")
+	}
+}
+
 func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "ua.db")
