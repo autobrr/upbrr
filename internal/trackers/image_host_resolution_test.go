@@ -86,6 +86,47 @@ func TestEnsureDescriptionImageHostSkipUploadDoesNotMaterializeURLOnlySlots(t *t
 	}
 }
 
+func TestOptionalImageHostPoliciesPreserveExistingPreferredHosts(t *testing.T) {
+	t.Parallel()
+
+	policy := imageHostPolicy{
+		uploadHosts: []string{"imgbb", "pixhost"},
+		preferred:   []string{"imgbb", "pixhost"},
+	}
+
+	selectionPolicy := optionalImageHostSelectionPolicy(policy)
+	if got := strings.Join(selectionPolicy.preferred, ","); got != "imgbb,pixhost" {
+		t.Fatalf("expected existing preferred hosts to be preserved, got %q", got)
+	}
+
+	uploadPolicy := optionalImageHostUploadPolicy(policy)
+	if !uploadPolicy.required {
+		t.Fatalf("expected upload policy to require preferred hosts, got %#v", uploadPolicy)
+	}
+	if got := strings.Join(uploadPolicy.preferred, ","); got != "imgbb,pixhost" {
+		t.Fatalf("expected existing preferred hosts to drive upload policy, got %q", got)
+	}
+}
+
+func TestOptionalImageHostPoliciesPrependExplicitPreferredHost(t *testing.T) {
+	t.Parallel()
+
+	policy := imageHostPolicy{
+		uploadHosts: []string{"imgbb", "pixhost"},
+		preferred:   []string{"imgbb", "pixhost"},
+	}
+
+	selectionPolicy := optionalImageHostSelectionPolicy(policy, "pixhost")
+	if got := strings.Join(selectionPolicy.preferred, ","); got != "pixhost,imgbb" {
+		t.Fatalf("expected explicit preferred host to prepend existing hosts, got %q", got)
+	}
+
+	uploadPolicy := optionalImageHostUploadPolicy(policy, "pixhost")
+	if got := strings.Join(uploadPolicy.preferred, ","); got != "pixhost,imgbb" {
+		t.Fatalf("expected upload policy to merge explicit and existing preferred hosts, got %q", got)
+	}
+}
+
 func TestDownloadDescriptionSlotImageRejectsPrivateTargets(t *testing.T) {
 	t.Parallel()
 

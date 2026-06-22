@@ -436,6 +436,9 @@ func acmSubtitleTag(subtitles []string) string {
 	return " [" + subtitles[0] + " subs only]"
 }
 
+// convertACMComparisonToCollapse rewrites UNIT3D comparison blocks into ACM
+// spoiler markup while leaving malformed blocks unchanged when no image URLs
+// can be paired with the source labels.
 func convertACMComparisonToCollapse(value string, maxWidth int) string {
 	re := regexp.MustCompile(`(?is)\[comparison=[\s\S]*?\[/comparison\]`)
 	return re.ReplaceAllStringFunc(value, func(block string) string {

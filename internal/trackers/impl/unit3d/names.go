@@ -26,12 +26,17 @@ var (
 )
 
 func buildUnit3DName(tracker string, meta api.PreparedMetadata, cfg config.TrackerConfig) string {
+	trackerName := strings.ToUpper(strings.TrimSpace(tracker))
+	if trackerName == "RHD" {
+		return buildRHDName(meta)
+	}
+
 	name := baseReleaseName(meta)
 	if name == "" {
 		return ""
 	}
 
-	switch strings.ToUpper(strings.TrimSpace(tracker)) {
+	switch trackerName {
 	case "AITHER":
 		return BuildAitherName(meta)
 	case "ACM":

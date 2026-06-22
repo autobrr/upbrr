@@ -307,6 +307,116 @@ func TestEvaluateRulesDPDoesNotSpecialCaseFGTEncodes(t *testing.T) {
 	}
 }
 
+func TestEvaluateRulesRHDRequiresGermanAudio(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		AudioLanguages: []string{"English"},
+		Release:        api.ReleaseInfo{Resolution: "1080p"},
+	}
+	failures := EvaluateRules(context.Background(), "RHD", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "language_rule" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+}
+
+func TestEvaluateRulesRHDAllowsGermanAudio(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		AudioLanguages: []string{"German"},
+		Release:        api.ReleaseInfo{Resolution: "1080p"},
+	}
+	failures := EvaluateRules(context.Background(), "RHD", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesRHDRequiresGermanAudioForDisc(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Type:           "DISC",
+		DiscType:       "BDMV",
+		AudioLanguages: []string{"English"},
+		Release:        api.ReleaseInfo{Resolution: "1080p"},
+	}
+	failures := EvaluateRules(context.Background(), "RHD", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "language_rule" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+}
+
+func TestEvaluateRulesRHDAllowsGermanAudioForDisc(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Type:           "DISC",
+		DiscType:       "BDMV",
+		AudioLanguages: []string{"German"},
+		Release:        api.ReleaseInfo{Resolution: "1080p"},
+	}
+	failures := EvaluateRules(context.Background(), "RHD", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesRHDRequiresSceneNFO(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Scene:          true,
+		AudioLanguages: []string{"German"},
+		Release:        api.ReleaseInfo{Resolution: "1080p"},
+	}
+	failures := EvaluateRules(context.Background(), "RHD", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "require_scene_nfo" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+}
+
+func TestEvaluateRulesRHDAllowsNonSceneWithoutNFO(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		AudioLanguages: []string{"German"},
+		Release:        api.ReleaseInfo{Resolution: "1080p"},
+	}
+	failures := EvaluateRules(context.Background(), "RHD", meta, nil)
+	for _, failure := range failures {
+		if failure.Rule == "require_scene_nfo" {
+			t.Fatalf("expected non-scene upload to avoid NFO blocker, got %#v", failures)
+		}
+	}
+}
+
+func TestEvaluateRulesTOSRequiresSceneNFO(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		Scene:          true,
+		AudioLanguages: []string{"French"},
+	}
+	failures := EvaluateRules(context.Background(), "TOS", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "require_scene_nfo" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+}
+
 func TestEvaluateRulesAitherRequiresLanguageForNonDisc(t *testing.T) {
 	meta := api.PreparedMetadata{
 		DiscType:          "",

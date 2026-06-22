@@ -17,6 +17,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -145,7 +146,7 @@ func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, baseA
 		return nil
 	}
 
-	if !req.Options.Debug && !req.Options.DryRun {
+	if req.Options.Debug || !req.Options.DryRun {
 		if err := runCLIScreenshotHandling(ctx, coreSvc, req); err != nil {
 			return err
 		}
@@ -827,7 +828,7 @@ func printDryRunUploadReview(review api.UploadReview, req api.Request) {
 
 func printDryRunDetails(entry api.TrackerDryRunEntry) {
 	if strings.TrimSpace(entry.Endpoint) != "" {
-		fmt.Printf("Endpoint: %s\n", entry.Endpoint)
+		fmt.Printf("Endpoint: %s\n", safeDryRunEndpoint(entry.Endpoint))
 	}
 	if len(entry.Files) > 0 {
 		fmt.Println("Files:")
@@ -855,11 +856,17 @@ func printDryRunDetails(entry api.TrackerDryRunEntry) {
 	}
 }
 
+// formatDryRunPayloadValue returns a log-safe preview for a dry-run payload
+// field, redacting sensitive keys before applying body summarization/truncation.
 func formatDryRunPayloadValue(key string, value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return ""
 	}
+	if isSensitiveDryRunPayloadField(key) {
+		return "[REDACTED]"
+	}
+	trimmed = redaction.RedactValue(trimmed, nil)
 	if isDryRunBodyPayloadField(key) {
 		return summarizeDryRunBody(trimmed)
 	}
@@ -869,6 +876,12 @@ func formatDryRunPayloadValue(key string, value string) string {
 		return compact
 	}
 	return fmt.Sprintf("%s... [%d bytes total]", string(compactRunes[:dryRunPayloadPreviewLimit]), len(trimmed))
+}
+
+// safeDryRunEndpoint returns a dry-run endpoint suitable for CLI output,
+// preserving the URL shape while redacting credential-like path/query values.
+func safeDryRunEndpoint(value string) string {
+	return redaction.RedactValue(strings.TrimSpace(value), nil)
 }
 
 func summarizeDryRunBody(value string) string {
@@ -909,6 +922,18 @@ func isDryRunDescriptionPayloadField(key string) bool {
 
 func normalizedDryRunPayloadKey(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
+}
+
+// isSensitiveDryRunPayloadField reports whether a dry-run payload key should
+// suppress its value entirely instead of showing a redacted preview.
+func isSensitiveDryRunPayloadField(key string) bool {
+	normalized := normalizedDryRunPayloadKey(key)
+	for sensitive := range redaction.DefaultSensitiveKeys {
+		if strings.Contains(normalized, sensitive) {
+			return true
+		}
+	}
+	return false
 }
 
 func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) (bool, error) {

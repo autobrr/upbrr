@@ -5,6 +5,9 @@ package metadata
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -407,6 +410,117 @@ func TestSourceAndTypeBareWebMissingTypeDefaultsToWebDL(t *testing.T) {
 	}
 }
 
+func TestApplyMediaDetailsFallsBackToFilenameHDRWhenMediaInfoHasNoHDR(t *testing.T) {
+	miPath := filepath.Join(t.TempDir(), "mediainfo.json")
+	if err := os.WriteFile(miPath, []byte(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Format":"HEVC","Width":"3840","Height":"2160"}]}}`), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	meta, err := svc.ApplyMediaDetails(context.Background(), api.PreparedMetadata{
+		SourcePath:        "Movie.2026.[DV].HDR10+.HLG.2160p.WEB-DL.H.265-GRP.mkv",
+		MediaInfoJSONPath: miPath,
+		Release:           api.ReleaseInfo{HDR: []string{"HDR"}, Resolution: "2160p"},
+	})
+	if err != nil {
+		t.Fatalf("apply media details: %v", err)
+	}
+	if meta.HDR != "DV HDR10+ HLG" {
+		t.Fatalf("expected filename HDR fallback, got %q", meta.HDR)
+	}
+	if !strings.Contains(meta.ReleaseName, "DV HDR10+ HLG") {
+		t.Fatalf("expected rebuilt release name to include filename HDR, got %q", meta.ReleaseName)
+	}
+}
+
+func TestHDRFromMediaPrefersMediaInfoOverFilenameHDR(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","colour_primaries":"BT.2020","HDR_Format":"HDR10+"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{
+		SourcePath: "Movie.2026.DV.HDR.2160p.WEB-DL.H.265-GRP.mkv",
+	})
+	if got != "HDR10+" {
+		t.Fatalf("expected MediaInfo HDR precedence, got %q", got)
+	}
+}
+
+func TestHDRFromMediaPrefersBDInfoOverFilenameHDR(t *testing.T) {
+	got := hdrFromMedia(mediaInfoDoc{}, &discparse.BDInfo{
+		Video: []discparse.BDVideo{
+			{HDRDV: "HDR10+"},
+			{HDRDV: "Dolby Vision"},
+		},
+	}, api.PreparedMetadata{
+		SourcePath: "Movie.2026.HDR.2160p.BluRay-GRP",
+	})
+	if got != "DV HDR10+" {
+		t.Fatalf("expected BDInfo HDR precedence, got %q", got)
+	}
+}
+
+func TestFilenameHDRFromMetaNormalizesSafeTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		meta api.PreparedMetadata
+		want string
+	}{
+		{
+			name: "dot bracket space tokens",
+			meta: api.PreparedMetadata{SourcePath: "Movie.2026.[DV].HDR10+.HLG.2160p.WEB-DL.H.265-GRP.mkv"},
+			want: "DV HDR10+ HLG",
+		},
+		{
+			name: "underscore separator",
+			meta: api.PreparedMetadata{SourcePath: "Movie_2026_HDR_2160p_WEB-DL_H265-GRP.mkv"},
+			want: "HDR",
+		},
+		{
+			name: "hyphen separator",
+			meta: api.PreparedMetadata{SourcePath: "Movie-2026-HDR10-2160p-WEB-DL-H265-GRP.mkv"},
+			want: "HDR",
+		},
+		{
+			name: "source path tokens win over stale parsed release tokens",
+			meta: api.PreparedMetadata{
+				SourcePath: "Movie.2026.DV.HDR10+.2160p.WEB-DL.H265-GRP.mkv",
+				Release:    api.ReleaseInfo{HDR: []string{"HDR"}},
+			},
+			want: "DV HDR10+",
+		},
+		{
+			name: "parsed release tokens fallback when source path has no hdr",
+			meta: api.PreparedMetadata{Release: api.ReleaseInfo{HDR: []string{"DV", "HDR10+", "SDR"}}},
+			want: "DV HDR10+",
+		},
+		{
+			name: "sdr token ignored",
+			meta: api.PreparedMetadata{SourcePath: "Movie.2026.SDR.2160p.WEB-DL.H.265-GRP.mkv"},
+			want: "",
+		},
+		{
+			name: "hdrip source ignored",
+			meta: api.PreparedMetadata{SourcePath: "Movie.2026.1080p.HDRip.H.264-GRP.mkv"},
+			want: "",
+		},
+		{
+			name: "group suffix ignored",
+			meta: api.PreparedMetadata{SourcePath: "Movie.2026.2160p.WEB-DL.H.265-GRP-HDR.mkv"},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filenameHDRFromMeta(tt.meta)
+			if got != tt.want {
+				t.Fatalf("expected filename HDR %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestSourceAndTypeInfersRemuxWhenReleaseTypeMissing(t *testing.T) {
 	source, typeValue := sourceAndType(api.PreparedMetadata{
 		SourcePath: "Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
@@ -683,6 +797,59 @@ func TestRefreshPreparedMetadataPreservesNonRequestScopedFailures(t *testing.T) 
 				t.Fatalf("did not expect request-scoped failure %q for %s after refresh: %#v", failure.Rule, tracker, refreshed.TrackerRuleFailures)
 			}
 		}
+	}
+}
+
+func TestRefreshPreparedMetadataRefreshesFilenameHDRFromCurrentSourcePath(t *testing.T) {
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	meta := api.PreparedMetadata{
+		SourcePath: "Movie.2026.DV.HDR10+.2160p.WEB-DL.H.265-GRP.mkv",
+		Source:     "Web",
+		Type:       "WEBDL",
+		VideoCodec: "H.265",
+		HDR:        "HDR",
+		Release: api.ReleaseInfo{
+			Title:      "Movie",
+			Year:       2026,
+			Resolution: "2160p",
+			HDR:        []string{"HDR"},
+		},
+	}
+
+	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("refresh prepared metadata: %v", err)
+	}
+	if refreshed.HDR != "DV HDR10+" {
+		t.Fatalf("expected current source path HDR, got %q", refreshed.HDR)
+	}
+	if !strings.Contains(refreshed.ReleaseName, "DV HDR10+") {
+		t.Fatalf("expected refreshed release name to include current source path HDR, got %q", refreshed.ReleaseName)
+	}
+}
+
+func TestRefreshPreparedMetadataKeepsDistinctMediaHDR(t *testing.T) {
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	meta := api.PreparedMetadata{
+		SourcePath: "Movie.2026.DV.2160p.WEB-DL.H.265-GRP.mkv",
+		Source:     "Web",
+		Type:       "WEBDL",
+		VideoCodec: "H.265",
+		HDR:        "HDR10+",
+		Release: api.ReleaseInfo{
+			Title:      "Movie",
+			Year:       2026,
+			Resolution: "2160p",
+			HDR:        []string{"HDR"},
+		},
+	}
+
+	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("refresh prepared metadata: %v", err)
+	}
+	if refreshed.HDR != "HDR10+" {
+		t.Fatalf("expected distinct media HDR to remain, got %q", refreshed.HDR)
 	}
 }
 

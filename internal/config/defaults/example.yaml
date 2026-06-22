@@ -409,6 +409,12 @@ trackers:
     img_api: ""
     url: "https://reelflix.cc"
     anon: false
+  RHD:
+    link_dir_name: ""
+    api_key: ""
+    url: "https://rocket-hd.cc"
+    anon: false
+    modq: false
   RTF:
     link_dir_name: ""
     username: ""

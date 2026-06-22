@@ -92,6 +92,90 @@ func checkTest() {
 	}
 }
 
+func TestCheckRepositoryFlagsRawDryRunDetailsOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+type dryRun struct {
+	Endpoint string
+	Payload map[string]string
+}
+
+func printDryRunDetails(entry dryRun, key string) {
+	fmt.Printf("Endpoint: %s\n", entry.Endpoint)
+	fmt.Printf("- %s: %s\n", key, entry.Payload[key])
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	}
+	joined := violations[0].Message + "\n" + violations[1].Message
+	if !strings.Contains(joined, "dry-run endpoint output") {
+		t.Fatalf("expected endpoint redaction violation, got %q", joined)
+	}
+	if !strings.Contains(joined, "dry-run payload output") {
+		t.Fatalf("expected payload redaction violation, got %q", joined)
+	}
+}
+
+func TestCheckRepositoryAllowsRedactedDryRunDetailsOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+type dryRun struct {
+	Endpoint string
+	Payload map[string]string
+}
+
+func safeDryRunEndpoint(value string) string { return value }
+func formatDryRunPayloadValue(key string, value string) string { return value }
+
+func printDryRunDetails(entry dryRun, key string) {
+	fmt.Printf("Endpoint: %s\n", safeDryRunEndpoint(entry.Endpoint))
+	fmt.Printf("- %s: %s\n", key, formatDryRunPayloadValue(key, entry.Payload[key]))
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryFlagsRawResponseBodyLogging(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {

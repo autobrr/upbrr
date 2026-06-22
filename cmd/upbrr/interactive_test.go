@@ -158,7 +158,7 @@ func TestRunInteractiveCLIPathDryRunPreservesExplicitNoSeed(t *testing.T) {
 	}
 }
 
-func TestRunInteractiveCLIPathDebugSkipsScreenshotSideEffects(t *testing.T) {
+func TestRunInteractiveCLIPathDebugHandlesScreenshotsBeforeReview(t *testing.T) {
 	t.Parallel()
 
 	coreSvc := &cliCoreForTest{
@@ -176,11 +176,11 @@ func TestRunInteractiveCLIPathDebugSkipsScreenshotSideEffects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runInteractiveCLIPath: %v", err)
 	}
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,review" {
-		t.Fatalf("expected debug to skip screenshot side effects, got %s", got)
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,generate-screenshots,save-screenshots,review" {
+		t.Fatalf("expected debug to prepare screenshots before review, got %s", got)
 	}
-	if len(coreSvc.savedFinalImages) != 0 {
-		t.Fatalf("expected debug to skip saved screenshots, got %#v", coreSvc.savedFinalImages)
+	if len(coreSvc.savedFinalImages) != 1 || coreSvc.savedFinalImages[0].Path != "screen1.png" {
+		t.Fatalf("expected debug to save generated final screenshot, got %#v", coreSvc.savedFinalImages)
 	}
 	if coreSvc.runUploadPreparedCalls != 1 {
 		t.Fatalf("expected debug to run prepared injection path, got %d", coreSvc.runUploadPreparedCalls)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -45,6 +46,7 @@ var (
 	genericEpisodePattern  = regexp.MustCompile(`(?i)^episode\s*#?\s*\d+\s*$`)
 )
 
+// TMDBClient is the TMDB metadata surface used by external-ID resolution.
 type TMDBClient interface {
 	FindByExternalID(ctx context.Context, input tmdb.FindInput) (tmdb.FindResult, error)
 	SearchID(ctx context.Context, input tmdb.SearchInput) (tmdb.SearchOutcome, error)
@@ -55,11 +57,13 @@ type TMDBClient interface {
 	GetLocalizedData(ctx context.Context, input tmdb.LocalizedDataInput) (map[string]any, error)
 }
 
+// IMDBClient is the IMDb metadata surface used by external-ID resolution.
 type IMDBClient interface {
 	Search(ctx context.Context, input imdb.SearchInput) (imdb.SearchResult, error)
 	GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (imdb.Info, error)
 }
 
+// TVDBClient is the TVDB metadata surface used by external-ID resolution.
 type TVDBClient interface {
 	GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error)
 	GetSeriesMetadata(ctx context.Context, seriesID int) (tvdb.SeriesMetadata, error)
@@ -69,14 +73,16 @@ type TVDBClient interface {
 	GetEpisodeTranslation(ctx context.Context, episodeID int, language string) (tvdb.EpisodeTranslation, error)
 }
 
+// TVmazeClient is the TVmaze metadata surface used by external-ID resolution.
 type TVmazeClient interface {
 	Search(ctx context.Context, input tvmaze.SearchInput) (tvmaze.SearchResult, error)
 	GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episode int, lookup tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error)
 	GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate string) (*tvmaze.EpisodeData, error)
 }
 
-// ResolveExternalIDs resolves and persists external IDs and metadata for prepared media.
-// Source-matched fresh stored data is reused, while selected BJS, BT, or ASC
+// ResolveExternalIDs resolves and persists cross-provider IDs and metadata for
+// a prepared item, honoring fresh stored data, overrides, scene IDs, and tracker
+// matches before falling back to provider searches. Selected BJS, BT, and ASC
 // targets trigger pt-BR TMDB localized metadata when a TMDB ID is known.
 func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
@@ -1334,6 +1340,7 @@ func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBM
 		Demographic:         result.Demographic,
 		RetrievedAKA:        result.RetrievedAKA,
 		Keywords:            result.Keywords,
+		LocalizedTitles:     cloneStringMap(result.LocalizedTitles),
 		YouTube:             result.YouTube,
 		Certification:       result.Certification,
 		ProductionCompanies: mapTMDBCompanies(result.ProductionCompanies),
@@ -1342,6 +1349,14 @@ func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBM
 		IMDbMismatch:        result.IMDbMismatch,
 		MismatchedIMDbID:    result.MismatchedIMDbID,
 	}
+}
+
+// cloneStringMap returns a detached copy of values, normalizing nil to an
+// empty map so API callers observe the same object shape before JSON marshal.
+func cloneStringMap(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	maps.Copy(cloned, values)
+	return cloned
 }
 
 func mapIMDBMetadata(info imdb.Info) *api.IMDBMetadata {

@@ -92,6 +92,106 @@ func TestPrepare(t *testing.T) {
 	}
 }
 
+func TestPrepareCopiesSceneResultAfterRecoverableNFOFailure(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	path := filepath.Join(base, "Example.Release")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	videoPath := filepath.Join(path, "Example.Release.mkv")
+	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write video failed: %v", err)
+	}
+
+	logger := &recordingLogger{}
+	repo := &stubRepo{}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo,
+		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithSceneDetector(staticSceneDetector{
+			result: SceneResult{
+				IsScene:   true,
+				SceneName: "Example.Release.2024.1080p-WEB",
+				TMDBID:    42,
+				IMDBID:    1234567,
+				TVDBID:    333,
+			},
+			err: newSceneNFOError(errors.New("scene: write nfo: permission denied")),
+		}),
+		WithLogger(logger),
+		WithConfig(cfg),
+	)
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths: []string{path},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	if !meta.Scene || meta.SceneName != "Example.Release.2024.1080p-WEB" {
+		t.Fatalf("expected scene result copied, got scene=%t name=%q", meta.Scene, meta.SceneName)
+	}
+	if meta.SceneTMDBID != 42 || meta.SceneIMDB != 1234567 || meta.SceneTVDBID != 333 {
+		t.Fatalf("expected scene ids copied, got tmdb=%d imdb=%d tvdb=%d", meta.SceneTMDBID, meta.SceneIMDB, meta.SceneTVDBID)
+	}
+	if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "scene nfo side effect failed") {
+		t.Fatalf("expected visible NFO warning, got %#v", logger.warnings)
+	}
+}
+
+func TestPrepareRetainsStoredSceneMetadataAfterZeroRecoverableNFOFailure(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	path := filepath.Join(base, "Cached.Scene.Release")
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	videoPath := filepath.Join(path, "Cached.Scene.Release.mkv")
+	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write video failed: %v", err)
+	}
+
+	logger := &recordingLogger{}
+	repo := &stubRepo{
+		existing: db.FileMetadata{
+			Path:      videoPath,
+			Scene:     true,
+			SceneName: "Cached.Scene.Release.2024.1080p-WEB",
+			SceneIMDB: 7654321,
+		},
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo,
+		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithSceneDetector(staticSceneDetector{
+			err: newSceneNFOError(errors.New("scene: write nfo: permission denied")),
+		}),
+		WithLogger(logger),
+		WithConfig(cfg),
+	)
+
+	meta, err := service.Prepare(context.Background(), api.Request{
+		Paths: []string{path},
+		Mode:  api.ModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("prepare failed: %v", err)
+	}
+	if !meta.Scene || meta.SceneName != "Cached.Scene.Release.2024.1080p-WEB" || meta.SceneIMDB != 7654321 {
+		t.Fatalf("expected stored scene metadata retained, got scene=%t name=%q imdb=%d", meta.Scene, meta.SceneName, meta.SceneIMDB)
+	}
+	if !repo.saved.Scene || repo.saved.SceneName != "Cached.Scene.Release.2024.1080p-WEB" || repo.saved.SceneIMDB != 7654321 {
+		t.Fatalf("expected saved scene metadata retained, got scene=%t name=%q imdb=%d", repo.saved.Scene, repo.saved.SceneName, repo.saved.SceneIMDB)
+	}
+	if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "scene nfo side effect failed") {
+		t.Fatalf("expected visible NFO warning, got %#v", logger.warnings)
+	}
+}
+
 func TestPrepareCLIKeepFolderPreservesSingleFileDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -993,6 +1093,15 @@ func (r *recordingMediaInfo) Export(_ context.Context, req mediainfo.Request) (m
 	return mediainfo.Result{}, nil
 }
 
+type recordingLogger struct {
+	api.NopLogger
+	warnings []string
+}
+
+func (r *recordingLogger) Warnf(format string, args ...any) {
+	r.warnings = append(r.warnings, fmt.Sprintf(format, args...))
+}
+
 type stubSceneDetector struct{}
 
 func (stubSceneDetector) Detect(context.Context, api.PreparedMetadata) (SceneResult, error) {
@@ -1001,10 +1110,11 @@ func (stubSceneDetector) Detect(context.Context, api.PreparedMetadata) (SceneRes
 
 type staticSceneDetector struct {
 	result SceneResult
+	err    error
 }
 
 func (s staticSceneDetector) Detect(context.Context, api.PreparedMetadata) (SceneResult, error) {
-	return s.result, nil
+	return s.result, s.err
 }
 
 func (s *stubRepo) GetByPath(context.Context, string) (db.FileMetadata, error) {
