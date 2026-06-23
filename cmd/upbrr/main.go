@@ -79,6 +79,10 @@ func exitError(code int, err error) error {
 	return &cliExitError{code: code, err: err}
 }
 
+// cliItemTimeout bounds processing of a single input path (one queue item or
+// one explicit path), so large queues are not capped by a shared run deadline.
+const cliItemTimeout = 30 * time.Minute
+
 func run() error {
 	api.SetApplicationBuild(version, buildIdentifier)
 
@@ -189,7 +193,10 @@ func run() error {
 	if screens < 0 {
 		screens = cfg.ScreenshotHandling.Screens
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// Each input path runs under its own cliItemTimeout (applied per item in
+	// processCLIPaths) so a long queue is not killed by a single run-wide
+	// deadline. Setup work below shares the uncapped base context.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ctx = withCLIUploadProgressLogger(ctx, logger)
 	coreSvc, err := core.NewWithContext(ctx, api.CoreDependencies{
@@ -247,16 +254,20 @@ func run() error {
 	}
 
 	if opts.UploadOnly {
+		// Upload-only processes every path in one core call, so budget the
+		// timeout by item count to preserve a per-item allowance.
+		uploadCtx, uploadCancel := context.WithTimeout(ctx, time.Duration(max(1, len(paths)))*cliItemTimeout)
+		defer uploadCancel()
 		uploadReq, err := buildCLIRequest(opts, visitedFlags, paths, screens)
 		if err != nil {
 			return exitError(1, err)
 		}
-		uploadReq, err = prepareCLIUploadMetadata(ctx, coreSvc, uploadReq)
+		uploadReq, err = prepareCLIUploadMetadata(uploadCtx, coreSvc, uploadReq)
 		if err != nil {
 			return exitError(1, err)
 		}
 		if opts.Debug {
-			reviews, err := buildCLIUploadDebugReviews(ctx, coreSvc, paths, uploadReq)
+			reviews, err := buildCLIUploadDebugReviews(uploadCtx, coreSvc, paths, uploadReq)
 			if err != nil {
 				return exitError(1, err)
 			}
@@ -264,24 +275,57 @@ func run() error {
 				printDebugUploadReview(review)
 			}
 		}
-		if _, err := coreSvc.RunUploadPrepared(ctx, uploadReq); err != nil {
+		if _, err := coreSvc.RunUploadPrepared(uploadCtx, uploadReq); err != nil {
 			return exitError(1, err)
 		}
 		return nil
 	}
 
-	for _, sourcePath := range paths {
+	queueMode := strings.TrimSpace(opts.QueueName) != ""
+	return processCLIPaths(ctx, paths, queueMode, cliItemTimeout, logger, func(itemCtx context.Context, sourcePath string) error {
 		if opts.SiteCheck {
-			if err := runSiteCheckCLIPath(ctx, coreSvc, opts, visitedFlags, sourcePath, screens); err != nil {
-				return exitError(1, err)
-			}
+			return runSiteCheckCLIPath(itemCtx, coreSvc, opts, visitedFlags, sourcePath, screens)
+		}
+		return runInteractiveCLIPath(itemCtx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens, cfg)
+	})
+}
+
+// processCLIPaths runs process for each input path under its own itemTimeout. In
+// queue mode a per-item failure is logged and processing continues so the rest
+// of the queue still runs, with a summary error returned at the end if any item
+// failed. Outside queue mode the first failure aborts immediately, preserving
+// the original single/multi-path behavior.
+func processCLIPaths(ctx context.Context, paths []string, queueMode bool, itemTimeout time.Duration, logger api.Logger, process func(ctx context.Context, sourcePath string) error) error {
+	failed := make([]string, 0)
+	for _, sourcePath := range paths {
+		err := runCLIPathWithTimeout(ctx, itemTimeout, sourcePath, process)
+		if err == nil {
 			continue
 		}
-		if err := runInteractiveCLIPath(ctx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens, cfg); err != nil {
+		if !queueMode {
 			return exitError(1, err)
 		}
+		if logger != nil {
+			logger.Errorf("queue: %q failed, continuing with remaining items: %v", sourcePath, err)
+		}
+		failed = append(failed, sourcePath)
+	}
+	if len(failed) > 0 {
+		if logger != nil {
+			logger.Warnf("queue: %d of %d item(s) failed: %s", len(failed), len(paths), strings.Join(failed, ", "))
+		}
+		return exitError(1, fmt.Errorf("queue completed with %d of %d item(s) failed", len(failed), len(paths)))
 	}
 	return nil
+}
+
+// runCLIPathWithTimeout processes a single input path under its own deadline so
+// each queue item receives a full timeout budget rather than sharing one
+// run-wide deadline.
+func runCLIPathWithTimeout(ctx context.Context, itemTimeout time.Duration, sourcePath string, process func(ctx context.Context, sourcePath string) error) error {
+	itemCtx, cancel := context.WithTimeout(ctx, itemTimeout)
+	defer cancel()
+	return process(itemCtx, sourcePath)
 }
 
 func createCLIAuthFile(stdin io.Reader, stdout io.Writer, dbPath string) error {

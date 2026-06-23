@@ -11,12 +11,98 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/webserver"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestProcessCLIPathsQueueModeContinuesOnError(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{"a", "b", "c"}
+	attempted := make([]string, 0, len(paths))
+	err := processCLIPaths(context.Background(), paths, true, time.Minute, api.NopLogger{}, func(_ context.Context, sourcePath string) error {
+		attempted = append(attempted, sourcePath)
+		if sourcePath == "b" {
+			return errors.New("boom")
+		}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected a summary error when a queue item fails")
+	}
+	var exitErr *cliExitError
+	if !errors.As(err, &exitErr) || exitErr.code != 1 {
+		t.Fatalf("expected cliExitError with code 1, got %v", err)
+	}
+	if len(attempted) != len(paths) {
+		t.Fatalf("expected all %d items attempted in queue mode, got %v", len(paths), attempted)
+	}
+}
+
+func TestProcessCLIPathsQueueModeSucceedsWhenAllPass(t *testing.T) {
+	t.Parallel()
+
+	if err := processCLIPaths(context.Background(), []string{"a", "b"}, true, time.Minute, api.NopLogger{}, func(context.Context, string) error {
+		return nil
+	}); err != nil {
+		t.Fatalf("expected nil error when all queue items succeed, got %v", err)
+	}
+}
+
+func TestProcessCLIPathsNonQueueAbortsOnFirstError(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{"a", "b", "c"}
+	attempted := 0
+	err := processCLIPaths(context.Background(), paths, false, time.Minute, api.NopLogger{}, func(_ context.Context, sourcePath string) error {
+		attempted++
+		if sourcePath == "b" {
+			return errors.New("boom")
+		}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error in non-queue mode")
+	}
+	if attempted != 2 {
+		t.Fatalf("expected abort after the failing item (2 attempts), got %d", attempted)
+	}
+}
+
+func TestProcessCLIPathsAppliesPerItemTimeout(t *testing.T) {
+	t.Parallel()
+
+	paths := []string{"slow", "fast"}
+	fastSawFreshDeadline := false
+	err := processCLIPaths(context.Background(), paths, true, 20*time.Millisecond, api.NopLogger{}, func(itemCtx context.Context, sourcePath string) error {
+		if sourcePath == "slow" {
+			// Exceed the per-item timeout; this item should be cancelled at
+			// ~20ms rather than running to completion.
+			select {
+			case <-itemCtx.Done():
+				return itemCtx.Err()
+			case <-time.After(2 * time.Second):
+				return nil
+			}
+		}
+		// The next item must receive a fresh per-item deadline, proving the
+		// timeout is not shared across the queue.
+		if deadline, ok := itemCtx.Deadline(); ok && time.Until(deadline) > 10*time.Millisecond {
+			fastSawFreshDeadline = true
+		}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected a summary error because the slow item timed out")
+	}
+	if !fastSawFreshDeadline {
+		t.Fatal("expected the second item to get a fresh per-item deadline")
+	}
+}
 
 func TestParseCLIOptionsCreateAuth(t *testing.T) {
 	t.Parallel()
