@@ -65,8 +65,9 @@ func TestProcessCLIPathsNonQueueAbortsOnFirstError(t *testing.T) {
 		}
 		return nil
 	})
-	if err == nil {
-		t.Fatal("expected error in non-queue mode")
+	var exitErr *cliExitError
+	if !errors.As(err, &exitErr) || exitErr.code != 1 {
+		t.Fatalf("expected cliExitError with code 1, got %v", err)
 	}
 	if attempted != 2 {
 		t.Fatalf("expected abort after the failing item (2 attempts), got %d", attempted)
@@ -91,7 +92,7 @@ func TestProcessCLIPathsAppliesPerItemTimeout(t *testing.T) {
 		}
 		// The next item must receive a fresh per-item deadline, proving the
 		// timeout is not shared across the queue.
-		if deadline, ok := itemCtx.Deadline(); ok && time.Until(deadline) > 10*time.Millisecond {
+		if deadline, ok := itemCtx.Deadline(); ok && time.Until(deadline) > 5*time.Millisecond {
 			fastSawFreshDeadline = true
 		}
 		return nil

@@ -83,6 +83,12 @@ func exitError(code int, err error) error {
 // one explicit path), so large queues are not capped by a shared run deadline.
 const cliItemTimeout = 30 * time.Minute
 
+// cliSetupTimeout bounds pre-upload setup work (core init, queue gathering,
+// disc playlist selection, cleanup, delete-tmp) so the CLI fails instead of
+// hanging on a stuck database or I/O call. It does not cover the per-item
+// upload loop, which uses cliItemTimeout per path.
+const cliSetupTimeout = 30 * time.Minute
+
 func run() error {
 	api.SetApplicationBuild(version, buildIdentifier)
 
@@ -195,11 +201,14 @@ func run() error {
 	}
 	// Each input path runs under its own cliItemTimeout (applied per item in
 	// processCLIPaths) so a long queue is not killed by a single run-wide
-	// deadline. Setup work below shares the uncapped base context.
+	// deadline. Pre-upload setup work instead runs under setupCtx so it still
+	// fails fast if a database or I/O call hangs.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ctx = withCLIUploadProgressLogger(ctx, logger)
-	coreSvc, err := core.NewWithContext(ctx, api.CoreDependencies{
+	setupCtx, setupCancel := context.WithTimeout(ctx, cliSetupTimeout)
+	defer setupCancel()
+	coreSvc, err := core.NewWithContext(setupCtx, api.CoreDependencies{
 		Config: cfg,
 		Logger: logger,
 		Services: api.ServiceSet{
@@ -216,7 +225,7 @@ func run() error {
 	}()
 
 	if opts.Cleanup {
-		deleted, err := coreSvc.DeleteAllHistoryReleases(ctx)
+		deleted, err := coreSvc.DeleteAllHistoryReleases(setupCtx)
 		if err != nil {
 			return exitError(1, err)
 		}
@@ -228,7 +237,7 @@ func run() error {
 		if len(paths) != 1 {
 			return exitError(2, errors.New("--queue requires exactly one queue root path"))
 		}
-		queuePaths, err := filesystem.GatherQueuePaths(ctx, paths[0])
+		queuePaths, err := filesystem.GatherQueuePaths(setupCtx, paths[0])
 		if err != nil {
 			return exitError(1, err)
 		}
@@ -239,17 +248,17 @@ func run() error {
 	}
 
 	if opts.DeleteTmp {
-		paths, err = normalizeCLIPaths(ctx, paths)
+		paths, err = normalizeCLIPaths(setupCtx, paths)
 		if err != nil {
 			return exitError(1, err)
 		}
-		if err := deleteCLIStoredReleases(ctx, coreSvc, paths); err != nil {
+		if err := deleteCLIStoredReleases(setupCtx, coreSvc, paths); err != nil {
 			return exitError(1, err)
 		}
 	}
 
 	// Handle BDMV playlist selection before upload
-	if err := handleBDMVPlaylistSelection(ctx, paths, coreSvc, cfg, logger, opts); err != nil {
+	if err := handleBDMVPlaylistSelection(setupCtx, paths, coreSvc, cfg, logger, opts); err != nil {
 		return exitError(1, err)
 	}
 
