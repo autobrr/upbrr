@@ -878,6 +878,62 @@ func TestSaveSectionsToDatabasePreservesStoredUnknownSameRootFields(t *testing.T
 	}
 }
 
+func TestSaveSectionsToDatabaseDoesNotPreserveRepairedTrackerAliases(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	trackerSection, ok := raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected Trackers defaults map")
+	}
+	trackers, ok := trackerSection["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected Trackers.Trackers defaults map")
+	}
+	delete(trackers, "BTN")
+	trackers["btn"] = map[string]any{
+		"apikey":     "stored-token",
+		"FutureFlag": true,
+	}
+	repo := &sectionBatchPreserveRepo{raw: raw}
+
+	loaded, report, err := LoadFromDatabaseWithRepairReport(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithRepairReport failed: %v", err)
+	}
+	if !slices.Contains(report.ChangedSections, "Trackers") {
+		t.Fatalf("expected Trackers repair section, got %#v", report.ChangedSections)
+	}
+	if err := SaveSectionsToDatabase(context.Background(), loaded, report.ChangedSections, repo); err != nil {
+		t.Fatalf("SaveSectionsToDatabase failed: %v", err)
+	}
+
+	persistedTrackers, ok := repo.raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected persisted Trackers map")
+	}
+	persistedEntries, ok := persistedTrackers["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected persisted Trackers.Trackers map")
+	}
+	if _, ok := persistedEntries["btn"]; ok {
+		t.Fatalf("expected folded tracker alias not to be preserved, got %#v", persistedEntries["btn"])
+	}
+	btn, ok := persistedEntries["BTN"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected canonical BTN entry, got %#v", persistedEntries["BTN"])
+	}
+	if _, ok := btn["apikey"]; ok {
+		t.Fatalf("expected folded tracker field alias not to be preserved, got %#v", btn["apikey"])
+	}
+	if got := btn["APIKey"]; got != "stored-token" {
+		t.Fatalf("expected canonical APIKey to keep stored value, got %#v", got)
+	}
+	if got := btn["FutureFlag"]; got != true {
+		t.Fatalf("expected distinct unknown tracker field to be preserved, got %#v", got)
+	}
+}
+
 // TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName verifies stored
 // tracker names fold into canonical defaults and still report backfilled keys.
 func TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName(t *testing.T) {
@@ -914,6 +970,78 @@ func TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName(t *testing.T) {
 	}
 	if btn.URL != "https://stored.btn.example" {
 		t.Fatalf("expected stored BTN URL, got %q", btn.URL)
+	}
+}
+
+func TestMergeStoredDynamicConfigValueSkipsNonObjectCaseFoldedTrackerEntry(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{
+		"BTN": map[string]any{
+			"APIKey": "",
+		},
+	}
+
+	report, err := mergeStoredDynamicConfigValue(base, "btn", "not-an-object", "Trackers.Trackers")
+	if err != nil {
+		t.Fatalf("merge stored dynamic config value: %v", err)
+	}
+
+	btn, ok := base["BTN"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected canonical BTN entry to remain an object, got %T", base["BTN"])
+	}
+	if got := btn["APIKey"]; got != "" {
+		t.Fatalf("expected canonical BTN entry to remain unchanged, got APIKey %#v", got)
+	}
+	if changed := report.changedRootSections(); len(changed) != 0 {
+		t.Fatalf("expected skipped scalar entry not to mark changes, got %#v", changed)
+	}
+}
+
+func TestMergeStoredConfigMapSkipsNonObjectDynamicEntries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		path         string
+		key          string
+		overlayValue any
+	}{
+		{
+			name:         "tracker entry scalar",
+			path:         "Trackers.Trackers",
+			key:          "NEW",
+			overlayValue: "not-an-object",
+		},
+		{
+			name:         "torrent client array",
+			path:         "TorrentClients",
+			key:          "client",
+			overlayValue: []any{"not-an-object"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			base := map[string]any{}
+			overlay := map[string]any{
+				test.key: test.overlayValue,
+			}
+
+			report, err := mergeStoredConfigMapWithReport(base, overlay, test.path)
+			if err != nil {
+				t.Fatalf("merge stored config map: %v", err)
+			}
+			if _, ok := base[test.key]; ok {
+				t.Fatalf("expected non-object dynamic entry %q not to be inserted", test.key)
+			}
+			if changed := report.changedRootSections(); len(changed) != 0 {
+				t.Fatalf("expected skipped dynamic entry not to mark changes, got %#v", changed)
+			}
+		})
 	}
 }
 

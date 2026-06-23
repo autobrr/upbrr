@@ -446,8 +446,10 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 	return report, nil
 }
 
-// mergeStoredDynamicConfigValue inserts a stored dynamic entry or folds it into
-// a single existing ASCII-case tracker or field alias.
+// mergeStoredDynamicConfigValue inserts an object-shaped stored dynamic entry
+// or folds it into a single existing ASCII-case tracker or field alias. Dynamic
+// tracker and torrent-client entries that are not objects are skipped without
+// marking the section changed.
 func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue any, path string) (storedConfigMergeReport, error) {
 	report := newStoredConfigMergeReport()
 	if usesASCIIStoredTrackerKeys(path) {
@@ -458,8 +460,14 @@ func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue
 		if ok {
 			baseMap, baseOK := base[existingKey].(map[string]any)
 			overlayMap, overlayOK := overlayValue.(map[string]any)
-			if baseOK && overlayOK {
+			if baseOK {
+				if !overlayOK {
+					return report, nil
+				}
 				return mergeStoredConfigMapWithReport(baseMap, overlayMap, configMapPath(path, existingKey))
+			}
+			if !overlayOK {
+				return report, nil
 			}
 			base[existingKey] = overlayValue
 			report.markChanged(configMapPath(path, existingKey))
@@ -478,6 +486,11 @@ func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue
 		}
 	}
 
+	if allowsStoredDynamicConfigEntry(path) {
+		if _, overlayOK := overlayValue.(map[string]any); !overlayOK {
+			return report, nil
+		}
+	}
 	base[key] = overlayValue
 	return report, nil
 }
@@ -646,26 +659,64 @@ func sortedUniqueStrings(values []string) []string {
 }
 
 // mergeStoredUnknownConfigValues copies stored object keys that are absent from
-// current without overwriting known current values. It recurses through object
-// values so selected-section repair saves keep forward-compatible same-root
-// fields while still writing repaired known fields.
-func mergeStoredUnknownConfigValues(current, stored any) {
+// current without overwriting known current values. It recurses using canonical
+// tracker names and fields so selected-section repair saves preserve distinct
+// future same-root fields without reintroducing folded aliases.
+func mergeStoredUnknownConfigValues(current, stored any, path string) error {
 	currentMap, ok := current.(map[string]any)
 	if !ok {
-		return
+		return nil
 	}
 	storedMap, ok := stored.(map[string]any)
 	if !ok {
-		return
+		return nil
 	}
 	for key, storedValue := range storedMap {
-		currentValue, exists := currentMap[key]
+		currentKey, currentValue, exists, err := storedUnknownConfigMergeTarget(currentMap, key, path)
+		if err != nil {
+			return err
+		}
 		if !exists {
 			currentMap[key] = storedValue
 			continue
 		}
-		mergeStoredUnknownConfigValues(currentValue, storedValue)
+		if err := mergeStoredUnknownConfigValues(currentValue, storedValue, configMapPath(path, currentKey)); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// storedUnknownConfigMergeTarget resolves a stored key to the current key that
+// should receive recursive unknown-field preservation at path. Tracker names
+// and direct tracker-entry fields use the same ASCII folding rules as load-time
+// repair; all other paths require exact keys.
+func storedUnknownConfigMergeTarget(current map[string]any, key, path string) (string, any, bool, error) {
+	currentValue, exists := current[key]
+	if exists {
+		return key, currentValue, true, nil
+	}
+
+	var (
+		currentKey string
+		ok         bool
+		err        error
+	)
+	switch {
+	case usesASCIIStoredTrackerKeys(path):
+		currentKey, ok, err = asciiConfigMapKey(current, key)
+	case isStoredTrackerEntryPath(path):
+		currentKey, ok, err = trackerFieldConfigMapKey(current, key)
+	default:
+		return key, nil, false, nil
+	}
+	if err != nil {
+		return "", nil, false, err
+	}
+	if !ok {
+		return key, nil, false, nil
+	}
+	return currentKey, current[currentKey], true, nil
 }
 
 // preserveStoredUnknownConfigValues merges unknown stored fields into selected
@@ -688,7 +739,9 @@ func preserveStoredUnknownConfigValues(ctx context.Context, repo any, sections m
 		return fmt.Errorf("load stored sections: %w", err)
 	}
 	for section, current := range sections {
-		mergeStoredUnknownConfigValues(current, stored[section])
+		if err := mergeStoredUnknownConfigValues(current, stored[section], section); err != nil {
+			return err
+		}
 	}
 	return nil
 }
