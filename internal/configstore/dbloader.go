@@ -101,17 +101,22 @@ func loadFromDBPath(ctx context.Context, dbPath string, applyEnv bool) (*config.
 		return nil, fmt.Errorf("config store: %w", err)
 	}
 
-	loaded, backfilledDefaults, err := config.LoadFromDatabaseWithDefaultBackfill(ctx, repo)
+	loaded, repairReport, err := config.LoadFromDatabaseWithRepairReport(ctx, repo)
 	if err != nil {
 		return nil, fmt.Errorf("config store: %w", err)
 	}
-	mergedTrackerDefaults, err := config.MergeMissingTrackerDefaults(loaded)
+	changedSections := append([]string(nil), repairReport.ChangedSections...)
+	mergeReport, err := config.MergeMissingTrackerDefaultsWithReport(loaded)
 	if err != nil {
 		return nil, fmt.Errorf("config store: %w", err)
 	}
+	changedSections = append(changedSections, mergeReport.ChangedSections...)
 	sanitizedTrackers := len(config.DisableUnsupportedTrackerImageRehosts(loaded)) > 0
-	if backfilledDefaults || mergedTrackerDefaults || sanitizedTrackers {
-		if err := config.SaveToDatabase(ctx, loaded, repo); err != nil {
+	if sanitizedTrackers {
+		changedSections = append(changedSections, "Trackers")
+	}
+	if repairReport.BackfilledDefaults || mergeReport.Changed || sanitizedTrackers {
+		if err := config.SaveSectionsToDatabase(ctx, loaded, changedSections, repo); err != nil {
 			return nil, fmt.Errorf("config store: %w", err)
 		}
 	}

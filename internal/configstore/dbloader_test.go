@@ -93,7 +93,7 @@ func TestLoadFromDBPathBackfillsMissingTrackerDefaults(t *testing.T) {
 }
 
 // TestLoadFromDBPathPersistsMergedTrackerDefaults verifies legacy metadata BTN
-// tokens remain available after being merged into tracker defaults.
+// tokens move into tracker defaults without keeping a duplicate metadata copy.
 func TestLoadFromDBPathPersistsMergedTrackerDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -132,8 +132,8 @@ func TestLoadFromDBPathPersistsMergedTrackerDefaults(t *testing.T) {
 	if got := loaded.Trackers.Trackers["BTN"].APIKey; got != "legacy-btn-token" {
 		t.Fatalf("expected runtime BTN API key to be merged, got %q", got)
 	}
-	if got := loaded.Metadata.BTNAPI; got != "legacy-btn-token" {
-		t.Fatalf("expected legacy BTN metadata API key to be preserved, got %q", got)
+	if got := loaded.Metadata.BTNAPI; got != "" {
+		t.Fatalf("expected legacy BTN metadata API key to be cleared, got %q", got)
 	}
 
 	repo, err = db.Open(dbPath)
@@ -158,6 +158,99 @@ func TestLoadFromDBPathPersistsMergedTrackerDefaults(t *testing.T) {
 	}
 	if got := persisted.Trackers["BTN"].APIKey; got != "legacy-btn-token" {
 		t.Fatalf("expected persisted BTN API key to be merged, got %q", got)
+	}
+	var metadataJSON string
+	if err := repo.RawDB().QueryRowContext(ctx,
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"Metadata",
+	).Scan(&metadataJSON); err != nil {
+		t.Fatalf("query metadata: %v", err)
+	}
+	var metadata config.MetadataConfig
+	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	if got := metadata.BTNAPI; got != "" {
+		t.Fatalf("expected persisted metadata BTN API key to be cleared, got %q", got)
+	}
+}
+
+func TestLoadFromDBPathRollsBackMultiSectionRepairOnLaterFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	if err := repo.Migrate(); err != nil {
+		_ = repo.Close()
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		_ = repo.Close()
+		t.Fatalf("load embedded config: %v", err)
+	}
+	cfg.MainSettings.DBPath = dbPath
+	cfg.Metadata.BTNAPI = "legacy-btn-token"
+	btn := cfg.Trackers.Trackers["BTN"]
+	btn.APIKey = ""
+	cfg.Trackers.Trackers["BTN"] = btn
+
+	if err := config.SaveToDatabase(ctx, cfg, repo); err != nil {
+		_ = repo.Close()
+		t.Fatalf("save config: %v", err)
+	}
+	_ = repo.Close()
+
+	installFailTrackersSectionTrigger(ctx, t, dbPath)
+
+	_, err = configstore.LoadFromDBPath(ctx, dbPath)
+	if err == nil {
+		t.Fatal("expected load repair save to fail")
+	}
+
+	repo, err = db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	var metadataJSON string
+	if err := repo.RawDB().QueryRowContext(ctx,
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"Metadata",
+	).Scan(&metadataJSON); err != nil {
+		t.Fatalf("query metadata: %v", err)
+	}
+	var metadata config.MetadataConfig
+	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	if got := metadata.BTNAPI; got != "legacy-btn-token" {
+		t.Fatalf("expected metadata BTN token rollback, got %q", got)
+	}
+
+	var trackersJSON string
+	if err := repo.RawDB().QueryRowContext(ctx,
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"Trackers",
+	).Scan(&trackersJSON); err != nil {
+		t.Fatalf("query trackers: %v", err)
+	}
+	var trackers struct {
+		Trackers map[string]config.TrackerConfig `json:"Trackers"`
+	}
+	if err := json.Unmarshal([]byte(trackersJSON), &trackers); err != nil {
+		t.Fatalf("unmarshal trackers: %v", err)
+	}
+	if got := trackers.Trackers["BTN"].APIKey; got != "" {
+		t.Fatalf("expected tracker BTN API key rollback, got %q", got)
 	}
 }
 
@@ -486,6 +579,27 @@ func installFailMainSettingsTrigger(ctx context.Context, t *testing.T, dbPath st
 		END
 	`); err != nil {
 		t.Fatalf("create failure trigger: %v", err)
+	}
+}
+
+func installFailTrackersSectionTrigger(ctx context.Context, t *testing.T, dbPath string) {
+	t.Helper()
+
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+	for _, statement := range []string{
+		`CREATE TRIGGER fail_trackers_section_insert BEFORE INSERT ON config_settings WHEN NEW.section = 'Trackers' BEGIN SELECT RAISE(FAIL, 'forced config section failure'); END`,
+		`CREATE TRIGGER fail_trackers_section_update BEFORE UPDATE ON config_settings WHEN NEW.section = 'Trackers' BEGIN SELECT RAISE(FAIL, 'forced config section failure'); END`,
+	} {
+		if _, err := repo.RawDB().ExecContext(ctx, statement); err != nil {
+			t.Fatalf("create failure trigger: %v", err)
+		}
 	}
 }
 

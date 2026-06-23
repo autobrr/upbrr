@@ -1045,32 +1045,58 @@ func trackerAPIKeyForExactName(trackers map[string]TrackerConfig, name string) s
 // create a duplicate canonical "BTN" entry.
 // CZT keeps user credentials in Passkey only, so stale URL, APIKey, and
 // AnnounceURL values are removed while preserving the passkey.
+// Legacy Metadata.BTNAPI is moved into the BTN tracker APIKey when needed, then
+// cleared once a tracker token is available.
 // The returned flag reports whether cfg was modified.
 func MergeMissingTrackerDefaults(cfg *Config) (bool, error) {
-	if cfg == nil {
-		return false, nil
+	report, err := MergeMissingTrackerDefaultsWithReport(cfg)
+	return report.Changed, err
+}
+
+// TrackerDefaultsMergeReport describes semantic tracker-default changes made by
+// [MergeMissingTrackerDefaultsWithReport]. Changed reports whether cfg was
+// modified; ChangedSections contains sorted JSON root section names to persist,
+// including Metadata when a legacy metadata BTN token is cleared.
+type TrackerDefaultsMergeReport struct {
+	Changed         bool
+	ChangedSections []string
+}
+
+func (r *TrackerDefaultsMergeReport) markChanged(section string) {
+	r.Changed = true
+	if section != "" {
+		r.ChangedSections = append(r.ChangedSections, section)
 	}
-	changed := false
+}
+
+// MergeMissingTrackerDefaultsWithReport backfills semantic tracker defaults and
+// reports the root sections that should be persisted. It may initialize nil
+// tracker maps for runtime use without marking cfg changed. Legacy
+// Metadata.BTNAPI is copied to the BTN tracker before Metadata is marked for
+// clearing so callers can persist both affected sections together.
+func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeReport, error) {
+	var report TrackerDefaultsMergeReport
+	if cfg == nil {
+		return report, nil
+	}
 	if cfg.Trackers.Trackers == nil {
 		cfg.Trackers.Trackers = map[string]TrackerConfig{}
-		changed = true
 	}
 	if cfg.Trackers.DefaultTrackers == nil {
 		cfg.Trackers.DefaultTrackers = CSVList{}
-		changed = true
 	}
 	defaults, err := loadEmbeddedDefaultConfigRaw()
 	if err != nil || defaults == nil || len(defaults.Trackers.Trackers) == 0 {
 		if err != nil {
-			return false, fmt.Errorf("load embedded tracker defaults: %w", err)
+			return report, fmt.Errorf("load embedded tracker defaults: %w", err)
 		}
-		return false, errors.New("load embedded tracker defaults: embedded default trackers missing")
+		return report, errors.New("load embedded tracker defaults: embedded default trackers missing")
 	}
 	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
 		existingName, existing, ok := trackerDefaultMergeEntry(cfg.Trackers.Trackers, trackerName)
 		if !ok {
 			cfg.Trackers.Trackers[trackerName] = trackerCfg
-			changed = true
+			report.markChanged("Trackers")
 			continue
 		}
 		if asciiEqualFold(trackerName, "CZT") {
@@ -1079,23 +1105,29 @@ func MergeMissingTrackerDefaults(cfg *Config) (bool, error) {
 				existing.APIKey = ""
 				existing.AnnounceURL = ""
 				cfg.Trackers.Trackers[existingName] = existing
-				changed = true
+				report.markChanged("Trackers")
 			}
 			continue
 		}
 		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
 			existing.URL = trackerCfg.URL
 			cfg.Trackers.Trackers[existingName] = existing
-			changed = true
+			report.markChanged("Trackers")
 		}
 	}
-	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" && trackerAPIKeyByName(cfg.Trackers.Trackers, "BTN") == "" {
-		btnName := trackerBTNMergeName(cfg.Trackers.Trackers)
-		btnCfg := cfg.Trackers.Trackers[btnName]
-		if strings.TrimSpace(btnCfg.APIKey) == "" {
-			btnCfg.APIKey = token
-			cfg.Trackers.Trackers[btnName] = btnCfg
-			changed = true
+	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" {
+		if trackerAPIKeyByName(cfg.Trackers.Trackers, "BTN") == "" {
+			btnName := trackerBTNMergeName(cfg.Trackers.Trackers)
+			btnCfg := cfg.Trackers.Trackers[btnName]
+			if strings.TrimSpace(btnCfg.APIKey) == "" {
+				btnCfg.APIKey = token
+				cfg.Trackers.Trackers[btnName] = btnCfg
+				report.markChanged("Trackers")
+			}
+		}
+		if trackerAPIKeyByName(cfg.Trackers.Trackers, "BTN") != "" {
+			cfg.Metadata.BTNAPI = ""
+			report.markChanged("Metadata")
 		}
 	}
 	for trackerName, trackerCfg := range cfg.Trackers.Trackers {
@@ -1109,9 +1141,10 @@ func MergeMissingTrackerDefaults(cfg *Config) (bool, error) {
 		trackerCfg.URL = ""
 		trackerCfg.AnnounceURL = ""
 		cfg.Trackers.Trackers[trackerName] = trackerCfg
-		changed = true
+		report.markChanged("Trackers")
 	}
-	return changed, nil
+	report.ChangedSections = sortedUniqueStrings(report.ChangedSections)
+	return report, nil
 }
 
 // trackerDefaultMergeEntry returns the exact tracker entry when present, then
