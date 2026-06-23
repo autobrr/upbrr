@@ -21,9 +21,9 @@ func TestEvaluateRulesRequiresUniqueID(t *testing.T) {
 	}
 }
 
-func hasRuleFailure(failures []api.RuleFailure, rule string) bool {
+func hasMISettingsFailure(failures []api.RuleFailure) bool {
 	for _, failure := range failures {
-		if failure.Rule == rule {
+		if failure.Rule == "require_valid_mi_setting" {
 			return true
 		}
 	}
@@ -39,8 +39,24 @@ func TestEvaluateRulesUnit3DEnforcesMediaInfoSettings(t *testing.T) {
 		ValidMediaInfoSettings: false,
 	}
 	failures := EvaluateRules(context.Background(), "RF", meta, nil)
-	if !hasRuleFailure(failures, "require_valid_mi_setting") {
+	if !hasMISettingsFailure(failures) {
 		t.Fatalf("expected require_valid_mi_setting failure for RF, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesUnit3DWithoutRuleSetEnforcesMediaInfoSettings(t *testing.T) {
+	// ACM is a known UNIT3D tracker with no tracker-specific RuleSet. The early
+	// "not found" return must not skip the MediaInfo-settings enforcement.
+	meta := api.PreparedMetadata{ValidMediaInfoSettings: false}
+	failures := EvaluateRules(context.Background(), "ACM", meta, nil)
+	if !hasMISettingsFailure(failures) {
+		t.Fatalf("expected require_valid_mi_setting failure for ACM, got %#v", failures)
+	}
+
+	meta.ValidMediaInfoSettings = true
+	failures = EvaluateRules(context.Background(), "ACM", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures for ACM with valid MI settings, got %#v", failures)
 	}
 }
 
@@ -50,7 +66,7 @@ func TestEvaluateRulesUnit3DAllowsValidMediaInfoSettings(t *testing.T) {
 		ValidMediaInfoSettings: true,
 	}
 	failures := EvaluateRules(context.Background(), "RF", meta, nil)
-	if hasRuleFailure(failures, "require_valid_mi_setting") {
+	if hasMISettingsFailure(failures) {
 		t.Fatalf("did not expect require_valid_mi_setting failure for RF, got %#v", failures)
 	}
 }
@@ -60,7 +76,7 @@ func TestEvaluateRulesNonUnit3DOptInMediaInfoSettings(t *testing.T) {
 	// per-tracker flag must still be honored.
 	meta := api.PreparedMetadata{ValidMediaInfoSettings: false}
 	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
-	if !hasRuleFailure(failures, "require_valid_mi_setting") {
+	if !hasMISettingsFailure(failures) {
 		t.Fatalf("expected require_valid_mi_setting failure for BHD, got %#v", failures)
 	}
 }
