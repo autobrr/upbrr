@@ -1251,7 +1251,7 @@ func (a *App) SaveConfig(payload string) error {
 	if err != nil {
 		return fmt.Errorf("gui: %w", err)
 	}
-	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
+	if _, err := config.MergeMissingTrackerDefaults(cfg); err != nil {
 		return fmt.Errorf("gui: %w", err)
 	}
 	currentCfg := a.currentConfig()
@@ -1283,7 +1283,7 @@ func normalizeGUIConfigForExport(cfg *config.Config, dbPath string) (*config.Con
 	if err != nil {
 		return nil, err
 	}
-	if err := config.MergeMissingTrackerDefaults(normalized); err != nil {
+	if _, err := config.MergeMissingTrackerDefaults(normalized); err != nil {
 		return nil, fmt.Errorf("gui: %w", err)
 	}
 	if strings.TrimSpace(normalized.MainSettings.DBPath) == "" {

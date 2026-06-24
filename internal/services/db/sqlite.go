@@ -4,12 +4,15 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -2852,6 +2855,37 @@ func (r *SQLiteRepository) SaveConfigSection(ctx context.Context, section string
 	return nil
 }
 
+// SaveConfigSections persists multiple prepared config sections in one
+// transaction. The map keys are config root section names and values are
+// marshaled before the transaction starts; if any section write fails, no
+// selected section is committed.
+func (r *SQLiteRepository) SaveConfigSections(ctx context.Context, sections map[string]any) error {
+	if r == nil || r.db == nil {
+		return errors.New("db: repository not initialized")
+	}
+	if len(sections) == 0 {
+		return nil
+	}
+
+	prepared := make(map[string]string, len(sections))
+	for section, data := range sections {
+		if section == "" {
+			return internalerrors.ErrInvalidInput
+		}
+		payload, err := json.Marshal(data)
+		if err != nil {
+			return fmt.Errorf("db save config: marshal section %s: %w", section, err)
+		}
+		prepared[section] = string(payload)
+	}
+
+	if err := r.saveFullConfigSections(ctx, prepared, nil); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // LoadConfigSection retrieves a single config section from the database.
 func (r *SQLiteRepository) LoadConfigSection(ctx context.Context, section string, dest any) error {
 	if r == nil || r.db == nil {
@@ -2963,7 +2997,13 @@ func (r *SQLiteRepository) saveFullConfigSections(ctx context.Context, sections 
 				return err
 			}
 		}
-		for section, payload := range sections {
+		sectionNames := make([]string, 0, len(sections))
+		for section := range sections {
+			sectionNames = append(sectionNames, section)
+		}
+		sort.Strings(sectionNames)
+		for _, section := range sectionNames {
+			payload := sections[section]
 			if _, err := tx.ExecContext(ctx, `
 			INSERT INTO config_settings (section, data, updated_at) VALUES (?, ?, ?)
 			ON CONFLICT(section) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
@@ -2979,7 +3019,10 @@ func (r *SQLiteRepository) saveFullConfigSections(ctx context.Context, sections 
 	return nil
 }
 
-// LoadFullConfig reconstructs the entire config from all sections.
+// LoadFullConfig reconstructs the entire config from all sections. Each raw
+// section is rejected if it contains duplicate JSON object names before the
+// sections are joined, so malformed stored data cannot collapse duplicate keys
+// during unmarshaling.
 func (r *SQLiteRepository) LoadFullConfig(ctx context.Context, dest any) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3001,6 +3044,9 @@ func (r *SQLiteRepository) LoadFullConfig(ctx context.Context, dest any) error {
 		if err := rows.Scan(&section, &payload); err != nil {
 			return fmt.Errorf("db load full config: scan: %w", err)
 		}
+		if err := validateJSONNoDuplicateObjectNames([]byte(payload)); err != nil {
+			return fmt.Errorf("db load full config section %s: %w", section, err)
+		}
 		sections[section] = json.RawMessage(payload)
 	}
 	if err := rows.Err(); err != nil {
@@ -3021,6 +3067,90 @@ func (r *SQLiteRepository) LoadFullConfig(ctx context.Context, dest any) error {
 		return fmt.Errorf("db load full config: unmarshal to dest: %w", err)
 	}
 
+	return nil
+}
+
+// validateJSONNoDuplicateObjectNames scans one JSON value and rejects duplicate
+// object member names before the standard decoder can collapse them into a map.
+func validateJSONNoDuplicateObjectNames(payload []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.UseNumber()
+	if err := validateJSONValueNoDuplicateObjectNames(dec, ""); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return fmt.Errorf("read trailing JSON token: %w", err)
+	}
+	return nil
+}
+
+// validateJSONValueNoDuplicateObjectNames consumes one JSON value from dec and
+// reports duplicate object member names with a dotted path to the object.
+func validateJSONValueNoDuplicateObjectNames(dec *json.Decoder, path string) error {
+	token, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("read JSON token at %q: %w", path, err)
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+		for dec.More() {
+			keyToken, err := dec.Token()
+			if err != nil {
+				return fmt.Errorf("read JSON object key at %q: %w", path, err)
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("invalid JSON object key at %q", path)
+			}
+			if _, exists := seen[key]; exists {
+				if path == "" {
+					return fmt.Errorf("duplicate JSON object key %q", key)
+				}
+				return fmt.Errorf("duplicate JSON object key %q at %q", key, path)
+			}
+			seen[key] = struct{}{}
+			childPath := key
+			if path != "" {
+				childPath = path + "." + key
+			}
+			if err := validateJSONValueNoDuplicateObjectNames(dec, childPath); err != nil {
+				return err
+			}
+		}
+		return consumeJSONDelim(dec, '}')
+	case '[':
+		index := 0
+		for dec.More() {
+			childPath := fmt.Sprintf("%s[%d]", path, index)
+			if err := validateJSONValueNoDuplicateObjectNames(dec, childPath); err != nil {
+				return err
+			}
+			index++
+		}
+		return consumeJSONDelim(dec, ']')
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q at %q", delim, path)
+	}
+}
+
+// consumeJSONDelim consumes and verifies the expected closing JSON delimiter.
+func consumeJSONDelim(dec *json.Decoder, want json.Delim) error {
+	token, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("read JSON delimiter %q: %w", want, err)
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != want {
+		return fmt.Errorf("expected JSON delimiter %q", want)
+	}
 	return nil
 }
 
