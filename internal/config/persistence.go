@@ -265,7 +265,7 @@ func LoadFromDatabaseWithRepairReport(ctx context.Context, repo fullConfigLoader
 		return nil, DatabaseRepairReport{}, err
 	}
 
-	decryptedCfg, err := DecryptConfigSecrets(&cfg)
+	decryptedCfg, err := decryptConfigSecretsWithDBDir(&cfg, repoDBPath(repo))
 	if err != nil {
 		return nil, DatabaseRepairReport{}, fmt.Errorf("config load from database: decrypt secrets: %w", err)
 	}
@@ -847,10 +847,16 @@ func secretPathRoot(path string) string {
 	return path[:end]
 }
 
-// repoDBPath returns the on-disk database path for repositories that expose one
-// (e.g. *db.SQLiteRepository), or "" for in-memory or path-less repositories.
+// databasePathProvider is implemented by repositories that can expose the
+// resolved on-disk database path used to locate sibling auth/helper files.
+type databasePathProvider interface {
+	DBPath() string
+}
+
+// repoDBPath returns the resolved on-disk database path for repositories that
+// expose one (e.g. *db.SQLiteRepository), or "" for in-memory/path-less repos.
 func repoDBPath(repo any) string {
-	if r, ok := repo.(interface{ DBPath() string }); ok {
+	if r, ok := repo.(databasePathProvider); ok {
 		return strings.TrimSpace(r.DBPath())
 	}
 	return ""
@@ -858,10 +864,10 @@ func repoDBPath(repo any) string {
 
 // decryptConfigSecretsWithDBDir decrypts cfg using the secret-encryption helper
 // (web-auth.json) resolved from the config's stored db_path. If that helper is
-// unavailable (e.g. the persisted db_path is empty or points at a pre-upgrade
-// location), it retries anchored to runtimeDBPath — the repository's actual
-// on-disk database directory — without changing the returned config's stored
-// db_path. The stored-path-first order preserves existing behavior for callers
+// fails (e.g. the persisted db_path is empty, points at a pre-upgrade location,
+// or has stale helper material), it retries anchored to runtimeDBPath, the
+// repository's actual on-disk database, without changing the returned config's
+// stored db_path. The stored-path-first order preserves existing behavior for callers
 // that intentionally rely on the snapshot's db_path.
 func decryptConfigSecretsWithDBDir(cfg *Config, runtimeDBPath string) (*Config, error) {
 	decrypted, err := DecryptConfigSecrets(cfg)
@@ -870,8 +876,7 @@ func decryptConfigSecretsWithDBDir(cfg *Config, runtimeDBPath string) (*Config, 
 	}
 
 	runtimeDBPath = strings.TrimSpace(runtimeDBPath)
-	if runtimeDBPath == "" || runtimeDBPath == strings.TrimSpace(cfg.MainSettings.DBPath) ||
-		!errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
+	if runtimeDBPath == "" || runtimeDBPath == strings.TrimSpace(cfg.MainSettings.DBPath) {
 		return nil, err
 	}
 
@@ -879,10 +884,30 @@ func decryptConfigSecretsWithDBDir(cfg *Config, runtimeDBPath string) (*Config, 
 	probe.MainSettings.DBPath = runtimeDBPath
 	retried, retryErr := DecryptConfigSecrets(&probe)
 	if retryErr != nil {
-		return nil, err
+		return nil, errors.Join(err, fmt.Errorf("runtime db path decrypt retry: %w", retryErr))
 	}
 	retried.MainSettings.DBPath = cfg.MainSettings.DBPath
 	return retried, nil
+}
+
+func encryptConfigSecretsForSectionsWithDBDir(cfg *Config, sections []string, runtimeDBPath string) (*Config, error) {
+	runtimeDBPath = strings.TrimSpace(runtimeDBPath)
+	if runtimeDBPath == "" || runtimeDBPath == strings.TrimSpace(cfg.MainSettings.DBPath) {
+		return encryptConfigSecretsForSections(cfg, sections)
+	}
+
+	probe, err := cloneConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	storedDBPath := probe.MainSettings.DBPath
+	probe.MainSettings.DBPath = runtimeDBPath
+	encrypted, err := encryptConfigSecretsForSections(probe, sections)
+	if err != nil {
+		return nil, err
+	}
+	encrypted.MainSettings.DBPath = storedDBPath
+	return encrypted, nil
 }
 
 // SaveToDatabase persists the config to the repository.
@@ -939,7 +964,7 @@ func SaveSectionsToDatabase(ctx context.Context, cfg *Config, sections []string,
 		return fmt.Errorf("config save sections to database: %w", err)
 	}
 
-	encryptedCfg, err := encryptConfigSecretsForSections(cfg, sections)
+	encryptedCfg, err := encryptConfigSecretsForSectionsWithDBDir(cfg, sections, repoDBPath(repo))
 	if err != nil {
 		return fmt.Errorf("config save sections to database: encrypt secrets: %w", err)
 	}

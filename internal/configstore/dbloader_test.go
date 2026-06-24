@@ -92,6 +92,85 @@ func TestLoadFromDBPathBackfillsMissingTrackerDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadFromDBPathRepairPersistsSecretsWithRuntimeDBPath(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "guiapp.db")
+	if err := webserver.BootstrapAuthFile(runtimeDBPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile runtime: %v", err)
+	}
+	staleDBPath := filepath.Join(t.TempDir(), "old", "guiapp.db")
+	if err := webserver.BootstrapAuthFile(staleDBPath, "tester", "different-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile stale: %v", err)
+	}
+
+	cfg, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("load embedded config: %v", err)
+	}
+	cfg.MainSettings.DBPath = runtimeDBPath
+	cfg.MainSettings.TMDBAPI = "runtime-secret"
+	if err := configstore.SaveToDBPath(ctx, cfg, runtimeDBPath); err != nil {
+		t.Fatalf("SaveToDBPath: %v", err)
+	}
+
+	repo, err := db.OpenContext(ctx, runtimeDBPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	var mainSettingsJSON string
+	if err := repo.RawDB().QueryRowContext(ctx,
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"MainSettings",
+	).Scan(&mainSettingsJSON); err != nil {
+		_ = repo.Close()
+		t.Fatalf("query main settings: %v", err)
+	}
+	var mainSettings map[string]any
+	if err := json.Unmarshal([]byte(mainSettingsJSON), &mainSettings); err != nil {
+		_ = repo.Close()
+		t.Fatalf("unmarshal main settings: %v", err)
+	}
+	mainSettings["DBPath"] = staleDBPath
+	delete(mainSettings, "UseFavicons")
+	updated, err := json.Marshal(mainSettings)
+	if err != nil {
+		_ = repo.Close()
+		t.Fatalf("marshal patched main settings: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx,
+		`UPDATE config_settings SET data = ? WHERE section = ?`,
+		string(updated),
+		"MainSettings",
+	); err != nil {
+		_ = repo.Close()
+		t.Fatalf("patch main settings: %v", err)
+	}
+	_ = repo.Close()
+
+	loaded, err := configstore.LoadFromDBPath(ctx, runtimeDBPath)
+	if err != nil {
+		t.Fatalf("LoadFromDBPath: %v", err)
+	}
+	if loaded.MainSettings.TMDBAPI != "runtime-secret" {
+		t.Fatalf("secret not decrypted via runtime DB path: got %q", loaded.MainSettings.TMDBAPI)
+	}
+	if loaded.MainSettings.DBPath != staleDBPath {
+		t.Fatalf("stored DBPath got %q want %q", loaded.MainSettings.DBPath, staleDBPath)
+	}
+	if err := os.Remove(webserver.AuthFilePath(staleDBPath)); err != nil {
+		t.Fatalf("remove stale auth helper: %v", err)
+	}
+	reloaded, err := configstore.LoadFromDBPath(ctx, runtimeDBPath)
+	if err != nil {
+		t.Fatalf("LoadFromDBPath after stale helper removal: %v", err)
+	}
+	if reloaded.MainSettings.TMDBAPI != "runtime-secret" {
+		t.Fatalf("secret not decryptable from runtime helper after repair save: got %q", reloaded.MainSettings.TMDBAPI)
+	}
+}
+
 // TestLoadFromDBPathPersistsMergedTrackerDefaults verifies legacy metadata BTN
 // tokens move into tracker defaults without keeping a duplicate metadata copy.
 func TestLoadFromDBPathPersistsMergedTrackerDefaults(t *testing.T) {

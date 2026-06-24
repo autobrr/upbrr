@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -14,7 +15,7 @@ const defaultDirName = ".upbrr"
 const defaultDBName = "db.sqlite"
 
 func DefaultPath() (string, error) {
-	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		preferred := filepath.Join(xdg, "upbrr", defaultDBName)
 		if dbFileExists(preferred) {
 			return preferred, nil
@@ -27,7 +28,7 @@ func DefaultPath() (string, error) {
 		if legacy := filepath.Join(xdg, defaultDirName, defaultDBName); dbFileExists(legacy) {
 			return legacy, nil
 		}
-		if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
+		if home := os.Getenv("HOME"); home != "" && sameConfigRoot(home, xdg) {
 			if legacy := filepath.Join(home, defaultDirName, defaultDBName); dbFileExists(legacy) {
 				return legacy, nil
 			}
@@ -43,8 +44,17 @@ func DefaultPath() (string, error) {
 
 // dbFileExists reports whether path is an existing regular file.
 func dbFileExists(path string) bool {
-	info, err := os.Stat(path) //nolint:gosec // Existence probe for a default/legacy DB path derived from trusted env config.
-	return err == nil && !info.IsDir()
+	info, err := os.Lstat(path) //nolint:gosec // Existence probe for a default/legacy DB path derived from trusted env config.
+	return err == nil && info.Mode().IsRegular()
+}
+
+func sameConfigRoot(a, b string) bool {
+	cleanA := filepath.Clean(a)
+	cleanB := filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(cleanA, cleanB)
+	}
+	return cleanA == cleanB
 }
 
 func RootDir(dbPath string) (string, error) {
