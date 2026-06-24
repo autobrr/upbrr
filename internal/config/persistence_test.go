@@ -649,8 +649,16 @@ func defaultDatabaseConfigMap(t *testing.T) map[string]any {
 
 func writeWebAuthFixture(t *testing.T, dbPath string) {
 	t.Helper()
+	writeWebAuthFixtureWithSeed(t, dbPath, "stable-seed-for-tests")
+}
+
+func writeWebAuthFixtureWithSeed(t *testing.T, dbPath string, seed string) {
+	t.Helper()
 	authPath := filepath.Join(filepath.Dir(dbPath), webAuthFileName)
-	payload := `{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":"stable-seed-for-tests"}`
+	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
+		t.Fatalf("mkdir web auth fixture: %v", err)
+	}
+	payload := fmt.Sprintf(`{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":%q}`, seed)
 	if err := os.WriteFile(authPath, []byte(payload), 0600); err != nil {
 		t.Fatalf("write web auth fixture: %v", err)
 	}
@@ -1571,5 +1579,187 @@ func TestExportFromDatabaseToYAMLLoadFailure(t *testing.T) {
 	err := ExportFromDatabaseToYAML(context.Background(), filepath.Join(t.TempDir(), "out.yaml"), repo)
 	if err == nil {
 		t.Fatalf("expected load error, got nil")
+	}
+}
+
+type runtimePathRepo struct {
+	dbPath string
+	cfg    Config
+}
+
+func (r *runtimePathRepo) LoadFullConfig(_ context.Context, dest any) error {
+	payload, err := json.Marshal(r.cfg)
+	if err != nil {
+		return fmt.Errorf("marshal runtime path config: %w", err)
+	}
+	if err := json.Unmarshal(payload, dest); err != nil {
+		return fmt.Errorf("unmarshal runtime path config: %w", err)
+	}
+	return nil
+}
+
+func (r *runtimePathRepo) DBPath() string { return r.dbPath }
+
+func TestLoadFromDatabaseDecryptsViaRuntimeDBDir(t *testing.T) {
+	// web-auth.json (the secret-encryption helper) lives next to the *runtime*
+	// database. Encrypt a secret against that helper.
+	runtimeDBPath := filepath.Join(t.TempDir(), "db.sqlite")
+	writeWebAuthFixture(t, runtimeDBPath)
+	plain := &Config{MainSettings: MainSettingsConfig{DBPath: runtimeDBPath, TMDBAPI: "super-secret-token"}}
+	encrypted, err := EncryptConfigSecrets(plain)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if encrypted.MainSettings.TMDBAPI == "super-secret-token" {
+		t.Fatalf("expected TMDBAPI to be encrypted, got plaintext")
+	}
+
+	// Simulate a stored config whose db_path points at a pre-upgrade dir that no
+	// longer holds web-auth.json. Decryption must still succeed by anchoring to
+	// the repo's runtime DB dir, and the stored db_path must be preserved.
+	staleDBPath := filepath.Join(t.TempDir(), "old", "db.sqlite")
+	encrypted.MainSettings.DBPath = staleDBPath
+
+	repo := &runtimePathRepo{dbPath: runtimeDBPath, cfg: *encrypted}
+	got, err := LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabase: %v", err)
+	}
+	if got.MainSettings.TMDBAPI != "super-secret-token" {
+		t.Fatalf("secret not decrypted via runtime DB dir: got %q", got.MainSettings.TMDBAPI)
+	}
+	if got.MainSettings.DBPath != staleDBPath {
+		t.Fatalf("stored db_path not preserved: got %q want %q", got.MainSettings.DBPath, staleDBPath)
+	}
+}
+
+func TestLoadFromDatabaseWithRepairReportDecryptsViaRuntimeDBDir(t *testing.T) {
+	runtimeDBPath := filepath.Join(t.TempDir(), "db.sqlite")
+	writeWebAuthFixture(t, runtimeDBPath)
+	plain := &Config{MainSettings: MainSettingsConfig{DBPath: runtimeDBPath, TMDBAPI: "super-secret-token"}}
+	encrypted, err := EncryptConfigSecrets(plain)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	staleDBPath := filepath.Join(t.TempDir(), "old", "db.sqlite")
+	encrypted.MainSettings.DBPath = staleDBPath
+
+	repo := &runtimePathRepo{dbPath: runtimeDBPath, cfg: *encrypted}
+	got, _, err := LoadFromDatabaseWithRepairReport(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithRepairReport: %v", err)
+	}
+	if got.MainSettings.TMDBAPI != "super-secret-token" {
+		t.Fatalf("secret not decrypted via runtime DB dir: got %q", got.MainSettings.TMDBAPI)
+	}
+	if got.MainSettings.DBPath != staleDBPath {
+		t.Fatalf("stored db_path not preserved: got %q want %q", got.MainSettings.DBPath, staleDBPath)
+	}
+}
+
+func TestLoadFromDatabaseRetriesRuntimeDBDirAfterWrongStoredHelper(t *testing.T) {
+	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "db.sqlite")
+	writeWebAuthFixtureWithSeed(t, runtimeDBPath, "runtime-seed")
+	plain := &Config{MainSettings: MainSettingsConfig{DBPath: runtimeDBPath, TMDBAPI: "super-secret-token"}}
+	encrypted, err := EncryptConfigSecrets(plain)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	staleDBPath := filepath.Join(t.TempDir(), "old", "db.sqlite")
+	writeWebAuthFixtureWithSeed(t, staleDBPath, "wrong-seed")
+	encrypted.MainSettings.DBPath = staleDBPath
+
+	repo := &runtimePathRepo{dbPath: runtimeDBPath, cfg: *encrypted}
+	got, err := LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabase: %v", err)
+	}
+	if got.MainSettings.TMDBAPI != "super-secret-token" {
+		t.Fatalf("secret not decrypted via runtime DB dir: got %q", got.MainSettings.TMDBAPI)
+	}
+}
+
+func TestDecryptConfigSecretsWithDBDirReportsRuntimeRetryError(t *testing.T) {
+	goodDBPath := filepath.Join(t.TempDir(), "good", "db.sqlite")
+	writeWebAuthFixtureWithSeed(t, goodDBPath, "good-seed")
+	plain := &Config{MainSettings: MainSettingsConfig{DBPath: goodDBPath, TMDBAPI: "super-secret-token"}}
+	encrypted, err := EncryptConfigSecrets(plain)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	staleDBPath := filepath.Join(t.TempDir(), "missing", "db.sqlite")
+	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "db.sqlite")
+	writeWebAuthFixtureWithSeed(t, runtimeDBPath, "wrong-seed")
+	encrypted.MainSettings.DBPath = staleDBPath
+
+	_, err = decryptConfigSecretsWithDBDir(encrypted, runtimeDBPath)
+	if err == nil {
+		t.Fatalf("expected decrypt error")
+	}
+	if !errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
+		t.Fatalf("expected original helper unavailable error to be preserved, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "runtime db path decrypt retry") {
+		t.Fatalf("expected runtime retry error context, got %v", err)
+	}
+}
+
+func TestSaveSectionsToDatabaseEncryptsViaRuntimeDBDir(t *testing.T) {
+	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "db.sqlite")
+	writeWebAuthFixture(t, runtimeDBPath)
+	staleDBPath := filepath.Join(t.TempDir(), "old", "db.sqlite")
+
+	repo := &runtimeSectionRepo{dbPath: runtimeDBPath}
+	cfg := validMinimalConfig()
+	cfg.MainSettings.DBPath = staleDBPath
+	cfg.MainSettings.TMDBAPI = "super-secret-token"
+
+	if err := SaveSectionsToDatabase(context.Background(), cfg, []string{"MainSettings"}, repo); err != nil {
+		t.Fatalf("SaveSectionsToDatabase: %v", err)
+	}
+	mainSettings, ok := repo.sections["MainSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected MainSettings map, got %#v", repo.sections["MainSettings"])
+	}
+	if got := mainSettings["DBPath"]; got != staleDBPath {
+		t.Fatalf("stored DBPath got %#v want %q", got, staleDBPath)
+	}
+	token, ok := mainSettings["TMDBAPI"].(string)
+	if !ok || !strings.HasPrefix(token, encryptedEnvelopePrefix) {
+		t.Fatalf("expected TMDBAPI to be encrypted via runtime helper, got %#v", mainSettings["TMDBAPI"])
+	}
+}
+
+type runtimeSectionRepo struct {
+	dbPath   string
+	sections map[string]any
+}
+
+func (r *runtimeSectionRepo) DBPath() string { return r.dbPath }
+
+func (r *runtimeSectionRepo) SaveConfigSection(_ context.Context, section string, data any) error {
+	if r.sections == nil {
+		r.sections = map[string]any{}
+	}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal section %s: %w", section, err)
+	}
+	var stored any
+	if err := json.Unmarshal(payload, &stored); err != nil {
+		return fmt.Errorf("unmarshal section %s: %w", section, err)
+	}
+	r.sections[section] = stored
+	return nil
+}
+
+func TestRepoDBPath(t *testing.T) {
+	if got := repoDBPath(&runtimePathRepo{dbPath: "  /a/b  "}); got != "/a/b" {
+		t.Fatalf("repoDBPath got %q, want /a/b", got)
+	}
+	if got := repoDBPath(struct{}{}); got != "" {
+		t.Fatalf("repoDBPath for repo without DBPath got %q, want empty", got)
 	}
 }

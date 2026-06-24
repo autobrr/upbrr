@@ -28,6 +28,9 @@ import (
 type SQLiteRepository struct {
 	db     *sql.DB
 	logger Logger
+	// path is empty for SQLite sentinel/URI inputs whose sibling helper-file
+	// location is intentionally not inferred from the opened DB string.
+	path string
 }
 
 const sqliteBusyTimeout = 5000
@@ -109,7 +112,18 @@ func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQ
 		}
 	}
 
-	return &SQLiteRepository{db: db, logger: logger}, nil
+	return &SQLiteRepository{db: db, logger: logger, path: repositoryDBPath(path, resolved)}, nil
+}
+
+// DBPath returns the resolved on-disk database path when the repository was
+// opened from a normal filesystem path. It returns empty for SQLite sentinel or
+// URI inputs so callers do not invent helper-file locations for in-memory DBs
+// or opaque SQLite connection strings.
+func (r *SQLiteRepository) DBPath() string {
+	if r == nil {
+		return ""
+	}
+	return r.path
 }
 
 func (r *SQLiteRepository) Close() error {
@@ -2816,6 +2830,14 @@ func resolvePath(path string) (string, error) {
 	}
 
 	return cleaned, nil
+}
+
+func repositoryDBPath(input, resolved string) string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == ":memory:" || strings.HasPrefix(trimmed, "file:") {
+		return ""
+	}
+	return resolved
 }
 
 // SaveConfigSection persists a single config section as JSON.
