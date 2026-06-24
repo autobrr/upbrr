@@ -208,12 +208,54 @@ func LoadFromDatabase(ctx context.Context, repo interface {
 		return nil, fmt.Errorf("config load from database: %w", err)
 	}
 
-	decryptedCfg, err := DecryptConfigSecrets(&cfg)
+	// Decrypt using the secret-encryption helper located next to the
+	// repository's actual on-disk database, not the db_path persisted inside the
+	// config (which may be empty or point at a pre-upgrade path). The returned
+	// config keeps its stored db_path so callers still control path resolution.
+	decryptedCfg, err := decryptConfigSecretsWithDBDir(&cfg, repoDBPath(repo))
 	if err != nil {
 		return nil, fmt.Errorf("config load from database: decrypt secrets: %w", err)
 	}
 
 	return decryptedCfg, nil
+}
+
+// repoDBPath returns the on-disk database path for repositories that expose one
+// (e.g. *db.SQLiteRepository), or "" for in-memory or path-less repositories.
+func repoDBPath(repo any) string {
+	if r, ok := repo.(interface{ DBPath() string }); ok {
+		return strings.TrimSpace(r.DBPath())
+	}
+	return ""
+}
+
+// decryptConfigSecretsWithDBDir decrypts cfg using the secret-encryption helper
+// (web-auth.json) resolved from the config's stored db_path. If that helper is
+// unavailable (e.g. the persisted db_path is empty or points at a pre-upgrade
+// location), it retries anchored to runtimeDBPath — the repository's actual
+// on-disk database directory — without changing the returned config's stored
+// db_path. The stored-path-first order preserves existing behavior for callers
+// that intentionally rely on the snapshot's db_path.
+func decryptConfigSecretsWithDBDir(cfg *Config, runtimeDBPath string) (*Config, error) {
+	decrypted, err := DecryptConfigSecrets(cfg)
+	if err == nil {
+		return decrypted, nil
+	}
+
+	runtimeDBPath = strings.TrimSpace(runtimeDBPath)
+	if runtimeDBPath == "" || runtimeDBPath == strings.TrimSpace(cfg.MainSettings.DBPath) ||
+		!errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
+		return nil, err
+	}
+
+	probe := *cfg
+	probe.MainSettings.DBPath = runtimeDBPath
+	retried, retryErr := DecryptConfigSecrets(&probe)
+	if retryErr != nil {
+		return nil, err
+	}
+	retried.MainSettings.DBPath = cfg.MainSettings.DBPath
+	return retried, nil
 }
 
 // SaveToDatabase persists the config to the repository.

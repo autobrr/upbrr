@@ -1002,3 +1002,65 @@ func TestExportFromDatabaseToYAMLLoadFailure(t *testing.T) {
 		t.Fatalf("expected load error, got nil")
 	}
 }
+
+type runtimePathRepo struct {
+	dbPath string
+	cfg    Config
+}
+
+func (r *runtimePathRepo) LoadFullConfig(_ context.Context, dest any) error {
+	target, ok := dest.(*Config)
+	if !ok {
+		return fmt.Errorf("unexpected dest type %T", dest)
+	}
+	*target = r.cfg
+	return nil
+}
+
+func (r *runtimePathRepo) DBPath() string { return r.dbPath }
+
+func TestLoadFromDatabaseDecryptsViaRuntimeDBDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are ACL-backed on Windows")
+	}
+
+	// web-auth.json (the secret-encryption helper) lives next to the *runtime*
+	// database. Encrypt a secret against that helper.
+	runtimeDBPath := filepath.Join(t.TempDir(), "db.sqlite")
+	writeWebAuthFixture(t, runtimeDBPath)
+	plain := &Config{MainSettings: MainSettingsConfig{DBPath: runtimeDBPath, TMDBAPI: "super-secret-token"}}
+	encrypted, err := EncryptConfigSecrets(plain)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if encrypted.MainSettings.TMDBAPI == "super-secret-token" {
+		t.Fatalf("expected TMDBAPI to be encrypted, got plaintext")
+	}
+
+	// Simulate a stored config whose db_path points at a pre-upgrade dir that no
+	// longer holds web-auth.json. Decryption must still succeed by anchoring to
+	// the repo's runtime DB dir, and the stored db_path must be preserved.
+	staleDBPath := filepath.Join(t.TempDir(), "old", "db.sqlite")
+	encrypted.MainSettings.DBPath = staleDBPath
+
+	repo := &runtimePathRepo{dbPath: runtimeDBPath, cfg: *encrypted}
+	got, err := LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabase: %v", err)
+	}
+	if got.MainSettings.TMDBAPI != "super-secret-token" {
+		t.Fatalf("secret not decrypted via runtime DB dir: got %q", got.MainSettings.TMDBAPI)
+	}
+	if got.MainSettings.DBPath != staleDBPath {
+		t.Fatalf("stored db_path not preserved: got %q want %q", got.MainSettings.DBPath, staleDBPath)
+	}
+}
+
+func TestRepoDBPath(t *testing.T) {
+	if got := repoDBPath(&runtimePathRepo{dbPath: "  /a/b  "}); got != "/a/b" {
+		t.Fatalf("repoDBPath got %q, want /a/b", got)
+	}
+	if got := repoDBPath(struct{}{}); got != "" {
+		t.Fatalf("repoDBPath for repo without DBPath got %q, want empty", got)
+	}
+}

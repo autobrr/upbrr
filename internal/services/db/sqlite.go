@@ -25,6 +25,7 @@ import (
 type SQLiteRepository struct {
 	db     *sql.DB
 	logger Logger
+	path   string
 }
 
 const sqliteBusyTimeout = 5000
@@ -106,7 +107,17 @@ func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQ
 		}
 	}
 
-	return &SQLiteRepository{db: db, logger: logger}, nil
+	return &SQLiteRepository{db: db, logger: logger, path: path}, nil
+}
+
+// DBPath returns the filesystem path the repository was opened with. Callers
+// use it to locate sibling files (e.g. web-auth.json) next to the actual
+// database rather than relying on a path persisted inside the config.
+func (r *SQLiteRepository) DBPath() string {
+	if r == nil {
+		return ""
+	}
+	return r.path
 }
 
 func (r *SQLiteRepository) Close() error {
