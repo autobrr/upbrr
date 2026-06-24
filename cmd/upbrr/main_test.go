@@ -186,7 +186,7 @@ func TestRunHelpFlagsPrintUsageAndSucceed(t *testing.T) {
 				"Commands:",
 				"  serve [options]",
 				"Start the embedded web UI server",
-				"Options: --addr, --host, --port, --persist-listen, --dev-no-auth",
+				"Options: --addr, --host, --port, --base-url, --persist-web-config, --dev-no-auth",
 				"Config:",
 				"Execution:",
 				"Tracker Selection:",
@@ -222,7 +222,7 @@ func TestRunServeHelpPrintsUsageAndSucceeds(t *testing.T) {
 	if !strings.Contains(output, "Usage: upbrr serve [options]") {
 		t.Fatalf("expected serve usage in output, got %q", output)
 	}
-	for _, expected := range []string{"Config:", "Server:", "Development:", "-config, --config string", "-addr, --addr string", "-host, --host string", "-port, --port int", "-persist-listen, --persist-listen", "-dev-no-auth, --dev-no-auth"} {
+	for _, expected := range []string{"Config:", "Server:", "Development:", "-config, --config string", "-addr, --addr string", "-host, --host string", "-port, --port int", "-base-url, --base-url string", "-persist-listen, --persist-listen", "-persist-web-config, --persist-web-config", "-dev-no-auth, --dev-no-auth"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)
 		}
@@ -233,6 +233,52 @@ func TestRunServePersistListenRequiresListenOverride(t *testing.T) {
 	err := runServe([]string{"--persist-listen"})
 	if err == nil || !strings.Contains(err.Error(), "--persist-listen requires --addr, --host, or --port") {
 		t.Fatalf("expected persist-listen requirement error, got %v", err)
+	}
+}
+
+func TestRunServePersistWebConfigRequiresWebConfigOverride(t *testing.T) {
+	err := runServe([]string{"--persist-web-config"})
+	if err == nil || !strings.Contains(err.Error(), "--persist-web-config requires --addr, --host, --port, or --base-url") {
+		t.Fatalf("expected persist-web-config requirement error, got %v", err)
+	}
+}
+
+func TestServePersistConfigListenOnlyPreservesStoredBaseURL(t *testing.T) {
+	stored := webserver.CLIConfig{
+		Host:           "localhost",
+		Port:           7480,
+		OpenBrowser:    true,
+		TrustedProxies: []string{"127.0.0.1"},
+		BaseURL:        "/stored/",
+		SessionTTL:     1440,
+	}
+	runtime := stored
+	runtime.Host = "0.0.0.0"
+	runtime.Port = 9090
+	runtime.BaseURL = "/temporary/"
+
+	persisted := servePersistConfig(stored, runtime, map[string]bool{"persist-listen": true, "addr": true, "base-url": true})
+	if persisted.Host != "0.0.0.0" || persisted.Port != 9090 {
+		t.Fatalf("listen settings not persisted: %#v", persisted)
+	}
+	if persisted.BaseURL != "/stored/" {
+		t.Fatalf("base url persisted from transient override: %#v", persisted)
+	}
+	if !persisted.OpenBrowser || persisted.SessionTTL != 1440 || len(persisted.TrustedProxies) != 1 || persisted.TrustedProxies[0] != "127.0.0.1" {
+		t.Fatalf("unrelated web config changed: %#v", persisted)
+	}
+}
+
+func TestServePersistConfigWebConfigPersistsBaseURL(t *testing.T) {
+	stored := webserver.CLIConfig{Host: "localhost", Port: 7480, BaseURL: "/stored/"}
+	runtime := stored
+	runtime.Host = "0.0.0.0"
+	runtime.Port = 9090
+	runtime.BaseURL = "/explicit/"
+
+	persisted := servePersistConfig(stored, runtime, map[string]bool{"persist-listen": true, "persist-web-config": true, "addr": true, "base-url": true})
+	if persisted.Host != "0.0.0.0" || persisted.Port != 9090 || persisted.BaseURL != "/explicit/" {
+		t.Fatalf("explicit web config not persisted: %#v", persisted)
 	}
 }
 

@@ -357,6 +357,41 @@ func TestBaseURLPreservesExplicitBaseURL(t *testing.T) {
 	}
 }
 
+func TestBaseURLSynthesizesLocalOriginForPathOnlyBaseURL(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		host    string
+		baseURL string
+		want    string
+	}{
+		{name: "wildcard ipv4", host: "0.0.0.0", baseURL: " /upbrr/ ", want: "http://localhost:49152/upbrr/"},
+		{name: "wildcard ipv6", host: "::", baseURL: "upbrr", want: "http://localhost:49152/upbrr/"},
+		{name: "bracketed wildcard ipv6", host: "[::]", baseURL: "/tools/upbrr", want: "http://localhost:49152/tools/upbrr/"},
+		{name: "scoped ipv6", host: "fe80::1%zone", baseURL: "/upbrr/", want: "http://[fe80::1%25zone]:49152/upbrr/"},
+		{name: "query and fragment dropped", host: "127.0.0.1", baseURL: "/upbrr/?token=secret#frag", want: "http://127.0.0.1:49152/upbrr/"},
+		{name: "root path", host: "127.0.0.1", baseURL: "/", want: "http://127.0.0.1:49152"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			server := &Server{
+				cliCfg: CLIConfig{
+					Host:    tc.host,
+					Port:    7480,
+					BaseURL: tc.baseURL,
+				},
+			}
+			got := server.baseURL(&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 49152})
+			if got != tc.want {
+				t.Fatalf("baseURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBrowserHostNormalization(t *testing.T) {
 	t.Parallel()
 
@@ -595,6 +630,66 @@ func TestServeOpensBrowserAfterSuccessfulListen(t *testing.T) {
 	select {
 	case url := <-opened:
 		want := "http://" + listener.Addr().String()
+		if url != want {
+			t.Fatalf("browser URL = %q, want %q", url, want)
+		}
+		cancel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for browser open")
+	}
+
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatalf("serve returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for serve shutdown")
+	}
+}
+
+func TestServeOpensAbsoluteBrowserURLForPathOnlyBaseURL(t *testing.T) {
+	originalOpenBrowserURL := openBrowserURL
+	defer func() {
+		openBrowserURL = originalOpenBrowserURL
+	}()
+
+	opened := make(chan string, 1)
+	openBrowserURL = func(url string) error {
+		opened <- url
+		return nil
+	}
+
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen fixture: %v", err)
+	}
+	defer listener.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server := &Server{
+		cliCfg: CLIConfig{
+			Host:        "127.0.0.1",
+			Port:        7480,
+			OpenBrowser: true,
+			BaseURL:     "/upbrr/",
+		},
+		server: &http.Server{
+			Handler: http.NewServeMux(),
+		},
+	}
+
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- server.serve(ctx, listener)
+	}()
+
+	select {
+	case url := <-opened:
+		want := "http://" + listener.Addr().String() + "/upbrr/"
 		if url != want {
 			t.Fatalf("browser URL = %q, want %q", url, want)
 		}

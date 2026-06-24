@@ -92,14 +92,14 @@ func TestParseServeOptionsDevNoAuth(t *testing.T) {
 }
 
 func TestParseServeOptionsAddressHostPort(t *testing.T) {
-	opts, visited, err := parseServeOptions([]string{"--addr", "0.0.0.0:9090", "--host", "localhost", "--port", "7481", "--persist-listen"})
+	opts, visited, err := parseServeOptions([]string{"--addr", "0.0.0.0:9090", "--host", "localhost", "--port", "7481", "--base-url", "https://example.test/upbrr/", "--persist-listen", "--persist-web-config"})
 	if err != nil {
 		t.Fatalf("parse serve options: %v", err)
 	}
-	if opts.Addr != "0.0.0.0:9090" || opts.Host != "localhost" || opts.Port != 7481 || !opts.PersistListen {
+	if opts.Addr != "0.0.0.0:9090" || opts.Host != "localhost" || opts.Port != 7481 || opts.BaseURL != "https://example.test/upbrr/" || !opts.PersistListen || !opts.PersistWebConfig {
 		t.Fatalf("unexpected serve options: %#v", opts)
 	}
-	for _, name := range []string{"addr", "host", "port", "persist-listen"} {
+	for _, name := range []string{"addr", "host", "port", "base-url", "persist-listen", "persist-web-config"} {
 		if !visited[name] {
 			t.Fatalf("expected %s visited flag, got %#v", name, visited)
 		}
@@ -150,6 +150,19 @@ func TestApplyServeOptionOverridesAddress(t *testing.T) {
 	}
 }
 
+func TestApplyServeOptionOverridesAddressWithBaseURL(t *testing.T) {
+	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{
+		Addr:    "0.0.0.0:9090",
+		BaseURL: " https://example.test/upbrr/ ",
+	}, map[string]bool{"addr": true, "base-url": true})
+	if err != nil {
+		t.Fatalf("apply serve overrides: %v", err)
+	}
+	if cfg.Host != "0.0.0.0" || cfg.Port != 9090 || cfg.BaseURL != "https://example.test/upbrr/" {
+		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+}
+
 func TestApplyServeOptionOverridesAddressMatrix(t *testing.T) {
 	cases := []struct {
 		name string
@@ -183,6 +196,16 @@ func TestApplyServeOptionOverridesHostPort(t *testing.T) {
 	}
 	if cfg.Host != "::1" || cfg.Port != 9091 {
 		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+}
+
+func TestApplyServeOptionOverridesBaseURL(t *testing.T) {
+	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{BaseURL: " https://example.test/upbrr/ "}, map[string]bool{"base-url": true})
+	if err != nil {
+		t.Fatalf("apply serve overrides: %v", err)
+	}
+	if cfg.BaseURL != "https://example.test/upbrr/" {
+		t.Fatalf("base url = %q, want trimmed configured URL", cfg.BaseURL)
 	}
 }
 
@@ -239,6 +262,7 @@ func TestApplyServeOptionOverridesRejectsInvalidValues(t *testing.T) {
 		{name: "invalid port", opts: serveOptions{Port: 70000}, visited: map[string]bool{"port": true}, want: "invalid port"},
 		{name: "invalid addr", opts: serveOptions{Addr: "localhost"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
 		{name: "unbracketed ipv6 addr", opts: serveOptions{Addr: "::1:9090"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
+		{name: "empty base url", opts: serveOptions{BaseURL: " "}, visited: map[string]bool{"base-url": true}, want: "--base-url cannot be empty"},
 	}
 
 	for _, tc := range cases {
