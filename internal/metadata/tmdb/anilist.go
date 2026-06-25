@@ -23,6 +23,8 @@ const anilistRetryCount = 3
 
 var seasonPattern = regexp.MustCompile(`(?i)(?:season\s*(\d+)|\bS(\d{1,2})\b)`)
 
+// ResolveAnime enriches anime metadata from AniList, preferring an explicit MAL
+// ID and falling back to TMDB title or filename searches.
 func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input MetadataInput) (AnimeResult, error) {
 	result := AnimeResult{Demographic: "Mina"}
 	if input.MALManual != 0 {
@@ -115,7 +117,7 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 	}
 
 	var lastErr error
-	for attempt := 0; attempt < anilistRetryCount; attempt++ {
+	for attempt := range anilistRetryCount {
 		response, err := c.doAniListSearch(ctx, body)
 		if err == nil {
 			return response.Data.Page.Media, nil

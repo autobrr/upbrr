@@ -28,7 +28,10 @@ type Service struct {
 	registry *Registry
 }
 
-const defaultMaxConcurrentTrackerUploads = 4
+const (
+	defaultMaxConcurrentTrackerUploads = 4
+	uploadRecordFinalizationTimeout    = 5 * time.Second
+)
 
 type trackerUploadResult struct {
 	tracker        string
@@ -54,6 +57,12 @@ func NewServiceWithRegistryAndImages(cfg config.Config, logger api.Logger, repo 
 	return &Service{cfg: cfg, logger: logger, repo: repo, images: images, banned: NewBannedGroupChecker(cfg.MainSettings.DBPath), registry: registry}
 }
 
+// Upload submits prepared metadata to the resolved tracker set.
+// The returned summary includes tracker uploads that completed before a later
+// failure or cancellation, and pending upload records are finalized with a
+// cleanup context when the caller's context has already been canceled.
+// Successful tracker results are treated as terminal for finalization even when
+// persisting that terminal status logs a warning.
 func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
@@ -120,53 +129,70 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s: %w", strings.Join(trackers, ","), internalerrors.ErrNotImplemented)
 	}
 
-	var finalizePending func(string)
+	var finalizePending func(context.Context, string) []string
 	if s.repo != nil {
-		recordStatuses := make(map[string]string, len(trackers))
+		type recordStatusState struct {
+			status    string
+			persisted bool
+		}
+
+		recordStatuses := make(map[string]recordStatusState, len(trackers))
 		var recordMu sync.Mutex
-		updateRecordStatus := func(tracker string, status string) {
+		updateRecordStatus := func(updateCtx context.Context, tracker string, status string) error {
 			trimmedTracker := strings.TrimSpace(tracker)
 			trimmedStatus := strings.TrimSpace(status)
 			if trimmedTracker == "" || trimmedStatus == "" {
-				return
+				return nil
 			}
 
 			recordMu.Lock()
 			current, ok := recordStatuses[trimmedTracker]
-			if ok && current == trimmedStatus {
+			if ok && current.status == trimmedStatus && current.persisted {
 				recordMu.Unlock()
-				return
+				return nil
 			}
 			recordMu.Unlock()
 
-			if err := s.repo.UpdateLatestUploadRecordStatus(ctx, meta.SourcePath, trimmedTracker, trimmedStatus); err != nil {
+			if err := s.repo.UpdateLatestUploadRecordStatus(updateCtx, meta.SourcePath, trimmedTracker, trimmedStatus); err != nil {
 				s.logger.Warnf("trackers: status update %s (%s): %v", trimmedTracker, trimmedStatus, err)
-				return
+				recordMu.Lock()
+				recordStatuses[trimmedTracker] = recordStatusState{status: trimmedStatus}
+				recordMu.Unlock()
+				return fmt.Errorf("trackers: status update %s (%s): %w", trimmedTracker, trimmedStatus, err)
 			}
-
 			recordMu.Lock()
-			recordStatuses[trimmedTracker] = trimmedStatus
+			recordStatuses[trimmedTracker] = recordStatusState{status: trimmedStatus, persisted: true}
 			recordMu.Unlock()
+			return nil
 		}
-		finalizePending = func(status string) {
+		finalizePending = func(updateCtx context.Context, status string) []string {
 			recordMu.Lock()
-			pendingTrackers := make([]string, 0, len(recordStatuses))
-			for tracker, currentStatus := range recordStatuses {
-				if currentStatus == "pending" || currentStatus == "pending-internal" {
-					pendingTrackers = append(pendingTrackers, tracker)
+			targetStatuses := make(map[string]string, len(recordStatuses))
+			for tracker, current := range recordStatuses {
+				switch {
+				case current.status == "pending" || current.status == "pending-internal":
+					targetStatuses[tracker] = status
+				case !current.persisted:
+					targetStatuses[tracker] = current.status
 				}
 			}
 			recordMu.Unlock()
 
-			for _, tracker := range pendingTrackers {
-				updateRecordStatus(tracker, status)
+			failures := make([]string, 0)
+			for tracker, targetStatus := range targetStatuses {
+				if err := updateRecordStatus(updateCtx, tracker, targetStatus); err != nil {
+					failures = append(failures, fmt.Sprintf("%s (%s): %v", tracker, targetStatus, err))
+				}
 			}
+			return failures
 		}
 
 		for _, tracker := range trackers {
 			select {
 			case <-ctx.Done():
-				finalizePending("canceled")
+				cleanupCtx, cleanupCancel := uploadRecordCleanupContext(ctx)
+				finalizePending(cleanupCtx, "canceled")
+				cleanupCancel()
 				return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 			default:
 			}
@@ -188,42 +214,56 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 				return api.UploadSummary{}, fmt.Errorf("trackers: record %s: %w", tracker, err)
 			}
 			recordMu.Lock()
-			recordStatuses[strings.TrimSpace(tracker)] = status
+			recordStatuses[strings.TrimSpace(tracker)] = recordStatusState{status: status, persisted: true}
 			recordMu.Unlock()
 		}
 
 		preflight := s.preflightDescriptionImageHosts(ctx, meta, trackers)
 		results, err := s.uploadTrackersConcurrently(ctx, meta, trackers, preflight)
-		if err != nil {
-			finalizePending("canceled")
-			return api.UploadSummary{}, err
-		}
+		statusCtx, statusCancel := uploadRecordCleanupContext(ctx)
+		defer statusCancel()
 
 		summary := api.UploadSummary{}
 		notImplemented := make([]string, 0)
 		failedTrackers := make([]string, 0)
 		failedMessages := make([]string, 0)
+		retryStatusUpdates := false
 
 		for _, result := range results {
 			if result.notImplemented {
 				notImplemented = append(notImplemented, result.tracker)
-				updateRecordStatus(result.tracker, "failed")
+				if updateRecordStatus(statusCtx, result.tracker, "failed") != nil {
+					retryStatusUpdates = true
+				}
 				continue
 			}
 			if result.err != nil {
+				if err != nil && isContextCancellation(result.err) {
+					continue
+				}
 				failedTrackers = append(failedTrackers, result.tracker)
 				failedMessages = append(failedMessages, fmt.Sprintf("%s: %v", result.tracker, result.err))
-				updateRecordStatus(result.tracker, "failed")
+				if updateRecordStatus(statusCtx, result.tracker, "failed") != nil {
+					retryStatusUpdates = true
+				}
 				continue
 			}
 
-			updateRecordStatus(result.tracker, "uploaded")
+			if updateRecordStatus(statusCtx, result.tracker, "uploaded") != nil {
+				retryStatusUpdates = true
+			}
 			summary.Uploaded += result.summary.Uploaded
 			if len(result.summary.UploadedTorrents) > 0 {
 				summary.UploadedTorrents = append(summary.UploadedTorrents, result.summary.UploadedTorrents...)
 			}
 		}
 
+		statusFailures := make([]string, 0)
+		if err != nil {
+			statusFailures = append(statusFailures, finalizePending(statusCtx, "canceled")...)
+		} else if retryStatusUpdates {
+			statusFailures = append(statusFailures, finalizePending(statusCtx, "failed")...)
+		}
 		if len(failedMessages) > 0 {
 			s.logger.Warnf("trackers: upload failures: %s", strings.Join(failedMessages, "; "))
 		}
@@ -232,7 +272,19 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 		}
 
 		if summary.Uploaded > 0 {
-			return summary, nil
+			if err != nil {
+				return summary, err
+			}
+			if len(failedTrackers) > 0 {
+				return summary, fmt.Errorf("trackers: %s", strings.Join(failedMessages, "; "))
+			}
+			if len(statusFailures) > 0 {
+				return summary, fmt.Errorf("trackers: status updates: %s", strings.Join(statusFailures, "; "))
+			}
+			return summary, err
+		}
+		if err != nil {
+			return summary, err
 		}
 		if len(failedTrackers) > 0 {
 			return summary, fmt.Errorf("trackers: %s", strings.Join(failedMessages, "; "))
@@ -240,15 +292,15 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 		if len(notImplemented) > 0 {
 			return summary, fmt.Errorf("trackers: %s: %w", strings.Join(notImplemented, ","), internalerrors.ErrNotImplemented)
 		}
+		if len(statusFailures) > 0 {
+			return summary, fmt.Errorf("trackers: status updates: %s", strings.Join(statusFailures, "; "))
+		}
 
 		return summary, nil
 	}
 
 	preflight := s.preflightDescriptionImageHosts(ctx, meta, trackers)
 	results, err := s.uploadTrackersConcurrently(ctx, meta, trackers, preflight)
-	if err != nil {
-		return api.UploadSummary{}, err
-	}
 
 	summary := api.UploadSummary{}
 	notImplemented := make([]string, 0)
@@ -260,6 +312,9 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 			continue
 		}
 		if result.err != nil {
+			if err != nil && isContextCancellation(result.err) {
+				continue
+			}
 			failedTrackers = append(failedTrackers, result.tracker)
 			failedMessages = append(failedMessages, fmt.Sprintf("%s: %v", result.tracker, result.err))
 			continue
@@ -278,7 +333,16 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 	}
 
 	if summary.Uploaded > 0 {
-		return summary, nil
+		if err != nil {
+			return summary, err
+		}
+		if len(failedTrackers) > 0 {
+			return summary, fmt.Errorf("trackers: %s", strings.Join(failedMessages, "; "))
+		}
+		return summary, err
+	}
+	if err != nil {
+		return summary, err
 	}
 	if len(failedTrackers) > 0 {
 		return summary, fmt.Errorf("trackers: %s", strings.Join(failedMessages, "; "))
@@ -408,7 +472,12 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 		case <-ctx.Done():
 			close(jobs)
 			wg.Wait()
-			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+			for canceledIdx := idx; canceledIdx < len(trackers); canceledIdx++ {
+				if results[canceledIdx].tracker == "" {
+					results[canceledIdx] = trackerUploadResult{tracker: trackers[canceledIdx], err: ctx.Err()}
+				}
+			}
+			return results, fmt.Errorf("context canceled: %w", ctx.Err())
 		case jobs <- idx:
 		}
 	}
@@ -417,10 +486,20 @@ func (s *Service) uploadTrackersConcurrently(ctx context.Context, meta api.Prepa
 	wg.Wait()
 
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("context canceled: %w", ctx.Err())
+		return results, fmt.Errorf("context canceled: %w", ctx.Err())
 	}
 
 	return results, nil
+}
+
+func isContextCancellation(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// uploadRecordCleanupContext keeps terminal upload record updates bounded while
+// allowing them to outlive the caller's canceled context.
+func uploadRecordCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), uploadRecordFinalizationTimeout)
 }
 
 func (s *Service) maxConcurrentTrackerUploads(total int) int {
@@ -437,8 +516,12 @@ func (s *Service) maxConcurrentTrackerUploads(total int) int {
 	return limit
 }
 
+// preflightDescriptionImageHosts resolves hosted screenshot URLs before upload
+// workers run, using configured image-host preferences even for trackers without
+// a restricted image-host policy.
 func (s *Service) preflightDescriptionImageHosts(ctx context.Context, meta api.PreparedMetadata, trackers []string) imageHostPreflight {
-	return s.preflightDescriptionImageHostsWithPreferences(ctx, meta, trackers, nil, nil, true)
+	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, trackers, s.logger)
+	return s.preflightDescriptionImageHostsWithPreferences(ctx, meta, trackers, preferredImageHosts, nil, true)
 }
 
 func (s *Service) preflightDescriptionImageHostsWithPreferences(
@@ -778,6 +861,8 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 	return api.PreparationPreview{SourcePath: meta.SourcePath, Descriptions: results}, nil
 }
 
+// preparationImageHostPreferences returns the first upload host each tracker
+// should prefer when generated screenshots need hosted URLs.
 func preparationImageHostPreferences(appCfg config.Config, meta api.PreparedMetadata, trackers []string, logger api.Logger) map[string]string {
 	if meta.ImageHostOverrides.PreferredHost != nil {
 		return nil

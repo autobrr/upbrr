@@ -40,6 +40,8 @@ const (
 	secretArgon2KeyLen = 32
 )
 
+// ErrSecretEncryptionHelperUnavailable means encrypted secret operations need
+// web auth helper material that is not available for the config's DB path.
 var ErrSecretEncryptionHelperUnavailable = errors.New("config secret encryption helper unavailable")
 
 type secretEnvelope struct {
@@ -50,7 +52,9 @@ type secretEnvelope struct {
 	T string `json:"t"`
 }
 
-// EncryptConfigSecrets returns a cloned config where known secret fields are encrypted.
+// EncryptConfigSecrets returns a cloned config where known secret fields are
+// encrypted. If helper material is unavailable, configs with imported or
+// existing encrypted envelopes fail instead of falling back to plaintext.
 func EncryptConfigSecrets(cfg *Config) (*Config, error) {
 	if cfg == nil {
 		return nil, errors.New("config secret encryption: nil config")
@@ -59,6 +63,9 @@ func EncryptConfigSecrets(cfg *Config) (*Config, error) {
 	helper, err := resolveSecretHelper(cfg)
 	if err != nil {
 		if errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
+			if cfg.secretReencryptionRequired {
+				return nil, err
+			}
 			hasEncryptedSecrets, scanErr := hasEncryptedSecretEnvelopes(cfg)
 			if scanErr != nil {
 				return nil, scanErr
@@ -74,7 +81,29 @@ func EncryptConfigSecrets(cfg *Config) (*Config, error) {
 	return encryptConfigSecretsWithHelper(cfg, helper)
 }
 
-// DecryptConfigSecrets returns a cloned config where known encrypted secret fields are decrypted.
+// DecryptImportedConfigSecrets decrypts native-import secret envelopes and
+// marks the returned config so later persistence cannot silently fall back to
+// plaintext if destination helper material is unavailable.
+func DecryptImportedConfigSecrets(cfg *Config) (*Config, error) {
+	hasEncryptedSecrets, err := hasEncryptedSecretEnvelopes(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	decrypted, err := DecryptConfigSecrets(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if hasEncryptedSecrets {
+		decrypted.secretReencryptionRequired = true
+	}
+
+	return decrypted, nil
+}
+
+// DecryptConfigSecrets returns a cloned config where known encrypted secret
+// fields are decrypted. Helper material is required only when at least one
+// secret envelope is present.
 func DecryptConfigSecrets(cfg *Config) (*Config, error) {
 	if cfg == nil {
 		return nil, errors.New("config secret decryption: nil config")
@@ -177,6 +206,8 @@ func decryptConfigSecretsWithHelperFrom(cfg *Config, helper string, assumeCloned
 	return cloned, nil
 }
 
+// RewrapSecretsInDatabase decrypts stored config secrets with oldMaterial,
+// re-encrypts them with newMaterial, and saves the updated config.
 func RewrapSecretsInDatabase(ctx context.Context, repo interface {
 	LoadFullConfig(ctx context.Context, dest any) error
 	SaveFullConfig(ctx context.Context, cfg any) error
@@ -184,6 +215,8 @@ func RewrapSecretsInDatabase(ctx context.Context, repo interface {
 	return RewrapSecretsInDatabaseWithFallback(ctx, repo, []authmaterial.Material{oldMaterial}, newMaterial)
 }
 
+// RewrapSecretsInDatabaseWithFallback decrypts stored config secrets using the
+// first matching source material, then re-encrypts them with newMaterial.
 func RewrapSecretsInDatabaseWithFallback(ctx context.Context, repo interface {
 	LoadFullConfig(ctx context.Context, dest any) error
 	SaveFullConfig(ctx context.Context, cfg any) error

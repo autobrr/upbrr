@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/services/db"
 
 	"golang.org/x/crypto/argon2"
@@ -88,7 +89,7 @@ func TestBootstrapRetainedSessionSetsPersistentCookie(t *testing.T) {
 	}
 }
 
-func TestBootstrapRejectsRemoteFirstRunRequest(t *testing.T) {
+func TestBootstrapAllowsRemoteFirstRunRequest(t *testing.T) {
 	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
 
 	body := `{"username":"admin","password":"very-secure-password","retainLogin":true}`
@@ -100,11 +101,40 @@ func TestBootstrapRejectsRemoteFirstRunRequest(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	server.handleBootstrap(recorder, req, session{})
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected remote bootstrap to return 403, got %d: %s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected remote first-run bootstrap to return 200, got %d: %s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "bootstrap is only available from localhost") {
-		t.Fatalf("unexpected bootstrap rejection: %s", recorder.Body.String())
+}
+
+func TestBootstrapRejectsRemoteRequestWhenUserExists(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+
+	body := `{"username":"admin","password":"very-secure-password","retainLogin":true}`
+
+	first := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	first.Header.Set("Content-Type", "application/json")
+	first.Host = "192.168.1.20:7480"
+	first.RemoteAddr = "192.168.1.25:5000"
+
+	firstRecorder := httptest.NewRecorder()
+	server.handleBootstrap(firstRecorder, first, session{})
+	if firstRecorder.Code != http.StatusOK {
+		t.Fatalf("expected initial bootstrap to return 200, got %d: %s", firstRecorder.Code, firstRecorder.Body.String())
+	}
+
+	second := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	second.Header.Set("Content-Type", "application/json")
+	second.Host = "192.168.1.20:7480"
+	second.RemoteAddr = "192.168.1.25:5000"
+
+	secondRecorder := httptest.NewRecorder()
+	server.handleBootstrap(secondRecorder, second, session{})
+
+	if secondRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected bootstrap after user exists to return 400, got %d: %s", secondRecorder.Code, secondRecorder.Body.String())
+	}
+	if !strings.Contains(secondRecorder.Body.String(), "user already exists") {
+		t.Fatalf("unexpected bootstrap rejection: %s", secondRecorder.Body.String())
 	}
 }
 
@@ -236,6 +266,87 @@ func TestLoginFinalizesPendingAuthUpgradeAfterInterruptedRewrap(t *testing.T) {
 	}
 	if !verifyPassword(password, updated.PasswordHash) {
 		t.Fatal("expected finalized hash to verify")
+	}
+}
+
+func TestRewrapProtectedDataForAuthChangeRecoversPreparedCookiesAfterPhasePersistFailure(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+	ctx := context.Background()
+
+	oldRecord := authRecord{
+		Username:     "admin",
+		PasswordHash: "old-password-hash",
+		CreatedAt:    time.Now().UTC(),
+	}
+	newRecord := authRecord{
+		Username:          "admin",
+		PasswordHash:      "new-password-hash",
+		EncryptionKeySeed: "stable-seed-after-interrupt",
+		CreatedAt:         oldRecord.CreatedAt,
+	}
+	oldRecord.PendingUpgrade = &authmaterial.PendingUpgrade{
+		Stage:     authmaterial.UpgradeStagePrepared,
+		Target:    newRecord,
+		UpdatedAt: time.Now().UTC(),
+	}
+	raw, err := json.MarshalIndent(oldRecord, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent: %v", err)
+	}
+	if err := os.WriteFile(AuthFilePath(dbPath), raw, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	rawDB := server.backend.repo.RawDB()
+	oldKey, err := cookies.NewKeyManager(rawDB).InitializeEncryptionKey(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("initialize old cookie key: %v", err)
+	}
+	store, err := cookies.NewCookieStore(rawDB)
+	if err != nil {
+		t.Fatalf("create cookie store: %v", err)
+	}
+	if err := store.SaveCookie(ctx, "tracker", "session", "cookie-value", oldKey); err != nil {
+		t.Fatalf("save old cookie: %v", err)
+	}
+	if err := cookies.RewrapCookiesWithAuthChange(ctx, rawDB, oldRecord.AuthMaterial(), newRecord.AuthMaterial()); err != nil {
+		t.Fatalf("simulate cookie rewrap before phase persistence: %v", err)
+	}
+
+	if err := server.rewrapProtectedDataForAuthChange(ctx, oldRecord, newRecord); err != nil {
+		t.Fatalf("retry prepared auth rewrap: %v", err)
+	}
+
+	updated, err := server.auth.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if updated.PendingUpgrade == nil {
+		t.Fatal("expected pending upgrade to remain until login finalizes it")
+	}
+	if updated.PendingUpgrade.Stage != authmaterial.UpgradeStageDataRewrapped {
+		t.Fatalf("pending stage = %q, want %q", updated.PendingUpgrade.Stage, authmaterial.UpgradeStageDataRewrapped)
+	}
+
+	newHelper, _, err := newRecord.AuthMaterial().PrimaryHelper()
+	if err != nil {
+		t.Fatalf("new auth helper: %v", err)
+	}
+	salt, err := loadCookieEncryptionSalt(ctx, rawDB)
+	if err != nil {
+		t.Fatalf("load cookie salt: %v", err)
+	}
+	newKey, err := cookies.DeriveEncryptionKey(newHelper, salt)
+	if err != nil {
+		t.Fatalf("derive new cookie key: %v", err)
+	}
+	value, err := store.GetCookie(ctx, "tracker", "session", newKey)
+	if err != nil {
+		t.Fatalf("decrypt recovered cookie with new key: %v", err)
+	}
+	if value != "cookie-value" {
+		t.Fatalf("recovered cookie = %q, want %q", value, "cookie-value")
 	}
 }
 

@@ -69,6 +69,9 @@ type dupeCheckJob struct {
 	cancel         context.CancelFunc
 }
 
+// TrackerUploadTrackerState reports frontend-visible state for one tracker in
+// an upload job. UploadedCount includes accepted uploads returned before a later
+// tracker error or cancellation.
 type TrackerUploadTrackerState struct {
 	Tracker         string  `json:"tracker"`
 	Status          string  `json:"status"`
@@ -84,6 +87,9 @@ type TrackerUploadTrackerState struct {
 	FinishedAt      string  `json:"finishedAt"`
 }
 
+// TrackerUploadSnapshot reports frontend-visible state for a tracker upload
+// job. UploadedCount is the sum of per-tracker accepted uploads, including
+// partial counts returned with non-nil errors.
 type TrackerUploadSnapshot struct {
 	JobID                  string                      `json:"jobID"`
 	SourcePath             string                      `json:"sourcePath"`
@@ -104,11 +110,14 @@ type TrackerUploadSnapshot struct {
 }
 
 type trackerUploadJob struct {
-	mu                   sync.Mutex
-	cleanupOnce          sync.Once
-	sessionID            string
-	id                   string
-	sourcePath           string
+	mu          sync.Mutex
+	cleanupOnce sync.Once
+	sessionID   string
+	id          string
+	sourcePath  string
+	// uploadOptions is the per-job runtime snapshot needed for upload requests;
+	// the full config may contain secrets and must not be retained in job state.
+	uploadOptions        api.UploadOptions
 	runOptions           runOptions
 	core                 api.Core
 	logger               interface{ Close() error }
@@ -135,6 +144,19 @@ type trackerUploadJob struct {
 	startedAt            time.Time
 	finishedAt           time.Time
 	cancel               context.CancelFunc
+}
+
+type trackerUploadRetryRequest struct {
+	sessionID            string
+	sourcePath           string
+	overrides            api.ExternalIDOverrides
+	nameOverrides        api.ReleaseNameOverrides
+	questionnaireAnswers map[string]map[string]string
+	descriptionGroups    []api.DescriptionBuilderGroup
+	failedTrackers       []string
+	ignoreDupesFor       []string
+	runOptions           runOptions
+	uploadOptions        api.UploadOptions
 }
 
 const trackerUploadSnapshotThrottle = 200 * time.Millisecond
@@ -395,8 +417,43 @@ func (j *trackerUploadJob) closeResources() {
 	})
 }
 
+func trackerUploadRetryRequestFromJob(job *trackerUploadJob) (trackerUploadRetryRequest, error) {
+	if job == nil {
+		return trackerUploadRetryRequest{}, errors.New("upload job not found")
+	}
+
+	job.mu.Lock()
+	defer job.mu.Unlock()
+
+	if len(job.failedTrackers) == 0 {
+		return trackerUploadRetryRequest{}, errors.New("no failed trackers to retry")
+	}
+
+	return trackerUploadRetryRequest{
+		sessionID:            job.sessionID,
+		sourcePath:           job.sourcePath,
+		overrides:            job.overrides,
+		nameOverrides:        job.nameOverrides,
+		questionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
+		descriptionGroups:    api.CloneDescriptionBuilderGroups(job.descriptionGroups),
+		failedTrackers:       append([]string(nil), job.failedTrackers...),
+		ignoreDupesFor:       append([]string(nil), job.ignoreDupesFor...),
+		runOptions:           job.runOptions,
+		uploadOptions:        job.uploadOptions,
+	}, nil
+}
+
+// StartTrackerUpload starts an upload job owned by sessionID for selected
+// trackers and returns its job ID. Snapshots preserve partial upload counts
+// returned with later tracker errors or cancellation. The job captures upload
+// options at start time so failed-tracker retries reuse the original option set.
 func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
-	if err := b.requireCore(); err != nil {
+	return b.startTrackerUpload(sessionID, path, overrides, nameOverrides, trackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, debug, noSeed, runLogLevel, nil)
+}
+
+func (b *Backend) startTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string, uploadOptions *api.UploadOptions) (string, error) {
+	rt, err := b.requireRuntime()
+	if err != nil {
 		return "", err
 	}
 	trimmedPath := strings.TrimSpace(path)
@@ -411,7 +468,7 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	if err != nil {
 		return "", err
 	}
-	runCore, runLogger, err := b.buildRunCore(runOpts)
+	runCore, runLogger, err := b.buildRunCoreFromSnapshot(rt, runOpts)
 	if err != nil {
 		return "", err
 	}
@@ -426,17 +483,22 @@ func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides ap
 	}
 	seedCtx, cancel := context.WithTimeout(context.Background(), seedPreparedMetaTimeout)
 	defer cancel()
-	if err := guishared.SeedRunCorePreparedMeta(seedCtx, b.currentCore(), runCore, seedReq); err != nil {
+	if err := guishared.SeedRunCorePreparedMeta(seedCtx, rt.core, runCore, seedReq); err != nil {
 		_ = runCore.Close()
 		_ = runLogger.Close()
 		return "", fmt.Errorf("web: %w", err)
 	}
 
 	jobID := randomJobID()
+	jobUploadOptions := buildRunUploadOptions(rt.cfg, runOpts)
+	if uploadOptions != nil {
+		jobUploadOptions = *uploadOptions
+	}
 	job := &trackerUploadJob{
 		sessionID:            sessionID,
 		id:                   jobID,
 		sourcePath:           trimmedPath,
+		uploadOptions:        jobUploadOptions,
 		runOptions:           runOpts,
 		core:                 runCore,
 		logger:               runLogger,
@@ -488,28 +550,19 @@ func (b *Backend) CancelTrackerUpload(sessionID string, jobID string) error {
 }
 
 // RetryFailedTrackerUpload starts a retry job for failed trackers only when
-// sessionID owns the original upload job.
+// sessionID owns the original upload job. The retry reuses the original job's
+// run options, upload options, questionnaire answers, description groups, and
+// ignore-dupe list instead of rebuilding them from current settings.
 func (b *Backend) RetryFailedTrackerUpload(sessionID string, jobID string) (string, error) {
 	job := b.getTrackerUploadJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
 	if job == nil {
 		return "", errors.New("upload job not found")
 	}
-	job.mu.Lock()
-	failedTrackers := append([]string(nil), job.failedTrackers...)
-	sourcePath := job.sourcePath
-	retrySessionID := job.sessionID
-	overrides := job.overrides
-	nameOverrides := job.nameOverrides
-	questionnaireAnswers := cloneQuestionnaireAnswers(job.questionnaireAnswers)
-	descriptionGroups := api.CloneDescriptionBuilderGroups(job.descriptionGroups)
-	ignoreDupesFor := append([]string(nil), job.ignoreDupesFor...)
-	runOptions := job.runOptions
-	job.mu.Unlock()
-
-	if len(failedTrackers) == 0 {
-		return "", errors.New("no failed trackers to retry")
+	retry, err := trackerUploadRetryRequestFromJob(job)
+	if err != nil {
+		return "", err
 	}
-	return b.StartTrackerUpload(retrySessionID, sourcePath, overrides, nameOverrides, failedTrackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, runOptions.Debug, runOptions.NoSeed, runOptions.RunLogLevel)
+	return b.startTrackerUpload(retry.sessionID, retry.sourcePath, retry.overrides, retry.nameOverrides, retry.failedTrackers, retry.ignoreDupesFor, retry.questionnaireAnswers, retry.descriptionGroups, retry.runOptions.Debug, retry.runOptions.NoSeed, retry.runOptions.RunLogLevel, &retry.uploadOptions)
 }
 
 // GetTrackerUploadSnapshot returns an upload job snapshot only to the session
@@ -522,6 +575,8 @@ func (b *Backend) GetTrackerUploadSnapshot(sessionID string, jobID string) (Trac
 	return buildTrackerUploadSnapshot(job), nil
 }
 
+// runTrackerUploadJob records UploadedCount before error handling so partial
+// successes returned with non-nil errors remain visible in snapshots.
 func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob) {
 	defer b.uploadWG.Done()
 
@@ -547,6 +602,14 @@ func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob
 			b.applyTrackerUploadProgress(job, update)
 		})
 		result, err := b.runSingleTrackerUpload(progressCtx, job, tracker)
+		if result.UploadedCount > 0 {
+			job.mu.Lock()
+			state = job.states[tracker]
+			state.UploadedCount += result.UploadedCount
+			job.states[tracker] = state
+			job.uploadedCount += result.UploadedCount
+			job.mu.Unlock()
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				break
@@ -568,10 +631,8 @@ func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob
 		state = job.states[tracker]
 		state.Status = "success"
 		state.Message = "uploaded"
-		state.UploadedCount += result.UploadedCount
 		state.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 		job.states[tracker] = state
-		job.uploadedCount += result.UploadedCount
 		job.mu.Unlock()
 		b.emitTrackerUploadSnapshot(job)
 	}
@@ -582,6 +643,15 @@ func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob
 	case ctx.Err() != nil:
 		job.status = "canceled"
 		job.errorMessage = "upload canceled"
+		for _, tracker := range job.trackers {
+			state := job.states[tracker]
+			if state.Status == "queued" || state.Status == "running" {
+				state.Status = "canceled"
+				state.Message = "canceled"
+				state.FinishedAt = job.finishedAt.Format(time.RFC3339)
+				job.states[tracker] = state
+			}
+		}
 	case len(job.failedTrackers) > 0:
 		job.status = "completed_with_errors"
 	default:
@@ -670,7 +740,7 @@ func (b *Backend) runSingleTrackerUpload(ctx context.Context, job *trackerUpload
 		Trackers:                    []string{tracker},
 		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
 		IgnoreTrackerRuleFailures:   false,
-		Options:                     buildRunUploadOptions(b.currentConfig(), job.runOptions),
+		Options:                     job.uploadOptions,
 		ExternalIDOverrides:         job.overrides,
 		ReleaseNameOverrides:        job.nameOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),

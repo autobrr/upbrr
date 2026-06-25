@@ -5,6 +5,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -403,37 +405,43 @@ func (m *BlurayMetadata) SelectCandidate(releaseID string, auto bool, reason str
 	return true
 }
 
+// TMDBMetadata is the shared TMDB metadata snapshot returned to CLI, Wails, and
+// embedded web callers during upload preparation and review.
 type TMDBMetadata struct {
-	TMDBID              int
-	IMDBID              int
-	TVDBID              int
-	Category            string
-	Title               string
-	OriginalTitle       string
-	Year                int
-	ReleaseDate         string
-	FirstAirDate        string
-	LastAirDate         string
-	OriginCountry       []string
-	OriginalLanguage    string
-	Overview            string
-	Poster              string
-	TMDBPosterPath      string
-	Logo                string
-	TMDBLogo            string
-	Backdrop            string
-	TMDBType            string
-	Runtime             int
-	Genres              string
-	GenreIDs            string
-	Creators            []string
-	Directors           []string
-	Cast                []string
-	MALID               int
-	Anime               bool
-	Demographic         string
-	RetrievedAKA        string
-	Keywords            string
+	TMDBID           int
+	IMDBID           int
+	TVDBID           int
+	Category         string
+	Title            string
+	OriginalTitle    string
+	Year             int
+	ReleaseDate      string
+	FirstAirDate     string
+	LastAirDate      string
+	OriginCountry    []string
+	OriginalLanguage string
+	Overview         string
+	Poster           string
+	TMDBPosterPath   string
+	Logo             string
+	TMDBLogo         string
+	Backdrop         string
+	TMDBType         string
+	Runtime          int
+	Genres           string
+	GenreIDs         string
+	Creators         []string
+	Directors        []string
+	Cast             []string
+	MALID            int
+	Anime            bool
+	Demographic      string
+	RetrievedAKA     string
+	Keywords         string
+	// LocalizedTitles maps lowercase language codes and optional regional tags
+	// such as "de" or "pt-BR" to TMDB translation titles. Nil values marshal as
+	// an empty JSON object for Wails and embedded-web callers.
+	LocalizedTitles     map[string]string
 	YouTube             string
 	Certification       string
 	ProductionCompanies []TMDBCompany
@@ -441,6 +449,44 @@ type TMDBMetadata struct {
 	Networks            []TMDBNetwork
 	IMDbMismatch        bool
 	MismatchedIMDbID    int
+	Localized           map[string]TMDBLocalizedData
+}
+
+type TMDBLocalizedData struct {
+	Title           string
+	Overview        string
+	EpisodeTitle    string
+	EpisodeOverview string
+	TrailerURL      string
+	Genres          string
+	ContentRating   string
+	Poster          string
+}
+
+// ExtractLocalizedPTBR returns the pt-BR localized data from the given
+// metadata, or an empty value when none is available.
+func ExtractLocalizedPTBR(meta PreparedMetadata) TMDBLocalizedData {
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if v, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			return v
+		}
+	}
+	return TMDBLocalizedData{}
+}
+
+// MarshalJSON preserves the shared TMDBMetadata shape while emitting
+// LocalizedTitles as an object instead of null.
+func (m TMDBMetadata) MarshalJSON() ([]byte, error) {
+	type tmdbMetadata TMDBMetadata
+	payload := tmdbMetadata(m)
+	if payload.LocalizedTitles == nil {
+		payload.LocalizedTitles = map[string]string{}
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("api: marshal TMDB metadata: %w", err)
+	}
+	return data, nil
 }
 
 type TMDBCompany struct {

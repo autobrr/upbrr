@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,6 +28,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/tvmaze"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -44,6 +46,7 @@ var (
 	genericEpisodePattern  = regexp.MustCompile(`(?i)^episode\s*#?\s*\d+\s*$`)
 )
 
+// TMDBClient is the TMDB metadata surface used by external-ID resolution.
 type TMDBClient interface {
 	FindByExternalID(ctx context.Context, input tmdb.FindInput) (tmdb.FindResult, error)
 	SearchID(ctx context.Context, input tmdb.SearchInput) (tmdb.SearchOutcome, error)
@@ -51,13 +54,16 @@ type TMDBClient interface {
 	GetEpisodeDetails(ctx context.Context, tmdbID, season, episode int) (tmdb.EpisodeDetails, error)
 	GetSeasonDetails(ctx context.Context, tmdbID, season int) (tmdb.SeasonDetails, error)
 	DailyToSeasonEpisode(ctx context.Context, tmdbID int, date time.Time) (int, int, error)
+	GetLocalizedData(ctx context.Context, input tmdb.LocalizedDataInput) (map[string]any, error)
 }
 
+// IMDBClient is the IMDb metadata surface used by external-ID resolution.
 type IMDBClient interface {
 	Search(ctx context.Context, input imdb.SearchInput) (imdb.SearchResult, error)
 	GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (imdb.Info, error)
 }
 
+// TVDBClient is the TVDB metadata surface used by external-ID resolution.
 type TVDBClient interface {
 	GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error)
 	GetSeriesMetadata(ctx context.Context, seriesID int) (tvdb.SeriesMetadata, error)
@@ -67,12 +73,17 @@ type TVDBClient interface {
 	GetEpisodeTranslation(ctx context.Context, episodeID int, language string) (tvdb.EpisodeTranslation, error)
 }
 
+// TVmazeClient is the TVmaze metadata surface used by external-ID resolution.
 type TVmazeClient interface {
 	Search(ctx context.Context, input tvmaze.SearchInput) (tvmaze.SearchResult, error)
 	GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episode int, lookup tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error)
 	GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate string) (*tvmaze.EpisodeData, error)
 }
 
+// ResolveExternalIDs resolves and persists cross-provider IDs and metadata for
+// a prepared item, honoring fresh stored data, overrides, scene IDs, and tracker
+// matches before falling back to provider searches. Selected BJS, BT, and ASC
+// targets trigger pt-BR TMDB localized metadata when a TMDB ID is known.
 func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
@@ -638,6 +649,72 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	clearTVDBForNonTVCategory(meta, &ids, &metadata)
 	meta = s.applyTVEpisodeMetadata(ctx, meta, &ids, &metadata, tmdbClient, tvdbClient, tvmazeClient)
 
+	needsPTBR := trackers.AnyNeedsPTBRLocalizedMetadata(meta.Trackers) || trackers.AnyNeedsPTBRLocalizedMetadata(meta.MatchedTrackers)
+
+	if needsPTBR && ids.TMDBID != 0 {
+		var mainData, seasonData, episodeData map[string]any
+		var localizedErr error
+		isTV := strings.EqualFold(ids.Category, "TV")
+		mainInput := tmdb.LocalizedDataInput{
+			TMDBID:           ids.TMDBID,
+			Category:         ids.Category,
+			DataType:         "main",
+			Language:         "pt-BR",
+			AppendToResponse: localizedMainAppendToResponse(isTV),
+		}
+		mainInput.CachePath = localizedTMDBCachePath(s.cfg.MainSettings.DBPath, mainInput)
+		mainData, localizedErr = tmdbClient.GetLocalizedData(ctx, mainInput)
+		if localizedErr != nil && s.logger != nil {
+			s.logger.Debugf("metadata: pt-BR main localized data fetch failed: %v", localizedErr)
+		}
+
+		if isTV && meta.SeasonInt > 0 {
+			seasonInput := tmdb.LocalizedDataInput{
+				TMDBID:           ids.TMDBID,
+				Season:           meta.SeasonInt,
+				Category:         "TV",
+				DataType:         "season",
+				Language:         "pt-BR",
+				AppendToResponse: "credits",
+			}
+			seasonInput.CachePath = localizedTMDBCachePath(s.cfg.MainSettings.DBPath, seasonInput)
+			seasonData, localizedErr = tmdbClient.GetLocalizedData(ctx, seasonInput)
+			if localizedErr != nil && s.logger != nil {
+				s.logger.Debugf("metadata: pt-BR season localized data fetch failed: %v", localizedErr)
+			}
+			if meta.EpisodeInt > 0 {
+				episodeInput := tmdb.LocalizedDataInput{
+					TMDBID:           ids.TMDBID,
+					Season:           meta.SeasonInt,
+					Episode:          meta.EpisodeInt,
+					Category:         "TV",
+					DataType:         "episode",
+					Language:         "pt-BR",
+					AppendToResponse: "credits",
+				}
+				episodeInput.CachePath = localizedTMDBCachePath(s.cfg.MainSettings.DBPath, episodeInput)
+				episodeData, localizedErr = tmdbClient.GetLocalizedData(ctx, episodeInput)
+				if localizedErr != nil && s.logger != nil {
+					s.logger.Debugf("metadata: pt-BR episode localized data fetch failed: %v", localizedErr)
+				}
+			}
+		}
+
+		if mainData != nil || seasonData != nil || episodeData != nil {
+			localized := parseTMDBLocalizedData(mainData, seasonData, episodeData)
+			if metadata.TMDB == nil {
+				metadata.TMDB = &api.TMDBMetadata{TMDBID: ids.TMDBID}
+			}
+			if metadata.TMDB.Localized == nil {
+				metadata.TMDB.Localized = make(map[string]api.TMDBLocalizedData)
+			}
+			merged := mergeLocalizedPTBR(metadata.TMDB.Localized["pt-BR"], localized)
+			if localizedPTBRComplete(merged, isTV && meta.SeasonInt > 0) {
+				metadata.TMDB.Localized["pt-BR"] = merged
+			}
+		}
+	}
+
 	if tmdbErr != nil && s.logger != nil {
 		s.logger.Warnf("metadata: tmdb metadata lookup failed: %v", tmdbErr)
 	}
@@ -751,6 +828,109 @@ func clearTVDBForNonTVCategory(meta api.PreparedMetadata, ids *api.ExternalIDs, 
 	if metadata != nil {
 		metadata.TVDB = nil
 	}
+}
+
+// localizedMainAppendToResponse selects the TMDB append list that exposes
+// category-specific localized certification data.
+func localizedMainAppendToResponse(isTV bool) string {
+	if isTV {
+		return "credits,videos,content_ratings"
+	}
+	return "credits,videos,release_dates"
+}
+
+// localizedTMDBCachePath returns the per-request cache file for pt-BR TMDB
+// localized payloads, or empty when the configured DB path cannot host it.
+func localizedTMDBCachePath(dbPath string, input tmdb.LocalizedDataInput) string {
+	if strings.TrimSpace(dbPath) == "" {
+		return ""
+	}
+	name := fmt.Sprintf(
+		"tmdb_localized_%d_%s_%s_%s_s%d_e%d_%s.json",
+		input.TMDBID,
+		localizedCacheSlug(input.Category),
+		localizedCacheSlug(input.DataType),
+		localizedCacheSlug(input.Language),
+		input.Season,
+		input.Episode,
+		localizedCacheSlug(input.AppendToResponse),
+	)
+	path, err := db.FileInSubdir(dbPath, "cache", name)
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+// localizedCacheSlug normalizes request components for stable cache filenames.
+func localizedCacheSlug(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "none"
+	}
+	var builder strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		ok := r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
+		if ok {
+			builder.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			builder.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	slug := strings.Trim(builder.String(), "_")
+	if slug == "" {
+		return "none"
+	}
+	return slug
+}
+
+// mergeLocalizedPTBR applies only non-empty incoming pt-BR fields so partial
+// localized responses do not erase previously cached metadata.
+func mergeLocalizedPTBR(existing, incoming api.TMDBLocalizedData) api.TMDBLocalizedData {
+	merged := existing
+	if strings.TrimSpace(incoming.Title) != "" {
+		merged.Title = incoming.Title
+	}
+	if strings.TrimSpace(incoming.Overview) != "" {
+		merged.Overview = incoming.Overview
+	}
+	if strings.TrimSpace(incoming.EpisodeTitle) != "" {
+		merged.EpisodeTitle = incoming.EpisodeTitle
+	}
+	if strings.TrimSpace(incoming.EpisodeOverview) != "" {
+		merged.EpisodeOverview = incoming.EpisodeOverview
+	}
+	if strings.TrimSpace(incoming.TrailerURL) != "" {
+		merged.TrailerURL = incoming.TrailerURL
+	}
+	if strings.TrimSpace(incoming.Genres) != "" {
+		merged.Genres = incoming.Genres
+	}
+	if strings.TrimSpace(incoming.ContentRating) != "" {
+		merged.ContentRating = incoming.ContentRating
+	}
+	if strings.TrimSpace(incoming.Poster) != "" {
+		merged.Poster = incoming.Poster
+	}
+	return merged
+}
+
+// localizedPTBRComplete reports whether localized metadata has the title-level
+// fields required by current pt-BR trackers, plus scoped TV overview text when
+// season or episode data is needed.
+func localizedPTBRComplete(localized api.TMDBLocalizedData, episodeLike bool) bool {
+	if strings.TrimSpace(localized.Title) == "" {
+		return false
+	}
+	if episodeLike {
+		return strings.TrimSpace(localized.EpisodeOverview) != ""
+	}
+	return strings.TrimSpace(localized.Overview) != ""
 }
 
 func mapTMDBCandidates(items []tmdb.Candidate, category string) []api.ExternalIDCandidate {
@@ -1160,6 +1340,7 @@ func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBM
 		Demographic:         result.Demographic,
 		RetrievedAKA:        result.RetrievedAKA,
 		Keywords:            result.Keywords,
+		LocalizedTitles:     cloneStringMap(result.LocalizedTitles),
 		YouTube:             result.YouTube,
 		Certification:       result.Certification,
 		ProductionCompanies: mapTMDBCompanies(result.ProductionCompanies),
@@ -1168,6 +1349,14 @@ func mapTMDBMetadata(ids api.ExternalIDs, result tmdb.MetadataResult) *api.TMDBM
 		IMDbMismatch:        result.IMDbMismatch,
 		MismatchedIMDbID:    result.MismatchedIMDbID,
 	}
+}
+
+// cloneStringMap returns a detached copy of values, normalizing nil to an
+// empty map so API callers observe the same object shape before JSON marshal.
+func cloneStringMap(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	maps.Copy(cloned, values)
+	return cloned
 }
 
 func mapIMDBMetadata(info imdb.Info) *api.IMDBMetadata {

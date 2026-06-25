@@ -332,6 +332,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
     trackerFieldMeta.CheckForRules,
   ],
+  CZT: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.Passkey],
   DC: [
     trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
@@ -428,6 +429,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
+    trackerFieldMeta.TagForCustomRelease,
   ],
   LDU: [
     trackerFieldMeta.FaviconURL,
@@ -648,6 +650,13 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
+  ],
+  ZNTH: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
   ],
   MANUAL: [trackerFieldMeta.FaviconURL, trackerFieldMeta.Filebrowser],
 };
@@ -948,6 +957,10 @@ const normalizeTorrentClientType = (client: ConfigMap) => {
   return "qbit";
 };
 
+/**
+ * Normalizes a torrent client before save, migrating legacy qBit fields to the
+ * canonical qBit keys while preserving non-qBit client configs.
+ */
 export const normalizeTorrentClientForSave = (client: ConfigMap) => {
   const next = { ...client };
   if (normalizeTorrentClientType(next) !== "qbit") {
@@ -978,6 +991,11 @@ export const normalizeTorrentClientForSave = (client: ConfigMap) => {
   return next;
 };
 
+/**
+ * Builds the next qBit direct-connection state for the settings toggle.
+ * Enabling seeds host defaults; disabling clears direct, proxy, and legacy
+ * credential fields so the client no longer attempts a direct qBit connection.
+ */
 export const nextQbitDirectState = (client: ConfigMap, enabled: boolean): ConfigMap => {
   if (enabled) {
     return {
@@ -992,6 +1010,10 @@ export const nextQbitDirectState = (client: ConfigMap, enabled: boolean): Config
   return { ...client, ...qbitDirectDisabledValues };
 };
 
+/**
+ * Normalizes all configured torrent client entries in a settings payload before
+ * serializing it for the backend.
+ */
 export const normalizeTorrentClientsForSave = (input: ConfigMap) => {
   const clients = input.TorrentClients;
   if (!clients || typeof clients !== "object" || Array.isArray(clients)) {
@@ -1009,6 +1031,60 @@ export const normalizeTorrentClientsForSave = (input: ConfigMap) => {
   return { ...input, TorrentClients: nextClients };
 };
 
+const normalizeCZTTrackerForSave = (input: ConfigMap) => {
+  const trackerRoot = input.Trackers;
+  if (!trackerRoot || typeof trackerRoot !== "object" || Array.isArray(trackerRoot)) {
+    return input;
+  }
+  const trackerEntries = (trackerRoot as ConfigMap).Trackers;
+  if (!trackerEntries || typeof trackerEntries !== "object" || Array.isArray(trackerEntries)) {
+    return input;
+  }
+
+  let changed = false;
+  const nextEntries: ConfigMap = {};
+  Object.entries(trackerEntries as ConfigMap).forEach(([name, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      nextEntries[name] = value;
+      return;
+    }
+    if (name.trim().toUpperCase() !== "CZT") {
+      nextEntries[name] = value;
+      return;
+    }
+    const next = { ...(value as ConfigMap) };
+    if ("APIKey" in next) {
+      delete next.APIKey;
+      changed = true;
+    }
+    if ("URL" in next) {
+      delete next.URL;
+      changed = true;
+    }
+    if ("AnnounceURL" in next) {
+      delete next.AnnounceURL;
+      changed = true;
+    }
+    nextEntries[name] = next;
+  });
+
+  if (!changed) {
+    return input;
+  }
+  return {
+    ...input,
+    Trackers: {
+      ...(trackerRoot as ConfigMap),
+      Trackers: nextEntries,
+    },
+  };
+};
+
+/**
+ * Owns settings-screen state, Wails config loading, sensitive-value masking,
+ * render helpers, and save payload construction for tabs that need config data.
+ * Save payloads restore masked secrets before serialization.
+ */
 export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsStateResult => {
   const { activeTab } = options;
   const [configData, setConfigData] = useState<ConfigMap | null>(null);
@@ -1125,8 +1201,8 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (!configData) {
       return null;
     }
-    const restored = normalizeTorrentClientsForSave(
-      restoreSensitiveConfig(configData, sensitiveValues),
+    const restored = normalizeCZTTrackerForSave(
+      normalizeTorrentClientsForSave(restoreSensitiveConfig(configData, sensitiveValues)),
     );
     return JSON.stringify(restored, null, 2);
   };

@@ -27,6 +27,13 @@ type Service struct {
 	logger api.Logger
 }
 
+// qbit injection HTTP uses a short, single-attempt client so a dead WebUI or
+// Qui proxy fails quickly without timing out local link staging first.
+const (
+	qbitInjectHTTPTimeout       = 30 * time.Second
+	qbitInjectHTTPRetryAttempts = 1
+)
+
 func NewService(cfg config.Config, logger api.Logger) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -260,21 +267,12 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	default:
 	}
 
-	qbit := qbittorrent.NewClient(qbittorrent.Config{
-		Host:          host,
-		Username:      username,
-		Password:      password,
-		TLSSkipVerify: client.QbitTLSSkipVerify(),
-	})
-	s.logger.Debugf("clients: connecting to qbit %s", redaction.RedactValue(host, nil))
-	if !client.UsesQuiProxy() {
-		if err := qbit.LoginCtx(ctx); err != nil {
-			return fmt.Errorf("clients: %s qbit login: %w", name, err)
-		}
-	}
+	qbit := qbittorrent.NewClient(qbitInjectClientConfig(host, username, password, client))
 
 	options := qbittorrent.TorrentAddOptions{}
 	options.SkipHashCheck = true
+	s.logger.Debugf("clients: preparing qbit add options for client %s", name)
+	optionsStart := time.Now()
 	staging, err := s.prepareLinkStaging(ctx, name, client, meta, torrent.Tracker)
 	if err != nil {
 		return err
@@ -306,10 +304,24 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	} else if client.UseTrackerAsTag {
 		options.Tags = strings.TrimSpace(torrent.Tracker)
 	}
+	s.logger.Debugf("clients: qbit add options ready client=%s elapsed=%s", name, time.Since(optionsStart).Round(time.Millisecond))
+
+	qbitCtx, cancel := context.WithTimeout(ctx, qbitInjectHTTPTimeout)
+	defer cancel()
+
+	s.logger.Debugf("clients: connecting to qbit %s timeout=%s retries=%d", redaction.RedactValue(host, nil), qbitInjectHTTPTimeout, qbitInjectHTTPRetryAttempts)
+	if !client.UsesQuiProxy() {
+		if err := qbit.LoginCtx(qbitCtx); err != nil {
+			return fmt.Errorf("clients: %s qbit login: %w", name, err)
+		}
+		s.logger.Debugf("clients: connected to qbit client %s", name)
+	} else {
+		s.logger.Debugf("clients: using qbit proxy for client %s", name)
+	}
 
 	if torrentPath := strings.TrimSpace(torrent.Path); torrentPath != "" {
 		s.logger.Debugf("clients: adding torrent file to qbit client %s for %s", name, meta.SourcePath)
-		if _, err := qbit.AddTorrentFromFileCtx(ctx, torrentPath, options.Prepare()); err != nil {
+		if _, err := qbit.AddTorrentFromFileCtx(qbitCtx, torrentPath, options.Prepare()); err != nil {
 			s.cleanupFailedLinkStaging(name, torrent.Tracker, staging)
 			return fmt.Errorf("clients: %s qbit add torrent file: %w", name, err)
 		}
@@ -320,7 +332,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 
 	if torrentURL := strings.TrimSpace(torrent.URL); torrentURL != "" {
 		s.logger.Debugf("clients: adding tracker torrent URL to qbit client %s for %s", name, meta.SourcePath)
-		if _, err := qbit.AddTorrentFromUrlCtx(ctx, torrentURL, options.Prepare()); err != nil {
+		if _, err := qbit.AddTorrentFromUrlCtx(qbitCtx, torrentURL, options.Prepare()); err != nil {
 			s.cleanupFailedLinkStaging(name, torrent.Tracker, staging)
 			return fmt.Errorf("clients: %s qbit add torrent URL: %w", name, err)
 		}
@@ -329,6 +341,19 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	}
 
 	return internalerrors.ErrInvalidInput
+}
+
+// qbitInjectClientConfig preserves configured auth and TLS behavior while
+// applying the bounded HTTP policy used only for torrent injection requests.
+func qbitInjectClientConfig(host, username, password string, client config.TorrentClientConfig) qbittorrent.Config {
+	return qbittorrent.Config{
+		Host:          host,
+		Username:      username,
+		Password:      password,
+		TLSSkipVerify: client.QbitTLSSkipVerify(),
+		Timeout:       int(qbitInjectHTTPTimeout / time.Second),
+		RetryAttempts: qbitInjectHTTPRetryAttempts,
+	}
 }
 
 func (s *Service) cleanupFailedLinkStaging(clientName string, tracker string, staging linkStagingResult) {

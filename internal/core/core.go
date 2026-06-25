@@ -115,7 +115,7 @@ func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 		repo = sqliteRepo
 		ownsRepo = true
 	}
-	if sqliteRepo, ok := repo.(*db.SQLiteRepository); ok {
+	if sqliteRepo, ok := repo.(*db.SQLiteRepository); ok && !deps.SkipCookieMigration {
 		if err := migrateLegacyCookies(ctx, sqliteRepo.RawDB(), cfg.MainSettings.DBPath, logger); err != nil {
 			logger.Warnf("core: cookie migration failed: %v (continuing)", err)
 		}
@@ -193,6 +193,11 @@ func (c *Core) RunUpload(ctx context.Context, req api.Request) (api.Result, erro
 	return c.RunUploadPrepared(ctx, req)
 }
 
+// RunUploadPrepared uploads from cached prepared metadata for each requested path.
+// Explicit tracker selections that resolve empty return without tracker upload
+// side effects, while omitted tracker selections retain configured default behavior.
+// If a later path fails or the context is canceled after earlier uploads complete,
+// the returned result preserves the uploaded count accumulated before the error.
 func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Result, error) {
 	req = normalizeExecutionRequest(req)
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
@@ -231,7 +236,7 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 	for _, path := range uniquePaths {
 		select {
 		case <-ctx.Done():
-			return api.Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
+			return api.Result{UploadedCount: totalUploaded}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -246,32 +251,40 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 			meta, ok = c.getGUICachedMeta(path, signature, singleReq.ExternalIDOverrides)
 		}
 		if !ok {
-			return api.Result{}, fmt.Errorf("core: upload-only requires prepared metadata for %s", path)
+			return api.Result{UploadedCount: totalUploaded}, fmt.Errorf("core: upload-only requires prepared metadata for %s", path)
 		}
 
 		if len(singleReq.ScreenshotOverrides.MenuPaths) > 0 {
 			if err := c.ImportMenuImages(ctx, singleReq, singleReq.ScreenshotOverrides.MenuPaths); err != nil {
-				return api.Result{}, fmt.Errorf("core: import menu images failed: %w", err)
+				return api.Result{UploadedCount: totalUploaded}, fmt.Errorf("core: import menu images failed: %w", err)
 			}
 		}
 
 		uploaded, err := c.executePreparedUpload(ctx, singleReq, meta)
-		if err != nil {
-			return api.Result{}, err
-		}
 		totalUploaded += uploaded
+		if err != nil {
+			return api.Result{UploadedCount: totalUploaded}, err
+		}
 	}
 
 	c.logger.Debugf("core: upload-only complete with %d uploaded", totalUploaded)
 	return api.Result{UploadedCount: totalUploaded}, nil
 }
 
+// executePreparedUpload returns the number of tracker uploads accepted before any
+// later upload, injection, validation, or cancellation error.
 func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta api.PreparedMetadata) (int, error) {
 	var err error
 	meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, req)
 	if err != nil {
 		return 0, err
 	}
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	if explicitEmpty {
+		c.logger.Debugf("core: upload prepared explicit trackers resolved empty source=%s", meta.SourcePath)
+		return 0, nil
+	}
+
 	descriptionGroups, err := c.resolveCanonicalDescriptionGroups(ctx, meta, req)
 	if err != nil {
 		return 0, err
@@ -292,15 +305,26 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 			return 0, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
-		if err := c.repo.Save(ctx, db.FileMetadata{Path: meta.SourcePath, InfoHash: torrent.InfoHash, UpdatedAt: time.Now().UTC()}); err != nil {
+		if err := c.persistPreparedInfoHash(ctx, meta.SourcePath, torrent.InfoHash); err != nil {
 			return 0, fmt.Errorf("metadata: persist info hash: %w", err)
 		}
 	}
 
 	if req.Options.DryRun || req.Options.Debug {
 		if !meta.Options.NoSeed {
-			if err := c.injectPreparedTorrent(ctx, req, meta, torrent); err != nil {
-				return 0, err
+			if len(resolvedTrackers) == 0 {
+				if err := c.injectPreparedTorrent(ctx, req, meta, torrent); err != nil {
+					return 0, err
+				}
+			} else {
+				entries, err := c.services.Trackers.BuildUploadDryRun(ctx, meta, resolvedTrackers)
+				if err != nil {
+					return 0, fmt.Errorf("core: %w", err)
+				}
+				annotateDryRunReleaseNames(meta, entries)
+				if err := c.injectTrackerDryRunTorrents(ctx, req, meta, entries, torrent); err != nil {
+					return 0, err
+				}
 			}
 		}
 		c.logger.Debugf("core: dry-run or debug enabled, skipping tracker upload")
@@ -310,24 +334,32 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 
 	c.logger.Debugf("core: uploading to trackers for %s", meta.SourcePath)
 	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "running", "Uploading to tracker")
-	summary, err := c.services.Trackers.Upload(ctx, meta)
-	if err != nil {
-		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
-		return 0, fmt.Errorf("core: %w", err)
+	summary, uploadErr := c.services.Trackers.Upload(ctx, meta)
+	if summary.Uploaded < 0 {
+		return 0, fmt.Errorf("upload summary invalid: %d", summary.Uploaded)
 	}
-	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "completed", "Tracker upload complete")
+	if uploadErr != nil && summary.Uploaded == 0 {
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
+		return 0, fmt.Errorf("core: %w", uploadErr)
+	}
 
 	if !meta.Options.NoSeed {
 		// Cross-seed torrents come from dupe matches and should be injected even when
 		// the tracker upload summary later reports no successful uploads.
 		if err := c.injectCrossSeedTorrents(ctx, req, meta); err != nil {
-			return 0, err
+			if uploadErr != nil {
+				emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
+				return summary.Uploaded, fmt.Errorf("core: %w", errors.Join(uploadErr, err))
+			}
+			return summary.Uploaded, err
 		}
 	}
 
-	if summary.Uploaded < 0 {
-		return 0, fmt.Errorf("upload summary invalid: %d", summary.Uploaded)
+	if uploadErr != nil {
+		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "failed", "Tracker upload failed")
+		return summary.Uploaded, fmt.Errorf("core: %w", uploadErr)
 	}
+	emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "tracker_upload", "completed", "Tracker upload complete")
 
 	if !meta.Options.NoSeed {
 		if len(summary.UploadedTorrents) == 0 {
@@ -347,7 +379,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 					Tracker: uploaded.Tracker,
 				}); err != nil {
 					emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "failed", "Client injection failed")
-					return 0, fmt.Errorf("core: %w", err)
+					return summary.Uploaded, fmt.Errorf("core: %w", err)
 				}
 				emitPreparedUploadProgress(ctx, req, meta.SourcePath, uploaded.Tracker, "client_injection", "completed", "Client injection complete")
 			}
@@ -355,6 +387,36 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	}
 
 	return summary.Uploaded, nil
+}
+
+// persistPreparedInfoHash stores the prepared torrent hash without replacing
+// existing release metadata used by history views.
+func (c *Core) persistPreparedInfoHash(ctx context.Context, sourcePath string, infoHash string) error {
+	if c == nil || c.repo == nil {
+		return nil
+	}
+	trimmedPath := strings.TrimSpace(sourcePath)
+	trimmedHash := strings.TrimSpace(infoHash)
+	if trimmedPath == "" || trimmedHash == "" {
+		return nil
+	}
+
+	metadata, err := c.repo.GetByPath(ctx, trimmedPath)
+	if err != nil {
+		if !errors.Is(err, internalerrors.ErrNotFound) {
+			return fmt.Errorf("lookup existing metadata: %w", err)
+		}
+		c.logger.Debugf("metadata: skip info hash persistence without stored metadata for %s", trimmedPath)
+		return nil
+	} else if strings.TrimSpace(metadata.Path) == "" {
+		metadata.Path = trimmedPath
+	}
+	metadata.InfoHash = trimmedHash
+	metadata.UpdatedAt = time.Now().UTC()
+	if err := c.repo.Save(ctx, metadata); err != nil {
+		return fmt.Errorf("save metadata: %w", err)
+	}
+	return nil
 }
 
 func (c *Core) injectCrossSeedTorrents(ctx context.Context, req api.Request, meta api.PreparedMetadata) error {
@@ -467,9 +529,6 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 			matchedTrackers := mergeTrackerRemovals(nil, cached.MatchedTrackers)
 			removeTrackers := mergeTrackerRemovals(req.TrackersRemove, matchedTrackers)
 			resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
-			if req.Mode == api.ModeGUI {
-				resolvedTrackers = trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, removeTrackers, c.logger)
-			}
 			summary, err := c.services.Dupes.Check(ctx, cached, resolvedTrackers)
 			if err != nil {
 				return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
@@ -1191,6 +1250,8 @@ func (c *Core) resolveImageUploadTargets(req api.Request, meta api.PreparedMetad
 	return normalized, nil
 }
 
+// filterImageUploadTrackers returns canonical tracker names that can receive
+// tracker-scoped image uploads, excluding blocked, rule-failed, or already matched trackers.
 func (c *Core) filterImageUploadTrackers(trackerNames []string, meta api.PreparedMetadata) []string {
 	filtered := make([]string, 0, len(trackerNames))
 	for _, tracker := range trackerNames {
@@ -1653,6 +1714,10 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 	return wrapCoreError(c.repo.DeleteUploadedImage(ctx, uniquePaths[0], imagePath, host))
 }
 
+// FetchMetadataPreview prepares and enriches metadata for one validated source path,
+// emits metadata progress, and stores the refreshed prepared metadata cache entry.
+// An empty tracker request is not an explicit "no trackers" request; downstream
+// tracker resolution can still use configured defaults.
 func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.MetadataPreview, error) {
 	req = normalizeExecutionRequest(req)
 	if len(req.Paths) == 0 {
@@ -1861,6 +1926,9 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 	return buildMetadataPreview(meta, c.cfg), nil
 }
 
+// FetchPreparationPreview builds the tracker preparation preview for one validated
+// source path. Explicit tracker selections limit preparation to those trackers;
+// selections that resolve empty return an empty preview.
 func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (api.PreparationPreview, error) {
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
@@ -1901,7 +1969,11 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.PreparationPreview{}, err
 		} else if ok {
-			resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, cached.TrackersRemove, c.logger)
+			resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, requestPreparedMetaTrackersRemove(cached, req), c.logger, false, false)
+			if explicitEmpty {
+				c.logger.Debugf("core: preparation explicit trackers resolved empty source=%s", cached.SourcePath)
+				return api.PreparationPreview{SourcePath: cached.SourcePath}, nil
+			}
 			c.logger.Debugf("core: preparation resolved trackers %v", resolvedTrackers)
 			return wrapCoreResult(c.services.Trackers.BuildPreparation(ctx, cached, resolvedTrackers))
 		}
@@ -1923,15 +1995,21 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 		return api.PreparationPreview{}, fmt.Errorf("core: %w", err)
 	}
 	meta = applyRequestToPreparedMeta(meta, singleReq, c.cfg, c.logger)
+
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	if explicitEmpty {
+		c.logger.Debugf("core: preparation explicit trackers resolved empty after prepare source=%s", meta.SourcePath)
+		return api.PreparationPreview{SourcePath: meta.SourcePath}, nil
+	}
 	if req.Mode == api.ModeGUI {
 		c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 	}
-
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	c.logger.Debugf("core: preparation resolved trackers %v", resolvedTrackers)
 	return wrapCoreResult(c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers))
 }
 
+// FetchTrackerDryRunPreview builds per-tracker dry-run upload entries from cached
+// prepared metadata, creating torrents and cache state only after selected trackers resolve.
 func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (api.TrackerDryRunPreview, error) {
 	req = normalizeExecutionRequest(req)
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
@@ -1991,13 +2069,29 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	signature := overrideSignature(singleReq.ExternalIDOverrides, singleReq.ReleaseNameOverrides, singleReq.MetadataOverrides, singleReq.TrackerConfigOverrides, singleReq.TrackerSiteOverrides, singleReq.ClientOverrides, singleReq.TorrentOverrides, singleReq.ImageHostOverrides, singleReq.ScreenshotOverrides)
 	meta, ok := c.getDupeCache(uniquePaths[0], signature)
 	if req.Mode == api.ModeGUI {
-		meta, ok, err = c.resolveGUICachedPreparedMeta(ctx, singleReq, uniquePaths[0])
-		if err != nil {
-			return api.TrackerDryRunPreview{}, err
+		entry, _, found := c.lookupGUICachedMetaEntry(singleReq, uniquePaths[0])
+		if found {
+			ok = true
+			if _, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, requestPreparedMetaTrackersRemove(entry.meta, singleReq), c.logger, false, false); explicitEmpty {
+				c.logger.Debugf("core: tracker dry-run explicit trackers resolved empty source=%s", entry.meta.SourcePath)
+				return api.TrackerDryRunPreview{SourcePath: entry.meta.SourcePath, Trackers: []api.TrackerDryRunEntry{}}, nil
+			}
+			if entry.requestRefreshed && cachedPreparedMetaMatchesRequest(entry.meta, singleReq, uniquePaths[0]) {
+				meta = deepCopyPreparedMetadata(entry.meta)
+			} else {
+				meta, err = c.applyRequestToCachedPreparedMeta(ctx, entry.meta, singleReq)
+				if err != nil {
+					return api.TrackerDryRunPreview{}, err
+				}
+			}
 		}
 	} else {
 		if !ok {
 			return api.TrackerDryRunPreview{}, fmt.Errorf("core: tracker dry-run requires prepared metadata for %s", uniquePaths[0])
+		}
+		if _, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, requestPreparedMetaTrackersRemove(meta, singleReq), c.logger, false, false); explicitEmpty {
+			c.logger.Debugf("core: tracker dry-run explicit trackers resolved empty source=%s", meta.SourcePath)
+			return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: []api.TrackerDryRunEntry{}}, nil
 		}
 		meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, singleReq)
 		if err != nil {
@@ -2008,6 +2102,11 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: tracker dry-run requires prepared metadata for %s", uniquePaths[0])
 	}
 	c.logger.Debugf("core: tracker dry-run using cached prepared metadata for %s meta_no_seed=%t req_no_seed=%t", uniquePaths[0], meta.Options.NoSeed, singleReq.Options.NoSeed)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	if explicitEmpty {
+		c.logger.Debugf("core: tracker dry-run explicit trackers resolved empty source=%s", meta.SourcePath)
+		return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: []api.TrackerDryRunEntry{}}, nil
+	}
 	descriptionGroups, err := c.resolveCanonicalDescriptionGroups(ctx, meta, singleReq)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
@@ -2020,7 +2119,6 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	}
 	meta.TorrentPath = torrent.Path
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	entries, err := c.services.Trackers.BuildUploadDryRun(ctx, meta, resolvedTrackers)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
@@ -2131,6 +2229,10 @@ func annotateDryRunReleaseNames(meta api.PreparedMetadata, entries []api.Tracker
 	}
 }
 
+// FetchDescriptionBuilderPreview builds editable description groups from cached
+// or freshly prepared metadata. When request trackers are provided, only that
+// selected set contributes groups; selections that resolve empty return an empty
+// preview instead of falling back to configured defaults.
 func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Request) (api.DescriptionBuilderPreview, error) {
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
@@ -2183,6 +2285,7 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 	}
 
 	var meta api.PreparedMetadata
+	storePreparedCache := false
 	if req.Mode == api.ModeGUI {
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.DescriptionBuilderPreview{}, err
@@ -2232,16 +2335,22 @@ func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Reque
 			return api.DescriptionBuilderPreview{}, fmt.Errorf("core: %w", err)
 		}
 		meta = applyRequestToPreparedMeta(meta, singleReq, c.cfg, c.logger)
-		if req.Mode == api.ModeGUI {
-			c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
-		}
+		storePreparedCache = req.Mode == api.ModeGUI
 	}
-	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	if explicitEmpty {
+		c.logger.Debugf("core: description builder explicit trackers resolved empty source=%s", meta.SourcePath)
+		return api.DescriptionBuilderPreview{SourcePath: meta.SourcePath}, nil
+	}
+	needsDescriptionMetadata := c.services.Metadata != nil && descriptionBuilderNeedsExternalMetadata(c.cfg, meta, resolvedTrackers)
+	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta, resolvedTrackers)
 	if err != nil {
 		return api.DescriptionBuilderPreview{}, err
 	}
+	if storePreparedCache && !needsDescriptionMetadata {
+		c.storeDescriptionBuilderPreparedCache(req, uniquePaths[0], meta)
+	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
 	if err != nil {
 		c.logger.Errorf("core: description builder preparation failed source=%s: %v", meta.SourcePath, err)
@@ -2304,13 +2413,26 @@ func buildDescriptionBuilderGroup(entry api.PreparationDescription, overrideByGr
 	}
 }
 
-func (c *Core) ensureDescriptionBuilderMetadata(ctx context.Context, req api.Request, path string, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	if c.services.Metadata == nil || !descriptionBuilderNeedsExternalMetadata(c.cfg, meta) {
+// ensureDescriptionBuilderMetadata refreshes missing external metadata before
+// tracker description preparation, using the resolved tracker set for localized
+// pt-BR refreshes while preserving the original tracker list on returned
+// metadata. Cacheable GUI refreshes are stored as request-refreshed entries.
+func (c *Core) ensureDescriptionBuilderMetadata(ctx context.Context, req api.Request, path string, meta api.PreparedMetadata, resolvedTrackers []string) (api.PreparedMetadata, error) {
+	if c.services.Metadata == nil || !descriptionBuilderNeedsExternalMetadata(c.cfg, meta, resolvedTrackers) {
 		return meta, nil
 	}
-	resolved, err := c.services.Metadata.ResolveExternalIDs(ctx, meta)
+	resolveMeta := meta
+	restoreTrackers := false
+	if descriptionBuilderTrackersNeedPTBR(resolvedTrackers) && !descriptionBuilderTrackersNeedPTBR(resolveMeta.Trackers) {
+		resolveMeta.Trackers = append([]string{}, resolvedTrackers...)
+		restoreTrackers = true
+	}
+	resolved, err := c.services.Metadata.ResolveExternalIDs(ctx, resolveMeta)
 	if err != nil {
 		return api.PreparedMetadata{}, fmt.Errorf("core: %w", err)
+	}
+	if restoreTrackers {
+		resolved.Trackers = append([]string{}, meta.Trackers...)
 	}
 	if req.Mode == api.ModeGUI && cacheableGUIPreparedMetaRequest(req) {
 		overrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
@@ -2320,7 +2442,20 @@ func (c *Core) ensureDescriptionBuilderMetadata(ctx context.Context, req api.Req
 	return resolved, nil
 }
 
-func descriptionBuilderNeedsExternalMetadata(cfg config.Config, meta api.PreparedMetadata) bool {
+// storeDescriptionBuilderPreparedCache stores cacheable GUI description-builder
+// metadata that did not require an external metadata refresh.
+func (c *Core) storeDescriptionBuilderPreparedCache(req api.Request, path string, meta api.PreparedMetadata) {
+	if req.Mode != api.ModeGUI || !cacheableGUIPreparedMetaRequest(req) {
+		return
+	}
+	overrides := mergeExternalIDOverrides(req.ExternalIDOverrides, resolveExternalIDSelection(req.ExternalIDSelections, path))
+	signature := overrideSignature(overrides, req.ReleaseNameOverrides, req.MetadataOverrides, req.TrackerConfigOverrides, req.TrackerSiteOverrides, req.ClientOverrides, req.TorrentOverrides, req.ImageHostOverrides, req.ScreenshotOverrides)
+	c.storeDupeCache(path, signature, meta)
+}
+
+// descriptionBuilderNeedsExternalMetadata reports whether tracker description
+// preparation needs metadata not present on the current prepared metadata.
+func descriptionBuilderNeedsExternalMetadata(cfg config.Config, meta api.PreparedMetadata, resolvedTrackers []string) bool {
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return false
 	}
@@ -2329,9 +2464,32 @@ func descriptionBuilderNeedsExternalMetadata(cfg config.Config, meta api.Prepare
 			return true
 		}
 	}
+	if descriptionBuilderNeedsPTBRMetadata(meta, resolvedTrackers) {
+		return true
+	}
 	return cfg.Description.EpisodeOverview && strings.TrimSpace(meta.EpisodeOverview) == "" && descriptionBuilderEpisodeLike(meta)
 }
 
+// descriptionBuilderNeedsPTBRMetadata reports whether localized tracker
+// descriptions need a missing pt-BR TMDB metadata entry.
+func descriptionBuilderNeedsPTBRMetadata(meta api.PreparedMetadata, resolvedTrackers []string) bool {
+	if !descriptionBuilderTrackersNeedPTBR(resolvedTrackers) && !descriptionBuilderTrackersNeedPTBR(meta.Trackers) && !descriptionBuilderTrackersNeedPTBR(meta.MatchedTrackers) {
+		return false
+	}
+	if meta.ExternalMetadata.TMDB == nil || meta.ExternalMetadata.TMDB.Localized == nil {
+		return true
+	}
+	localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]
+	return !ok || !localizedPTBRComplete(meta, localized)
+}
+
+// descriptionBuilderTrackersNeedPTBR reports whether any tracker consumes pt-BR localized metadata.
+func descriptionBuilderTrackersNeedPTBR(trackersList []string) bool {
+	return trackers.AnyNeedsPTBRLocalizedMetadata(trackersList)
+}
+
+// descriptionBuilderEpisodeLike reports whether description generation should
+// require episode-scoped metadata when episode overview support is enabled.
 func descriptionBuilderEpisodeLike(meta api.PreparedMetadata) bool {
 	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 {
 		return true
@@ -2350,6 +2508,9 @@ func normalizeDescriptionBuilderGroupKey(groupKey string, trackersList []string)
 	return normalized
 }
 
+// FetchDescriptionBuilderGroupPreview rebuilds one description group from cached
+// or freshly prepared metadata. Request trackers limit the rebuild to the
+// selected set while tracker removals still suppress removed selections.
 func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.Request) (api.DescriptionBuilderGroup, error) {
 	targetGroup := strings.TrimSpace(req.DescriptionOverrideGroup)
 	if targetGroup == "" && len(req.Trackers) > 0 {
@@ -2409,6 +2570,7 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 	}
 
 	var meta api.PreparedMetadata
+	storePreparedCache := false
 	if req.Mode == api.ModeGUI {
 		if cached, ok, err := c.resolveGUICachedPreparedMeta(ctx, req, uniquePaths[0]); err != nil {
 			return api.DescriptionBuilderGroup{}, err
@@ -2442,19 +2604,21 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 			return api.DescriptionBuilderGroup{}, fmt.Errorf("core: %w", err)
 		}
 		meta = applyRequestToPreparedMeta(meta, singleReq, c.cfg, c.logger)
-		if req.Mode == api.ModeGUI {
-			c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
-		}
+		storePreparedCache = req.Mode == api.ModeGUI
 	}
-	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	if explicitEmpty {
+		return api.DescriptionBuilderGroup{}, nil
+	}
+	needsDescriptionMetadata := c.services.Metadata != nil && descriptionBuilderNeedsExternalMetadata(c.cfg, meta, resolvedTrackers)
+	meta, err = c.ensureDescriptionBuilderMetadata(ctx, req, uniquePaths[0], meta, resolvedTrackers)
 	if err != nil {
 		return api.DescriptionBuilderGroup{}, err
 	}
-
-	resolvedTrackers := req.Trackers
-	if len(resolvedTrackers) == 0 {
-		resolvedTrackers = trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
+	if storePreparedCache && !needsDescriptionMetadata {
+		c.storeDescriptionBuilderPreparedCache(req, uniquePaths[0], meta)
 	}
+
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
 	if err != nil {
 		return api.DescriptionBuilderGroup{}, fmt.Errorf("core: %w", err)
@@ -2463,8 +2627,8 @@ func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.
 		normalizedGroupKey := normalizeDescriptionBuilderGroupKey(entry.GroupKey, entry.Trackers)
 		if strings.EqualFold(normalizedGroupKey, targetGroup) {
 			group := buildDescriptionBuilderGroup(entry, overrideByGroup, meta, c.logger)
-			if len(group.Trackers) == 0 && len(req.Trackers) > 0 {
-				group.Trackers = append([]string{}, req.Trackers...)
+			if len(group.Trackers) == 0 && len(resolvedTrackers) > 0 {
+				group.Trackers = append([]string{}, resolvedTrackers...)
 			}
 			return group, nil
 		}
@@ -2869,6 +3033,7 @@ func cachedPreparedMetaMatchesRequest(meta api.PreparedMetadata, req api.Request
 		reflect.DeepEqual(meta.ScreenshotOverrides, req.ScreenshotOverrides) &&
 		reflect.DeepEqual(meta.TorrentOverrides, req.TorrentOverrides) &&
 		meta.IgnoreTrackerRuleFailures == req.IgnoreTrackerRuleFailures &&
+		len(req.IgnoreDupesFor) == 0 &&
 		reflect.DeepEqual(meta.ExternalIDOverrides, mergedOverrides) &&
 		reflect.DeepEqual(meta.ReleaseNameOverrides, req.ReleaseNameOverrides) &&
 		sameQuestionnaireAnswers(meta.TrackerQuestionnaireAnswers, req.TrackerQuestionnaireAnswers) &&
@@ -2879,15 +3044,75 @@ func requestedTrackersApplied(metaTrackers []string, requested []string) bool {
 	if len(requested) == 0 {
 		return true
 	}
-	if len(metaTrackers) != len(requested) {
+	return sameTrackerSet(metaTrackers, requested)
+}
+
+func sameTrackerSet(left []string, right []string) bool {
+	leftCounts, leftTotal := trackerNameCounts(left)
+	rightCounts, rightTotal := trackerNameCounts(right)
+	if leftTotal != rightTotal {
 		return false
 	}
-	for idx, tracker := range requested {
-		if !strings.EqualFold(strings.TrimSpace(metaTrackers[idx]), strings.TrimSpace(tracker)) {
+	if len(leftCounts) != len(rightCounts) {
+		return false
+	}
+	for name, count := range leftCounts {
+		if rightCounts[name] != count {
 			return false
 		}
 	}
 	return true
+}
+
+func trackerNameCounts(trackers []string) (map[string]int, int) {
+	counts := make(map[string]int, len(trackers))
+	total := 0
+	for _, tracker := range trackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		counts[name]++
+		total++
+	}
+	return counts, total
+}
+
+// explicitTrackerSelectionResolvedEmpty reports whether a non-empty requested
+// tracker set was fully removed by tracker resolution.
+func explicitTrackerSelectionResolvedEmpty(requested []string, resolved []string) bool {
+	return len(requested) > 0 && len(resolved) == 0
+}
+
+// resolveTrackersPreservingExplicitEmpty resolves requested trackers while
+// preserving the difference between an omitted selection and an explicit
+// selection that was fully removed.
+//
+// includeDefaults adds configured defaults to non-empty explicit selections.
+// fallbackDefaultsWhenExplicitEmpty controls whether a removed explicit
+// selection may fall back to defaults instead of returning explicitEmpty.
+func resolveTrackersPreservingExplicitEmpty(
+	cfg config.Config,
+	requested []string,
+	remove []string,
+	logger api.Logger,
+	includeDefaults bool,
+	fallbackDefaultsWhenExplicitEmpty bool,
+) ([]string, bool) {
+	resolved := trackers.ResolveTrackers(cfg, requested, remove, logger)
+	if explicitTrackerSelectionResolvedEmpty(requested, resolved) {
+		if includeDefaults && fallbackDefaultsWhenExplicitEmpty {
+			defaults := trackers.ResolveTrackers(cfg, nil, remove, logger)
+			if len(defaults) > 0 {
+				return defaults, false
+			}
+		}
+		return nil, true
+	}
+	if includeDefaults && len(requested) > 0 {
+		return trackers.ResolveTrackersWithDefaults(cfg, requested, remove, logger), false
+	}
+	return resolved, false
 }
 
 func requestedTrackersRemoveApplied(metaTrackersRemove []string, requested []string) bool {
@@ -3251,9 +3476,14 @@ func deepCopyTMDBMetadata(metadata *api.TMDBMetadata) *api.TMDBMetadata {
 	cloned.Creators = append([]string(nil), metadata.Creators...)
 	cloned.Directors = append([]string(nil), metadata.Directors...)
 	cloned.Cast = append([]string(nil), metadata.Cast...)
+	cloned.LocalizedTitles = cloneStringMap(metadata.LocalizedTitles)
 	cloned.ProductionCompanies = append([]api.TMDBCompany(nil), metadata.ProductionCompanies...)
 	cloned.ProductionCountries = append([]api.TMDBCountry(nil), metadata.ProductionCountries...)
 	cloned.Networks = append([]api.TMDBNetwork(nil), metadata.Networks...)
+	if metadata.Localized != nil {
+		cloned.Localized = make(map[string]api.TMDBLocalizedData, len(metadata.Localized))
+		maps.Copy(cloned.Localized, metadata.Localized)
+	}
 	return &cloned
 }
 
@@ -4369,6 +4599,15 @@ func mergeTrackerRemovals(existing []string, additions []string) []string {
 	return merged
 }
 
+// requestPreparedMetaTrackersRemove returns the removal set that should be used
+// for pre-application explicit-empty checks. Request dupe bypasses are applied
+// first so ignored or skipped matched trackers can still resolve when selected.
+func requestPreparedMetaTrackersRemove(meta api.PreparedMetadata, req api.Request) []string {
+	metaRemove, matched := duplicateTrackerStateForRequest(meta, req)
+	remove := mergeTrackerRemovals(req.TrackersRemove, metaRemove)
+	return mergeTrackerRemovals(remove, matched)
+}
+
 func normalizeExecutionRequest(req api.Request) api.Request {
 	if req.Execution.SiteCheck {
 		req.Options.DryRun = true
@@ -4379,6 +4618,10 @@ func normalizeExecutionRequest(req api.Request) api.Request {
 	return req
 }
 
+// resolveCanonicalDescriptionGroups returns request or cached description groups
+// before rebuilding groups from tracker preparation for the selected tracker set.
+// Explicit tracker selections constrain the rebuild and do not fall back to
+// configured defaults when they resolve empty.
 func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.PreparedMetadata, req api.Request) ([]api.DescriptionBuilderGroup, error) {
 	if len(req.DescriptionGroups) > 0 {
 		return api.CloneDescriptionBuilderGroups(req.DescriptionGroups), nil
@@ -4390,7 +4633,10 @@ func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.P
 		return nil, errors.New("core: tracker service not configured")
 	}
 
-	resolvedTrackers := trackers.ResolveTrackersWithDefaults(c.cfg, req.Trackers, meta.TrackersRemove, c.logger)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	if explicitEmpty {
+		return nil, nil
+	}
 	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)

@@ -5,11 +5,14 @@ package main
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/webserver"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -85,6 +88,238 @@ func TestParseServeOptionsDevNoAuth(t *testing.T) {
 	}
 	if !visited["dev-no-auth"] {
 		t.Fatalf("expected dev-no-auth visited flag, got %#v", visited)
+	}
+}
+
+func TestParseServeOptionsAddressHostPort(t *testing.T) {
+	opts, visited, err := parseServeOptions([]string{"--addr", "0.0.0.0:9090", "--host", "localhost", "--port", "7481", "--persist-listen"})
+	if err != nil {
+		t.Fatalf("parse serve options: %v", err)
+	}
+	if opts.Addr != "0.0.0.0:9090" || opts.Host != "localhost" || opts.Port != 7481 || !opts.PersistListen {
+		t.Fatalf("unexpected serve options: %#v", opts)
+	}
+	for _, name := range []string{"addr", "host", "port", "persist-listen"} {
+		if !visited[name] {
+			t.Fatalf("expected %s visited flag, got %#v", name, visited)
+		}
+	}
+}
+
+func TestParseServeOptionsPortUsesDecimalSyntax(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{name: "separate value", args: []string{"--port", "080"}, want: 80},
+		{name: "equals value", args: []string{"--port=010"}, want: 10},
+		{name: "leading zero nine", args: []string{"--port", "009"}, want: 9},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, visited, err := parseServeOptions(tc.args)
+			if err != nil {
+				t.Fatalf("parse serve options: %v", err)
+			}
+			if opts.Port != tc.want {
+				t.Fatalf("port = %d, want %d", opts.Port, tc.want)
+			}
+			if !visited["port"] {
+				t.Fatalf("expected port visited flag, got %#v", visited)
+			}
+		})
+	}
+}
+
+func TestParseServeOptionsRejectsNonDecimalPort(t *testing.T) {
+	_, _, err := parseServeOptions([]string{"--port", "0x50"})
+	if err == nil || !strings.Contains(err.Error(), "invalid port") {
+		t.Fatalf("expected invalid port error, got %v", err)
+	}
+}
+
+func TestApplyServeOptionOverridesAddress(t *testing.T) {
+	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{Addr: "0.0.0.0:9090"}, map[string]bool{"addr": true})
+	if err != nil {
+		t.Fatalf("apply serve overrides: %v", err)
+	}
+	if cfg.Host != "0.0.0.0" || cfg.Port != 9090 {
+		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+}
+
+func TestApplyServeOptionOverridesAddressMatrix(t *testing.T) {
+	cases := []struct {
+		name string
+		addr string
+		host string
+		port int
+	}{
+		{name: "host port", addr: "localhost:9090", host: "localhost", port: 9090},
+		{name: "colon port shorthand", addr: ":9091", host: "0.0.0.0", port: 9091},
+		{name: "bracketed ipv6", addr: "[::1]:9092", host: "::1", port: 9092},
+		{name: "scoped ipv6", addr: "[fe80::1%zone]:9093", host: "fe80::1%zone", port: 9093},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{Addr: tc.addr}, map[string]bool{"addr": true})
+			if err != nil {
+				t.Fatalf("apply serve overrides: %v", err)
+			}
+			if cfg.Host != tc.host || cfg.Port != tc.port {
+				t.Fatalf("unexpected web config: %#v", cfg)
+			}
+		})
+	}
+}
+
+func TestApplyServeOptionOverridesHostPort(t *testing.T) {
+	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{Host: "[::1]", Port: 9091}, map[string]bool{"host": true, "port": true})
+	if err != nil {
+		t.Fatalf("apply serve overrides: %v", err)
+	}
+	if cfg.Host != "::1" || cfg.Port != 9091 {
+		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+}
+
+func TestApplyServeOptionOverridesHostPortScopedIPv6(t *testing.T) {
+	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{Host: "[fe80::1%zone]", Port: 9091}, map[string]bool{"host": true, "port": true})
+	if err != nil {
+		t.Fatalf("apply serve overrides: %v", err)
+	}
+	if cfg.Host != "fe80::1%zone" || cfg.Port != 9091 {
+		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+	if got := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)); got != "[fe80::1%zone]:9091" {
+		t.Fatalf("unexpected bind address: %q", got)
+	}
+}
+
+func TestApplyServeOptionOverridesHostPortIPv4MappedIPv6(t *testing.T) {
+	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{Host: "[::ffff:127.0.0.1]", Port: 9091}, map[string]bool{"host": true, "port": true})
+	if err != nil {
+		t.Fatalf("apply serve overrides: %v", err)
+	}
+	if cfg.Host != "::ffff:127.0.0.1" || cfg.Port != 9091 {
+		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+	if got := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)); got != "[::ffff:127.0.0.1]:9091" {
+		t.Fatalf("unexpected bind address: %q", got)
+	}
+}
+
+func TestApplyServeOptionOverridesAddressScopedIPv6ProducesValidBindAddress(t *testing.T) {
+	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{Addr: "[fe80::1%zone]:9093"}, map[string]bool{"addr": true})
+	if err != nil {
+		t.Fatalf("apply serve overrides: %v", err)
+	}
+	if cfg.Host != "fe80::1%zone" || cfg.Port != 9093 {
+		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+	if got := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)); got != "[fe80::1%zone]:9093" {
+		t.Fatalf("unexpected bind address: %q", got)
+	}
+}
+
+func TestApplyServeOptionOverridesRejectsInvalidValues(t *testing.T) {
+	cases := []struct {
+		name    string
+		opts    serveOptions
+		visited map[string]bool
+		want    string
+	}{
+		{name: "addr with host", opts: serveOptions{Addr: "localhost:7480", Host: "localhost"}, visited: map[string]bool{"addr": true, "host": true}, want: "--addr cannot be used"},
+		{name: "empty host", opts: serveOptions{Host: " "}, visited: map[string]bool{"host": true}, want: "--host cannot be empty"},
+		{name: "host includes port", opts: serveOptions{Host: "localhost:7480"}, visited: map[string]bool{"host": true}, want: "--host cannot include a port"},
+		{name: "scoped ipv6 hostport", opts: serveOptions{Host: "fe80::1%zone:9090"}, visited: map[string]bool{"host": true}, want: "--host cannot include a port"},
+		{name: "invalid port", opts: serveOptions{Port: 70000}, visited: map[string]bool{"port": true}, want: "invalid port"},
+		{name: "invalid addr", opts: serveOptions{Addr: "localhost"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
+		{name: "unbracketed ipv6 addr", opts: serveOptions{Addr: "::1:9090"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), tc.opts, tc.visited)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestParseServeHostRejectsMalformedBrackets(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		host string
+		want string
+	}{
+		{name: "leading bracket only", host: "[::1", want: "invalid bracket syntax"},
+		{name: "trailing bracket only", host: "::1]", want: "invalid bracket syntax"},
+		{name: "nested brackets", host: "[[::1]]", want: "invalid bracket syntax"},
+		{name: "empty brackets", host: "[]", want: "invalid bracket syntax"},
+		{name: "bracketed hostname", host: "[localhost]", want: "IPv6 literals"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseServeHost(tc.host)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("parseServeHost(%q) error = %v, want substring %q", tc.host, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseServeHostRejectsInvalidColonHosts(t *testing.T) {
+	t.Parallel()
+
+	for _, host := range []string{"foo:bar:baz", "::1:http", "fe80::1%zone:9090", "::ffff:127.0.0.1:9090", "::ffff:127.0.0.999", "localhost:"} {
+		t.Run(host, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseServeHost(host)
+			if err == nil || !strings.Contains(err.Error(), "cannot include a port") {
+				t.Fatalf("parseServeHost(%q) error = %v, want port rejection", host, err)
+			}
+		})
+	}
+}
+
+func TestParseServeHostPreservesValidIPv6(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		host string
+		want string
+	}{
+		{host: "::1", want: "::1"},
+		{host: "::1:9090", want: "::1:9090"},
+		{host: "2001:db8::1234", want: "2001:db8::1234"},
+		{host: "[2001:db8::1234]", want: "2001:db8::1234"},
+		{host: "[::1]", want: "::1"},
+		{host: "::ffff:127.0.0.1", want: "::ffff:127.0.0.1"},
+		{host: "[::ffff:127.0.0.1]", want: "::ffff:127.0.0.1"},
+		{host: "fe80::1%zone", want: "fe80::1%zone"},
+		{host: "[fe80::1%zone]", want: "fe80::1%zone"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.host, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseServeHost(tc.host)
+			if err != nil {
+				t.Fatalf("parseServeHost(%q): %v", tc.host, err)
+			}
+			if got != tc.want {
+				t.Fatalf("parseServeHost(%q) = %q, want %q", tc.host, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -640,6 +875,39 @@ func TestPrintDryRunDetails(t *testing.T) {
 				t.Fatalf("expected no output, got %q", output)
 			}
 		})
+	}
+}
+
+func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
+	output := captureStdout(t, func() {
+		printDryRunDetails(api.TrackerDryRunEntry{
+			Endpoint: "https://tracker.test/api/upload?api_key=secret-key&passkey=secret-pass",
+			Payload: map[string]string{
+				"api_key":  "secret-key",
+				"auth":     "secret-auth",
+				"name":     "Movie.2024",
+				"passkey":  "secret-pass",
+				"announce": "https://tracker.test/announce?passkey=secret-pass",
+			},
+		})
+	})
+
+	for _, secret := range []string{"secret-key", "secret-pass", "secret-auth"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("expected %q to be redacted, got %q", secret, output)
+		}
+	}
+	for _, expected := range []string{
+		"Endpoint: https://tracker.test/api/upload?api_key=[REDACTED]&passkey=[REDACTED]",
+		"- api_key: [REDACTED]",
+		"- auth: [REDACTED]",
+		"- name: Movie.2024",
+		"- passkey: [REDACTED]",
+		"- announce: https://tracker.test/announce?passkey=[REDACTED]",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected redacted output to contain %q, got %q", expected, output)
+		}
 	}
 }
 

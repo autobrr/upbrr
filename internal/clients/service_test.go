@@ -207,6 +207,18 @@ func TestInjectQbitClient(t *testing.T) {
 	}
 }
 
+func TestQbitInjectClientConfigCapsTimeoutAndRetries(t *testing.T) {
+	t.Parallel()
+
+	cfg := qbitInjectClientConfig("http://localhost:8080", "user", "pass", config.TorrentClientConfig{})
+	if cfg.Timeout != int(qbitInjectHTTPTimeout/time.Second) {
+		t.Fatalf("expected timeout %d, got %d", int(qbitInjectHTTPTimeout/time.Second), cfg.Timeout)
+	}
+	if cfg.RetryAttempts != qbitInjectHTTPRetryAttempts {
+		t.Fatalf("expected retry attempts %d, got %d", qbitInjectHTTPRetryAttempts, cfg.RetryAttempts)
+	}
+}
+
 func TestInjectQbitClientUsesPathMappingSavePath(t *testing.T) {
 	t.Parallel()
 

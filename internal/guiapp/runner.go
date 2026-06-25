@@ -13,16 +13,23 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
 
+// RunOptions configures Wails GUI startup.
 type RunOptions struct {
-	Assets         fs.FS
-	ConfigPath     string
+	// Assets overrides the embedded or discovered frontend asset filesystem.
+	Assets fs.FS
+	// ConfigPath is passed to config bootstrap as the optional config file path.
+	ConfigPath string
+	// ConfigProvided reports whether ConfigPath came from an explicit user flag.
 	ConfigProvided bool
 }
 
+// Run starts the Wails GUI with a background context.
 func Run(opts RunOptions) error {
 	return RunWithContext(context.Background(), opts)
 }
 
+// RunWithContext starts the Wails GUI after resolving assets and creating the
+// bound app with ctx.
 func RunWithContext(ctx context.Context, opts RunOptions) error {
 	assets, err := resolveAssets(opts.Assets)
 	if err != nil {
@@ -48,7 +55,7 @@ func RunWithContext(ctx context.Context, opts RunOptions) error {
 		DragAndDrop: &options.DragAndDrop{
 			EnableFileDrop: true,
 		},
-		Bind: []interface{}{
+		Bind: []any{
 			app,
 		},
 	}); err != nil {

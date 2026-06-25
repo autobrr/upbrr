@@ -4,7 +4,9 @@
 package trackers
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,11 +23,11 @@ func TestNewBannedGroupCheckerFromDBPath(t *testing.T) {
 		t.Fatalf("expected base path %q, got %q", bannedDir, checker.basePath)
 	}
 }
-
 func TestNewBannedGroupCheckerNoPathUsesDefaultRoot(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	checker := NewBannedGroupChecker(" ")
 	if checker == nil {
@@ -64,6 +66,81 @@ func TestBannedGroupCheckerBHDBuiltins(t *testing.T) {
 		if !banned {
 			t.Fatalf("expected %s to be banned on BHD", group)
 		}
+	}
+}
+
+func TestBannedGroupCheckerMergesBuiltinsWithCacheFile(t *testing.T) {
+	t.Parallel()
+
+	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	if checker == nil {
+		t.Fatalf("expected checker")
+	}
+	if err := os.MkdirAll(checker.basePath, 0o700); err != nil {
+		t.Fatalf("create banned cache dir: %v", err)
+	}
+	filePath := filepath.Join(checker.basePath, "RHD_banned_groups.json")
+	if err := os.WriteFile(filePath, []byte(`{"banned_groups":"CustomRHD, Another.Custom"}`), 0o600); err != nil {
+		t.Fatalf("write banned groups: %v", err)
+	}
+
+	for _, group := range []string{"MagicX", "CustomRHD", "another.custom"} {
+		banned, err := checker.IsBanned("RHD", group)
+		if err != nil {
+			t.Fatalf("check %s: %v", group, err)
+		}
+		if !banned {
+			t.Fatalf("expected %s to be banned on RHD", group)
+		}
+	}
+}
+
+func TestBannedGroupCheckerUnreadableCacheFallsBackToRhdBuiltins(t *testing.T) {
+	t.Parallel()
+
+	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	if checker == nil {
+		t.Fatalf("expected checker")
+	}
+	if err := os.MkdirAll(checker.basePath, 0o700); err != nil {
+		t.Fatalf("create banned cache dir: %v", err)
+	}
+	filePath := filepath.Join(checker.basePath, "RHD_banned_groups.json")
+	if err := os.Mkdir(filePath, 0o700); err != nil {
+		t.Fatalf("create unreadable banned groups path: %v", err)
+	}
+
+	banned, err := checker.IsBanned(" rhd ", " MagicX ")
+	if err != nil {
+		t.Fatalf("check builtin after unreadable cache: %v", err)
+	}
+	if !banned {
+		t.Fatalf("expected MagicX to be banned on RHD")
+	}
+
+	banned, err = checker.IsBanned("RHD", "CustomRHD")
+	if err == nil {
+		t.Fatalf("expected unreadable cache error")
+	}
+	if !strings.Contains(err.Error(), "RHD_banned_groups.json") {
+		t.Fatalf("expected error to include cache path, got %v", err)
+	}
+	if banned {
+		t.Fatalf("expected unread custom group not to be banned without readable cache")
+	}
+
+	if err := os.Remove(filePath); err != nil {
+		t.Fatalf("remove unreadable banned groups path: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte(`{"banned_groups":"CustomRHD"}`), 0o600); err != nil {
+		t.Fatalf("write banned groups: %v", err)
+	}
+	banned, err = checker.IsBanned("RHD", "CustomRHD")
+	if err != nil {
+		t.Fatalf("check custom group after readable cache: %v", err)
+	}
+	if !banned {
+		t.Fatalf("expected CustomRHD to be banned after readable cache")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +22,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// LoadTrackerCookieMap returns cookies for trackerID from encrypted database
+// storage and legacy cookie files. Legacy file values override database values
+// when both sources contain the same cookie name.
 func LoadTrackerCookieMap(ctx context.Context, dbPath string, trackerID string) (map[string]string, error) {
 	if ctx == nil {
 		return nil, errors.New("cookies: context is required")
@@ -60,6 +64,8 @@ func LoadTrackerCookieMap(ctx context.Context, dbPath string, trackerID string) 
 	return nil, err
 }
 
+// LoadTrackerHTTPCookies returns tracker cookies as HTTP cookies for domain,
+// using the same database-plus-legacy-file merge as LoadTrackerCookieMap.
 func LoadTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string, domain string) ([]*http.Cookie, error) {
 	if ctx == nil {
 		return nil, errors.New("cookies: context is required")
@@ -99,6 +105,8 @@ func LoadTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string
 	return nil, err
 }
 
+// SaveTrackerCookieMap replaces trackerID's encrypted database cookies with
+// non-empty entries from values. It requires usable web auth material.
 func SaveTrackerCookieMap(ctx context.Context, dbPath string, trackerID string, values map[string]string) error {
 	if ctx == nil {
 		return errors.New("cookies: context is required")
@@ -140,10 +148,13 @@ func SaveTrackerCookieMap(ctx context.Context, dbPath string, trackerID string, 
 	return nil
 }
 
+// SaveTrackerHTTPCookies stores HTTP cookies by cookie name for trackerID.
 func SaveTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string, values []*http.Cookie) error {
 	return SaveTrackerCookieMap(ctx, dbPath, trackerID, httpCookiesToMap(values))
 }
 
+// DeleteTrackerCookies removes trackerID cookies from encrypted database
+// storage and deletes matching legacy cookie files when present.
 func DeleteTrackerCookies(ctx context.Context, dbPath string, trackerID string) error {
 	if ctx == nil {
 		return errors.New("cookies: context is required")
@@ -173,6 +184,8 @@ func DeleteTrackerCookies(ctx context.Context, dbPath string, trackerID string) 
 	return deleteErr
 }
 
+// CookieMapToHTTPCookies converts non-empty cookie name/value pairs to HTTP
+// cookies scoped to domain and path "/".
 func CookieMapToHTTPCookies(values map[string]string, domain string) []*http.Cookie {
 	trimmedDomain := strings.TrimSpace(domain)
 	result := make([]*http.Cookie, 0, len(values))
@@ -296,12 +309,8 @@ func mergeCookieMaps(base map[string]string, override map[string]string) map[str
 	}
 
 	merged := make(map[string]string, len(base)+len(override))
-	for name, value := range base {
-		merged[name] = value
-	}
-	for name, value := range override {
-		merged[name] = value
-	}
+	maps.Copy(merged, base)
+	maps.Copy(merged, override)
 
 	return merged
 }

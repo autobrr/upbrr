@@ -490,7 +490,11 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 	s.logger.Debugf("metadata: source size %d bytes", size)
 
 	storedInfoHash := ""
+	var storedMetadata db.FileMetadata
+	hasStoredMetadata := false
 	if existing, err := s.repo.GetByPath(ctx, primary); err == nil {
+		storedMetadata = existing
+		hasStoredMetadata = true
 		meta.StoredUpdatedAt = existing.UpdatedAt
 		if metadataFingerprintMatches(primary, meta, existing) {
 			meta.StoredDataFresh = true
@@ -521,24 +525,20 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 
 	if s.scene != nil {
 		result, err := s.scene.Detect(ctx, meta)
+		recoverableNFOError := false
 		if err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: scene detect: %w", err)
+			if isSceneNFOError(err) {
+				recoverableNFOError = true
+				s.logger.Warnf("metadata: scene nfo side effect failed: %v", err)
+			} else {
+				return api.PreparedMetadata{}, fmt.Errorf("metadata: scene detect: %w", err)
+			}
 		}
-		meta.Scene = result.IsScene
-		meta.SceneName = result.SceneName
-		meta.SceneTMDBID = result.TMDBID
-		meta.SceneIMDB = result.IMDBID
-		meta.SceneTVDBID = result.TVDBID
-		meta.SceneTVmazeID = result.TVmazeID
-		meta.SceneMALID = result.MALID
-		if meta.Service == "" {
-			meta.Service = strings.TrimSpace(result.Service)
+		if !recoverableNFOError || sceneResultHasData(result) {
+			applySceneResult(&meta, result)
+		} else if hasStoredMetadata {
+			applyStoredSceneMetadata(&meta, storedMetadata)
 		}
-		if meta.ServiceLongName == "" {
-			meta.ServiceLongName = strings.TrimSpace(result.ServiceLongName)
-		}
-		meta.SceneNFOPath = result.NFOPath
-		meta.SceneNFONew = result.NFONew
 		if meta.Scene {
 			s.logger.Debugf("metadata: scene release detected")
 		}
@@ -727,6 +727,49 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 	}
 
 	return meta, nil
+}
+
+// sceneResultHasData reports whether a scene detector returned metadata worth
+// applying even when a recoverable side-effect error was also returned.
+func sceneResultHasData(result SceneResult) bool {
+	return result.IsScene ||
+		strings.TrimSpace(result.SceneName) != "" ||
+		result.TMDBID > 0 ||
+		result.IMDBID > 0 ||
+		result.TVDBID > 0 ||
+		result.TVmazeID > 0 ||
+		result.MALID > 0 ||
+		strings.TrimSpace(result.Service) != "" ||
+		strings.TrimSpace(result.ServiceLongName) != "" ||
+		strings.TrimSpace(result.NFOPath) != ""
+}
+
+// applySceneResult copies detector scene metadata into prepared metadata,
+// preserving existing service labels unless the detector supplied them first.
+func applySceneResult(meta *api.PreparedMetadata, result SceneResult) {
+	meta.Scene = result.IsScene
+	meta.SceneName = result.SceneName
+	meta.SceneTMDBID = result.TMDBID
+	meta.SceneIMDB = result.IMDBID
+	meta.SceneTVDBID = result.TVDBID
+	meta.SceneTVmazeID = result.TVmazeID
+	meta.SceneMALID = result.MALID
+	if meta.Service == "" {
+		meta.Service = strings.TrimSpace(result.Service)
+	}
+	if meta.ServiceLongName == "" {
+		meta.ServiceLongName = strings.TrimSpace(result.ServiceLongName)
+	}
+	meta.SceneNFOPath = result.NFOPath
+	meta.SceneNFONew = result.NFONew
+}
+
+// applyStoredSceneMetadata restores persisted scene fields when a detector
+// returns only a recoverable side-effect error and no fresh scene data.
+func applyStoredSceneMetadata(meta *api.PreparedMetadata, stored db.FileMetadata) {
+	meta.Scene = stored.Scene
+	meta.SceneName = stored.SceneName
+	meta.SceneIMDB = stored.SceneIMDB
 }
 
 // extractM2TSFromPlaylist parses selected playlist files and extracts m2ts file references.

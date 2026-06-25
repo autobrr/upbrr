@@ -74,8 +74,15 @@ func (a *App) currentCore() api.Core {
 	return a.core
 }
 
+// baseUploadOptions returns upload options from the current runtime config.
 func (a *App) baseUploadOptions() api.UploadOptions {
 	return buildBaseUploadOptions(a.currentConfig())
+}
+
+// baseUploadOptions returns upload options derived from the same runtime
+// snapshot as the core selected for a request.
+func (rt appRuntimeSnapshot) baseUploadOptions() api.UploadOptions {
+	return buildBaseUploadOptions(rt.cfg)
 }
 
 func (a *App) replaceRuntime(cfg config.Config, core api.Core, logger *logging.Logger) (api.Core, *logging.Logger) {

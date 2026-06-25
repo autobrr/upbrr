@@ -118,8 +118,12 @@ type cliOptions struct {
 }
 
 type serveOptions struct {
-	ConfigPath string
-	DevNoAuth  bool
+	ConfigPath    string
+	Addr          string
+	Host          string
+	Port          int
+	PersistListen bool
+	DevNoAuth     bool
 }
 
 type cliHelpError struct {
@@ -494,12 +498,18 @@ func cliFlagAliases() map[string]string {
 	}
 }
 
+// parseServeOptions parses serve-only flags and returns the set of flags the
+// caller supplied so config defaults are not overwritten by zero values.
 func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	var opts serveOptions
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
+	fs.StringVar(&opts.Addr, "addr", "", "Web UI listen address (host:port)")
+	fs.StringVar(&opts.Host, "host", "", "Web UI host to bind")
+	fs.Var(&decimalPortValue{target: &opts.Port}, "port", "Web UI port to bind")
+	fs.BoolVar(&opts.PersistListen, "persist-listen", false, "Persist Web UI listen host and port to web-config.json")
 	fs.BoolVar(&opts.DevNoAuth, "dev-no-auth", false, "Development only: serve web UI without web authentication on loopback hosts")
 
 	if err := fs.Parse(args); err != nil {
@@ -522,8 +532,9 @@ func formatFlagUsage(fs *flag.FlagSet, usage string) string {
 	fmt.Fprintf(&builder, "Usage: %s\n", usage)
 	if fs.Name() == "upbrr" {
 		fmt.Fprint(&builder, "\nCommands:\n")
-		fmt.Fprint(&builder, "  serve\n")
+		fmt.Fprint(&builder, "  serve [options]\n")
 		fmt.Fprint(&builder, "      Start the embedded web UI server\n")
+		fmt.Fprint(&builder, "      Options: --addr, --host, --port, --persist-listen, --dev-no-auth\n")
 	}
 	fmt.Fprint(&builder, "\nOptions:\n")
 	sections := cliHelpSections(fs.Name())
@@ -575,6 +586,7 @@ func cliHelpSections(name string) []helpSection {
 	if name == "serve" {
 		return []helpSection{
 			{title: "Config", names: []string{"config"}},
+			{title: "Server", names: []string{"addr", "host", "port", "persist-listen"}},
 			{title: "Development", names: []string{"dev-no-auth"}},
 		}
 	}
@@ -621,6 +633,9 @@ func cliAliasesByCanonical() map[string][]string {
 
 func formatHelpFlag(builder *strings.Builder, f *flag.Flag, aliases []string) {
 	valueName, usage := flag.UnquoteUsage(f)
+	if _, ok := f.Value.(*decimalPortValue); ok {
+		valueName = "int"
+	}
 	names := make([]string, 0, 2+len(aliases))
 	names = append(names, "-"+f.Name, "--"+f.Name)
 	for _, alias := range aliases {
@@ -636,6 +651,28 @@ func formatHelpFlag(builder *strings.Builder, f *flag.Flag, aliases []string) {
 
 type boolFlag interface {
 	IsBoolFlag() bool
+}
+
+// decimalPortValue parses --port from raw flag text so leading-zero values use
+// decimal syntax instead of the integer-literal rules used by flag.IntVar.
+type decimalPortValue struct {
+	target *int
+}
+
+func (v *decimalPortValue) Set(value string) error {
+	port, err := parseServePortValue(value)
+	if err != nil {
+		return err
+	}
+	*v.target = port
+	return nil
+}
+
+func (v *decimalPortValue) String() string {
+	if v == nil || v.target == nil {
+		return "0"
+	}
+	return strconv.Itoa(*v.target)
 }
 
 func isBoolFlag(f *flag.Flag) bool {

@@ -9,12 +9,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
@@ -24,6 +27,10 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -34,17 +41,11 @@ const (
 )
 
 var (
-	authPattern      = regexp.MustCompile(`name="auth"\s+value="([^"]+)"`)
-	idPattern        = regexp.MustCompile(`action=download&id=(\d+)|torrentid=(\d+)`)
-	durationPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(?im)^duration(?:\s*/string\d*)?\s*:\s*(.+)$`),
-		regexp.MustCompile(`(?im)^duration\s*:\s*(.+)$`),
-	}
-	isoDurationPattern  = regexp.MustCompile(`(?i)^pt(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$`)
-	hoursPattern        = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|hr|h)\b`)
-	minutesPattern      = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|min|mn)\b`)
-	secondsPattern      = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|sec|s)\b`)
-	millisecondsPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*ms\b`)
+	authPattern                   = regexp.MustCompile(`name="auth"\s+value="([^"]+)"`)
+	idPattern                     = regexp.MustCompile(`action=download&id=(\d+)|torrentid=(\d+)`)
+	mediaInfoDurationLinePattern  = regexp.MustCompile(`(?im)^\s*duration(?:\s*/\s*string[123]?)?\s*:\s*(.+)$`)
+	mediaInfoDurationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|hr|h|minutes?|mins?|min|mn|m|seconds?|secs?|sec|s)\b`)
+	isoDurationPattern            = regexp.MustCompile(`(?i)^pt(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$`)
 )
 
 type uploadState struct {
@@ -184,6 +185,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 func buildFields(meta api.PreparedMetadata, description string, auth string, answers map[string]string) map[string]string {
 	width, height := resolveResolution(meta)
 	runtimeMinutes := resolveRuntime(meta)
+	ptBR := api.ExtractLocalizedPTBR(meta)
+
+	var tmdbOriginalTitle, tmdbTitle string
+	if meta.ExternalMetadata.TMDB != nil {
+		tmdbOriginalTitle = meta.ExternalMetadata.TMDB.OriginalTitle
+		tmdbTitle = meta.ExternalMetadata.TMDB.Title
+	}
+
 	fields := map[string]string{
 		"audio":            resolveAudio(meta),
 		"auth":             auth,
@@ -198,16 +207,16 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 		"imdblink":         resolveIDLink(meta),
 		"qualidade":        resolveQuality(meta),
 		"release":          strings.TrimSpace(meta.ServiceLongName),
-		"remaster_title":   strings.TrimSpace(meta.Edition),
+		"remaster_title":   resolveRemasterTitle(meta),
 		"resolucaoh":       height,
 		"resolucaow":       width,
-		"sinopse":          metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["overview"]), resolveOverview(meta)),
+		"sinopse":          metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["overview"]), resolveOverview(meta, ptBR)),
 		"submit":           "true",
-		"tags":             metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta)),
+		"tags":             metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta, ptBR)),
 		"tipolegenda":      resolveSubtitle(meta),
-		"title":            metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.OriginalTitle, meta.Release.Title),
-		"titulobrasileiro": metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Title, meta.Release.Title),
-		"traileryoutube":   resolveYouTube(meta),
+		"title":            metautil.FirstNonEmptyTrimmed(tmdbOriginalTitle, meta.Release.Title),
+		"titulobrasileiro": metautil.FirstNonEmptyTrimmed(ptBR.Title, tmdbTitle, meta.Release.Title),
+		"traileryoutube":   resolveYouTube(meta, ptBR),
 		"type":             resolveType(meta),
 		"year":             resolveYearLabel(meta),
 	}
@@ -227,8 +236,21 @@ func buildFields(meta api.PreparedMetadata, description string, auth string, ans
 		fields["season"] = strconv.Itoa(meta.SeasonInt)
 		fields["episode"] = strconv.Itoa(meta.EpisodeInt)
 		fields["network"] = resolveNetworks(meta)
-		fields["numtemporadas"] = strconv.Itoa(len(meta.ExternalMetadata.IMDB.SeasonsSummary))
-		fields["pais"] = strings.Join(meta.ExternalMetadata.TMDB.OriginCountry, ", ")
+
+		numSeasons := 0
+		if meta.ExternalMetadata.IMDB != nil {
+			numSeasons = len(meta.ExternalMetadata.IMDB.SeasonsSummary)
+		}
+		fields["numtemporadas"] = strconv.Itoa(numSeasons)
+
+		var originCountry []string
+		if meta.ExternalMetadata.TMDB != nil {
+			for _, code := range meta.ExternalMetadata.TMDB.OriginCountry {
+				originCountry = append(originCountry, metautil.ISO3166PortugueseName(code, code))
+			}
+		}
+		fields["pais"] = strings.Join(originCountry, ", ")
+
 		fields["diretorserie"] = resolveDirectors(meta)
 		fields["avaliacao"] = resolveIMDbRating(meta)
 		fields["datalancamento"] = resolveReleaseDate(meta)
@@ -307,9 +329,25 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 	}
 
 	// TV Episode details
-	if strings.TrimSpace(meta.EpisodeOverview) != "" {
-		parts = append(parts, "[align=center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/align]")
-		parts = append(parts, "[align=center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/align]")
+	epTitle := meta.EpisodeTitle
+	epOverview := meta.EpisodeOverview
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
+		if ptBR, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
+			if ptBR.EpisodeTitle != "" {
+				epTitle = ptBR.EpisodeTitle
+			}
+			if ptBR.EpisodeOverview != "" {
+				epOverview = ptBR.EpisodeOverview
+			}
+		}
+	}
+	epTitle = strings.TrimSpace(epTitle)
+	epOverview = strings.TrimSpace(epOverview)
+	if epOverview != "" {
+		if epTitle != "" {
+			parts = append(parts, "[align=center]"+epTitle+"[/align]")
+		}
+		parts = append(parts, "[align=center]"+epOverview+"[/align]")
 	}
 
 	// File information
@@ -409,21 +447,25 @@ func resolveAudio(meta api.PreparedMetadata) string {
 }
 
 func resolveLanguage(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		switch strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)) {
-		case "pt":
-			return "Português"
-		case "en":
-			return "Inglês"
-		case "ja":
-			return "Japonês"
-		case "ko":
-			return "Coreano"
-		default:
-			return strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
-		}
+	if meta.ExternalMetadata.TMDB == nil {
+		return "Outro"
 	}
-	return "Outro"
+
+	langCode := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage))
+	if langCode == "" {
+		return "Outro"
+	}
+
+	if langCode == "pt" {
+		for _, country := range meta.ExternalMetadata.TMDB.OriginCountry {
+			if strings.ToUpper(strings.TrimSpace(country)) == "PT" {
+				return "Português (pt)"
+			}
+		}
+		return "Português"
+	}
+
+	return metautil.ISO639PortugueseName(langCode, "Outro")
 }
 
 func resolveSubtitle(meta api.PreparedMetadata) string {
@@ -551,7 +593,7 @@ func resolveRuntime(meta api.PreparedMetadata) int {
 	return 0
 }
 
-func parseBDInfoLengthMinutes(value interface{}) int {
+func parseBDInfoLengthMinutes(value any) int {
 	text := strings.TrimSpace(fmt.Sprint(value))
 	if text == "" || text == "<nil>" {
 		return 0
@@ -579,48 +621,101 @@ func parseBDInfoLengthMinutes(value interface{}) int {
 	return int(math.Round(totalSeconds / 60))
 }
 
+// parseMediaInfoDurationMinutes returns rounded minutes from the first parseable
+// MediaInfo Duration or Duration/String[1-3] line, including ISO-8601-like values.
 func parseMediaInfoDurationMinutes(text string) int {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return 0
-	}
-	for _, pattern := range durationPatterns {
-		matches := pattern.FindStringSubmatch(trimmed)
-		if len(matches) < 2 {
+	for _, matches := range mediaInfoDurationLinePattern.FindAllStringSubmatch(text, -1) {
+		if len(matches) != 2 {
 			continue
 		}
-		if minutes := parseDurationComponentString(matches[1]); minutes > 0 {
+		if minutes := parseMediaInfoDurationValueMinutes(matches[1]); minutes > 0 {
 			return minutes
 		}
 	}
 	return 0
 }
 
-func parseDurationComponentString(value string) int {
+func parseMediaInfoDurationValueMinutes(value string) int {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return 0
 	}
 	if matches := isoDurationPattern.FindStringSubmatch(trimmed); len(matches) == 4 {
-		return roundedDurationMinutes(matches[1], matches[2], matches[3], "")
+		return mediaInfoDurationSecondsToMinutes(durationComponentSeconds(matches[1], matches[2], matches[3], ""))
 	}
-	return roundedDurationMinutes(
-		firstMatch(hoursPattern, trimmed),
-		firstMatch(minutesPattern, trimmed),
-		firstMatch(secondsPattern, trimmed),
-		firstMatch(millisecondsPattern, trimmed),
-	)
+	if strings.Contains(trimmed, ":") {
+		return mediaInfoDurationSecondsToMinutes(parseMediaInfoDurationColonSeconds(trimmed))
+	}
+	if seconds := parseMediaInfoDurationTokenSeconds(trimmed); seconds > 0 {
+		return mediaInfoDurationSecondsToMinutes(seconds)
+	}
+	if fields := strings.Fields(trimmed); len(fields) > 0 {
+		if ms, err := strconv.ParseFloat(strings.ReplaceAll(fields[0], ",", ""), 64); err == nil && ms > 10000 {
+			return int(math.Round(ms / 60000.0))
+		}
+	}
+	return 0
 }
 
-func roundedDurationMinutes(hours string, minutes string, seconds string, milliseconds string) int {
+func parseMediaInfoDurationTokenSeconds(value string) float64 {
+	var total float64
+	for _, matches := range mediaInfoDurationTokenPattern.FindAllStringSubmatch(value, -1) {
+		if len(matches) != 3 {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(matches[1], ",", ""), 64)
+		if err != nil || amount <= 0 {
+			continue
+		}
+		switch strings.ToLower(matches[2]) {
+		case "h", "hr", "hrs", "hour", "hours":
+			total += amount * 3600
+		case "m", "mn", "min", "mins", "minute", "minutes":
+			total += amount * 60
+		case "s", "sec", "secs", "second", "seconds":
+			total += amount
+		case "ms", "msec", "msecs", "millisecond", "milliseconds":
+			total += amount / 1000
+		}
+	}
+	return total
+}
+
+func parseMediaInfoDurationColonSeconds(value string) float64 {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) < 2 {
+		return 0
+	}
+	var total float64
+	multiplier := 1.0
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
+		if part == "" {
+			continue
+		}
+		amount, err := strconv.ParseFloat(strings.ReplaceAll(part, ",", ""), 64)
+		if err != nil || amount < 0 {
+			return 0
+		}
+		total += amount * multiplier
+		multiplier *= 60
+	}
+	return total
+}
+
+func durationComponentSeconds(hours string, minutes string, seconds string, milliseconds string) float64 {
 	totalSeconds := parseDurationComponent(hours) * 3600
 	totalSeconds += parseDurationComponent(minutes) * 60
 	totalSeconds += parseDurationComponent(seconds)
 	totalSeconds += parseDurationComponent(milliseconds) / 1000
-	if totalSeconds <= 0 {
+	return totalSeconds
+}
+
+func mediaInfoDurationSecondsToMinutes(seconds float64) int {
+	if seconds <= 0 {
 		return 0
 	}
-	return int(math.Round(totalSeconds / 60))
+	return int(math.Round(seconds / 60.0))
 }
 
 func parseDurationComponent(value string) float64 {
@@ -633,14 +728,6 @@ func parseDurationComponent(value string) float64 {
 		return 0
 	}
 	return parsed
-}
-
-func firstMatch(pattern *regexp.Regexp, value string) string {
-	matches := pattern.FindStringSubmatch(value)
-	if len(matches) < 2 {
-		return ""
-	}
-	return matches[1]
 }
 
 func resolveIDLink(meta api.PreparedMetadata) string {
@@ -656,7 +743,15 @@ func resolveIDLink(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveOverview(meta api.PreparedMetadata) string {
+// resolveOverview prefers scoped TV synopsis for episode/season-pack uploads,
+// then localized title-level overview, then TMDB or IMDB fallback text.
+func resolveOverview(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	if shouldUseScopedTVOverview(meta) && ptBR.EpisodeOverview != "" {
+		return strings.TrimSpace(ptBR.EpisodeOverview)
+	}
+	if ptBR.Overview != "" {
+		return strings.TrimSpace(ptBR.Overview)
+	}
 	if meta.ExternalMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Overview)
 	}
@@ -666,15 +761,93 @@ func resolveOverview(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveTags(meta api.PreparedMetadata) string {
-	genreText := strings.TrimSpace(meta.Release.Genre)
-	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "" {
-		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
+// shouldUseScopedTVOverview reports whether BJS should prefer season or
+// episode localized overview over title-level synopsis text.
+func shouldUseScopedTVOverview(meta api.PreparedMetadata) bool {
+	if meta.SeasonInt <= 0 {
+		return false
 	}
-	return strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(genreText, ", ", "."), " ", "."))
+	if !isTVUpload(meta) {
+		return false
+	}
+	if meta.TVPack {
+		return true
+	}
+	return meta.EpisodeInt > 0
 }
 
-func resolveYouTube(meta api.PreparedMetadata) string {
+// isTVUpload reports whether BJS should treat the upload as TV from category or episode fields.
+func isTVUpload(meta api.PreparedMetadata) bool {
+	category := strings.TrimSpace(categoryOf(meta))
+	if strings.EqualFold(category, "TV") {
+		return true
+	}
+	if category == "" {
+		return meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0
+	}
+	return false
+}
+
+// resolveTags returns BJS tag text from localized genres or translated fallback
+// genres, preserving unknown fallback genre names after tag normalization.
+func resolveTags(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	// 1. Use localized if available
+	if ptBR.Genres != "" {
+		genres := strings.Split(strings.TrimSpace(ptBR.Genres), ",")
+		out := make([]string, 0, len(genres))
+		for _, g := range genres {
+			g = strings.TrimSpace(g)
+			t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+			g, _, _ = transform.String(t, g)
+			g = strings.ReplaceAll(g, " ", ".")
+			g = strings.ToLower(g)
+			if g != "" {
+				out = append(out, g)
+			}
+		}
+		return strings.Join(out, ", ")
+	}
+
+	// 2. Use metautil.TranslateGenreToPortugueseStrict to translate
+	var genreText string
+	switch {
+	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "":
+		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
+	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres) != "":
+		genreText = strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres)
+	default:
+		genreText = strings.TrimSpace(meta.Release.Genre)
+	}
+
+	if genreText == "" {
+		return ""
+	}
+
+	genres := strings.Split(genreText, ",")
+	out := make([]string, 0, len(genres))
+	for _, g := range genres {
+		g = strings.TrimSpace(g)
+		if g == "" {
+			continue
+		}
+		translated := metautil.TranslateGenreToPortugueseStrict(g)
+		if translated == "" {
+			translated = g
+		}
+		t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+		tag, _, _ := transform.String(t, translated)
+		tag = strings.ReplaceAll(strings.TrimSpace(tag), " ", ".")
+		if tag != "" {
+			out = append(out, strings.ToLower(tag))
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+func resolveYouTube(meta api.PreparedMetadata, ptBR api.TMDBLocalizedData) string {
+	if ptBR.TrailerURL != "" {
+		return strings.TrimSpace(ptBR.TrailerURL)
+	}
 	if meta.ExternalMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ExternalMetadata.TMDB.YouTube)
 	}
@@ -695,18 +868,115 @@ func resolveNetworks(meta api.PreparedMetadata) string {
 }
 
 func resolveReleaseDate(meta api.PreparedMetadata) string {
+	rawDate := ""
 	if meta.ExternalMetadata.TMDB != nil {
-		return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.ReleaseDate, meta.ExternalMetadata.TMDB.FirstAirDate)
+		rawDate = metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.ReleaseDate, meta.ExternalMetadata.TMDB.FirstAirDate)
+	}
+	if rawDate == "" {
+		return ""
+	}
+	t, err := time.Parse("2006-01-02", rawDate)
+	if err == nil {
+		return t.Format("02 Jan 2006")
 	}
 	return ""
 }
 
 func resolveYearLabel(meta api.PreparedMetadata) string {
 	year := resolveYear(meta)
-	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.EndYear > 0 {
-		return fmt.Sprintf("%d-%d", year, meta.ExternalMetadata.IMDB.EndYear)
+	if strings.EqualFold(categoryOf(meta), "TV") {
+		if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.EndYear > 0 {
+			return fmt.Sprintf("%d-%d", year, meta.ExternalMetadata.IMDB.EndYear)
+		}
+		return fmt.Sprintf("%d-", year)
 	}
-	return fmt.Sprintf("%d-", year)
+	return strconv.Itoa(year)
+}
+
+func resolveRemasterTitle(meta api.PreparedMetadata) string {
+	var tags []string
+
+	edition := strings.TrimSpace(meta.Edition)
+	editionLower := strings.ToLower(edition)
+	editionEntries := []struct{ keyword, label string }{
+		{"director's cut", "Director's Cut"},
+		{"extended", "Extended Edition"},
+		{"imax", "IMAX"},
+		{"open matte", "Open Matte"},
+		{"noir", "Noir Edition"},
+		{"theatrical", "Theatrical Cut"},
+		{"uncut", "Uncut"},
+		{"unrated", "Unrated"},
+		{"uncensored", "Uncensored"},
+	}
+	for _, entry := range editionEntries {
+		if strings.Contains(editionLower, entry.keyword) {
+			tags = append(tags, entry.label)
+			break
+		}
+	}
+
+	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
+	if strings.Contains(audio, "ATMOS") {
+		tags = append(tags, "Dolby Atmos")
+	}
+
+	if meta.BitDepth == "10" {
+		tags = append(tags, "10-bit")
+	}
+
+	hdr := strings.ToUpper(strings.TrimSpace(meta.HDR))
+	if strings.Contains(hdr, "DV") || strings.Contains(hdr, "DOLBY VISION") {
+		tags = append(tags, "Dolby Vision")
+	}
+	if strings.Contains(hdr, "HDR10+") {
+		tags = append(tags, "HDR10+")
+	}
+	if strings.Contains(hdr, "HDR") && !strings.Contains(hdr, "HDR10+") {
+		tags = append(tags, "HDR10")
+	}
+
+	if strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX") {
+		tags = append(tags, "Remux")
+	}
+
+	if meta.HasCommentary {
+		tags = append(tags, "Com comentários")
+	}
+
+	priority := []string{
+		"Dolby Atmos",
+		"Remux",
+		"Director's Cut",
+		"Extended Edition",
+		"IMAX",
+		"Open Matte",
+		"Noir Edition",
+		"Theatrical Cut",
+		"Uncut",
+		"Unrated",
+		"Uncensored",
+		"10-bit",
+		"Dolby Vision",
+		"HDR10+",
+		"HDR10",
+		"Com extras",
+		"Com comentários",
+	}
+
+	tagSet := make(map[string]bool)
+	for _, t := range tags {
+		tagSet[t] = true
+	}
+
+	var ordered []string
+	for _, p := range priority {
+		if tagSet[p] {
+			ordered = append(ordered, p)
+		}
+	}
+
+	return strings.Join(ordered, " / ")
 }
 
 func resolveYear(meta api.PreparedMetadata) int {
@@ -719,17 +989,35 @@ func resolveYear(meta api.PreparedMetadata) int {
 	return meta.Release.Year
 }
 
+// resolveAdult returns the BJS adult flag from localized, TMDB, IMDB, and
+// release genre text after accent-insensitive keyword matching.
 func resolveAdult(meta api.PreparedMetadata) string {
-	genres := strings.ToLower(resolveTags(meta) + " " + metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Keywords, ""))
+	ptBR := api.ExtractLocalizedPTBR(meta)
+	parts := []string{resolveTags(meta, ptBR), ptBR.Genres}
+	if meta.ExternalMetadata.TMDB != nil {
+		parts = append(parts, meta.ExternalMetadata.TMDB.Keywords, meta.ExternalMetadata.TMDB.Genres)
+	}
+	if meta.ExternalMetadata.IMDB != nil {
+		parts = append(parts, meta.ExternalMetadata.IMDB.Genres)
+	}
+	parts = append(parts, meta.Release.Genre)
+	genres := normalizeAdultText(strings.Join(parts, " "))
 	if meta.Anime && strings.Contains(genres, "hentai") {
 		return "1"
 	}
-	for _, keyword := range []string{"xxx", "erotic", "porn", "adult", "orgy"} {
+	for _, keyword := range []string{"xxx", "erotic", "erotico", "porn", "adult", "adulto", "orgy", "orgia"} {
 		if strings.Contains(genres, keyword) {
 			return "1"
 		}
 	}
 	return "2"
+}
+
+// normalizeAdultText folds case and diacritics before adult keyword matching.
+func normalizeAdultText(value string) string {
+	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	normalized, _, _ := transform.String(t, strings.ToLower(value))
+	return normalized
 }
 
 func resolveDirectors(meta api.PreparedMetadata) string {
@@ -800,6 +1088,11 @@ func resolveLogo(meta api.PreparedMetadata) string {
 
 func resolvePoster(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TMDB != nil {
+		if meta.ExternalMetadata.TMDB.Localized != nil {
+			if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok && strings.TrimSpace(localized.Poster) != "" {
+				return strings.TrimSpace(localized.Poster)
+			}
+		}
 		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
 	}
 	return ""
@@ -818,9 +1111,7 @@ func categoryOf(meta api.PreparedMetadata) string {
 
 func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }
 

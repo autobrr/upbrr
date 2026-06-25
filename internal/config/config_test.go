@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestValidate(t *testing.T) {
@@ -541,6 +543,89 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	}
 }
 
+func TestTrackersConfigCZTPasskeyFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+		Trackers: TrackersConfig{
+			DefaultTrackers: CSVList{"CZT"},
+			Trackers: map[string]TrackerConfig{
+				"CZT": {
+					URL:         "https://czteam.example",
+					APIKey:      "service-token",
+					Passkey:     "user-passkey",
+					AnnounceURL: "https://should-not-be-here",
+				},
+			},
+		},
+	}
+
+	jsonPayload, err := ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("export json: %v", err)
+	}
+	jsonRoundTrip, err := ImportFromJSON(jsonPayload)
+	if err != nil {
+		t.Fatalf("import json: %v", err)
+	}
+	jsonCZT := jsonRoundTrip.Trackers.Trackers["CZT"]
+	if jsonCZT.URL != "" {
+		t.Fatalf("json CZT should not include URL, got %q", jsonCZT.URL)
+	}
+	if jsonCZT.APIKey != "" {
+		t.Fatalf("json CZT should not include APIKey, got %q", jsonCZT.APIKey)
+	}
+	if jsonCZT.Passkey != "user-passkey" {
+		t.Fatalf("json CZT Passkey mismatch: got %q", jsonCZT.Passkey)
+	}
+	if jsonCZT.AnnounceURL != "" {
+		t.Fatalf("json CZT should not include AnnounceURL, got %q", jsonCZT.AnnounceURL)
+	}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.yaml")
+	if err := ExportToPlaintextYAML(cfg, path); err != nil {
+		t.Fatalf("export yaml: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read yaml: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "passkey: user-passkey") {
+		t.Fatalf("yaml export missing CZT passkey in:\n%s", text)
+	}
+	if strings.Contains(text, "url: https://czteam.example") {
+		t.Fatalf("yaml CZT should not include url")
+	}
+	if strings.Contains(text, "api_key: service-token") {
+		t.Fatalf("yaml CZT should not include api_key")
+	}
+	if strings.Contains(text, "announce_url: https://should-not-be-here") {
+		t.Fatalf("yaml CZT should not include announce_url")
+	}
+
+	yamlRoundTrip, err := ImportFromYAML(path)
+	if err != nil {
+		t.Fatalf("import yaml: %v", err)
+	}
+	yamlCZT := yamlRoundTrip.Trackers.Trackers["CZT"]
+	if yamlCZT.URL != "" {
+		t.Fatalf("yaml CZT should not include URL, got %q", yamlCZT.URL)
+	}
+	if yamlCZT.APIKey != "" {
+		t.Fatalf("yaml CZT should not include APIKey, got %q", yamlCZT.APIKey)
+	}
+	if yamlCZT.Passkey != "user-passkey" {
+		t.Fatalf("yaml CZT Passkey mismatch: got %q", yamlCZT.Passkey)
+	}
+	if yamlCZT.AnnounceURL != "" {
+		t.Fatalf("yaml CZT should not include AnnounceURL, got %q", yamlCZT.AnnounceURL)
+	}
+}
+
 func TestTrackersConfigPreferredTrackerRoundTripJSON(t *testing.T) {
 	t.Parallel()
 
@@ -639,8 +724,12 @@ func TestMergeMissingTrackerDefaults(t *testing.T) {
 		},
 	}
 
-	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
 		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
 	}
 
 	if _, ok := cfg.Trackers.Trackers["BTN"]; !ok {
@@ -671,6 +760,174 @@ func TestResolveBTNAPITokenPrefersTrackerConfig(t *testing.T) {
 	}
 }
 
+func TestResolveBTNAPITokenUsesLowercaseTrackerConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"btn": {APIKey: " lowercase-token "},
+			},
+		},
+	}
+
+	if got := ResolveBTNAPIToken(cfg); got != "lowercase-token" {
+		t.Fatalf("expected lowercase tracker token, got %q", got)
+	}
+}
+
+func TestResolveBTNAPITokenPrefersExactBTNOverFoldedTrackerConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"BTN": {APIKey: "canonical-token"},
+				"btn": {APIKey: "lowercase-token"},
+			},
+		},
+	}
+
+	if got := ResolveBTNAPIToken(cfg); got != "canonical-token" {
+		t.Fatalf("expected canonical tracker token, got %q", got)
+	}
+}
+
+func TestResolveBTNAPITokenUsesLowercaseTrackerWhenExactBTNEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"BTN": {APIKey: " "},
+				"btn": {APIKey: "lowercase-token"},
+			},
+		},
+	}
+
+	if got := ResolveBTNAPIToken(cfg); got != "lowercase-token" {
+		t.Fatalf("expected lowercase tracker token, got %q", got)
+	}
+}
+
+func TestResolveBTNAPITokenUsesDeterministicASCIICaseAliasPrecedence(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"BTN": {APIKey: " "},
+				"bTN": {APIKey: "third-token"},
+				"btn": {APIKey: "second-token"},
+				"BtN": {APIKey: "first-token"},
+			},
+		},
+	}
+
+	for range 25 {
+		if got := ResolveBTNAPIToken(cfg); got != "first-token" {
+			t.Fatalf("expected deterministic folded tracker token, got %q", got)
+		}
+	}
+}
+
+func TestResolveBTNAPITokenMatchesASCIICaseTrackerNames(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"BTN": {APIKey: " "},
+				"BtN": {APIKey: "mixed-token"},
+			},
+		},
+	}
+
+	if got := ResolveBTNAPIToken(cfg); got != "mixed-token" {
+		t.Fatalf("expected mixed-case tracker token, got %q", got)
+	}
+}
+
+func TestResolveBTNAPITokenDoesNotMatchUnicodeEquivalentTrackerNames(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"\uFF22\uFF34\uFF2E": {APIKey: "fullwidth-token"},
+			},
+		},
+	}
+
+	if got := ResolveBTNAPIToken(cfg); got != "legacy-token" {
+		t.Fatalf("expected legacy token fallback, got %q", got)
+	}
+}
+
+func TestASCIIEqualFoldComparesEveryByte(t *testing.T) {
+	t.Parallel()
+
+	if asciiEqualFold("é", "è") {
+		t.Fatal("expected non-ASCII strings with different continuation bytes not to match")
+	}
+}
+
+func TestResolveBTNAPITokenDoesNotMatchFuzzyTrackerNames(t *testing.T) {
+	t.Parallel()
+
+	spacedBTNTrackerName := " BTN "
+	cfg := Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				spacedBTNTrackerName: {APIKey: "spaced-token"},
+				"BTNx":               {APIKey: "suffix-token"},
+				"b-t-n":              {APIKey: "separator-token"},
+				"xBTN":               {APIKey: "prefix-token"},
+			},
+		},
+	}
+
+	if got := ResolveBTNAPIToken(cfg); got != "legacy-token" {
+		t.Fatalf("expected legacy token fallback, got %q", got)
+	}
+}
+
+func TestResolveBTNAPITokenUsesLowercaseTrackerConfigFromJSONAndYAML(t *testing.T) {
+	t.Parallel()
+
+	var jsonCfg Config
+	if err := json.Unmarshal([]byte(`{
+		"metadata": {"btn_api": "legacy-token"},
+		"trackers": {"Trackers": {"btn": {"APIKey": "json-token"}}}
+	}`), &jsonCfg); err != nil {
+		t.Fatalf("unmarshal json config: %v", err)
+	}
+	if got := ResolveBTNAPIToken(jsonCfg); got != "json-token" {
+		t.Fatalf("expected json tracker token, got %q", got)
+	}
+
+	var yamlCfg Config
+	if err := yaml.Unmarshal([]byte(`
+metadata:
+  btn_api: legacy-token
+trackers:
+  trackers:
+    btn:
+      api_key: yaml-token
+`), &yamlCfg); err != nil {
+		t.Fatalf("unmarshal yaml config: %v", err)
+	}
+	if got := ResolveBTNAPIToken(yamlCfg); got != "yaml-token" {
+		t.Fatalf("expected yaml tracker token, got %q", got)
+	}
+}
+
 func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *testing.T) {
 	t.Parallel()
 
@@ -681,12 +938,157 @@ func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *te
 		},
 	}
 
-	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
 		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
 	}
 
 	if got := cfg.Trackers.Trackers["BTN"].APIKey; got != "legacy-token" {
 		t.Fatalf("expected legacy BTN api token to backfill tracker config, got %q", got)
+	}
+}
+
+func TestMergeMissingTrackerDefaultsDoesNotBackfillLegacyBTNAPIOverLowercaseTrackerConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"btn": {APIKey: "lowercase-token"},
+			},
+		},
+	}
+
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
+		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
+	}
+
+	if got := ResolveBTNAPIToken(*cfg); got != "lowercase-token" {
+		t.Fatalf("expected lowercase tracker token after merge, got %q", got)
+	}
+	if _, ok := cfg.Trackers.Trackers["BTN"]; ok {
+		t.Fatalf("expected canonical BTN default not to duplicate lowercase btn tracker")
+	}
+	if got := cfg.Trackers.Trackers["btn"].URL; got != "https://backup.landof.tv" {
+		t.Fatalf("expected lowercase btn URL to be backfilled, got %q", got)
+	}
+}
+
+func TestMergeMissingTrackerDefaultsReconcilesLowercaseBTNWithoutToken(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"btn": {Username: "user", Password: "pass"},
+			},
+		},
+	}
+
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
+		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
+	}
+
+	if _, ok := cfg.Trackers.Trackers["BTN"]; ok {
+		t.Fatalf("expected canonical BTN default not to duplicate lowercase btn tracker")
+	}
+	btn := cfg.Trackers.Trackers["btn"]
+	if got := btn.APIKey; got != "legacy-token" {
+		t.Fatalf("expected legacy BTN api token to backfill lowercase tracker config, got %q", got)
+	}
+	if got := ResolveBTNAPIToken(*cfg); got != "legacy-token" {
+		t.Fatalf("expected legacy tracker token after merge, got %q", got)
+	}
+	if btn.Username != "user" || btn.Password != "pass" {
+		t.Fatalf("expected lowercase btn non-token fields to be preserved, got username=%q password=%q", btn.Username, btn.Password)
+	}
+	if got := btn.URL; got != "https://backup.landof.tv" {
+		t.Fatalf("expected lowercase btn URL to be backfilled, got %q", got)
+	}
+}
+
+func TestMergeMissingTrackerDefaultsUsesASCIICaseBTNTrackerConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Metadata: MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"BtN": {Username: "user"},
+			},
+		},
+	}
+
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
+		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
+	}
+
+	if got := ResolveBTNAPIToken(*cfg); got != "legacy-token" {
+		t.Fatalf("expected legacy token on mixed-case tracker after merge, got %q", got)
+	}
+	if _, ok := cfg.Trackers.Trackers["BTN"]; ok {
+		t.Fatalf("expected canonical BTN default not to duplicate mixed-case BTN tracker")
+	}
+	if got := cfg.Trackers.Trackers["BtN"].APIKey; got != "legacy-token" {
+		t.Fatalf("expected mixed-case BTN token to receive legacy token, got %q", got)
+	}
+}
+
+func TestMergeMissingTrackerDefaultsClearsCZTSensitiveFields(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"CZT":                {APIKey: "stale-token", URL: "https://stale.example", AnnounceURL: "https://czteam.me/announce.php?passkey=stale", Passkey: "passkey"},
+				"czt":                {AnnounceURL: "https://czteam.me/announce.php?passkey=lowercase"},
+				"\uFF23\uFF3A\uFF34": {AnnounceURL: "https://czteam.me/announce.php?passkey=fullwidth"},
+			},
+		},
+	}
+
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
+		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
+	}
+	czt := cfg.Trackers.Trackers["CZT"]
+	if czt.APIKey != "" {
+		t.Fatalf("expected CZT APIKey to be cleared, got %q", czt.APIKey)
+	}
+	if czt.URL != "" {
+		t.Fatalf("expected CZT URL to be cleared, got %q", czt.URL)
+	}
+	if czt.AnnounceURL != "" {
+		t.Fatalf("expected CZT AnnounceURL to be cleared, got %q", czt.AnnounceURL)
+	}
+	if czt.Passkey != "passkey" {
+		t.Fatalf("expected CZT passkey preserved, got %q", czt.Passkey)
+	}
+	if lower := cfg.Trackers.Trackers["czt"]; lower.AnnounceURL != "" {
+		t.Fatalf("expected lowercase CZT AnnounceURL to be cleared, got %q", lower.AnnounceURL)
+	}
+	if folded := cfg.Trackers.Trackers["\uFF23\uFF3A\uFF34"]; folded.AnnounceURL == "" {
+		t.Fatalf("expected non-ASCII CZT equivalent AnnounceURL to be preserved")
 	}
 }
 

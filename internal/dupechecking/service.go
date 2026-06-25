@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package dupechecking runs tracker-specific duplicate searches and converts
+// the results into upload review state.
 package dupechecking
 
 import (
@@ -14,20 +16,32 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackerdata"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const maxDupeWorkers = 4
+const defaultDupeCancelDrainTimeout = 5 * time.Second
+const (
+	skipCodeNotePrefix = "\x00upbrr-skip-code:"
+	skipCodeNoteSuffix = "\x00"
+)
 
+// Service coordinates duplicate checks across configured tracker handlers.
 type Service struct {
 	cfg      config.Config
 	logger   api.Logger
 	http     *http.Client
 	tracker  *trackerdata.Client
 	handlers map[string]searchHandler
+	filter   func([]api.DupeEntry, api.PreparedMetadata, string, config.Config, api.Logger) ([]api.DupeEntry, api.DupeMatch)
+
+	cancelDrainTimeout time.Duration
 }
 
+// NewService builds a duplicate-checking service with shared HTTP and tracker
+// metadata clients.
 func NewService(cfg config.Config, logger api.Logger) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -41,9 +55,17 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 		http:     httpClient,
 		tracker:  trackerClient,
 		handlers: buildHandlers(deps),
+		filter:   FilterDupes,
+
+		cancelDrainTimeout: defaultDupeCancelDrainTimeout,
 	}
 }
 
+// Check searches the requested trackers for duplicates of meta.SourcePath.
+// Missing source paths return an error, an empty tracker list returns a summary
+// note, and context cancellation stops queued work, waits briefly for active
+// workers, and returns a cancellation error instead of a partial summary.
+// Progress callback panics are logged and do not abort the duplicate check.
 func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return api.DupeCheckSummary{}, errors.New("dupechecking: missing source path")
@@ -58,7 +80,7 @@ func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers
 
 	total := len(resolvedTrackers)
 	for _, tracker := range resolvedTrackers {
-		api.EmitDupeProgress(ctx, api.DupeProgressUpdate{
+		s.emitDupeProgress(ctx, api.DupeProgressUpdate{
 			SourcePath: meta.SourcePath,
 			Tracker:    tracker,
 			Status:     "queued",
@@ -70,21 +92,16 @@ func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers
 
 	jobs := make(chan string)
 	results := make(chan api.DupeCheckResult, total)
-	workerCount := total
-	if workerCount > maxDupeWorkers {
-		workerCount = maxDupeWorkers
-	}
+	workerCount := min(total, maxDupeWorkers)
 
 	var workers sync.WaitGroup
-	for idx := 0; idx < workerCount; idx++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+	for range workerCount {
+		workers.Go(func() {
 			for tracker := range jobs {
 				if ctx.Err() != nil {
 					return
 				}
-				api.EmitDupeProgress(ctx, api.DupeProgressUpdate{
+				s.emitDupeProgress(ctx, api.DupeProgressUpdate{
 					SourcePath: meta.SourcePath,
 					Tracker:    tracker,
 					Status:     "running",
@@ -93,8 +110,13 @@ func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers
 				})
 				results <- s.checkTracker(ctx, meta, tracker)
 			}
-		}()
+		})
 	}
+	workersDone := make(chan struct{})
+	go func() {
+		workers.Wait()
+		close(workersDone)
+	}()
 
 	go func() {
 		defer close(jobs)
@@ -111,11 +133,16 @@ func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers
 	for completed < total {
 		select {
 		case <-ctx.Done():
+			s.waitForCanceledDupeWorkers(workersDone, meta.SourcePath)
 			return api.DupeCheckSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		case result := <-results:
+			if ctx.Err() != nil {
+				s.waitForCanceledDupeWorkers(workersDone, meta.SourcePath)
+				return api.DupeCheckSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
+			}
 			completed++
 			summary.Results = append(summary.Results, result)
-			api.EmitDupeProgress(ctx, api.DupeProgressUpdate{
+			s.emitDupeProgress(ctx, api.DupeProgressUpdate{
 				SourcePath: meta.SourcePath,
 				Tracker:    result.Tracker,
 				Status:     result.Status,
@@ -127,7 +154,7 @@ func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers
 		}
 	}
 
-	workers.Wait()
+	<-workersDone
 	summary.Results = groupRuleSkippedResults(summary.Results)
 	sort.Slice(summary.Results, func(i, j int) bool {
 		return summary.Results[i].Tracker < summary.Results[j].Tracker
@@ -136,8 +163,51 @@ func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers
 	return summary, nil
 }
 
-func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, tracker string) api.DupeCheckResult {
-	result := api.DupeCheckResult{Tracker: tracker, CheckedAt: time.Now().UTC(), Status: "completed"}
+// waitForCanceledDupeWorkers joins canceled duplicate-check workers up to the
+// configured drain timeout so ctx-ignoring handlers cannot delay cancellation
+// indefinitely.
+func (s *Service) waitForCanceledDupeWorkers(workersDone <-chan struct{}, sourcePath string) {
+	timeout := s.cancelDrainTimeout
+	if timeout <= 0 {
+		timeout = defaultDupeCancelDrainTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-workersDone:
+	case <-timer.C:
+		if s.logger != nil {
+			s.logger.Warnf("dupechecking: timed out waiting for canceled workers for %s", sourcePath)
+		}
+	}
+}
+
+func (s *Service) emitDupeProgress(ctx context.Context, update api.DupeProgressUpdate) {
+	defer func() {
+		if recovered := recover(); recovered != nil && s.logger != nil {
+			s.logger.Warnf("dupechecking: progress reporter panicked for %s %s: %s", update.Tracker, update.Status, panicProgressMessage(recovered))
+		}
+	}()
+	api.EmitDupeProgress(ctx, update)
+}
+
+func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, tracker string) (result api.DupeCheckResult) {
+	result = api.DupeCheckResult{Tracker: tracker, CheckedAt: time.Now().UTC(), Status: "completed"}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			message := panicFailureMessage(recovered)
+			result = api.DupeCheckResult{
+				Tracker:   tracker,
+				CheckedAt: result.CheckedAt,
+				Status:    "failed",
+				Error:     message,
+				Notes:     []string{message},
+			}
+			s.logger.Warnf("dupechecking: %s search panicked for %s: %s", tracker, meta.SourcePath, message)
+		}
+	}()
+
 	if reason, rules := skipReason(meta, tracker); reason != "" {
 		result.Skipped = true
 		result.SkipReason = reason
@@ -167,9 +237,11 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 		s.logger.Warnf("dupechecking: %s search failed for %s: %v", tracker, meta.SourcePath, err)
 		return result
 	}
+	skipCode, notes := splitSkipCodeNotes(notes)
 	if reason, ok := parseSkipReason(notes); ok {
 		result.Skipped = true
 		result.SkipReason = reason
+		result.SkipCode = skipCode
 		result.Status = "skipped"
 	}
 	result.Notes = append(result.Notes, notes...)
@@ -179,12 +251,67 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 		return result
 	}
 
-	filtered, match := FilterDupes(result.Raw, meta, tracker, s.cfg, s.logger)
+	filter := s.filter
+	if filter == nil {
+		filter = FilterDupes
+	}
+	filtered, match := filter(result.Raw, meta, tracker, s.cfg, s.logger)
 	result.Filtered = filtered
 	result.Match = match
 	result.HasDupes = len(filtered) > 0
 	s.logger.Debugf("dupechecking: %s checked for %s raw=%d filtered=%d dupes=%t", tracker, meta.SourcePath, len(result.Raw), len(filtered), result.HasDupes)
 	return result
+}
+
+func panicFailureMessage(recovered any) string {
+	detail := strings.TrimSpace(redaction.RedactValue(fmt.Sprint(recovered), nil))
+	if detail == "" {
+		return "dupe search panicked"
+	}
+	return "dupe search panicked: " + detail
+}
+
+func panicProgressMessage(recovered any) string {
+	detail := strings.TrimSpace(redaction.RedactValue(fmt.Sprint(recovered), nil))
+	if detail == "" {
+		return "dupe progress reporter panicked"
+	}
+	return "dupe progress reporter panicked: " + detail
+}
+
+func noteSkipCode(code string) string {
+	return skipCodeNotePrefix + strings.TrimSpace(code) + skipCodeNoteSuffix
+}
+
+// splitSkipCodeNotes extracts trusted internal skip-code metadata and leaves
+// handler display notes intact.
+func splitSkipCodeNotes(notes []string) (string, []string) {
+	if len(notes) == 0 {
+		return "", nil
+	}
+	out := make([]string, 0, len(notes))
+	var code string
+	for _, note := range notes {
+		skipCode, ok := parseSkipCodeNote(note)
+		if ok {
+			if code == "" {
+				code = skipCode
+			}
+			continue
+		}
+		out = append(out, note)
+	}
+	return code, out
+}
+
+// parseSkipCodeNote accepts only the NUL-wrapped internal marker so tracker
+// notes that merely begin with similar text stay user-visible.
+func parseSkipCodeNote(note string) (string, bool) {
+	if !strings.HasPrefix(note, skipCodeNotePrefix) || !strings.HasSuffix(note, skipCodeNoteSuffix) {
+		return "", false
+	}
+	code := strings.TrimSuffix(strings.TrimPrefix(note, skipCodeNotePrefix), skipCodeNoteSuffix)
+	return strings.TrimSpace(code), true
 }
 
 func dedupeTrackers(trackers []string) []string {

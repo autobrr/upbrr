@@ -29,9 +29,9 @@ func initTrackers() {
 		unit3DTrackers := []string{
 			"A4K", "ACM", "AITHER", "BLU", "CBR", "DP", "EMUW",
 			"FRIKI", "HHD", "IHD", "ITT", "LCD", "LDU", "LST", "LT",
-			"LUME", "OE", "OTW", "PT", "PTT", "R4E", "RAS", "RF",
+			"LUME", "OE", "OTW", "PT", "PTT", "R4E", "RAS", "RF", "RHD",
 			"SAM", "SHRI", "SP", "STC", "TIK", "TLZ", "TOS", "TTR",
-			"ULCX", "UTP", "YUS",
+			"ULCX", "UTP", "YUS", "ZNTH",
 		}
 
 		for _, name := range unit3DTrackers {

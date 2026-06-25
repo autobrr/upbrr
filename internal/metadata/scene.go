@@ -24,24 +24,57 @@ import (
 
 const srrdbBaseURL = "https://api.srrdb.com"
 
-// SceneDetector resolves scene metadata from a prepared item.
+// SceneDetector resolves scene metadata from a prepared item. Implementations
+// may return a populated result with an error when an optional side effect fails.
 type SceneDetector interface {
 	Detect(ctx context.Context, meta api.PreparedMetadata) (SceneResult, error)
 }
 
-// SceneResult captures scene metadata from external sources.
+// SceneResult captures scene metadata from external sources. NFO fields are
+// best-effort side-effect outputs and may be empty on an otherwise valid match.
 type SceneResult struct {
-	IsScene         bool
-	SceneName       string
-	TMDBID          int
-	IMDBID          int
-	TVDBID          int
-	TVmazeID        int
-	MALID           int
-	Service         string
+	IsScene   bool
+	SceneName string
+	TMDBID    int
+	IMDBID    int
+	TVDBID    int
+	TVmazeID  int
+	MALID     int
+	// Service is the normalized service code parsed from a saved scene NFO.
+	Service string
+	// ServiceLongName is the display name matching Service when one is known.
 	ServiceLongName string
-	NFOPath         string
-	NFONew          bool
+	// NFOPath is the local filesystem path to a saved scene NFO.
+	NFOPath string
+	// NFONew reports whether NFOPath was downloaded during this detection run.
+	NFONew bool
+}
+
+type sceneNFOError struct {
+	err error
+}
+
+// newSceneNFOError marks optional NFO fetch or persistence failures so callers
+// can keep the primary scene match while still reporting the side-effect error.
+func newSceneNFOError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &sceneNFOError{err: err}
+}
+
+func (e *sceneNFOError) Error() string {
+	return fmt.Sprintf("scene: nfo side effect: %v", e.err)
+}
+
+func (e *sceneNFOError) Unwrap() error {
+	return e.err
+}
+
+// isSceneNFOError reports whether err is a recoverable NFO side-effect failure.
+func isSceneNFOError(err error) bool {
+	var nfoErr *sceneNFOError
+	return errors.As(err, &nfoErr)
 }
 
 type srrdbDetector struct {
@@ -98,52 +131,58 @@ func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (
 	}
 
 	result := payload.Results[0]
-	tmdbID := 0
 	imdbID := parseSRRDBIMDbID(result.IMDBID)
-	tvdbID := 0
-	tvmazeID := 0
-	malID := 0
-	service := ""
-	serviceLongName := ""
 	if imdbID == 0 {
 		if details, err := d.fetchIMDB(ctx, result.Release); err == nil {
 			imdbID = details.firstIMDbID()
 		}
 	}
 
-	nfoPath := ""
-	nfoNew := false
+	scene := SceneResult{
+		IsScene:   true,
+		SceneName: strings.TrimSpace(result.Release),
+		IMDBID:    imdbID,
+	}
 	if strings.EqualFold(result.HasNFO, "yes") {
-		if path, downloaded, err := d.fetchNFO(ctx, result.Release); err == nil {
-			nfoPath = path
-			nfoNew = downloaded
+		path, downloaded, err := d.fetchNFO(ctx, result.Release)
+		if err != nil && isContextError(ctx, err) {
+			return SceneResult{}, err
+		}
+		if path != "" {
+			scene.NFOPath = path
+			scene.NFONew = downloaded
 			if nfoIDs, readErr := parseNFOExternalIDs(path); readErr == nil {
-				tmdbID = nfoIDs.TMDBID
-				if imdbID == 0 {
-					imdbID = nfoIDs.IMDBID
+				scene.TMDBID = nfoIDs.TMDBID
+				if scene.IMDBID == 0 {
+					scene.IMDBID = nfoIDs.IMDBID
 				}
-				tvdbID = nfoIDs.TVDBID
-				tvmazeID = nfoIDs.TVmazeID
-				malID = nfoIDs.MALID
-				service = nfoIDs.Service
-				serviceLongName = nfoIDs.ServiceLongName
+				scene.TVDBID = nfoIDs.TVDBID
+				scene.TVmazeID = nfoIDs.TVmazeID
+				scene.MALID = nfoIDs.MALID
+				scene.Service = nfoIDs.Service
+				scene.ServiceLongName = nfoIDs.ServiceLongName
 			}
+		}
+		if err != nil {
+			return scene, newSceneNFOError(err)
 		}
 	}
 
-	return SceneResult{
-		IsScene:         true,
-		SceneName:       strings.TrimSpace(result.Release),
-		TMDBID:          tmdbID,
-		IMDBID:          imdbID,
-		TVDBID:          tvdbID,
-		TVmazeID:        tvmazeID,
-		MALID:           malID,
-		Service:         service,
-		ServiceLongName: serviceLongName,
-		NFOPath:         nfoPath,
-		NFONew:          nfoNew,
-	}, nil
+	return scene, nil
+}
+
+// isContextError reports cancellation and deadline errors from err or ctx.
+func isContextError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+		return true
+	}
+	return false
 }
 
 type srrdbResponse struct {
@@ -275,6 +314,7 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 		return "", false, nil
 	}
 	fileBase := strings.ToLower(trimmed)
+	var detailsErr error
 	if details, err := d.fetchDetails(ctx, trimmed); err == nil {
 		for _, file := range details.Files {
 			name := strings.TrimSpace(file.Name)
@@ -286,48 +326,52 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 				break
 			}
 		}
+	} else if isContextError(ctx, err) {
+		return "", false, err
+	} else {
+		detailsErr = err
 	}
 
 	cacheDir := d.cacheDir
 	if cacheDir == "" {
-		return "", false, errors.New("scene: nfo cache: missing cache dir")
+		return "", false, errors.Join(detailsErr, errors.New("scene: nfo cache: missing cache dir"))
 	}
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
-		return "", false, fmt.Errorf("scene: nfo cache: %w", err)
+		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: nfo cache: %w", err))
 	}
 	nfoDir := d.nfoDir
 	if nfoDir == "" {
-		return "", false, errors.New("scene: nfo cache: missing nfo dir")
+		return "", false, errors.Join(detailsErr, errors.New("scene: nfo cache: missing nfo dir"))
 	}
 	if err := os.MkdirAll(nfoDir, 0o700); err != nil {
-		return "", false, fmt.Errorf("scene: nfo dir: %w", err)
+		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: nfo dir: %w", err))
 	}
 	path := filepath.Join(nfoDir, fileBase+".nfo")
 	if _, err := os.Stat(path); err == nil {
-		return path, false, nil
+		return path, false, detailsErr
 	}
 
 	nfoURL := fmt.Sprintf("https://www.srrdb.com/download/file/%s/%s.nfo", url.PathEscape(trimmed), url.PathEscape(fileBase))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nfoURL, nil)
 	if err != nil {
-		return "", false, fmt.Errorf("scene: build nfo request: %w", err)
+		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: build nfo request: %w", err))
 	}
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return "", false, fmt.Errorf("scene: nfo request: %w", err)
+		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: nfo request: %w", err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", false, nil
+		return "", false, detailsErr
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", false, fmt.Errorf("scene: read nfo: %w", err)
+		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: read nfo: %w", err))
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return "", false, fmt.Errorf("scene: write nfo: %w", err)
+		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: write nfo: %w", err))
 	}
-	return path, true, nil
+	return path, true, detailsErr
 }
 
 func (d *srrdbDetector) fetchDetails(ctx context.Context, release string) (srrdbDetailsResponse, error) {

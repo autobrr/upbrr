@@ -4,12 +4,15 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +28,9 @@ import (
 type SQLiteRepository struct {
 	db     *sql.DB
 	logger Logger
+	// path is empty for SQLite sentinel/URI inputs whose sibling helper-file
+	// location is intentionally not inferred from the opened DB string.
+	path string
 }
 
 const sqliteBusyTimeout = 5000
@@ -106,7 +112,18 @@ func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQ
 		}
 	}
 
-	return &SQLiteRepository{db: db, logger: logger}, nil
+	return &SQLiteRepository{db: db, logger: logger, path: repositoryDBPath(path, resolved)}, nil
+}
+
+// DBPath returns the resolved on-disk database path when the repository was
+// opened from a normal filesystem path. It returns empty for SQLite sentinel or
+// URI inputs so callers do not invent helper-file locations for in-memory DBs
+// or opaque SQLite connection strings.
+func (r *SQLiteRepository) DBPath() string {
+	if r == nil {
+		return ""
+	}
+	return r.path
 }
 
 func (r *SQLiteRepository) Close() error {
@@ -1398,6 +1415,31 @@ func (r *SQLiteRepository) ListHistoryEntries(ctx context.Context) ([]HistoryEnt
 			WHERE source_path = fm.path
 			ORDER BY created_at DESC, id DESC
 			LIMIT 1
+		)
+		WHERE NOT (
+			fm.source_size = 0
+			AND TRIM(fm.disc_type) = ""
+			AND TRIM(fm.video_path) = ""
+			AND TRIM(fm.file_list) IN ("", "[]")
+			AND TRIM(fm.release_type) = ""
+			AND TRIM(fm.release_artist) = ""
+			AND TRIM(fm.release_title) = ""
+			AND TRIM(fm.release_subtitle) = ""
+			AND TRIM(fm.release_alt) = ""
+			AND fm.release_year = 0
+			AND fm.release_month = 0
+			AND fm.release_day = 0
+			AND TRIM(fm.release_source) = ""
+			AND TRIM(fm.release_resolution) = ""
+			AND TRIM(fm.release_ext) = ""
+			AND TRIM(fm.release_site) = ""
+			AND TRIM(fm.release_genre) = ""
+			AND TRIM(fm.release_channels) = ""
+			AND TRIM(fm.release_collection) = ""
+			AND TRIM(fm.release_region) = ""
+			AND TRIM(fm.release_size) = ""
+			AND TRIM(fm.release_group) = ""
+			AND TRIM(fm.release_disc) = ""
 		)
 		ORDER BY fm.updated_at DESC, fm.path ASC
 	`)
@@ -2790,6 +2832,14 @@ func resolvePath(path string) (string, error) {
 	return cleaned, nil
 }
 
+func repositoryDBPath(input, resolved string) string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == ":memory:" || strings.HasPrefix(trimmed, "file:") {
+		return ""
+	}
+	return resolved
+}
+
 // SaveConfigSection persists a single config section as JSON.
 func (r *SQLiteRepository) SaveConfigSection(ctx context.Context, section string, data any) error {
 	if r == nil || r.db == nil {
@@ -2811,6 +2861,37 @@ func (r *SQLiteRepository) SaveConfigSection(ctx context.Context, section string
 	`, section, string(payload), now)
 	if err != nil {
 		return fmt.Errorf("db save config section %s: %w", section, err)
+	}
+
+	return nil
+}
+
+// SaveConfigSections persists multiple prepared config sections in one
+// transaction. The map keys are config root section names and values are
+// marshaled before the transaction starts; if any section write fails, no
+// selected section is committed.
+func (r *SQLiteRepository) SaveConfigSections(ctx context.Context, sections map[string]any) error {
+	if r == nil || r.db == nil {
+		return errors.New("db: repository not initialized")
+	}
+	if len(sections) == 0 {
+		return nil
+	}
+
+	prepared := make(map[string]string, len(sections))
+	for section, data := range sections {
+		if section == "" {
+			return internalerrors.ErrInvalidInput
+		}
+		payload, err := json.Marshal(data)
+		if err != nil {
+			return fmt.Errorf("db save config: marshal section %s: %w", section, err)
+		}
+		prepared[section] = string(payload)
+	}
+
+	if err := r.saveFullConfigSections(ctx, prepared, nil); err != nil {
+		return err
 	}
 
 	return nil
@@ -2845,6 +2926,32 @@ func (r *SQLiteRepository) LoadConfigSection(ctx context.Context, section string
 	return nil
 }
 
+// prepareFullConfigSections converts a full config into per-section JSON
+// payloads matching config_settings section names.
+func prepareFullConfigSections(cfg any) (map[string]string, error) {
+	// Marshal the full config to inspect its structure.
+	cfgData, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("db save full config: marshal: %w", err)
+	}
+
+	var cfgMap map[string]any
+	if err := json.Unmarshal(cfgData, &cfgMap); err != nil {
+		return nil, fmt.Errorf("db save full config: unmarshal to map: %w", err)
+	}
+
+	sections := make(map[string]string, len(cfgMap))
+	for section, value := range cfgMap {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("db save full config: marshal section %s: %w", section, err)
+		}
+		sections[section] = string(payload)
+	}
+
+	return sections, nil
+}
+
 // SaveFullConfig persists the entire config to all sections.
 // This is called when exporting to database from YAML or UI updates.
 func (r *SQLiteRepository) SaveFullConfig(ctx context.Context, cfg any) error {
@@ -2855,29 +2962,59 @@ func (r *SQLiteRepository) SaveFullConfig(ctx context.Context, cfg any) error {
 		return internalerrors.ErrInvalidInput
 	}
 
-	// Marshal the full config to inspect its structure.
-	cfgData, err := json.MarshalIndent(cfg, "", "  ")
+	sections, err := prepareFullConfigSections(cfg)
 	if err != nil {
-		return fmt.Errorf("db save full config: marshal: %w", err)
+		return err
 	}
 
-	var cfgMap map[string]any
-	if err := json.Unmarshal(cfgData, &cfgMap); err != nil {
-		return fmt.Errorf("db save full config: unmarshal to map: %w", err)
+	if err := r.saveFullConfigSections(ctx, sections, nil); err != nil {
+		return err
 	}
 
+	return nil
+}
+
+// SaveFullConfigWithPreSave persists the entire config and runs preSave in the
+// same write transaction immediately before config sections are written. If
+// preSave or any section write fails, the transaction is rolled back.
+func (r *SQLiteRepository) SaveFullConfigWithPreSave(ctx context.Context, cfg any, preSave func(context.Context, *sql.Tx) error) error {
+	if r == nil || r.db == nil {
+		return errors.New("db: repository not initialized")
+	}
+	if cfg == nil {
+		return internalerrors.ErrInvalidInput
+	}
+
+	sections, err := prepareFullConfigSections(cfg)
+	if err != nil {
+		return err
+	}
+
+	if err := r.saveFullConfigSections(ctx, sections, preSave); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// saveFullConfigSections writes prepared section payloads in one transaction,
+// optionally running preSave in that same transaction before section writes.
+func (r *SQLiteRepository) saveFullConfigSections(ctx context.Context, sections map[string]string, preSave func(context.Context, *sql.Tx) error) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	sections := make(map[string]string, len(cfgMap))
-	for section, value := range cfgMap {
-		payload, err := json.Marshal(value)
-		if err != nil {
-			return fmt.Errorf("db save full config: marshal section %s: %w", section, err)
-		}
-		sections[section] = string(payload)
-	}
 
 	if err := r.withWriteTx(ctx, "save full config", func(tx *sql.Tx) error {
-		for section, payload := range sections {
+		if preSave != nil {
+			if err := preSave(ctx, tx); err != nil {
+				return err
+			}
+		}
+		sectionNames := make([]string, 0, len(sections))
+		for section := range sections {
+			sectionNames = append(sectionNames, section)
+		}
+		sort.Strings(sectionNames)
+		for _, section := range sectionNames {
+			payload := sections[section]
 			if _, err := tx.ExecContext(ctx, `
 			INSERT INTO config_settings (section, data, updated_at) VALUES (?, ?, ?)
 			ON CONFLICT(section) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
@@ -2893,7 +3030,10 @@ func (r *SQLiteRepository) SaveFullConfig(ctx context.Context, cfg any) error {
 	return nil
 }
 
-// LoadFullConfig reconstructs the entire config from all sections.
+// LoadFullConfig reconstructs the entire config from all sections. Each raw
+// section is rejected if it contains duplicate JSON object names before the
+// sections are joined, so malformed stored data cannot collapse duplicate keys
+// during unmarshaling.
 func (r *SQLiteRepository) LoadFullConfig(ctx context.Context, dest any) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -2915,6 +3055,9 @@ func (r *SQLiteRepository) LoadFullConfig(ctx context.Context, dest any) error {
 		if err := rows.Scan(&section, &payload); err != nil {
 			return fmt.Errorf("db load full config: scan: %w", err)
 		}
+		if err := validateJSONNoDuplicateObjectNames([]byte(payload)); err != nil {
+			return fmt.Errorf("db load full config section %s: %w", section, err)
+		}
 		sections[section] = json.RawMessage(payload)
 	}
 	if err := rows.Err(); err != nil {
@@ -2935,6 +3078,90 @@ func (r *SQLiteRepository) LoadFullConfig(ctx context.Context, dest any) error {
 		return fmt.Errorf("db load full config: unmarshal to dest: %w", err)
 	}
 
+	return nil
+}
+
+// validateJSONNoDuplicateObjectNames scans one JSON value and rejects duplicate
+// object member names before the standard decoder can collapse them into a map.
+func validateJSONNoDuplicateObjectNames(payload []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.UseNumber()
+	if err := validateJSONValueNoDuplicateObjectNames(dec, ""); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return fmt.Errorf("read trailing JSON token: %w", err)
+	}
+	return nil
+}
+
+// validateJSONValueNoDuplicateObjectNames consumes one JSON value from dec and
+// reports duplicate object member names with a dotted path to the object.
+func validateJSONValueNoDuplicateObjectNames(dec *json.Decoder, path string) error {
+	token, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("read JSON token at %q: %w", path, err)
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+		for dec.More() {
+			keyToken, err := dec.Token()
+			if err != nil {
+				return fmt.Errorf("read JSON object key at %q: %w", path, err)
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("invalid JSON object key at %q", path)
+			}
+			if _, exists := seen[key]; exists {
+				if path == "" {
+					return fmt.Errorf("duplicate JSON object key %q", key)
+				}
+				return fmt.Errorf("duplicate JSON object key %q at %q", key, path)
+			}
+			seen[key] = struct{}{}
+			childPath := key
+			if path != "" {
+				childPath = path + "." + key
+			}
+			if err := validateJSONValueNoDuplicateObjectNames(dec, childPath); err != nil {
+				return err
+			}
+		}
+		return consumeJSONDelim(dec, '}')
+	case '[':
+		index := 0
+		for dec.More() {
+			childPath := fmt.Sprintf("%s[%d]", path, index)
+			if err := validateJSONValueNoDuplicateObjectNames(dec, childPath); err != nil {
+				return err
+			}
+			index++
+		}
+		return consumeJSONDelim(dec, ']')
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q at %q", delim, path)
+	}
+}
+
+// consumeJSONDelim consumes and verifies the expected closing JSON delimiter.
+func consumeJSONDelim(dec *json.Decoder, want json.Delim) error {
+	token, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("read JSON delimiter %q: %w", want, err)
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != want {
+		return fmt.Errorf("expected JSON delimiter %q", want)
+	}
 	return nil
 }
 

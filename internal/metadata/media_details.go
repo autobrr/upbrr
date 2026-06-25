@@ -32,6 +32,8 @@ var editionWhitespacePattern = regexp.MustCompile(`\s+`)
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 var numericPattern = regexp.MustCompile(`\d+`)
 
+// ApplyMediaDetails enriches prepared metadata from MediaInfo, BDInfo, filename
+// tokens, overrides, and tracker policies, then rebuilds the release name.
 func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
@@ -115,7 +117,7 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	}
 
 	meta.UHD = uhdFromMeta(meta)
-	meta.HDR = hdrFromMedia(miDoc, bdinfo)
+	meta.HDR = hdrFromMedia(miDoc, bdinfo, meta)
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
 	}
@@ -194,6 +196,9 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	return meta, nil
 }
 
+// RefreshPreparedMetadata reapplies request-scoped audio, naming, rule, and
+// claim state without rereading media files. HDR may be refreshed from the
+// current source path only when it still matches the parsed release HDR.
 func (s *Service) RefreshPreparedMetadata(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	if s == nil {
 		return meta, nil
@@ -204,6 +209,9 @@ func (s *Service) RefreshPreparedMetadata(ctx context.Context, meta api.Prepared
 	meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonClaim)
 	meta.TrackerRuleFailures = removeTrackerRule(meta.TrackerRuleFailures, trackerClaimRuleActive)
 
+	if filenameHDR := filenameHDRFromMeta(meta); filenameHDR != "" && meta.HDR == normalizeFilenameHDRTokens(meta.Release.HDR) {
+		meta.HDR = filenameHDR
+	}
 	ApplyRequestScopedAudioPolicy(&meta, refreshService.cfg, refreshService.logger)
 	RebuildReleaseName(&meta, refreshService.logger)
 
@@ -517,6 +525,8 @@ func isCommentaryOrCompatibilityAudioValue(value string) bool {
 	return strings.Contains(lower, "commentary") || strings.Contains(lower, "compatibility")
 }
 
+// ApplyRequestScopedAudioPolicy updates audio labels and tracker audio blocks
+// for the request's active tracker set.
 func ApplyRequestScopedAudioPolicy(meta *api.PreparedMetadata, cfg config.Config, logger api.Logger) {
 	if meta == nil {
 		return
@@ -528,6 +538,8 @@ func ApplyRequestScopedAudioPolicy(meta *api.PreparedMetadata, cfg config.Config
 	applyAudioBloatPolicy(meta, trackers.ResolveTrackersWithDefaults(cfg, meta.Trackers, meta.TrackersRemove, logger), logger)
 }
 
+// RebuildReleaseName regenerates the prepared release-name fields from the
+// current metadata and release-name overrides.
 func RebuildReleaseName(meta *api.PreparedMetadata, logger api.Logger) {
 	if meta == nil {
 		return
@@ -1252,7 +1264,9 @@ func uhdFromMeta(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo) string {
+// hdrFromMedia prefers BDInfo and MediaInfo HDR evidence, then falls back to
+// normalized filename tokens from the current source path or parsed release.
+func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta api.PreparedMetadata) string {
 	if bdinfo != nil && len(bdinfo.Video) > 0 {
 		hdr := ""
 		dv := ""
@@ -1266,12 +1280,15 @@ func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo) string {
 		if len(bdinfo.Video) > 1 && bdinfo.Video[1].HDRDV == "Dolby Vision" {
 			dv = "DV"
 		}
-		return strings.TrimSpace(strings.Join([]string{dv, hdr}, " "))
+		if mediaHDR := strings.TrimSpace(strings.Join([]string{dv, hdr}, " ")); mediaHDR != "" {
+			return mediaHDR
+		}
+		return filenameHDRFromMeta(meta)
 	}
 
 	_, videoTracks, _ := splitMediaInfoTracks(doc)
 	if len(videoTracks) == 0 {
-		return ""
+		return filenameHDRFromMeta(meta)
 	}
 	track := videoTracks[0]
 	primaries := trackString(track, "colour_primaries", "colour_primaries_Original")
@@ -1307,7 +1324,43 @@ func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo) string {
 	if strings.Contains(trackString(track, "HDR_Format"), "Dolby Vision") || strings.Contains(trackString(track, "HDR_Format_String"), "Dolby Vision") {
 		dv = "DV"
 	}
-	return strings.TrimSpace(strings.Join([]string{dv, hdr}, " "))
+	if mediaHDR := strings.TrimSpace(strings.Join([]string{dv, hdr}, " ")); mediaHDR != "" {
+		return mediaHDR
+	}
+	return filenameHDRFromMeta(meta)
+}
+
+// filenameHDRFromMeta returns normalized HDR tokens from SourcePath before
+// falling back to previously parsed release tokens.
+func filenameHDRFromMeta(meta api.PreparedMetadata) string {
+	if sourceHDR := normalizeFilenameHDRTokens(ParseReleaseInfo(meta.SourcePath).HDR); sourceHDR != "" {
+		return sourceHDR
+	}
+	return normalizeFilenameHDRTokens(meta.Release.HDR)
+}
+
+// normalizeFilenameHDRTokens keeps recognized filename HDR tokens in release
+// name order and ignores ambiguous labels such as SDR.
+func normalizeFilenameHDRTokens(tokens []string) string {
+	dv := ""
+	hdr := ""
+	hlg := ""
+	for _, token := range tokens {
+		normalized := strings.ToUpper(strings.TrimSpace(token))
+		switch normalized {
+		case "DV", "DOVI", "DOLBY VISION":
+			dv = "DV"
+		case "HDR10+", "HDR+", "HDR10PLUS":
+			hdr = "HDR10+"
+		case "HDR", "HDR10":
+			if hdr == "" {
+				hdr = "HDR"
+			}
+		case "HLG":
+			hlg = "HLG"
+		}
+	}
+	return strings.TrimSpace(strings.Join([]string{dv, hdr, hlg}, " "))
 }
 
 func normalizeDistributor(input string) string {

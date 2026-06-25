@@ -5,15 +5,18 @@ package guiapp
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -53,6 +56,207 @@ func TestFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
 	}
 	if !coreSvc.fetchReq.Options.SkipAutoTorrent {
 		t.Fatalf("expected skip_auto_torrent request option, got %#v", coreSvc.fetchReq.Options)
+	}
+}
+
+type guiSnapshotGuardCore struct {
+	closeCounterCore
+	wantScreens int
+	errs        chan<- error
+}
+
+func (c *guiSnapshotGuardCore) check(req api.Request, method string) {
+	if req.Options.Screens != c.wantScreens {
+		select {
+		case c.errs <- errors.New(method + " used mismatched runtime options"):
+		default:
+		}
+	}
+}
+
+func (c *guiSnapshotGuardCore) FetchScreenshotPlan(_ context.Context, req api.Request) (api.ScreenshotPlan, error) {
+	c.check(req, "FetchScreenshotPlan")
+	return api.ScreenshotPlan{}, nil
+}
+
+func (c *guiSnapshotGuardCore) GenerateScreenshots(_ context.Context, req api.Request, _ []api.ScreenshotSelection, _ api.ScreenshotPurpose) (api.ScreenshotResult, error) {
+	c.check(req, "GenerateScreenshots")
+	return api.ScreenshotResult{}, nil
+}
+
+func (c *guiSnapshotGuardCore) ListUploadCandidates(_ context.Context, req api.Request) ([]api.ScreenshotImage, error) {
+	c.check(req, "ListUploadCandidates")
+	return nil, nil
+}
+
+func (c *guiSnapshotGuardCore) ListUploadedImages(_ context.Context, req api.Request) ([]api.UploadedImageLink, error) {
+	c.check(req, "ListUploadedImages")
+	return nil, nil
+}
+
+func (c *guiSnapshotGuardCore) UploadImages(_ context.Context, req api.Request, _ string, _ []api.ScreenshotImage) (api.UploadImagesResult, error) {
+	c.check(req, "UploadImages")
+	return api.UploadImagesResult{}, nil
+}
+
+func (c *guiSnapshotGuardCore) RunUploadPrepared(_ context.Context, req api.Request) (api.Result, error) {
+	c.check(req, "RunUploadPrepared")
+	return api.Result{}, nil
+}
+
+func (c *guiSnapshotGuardCore) ExportGUICachedPreparedMeta(_ context.Context, req api.Request) (api.PreparedMetadata, bool, error) {
+	c.check(req, "ExportGUICachedPreparedMeta")
+	return api.PreparedMetadata{}, false, nil
+}
+
+func TestGUIRequestsUseSingleRuntimeSnapshot(t *testing.T) {
+	t.Parallel()
+
+	errs := make(chan error, 1)
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-runtime-snapshot.db")
+	cfgA := guiConfigTestConfig(repoPath)
+	cfgA.ScreenshotHandling.Screens = 1
+	cfgB := cfgA
+	cfgB.ScreenshotHandling.Screens = 2
+	app := &App{
+		cfg:  cfgA,
+		core: &guiSnapshotGuardCore{wantScreens: 1, errs: errs},
+		repo: repo,
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if i%2 == 0 {
+				app.replaceRuntime(cfgB, &guiSnapshotGuardCore{wantScreens: 2, errs: errs}, nil)
+			} else {
+				app.replaceRuntime(cfgA, &guiSnapshotGuardCore{wantScreens: 1, errs: errs}, nil)
+			}
+		}
+	})
+	t.Cleanup(func() {
+		close(stop)
+		wg.Wait()
+	})
+
+	for range 200 {
+		if _, err := app.FetchScreenshotPlan("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}); err != nil {
+			t.Fatalf("fetch screenshot plan: %v", err)
+		}
+		if _, err := app.GenerateScreenshots("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, api.ScreenshotPurposeFinal); err != nil {
+			t.Fatalf("generate screenshots: %v", err)
+		}
+		if _, err := app.ListUploadCandidates("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}); err != nil {
+			t.Fatalf("list upload candidates: %v", err)
+		}
+		if _, err := app.ListUploadedImages("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}); err != nil {
+			t.Fatalf("list uploaded images: %v", err)
+		}
+		if _, err := app.UploadImages("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, "host", []api.ScreenshotImage{{Path: "image.jpg"}}); err != nil {
+			t.Fatalf("upload images: %v", err)
+		}
+		_, _ = app.FetchTrackerDryRun("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, nil, nil, nil, false, false, "")
+		select {
+		case err := <-errs:
+			t.Fatal(err)
+		default:
+		}
+	}
+}
+
+func TestRunSingleTrackerUploadUsesJobUploadOptionsSnapshot(t *testing.T) {
+	t.Parallel()
+
+	errs := make(chan error, 1)
+	repoPath := filepath.Join(t.TempDir(), "gui-upload-job.db")
+	jobCfg := guiConfigTestConfig(repoPath)
+	jobCfg.ScreenshotHandling.Screens = 1
+	currentCfg := jobCfg
+	currentCfg.ScreenshotHandling.Screens = 2
+	app := &App{cfg: currentCfg}
+	job := &trackerUploadJob{
+		sourcePath:           "C:\\releases\\Example.mkv",
+		uploadOptions:        buildRunUploadOptions(jobCfg, runOptions{}),
+		runOptions:           runOptions{},
+		core:                 &guiSnapshotGuardCore{wantScreens: 1, errs: errs},
+		descriptionGroups:    nil,
+		trackers:             []string{"BTN"},
+		questionnaireAnswers: map[string]map[string]string{},
+	}
+
+	if _, err := app.runSingleTrackerUpload(context.Background(), job, "BTN"); err != nil {
+		t.Fatalf("run single tracker upload: %v", err)
+	}
+	select {
+	case err := <-errs:
+		t.Fatal(err)
+	default:
+	}
+}
+
+func TestSaveConfigAcceptsSameDatabasePathAlias(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-dbpath-alias.db")
+	initial := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+	t.Cleanup(func() {
+		if coreSvc := app.currentCore(); coreSvc != nil {
+			_ = coreSvc.Close()
+		}
+		if logger := app.currentLogger(); logger != nil {
+			_ = logger.Close()
+		}
+	})
+
+	updated := initial
+	updated.MainSettings.DBPath = filepath.Dir(repoPath) + string(filepath.Separator) + "." + string(filepath.Separator) + filepath.Base(repoPath)
+	updated.Metadata.SkipAutoTorrent = true
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	if err := app.SaveConfig(payload); err != nil {
+		t.Fatalf("save config with DBPath alias: %v", err)
+	}
+	if got := app.currentConfig().MainSettings.DBPath; got != repoPath {
+		t.Fatalf("runtime DBPath: got %q want %q", got, repoPath)
+	}
+}
+
+func TestSaveConfigRejectsDifferentDatabasePath(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-dbpath-change.db")
+	initial := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+
+	updated := initial
+	updated.MainSettings.DBPath = filepath.Join(t.TempDir(), "different.db")
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	err = app.SaveConfig(payload)
+	if err == nil {
+		t.Fatal("expected DBPath change rejection")
+	}
+	if !strings.Contains(err.Error(), "requires restart") {
+		t.Fatalf("expected restart error, got %v", err)
 	}
 }
 
@@ -165,6 +369,491 @@ func TestSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
 	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); loadErr == nil {
 		t.Fatal("expected invalid runtime config to be rejected before database save")
 	}
+}
+
+func TestSaveConfigBuildRuntimeFailureLeavesDatabaseAndRuntimeUnchanged(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-runtime-build-failure.db")
+	initial := guiConfigTestConfig(repoPath)
+	if err := config.SaveToDatabase(context.Background(), &initial, repo); err != nil {
+		t.Fatalf("save initial config: %v", err)
+	}
+	previousCore := &closeCounterCore{}
+	app := &App{
+		cfg:  initial,
+		core: previousCore,
+		repo: repo,
+	}
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	updated.Logging.Level = "invalid-level"
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	err = app.SaveConfig(payload)
+	if err == nil {
+		t.Fatal("expected runtime build failure")
+	}
+
+	assertGUIStoredAndRuntimeConfigUnchanged(t, app, repo, initial, previousCore)
+}
+
+func TestGetConfigFallsBackToRuntimeConfigWhenDatabaseConfigMissing(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-get-missing-config.db")
+	cfg := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  cfg,
+		repo: repo,
+	}
+
+	payload, err := app.GetConfig()
+	if err != nil {
+		t.Fatalf("get config: %v", err)
+	}
+	exported, err := config.ImportFromJSONEncrypted(payload)
+	if err != nil {
+		t.Fatalf("parse exported config: %v", err)
+	}
+	if exported.MainSettings.DBPath != repoPath {
+		t.Fatalf("DBPath: got %q want %q", exported.MainSettings.DBPath, repoPath)
+	}
+	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); !errors.Is(loadErr, internalerrors.ErrNotFound) {
+		t.Fatalf("fallback should not persist config rows, load err=%v", loadErr)
+	}
+}
+
+func TestGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	repoPath := filepath.Join(tempDir, "gui-empty-snapshot.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	pathA := filepath.Join(tempDir, "runtime-a.db")
+	pathB := filepath.Join(tempDir, "runtime-b.db")
+	cfgA := config.Config{
+		MainSettings:       config.MainSettingsConfig{DBPath: pathA},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+	}
+	cfgB := config.Config{
+		MainSettings:       config.MainSettingsConfig{DBPath: pathB},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 2},
+	}
+	app := &App{
+		cfg:  cfgA,
+		repo: repo,
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				app.replaceRuntime(cfgA, nil, nil)
+				app.replaceRuntime(cfgB, nil, nil)
+			}
+		}
+	})
+	defer func() {
+		close(stop)
+		wg.Wait()
+	}()
+
+	for range 2000 {
+		payload, err := app.GetConfig()
+		if err != nil {
+			t.Fatalf("get config: %v", err)
+		}
+		exported, err := config.ImportFromJSONEncrypted(payload)
+		if err != nil {
+			t.Fatalf("parse exported config: %v", err)
+		}
+		switch exported.MainSettings.DBPath {
+		case pathA:
+			if exported.ScreenshotHandling.Screens != cfgA.ScreenshotHandling.Screens {
+				t.Fatalf("mixed fallback snapshot for %q: screens=%d", pathA, exported.ScreenshotHandling.Screens)
+			}
+		case pathB:
+			if exported.ScreenshotHandling.Screens != cfgB.ScreenshotHandling.Screens {
+				t.Fatalf("mixed fallback snapshot for %q: screens=%d", pathB, exported.ScreenshotHandling.Screens)
+			}
+		default:
+			t.Fatalf("unexpected fallback DBPath %q", exported.MainSettings.DBPath)
+		}
+	}
+	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); !errors.Is(loadErr, internalerrors.ErrNotFound) {
+		t.Fatalf("fallback should not persist config rows, load err=%v", loadErr)
+	}
+}
+
+func TestExportConfigToPathFallsBackToRuntimeConfigWhenDatabaseConfigMissing(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-export-missing-config.db")
+	cfg := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  cfg,
+		repo: repo,
+	}
+
+	outputBase := filepath.Join(t.TempDir(), "config-export")
+	outputPath, err := app.exportConfigToPath(context.Background(), outputBase)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+	wantPath := outputBase + ".yaml"
+	if outputPath != wantPath {
+		t.Fatalf("output path: got %q want %q", outputPath, wantPath)
+	}
+	exported, err := config.ImportFromYAML(outputPath)
+	if err != nil {
+		t.Fatalf("parse exported config: %v", err)
+	}
+	if exported.MainSettings.DBPath != repoPath {
+		t.Fatalf("DBPath: got %q want %q", exported.MainSettings.DBPath, repoPath)
+	}
+	if exported.Trackers.Trackers == nil {
+		t.Fatal("expected fallback export to include nonnil tracker map")
+	}
+	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); !errors.Is(loadErr, internalerrors.ErrNotFound) {
+		t.Fatalf("fallback should not persist config rows, load err=%v", loadErr)
+	}
+}
+
+func TestExportConfigToPathUsesDatabaseConfigWhenPresent(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-export-stored-config.db")
+	runtimeCfg := guiConfigTestConfig(repoPath)
+	runtimeCfg.ScreenshotHandling.Screens = 1
+	storedCfg := guiConfigTestConfig(repoPath)
+	storedCfg.ScreenshotHandling.Screens = 7
+	if err := config.SaveToDatabase(context.Background(), &storedCfg, repo); err != nil {
+		t.Fatalf("save stored config: %v", err)
+	}
+	app := &App{
+		cfg:  runtimeCfg,
+		repo: repo,
+	}
+
+	outputPath, err := app.exportConfigToPath(context.Background(), filepath.Join(t.TempDir(), "stored.yaml"))
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+	exported, err := config.ImportFromYAML(outputPath)
+	if err != nil {
+		t.Fatalf("parse exported config: %v", err)
+	}
+	if exported.ScreenshotHandling.Screens != storedCfg.ScreenshotHandling.Screens {
+		t.Fatalf("screens: got %d want %d", exported.ScreenshotHandling.Screens, storedCfg.ScreenshotHandling.Screens)
+	}
+}
+
+func TestExportConfigToPathAuthorizesAgainstExportSnapshotDBPath(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-export-snapshot-auth.db")
+	tempDir := filepath.Dir(repoPath)
+	runtimeDBPath := filepath.Join(tempDir, "runtime", "state.db")
+	storedDBPath := filepath.Join(tempDir, "stored", "state.db")
+	writeGUIAuthFile(t, runtimeDBPath, false)
+	writeGUIAuthFile(t, storedDBPath, true)
+
+	runtimeCfg := guiConfigTestConfig(runtimeDBPath)
+	runtimeCfg.MainSettings.TMDBAPI = "runtime-secret"
+	storedCfg := guiConfigTestConfig(storedDBPath)
+	storedCfg.MainSettings.TMDBAPI = "stored-secret"
+	if err := config.SaveToDatabase(context.Background(), &storedCfg, repo); err != nil {
+		t.Fatalf("save stored config: %v", err)
+	}
+	app := &App{
+		cfg:  runtimeCfg,
+		repo: repo,
+	}
+
+	outputPath, err := app.exportConfigToPath(context.Background(), filepath.Join(t.TempDir(), "stored.yaml"))
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+	payload, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read exported config: %v", err)
+	}
+	exported := string(payload)
+	if !strings.Contains(exported, "stored-secret") {
+		t.Fatalf("expected plaintext stored secret authorized by stored DB path, payload=%s", exported)
+	}
+	if strings.Contains(exported, "runtime-secret") {
+		t.Fatalf("export used runtime secret, payload=%s", exported)
+	}
+}
+
+func TestExportConfigToPathFallbackRespectsUnencryptedExportAuth(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                   string
+		allowUnencryptedExport bool
+		expectPlaintext        bool
+		expectEncryptedMarker  bool
+	}{
+		{
+			name:                   "allow unencrypted export",
+			allowUnencryptedExport: true,
+			expectPlaintext:        true,
+			expectEncryptedMarker:  false,
+		},
+		{
+			name:                   "deny unencrypted export",
+			allowUnencryptedExport: false,
+			expectPlaintext:        false,
+			expectEncryptedMarker:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo, repoPath := openGUIConfigTestRepo(t, "gui-export-auth.db")
+			writeGUIAuthFile(t, repoPath, tc.allowUnencryptedExport)
+			cfg := guiConfigTestConfig(repoPath)
+			cfg.MainSettings.TMDBAPI = "plain-secret"
+			app := &App{
+				cfg:  cfg,
+				repo: repo,
+			}
+
+			outputPath, err := app.exportConfigToPath(context.Background(), filepath.Join(t.TempDir(), "auth.yaml"))
+			if err != nil {
+				t.Fatalf("export config: %v", err)
+			}
+			payload, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatalf("read exported config: %v", err)
+			}
+			exported := string(payload)
+			if got := strings.Contains(exported, "plain-secret"); got != tc.expectPlaintext {
+				t.Fatalf("plaintext presence = %t, want %t; payload=%s", got, tc.expectPlaintext, exported)
+			}
+			if got := strings.Contains(exported, "upbrr-enc:v1:"); got != tc.expectEncryptedMarker {
+				t.Fatalf("encrypted marker presence = %t, want %t; payload=%s", got, tc.expectEncryptedMarker, exported)
+			}
+		})
+	}
+}
+
+func TestExportConfigToPathBlankPathNoops(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-export-blank-path.db")
+	app := &App{
+		cfg:  guiConfigTestConfig(repoPath),
+		repo: repo,
+	}
+
+	outputPath, err := app.exportConfigToPath(context.Background(), "   ")
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+	if outputPath != "" {
+		t.Fatalf("output path: got %q want empty", outputPath)
+	}
+}
+
+func TestSaveConfigMalformedWebAuthFailsBeforeConfigSave(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-malformed-auth.db")
+	initial := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+	if err := os.WriteFile(authmaterial.AuthFilePath(repoPath), []byte(`{`), 0o600); err != nil {
+		t.Fatalf("write malformed auth file: %v", err)
+	}
+
+	err = app.SaveConfig(payload)
+	if err == nil {
+		t.Fatal("expected malformed web auth to fail before save")
+	}
+
+	assertGUIFailedConfigSaveRowsAbsent(t, repo)
+	if got := app.currentConfig().Metadata.SkipAutoTorrent; got {
+		t.Fatal("expected runtime config not to be applied after failed auth sync")
+	}
+}
+
+func TestImportConfigMalformedWebAuthFailsBeforeConfigSave(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-import-malformed-auth.db")
+	initial := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+
+	imported := initial
+	imported.Metadata.SkipAutoTorrent = true
+	path := exportGUIConfigYAML(t, &imported)
+	if err := os.WriteFile(authmaterial.AuthFilePath(repoPath), []byte(`{`), 0o600); err != nil {
+		t.Fatalf("write malformed auth file: %v", err)
+	}
+
+	_, err := app.importConfigFromPath(context.Background(), path)
+	if err == nil {
+		t.Fatal("expected malformed web auth to fail before imported config save")
+	}
+
+	assertGUIFailedConfigSaveRowsAbsent(t, repo)
+	if got := app.currentConfig().Metadata.SkipAutoTorrent; got {
+		t.Fatal("expected runtime config not to be applied after failed auth sync")
+	}
+}
+
+func TestImportConfigBuildRuntimeFailureLeavesDatabaseAndRuntimeUnchanged(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-import-runtime-build-failure.db")
+	initial := guiConfigTestConfig(repoPath)
+	if err := config.SaveToDatabase(context.Background(), &initial, repo); err != nil {
+		t.Fatalf("save initial config: %v", err)
+	}
+	previousCore := &closeCounterCore{}
+	app := &App{
+		cfg:  initial,
+		core: previousCore,
+		repo: repo,
+	}
+
+	imported := initial
+	imported.Metadata.SkipAutoTorrent = true
+	imported.Logging.Level = "invalid-level"
+	path := exportGUIConfigYAML(t, &imported)
+
+	result, err := app.importConfigFromPath(context.Background(), path)
+	if err == nil {
+		t.Fatal("expected runtime build failure")
+	}
+	if result.Message != "" || len(result.Warnings) != 0 {
+		t.Fatalf("expected empty import result on failed apply, got %#v", result)
+	}
+
+	assertGUIStoredAndRuntimeConfigUnchanged(t, app, repo, initial, previousCore)
+}
+
+func TestSaveConfigSyncsUsableWebAuthBeforeSave(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-usable-auth.db")
+	if err := authmaterial.BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	initial := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	if err := app.SaveConfig(payload); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	assertGUICookieAuthStatePresent(t, repo)
+}
+
+func TestSaveConfigCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-cookie-rollback.db")
+	if err := authmaterial.BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	installGUIFailMainSettingsTrigger(t, repo)
+	initial := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	err = app.SaveConfig(payload)
+	if err == nil {
+		t.Fatal("expected save config to fail")
+	}
+
+	assertGUIFailedConfigSaveRowsAbsent(t, repo)
+	if got := app.currentConfig().Metadata.SkipAutoTorrent; got {
+		t.Fatal("expected runtime config not to be applied after failed config save")
+	}
+}
+
+func TestSaveConfigRepositoryRejectsAuthChangeAfterValidation(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-auth-drift.db")
+	if err := authmaterial.BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	if err := validateCookieAuthMaterial(repoPath); err != nil {
+		t.Fatalf("prevalidate auth material: %v", err)
+	}
+	if err := os.WriteFile(authmaterial.AuthFilePath(repoPath), []byte(`{`), 0o600); err != nil {
+		t.Fatalf("replace auth file: %v", err)
+	}
+	initial := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	err := app.saveConfigToRepository(context.Background(), &updated, repoPath)
+	if err == nil {
+		t.Fatal("expected auth drift to malformed helper to fail")
+	}
+	assertGUIFailedConfigSaveRowsAbsent(t, repo)
 }
 
 func TestListHistoryUsesRepositoryWhenCoreDisabled(t *testing.T) {
@@ -340,6 +1029,131 @@ func openGUIAppTestRepo(t *testing.T) *db.SQLiteRepository {
 	return repo
 }
 
+func openGUIConfigTestRepo(t *testing.T, name string) (*db.SQLiteRepository, string) {
+	t.Helper()
+
+	repoPath := filepath.Join(t.TempDir(), name)
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+	return repo, repoPath
+}
+
+func guiConfigTestConfig(repoPath string) config.Config {
+	return config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "info"},
+	}
+}
+
+func exportGUIConfigYAML(t *testing.T, cfg *config.Config) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := config.ExportToYAML(cfg, path); err != nil {
+		t.Fatalf("export config yaml: %v", err)
+	}
+	return path
+}
+
+func writeGUIAuthFile(t *testing.T, dbPath string, allowUnencryptedExport bool) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		t.Fatalf("create auth dir: %v", err)
+	}
+	authJSON := `{"username":"tester","password_hash":"hash","encryption_key_seed":"seed","allow_unencrypted_export":false}`
+	if allowUnencryptedExport {
+		authJSON = `{"username":"tester","password_hash":"hash","encryption_key_seed":"seed","allow_unencrypted_export":true}`
+	}
+	if err := os.WriteFile(authmaterial.AuthFilePath(dbPath), []byte(authJSON), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+}
+
+func assertGUIFailedConfigSaveRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
+	t.Helper()
+
+	for _, section := range []string{
+		"MainSettings",
+		"cookies_encryption_salt",
+		"cookies_encryption_auth_state",
+	} {
+		var data string
+		err := repo.RawDB().QueryRowContext(context.Background(),
+			`SELECT data FROM config_settings WHERE section = ?`,
+			section,
+		).Scan(&data)
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("expected %s to be absent after failed sync, got row=%q err=%v", section, data, err)
+		}
+	}
+}
+
+func assertGUICookieAuthStatePresent(t *testing.T, repo *db.SQLiteRepository) {
+	t.Helper()
+
+	var authState string
+	if err := repo.RawDB().QueryRowContext(context.Background(),
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"cookies_encryption_auth_state",
+	).Scan(&authState); err != nil {
+		t.Fatalf("query cookie auth state: %v", err)
+	}
+	if !strings.Contains(authState, "fingerprint") {
+		t.Fatalf("expected synced cookie auth fingerprint, got %s", authState)
+	}
+}
+
+func installGUIFailMainSettingsTrigger(t *testing.T, repo *db.SQLiteRepository) {
+	t.Helper()
+
+	if _, err := repo.RawDB().ExecContext(context.Background(), `
+		CREATE TRIGGER fail_main_settings_save
+		BEFORE INSERT ON config_settings
+		WHEN NEW.section = 'MainSettings'
+		BEGIN
+			SELECT RAISE(FAIL, 'forced main settings failure');
+		END
+	`); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+}
+
+func assertGUIStoredAndRuntimeConfigUnchanged(t *testing.T, app *App, repo *db.SQLiteRepository, want config.Config, wantCore api.Core) {
+	t.Helper()
+
+	stored, err := config.LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("load stored config: %v", err)
+	}
+	if stored.Metadata.SkipAutoTorrent != want.Metadata.SkipAutoTorrent {
+		t.Fatalf("stored skip_auto_torrent: got %v want %v", stored.Metadata.SkipAutoTorrent, want.Metadata.SkipAutoTorrent)
+	}
+	if stored.Logging.Level != want.Logging.Level {
+		t.Fatalf("stored logging level: got %q want %q", stored.Logging.Level, want.Logging.Level)
+	}
+
+	runtimeCfg := app.currentConfig()
+	if runtimeCfg.Metadata.SkipAutoTorrent != want.Metadata.SkipAutoTorrent {
+		t.Fatalf("runtime skip_auto_torrent: got %v want %v", runtimeCfg.Metadata.SkipAutoTorrent, want.Metadata.SkipAutoTorrent)
+	}
+	if runtimeCfg.Logging.Level != want.Logging.Level {
+		t.Fatalf("runtime logging level: got %q want %q", runtimeCfg.Logging.Level, want.Logging.Level)
+	}
+	if gotCore := app.currentCore(); gotCore != wantCore {
+		t.Fatalf("runtime core changed: got %T want %T", gotCore, wantCore)
+	}
+}
+
 func TestApplyConfigKeepsSharedRepositoryUsable(t *testing.T) {
 	t.Parallel()
 
@@ -373,7 +1187,7 @@ func TestApplyConfigKeepsSharedRepositoryUsable(t *testing.T) {
 		}
 	})
 
-	if err := app.applyConfig(cfg); err != nil {
+	if err := app.applyConfig(context.Background(), cfg); err != nil {
 		t.Fatalf("apply config: %v", err)
 	}
 	if app.core == nil {
@@ -453,7 +1267,7 @@ func TestAppAllowUnencryptedExportFromWebAuth(t *testing.T) {
 		},
 	}
 
-	allow, err := app.allowUnencryptedExport()
+	allow, err := app.allowUnencryptedExport(repoPath)
 	if err != nil {
 		t.Fatalf("allowUnencryptedExport: %v", err)
 	}

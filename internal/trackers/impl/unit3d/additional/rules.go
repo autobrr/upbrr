@@ -8,6 +8,7 @@ import "strings"
 var (
 	languagesEnglish = []string{"english", "en", "eng"}
 	languagesFrench  = []string{"french", "fr", "fra", "fre"}
+	languagesGerman  = []string{"german", "ger", "de", "deu", "gsw"}
 	languagesSpanish = []string{"spanish", "es", "spa"}
 	languagesNordic  = []string{
 		"english",
@@ -41,6 +42,7 @@ var trackerRuleFactories = map[string]func() RuleSet{
 	"OTW":    rulesOTW,
 	"RAS":    rulesRAS,
 	"RF":     rulesRF,
+	"RHD":    rulesRHD,
 	"SHRI":   rulesSHRI,
 	"SP":     rulesSP,
 	"STC":    rulesSTC,
@@ -49,6 +51,7 @@ var trackerRuleFactories = map[string]func() RuleSet{
 	"TTR":    rulesTTR,
 	"ULCX":   rulesULCX,
 	"NBL":    rulesNBL,
+	"ZNTH":   rulesZNTH,
 }
 
 func RulesFor(tracker string) (RuleSet, bool) {
@@ -188,6 +191,20 @@ func rulesRF() RuleSet {
 	}
 }
 
+// rulesRHD requires German audio for every upload type, including full discs
+// whose RHD release names do not carry language tags.
+func rulesRHD() RuleSet {
+	return RuleSet{
+		BlockAdult:    true,
+		MinResolution: "720p",
+		Language: &LanguageRule{
+			Languages:    languagesGerman,
+			RequireAudio: true,
+		},
+		RequireSceneNFO: true,
+	}
+}
+
 func rulesSHRI() RuleSet {
 	return RuleSet{ExtraCheck: checkSHRIRegion}
 }
@@ -242,5 +259,13 @@ func rulesULCX() RuleSet {
 			ApplyIfNonDisc: true,
 		},
 		ExtraCheck: checkULCXRules,
+	}
+}
+
+// rulesZNTH blocks adult uploads using ZNTH's tracker-facing rejection text.
+func rulesZNTH() RuleSet {
+	return RuleSet{
+		BlockAdult:   true,
+		AdultMessage: "Porn/xxx is not allowed at ZNTH.",
 	}
 }

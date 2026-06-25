@@ -121,6 +121,8 @@ export type TMDBMetadata = {
   Demographic: string;
   RetrievedAKA: string;
   Keywords: string;
+  /** Maps TMDB translation language keys, such as "de" or "pt-BR", to localized titles. */
+  LocalizedTitles: Record<string, string>;
   YouTube: string;
   Certification: string;
   ProductionCompanies: TMDBCompany[];
@@ -437,6 +439,12 @@ export type DupeMatch = {
   MatchedEpisodeIDs: DupeEpisodeMatch[];
 };
 
+/**
+ * Duplicate-search outcome for one tracker. Raw contains tracker results before
+ * filtering, Filtered contains blocking matches, and skipped or failed checks
+ * carry Status plus SkipReason or Error. SkipCode and SkipRules expose stable
+ * backend skip metadata for typed UI callers.
+ */
 export type DupeCheckResult = {
   Tracker: string;
   Raw: DupeEntry[];
@@ -447,6 +455,10 @@ export type DupeCheckResult = {
   Notes: string[];
   Skipped: boolean;
   SkipReason: string;
+  /** Stable machine-readable skip reason emitted by the backend. */
+  SkipCode: string;
+  /** Upload rule keys that produced a rule-failure skip. */
+  SkipRules: string[];
   Status: string;
   Error: string;
   CheckedAt: string;

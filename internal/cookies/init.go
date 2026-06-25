@@ -14,8 +14,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// SyncCookieEncryptionWithAuth ensures encrypted cookie state is synchronized with the current
-// web auth helper and performs key rotation when auth details have changed.
+// SyncCookieEncryptionWithAuth synchronizes encrypted cookie state with the
+// current web auth helper and rotates encrypted rows when auth details change.
+// It returns ErrAuthHelperUnavailable when no usable auth material exists.
 func SyncCookieEncryptionWithAuth(ctx context.Context, db *sql.DB, dbPath string) error {
 	if ctx == nil {
 		return errors.New("cookies: context is required")
@@ -23,6 +24,27 @@ func SyncCookieEncryptionWithAuth(ctx context.Context, db *sql.DB, dbPath string
 
 	keyManager := NewKeyManager(db)
 	_, err := keyManager.InitializeEncryptionKey(ctx, dbPath)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// SyncCookieEncryptionWithAuthTx synchronizes encrypted cookie state inside an
+// existing transaction so callers can commit or roll back cookie metadata with
+// the surrounding database write.
+func SyncCookieEncryptionWithAuthTx(ctx context.Context, tx *sql.Tx, dbPath string) error {
+	if ctx == nil {
+		return errors.New("cookies: context is required")
+	}
+	if tx == nil {
+		return errors.New("cookies: transaction is required")
+	}
+
+	_, err := initializeEncryptionKey(ctx, tx, dbPath, func(ctx context.Context, oldKey, newKey []byte) error {
+		return reencryptCookiesTx(ctx, tx, oldKey, newKey)
+	})
 	if err != nil {
 		return err
 	}

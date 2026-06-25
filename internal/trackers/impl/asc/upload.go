@@ -260,7 +260,7 @@ func validatePayload(ctx context.Context, meta api.PreparedMetadata, fields map[
 	if reason := authProblem(ctx, dbPath); reason != "" {
 		return reason
 	}
-	if strings.TrimSpace(fields["imdb"]) == "" {
+	if !meta.Anime && strings.TrimSpace(fields["imdb"]) == "" {
 		return "missing IMDb ID"
 	}
 	if strings.TrimSpace(fields["capa"]) == "" {

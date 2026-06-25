@@ -65,7 +65,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	if originalName == "" {
 		originalName = strings.TrimSpace(req.Meta.ReleaseNameNoTag)
 	}
-	name := buildUnit3DName(trackerName, req.Meta)
+	name := buildUnit3DName(trackerName, req.Meta, req.TrackerConfig)
 	if name != originalName {
 		logger.Infof("trackers: %s name formatting applied", trackerName)
 		logger.Infof("  Original: %s", originalName)
@@ -369,7 +369,7 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 	if originalName == "" {
 		originalName = strings.TrimSpace(req.Meta.ReleaseNameNoTag)
 	}
-	name := buildUnit3DName(trackerName, req.Meta)
+	name := buildUnit3DName(trackerName, req.Meta, req.TrackerConfig)
 	if name != originalName {
 		logger.Infof("trackers: %s dry-run name formatting applied", trackerName)
 	}
@@ -756,25 +756,51 @@ func resolveMALID(meta api.PreparedMetadata) int {
 	return 0
 }
 
+// resolveUnit3DCategory resolves the upload category from recognized explicit
+// tracker metadata, parsed release metadata, structured episode fields, then
+// release-name heuristics.
 func resolveUnit3DCategory(meta api.PreparedMetadata) string {
-	category := strings.ToUpper(strings.TrimSpace(meta.ExternalIDs.Category))
-	if category == "" {
-		category = strings.ToUpper(strings.TrimSpace(meta.MediaInfoCategory))
-	}
-	if category == "" {
-		if hasSeasonEpisode(meta.ReleaseName) {
-			category = "TV"
-		} else {
-			category = "MOVIE"
-		}
-	}
-	if category == "MOVIE" || category == "TV" {
+	if category := resolveExplicitUnit3DCategory(meta.ExternalIDs.Category); category != "" {
 		return category
 	}
-	if strings.HasPrefix(category, "TV") {
+	if category := resolveExplicitUnit3DCategory(meta.MediaInfoCategory); category != "" {
+		return category
+	}
+	if category := canonicalUnit3DCategory(meta.Release.Category); category != "" {
+		return category
+	}
+	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
+		return "TV"
+	}
+	if hasSeasonEpisode(meta.ReleaseName) {
 		return "TV"
 	}
 	return "MOVIE"
+}
+
+// resolveExplicitUnit3DCategory treats unrecognized explicit values as absent
+// so parsed release metadata can still determine the category.
+func resolveExplicitUnit3DCategory(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	if category := canonicalUnit3DCategory(value); category != "" {
+		return category
+	}
+	return ""
+}
+
+func canonicalUnit3DCategory(value string) string {
+	switch api.NormalizeCategory(value) {
+	case api.CategoryMovie:
+		return "MOVIE"
+	case api.CategoryTV:
+		return "TV"
+	case api.CategoryUnknown:
+		return ""
+	default:
+		return ""
+	}
 }
 
 func resolveUnit3DCategoryID(meta api.PreparedMetadata) string {

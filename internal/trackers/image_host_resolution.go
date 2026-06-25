@@ -64,6 +64,9 @@ func ensureDescriptionImageHost(
 	return ensureDescriptionImageHostWithData(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, nil)
 }
 
+// ensureDescriptionImageHostWithData resolves description screenshots against a
+// tracker's image-host rules, uploading local-only slots when a preferred host
+// is supplied and no reusable hosted variant already exists.
 func ensureDescriptionImageHostWithData(
 	ctx context.Context,
 	tracker string,
@@ -109,15 +112,10 @@ func ensureDescriptionImageHostWithData(
 	}
 
 	if !policy.required {
-		selectionPolicy := imageHostPolicy{}
-		if host := firstPreferredDescriptionImageHost(preferredHosts); host != "" {
-			selectionPolicy.preferred = []string{host}
-		}
+		selectionPolicy = optionalImageHostSelectionPolicy(policy, preferredHosts...)
+		preferredHost := preferredHost(selectionPolicy)
 		screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy)
-		if err != nil {
-			return descriptionImageHostResolution{}, err
-		}
-		if len(screenshots) > 0 {
+		if err == nil && len(screenshots) > 0 {
 			feedback.SelectedHost = host
 			feedback.Message = buildReuseMessage(tracker, host, usageScope, false)
 			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
@@ -128,7 +126,11 @@ func ensureDescriptionImageHostWithData(
 			feedback.SelectedHost = strings.ToLower(strings.TrimSpace(screenshots[0].Host))
 			feedback.Message = buildReuseMessage(tracker, feedback.SelectedHost, globalImageUsageScope, false)
 		}
-		return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
+		if len(screenshots) > 0 || preferredHost == "" {
+			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
+		}
+		policy = optionalImageHostUploadPolicy(policy, preferredHosts...)
+		selectionPolicy = reusableImageHostSelectionPolicy(policy, preferredHosts...)
 	}
 
 	if screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy); err == nil && len(screenshots) > 0 && reusableSelectionMatchesPolicy(host, selectionPolicy) {
@@ -246,7 +248,15 @@ func ensureDescriptionImageHostWithData(
 		screenshots, _, _, err := selectScreenshotsFromSlots(tracker, candidateSlots, selectionPolicy)
 		if err != nil {
 			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
-			return descriptionImageHostResolution{}, err
+			lastErr = err
+			feedback.Warnings = append(feedback.Warnings, api.ImageHostWarning{
+				Host:    host,
+				Message: err.Error(),
+			})
+			if logger != nil {
+				logger.Warnf("trackers: image host upload produced unusable screenshots tracker=%s host=%s: %v", tracker, host, err)
+			}
+			continue
 		}
 		if len(screenshots) == 0 {
 			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
@@ -298,6 +308,39 @@ func firstPreferredDescriptionImageHost(hosts []string) string {
 		}
 	}
 	return ""
+}
+
+// optionalImageHostSelectionPolicy keeps preferred host ordering for optional
+// image-host reuse without restricting the set of acceptable screenshot hosts.
+func optionalImageHostSelectionPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
+	return imageHostPolicy{
+		preferred: optionalImageHostPreferredHosts(policy, preferredHosts...),
+	}
+}
+
+// optionalImageHostUploadPolicy promotes optional preferences into an upload
+// policy once reuse cannot satisfy the requested preferred host.
+func optionalImageHostUploadPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
+	hosts := optionalImageHostPreferredHosts(policy, preferredHosts...)
+	for _, host := range policy.uploadHosts {
+		if supportedUploadImageHost(host) {
+			hosts = appendUniqueHost(hosts, host)
+		}
+	}
+	if len(hosts) == 0 {
+		return policy
+	}
+	return newPreferredImageHostPolicy(hosts[0], hosts[1:]...)
+}
+
+// optionalImageHostPreferredHosts returns policy preferences with an explicit
+// preferred host first, preserving existing fallback order and deduping hosts.
+func optionalImageHostPreferredHosts(policy imageHostPolicy, preferredHosts ...string) []string {
+	hosts := append([]string(nil), policy.preferred...)
+	if host := firstPreferredDescriptionImageHost(preferredHosts); host != "" {
+		hosts = prependHost(host, hosts)
+	}
+	return hosts
 }
 
 func imageHostRequirementLabel(policy imageHostPolicy) string {

@@ -5,9 +5,12 @@ package guiapp
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/core"
@@ -18,12 +21,17 @@ import (
 )
 
 type closeCounter struct {
-	count atomic.Int32
+	count      atomic.Int32
+	closeErr   error
+	panicValue any
 }
 
 func (c *closeCounter) Close() error {
 	c.count.Add(1)
-	return nil
+	if c.panicValue != nil {
+		panic(c.panicValue)
+	}
+	return c.closeErr
 }
 
 type closeCounterCore struct {
@@ -34,6 +42,15 @@ type closeCounterCore struct {
 	importedMeta api.PreparedMetadata
 	importedReq  api.Request
 	fetchReq     api.Request
+	uploads      []uploadPreparedResponse
+	uploadCalls  int
+}
+
+type uploadPreparedResponse struct {
+	result       api.Result
+	err          error
+	beforeReturn func()
+	panicValue   any
 }
 
 func (c *closeCounterCore) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -41,6 +58,17 @@ func (c *closeCounterCore) RunUpload(context.Context, api.Request) (api.Result, 
 }
 
 func (c *closeCounterCore) RunUploadPrepared(context.Context, api.Request) (api.Result, error) {
+	if c.uploadCalls < len(c.uploads) {
+		response := c.uploads[c.uploadCalls]
+		c.uploadCalls++
+		if response.beforeReturn != nil {
+			response.beforeReturn()
+		}
+		if response.panicValue != nil {
+			panic(response.panicValue)
+		}
+		return response.result, response.err
+	}
 	return api.Result{}, nil
 }
 
@@ -275,8 +303,8 @@ func TestTrackerUploadJobCloseResourcesIsIdempotent(t *testing.T) {
 		logger: loggerCloser,
 	}
 
-	job.closeResources()
-	job.closeResources()
+	_ = job.closeResources()
+	_ = job.closeResources()
 
 	if got := coreCloser.count.Load(); got != 1 {
 		t.Fatalf("expected core close once, got %d", got)
@@ -284,6 +312,385 @@ func TestTrackerUploadJobCloseResourcesIsIdempotent(t *testing.T) {
 	if got := loggerCloser.count.Load(); got != 1 {
 		t.Fatalf("expected logger close once, got %d", got)
 	}
+}
+
+func TestCloseTrackerUploadResourceReturnsCloseError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("close failed")
+
+	err := closeTrackerUploadResource("logger", &closeCounter{closeErr: wantErr})
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected close error, got %v", err)
+	}
+}
+
+func TestCloseTrackerUploadResourceReturnsPanicError(t *testing.T) {
+	t.Parallel()
+
+	closeErr := errors.New("close failed")
+
+	err := closeTrackerUploadResource("logger", &closeCounter{closeErr: closeErr, panicValue: "close panic"})
+
+	if err == nil {
+		t.Fatal("expected panic error")
+	}
+	if !strings.Contains(err.Error(), "logger close panicked") {
+		t.Fatalf("expected panic context, got %v", err)
+	}
+	if errors.Is(err, closeErr) {
+		t.Fatalf("expected panic error to take precedence over close error, got %v", err)
+	}
+}
+
+func TestTrackerUploadRetryRequestUsesStoredUploadOptions(t *testing.T) {
+	t.Parallel()
+
+	job := &trackerUploadJob{
+		sourcePath:     `C:\Media\Movie.mkv`,
+		uploadOptions:  api.UploadOptions{Screens: 1, SkipAutoTorrent: true},
+		runOptions:     runOptions{Debug: true, NoSeed: true, RunLogLevel: "debug"},
+		failedTrackers: []string{"BLU"},
+		ignoreDupesFor: []string{"AITHER"},
+	}
+
+	retry, err := trackerUploadRetryRequestFromJob(job)
+	if err != nil {
+		t.Fatalf("retry request: %v", err)
+	}
+
+	job.uploadOptions.Screens = 9
+	job.failedTrackers[0] = "MUTATED"
+	job.ignoreDupesFor[0] = "MUTATED"
+
+	if retry.uploadOptions.Screens != 1 || !retry.uploadOptions.SkipAutoTorrent {
+		t.Fatalf("expected stored upload options snapshot, got %#v", retry.uploadOptions)
+	}
+	if len(retry.failedTrackers) != 1 || retry.failedTrackers[0] != "BLU" {
+		t.Fatalf("expected failed trackers snapshot, got %#v", retry.failedTrackers)
+	}
+	if len(retry.ignoreDupesFor) != 1 || retry.ignoreDupesFor[0] != "AITHER" {
+		t.Fatalf("expected ignore dupes snapshot, got %#v", retry.ignoreDupesFor)
+	}
+	if !retry.runOptions.Debug || !retry.runOptions.NoSeed || retry.runOptions.RunLogLevel != "debug" {
+		t.Fatalf("expected run options snapshot, got %#v", retry.runOptions)
+	}
+}
+
+func TestCancelTrackerUploadDefersResourceCloseUntilWorkerExit(t *testing.T) {
+	coreCloser := &closeCounterCore{}
+	loggerCloser := &closeCounter{}
+	job := &trackerUploadJob{
+		id:     "job-1",
+		core:   coreCloser,
+		logger: loggerCloser,
+		cancel: func() {},
+	}
+	app := &App{
+		uploads: map[string]*trackerUploadJob{job.id: job},
+	}
+
+	if err := app.CancelTrackerUpload(job.id); err != nil {
+		t.Fatalf("cancel upload: %v", err)
+	}
+
+	if got := coreCloser.count.Load(); got != 0 {
+		t.Fatalf("expected cancel not to close core before worker exit, got %d", got)
+	}
+	if got := loggerCloser.count.Load(); got != 0 {
+		t.Fatalf("expected cancel not to close logger before worker exit, got %d", got)
+	}
+
+	_ = job.closeResources()
+}
+
+func TestStopAllUploadJobsWaitsForWorkersBeforeClosingResources(t *testing.T) {
+	coreCloser := &closeCounterCore{}
+	loggerCloser := &closeCounter{}
+	released := make(chan struct{})
+	cancelCalled := make(chan struct{})
+	workerFinished := make(chan struct{})
+	job := &trackerUploadJob{
+		id:     "job-1",
+		core:   coreCloser,
+		logger: loggerCloser,
+	}
+	app := &App{
+		uploads: map[string]*trackerUploadJob{job.id: job},
+	}
+	app.uploadWG.Add(1)
+	job.cancel = func() {
+		close(cancelCalled)
+		go func() {
+			<-released
+			app.uploadWG.Done()
+			close(workerFinished)
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		app.stopAllUploadJobs()
+		close(done)
+	}()
+
+	select {
+	case <-cancelCalled:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected stopAllUploadJobs to cancel active upload")
+	}
+
+	select {
+	case <-done:
+		t.Fatal("expected stopAllUploadJobs to wait for active worker")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if got := coreCloser.count.Load(); got != 0 {
+		t.Fatalf("expected core to remain open while worker is active, got close count %d", got)
+	}
+	if got := loggerCloser.count.Load(); got != 0 {
+		t.Fatalf("expected logger to remain open while worker is active, got close count %d", got)
+	}
+
+	close(released)
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected stopAllUploadJobs to return after worker finishes")
+	}
+	<-workerFinished
+	if got := coreCloser.count.Load(); got != 1 {
+		t.Fatalf("expected core close after worker exit, got %d", got)
+	}
+	if got := loggerCloser.count.Load(); got != 1 {
+		t.Fatalf("expected logger close after worker exit, got %d", got)
+	}
+}
+
+func TestStopAllUploadJobsWaitsForPublishedPreStartUpload(t *testing.T) {
+	coreCloser := &closeCounterCore{}
+	loggerCloser := &closeCounter{}
+	cancelCalled := make(chan struct{})
+	job := &trackerUploadJob{
+		id:     "job-1",
+		core:   coreCloser,
+		logger: loggerCloser,
+		cancel: func() {
+			close(cancelCalled)
+		},
+	}
+	app := &App{
+		uploads: map[string]*trackerUploadJob{},
+	}
+
+	app.publishTrackerUploadJob(job)
+	released := atomic.Bool{}
+	t.Cleanup(func() {
+		if released.CompareAndSwap(false, true) {
+			app.uploadWG.Done()
+		}
+	})
+
+	done := make(chan struct{})
+	go func() {
+		app.stopAllUploadJobs()
+		close(done)
+	}()
+
+	select {
+	case <-cancelCalled:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected stopAllUploadJobs to cancel published upload")
+	}
+
+	select {
+	case <-done:
+		t.Fatal("expected stopAllUploadJobs to wait for pre-start upload enrollment")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if got := coreCloser.count.Load(); got != 0 {
+		t.Fatalf("expected core to remain open before pre-start upload is released, got close count %d", got)
+	}
+	if got := loggerCloser.count.Load(); got != 0 {
+		t.Fatalf("expected logger to remain open before pre-start upload is released, got close count %d", got)
+	}
+
+	if released.CompareAndSwap(false, true) {
+		app.uploadWG.Done()
+	}
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected stopAllUploadJobs to return after pre-start upload release")
+	}
+	if got := coreCloser.count.Load(); got != 1 {
+		t.Fatalf("expected core close after pre-start release, got %d", got)
+	}
+	if got := loggerCloser.count.Load(); got != 1 {
+		t.Fatalf("expected logger close after pre-start release, got %d", got)
+	}
+}
+
+func TestRunTrackerUploadJobCountsPartialErrorAndContinues(t *testing.T) {
+	app := &App{}
+	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
+		{
+			result: api.Result{UploadedCount: 1},
+			err:    errors.New("tracker failed after upload"),
+		},
+		{
+			result: api.Result{UploadedCount: 2},
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU", "AITHER"})
+
+	app.runTrackerUploadJob(context.Background(), nil, job)
+
+	if got := job.uploadedCount; got != 3 {
+		t.Fatalf("expected total uploaded count 3, got %d", got)
+	}
+	if got := job.states["BLU"].UploadedCount; got != 1 {
+		t.Fatalf("expected failed tracker partial count 1, got %d", got)
+	}
+	if got := job.states["BLU"].Status; got != "failed" {
+		t.Fatalf("expected partial error tracker to remain failed, got %q", got)
+	}
+	if got := job.states["AITHER"].UploadedCount; got != 2 {
+		t.Fatalf("expected success tracker count 2, got %d", got)
+	}
+	if got := job.status; got != "completed_with_errors" {
+		t.Fatalf("expected completed_with_errors status, got %q", got)
+	}
+	if len(job.failedTrackers) != 1 || job.failedTrackers[0] != "BLU" {
+		t.Fatalf("expected failed tracker BLU, got %#v", job.failedTrackers)
+	}
+}
+
+func TestRunTrackerUploadJobIgnoresNegativeUploadedCount(t *testing.T) {
+	app := &App{}
+	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
+		{
+			result: api.Result{UploadedCount: -1},
+			err:    errors.New("tracker failed after invalid count"),
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU"})
+
+	app.runTrackerUploadJob(context.Background(), nil, job)
+
+	if got := job.uploadedCount; got != 0 {
+		t.Fatalf("expected negative count to leave total unchanged, got %d", got)
+	}
+	if got := job.states["BLU"].UploadedCount; got != 0 {
+		t.Fatalf("expected negative count to leave tracker count unchanged, got %d", got)
+	}
+	if got := job.states["BLU"].Status; got != "failed" {
+		t.Fatalf("expected tracker error handling to remain failed, got %q", got)
+	}
+	if len(job.failedTrackers) != 1 || job.failedTrackers[0] != "BLU" {
+		t.Fatalf("expected failed tracker BLU, got %#v", job.failedTrackers)
+	}
+}
+
+func TestRunTrackerUploadJobCountsCanceledPartialWithoutFailedTracker(t *testing.T) {
+	app := &App{}
+	ctx, cancel := context.WithCancel(context.Background())
+	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
+		{
+			result:       api.Result{UploadedCount: 1},
+			err:          context.Canceled,
+			beforeReturn: cancel,
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU"})
+
+	app.runTrackerUploadJob(ctx, nil, job)
+
+	if got := job.uploadedCount; got != 1 {
+		t.Fatalf("expected canceled partial count 1, got %d", got)
+	}
+	if got := job.states["BLU"].UploadedCount; got != 1 {
+		t.Fatalf("expected tracker partial count 1, got %d", got)
+	}
+	if got := job.status; got != "canceled" {
+		t.Fatalf("expected canceled job status, got %q", got)
+	}
+	if len(job.failedTrackers) != 0 {
+		t.Fatalf("expected no failed trackers after cancellation, got %#v", job.failedTrackers)
+	}
+}
+
+func TestRunTrackerUploadJobRecoversRunUploadPreparedPanic(t *testing.T) {
+	app := &App{}
+	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
+		{
+			panicValue: "https://tracker.invalid/announce?api_token=secret-value",
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU"})
+
+	app.runTrackerUploadJob(context.Background(), context.Background(), job)
+
+	if got := job.status; got != "failed" {
+		t.Fatalf("expected failed status after upload panic, got %q", got)
+	}
+	if !strings.Contains(job.errorMessage, "upload worker panicked") {
+		t.Fatalf("expected panic error message, got %q", job.errorMessage)
+	}
+	if strings.Contains(job.errorMessage, "secret-value") {
+		t.Fatalf("expected panic error message to redact secrets, got %q", job.errorMessage)
+	}
+	if got := coreSvc.count.Load(); got != 1 {
+		t.Fatalf("expected core close after upload panic, got %d", got)
+	}
+	if job.cancel != nil {
+		t.Fatal("expected upload panic to clear cancel func")
+	}
+}
+
+func TestRunTrackerUploadJobContainsCleanupPanic(t *testing.T) {
+	app := &App{}
+	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
+		{
+			result: api.Result{UploadedCount: 1},
+		},
+	}}
+	coreSvc.panicValue = "https://tracker.invalid/announce?api_token=secret-value"
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU"})
+
+	app.runTrackerUploadJob(context.Background(), context.Background(), job)
+
+	if got := job.status; got != "failed" {
+		t.Fatalf("expected failed status after cleanup panic, got %q", got)
+	}
+	if !strings.Contains(job.errorMessage, "core close panicked") {
+		t.Fatalf("expected cleanup panic message, got %q", job.errorMessage)
+	}
+	if strings.Contains(job.errorMessage, "secret-value") {
+		t.Fatalf("expected cleanup panic message to redact secrets, got %q", job.errorMessage)
+	}
+	if got := coreSvc.count.Load(); got != 1 {
+		t.Fatalf("expected core close attempt once, got %d", got)
+	}
+}
+
+func newTrackerUploadJobTestJob(coreSvc api.Core, trackers []string) *trackerUploadJob {
+	job := &trackerUploadJob{
+		id:         "job",
+		sourcePath: `C:\Media\Movie.mkv`,
+		core:       coreSvc,
+		trackers:   trackers,
+		states:     make(map[string]TrackerUploadTrackerState, len(trackers)),
+		status:     "queued",
+		startedAt:  time.Now().UTC(),
+	}
+	for _, tracker := range trackers {
+		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
+	}
+	return job
 }
 
 func TestSeedRunCorePreparedMetaCopiesPreparedMetadata(t *testing.T) {

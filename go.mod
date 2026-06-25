@@ -4,8 +4,8 @@ go 1.26.4
 
 require (
 	github.com/anacrolix/torrent v1.61.0
-	github.com/autobrr/go-bdinfo v0.3.1-0.20260225205009-aeaf066aecfe
-	github.com/autobrr/go-mediainfo v0.3.1
+	github.com/autobrr/go-bdinfo v0.3.1
+	github.com/autobrr/go-mediainfo v0.4.0
 	github.com/autobrr/go-qbittorrent v1.16.0
 	github.com/autobrr/mkbrr v1.23.0
 	github.com/frustra/bbcode v0.0.0-20201127003707-6ef347fbe1c8
@@ -22,7 +22,7 @@ require (
 	modernc.org/sqlite v1.50.1
 )
 
-replace github.com/moistari/rls => github.com/autobrr/rls v0.8.0
+replace github.com/moistari/rls => github.com/autobrr/rls v0.8.1
 
 replace github.com/anacrolix/dht/v2 => github.com/anacrolix/dht/v2 v2.24.0
 

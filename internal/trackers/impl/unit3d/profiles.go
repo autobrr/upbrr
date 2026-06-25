@@ -33,6 +33,7 @@ var unit3DSiteProfiles = map[string]unit3DSiteProfile{
 	"PT":     sitePTProfile(),
 	"R4E":    siteR4EProfile(),
 	"RF":     siteRFProfile(),
+	"RHD":    siteRHDProfile(),
 	"SHRI":   siteSHRIProfile(),
 	"STC":    siteSTCProfile(),
 	"TIK":    siteTIKProfile(),
@@ -40,6 +41,7 @@ var unit3DSiteProfiles = map[string]unit3DSiteProfile{
 	"TOS":    siteTOSProfile(),
 	"UTP":    siteUTPProfile(),
 	"YUS":    siteYUSProfile(),
+	"ZNTH":   siteZNTHProfile(),
 }
 
 func unit3DSiteProfileFor(tracker string) (unit3DSiteProfile, bool) {

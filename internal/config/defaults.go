@@ -40,7 +40,7 @@ func LoadEmbeddedDefaultConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+	if _, err := MergeMissingTrackerDefaults(cfg); err != nil {
 		return nil, err
 	}
 	return cfg, nil

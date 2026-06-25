@@ -14,6 +14,8 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 )
 
+// BannedGroupChecker checks tracker release groups against built-in and cached
+// banned-group lists.
 type BannedGroupChecker struct {
 	basePath string
 	mu       sync.Mutex
@@ -24,6 +26,8 @@ type bannedGroupsFile struct {
 	BannedGroups string `json:"banned_groups"`
 }
 
+// NewBannedGroupChecker creates a checker rooted at the banned-group cache
+// directory derived from dbPath.
 func NewBannedGroupChecker(dbPath string) *BannedGroupChecker {
 	basePath, err := db.Subdir(dbPath, "cache")
 	if err != nil {
@@ -33,6 +37,8 @@ func NewBannedGroupChecker(dbPath string) *BannedGroupChecker {
 	return &BannedGroupChecker{basePath: basePath, cache: make(map[string]map[string]struct{})}
 }
 
+// IsBanned reports whether group is banned for tracker after normalizing both
+// values; built-in matches still return true when the cache file cannot be read.
 func (c *BannedGroupChecker) IsBanned(tracker, group string) (bool, error) {
 	if c == nil {
 		return false, nil
@@ -45,6 +51,9 @@ func (c *BannedGroupChecker) IsBanned(tracker, group string) (bool, error) {
 
 	groups, err := c.load(tracker)
 	if err != nil {
+		if _, found := groups[group]; found {
+			return true, nil
+		}
 		return false, err
 	}
 	_, found := groups[group]
@@ -67,8 +76,6 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 				groups[cleaned] = struct{}{}
 			}
 		}
-		c.cache[tracker] = groups
-		return groups, nil
 	}
 
 	filePath := filepath.Join(c.basePath, tracker+"_banned_groups.json")
@@ -78,7 +85,7 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 			c.cache[tracker] = groups
 			return groups, nil
 		}
-		return nil, fmt.Errorf("trackers: read banned groups: %w", err)
+		return groups, fmt.Errorf("trackers: read banned groups: %w", err)
 	}
 
 	var payload bannedGroupsFile
@@ -194,6 +201,27 @@ var builtinBannedGroups = map[string][]string{
 		"X0r",
 		"YIFY",
 		"YTS",
+	},
+	"RHD": {
+		"1XBET",
+		"MEGA",
+		"MTZ",
+		"Whistler",
+		"WOTT",
+		"Taylor.D",
+		"HELD",
+		"FSX",
+		"FuN",
+		"MagicX",
+		"w00t",
+		"PaTroL",
+		"BB",
+		"266ers",
+		"GTF",
+		"JellyfinPlex",
+		"2BA",
+		"FritzBox",
+		"FUNXDTV",
 	},
 	"TOS": {
 		"FL3ER",

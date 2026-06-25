@@ -451,6 +451,52 @@ func TestSQLiteRepositoryConcurrentMigrateAndAccessOnDisk(t *testing.T) {
 	}
 }
 
+func TestSQLiteRepositoryListHistoryEntriesSkipsInfoHashOnlyPlaceholders(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := repo.Save(ctx, FileMetadata{
+		Path:      "/media/placeholder.mkv",
+		InfoHash:  "abc123",
+		UpdatedAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("save placeholder metadata: %v", err)
+	}
+	if err := repo.Save(ctx, FileMetadata{
+		Path:       "/media/release.mkv",
+		Title:      "Real Release",
+		VideoPath:  "/media/release.mkv",
+		FileList:   []string{"/media/release.mkv"},
+		SourceSize: 123,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("save release metadata: %v", err)
+	}
+
+	entries, err := repo.ListHistoryEntries(ctx)
+	if err != nil {
+		t.Fatalf("list history entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one visible history entry, got %#v", entries)
+	}
+	if entries[0].SourcePath != "/media/release.mkv" {
+		t.Fatalf("expected release history entry, got %q", entries[0].SourcePath)
+	}
+}
+
 func TestSQLiteRepositoryConcurrentDistinctPathWritesOnDisk(t *testing.T) {
 	t.Parallel()
 

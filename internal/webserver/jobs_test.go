@@ -5,6 +5,7 @@ package webserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -20,6 +21,14 @@ type preparedMetaTestCore struct {
 	importedMeta api.PreparedMetadata
 	importedReq  api.Request
 	fetchReq     api.Request
+	uploads      []uploadPreparedResponse
+	uploadCalls  int
+}
+
+type uploadPreparedResponse struct {
+	result       api.Result
+	err          error
+	beforeReturn func()
 }
 
 func (c *preparedMetaTestCore) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -27,6 +36,14 @@ func (c *preparedMetaTestCore) RunUpload(context.Context, api.Request) (api.Resu
 }
 
 func (c *preparedMetaTestCore) RunUploadPrepared(context.Context, api.Request) (api.Result, error) {
+	if c.uploadCalls < len(c.uploads) {
+		response := c.uploads[c.uploadCalls]
+		c.uploadCalls++
+		if response.beforeReturn != nil {
+			response.beforeReturn()
+		}
+		return response.result, response.err
+	}
 	return api.Result{}, nil
 }
 
@@ -274,6 +291,213 @@ func TestTrackerUploadJobAccessRequiresOwningSession(t *testing.T) {
 	}
 }
 
+func TestTrackerUploadRetryRequestUsesStoredUploadOptions(t *testing.T) {
+	job := &trackerUploadJob{
+		sessionID:      "session-a",
+		sourcePath:     `C:\Media\Movie.mkv`,
+		uploadOptions:  api.UploadOptions{Screens: 1, SkipAutoTorrent: true},
+		runOptions:     runOptions{Debug: true, NoSeed: true, RunLogLevel: "debug"},
+		failedTrackers: []string{"BLU"},
+		ignoreDupesFor: []string{"AITHER"},
+	}
+
+	retry, err := trackerUploadRetryRequestFromJob(job)
+	if err != nil {
+		t.Fatalf("retry request: %v", err)
+	}
+
+	job.uploadOptions.Screens = 9
+	job.failedTrackers[0] = "MUTATED"
+	job.ignoreDupesFor[0] = "MUTATED"
+
+	if retry.sessionID != "session-a" {
+		t.Fatalf("expected retry session snapshot, got %q", retry.sessionID)
+	}
+	if retry.uploadOptions.Screens != 1 || !retry.uploadOptions.SkipAutoTorrent {
+		t.Fatalf("expected stored upload options snapshot, got %#v", retry.uploadOptions)
+	}
+	if len(retry.failedTrackers) != 1 || retry.failedTrackers[0] != "BLU" {
+		t.Fatalf("expected failed trackers snapshot, got %#v", retry.failedTrackers)
+	}
+	if len(retry.ignoreDupesFor) != 1 || retry.ignoreDupesFor[0] != "AITHER" {
+		t.Fatalf("expected ignore dupes snapshot, got %#v", retry.ignoreDupesFor)
+	}
+	if !retry.runOptions.Debug || !retry.runOptions.NoSeed || retry.runOptions.RunLogLevel != "debug" {
+		t.Fatalf("expected run options snapshot, got %#v", retry.runOptions)
+	}
+}
+
+func TestRunTrackerUploadJobCountsPartialErrorAndContinues(t *testing.T) {
+	backend := &Backend{hub: newEventHub()}
+	coreSvc := &preparedMetaTestCore{uploads: []uploadPreparedResponse{
+		{
+			result: api.Result{UploadedCount: 1},
+			err:    errors.New("tracker failed after upload"),
+		},
+		{
+			result: api.Result{UploadedCount: 2},
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU", "AITHER"})
+
+	backend.uploadWG.Add(1)
+	backend.runTrackerUploadJob(context.Background(), job)
+
+	if got := job.uploadedCount; got != 3 {
+		t.Fatalf("expected total uploaded count 3, got %d", got)
+	}
+	if got := job.states["BLU"].UploadedCount; got != 1 {
+		t.Fatalf("expected failed tracker partial count 1, got %d", got)
+	}
+	if got := job.states["BLU"].Status; got != "failed" {
+		t.Fatalf("expected partial error tracker to remain failed, got %q", got)
+	}
+	if got := job.states["AITHER"].UploadedCount; got != 2 {
+		t.Fatalf("expected success tracker count 2, got %d", got)
+	}
+	if got := job.status; got != "completed_with_errors" {
+		t.Fatalf("expected completed_with_errors status, got %q", got)
+	}
+	if len(job.failedTrackers) != 1 || job.failedTrackers[0] != "BLU" {
+		t.Fatalf("expected failed tracker BLU, got %#v", job.failedTrackers)
+	}
+}
+
+func TestRunTrackerUploadJobIgnoresNegativeUploadedCount(t *testing.T) {
+	backend := &Backend{hub: newEventHub()}
+	coreSvc := &preparedMetaTestCore{uploads: []uploadPreparedResponse{
+		{
+			result: api.Result{UploadedCount: -1},
+			err:    errors.New("tracker failed after invalid count"),
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU"})
+
+	backend.uploadWG.Add(1)
+	backend.runTrackerUploadJob(context.Background(), job)
+
+	if got := job.uploadedCount; got != 0 {
+		t.Fatalf("expected negative count to leave total unchanged, got %d", got)
+	}
+	if got := job.states["BLU"].UploadedCount; got != 0 {
+		t.Fatalf("expected negative count to leave tracker count unchanged, got %d", got)
+	}
+	if got := job.states["BLU"].Status; got != "failed" {
+		t.Fatalf("expected tracker error handling to remain failed, got %q", got)
+	}
+	if len(job.failedTrackers) != 1 || job.failedTrackers[0] != "BLU" {
+		t.Fatalf("expected failed tracker BLU, got %#v", job.failedTrackers)
+	}
+}
+
+func TestRunTrackerUploadJobCountsCanceledPartialWithoutFailedTracker(t *testing.T) {
+	backend := &Backend{hub: newEventHub()}
+	ctx, cancel := context.WithCancel(context.Background())
+	coreSvc := &preparedMetaTestCore{uploads: []uploadPreparedResponse{
+		{
+			result:       api.Result{UploadedCount: 1},
+			err:          context.Canceled,
+			beforeReturn: cancel,
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU"})
+
+	backend.uploadWG.Add(1)
+	backend.runTrackerUploadJob(ctx, job)
+
+	if got := job.uploadedCount; got != 1 {
+		t.Fatalf("expected canceled partial count 1, got %d", got)
+	}
+	if got := job.states["BLU"].UploadedCount; got != 1 {
+		t.Fatalf("expected tracker partial count 1, got %d", got)
+	}
+	if got := job.states["BLU"].Status; got != "canceled" {
+		t.Fatalf("expected canceled tracker status, got %q", got)
+	}
+	if got := job.states["BLU"].Message; got != "canceled" {
+		t.Fatalf("expected canceled tracker message, got %q", got)
+	}
+	if got := job.states["BLU"].FinishedAt; got == "" {
+		t.Fatal("expected canceled tracker finished time")
+	}
+	assertSnapshotHasNoActiveTrackerStates(t, buildTrackerUploadSnapshot(job))
+	if got := job.status; got != "canceled" {
+		t.Fatalf("expected canceled job status, got %q", got)
+	}
+	if len(job.failedTrackers) != 0 {
+		t.Fatalf("expected no failed trackers after cancellation, got %#v", job.failedTrackers)
+	}
+}
+
+func TestRunTrackerUploadJobCancelsQueuedTrackersBeforeFirstUpload(t *testing.T) {
+	backend := &Backend{hub: newEventHub()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	coreSvc := &preparedMetaTestCore{}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU", "AITHER"})
+
+	backend.uploadWG.Add(1)
+	backend.runTrackerUploadJob(ctx, job)
+
+	if got := coreSvc.uploadCalls; got != 0 {
+		t.Fatalf("expected no upload calls after pre-start cancellation, got %d", got)
+	}
+	if got := job.status; got != "canceled" {
+		t.Fatalf("expected canceled job status, got %q", got)
+	}
+	for _, tracker := range job.trackers {
+		state := job.states[tracker]
+		if state.Status != "canceled" {
+			t.Fatalf("expected %s status canceled, got %q", tracker, state.Status)
+		}
+		if state.Message != "canceled" {
+			t.Fatalf("expected %s message canceled, got %q", tracker, state.Message)
+		}
+		if state.FinishedAt == "" {
+			t.Fatalf("expected %s finished time", tracker)
+		}
+	}
+	assertSnapshotHasNoActiveTrackerStates(t, buildTrackerUploadSnapshot(job))
+}
+
+func TestRunTrackerUploadJobCancelsRunningAndQueuedTrackersWithoutOverwritingSuccess(t *testing.T) {
+	backend := &Backend{hub: newEventHub()}
+	ctx, cancel := context.WithCancel(context.Background())
+	coreSvc := &preparedMetaTestCore{uploads: []uploadPreparedResponse{
+		{
+			result: api.Result{UploadedCount: 1},
+		},
+		{
+			err:          context.Canceled,
+			beforeReturn: cancel,
+		},
+	}}
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU", "AITHER", "BHD"})
+
+	backend.uploadWG.Add(1)
+	backend.runTrackerUploadJob(ctx, job)
+
+	if got := job.uploadedCount; got != 1 {
+		t.Fatalf("expected total uploaded count 1, got %d", got)
+	}
+	if got := job.states["BLU"].Status; got != "success" {
+		t.Fatalf("expected completed tracker success to remain unchanged, got %q", got)
+	}
+	if got := job.states["AITHER"].Status; got != "canceled" {
+		t.Fatalf("expected running tracker canceled, got %q", got)
+	}
+	if got := job.states["BHD"].Status; got != "canceled" {
+		t.Fatalf("expected queued tracker canceled, got %q", got)
+	}
+	assertSnapshotHasNoActiveTrackerStates(t, buildTrackerUploadSnapshot(job))
+	if got := job.status; got != "canceled" {
+		t.Fatalf("expected canceled job status, got %q", got)
+	}
+	if len(job.failedTrackers) != 0 {
+		t.Fatalf("expected no failed trackers after cancellation, got %#v", job.failedTrackers)
+	}
+}
+
 func TestApplyTrackerUploadProgressThrottlesSmallHashRateBurst(t *testing.T) {
 	hub := newEventHub()
 	ch, unsubscribe := hub.Subscribe("session")
@@ -404,6 +628,35 @@ func newTrackerUploadProgressTestJob() *trackerUploadJob {
 			"BLU": {Tracker: "BLU", Status: "running", Message: "uploading"},
 		},
 		startedAt: time.Now().UTC(),
+	}
+}
+
+func newTrackerUploadJobTestJob(coreSvc api.Core, trackers []string) *trackerUploadJob {
+	job := &trackerUploadJob{
+		sessionID:  "session",
+		id:         "job",
+		sourcePath: `C:\Media\Movie.mkv`,
+		core:       coreSvc,
+		trackers:   trackers,
+		states:     make(map[string]TrackerUploadTrackerState, len(trackers)),
+		status:     "queued",
+		startedAt:  time.Now().UTC(),
+	}
+	for _, tracker := range trackers {
+		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
+	}
+	return job
+}
+
+func assertSnapshotHasNoActiveTrackerStates(t *testing.T, snapshot TrackerUploadSnapshot) {
+	t.Helper()
+	if snapshot.Status != "canceled" {
+		t.Fatalf("expected canceled snapshot status, got %q", snapshot.Status)
+	}
+	for _, tracker := range snapshot.Trackers {
+		if tracker.Status == "queued" || tracker.Status == "running" {
+			t.Fatalf("expected snapshot tracker %s terminal, got %q", tracker.Tracker, tracker.Status)
+		}
 	}
 }
 
