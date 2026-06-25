@@ -34,6 +34,8 @@ const trackerAuthSection = {
 const settingsInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
 
+const remoteAuthValidationTrackers = new Set(["MTV", "PTP"]);
+
 type ConfigOpStatus = {
   type: "success" | "error" | "warning";
   title: string;
@@ -97,6 +99,7 @@ type Props = {
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
 };
 
+/** Renders the settings view and calls the app bridge for application info and tracker auth actions. */
 export default function SettingsPage(props: Props) {
   const {
     configData,
@@ -335,6 +338,9 @@ export default function SettingsPage(props: Props) {
             const status = trackerAuthStatuses[capability.trackerID];
             const busy = trackerAuthActions[capability.trackerID] || "";
             const code = trackerAuthCodes[capability.trackerID] || "";
+            const canTestAuth = remoteAuthValidationTrackers.has(
+              capability.trackerID.trim().toUpperCase(),
+            );
             return (
               <div className="settings-card tracker-auth-card" key={capability.trackerID}>
                 <div className="tracker-auth-card__header">
@@ -414,17 +420,19 @@ export default function SettingsPage(props: Props) {
                       {busy === "import" ? "Importing..." : "Import Cookies"}
                     </Button>
                   ) : null}
-                  <Button
-                    type="button"
-                    disabled={!bridge?.TestTrackerAuth || Boolean(busy)}
-                    onClick={() =>
-                      runTrackerAuthAction(capability.trackerID, "test", () =>
-                        bridge!.TestTrackerAuth!(capability.trackerID),
-                      )
-                    }
-                  >
-                    {busy === "test" ? "Testing..." : "Test Auth"}
-                  </Button>
+                  {canTestAuth ? (
+                    <Button
+                      type="button"
+                      disabled={!bridge?.TestTrackerAuth || Boolean(busy)}
+                      onClick={() =>
+                        runTrackerAuthAction(capability.trackerID, "test", () =>
+                          bridge!.TestTrackerAuth!(capability.trackerID),
+                        )
+                      }
+                    >
+                      {busy === "test" ? "Testing..." : "Test Auth"}
+                    </Button>
+                  ) : null}
                   {capability.supportsLogin ? (
                     <Button
                       type="button"

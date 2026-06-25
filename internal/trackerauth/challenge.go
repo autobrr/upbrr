@@ -16,12 +16,19 @@ import (
 
 const defaultChallengeTTL = 5 * time.Minute
 
+var sharedChallengeManager = NewChallengeManager(defaultChallengeTTL)
+
+// Challenge identifies one manual 2FA continuation for a tracker auth login.
 type Challenge struct {
-	ID        string
+	// ID is the opaque token returned to the UI and later supplied to Submit2FA.
+	ID string
+	// TrackerID is the normalized tracker code that owns the challenge.
 	TrackerID string
+	// ExpiresAt is the UTC deadline after which the challenge is discarded.
 	ExpiresAt time.Time
 }
 
+// ChallengeManager stores time-limited manual 2FA challenges for tracker auth.
 type ChallengeManager struct {
 	mu  sync.Mutex
 	ttl time.Duration
@@ -31,6 +38,7 @@ type ChallengeManager struct {
 	items map[string]Challenge
 }
 
+// NewChallengeManager returns a challenge manager with ttl, using the default TTL when ttl is not positive.
 func NewChallengeManager(ttl time.Duration) *ChallengeManager {
 	if ttl <= 0 {
 		ttl = defaultChallengeTTL
@@ -43,6 +51,7 @@ func NewChallengeManager(ttl time.Duration) *ChallengeManager {
 	}
 }
 
+// Create registers a challenge for trackerID and returns its opaque ID.
 func (m *ChallengeManager) Create(ctx context.Context, trackerID string) string {
 	if ctx != nil && ctx.Err() != nil {
 		return ""
@@ -64,6 +73,7 @@ func (m *ChallengeManager) Create(ctx context.Context, trackerID string) string 
 	return id
 }
 
+// Get returns an active challenge by ID after pruning expired challenges.
 func (m *ChallengeManager) Get(challengeID string) (Challenge, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -73,6 +83,7 @@ func (m *ChallengeManager) Get(challengeID string) (Challenge, bool) {
 	return challenge, ok
 }
 
+// Consume validates that challengeID belongs to trackerID, removes it, and returns the consumed challenge.
 func (m *ChallengeManager) Consume(challengeID string, trackerID string) (Challenge, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

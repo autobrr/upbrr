@@ -111,4 +111,72 @@ describe("SettingsPage", () => {
 
     expect(setSettingsSection).toHaveBeenCalledWith("tracker_auth");
   });
+
+  it("shows Test Auth only for adapter-backed tracker auth", async () => {
+    vi.stubGlobal("go", {
+      guiapp: {
+        App: {
+          ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([
+            {
+              trackerID: "MTV",
+              displayName: "MTV",
+              authKind: "api_key_cookies_login",
+              supportsCookieFile: true,
+              supportsLogin: true,
+              supportsAutoLogin: true,
+              supportsTOTP: true,
+              supportsManual2FA: true,
+              requiresAPIKey: true,
+              requiresPasskey: false,
+            },
+            {
+              trackerID: "AR",
+              displayName: "AR",
+              authKind: "cookies_login",
+              supportsCookieFile: true,
+              supportsLogin: true,
+              supportsAutoLogin: true,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: false,
+              requiresPasskey: false,
+            },
+          ]),
+          GetTrackerAuthStatus: vi.fn().mockImplementation((trackerID: string) =>
+            Promise.resolve({
+              trackerID,
+              displayName: trackerID,
+              state: "configured",
+              cookieCount: 0,
+              lastCheckedAt: "",
+              lastError: "",
+              encryptedStorage: true,
+              needs2FA: false,
+              challengeID: "",
+              message: "required config auth material is present",
+            }),
+          ),
+          TestTrackerAuth: vi.fn(),
+        },
+      },
+    });
+
+    render(
+      <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
+    );
+
+    const mtvTitle = await screen.findByText("MTV");
+    const arTitle = await screen.findByText("AR");
+    const mtvCard = mtvTitle.closest(".tracker-auth-card");
+    const arCard = arTitle.closest(".tracker-auth-card");
+
+    expect(mtvCard).not.toBeNull();
+    expect(arCard).not.toBeNull();
+    expect(
+      within(mtvCard as HTMLElement).getByRole("button", { name: "Test Auth" }),
+    ).toBeInTheDocument();
+    expect(
+      within(arCard as HTMLElement).queryByRole("button", { name: "Test Auth" }),
+    ).not.toBeInTheDocument();
+  });
 });

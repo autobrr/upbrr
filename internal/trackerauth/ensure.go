@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// EnsureSession validates stored tracker auth, optionally attempts credential login, and returns the ready session or a typed auth error.
 func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session, error) {
 	if ctx == nil {
 		return Session{}, errors.New("tracker auth: context is required")
@@ -97,7 +98,7 @@ func (s *Service) needs2FASession(ctx context.Context, trackerID string, adapter
 	}
 	challengeID := strings.TrimSpace(needsErr.ChallengeID)
 	if challengeID == "" {
-		challengeID = s.challenges.Create(ctx, trackerID)
+		challengeID = s.challengeManager().Create(ctx, trackerID)
 	}
 	needsErr.ChallengeID = challengeID
 	return Session{

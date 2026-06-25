@@ -1225,6 +1225,7 @@ func (a *App) ListKnownTrackers() ([]string, error) {
 	return trackers.KnownTrackers(), nil
 }
 
+// ListTrackerAuthCapabilities returns tracker auth support metadata through the Wails bridge.
 func (a *App) ListTrackerAuthCapabilities() ([]api.TrackerAuthCapability, error) {
 	if a == nil {
 		return nil, errors.New("app not initialized")
@@ -1232,6 +1233,7 @@ func (a *App) ListTrackerAuthCapabilities() ([]api.TrackerAuthCapability, error)
 	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Capabilities(context.Background()))
 }
 
+// GetTrackerAuthStatus returns the current local auth status for one tracker.
 func (a *App) GetTrackerAuthStatus(tracker string) (api.TrackerAuthStatus, error) {
 	if a == nil {
 		return api.TrackerAuthStatus{}, errors.New("app not initialized")
@@ -1239,6 +1241,7 @@ func (a *App) GetTrackerAuthStatus(tracker string) (api.TrackerAuthStatus, error
 	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Status(context.Background(), tracker))
 }
 
+// ImportTrackerAuthCookies opens a native file picker, imports selected cookie content, and returns updated tracker auth status.
 func (a *App) ImportTrackerAuthCookies(tracker string) (api.TrackerAuthStatus, error) {
 	if a == nil {
 		return api.TrackerAuthStatus{}, errors.New("app not initialized")
@@ -1267,6 +1270,7 @@ func (a *App) ImportTrackerAuthCookies(tracker string) (api.TrackerAuthStatus, e
 	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).ImportCookies(context.Background(), tracker, filepath.Base(selection), string(payload)))
 }
 
+// ImportTrackerAuthCookieContent imports caller-supplied cookie content for one tracker and returns updated auth status.
 func (a *App) ImportTrackerAuthCookieContent(tracker string, fileName string, content string) (api.TrackerAuthStatus, error) {
 	if a == nil {
 		return api.TrackerAuthStatus{}, errors.New("app not initialized")
@@ -1274,6 +1278,7 @@ func (a *App) ImportTrackerAuthCookieContent(tracker string, fileName string, co
 	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).ImportCookies(context.Background(), tracker, fileName, content))
 }
 
+// TestTrackerAuth validates tracker auth remotely when supported and otherwise returns local status with an unsupported message.
 func (a *App) TestTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
 	if a == nil {
 		return api.TrackerAuthStatus{}, errors.New("app not initialized")
@@ -1281,6 +1286,7 @@ func (a *App) TestTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
 	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Validate(context.Background(), tracker))
 }
 
+// LoginTrackerAuth attempts credential-based tracker auth and returns status for missing credentials, unsupported login, or 2FA.
 func (a *App) LoginTrackerAuth(tracker string, req api.TrackerAuthLoginRequest) (api.TrackerAuthStatus, error) {
 	if a == nil {
 		return api.TrackerAuthStatus{}, errors.New("app not initialized")
@@ -1288,6 +1294,7 @@ func (a *App) LoginTrackerAuth(tracker string, req api.TrackerAuthLoginRequest) 
 	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Login(context.Background(), tracker, req))
 }
 
+// SubmitTrackerAuth2FA submits a manual 2FA code for an active tracker auth challenge.
 func (a *App) SubmitTrackerAuth2FA(challengeID string, code string) (api.TrackerAuthStatus, error) {
 	if a == nil {
 		return api.TrackerAuthStatus{}, errors.New("app not initialized")
@@ -1295,6 +1302,7 @@ func (a *App) SubmitTrackerAuth2FA(challengeID string, code string) (api.Tracker
 	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Submit2FA(context.Background(), challengeID, code))
 }
 
+// DeleteTrackerAuth removes stored auth material for one tracker and returns refreshed local status.
 func (a *App) DeleteTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
 	if a == nil {
 		return api.TrackerAuthStatus{}, errors.New("app not initialized")

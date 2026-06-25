@@ -684,11 +684,14 @@ func resolveSession(ctx context.Context, trackerConfig config.TrackerConfig, dbP
 		if tokenErr == nil {
 			return client, token, nil
 		}
-		_ = cookiepkg.DeleteTrackerCookies(ctx, dbPath, "PTP")
+		if strings.TrimSpace(trackerConfig.Username) == "" || strings.TrimSpace(trackerConfig.Password) == "" || strings.TrimSpace(normalizedAnnounceURL(trackerConfig.AnnounceURL)) == "" {
+			return nil, "", tokenErr
+		}
 	}
 	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger)
 }
 
+// ResolveSessionForTrackerAuth validates PTP stored cookies or logs in with configured credentials and saves refreshed cookies.
 func ResolveSessionForTrackerAuth(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(trackerConfig.URL), "/")
 	if baseURL == "" {
@@ -923,7 +926,10 @@ func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error
 
 func loadCookies(ctx context.Context, dbPath string) (map[string]string, error) {
 	values, err := cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "PTP")
-	return values, fmt.Errorf("trackers: %w", err)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: %w", err)
+	}
+	return values, nil
 }
 
 func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseURL string) error {

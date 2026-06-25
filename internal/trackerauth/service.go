@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,9 +20,11 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/redaction"
+	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Tracker auth status values returned in api.TrackerAuthStatus.State.
 const (
 	StateConfigured                  = "configured"
 	StateHasCookies                  = "has_cookies"
@@ -30,6 +33,7 @@ const (
 	StateEncryptedStorageUnavailable = "encrypted_storage_unavailable"
 )
 
+// Service reports and manages persisted tracker auth material for configured trackers.
 type Service struct {
 	cfg        config.Config
 	adapters   map[string]Adapter
@@ -50,14 +54,16 @@ type trackerSpec struct {
 	notes            []string
 }
 
+// NewService builds a tracker auth service with default remote adapters and the shared manual 2FA challenge manager.
 func NewService(cfg config.Config) *Service {
 	return &Service{
 		cfg:        cfg,
 		adapters:   defaultAdapters(),
-		challenges: NewChallengeManager(defaultChallengeTTL),
+		challenges: sharedChallengeManager,
 	}
 }
 
+// Capabilities returns tracker auth support metadata for built-in trackers and configured custom trackers.
 func (s *Service) Capabilities(_ context.Context) ([]api.TrackerAuthCapability, error) {
 	specs := s.specs()
 	out := make([]api.TrackerAuthCapability, 0, len(specs))
@@ -67,6 +73,7 @@ func (s *Service) Capabilities(_ context.Context) ([]api.TrackerAuthCapability, 
 	return out, nil
 }
 
+// Status returns local tracker auth state derived from config, encrypted cookie storage, and stored cookies.
 func (s *Service) Status(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error) {
 	spec, err := s.specFor(trackerID)
 	if err != nil {
@@ -75,6 +82,7 @@ func (s *Service) Status(ctx context.Context, trackerID string) (api.TrackerAuth
 	return s.statusForSpec(ctx, spec)
 }
 
+// ImportCookies parses supplied cookie content, saves it for trackerID, and returns the updated auth status.
 func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName string, content string) (api.TrackerAuthStatus, error) {
 	spec, err := s.specFor(trackerID)
 	if err != nil {
@@ -100,6 +108,7 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 	return status, nil
 }
 
+// Validate returns tracker auth status after a remote validation check when the tracker has an adapter.
 func (s *Service) Validate(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error) {
 	spec, err := s.specFor(trackerID)
 	if err != nil {
@@ -128,10 +137,11 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (api.TrackerAu
 		status.Message = "remote auth check succeeded"
 		return status, nil
 	}
-	status.Message = validationMessage(spec, status)
+	status.Message = "remote auth validation is not supported for this tracker"
 	return status, nil
 }
 
+// Login runs credential-based tracker auth when supported and returns status for missing credentials, unsupported remote login, or 2FA.
 func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAuthLoginRequest) (api.TrackerAuthStatus, error) {
 	spec, err := s.specFor(trackerID)
 	if err != nil {
@@ -146,10 +156,6 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 	}
 	if status.State == StateLoginRequired {
 		status.Message = "username/password missing"
-		return status, nil
-	}
-	if status.Needs2FA {
-		status.Message = "manual 2FA is supported only during an active tracker login challenge"
 		return status, nil
 	}
 
@@ -172,11 +178,11 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 		status.Message = "remote login/auth check succeeded"
 		return status, nil
 	}
-	status.State = StateConfigured
-	status.Message = "remote login/auth check succeeded"
+	status.Message = "remote credential login is not supported for this tracker"
 	return status, nil
 }
 
+// Submit2FA completes an active manual 2FA challenge and consumes the challenge only after adapter success.
 func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string) (api.TrackerAuthStatus, error) {
 	if strings.TrimSpace(challengeID) == "" {
 		return api.TrackerAuthStatus{}, errors.New("tracker auth: challenge id is required")
@@ -184,10 +190,8 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 	if strings.TrimSpace(code) == "" {
 		return api.TrackerAuthStatus{}, errors.New("tracker auth: 2FA code is required")
 	}
-	if s.challenges == nil {
-		s.challenges = NewChallengeManager(defaultChallengeTTL)
-	}
-	challenge, ok := s.challenges.Get(challengeID)
+	challenges := s.challengeManager()
+	challenge, ok := challenges.Get(challengeID)
 	if !ok {
 		return api.TrackerAuthStatus{}, errors.New("tracker auth: no active manual 2FA challenge")
 	}
@@ -205,7 +209,7 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 		status.ChallengeID = challengeID
 		return status, nil
 	}
-	if _, err := s.challenges.Consume(challengeID, challenge.TrackerID); err != nil {
+	if _, err := challenges.Consume(challengeID, challenge.TrackerID); err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
 	status, err := s.Status(ctx, challenge.TrackerID)
@@ -221,6 +225,14 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 	return status, nil
 }
 
+func (s *Service) challengeManager() *ChallengeManager {
+	if s.challenges == nil {
+		s.challenges = sharedChallengeManager
+	}
+	return s.challenges
+}
+
+// Delete removes stored tracker auth material and returns the refreshed local auth status.
 func (s *Service) Delete(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error) {
 	spec, err := s.specFor(trackerID)
 	if err != nil {
@@ -229,12 +241,15 @@ func (s *Service) Delete(ctx context.Context, trackerID string) (api.TrackerAuth
 	if err := cookies.DeleteTrackerCookies(ctx, s.cfg.MainSettings.DBPath, spec.id); err != nil {
 		return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: delete %s cookies: %w", spec.id, err)
 	}
+	if err := deleteTrackerAuthState(ctx, s.cfg.MainSettings.DBPath, spec.id); err != nil {
+		return api.TrackerAuthStatus{}, err
+	}
 	status, err := s.statusForSpec(ctx, spec)
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
 	status.CookieCount = 0
-	status.Message = "stored cookies deleted"
+	status.Message = "stored auth deleted"
 	return status, nil
 }
 
@@ -355,8 +370,8 @@ func builtInSpecs() []trackerSpec {
 	return []trackerSpec{
 		{id: "AR", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
 		{id: "FL", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
-		{id: "MTV", authKind: "api_key_cookies_login", cookies: true, login: true, autoLogin: true, totp: true, manual2FA: true, apiKey: true, needsCredentials: true, notes: []string{"API key covers Torznab/search; cookies/login cover upload authkey."}},
-		{id: "PTP", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, totp: true, manual2FA: true, needsCredentials: true},
+		{id: "MTV", authKind: "api_key_cookies_login", cookies: true, login: true, autoLogin: true, totp: true, apiKey: true, needsCredentials: true, notes: []string{"API key covers Torznab/search; cookies/login cover upload authkey."}},
+		{id: "PTP", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, totp: true, needsCredentials: true},
 		{id: "THR", authKind: "credential_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
 		{id: "RTF", authKind: "api_key_credential_refresh", login: true, autoLogin: true, apiKey: true, needsCredentials: false},
 		{id: "ASC", authKind: "cookies", cookies: true},
@@ -426,6 +441,7 @@ func validationMessage(spec trackerSpec, status api.TrackerAuthStatus) string {
 	}
 }
 
+// ParseCookieContent parses JSON cookie exports or Netscape cookie files into a name/value map.
 func ParseCookieContent(fileName string, content string) (map[string]string, error) {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
@@ -438,11 +454,32 @@ func ParseCookieContent(fileName string, content string) (map[string]string, err
 }
 
 func parseJSONCookieContent(payload []byte) (map[string]string, error) {
-	var decoded map[string]any
+	var decoded any
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		return nil, fmt.Errorf("tracker auth: parse JSON cookies: %w", err)
 	}
 	out := make(map[string]string)
+	switch typed := decoded.(type) {
+	case map[string]any:
+		addJSONCookieObject(out, typed)
+	case []any:
+		for _, item := range typed {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			addJSONCookieArrayEntry(out, entry)
+		}
+	default:
+		return nil, errors.New("tracker auth: JSON cookie content must be an object or array")
+	}
+	if len(out) == 0 {
+		return nil, errors.New("tracker auth: cookie content has no entries")
+	}
+	return out, nil
+}
+
+func addJSONCookieObject(out map[string]string, decoded map[string]any) {
 	for key, value := range decoded {
 		name := strings.TrimSpace(key)
 		if name == "" {
@@ -450,21 +487,38 @@ func parseJSONCookieContent(payload []byte) (map[string]string, error) {
 		}
 		switch typed := value.(type) {
 		case string:
-			if trimmed := strings.TrimSpace(typed); trimmed != "" {
-				out[name] = trimmed
-			}
+			addCookieValue(out, name, typed)
 		case map[string]any:
-			if raw, ok := typed["value"]; ok {
-				if trimmed := strings.TrimSpace(fmt.Sprint(raw)); trimmed != "" {
-					out[name] = trimmed
-				}
+			if raw, ok := typed["value"]; ok && raw != nil {
+				addCookieValue(out, name, fmt.Sprint(raw))
 			}
 		}
 	}
-	if len(out) == 0 {
-		return nil, errors.New("tracker auth: cookie content has no entries")
+}
+
+func addJSONCookieArrayEntry(out map[string]string, entry map[string]any) {
+	name, hasName := jsonCookieField(entry, "name")
+	value, hasValue := jsonCookieField(entry, "value")
+	if !hasName || !hasValue {
+		return
 	}
-	return out, nil
+	addCookieValue(out, name, value)
+}
+
+func jsonCookieField(entry map[string]any, key string) (string, bool) {
+	raw, ok := entry[key]
+	if !ok || raw == nil {
+		return "", false
+	}
+	return strings.TrimSpace(fmt.Sprint(raw)), true
+}
+
+func addCookieValue(out map[string]string, name string, value string) {
+	name = strings.TrimSpace(name)
+	value = strings.TrimSpace(value)
+	if name != "" && value != "" {
+		out[name] = value
+	}
 }
 
 func parseNetscapeCookieContent(content string) (map[string]string, error) {
@@ -475,8 +529,8 @@ func parseNetscapeCookieContent(content string) (map[string]string, error) {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "#HttpOnly_") {
-			line = strings.TrimPrefix(line, "#HttpOnly_")
+		if trimmedLine, ok := strings.CutPrefix(line, "#HttpOnly_"); ok {
+			line = trimmedLine
 		} else if strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -542,6 +596,7 @@ func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 	}
 }
 
+// CookiesToMap converts HTTP cookies to a non-empty name/value map, ignoring nil cookies and blank names or values.
 func CookiesToMap(values []*http.Cookie) map[string]string {
 	out := make(map[string]string)
 	for _, cookie := range values {
@@ -555,4 +610,27 @@ func CookiesToMap(values []*http.Cookie) map[string]string {
 		}
 	}
 	return out
+}
+
+func deleteTrackerAuthState(ctx context.Context, dbPath string, trackerID string) error {
+	if !strings.EqualFold(strings.TrimSpace(trackerID), "AR") {
+		return nil
+	}
+	if err := DeleteAuthState(ctx, dbPath, "AR", "auth_key"); err != nil && encryptedAuthStateMayExist(dbPath) {
+		return fmt.Errorf("tracker auth: delete AR auth state: %w", err)
+	}
+	if legacyPath, err := servicedb.CookiePath(dbPath, "AR_auth.txt"); err == nil {
+		if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("tracker auth: delete AR legacy auth key: %w", err)
+		}
+	}
+	return nil
+}
+
+func encryptedAuthStateMayExist(dbPath string) bool {
+	if strings.TrimSpace(dbPath) == "" {
+		return false
+	}
+	_, err := authmaterial.LoadFromDBPath(dbPath)
+	return err == nil
 }
