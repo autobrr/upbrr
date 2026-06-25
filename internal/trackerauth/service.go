@@ -26,10 +26,15 @@ import (
 
 // Tracker auth status values returned in api.TrackerAuthStatus.State.
 const (
-	StateConfigured                  = "configured"
-	StateHasCookies                  = "has_cookies"
-	StateNotConfigured               = "not_configured"
-	StateLoginRequired               = "login_required"
+	// StateConfigured means required non-cookie config auth material is present.
+	StateConfigured = "configured"
+	// StateHasCookies means encrypted cookie storage contains at least one cookie for the tracker.
+	StateHasCookies = "has_cookies"
+	// StateNotConfigured means no supported auth material is currently configured.
+	StateNotConfigured = "not_configured"
+	// StateLoginRequired means credentials or imported cookies are required before tracker auth can proceed.
+	StateLoginRequired = "login_required"
+	// StateEncryptedStorageUnavailable means cookie import cannot be used until web auth material exists.
 	StateEncryptedStorageUnavailable = "encrypted_storage_unavailable"
 )
 

@@ -284,9 +284,12 @@ export type ApplicationInfo = {
   uptimeSeconds: number;
 };
 
+/** Tracker auth support metadata returned by the app bridge. */
 export type TrackerAuthCapability = {
+  /** Normalized tracker code used in tracker auth bridge calls. */
   trackerID: string;
   displayName: string;
+  /** Compact capability label such as "cookies", "credential_login", or "api_key_cookies_login". */
   authKind: string;
   supportsCookieFile: boolean;
   supportsLogin: boolean;
@@ -298,20 +301,27 @@ export type TrackerAuthCapability = {
   notes?: string[];
 };
 
+/** Current tracker auth state returned after status, import, login, validation, 2FA, or delete actions. */
 export type TrackerAuthStatus = {
   trackerID: string;
   displayName: string;
+  /** Backend state string such as "configured", "has_cookies", or "login_required". */
   state: string;
   cookieCount: number;
+  /** RFC3339 UTC timestamp generated when the backend evaluated the status. */
   lastCheckedAt: string;
+  /** Redacted failure text from the most recent local or remote auth check. */
   lastError: string;
   encryptedStorage: boolean;
   needs2FA: boolean;
+  /** Opaque manual-2FA continuation token; empty unless needs2FA is true. */
   challengeID: string;
   message: string;
 };
 
+/** Optional login data for tracker auth flows. */
 export type TrackerAuthLoginRequest = {
+  /** One-time 2FA code for adapters that accept it during login. */
   code?: string;
 };
 

@@ -15,12 +15,15 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// ErrAuthStateNotFound is returned when no encrypted tracker auth state exists for a tracker/key pair.
 var ErrAuthStateNotFound = errors.New("tracker auth state not found")
 
+// AuthStateStore persists encrypted tracker auth state in the shared SQLite database.
 type AuthStateStore struct {
 	db *sql.DB
 }
 
+// SaveAuthState opens dbPath, initializes encrypted auth storage, and upserts value for trackerID/stateKey.
 func SaveAuthState(ctx context.Context, dbPath string, trackerID string, stateKey string, value string) error {
 	store, encKey, repo, err := openAuthStateStore(ctx, dbPath)
 	if err != nil {
@@ -32,6 +35,8 @@ func SaveAuthState(ctx context.Context, dbPath string, trackerID string, stateKe
 	return store.Save(ctx, trackerID, stateKey, value, encKey)
 }
 
+// LoadAuthState opens dbPath and decrypts value for trackerID/stateKey.
+// It returns [ErrAuthStateNotFound] when the key has not been saved.
 func LoadAuthState(ctx context.Context, dbPath string, trackerID string, stateKey string) (string, error) {
 	store, encKey, repo, err := openAuthStateStore(ctx, dbPath)
 	if err != nil {
@@ -43,6 +48,7 @@ func LoadAuthState(ctx context.Context, dbPath string, trackerID string, stateKe
 	return store.Load(ctx, trackerID, stateKey, encKey)
 }
 
+// DeleteAuthState opens dbPath and deletes value for trackerID/stateKey.
 func DeleteAuthState(ctx context.Context, dbPath string, trackerID string, stateKey string) error {
 	store, _, repo, err := openAuthStateStore(ctx, dbPath)
 	if err != nil {
@@ -54,6 +60,7 @@ func DeleteAuthState(ctx context.Context, dbPath string, trackerID string, state
 	return store.Delete(ctx, trackerID, stateKey)
 }
 
+// NewAuthStateStore wraps db for encrypted tracker auth state operations.
 func NewAuthStateStore(db *sql.DB) (*AuthStateStore, error) {
 	if db == nil {
 		return nil, errors.New("tracker auth state: nil database connection")
@@ -61,6 +68,8 @@ func NewAuthStateStore(db *sql.DB) (*AuthStateStore, error) {
 	return &AuthStateStore{db: db}, nil
 }
 
+// Save encrypts value with encKey and upserts it for trackerID/stateKey.
+// encKey must be a 32-byte key from cookie encryption storage.
 func (s *AuthStateStore) Save(ctx context.Context, trackerID string, stateKey string, value string, encKey []byte) error {
 	if ctx == nil {
 		return errors.New("tracker auth state: context is required")
@@ -91,6 +100,8 @@ func (s *AuthStateStore) Save(ctx context.Context, trackerID string, stateKey st
 	return nil
 }
 
+// Load decrypts value for trackerID/stateKey with encKey.
+// It returns [ErrAuthStateNotFound] when the key has not been saved.
 func (s *AuthStateStore) Load(ctx context.Context, trackerID string, stateKey string, encKey []byte) (string, error) {
 	if ctx == nil {
 		return "", errors.New("tracker auth state: context is required")
@@ -124,6 +135,7 @@ func (s *AuthStateStore) Load(ctx context.Context, trackerID string, stateKey st
 	return value, nil
 }
 
+// Delete removes encrypted value for trackerID/stateKey.
 func (s *AuthStateStore) Delete(ctx context.Context, trackerID string, stateKey string) error {
 	if ctx == nil {
 		return errors.New("tracker auth state: context is required")

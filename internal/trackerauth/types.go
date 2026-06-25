@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package trackerauth manages tracker login, cookie import, session validation,
+// and encrypted auxiliary auth state for tracker implementations.
 package trackerauth
 
 import (
@@ -14,38 +16,62 @@ import (
 )
 
 const (
-	SessionStateReady        = "ready"
+	// SessionStateReady means an adapter returned auth material ready for tracker requests.
+	SessionStateReady = "ready"
+	// SessionStateAuthRequired means no usable session is available without user auth material.
 	SessionStateAuthRequired = "auth_required"
-	SessionStateNeeds2FA     = "needs_2fa"
-	SessionStateUnsupported  = "unsupported"
+	// SessionStateNeeds2FA means the auth flow is paused until a manual 2FA code is submitted.
+	SessionStateNeeds2FA = "needs_2fa"
+	// SessionStateUnsupported means the tracker has no supported auth operation for the requested flow.
+	SessionStateUnsupported = "unsupported"
 )
 
+// EnsureRequest describes one tracker auth validation or login attempt.
 type EnsureRequest struct {
+	// TrackerID is the tracker code to validate; comparisons are case-insensitive.
 	TrackerID string
-	Config    config.TrackerConfig
-	DBPath    string
+	// Config supplies credentials, URLs, passkeys, and OTP settings for the tracker.
+	Config config.TrackerConfig
+	// DBPath points at the application database used for encrypted cookie and state storage.
+	DBPath string
+	// AutoLogin allows EnsureSession to attempt credential login after a confirmed invalid stored session.
 	AutoLogin bool
-	Login     api.TrackerAuthLoginRequest
+	// Login carries optional adapter-specific login input, such as a one-time 2FA code.
+	Login api.TrackerAuthLoginRequest
 }
 
+// Session is the normalized result returned by a tracker auth adapter.
 type Session struct {
-	TrackerID   string
-	State       string
-	Cookies     map[string]string
-	Token       string
+	// TrackerID is the normalized tracker code that produced the session.
+	TrackerID string
+	// State reports whether the session is ready, blocked by auth, paused for 2FA, or unsupported.
+	State string
+	// Cookies contains session cookies returned by adapters that expose cookie maps.
+	Cookies map[string]string
+	// Token contains tracker-specific CSRF/auth tokens when an adapter exposes one.
+	Token string
+	// ChallengeID identifies a pending manual 2FA continuation.
 	ChallengeID string
 	Message     string
 }
 
+// Adapter validates and mutates tracker-specific auth material.
 type Adapter interface {
+	// Capability returns static auth support metadata for the tracker.
 	Capability() api.TrackerAuthCapability
+	// Status returns local auth state without forcing a remote login.
 	Status(ctx context.Context, cfg config.TrackerConfig, dbPath string) (api.TrackerAuthStatus, error)
+	// Validate checks whether stored auth material can be used for tracker requests.
 	Validate(ctx context.Context, cfg config.TrackerConfig, dbPath string) (Session, error)
+	// Login attempts credential-based auth and may persist refreshed auth material.
 	Login(ctx context.Context, cfg config.TrackerConfig, dbPath string, req api.TrackerAuthLoginRequest) (Session, error)
+	// Submit2FA continues a manual 2FA challenge previously returned by Validate or Login.
 	Submit2FA(ctx context.Context, challengeID string, code string) (Session, error)
+	// Delete removes persisted auth material owned by the adapter.
 	Delete(ctx context.Context, dbPath string) error
 }
 
+// AuthRequiredError reports that no usable session is available and caller-supplied auth material is required.
 type AuthRequiredError struct {
 	TrackerID string
 	Reason    string
@@ -60,8 +86,10 @@ func (e *AuthRequiredError) Unwrap() error {
 	return e.Err
 }
 
+// Needs2FAError reports that a manual 2FA code is required before auth can continue.
 type Needs2FAError struct {
-	TrackerID   string
+	TrackerID string
+	// ChallengeID is set when the caller can continue the flow with Submit2FA.
 	ChallengeID string
 	Reason      string
 	Err         error
@@ -75,6 +103,7 @@ func (e *Needs2FAError) Unwrap() error {
 	return e.Err
 }
 
+// UnsupportedAuthError reports that the requested auth operation is not implemented for the tracker.
 type UnsupportedAuthError struct {
 	TrackerID string
 	Reason    string
@@ -89,12 +118,15 @@ func (e *UnsupportedAuthError) Unwrap() error {
 	return e.Err
 }
 
+// ValidationError reports a failed remote or local validation check.
 type ValidationError struct {
-	TrackerID        string
+	TrackerID string
+	// ConfirmedInvalid means stored auth material is known bad and may be deleted.
 	ConfirmedInvalid bool
-	Transient        bool
-	Reason           string
-	Err              error
+	// Transient means stored auth material should be preserved because the failure may be temporary.
+	Transient bool
+	Reason    string
+	Err       error
 }
 
 func (e *ValidationError) Error() string {
