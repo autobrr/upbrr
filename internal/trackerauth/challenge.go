@@ -24,11 +24,14 @@ type Challenge struct {
 	ID string
 	// TrackerID is the normalized tracker code that owns the challenge.
 	TrackerID string
+	// OwnerKey binds the challenge to the config generation that created it.
+	OwnerKey string
 	// ExpiresAt is the UTC deadline after which the challenge is discarded.
 	ExpiresAt time.Time
 }
 
-// ChallengeManager stores time-limited manual 2FA challenges for tracker auth.
+// ChallengeManager stores time-limited manual 2FA challenges and rejects
+// continuations whose owner key no longer matches the creating config.
 type ChallengeManager struct {
 	mu  sync.Mutex
 	ttl time.Duration
@@ -51,8 +54,10 @@ func NewChallengeManager(ttl time.Duration) *ChallengeManager {
 	}
 }
 
-// Create registers a challenge for trackerID and returns its opaque ID.
-func (m *ChallengeManager) Create(ctx context.Context, trackerID string) string {
+// Create registers a challenge for trackerID and returns its opaque ID. The
+// optional owner key is stored with the challenge so later submissions can be
+// rejected after a config change.
+func (m *ChallengeManager) Create(ctx context.Context, trackerID string, ownerKey ...string) string {
 	if ctx != nil && ctx.Err() != nil {
 		return ""
 	}
@@ -68,6 +73,7 @@ func (m *ChallengeManager) Create(ctx context.Context, trackerID string) string 
 	m.items[id] = Challenge{
 		ID:        id,
 		TrackerID: trackerID,
+		OwnerKey:  firstOwnerKey(ownerKey),
 		ExpiresAt: m.now().UTC().Add(m.ttl),
 	}
 	return id
@@ -83,8 +89,9 @@ func (m *ChallengeManager) Get(challengeID string) (Challenge, bool) {
 	return challenge, ok
 }
 
-// Consume validates that challengeID belongs to trackerID, removes it, and returns the consumed challenge.
-func (m *ChallengeManager) Consume(challengeID string, trackerID string) (Challenge, error) {
+// Consume validates that challengeID belongs to trackerID and ownerKey, removes
+// it, and returns the consumed challenge.
+func (m *ChallengeManager) Consume(challengeID string, trackerID string, ownerKey ...string) (Challenge, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -97,8 +104,22 @@ func (m *ChallengeManager) Consume(challengeID string, trackerID string) (Challe
 	if !strings.EqualFold(challenge.TrackerID, strings.TrimSpace(trackerID)) {
 		return Challenge{}, errors.New("tracker auth: challenge tracker mismatch")
 	}
+	if !challengeOwnerMatches(challenge, firstOwnerKey(ownerKey)) {
+		return Challenge{}, errors.New("tracker auth: stale manual 2FA challenge")
+	}
 	delete(m.items, challengeID)
 	return challenge, nil
+}
+
+func firstOwnerKey(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[0])
+}
+
+func challengeOwnerMatches(challenge Challenge, ownerKey string) bool {
+	return strings.TrimSpace(challenge.OwnerKey) == strings.TrimSpace(ownerKey)
 }
 
 func (m *ChallengeManager) cleanupLocked() {

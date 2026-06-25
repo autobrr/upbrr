@@ -773,7 +773,8 @@ func (b *Backend) GetDefaultConfig() (string, error) {
 	return wrapWebResult(config.ExportToJSON(cfg))
 }
 
-// ListTrackerAuthCapabilities returns tracker auth support metadata through the embedded web API.
+// ListTrackerAuthCapabilities returns browser-visible tracker auth support from
+// the current runtime config.
 func (b *Backend) ListTrackerAuthCapabilities() ([]api.TrackerAuthCapability, error) {
 	if b == nil {
 		return nil, errors.New("backend not initialized")
@@ -781,7 +782,8 @@ func (b *Backend) ListTrackerAuthCapabilities() ([]api.TrackerAuthCapability, er
 	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Capabilities(context.Background()))
 }
 
-// GetTrackerAuthStatus returns the current local auth status for one tracker.
+// GetTrackerAuthStatus reports local auth state for tracker from the current
+// runtime config and persisted cookie/auth state.
 func (b *Backend) GetTrackerAuthStatus(tracker string) (api.TrackerAuthStatus, error) {
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
@@ -789,44 +791,49 @@ func (b *Backend) GetTrackerAuthStatus(tracker string) (api.TrackerAuthStatus, e
 	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Status(context.Background(), tracker))
 }
 
-// ImportTrackerAuthCookieContent imports browser-supplied cookie content for one tracker.
-func (b *Backend) ImportTrackerAuthCookieContent(tracker string, fileName string, content string) (api.TrackerAuthStatus, error) {
+// ImportTrackerAuthCookieContent imports browser-supplied cookie content with
+// the request context and the shared raw content size limit.
+func (b *Backend) ImportTrackerAuthCookieContent(ctx context.Context, tracker string, fileName string, content string) (api.TrackerAuthStatus, error) {
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).ImportCookies(context.Background(), tracker, fileName, content))
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).ImportCookies(ctx, tracker, fileName, content))
 }
 
-// TestTrackerAuth validates tracker auth remotely when supported and otherwise returns local status with an unsupported message.
-func (b *Backend) TestTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
+// TestTrackerAuth validates tracker auth with ctx so canceled web requests stop
+// remote validation and persistence work.
+func (b *Backend) TestTrackerAuth(ctx context.Context, tracker string) (api.TrackerAuthStatus, error) {
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Validate(context.Background(), tracker))
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Validate(ctx, tracker))
 }
 
-// LoginTrackerAuth attempts credential-based tracker auth and returns status for missing credentials, unsupported login, or 2FA.
-func (b *Backend) LoginTrackerAuth(tracker string, req api.TrackerAuthLoginRequest) (api.TrackerAuthStatus, error) {
+// LoginTrackerAuth attempts credential-based tracker auth with ctx and returns
+// status for missing credentials, unsupported login, or 2FA.
+func (b *Backend) LoginTrackerAuth(ctx context.Context, tracker string, req api.TrackerAuthLoginRequest) (api.TrackerAuthStatus, error) {
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Login(context.Background(), tracker, req))
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Login(ctx, tracker, req))
 }
 
-// SubmitTrackerAuth2FA submits a manual 2FA code for an active tracker auth challenge.
-func (b *Backend) SubmitTrackerAuth2FA(challengeID string, code string) (api.TrackerAuthStatus, error) {
+// SubmitTrackerAuth2FA completes an active manual 2FA challenge with ctx and
+// returns the refreshed tracker auth status.
+func (b *Backend) SubmitTrackerAuth2FA(ctx context.Context, challengeID string, code string) (api.TrackerAuthStatus, error) {
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Submit2FA(context.Background(), challengeID, code))
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Submit2FA(ctx, challengeID, code))
 }
 
-// DeleteTrackerAuth removes stored auth material for one tracker and returns refreshed local status.
-func (b *Backend) DeleteTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
+// DeleteTrackerAuth removes stored tracker cookies and tracker-specific auth
+// state with ctx, then returns the refreshed local status.
+func (b *Backend) DeleteTrackerAuth(ctx context.Context, tracker string) (api.TrackerAuthStatus, error) {
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Delete(context.Background(), tracker))
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Delete(ctx, tracker))
 }
 
 // exportableConfig returns the normalized config snapshot and the DB path that
@@ -909,8 +916,8 @@ func (b *Backend) allowUnencryptedExport(dbPath string) (bool, error) {
 }
 
 // SaveConfig validates encrypted browser settings, builds the replacement
-// runtime, persists the non-env config, then attempts shared cookie migration
-// before installing the runtime. Runtime build or save failures leave the
+// runtime, migrates shared cookies, then persists the non-env config before
+// installing the runtime. Runtime build, migration, or save failures leave the
 // persisted config and active runtime unchanged; env overrides apply only to
 // the installed runtime config.
 func (b *Backend) SaveConfig(payload string) error {
@@ -947,10 +954,10 @@ func (b *Backend) SaveConfig(payload string) error {
 const configImportMaxBytes = importer.MaxFileBytes
 
 // ImportConfig imports browser-uploaded config content, validates the saved and
-// env-applied runtime forms, builds the replacement runtime, persists the
-// non-env config, then attempts shared cookie migration before installing the
-// runtime. Runtime build or save failures leave the persisted config and active
-// runtime unchanged.
+// env-applied runtime forms, builds the replacement runtime, migrates shared
+// cookies, then persists the non-env config before installing the runtime.
+// Runtime build, migration, or save failures leave the persisted config and
+// active runtime unchanged.
 func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, error) {
 	if b.repo == nil {
 		return "", nil, errors.New("config repository not initialized")
@@ -992,9 +999,9 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 }
 
 // saveAndApplyConfig builds the replacement runtime before any repository
-// writes, then persists cfg, attempts shared cookie migration, and installs the
-// runtime as one ordered transition. If persistence fails, the built runtime is
-// closed and the active runtime is left untouched.
+// writes, then migrates shared cookies, persists cfg, and installs the runtime
+// as one ordered transition. If migration or persistence fails, the built
+// runtime is closed and the active runtime is left untouched.
 func (b *Backend) saveAndApplyConfig(ctx context.Context, cfg *config.Config, runtimeCfg config.Config, dbPath string) error {
 	if err := validateCookieAuthMaterial(dbPath); err != nil {
 		if !errors.Is(err, cookies.ErrAuthHelperUnavailable) {
@@ -1006,13 +1013,13 @@ func (b *Backend) saveAndApplyConfig(ctx context.Context, cfg *config.Config, ru
 	if err != nil {
 		return err
 	}
-	if err := b.saveConfigToRepository(ctx, cfg, dbPath); err != nil {
-		closeBuiltRuntime(rt)
-		return err
-	}
 	if err := b.ensureSharedCookieMigrationForRuntime(ctx, dbPath, rt.Logger); err != nil {
 		closeBuiltRuntime(rt)
 		return fmt.Errorf("web: cookie migration failed: %w", err)
+	}
+	if err := b.saveConfigToRepository(ctx, cfg, dbPath); err != nil {
+		closeBuiltRuntime(rt)
+		return err
 	}
 	b.installConfigRuntime(runtimeCfg, rt)
 	return nil

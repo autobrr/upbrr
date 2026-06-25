@@ -5,6 +5,7 @@ package mtv
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -62,6 +64,82 @@ func TestResolveSessionForTrackerAuthPreservesCookiesOnTransientAuthFetch(t *tes
 	}
 	if got["session"] != "abc" {
 		t.Fatalf("expected transient failure to preserve cookies, got %#v", got)
+	}
+}
+
+func TestResolveSessionForTrackerAuthReportsPostLoginCookiePersistenceFailure(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "abc", Path: "/"})
+			_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+		case "/index.php":
+			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	err := ResolveSessionForTrackerAuth(context.Background(), config.TrackerConfig{
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
+	}, filepath.Join(t.TempDir(), "upbrr.db"))
+	if !errors.Is(err, cookiepkg.ErrAuthHelperUnavailable) {
+		t.Fatalf("expected auth helper unavailable error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "persist cookies after successful login") {
+		t.Fatalf("expected distinct persistence failure, got %v", err)
+	}
+}
+
+func TestResolveSessionForTrackerAuthRejectsEmptyLoginCookiesWithoutReplacingStoredCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newMTVAuthDB(t)
+	if err := saveMTVCookies(ctx, dbPath, map[string]string{"session": "existing"}); err != nil {
+		t.Fatalf("saveMTVCookies: %v", err)
+	}
+	indexRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+				return
+			}
+			_, _ = w.Write([]byte(`<html>ok</html>`))
+		case "/index.php":
+			indexRequests++
+			if indexRequests == 1 {
+				_, _ = w.Write([]byte(`<html>logged out</html>`))
+				return
+			}
+			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
+	}, dbPath)
+	if err == nil || !strings.Contains(err.Error(), "no usable cookies") {
+		t.Fatalf("expected empty login cookie error, got %v", err)
+	}
+	got, loadErr := loadMTVCookies(ctx, dbPath)
+	if loadErr != nil {
+		t.Fatalf("loadMTVCookies after empty login cookies: %v", loadErr)
+	}
+	if got["session"] != "existing" {
+		t.Fatalf("expected empty login cookies to preserve stored cookies, got %#v", got)
 	}
 }
 

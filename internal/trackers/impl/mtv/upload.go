@@ -252,7 +252,9 @@ func saveMTVCookies(ctx context.Context, dbPath string, values map[string]string
 	return wrapTrackerError(cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "MTV", values))
 }
 
-// ResolveSessionForTrackerAuth validates MTV stored cookies or logs in with configured credentials and saves refreshed cookies.
+// ResolveSessionForTrackerAuth validates MTV stored cookies or logs in with
+// configured credentials. After a successful login, cookie persistence failures
+// are returned distinctly from remote authentication failures.
 func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	if baseURL == "" {
@@ -273,9 +275,17 @@ func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig,
 	if err != nil {
 		return err
 	}
-	return saveMTVCookies(ctx, dbPath, values)
+	if len(values) == 0 {
+		return errors.New("trackers: MTV login returned no usable cookies")
+	}
+	if err := saveMTVCookies(ctx, dbPath, values); err != nil {
+		return fmt.Errorf("trackers: MTV persist cookies after successful login: %w", err)
+	}
+	return nil
 }
 
+// loginAndResolveAuthKey performs MTV login, optional TOTP submission, and auth
+// key discovery, returning cookies captured from the authenticated jar.
 func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string) (string, *http.Client, map[string]string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -391,10 +401,10 @@ func cookiesFromJar(baseURL string, jar http.CookieJar) map[string]string {
 	}
 	out := make(map[string]string)
 	for _, cookie := range jar.Cookies(parsed) {
-		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
 			continue
 		}
-		out[strings.TrimSpace(cookie.Name)] = strings.TrimSpace(cookie.Value)
+		out[strings.TrimSpace(cookie.Name)] = cookie.Value
 	}
 	return out
 }

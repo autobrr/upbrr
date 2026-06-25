@@ -976,7 +976,7 @@ func TestBackendSaveConfigBuildRuntimeFailureDoesNotPersist(t *testing.T) {
 		t.Fatal("expected runtime build failure")
 	}
 
-	assertStoredSkipAutoTorrent(t, repo, false)
+	assertStoredSkipAutoTorrentUnset(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config to remain unchanged")
 	}
@@ -1012,7 +1012,7 @@ func TestBackendImportConfigBuildRuntimeFailureDoesNotPersist(t *testing.T) {
 		t.Fatal("expected runtime build failure")
 	}
 
-	assertStoredSkipAutoTorrent(t, repo, false)
+	assertStoredSkipAutoTorrentUnset(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config to remain unchanged")
 	}
@@ -1110,7 +1110,7 @@ func TestBackendSaveConfigSyncsUsableWebAuthBeforeSave(t *testing.T) {
 	assertCookieAuthStatePresent(t, repo)
 }
 
-func TestBackendSaveConfigCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
+func TestBackendSaveConfigLeavesConfigUnchangedWhenRepositorySaveFailsAfterCookieSync(t *testing.T) {
 	t.Parallel()
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-cookie-rollback.db")
@@ -1137,7 +1137,8 @@ func TestBackendSaveConfigCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
 		t.Fatal("expected save config to fail")
 	}
 
-	assertFailedConfigSaveRowsAbsent(t, repo)
+	assertConfigRowsAbsent(t, repo)
+	assertCookieAuthStatePresent(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config not to be applied after failed config save")
 	}
@@ -1174,7 +1175,7 @@ func TestBackendSaveConfigHardCookieMigrationErrorDoesNotInstallRuntime(t *testi
 	if !strings.Contains(err.Error(), "forced migration failure") {
 		t.Fatalf("expected forced migration failure, got %v", err)
 	}
-	assertStoredSkipAutoTorrent(t, repo, true)
+	assertStoredSkipAutoTorrentUnset(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config not to be applied after hard migration failure")
 	}
@@ -1211,6 +1212,7 @@ func TestBackendImportConfigHardCookieMigrationErrorPropagates(t *testing.T) {
 	if !strings.Contains(err.Error(), "forced migration failure") {
 		t.Fatalf("expected forced migration failure, got %v", err)
 	}
+	assertStoredSkipAutoTorrentUnset(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config not to be applied after imported hard migration failure")
 	}
@@ -1319,6 +1321,19 @@ func assertFailedConfigSaveRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
 	}
 }
 
+func assertConfigRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
+	t.Helper()
+
+	var data string
+	err := repo.RawDB().QueryRowContext(context.Background(),
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"MainSettings",
+	).Scan(&data)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected MainSettings to be absent after failed save, got row=%q err=%v", data, err)
+	}
+}
+
 func expectLogStreamMessage(t *testing.T, events <-chan serverEvent, streamID string, want string) {
 	t.Helper()
 
@@ -1359,15 +1374,15 @@ func drainLogStreamEvents(events <-chan serverEvent) {
 	}
 }
 
-func assertStoredSkipAutoTorrent(t *testing.T, repo *db.SQLiteRepository, want bool) {
+func assertStoredSkipAutoTorrentUnset(t *testing.T, repo *db.SQLiteRepository) {
 	t.Helper()
 
 	stored, err := config.LoadFromDatabase(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("load stored config: %v", err)
 	}
-	if got := stored.Metadata.SkipAutoTorrent; got != want {
-		t.Fatalf("stored skip_auto_torrent: got %t want %t", got, want)
+	if stored.Metadata.SkipAutoTorrent {
+		t.Fatal("stored skip_auto_torrent changed unexpectedly")
 	}
 }
 

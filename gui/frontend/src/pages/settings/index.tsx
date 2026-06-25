@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { Button } from "../../components/ui/button";
@@ -77,9 +77,9 @@ type Props = {
   handleExportSettings: () => void;
   handleImportConfig: () => void;
   importConfirmOpen: boolean;
-  handleImportConfigConfirm: () => void;
+  handleImportConfigConfirm: () => void | Promise<void>;
   handleImportConfigCancel: () => void;
-  handleSaveSettings: () => void;
+  handleSaveSettings: () => void | Promise<void>;
   webAuthAvailable: boolean;
   webAuthStatus: WebAuthStatus | null;
   webAuthLoading: boolean;
@@ -99,7 +99,11 @@ type Props = {
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
 };
 
-/** Renders the settings view and calls the app bridge for application info and tracker auth actions. */
+/**
+ * Renders settings plus tracker auth controls with generation-gated async state
+ * so config saves/imports, section changes, and per-tracker actions ignore
+ * stale tracker auth responses.
+ */
 export default function SettingsPage(props: Props) {
   const {
     configData,
@@ -157,9 +161,36 @@ export default function SettingsPage(props: Props) {
   );
   const [trackerAuthLoading, setTrackerAuthLoading] = useState(false);
   const [trackerAuthError, setTrackerAuthError] = useState("");
+  const [trackerAuthActionErrors, setTrackerAuthActionErrors] = useState<Record<string, string>>(
+    {},
+  );
   const [trackerAuthFilter, setTrackerAuthFilter] = useState("");
   const [trackerAuthActions, setTrackerAuthActions] = useState<Record<string, string>>({});
   const [trackerAuthCodes, setTrackerAuthCodes] = useState<Record<string, string>>({});
+  const [trackerAuthReloadRevision, setTrackerAuthReloadRevision] = useState(0);
+  const trackerAuthStatusVersions = useRef<Record<string, number>>({});
+  const trackerAuthActionSequences = useRef<Record<string, number>>({});
+  const trackerAuthLoadGeneration = useRef(0);
+  const trackerAuthSectionActiveRef = useRef(settingsSection === trackerAuthSection.key);
+
+  const invalidateTrackerAuthStatusVersions = useCallback(() => {
+    Object.keys(trackerAuthStatusVersions.current).forEach((trackerID) => {
+      trackerAuthStatusVersions.current[trackerID] =
+        (trackerAuthStatusVersions.current[trackerID] ?? 0) + 1;
+    });
+  }, []);
+
+  useEffect(() => {
+    const active = settingsSection === trackerAuthSection.key;
+    trackerAuthSectionActiveRef.current = active;
+    if (!active) {
+      invalidateTrackerAuthStatusVersions();
+      trackerAuthLoadGeneration.current += 1;
+      setTrackerAuthLoading(false);
+      setTrackerAuthActions({});
+      setTrackerAuthActionErrors({});
+    }
+  }, [invalidateTrackerAuthStatusVersions, settingsSection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,6 +245,8 @@ export default function SettingsPage(props: Props) {
       return undefined;
     }
     let cancelled = false;
+    const loadGeneration = trackerAuthLoadGeneration.current + 1;
+    trackerAuthLoadGeneration.current = loadGeneration;
     const bridge = globalThis.go?.guiapp?.App as AppBridgeWithTrackerAuth | undefined;
     const list = bridge?.ListTrackerAuthCapabilities;
     const getStatus = bridge?.GetTrackerAuthStatus;
@@ -226,47 +259,77 @@ export default function SettingsPage(props: Props) {
 
     setTrackerAuthLoading(true);
     setTrackerAuthError("");
+    setTrackerAuthActionErrors({});
     void list()
-      .then(async (capabilities) => {
+      .then((capabilities) => {
         if (cancelled) {
           return;
         }
         setTrackerAuthCapabilities(capabilities);
-        const entries = await Promise.all(
-          capabilities.map(async (capability) => {
-            try {
-              const status = await getStatus(capability.trackerID);
-              return [capability.trackerID, status] as const;
-            } catch (error) {
-              return [
-                capability.trackerID,
-                {
-                  trackerID: capability.trackerID,
-                  displayName: capability.displayName,
-                  state: "error",
-                  cookieCount: 0,
-                  lastCheckedAt: "",
-                  lastError: String(error),
-                  encryptedStorage: false,
-                  needs2FA: false,
-                  challengeID: "",
-                  message: "",
-                },
-              ] as const;
-            }
-          }),
-        );
-        if (!cancelled) {
-          setTrackerAuthStatuses(Object.fromEntries(entries));
+        setTrackerAuthStatuses({});
+        if (capabilities.length === 0) {
+          setTrackerAuthLoading(false);
+          return;
         }
+        let pendingStatuses = capabilities.length;
+        const markStatusComplete = () => {
+          pendingStatuses -= 1;
+          if (
+            pendingStatuses === 0 &&
+            !cancelled &&
+            trackerAuthLoadGeneration.current === loadGeneration
+          ) {
+            setTrackerAuthLoading(false);
+          }
+        };
+        capabilities.forEach((capability) => {
+          const statusVersion = trackerAuthStatusVersions.current[capability.trackerID] ?? 0;
+          void getStatus(capability.trackerID)
+            .then((status) => {
+              if (
+                !cancelled &&
+                (trackerAuthStatusVersions.current[capability.trackerID] ?? 0) === statusVersion
+              ) {
+                setTrackerAuthStatuses((prev) => ({
+                  ...prev,
+                  [capability.trackerID]: status,
+                }));
+              }
+            })
+            .catch((error) => {
+              if (
+                !cancelled &&
+                (trackerAuthStatusVersions.current[capability.trackerID] ?? 0) === statusVersion
+              ) {
+                setTrackerAuthStatuses((prev) => ({
+                  ...prev,
+                  [capability.trackerID]: {
+                    trackerID: capability.trackerID,
+                    displayName: capability.displayName,
+                    state: "error",
+                    cookieCount: 0,
+                    lastCheckedAt: "",
+                    lastError: String(error),
+                    encryptedStorage: false,
+                    needs2FA: false,
+                    challengeID: "",
+                    message: "",
+                  },
+                }));
+              }
+            })
+            .finally(() => {
+              if (!cancelled) {
+                markStatusComplete();
+              }
+            });
+        });
       })
       .catch((error) => {
         if (!cancelled) {
+          setTrackerAuthCapabilities([]);
+          setTrackerAuthStatuses({});
           setTrackerAuthError(String(error));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
           setTrackerAuthLoading(false);
         }
       });
@@ -274,22 +337,57 @@ export default function SettingsPage(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [settingsSection]);
+  }, [settingsSection, trackerAuthReloadRevision]);
+
+  const reloadTrackerAuthAfterConfigChange = useCallback(
+    async (handler: () => void | Promise<void>) => {
+      await handler();
+      invalidateTrackerAuthStatusVersions();
+      setTrackerAuthActions({});
+      setTrackerAuthActionErrors({});
+      setTrackerAuthReloadRevision((revision) => revision + 1);
+    },
+    [invalidateTrackerAuthStatusVersions],
+  );
 
   const runTrackerAuthAction = async (
     trackerID: string,
     action: string,
     fn: () => Promise<TrackerAuthStatus>,
   ) => {
+    const actionVersion = (trackerAuthStatusVersions.current[trackerID] ?? 0) + 1;
+    trackerAuthStatusVersions.current[trackerID] = actionVersion;
+    const actionSequence = (trackerAuthActionSequences.current[trackerID] ?? 0) + 1;
+    trackerAuthActionSequences.current[trackerID] = actionSequence;
     setTrackerAuthActions((prev) => ({ ...prev, [trackerID]: action }));
-    setTrackerAuthError("");
+    setTrackerAuthActionErrors((prev) => {
+      const next = { ...prev };
+      delete next[trackerID];
+      return next;
+    });
     try {
       const status = await fn();
-      setTrackerAuthStatuses((prev) => ({ ...prev, [trackerID]: status }));
+      if (
+        trackerAuthSectionActiveRef.current &&
+        trackerAuthStatusVersions.current[trackerID] === actionVersion
+      ) {
+        setTrackerAuthStatuses((prev) => ({ ...prev, [trackerID]: status }));
+      }
     } catch (error) {
-      setTrackerAuthError(String(error));
+      if (
+        trackerAuthSectionActiveRef.current &&
+        trackerAuthActionSequences.current[trackerID] === actionSequence &&
+        trackerAuthStatusVersions.current[trackerID] === actionVersion
+      ) {
+        setTrackerAuthActionErrors((prev) => ({ ...prev, [trackerID]: String(error) }));
+      }
     } finally {
-      setTrackerAuthActions((prev) => ({ ...prev, [trackerID]: "" }));
+      if (
+        trackerAuthSectionActiveRef.current &&
+        trackerAuthActionSequences.current[trackerID] === actionSequence
+      ) {
+        setTrackerAuthActions((prev) => ({ ...prev, [trackerID]: "" }));
+      }
     }
   };
 
@@ -337,6 +435,7 @@ export default function SettingsPage(props: Props) {
           {capabilities.map((capability) => {
             const status = trackerAuthStatuses[capability.trackerID];
             const busy = trackerAuthActions[capability.trackerID] || "";
+            const actionError = trackerAuthActionErrors[capability.trackerID] || "";
             const code = trackerAuthCodes[capability.trackerID] || "";
             const canTestAuth = remoteAuthValidationTrackers.has(
               capability.trackerID.trim().toUpperCase(),
@@ -371,6 +470,7 @@ export default function SettingsPage(props: Props) {
                 </div>
                 {status?.message ? <p className="helper">{status.message}</p> : null}
                 {status?.lastError ? <p className="error">{status.lastError}</p> : null}
+                {actionError ? <p className="error">{actionError}</p> : null}
                 {capability.notes?.map((note) => (
                   <p className="muted" key={note}>
                     {note}
@@ -568,7 +668,9 @@ export default function SettingsPage(props: Props) {
             <Button
               variant="primary"
               type="button"
-              onClick={handleSaveSettings}
+              onClick={() => {
+                void reloadTrackerAuthAfterConfigChange(handleSaveSettings);
+              }}
               disabled={settingsLoading || settingsExporting || settingsImporting || !settingsDirty}
             >
               Save
@@ -928,7 +1030,7 @@ export default function SettingsPage(props: Props) {
                   className="import-confirm-dialog__confirm"
                   onClick={(event) => {
                     event.preventDefault();
-                    handleImportConfigConfirm();
+                    void reloadTrackerAuthAfterConfigChange(handleImportConfigConfirm);
                   }}
                   disabled={settingsImporting}
                 >

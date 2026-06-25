@@ -14,6 +14,10 @@ let csrfToken = "";
 let nativeBrowseEnabled = false;
 let caseInsensitivePaths = navigator.platform.toLowerCase().startsWith("win");
 
+// Mirrors trackerauth.MaxCookieImportContentBytes so browser imports reject
+// over-limit files before decode and over-limit decoded text before posting.
+const maxCookieImportContentBytes = 1024 * 1024;
+const encodedTextByteLength = (value: string) => new TextEncoder().encode(value).length;
 const sessionChangedMessage =
   "Web session changed in another tab. Reload this tab to continue with the active login.";
 
@@ -592,9 +596,27 @@ export const initializeBrowserBridge = (
                   resolve({ name: "", content: "" });
                   return;
                 }
+                if (file.size > maxCookieImportContentBytes) {
+                  reject(
+                    new Error(
+                      `tracker auth: cookie file content exceeds ${maxCookieImportContentBytes} byte limit`,
+                    ),
+                  );
+                  return;
+                }
                 const reader = new FileReader();
-                reader.onload = () =>
-                  resolve({ name: file.name, content: reader.result as string });
+                reader.onload = () => {
+                  const content = reader.result as string;
+                  if (encodedTextByteLength(content) > maxCookieImportContentBytes) {
+                    reject(
+                      new Error(
+                        `tracker auth: cookie file content exceeds ${maxCookieImportContentBytes} byte limit`,
+                      ),
+                    );
+                    return;
+                  }
+                  resolve({ name: file.name, content });
+                };
                 reader.onerror = () => reject(reader.error);
                 reader.readAsText(file);
               };
@@ -666,11 +688,13 @@ export const initializeBrowserBridge = (
   recreateEventSource();
 };
 
+/** Returns whether app calls should use the browser HTTP bridge instead of Wails. */
 export const isBrowserMode = () => {
   browserMode = isWebUIRuntime();
   return browserMode;
 };
 
+/** Reports native browse availability, defaulting to true for desktop Wails builds. */
 export const isBrowserNativeBrowseAvailable = () => {
   if (!isBrowserMode()) {
     return true;
@@ -684,6 +708,7 @@ export const isBrowserNativeBrowseAvailable = () => {
  */
 export const isRuntimePathCaseInsensitive = () => caseInsensitivePaths;
 
+/** Subscribes to browser native-browse availability changes and returns an unsubscribe callback. */
 export const subscribeBrowserNativeBrowseAvailability = (listener: () => void) => {
   nativeBrowseAvailabilityListeners.add(listener);
   return () => {
@@ -703,6 +728,7 @@ export const updateBrowserCSRFToken = (token: string, runtimeCaseInsensitivePath
   recreateEventSource();
 };
 
+/** Browser-mode auth API wrappers that preserve cookie credentials on every request. */
 export const browserAuth = {
   status: async () => {
     const response = await fetch("/api/auth/status", { credentials: "include" });

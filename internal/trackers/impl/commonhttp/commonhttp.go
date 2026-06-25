@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -34,6 +35,11 @@ const maxHTTPErrorDetailDepth = 10
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
+// FileField describes one file part in a tracker multipart upload. FieldName is
+// the form field; Content is used when present; otherwise Path is read from disk
+// and FileName overrides the filename sent in the part. ContentType is carried
+// for callers that need to retain media-type metadata, but the current builders
+// use Go's default multipart file-part headers.
 type FileField struct {
 	FieldName   string
 	FileName    string
@@ -42,6 +48,8 @@ type FileField struct {
 	Content     []byte
 }
 
+// CookiePathCandidates returns cleaned legacy cookie file paths beside dbPath
+// for the supplied tracker name and extensions.
 func CookiePathCandidates(dbPath string, name string, exts ...string) []string {
 	candidates := make([]string, 0, len(exts))
 	baseName := strings.TrimSpace(name)
@@ -65,9 +73,8 @@ type CookieStore interface {
 }
 
 // LoadCookiesForTracker loads cookies for a tracker from startup cookie files and the
-// database. When both sources are available, startup file cookies win on conflicts so
-// a fresh startup bootstrap can override stale persisted values while still preserving
-// DB-only cookies.
+// database. When both sources are available, database cookies win on conflicts while
+// preserving legacy-file-only cookies.
 // Callers must pass an explicit request-scoped context so cancellation and
 // deadlines are preserved through database cookie reads.
 func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string, cookieStore CookieStore, encryptionKey []byte) (map[string]string, error) {
@@ -77,7 +84,7 @@ func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string,
 
 	var storeCookies map[string]string
 
-	// Load database cookies first so startup cookie files can overwrite stale entries.
+	// Load database cookies first so store errors are reported before legacy fallback.
 	if cookieStore != nil && len(encryptionKey) > 0 {
 		cookies, err := cookieStore.GetAllTrackerCookies(ctx, trackerID, encryptionKey)
 		if err != nil {
@@ -88,19 +95,18 @@ func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string,
 		}
 	}
 
-	// Load startup file cookies and let them override any persisted DB values.
+	// Load startup file cookies as fallback/compatibility input, then let persisted
+	// DB values win same-name conflicts.
 	candidates := CookiePathCandidates(dbPath, trackerID, ".txt", ".json")
 	for _, path := range candidates {
 		switch filepath.Ext(path) {
 		case ".txt":
 			if cookies, err := LoadNetscapeCookies(path, ""); err == nil && len(cookies) > 0 {
 				result := make(map[string]string, len(storeCookies)+len(cookies))
-				for name, value := range storeCookies {
-					result[name] = value
-				}
 				for _, c := range cookies {
 					result[c.Name] = c.Value
 				}
+				maps.Copy(result, storeCookies)
 				return result, nil
 			}
 		case ".json":
@@ -110,12 +116,8 @@ func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string,
 				}
 
 				result := make(map[string]string, len(storeCookies)+len(cookies))
-				for name, value := range storeCookies {
-					result[name] = value
-				}
-				for name, value := range cookies {
-					result[name] = value
-				}
+				maps.Copy(result, cookies)
+				maps.Copy(result, storeCookies)
 				return result, nil
 			}
 		}
@@ -128,6 +130,10 @@ func LoadCookiesForTracker(ctx context.Context, dbPath string, trackerID string,
 	return nil, errors.New("no cookies found for tracker: " + trackerID)
 }
 
+// LoadNetscapeCookies reads Netscape-format cookies from path, optionally
+// filtering by expectedDomain. It trims names and domains, preserves cookie
+// values after the value column, and returns an error when no valid cookies
+// match.
 func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -139,13 +145,14 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 	scanner := bufio.NewScanner(file)
 	cookies := make([]*http.Cookie, 0, 4)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		line := strings.TrimSuffix(scanner.Text(), "\r")
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "#HttpOnly_") {
-			line = strings.TrimPrefix(line, "#HttpOnly_")
-		} else if strings.HasPrefix(line, "#") {
+		if httpOnlyLine, ok := strings.CutPrefix(trimmedLine, "#HttpOnly_"); ok {
+			line = httpOnlyLine
+		} else if strings.HasPrefix(trimmedLine, "#") {
 			continue
 		}
 		fields := strings.Split(line, "\t")
@@ -160,7 +167,7 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 			continue
 		}
 		name := strings.TrimSpace(fields[5])
-		value := strings.TrimSpace(strings.Join(fields[6:], "\t"))
+		value := strings.Join(fields[6:], "\t")
 		if name == "" || value == "" {
 			continue
 		}
@@ -182,6 +189,8 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 	return cookies, nil
 }
 
+// LoadJSONCookieMap reads a JSON cookie map from path and returns non-empty
+// trimmed names with non-empty values.
 func LoadJSONCookieMap(path string) (map[string]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -216,6 +225,8 @@ func LoadJSONCookieMap(path string) (map[string]string, error) {
 	return result, nil
 }
 
+// BuildMultipartPayload encodes single-value fields and files as multipart
+// form data and returns the payload with its Content-Type header value.
 func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte, string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -254,6 +265,9 @@ func BuildMultipartPayload(fields map[string]string, files []FileField) ([]byte,
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
+// BuildMultipartPayloadMulti encodes repeated field values and files as
+// multipart form data and returns the payload with its Content-Type header
+// value.
 func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) ([]byte, string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -299,6 +313,8 @@ func BuildMultipartPayloadMulti(fields map[string][]string, files []FileField) (
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
+// ApplyCookies adds non-empty cookies to req and ignores nil cookies or blank
+// names and values.
 func ApplyCookies(req *http.Request, cookies []*http.Cookie) {
 	for _, cookie := range cookies {
 		if cookie == nil || strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
@@ -308,6 +324,9 @@ func ApplyCookies(req *http.Request, cookies []*http.Cookie) {
 	}
 }
 
+// WriteFailureArtifact stores a tracker failure response under the release temp
+// directory and returns the written path. It returns an empty path when dbPath or
+// the source path is unavailable.
 func WriteFailureArtifact(meta api.PreparedMetadata, dbPath string, tracker string, name string, body []byte, ext string) (string, error) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return "", nil
@@ -338,6 +357,8 @@ func WriteFailureArtifact(meta api.PreparedMetadata, dbPath string, tracker stri
 	return path, nil
 }
 
+// ReadOptionalFile returns file contents for a non-empty path or an empty string
+// when the path is blank or unreadable.
 func ReadOptionalFile(path string) string {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -350,6 +371,8 @@ func ReadOptionalFile(path string) string {
 	return string(payload)
 }
 
+// ReadFirstMatching returns the first readable non-directory file matched by the
+// supplied glob patterns.
 func ReadFirstMatching(dir string, patterns ...string) ([]byte, string, error) {
 	for _, pattern := range patterns {
 		matches, err := filepath.Glob(filepath.Join(dir, pattern))
@@ -371,6 +394,8 @@ func ReadFirstMatching(dir string, patterns ...string) ([]byte, string, error) {
 	return nil, "", errors.New("matching file not found")
 }
 
+// FileBytes reads the entire file at path and wraps open/read failures with the
+// trimmed path.
 func FileBytes(path string) ([]byte, error) {
 	file, err := os.Open(strings.TrimSpace(path))
 	if err != nil {
@@ -389,10 +414,13 @@ type HTTPError struct {
 	message string
 }
 
+// Error returns the formatted, redacted tracker upload failure message.
 func (e HTTPError) Error() string {
 	return e.message
 }
 
+// UploadHTTPError formats a tracker upload HTTP failure with redacted response
+// detail extracted from body.
 func UploadHTTPError(tracker string, status int, body []byte) HTTPError {
 	detail := ExtractHTTPErrorDetail(body)
 	tracker = strings.ToUpper(RedactErrorDetail(tracker))
@@ -402,6 +430,8 @@ func UploadHTTPError(tracker string, status int, body []byte) HTTPError {
 	return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d: %s", tracker, status, detail)}
 }
 
+// UploadHTTPErrorWithURL formats a tracker upload HTTP failure with the
+// redacted final URL and response detail.
 func UploadHTTPErrorWithURL(tracker string, status int, url string, body []byte) HTTPError {
 	detail := ExtractHTTPErrorDetail(body)
 	tracker = strings.ToUpper(RedactErrorDetail(tracker))
@@ -412,10 +442,13 @@ func UploadHTTPErrorWithURL(tracker string, status int, url string, body []byte)
 	return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d url=%s: %s", tracker, status, url, detail)}
 }
 
+// RedactErrorDetail trims value after applying the repository secret redactor.
 func RedactErrorDetail(value string) string {
 	return strings.TrimSpace(redaction.RedactValue(value, nil))
 }
 
+// ExtractHTTPErrorDetail returns a compact, redacted error detail from plain
+// text, HTML, or JSON response bodies.
 func ExtractHTTPErrorDetail(body []byte) string {
 	text := RedactErrorDetail(string(body))
 	if text == "" {

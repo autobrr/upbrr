@@ -52,7 +52,8 @@ type Session struct {
 	Token string
 	// ChallengeID identifies a pending manual 2FA continuation.
 	ChallengeID string
-	Message     string
+	// Message contains caller-visible detail about the current auth state.
+	Message string
 }
 
 // Adapter validates and mutates tracker-specific auth material.
@@ -166,7 +167,16 @@ func hasLoginCredentials(cfg config.TrackerConfig) bool {
 }
 
 func normalizeTrackerID(trackerID string) string {
-	return strings.ToUpper(strings.TrimSpace(trackerID))
+	trimmed := strings.TrimSpace(trackerID)
+	var builder strings.Builder
+	builder.Grow(len(trimmed))
+	for _, r := range trimmed {
+		if r >= 'a' && r <= 'z' {
+			r -= 'a' - 'A'
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
 }
 
 func newUnknownTrackerError(trackerID string) error {

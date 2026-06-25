@@ -691,7 +691,9 @@ func resolveSession(ctx context.Context, trackerConfig config.TrackerConfig, dbP
 	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger)
 }
 
-// ResolveSessionForTrackerAuth validates PTP stored cookies or logs in with configured credentials and saves refreshed cookies.
+// ResolveSessionForTrackerAuth validates PTP stored cookies or logs in with
+// configured credentials. Credential login must produce an anti-CSRF token
+// before refreshed cookies are persisted.
 func ResolveSessionForTrackerAuth(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(trackerConfig.URL), "/")
 	if baseURL == "" {
@@ -727,11 +729,7 @@ func fetchAntiCsrfToken(ctx context.Context, baseURL string, cookies map[string]
 	return client, token, nil
 }
 
-func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string, logger api.Logger) (*http.Client, string, error) {
-	if logger == nil {
-		logger = api.NopLogger{}
-	}
-
+func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string, _ api.Logger) (*http.Client, string, error) {
 	username := strings.TrimSpace(trackerConfig.Username)
 	password := strings.TrimSpace(trackerConfig.Password)
 	announceURL := normalizedAnnounceURL(trackerConfig.AnnounceURL)
@@ -801,12 +799,12 @@ func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.Tracke
 		return nil, "", errors.New("trackers: PTP login failed")
 	}
 
-	if err := saveCookies(ctx, dbPath, client, baseURL); err != nil {
-		logger.Warnf("trackers: PTP failed to persist login cookies: %v", err)
-	}
 	token := strings.TrimSpace(stringFromAny(payload["AntiCsrfToken"]))
 	if token == "" {
 		return nil, "", errors.New("trackers: PTP login missing anti csrf token")
+	}
+	if err := saveCookies(ctx, dbPath, client, baseURL); err != nil {
+		return nil, "", fmt.Errorf("trackers: PTP persist login cookies: %w", err)
 	}
 	return client, token, nil
 }
@@ -934,7 +932,7 @@ func loadCookies(ctx context.Context, dbPath string) (map[string]string, error) 
 
 func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseURL string) error {
 	if client == nil || client.Jar == nil {
-		return nil
+		return errors.New("trackers: PTP login returned no cookie jar")
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -945,10 +943,13 @@ func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseUR
 		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
 			continue
 		}
-		cookies[strings.TrimSpace(cookie.Name)] = strings.TrimSpace(cookie.Value)
+		if strings.TrimSpace(cookie.Value) == "" {
+			continue
+		}
+		cookies[strings.TrimSpace(cookie.Name)] = cookie.Value
 	}
 	if len(cookies) == 0 {
-		return nil
+		return errors.New("trackers: PTP login returned no usable cookies")
 	}
 	return wrapTrackerError(cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", cookies))
 }
@@ -1359,6 +1360,8 @@ func compactError(value string) string {
 
 func stringFromAny(value any) string {
 	switch typed := value.(type) {
+	case nil:
+		return ""
 	case string:
 		return strings.TrimSpace(typed)
 	case float64:

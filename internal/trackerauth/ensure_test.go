@@ -6,6 +6,7 @@ package trackerauth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -16,6 +17,7 @@ type fakeAdapter struct {
 	capability api.TrackerAuthCapability
 	validate   func() (Session, error)
 	login      func() (Session, error)
+	submit     func(context.Context, string, string) (Session, error)
 	deleted    bool
 }
 
@@ -35,7 +37,10 @@ func (a *fakeAdapter) Login(context.Context, config.TrackerConfig, string, api.T
 	return a.login()
 }
 
-func (a *fakeAdapter) Submit2FA(context.Context, string, string) (Session, error) {
+func (a *fakeAdapter) Submit2FA(ctx context.Context, challengeID string, code string) (Session, error) {
+	if a.submit != nil {
+		return a.submit(ctx, challengeID, code)
+	}
 	return Session{TrackerID: a.capability.TrackerID, State: SessionStateReady}, nil
 }
 
@@ -115,6 +120,92 @@ func TestEnsureSessionKeepsCookiesOnTransientValidationFailure(t *testing.T) {
 	}
 	if adapter.deleted {
 		t.Fatal("transient validation failure must not delete stored session")
+	}
+}
+
+func TestEnsureSessionKeepsCookiesOnPTPMissingAntiCSRFToken(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{TrackerID: "PTP", SupportsLogin: true},
+		validate: func() (Session, error) {
+			return Session{}, classifyAdapterError("PTP", errors.New("trackers: PTP anti csrf token not found"))
+		},
+	}
+	service := &Service{adapters: map[string]Adapter{"PTP": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
+
+	_, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "PTP", AutoLogin: true})
+	if err == nil {
+		t.Fatal("expected transient validation error")
+	}
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) || validationErr.ConfirmedInvalid {
+		t.Fatalf("expected non-confirmed validation error, got %v", err)
+	}
+	if adapter.deleted {
+		t.Fatal("PTP parser miss must not delete stored session")
+	}
+}
+
+func TestEnsureSessionKeepsCookiesOnPTPAuthKeyNotFoundText(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{TrackerID: "PTP", SupportsLogin: true},
+		validate: func() (Session, error) {
+			return Session{}, classifyAdapterError("PTP", errors.New("trackers: PTP auth key not found"))
+		},
+	}
+	service := &Service{adapters: map[string]Adapter{"PTP": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
+
+	_, err := service.EnsureSession(context.Background(), EnsureRequest{
+		TrackerID: "PTP",
+		Config:    config.TrackerConfig{Username: "user", Password: "pass"},
+		AutoLogin: true,
+	})
+	if err == nil {
+		t.Fatal("expected transient validation error")
+	}
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) || !validationErr.Transient || validationErr.ConfirmedInvalid {
+		t.Fatalf("expected transient non-confirmed validation error, got %v", err)
+	}
+	if adapter.deleted {
+		t.Fatal("free-text auth key miss must not delete stored session")
+	}
+}
+
+func TestEnsureSessionKeepsCookiesOnInvalidLookingTransientAdapterText(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{TrackerID: "MTV", SupportsLogin: true},
+		validate: func() (Session, error) {
+			return Session{}, classifyAdapterError("MTV", errors.New("temporary upstream failure: cookie invalid"))
+		},
+	}
+	service := &Service{adapters: map[string]Adapter{"MTV": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
+
+	_, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "MTV", AutoLogin: true})
+	if err == nil {
+		t.Fatal("expected transient validation error")
+	}
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) || !validationErr.Transient || validationErr.ConfirmedInvalid {
+		t.Fatalf("expected transient non-confirmed validation error, got %v", err)
+	}
+	if adapter.deleted {
+		t.Fatal("transient invalid-looking text must not delete stored session")
+	}
+}
+
+func TestClassifyAdapterErrorKeepsWrappedContextCancellationTransient(t *testing.T) {
+	t.Parallel()
+
+	err := classifyAdapterError("MTV", fmt.Errorf("cookie invalid after retry: %w", context.Canceled))
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) || !validationErr.Transient || validationErr.ConfirmedInvalid {
+		t.Fatalf("expected context cancellation to stay transient, got %v", err)
 	}
 }
 

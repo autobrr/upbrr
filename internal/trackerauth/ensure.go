@@ -98,7 +98,11 @@ func (s *Service) needs2FASession(ctx context.Context, trackerID string, adapter
 	}
 	challengeID := strings.TrimSpace(needsErr.ChallengeID)
 	if challengeID == "" {
-		challengeID = s.challengeManager().Create(ctx, trackerID)
+		ownerKey, err := s.challengeOwnerKey(trackerID)
+		if err != nil {
+			return Session{}, err
+		}
+		challengeID = s.challengeManager().Create(ctx, trackerID, ownerKey)
 	}
 	needsErr.ChallengeID = challengeID
 	return Session{

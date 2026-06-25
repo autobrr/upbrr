@@ -277,7 +277,7 @@ func TestResolveUploadTorrentPathReusesPreparedPTPArtifact(t *testing.T) {
 
 func TestDefinitionUploadSuccess(t *testing.T) {
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "ua.db")
+	dbPath := newPTPAuthDB(t)
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
 	markTorrentWithPrivateMetadata(t, torrentPath)

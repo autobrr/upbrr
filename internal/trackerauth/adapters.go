@@ -94,9 +94,18 @@ func (a trackerAdapter) Delete(ctx context.Context, dbPath string) error {
 	return nil
 }
 
+// classifyAdapterError maps tracker adapter failures to typed auth errors used
+// by EnsureSession. Parser/layout failures remain transient unless the message
+// proves stored credentials are invalid.
 func classifyAdapterError(trackerID string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if validation, ok := asValidationError(err); ok {
+		return validation
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return &ValidationError{TrackerID: trackerID, Transient: true, Reason: "remote validation unavailable", Err: err}
 	}
 	lower := strings.ToLower(err.Error())
 	switch {
@@ -104,10 +113,6 @@ func classifyAdapterError(trackerID string, err error) error {
 		return &Needs2FAError{TrackerID: trackerID, Reason: "2FA required", Err: err}
 	case strings.Contains(lower, "username") || strings.Contains(lower, "password") || strings.Contains(lower, "announce_url") || strings.Contains(lower, "not configured"):
 		return &AuthRequiredError{TrackerID: trackerID, Reason: "credentials missing", Err: err}
-	case strings.Contains(lower, "auth key not found") || strings.Contains(lower, "anti csrf token not found") || strings.Contains(lower, "cookie invalid") || strings.Contains(lower, "no cookies found"):
-		return &ValidationError{TrackerID: trackerID, ConfirmedInvalid: true, Reason: "stored session invalid", Err: err}
-	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
-		return &ValidationError{TrackerID: trackerID, Transient: true, Reason: "remote validation unavailable", Err: err}
 	default:
 		return &ValidationError{TrackerID: trackerID, Transient: true, Reason: "remote validation failed", Err: err}
 	}

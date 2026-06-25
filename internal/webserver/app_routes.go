@@ -14,8 +14,13 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/trackericon"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// cookieImportRequestEnvelopeMaxBytes leaves JSON envelope headroom while the
+// tracker auth importer enforces the shared raw cookie content limit.
+const cookieImportRequestEnvelopeMaxBytes = trackerauth.MaxCookieImportContentBytes*6 + 64*1024
 
 func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/app/ListTrackerAuthCapabilities", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
@@ -54,7 +59,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+		r.Body = http.MaxBytesReader(w, r.Body, cookieImportRequestEnvelopeMaxBytes)
 		var req struct {
 			Tracker  string
 			FileName string
@@ -64,7 +69,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.ImportTrackerAuthCookieContent(req.Tracker, req.FileName, req.Content)
+		value, err := s.backend.ImportTrackerAuthCookieContent(r.Context(), req.Tracker, req.FileName, req.Content)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -82,7 +87,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.TestTrackerAuth(req.Tracker)
+		value, err := s.backend.TestTrackerAuth(r.Context(), req.Tracker)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -103,7 +108,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.LoginTrackerAuth(req.Tracker, req.Login)
+		value, err := s.backend.LoginTrackerAuth(r.Context(), req.Tracker, req.Login)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -124,7 +129,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.SubmitTrackerAuth2FA(req.ChallengeID, req.Code)
+		value, err := s.backend.SubmitTrackerAuth2FA(r.Context(), req.ChallengeID, req.Code)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -142,7 +147,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.DeleteTrackerAuth(req.Tracker)
+		value, err := s.backend.DeleteTrackerAuth(r.Context(), req.Tracker)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
