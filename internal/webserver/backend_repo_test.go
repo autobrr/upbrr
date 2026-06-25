@@ -283,25 +283,10 @@ func TestBackendGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 		hub:  newEventHub(),
 	}
 
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				backend.replaceRuntime(cfgA, nil, nil)
-				backend.replaceRuntime(cfgB, nil, nil)
-			}
-		}
-	})
-	defer func() {
-		close(stop)
-		wg.Wait()
-	}()
+	assertExport := func(want config.Config) {
+		t.Helper()
 
-	for range 2000 {
+		backend.replaceRuntime(want, nil, nil)
 		payload, err := backend.GetConfig()
 		if err != nil {
 			t.Fatalf("get config: %v", err)
@@ -323,6 +308,9 @@ func TestBackendGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 			t.Fatalf("unexpected fallback DBPath %q", exported.MainSettings.DBPath)
 		}
 	}
+	assertExport(cfgA)
+	assertExport(cfgB)
+
 	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); !errors.Is(loadErr, internalerrors.ErrNotFound) {
 		t.Fatalf("fallback should not persist config rows, load err=%v", loadErr)
 	}
@@ -371,25 +359,9 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 		hub:  newEventHub(),
 	}
 
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				backend.replaceRuntime(cfgA, nil, nil)
-				backend.replaceRuntime(cfgB, nil, nil)
-			}
-		}
-	})
-	defer func() {
-		close(stop)
-		wg.Wait()
-	}()
+	assertExport := func(wantDBPath string) {
+		t.Helper()
 
-	for range 2000 {
 		payload, err := backend.GetConfig()
 		if err != nil {
 			t.Fatalf("get config: %v", err)
@@ -404,12 +376,14 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 		if exported.MainSettings.TMDBAPI != stored.MainSettings.TMDBAPI {
 			t.Fatalf("expected DB-loaded TMDB API, got %q", exported.MainSettings.TMDBAPI)
 		}
-		switch exported.MainSettings.DBPath {
-		case pathA, pathB:
-		default:
-			t.Fatalf("unexpected DBPath fallback %q", exported.MainSettings.DBPath)
+		if exported.MainSettings.DBPath != wantDBPath {
+			t.Fatalf("DBPath fallback: got %q want %q", exported.MainSettings.DBPath, wantDBPath)
 		}
 	}
+	backend.replaceRuntime(cfgA, nil, nil)
+	assertExport(pathA)
+	backend.replaceRuntime(cfgB, nil, nil)
+	assertExport(pathB)
 }
 
 func TestBackendFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {

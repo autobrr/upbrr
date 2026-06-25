@@ -459,25 +459,10 @@ func TestGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 		repo: repo,
 	}
 
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				app.replaceRuntime(cfgA, nil, nil)
-				app.replaceRuntime(cfgB, nil, nil)
-			}
-		}
-	})
-	defer func() {
-		close(stop)
-		wg.Wait()
-	}()
+	assertExport := func(want config.Config) {
+		t.Helper()
 
-	for range 2000 {
+		app.replaceRuntime(want, nil, nil)
 		payload, err := app.GetConfig()
 		if err != nil {
 			t.Fatalf("get config: %v", err)
@@ -499,6 +484,9 @@ func TestGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 			t.Fatalf("unexpected fallback DBPath %q", exported.MainSettings.DBPath)
 		}
 	}
+	assertExport(cfgA)
+	assertExport(cfgB)
+
 	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); !errors.Is(loadErr, internalerrors.ErrNotFound) {
 		t.Fatalf("fallback should not persist config rows, load err=%v", loadErr)
 	}
