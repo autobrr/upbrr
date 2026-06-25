@@ -242,7 +242,11 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	if loginResp.StatusCode < 200 || loginResp.StatusCode >= 400 {
 		return nil, fmt.Errorf("trackers: FL login failed status=%d", loginResp.StatusCode)
 	}
-	return loginResp.Cookies(), nil
+	loginCookies := loginResp.Cookies()
+	if err := cookies.SaveTrackerHTTPCookies(ctx, dbPath, "FL", loginCookies); err != nil && logger != nil {
+		logger.Warnf("trackers: FL failed to persist login cookies: %v", err)
+	}
+	return loginCookies, nil
 }
 
 func validFLCookies(values []*http.Cookie) []*http.Cookie {

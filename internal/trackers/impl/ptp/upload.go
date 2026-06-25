@@ -689,6 +689,15 @@ func resolveSession(ctx context.Context, trackerConfig config.TrackerConfig, dbP
 	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger)
 }
 
+func ResolveSessionForTrackerAuth(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string) error {
+	baseURL := strings.TrimRight(strings.TrimSpace(trackerConfig.URL), "/")
+	if baseURL == "" {
+		baseURL = ptpBaseURL
+	}
+	_, _, err := resolveSession(ctx, trackerConfig, dbPath, baseURL, api.NopLogger{})
+	return err
+}
+
 func fetchAntiCsrfToken(ctx context.Context, baseURL string, cookies map[string]string) (*http.Client, string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {

@@ -74,7 +74,7 @@ describe("SettingsPage", () => {
       within(settingsTags as HTMLElement)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["Main", "Trackers", "Application Details"]);
+    ).toEqual(["Main", "Trackers", "Application Details", "Tracker Auth"]);
     expect(screen.queryByText("autobrr/upbrr")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Application Details" }));
@@ -92,5 +92,23 @@ describe("SettingsPage", () => {
     expect(screen.getByText("autobrr/upbrr")).toBeInTheDocument();
     expect(screen.queryByText("Copyright")).not.toBeInTheDocument();
     expect(screen.queryByText("Copyright (c) 2026 autobrr")).not.toBeInTheDocument();
+  });
+
+  it("renders tracker auth as the bottom tab", async () => {
+    const setSettingsSection = vi.fn();
+    vi.stubGlobal("go", {
+      guiapp: {
+        App: {
+          ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([]),
+          GetTrackerAuthStatus: vi.fn(),
+        },
+      },
+    });
+
+    render(<SettingsPage {...baseProps} setSettingsSection={setSettingsSection} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Tracker Auth" }));
+
+    expect(setSettingsSection).toHaveBeenCalledWith("tracker_auth");
   });
 });

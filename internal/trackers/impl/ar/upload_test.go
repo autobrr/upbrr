@@ -5,10 +5,12 @@ package ar
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -62,6 +64,44 @@ func TestPersistLoginCookiesAllowsPlaintextFallbackWhenAuthHelperUnavailable(t *
 	}
 	if !strings.Contains(logger.warnings[0], "plaintext fallback") {
 		t.Fatalf("expected plaintext fallback warning, got %q", logger.warnings[0])
+	}
+}
+
+func TestWriteAuthKeyUsesEncryptedStateAndDeletesLegacyFile(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	legacyPath := authPath(dbPath)
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatalf("mkdir legacy dir: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("legacy-key"), 0o600); err != nil {
+		t.Fatalf("seed legacy auth key: %v", err)
+	}
+
+	if err := writeAuthKey(context.Background(), dbPath, "encrypted-key"); err != nil {
+		t.Fatalf("writeAuthKey: %v", err)
+	}
+	if got := readAuthKey(context.Background(), dbPath); got != "encrypted-key" {
+		t.Fatalf("readAuthKey: got %q", got)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy auth key removed, stat err=%v", err)
+	}
+}
+
+func TestWriteAuthKeyWithoutWebAuthDoesNotCreatePlaintextFile(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	if err := writeAuthKey(context.Background(), dbPath, "session-key"); err != nil {
+		t.Fatalf("writeAuthKey: %v", err)
+	}
+	if _, err := os.Stat(authPath(dbPath)); !os.IsNotExist(err) {
+		t.Fatalf("expected no plaintext auth key, stat err=%v", err)
 	}
 }
 

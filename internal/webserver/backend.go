@@ -32,6 +32,7 @@ import (
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -770,6 +771,55 @@ func (b *Backend) GetDefaultConfig() (string, error) {
 		return "", fmt.Errorf("web: %w", err)
 	}
 	return wrapWebResult(config.ExportToJSON(cfg))
+}
+
+func (b *Backend) ListTrackerAuthCapabilities() ([]api.TrackerAuthCapability, error) {
+	if b == nil {
+		return nil, errors.New("backend not initialized")
+	}
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Capabilities(context.Background()))
+}
+
+func (b *Backend) GetTrackerAuthStatus(tracker string) (api.TrackerAuthStatus, error) {
+	if b == nil {
+		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
+	}
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Status(context.Background(), tracker))
+}
+
+func (b *Backend) ImportTrackerAuthCookieContent(tracker string, fileName string, content string) (api.TrackerAuthStatus, error) {
+	if b == nil {
+		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
+	}
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).ImportCookies(context.Background(), tracker, fileName, content))
+}
+
+func (b *Backend) TestTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
+	if b == nil {
+		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
+	}
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Validate(context.Background(), tracker))
+}
+
+func (b *Backend) LoginTrackerAuth(tracker string, req api.TrackerAuthLoginRequest) (api.TrackerAuthStatus, error) {
+	if b == nil {
+		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
+	}
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Login(context.Background(), tracker, req))
+}
+
+func (b *Backend) SubmitTrackerAuth2FA(challengeID string, code string) (api.TrackerAuthStatus, error) {
+	if b == nil {
+		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
+	}
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Submit2FA(context.Background(), challengeID, code))
+}
+
+func (b *Backend) DeleteTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
+	if b == nil {
+		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
+	}
+	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Delete(context.Background(), tracker))
 }
 
 // exportableConfig returns the normalized config snapshot and the DB path that

@@ -36,6 +36,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/trackericon"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -1222,6 +1223,83 @@ func (a *App) ListKnownTrackers() ([]string, error) {
 	}
 
 	return trackers.KnownTrackers(), nil
+}
+
+func (a *App) ListTrackerAuthCapabilities() ([]api.TrackerAuthCapability, error) {
+	if a == nil {
+		return nil, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Capabilities(context.Background()))
+}
+
+func (a *App) GetTrackerAuthStatus(tracker string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Status(context.Background(), tracker))
+}
+
+func (a *App) ImportTrackerAuthCookies(tracker string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	ctx, err := a.readyRuntimeContext()
+	if err != nil {
+		return api.TrackerAuthStatus{}, err
+	}
+	selection, err := runtime.OpenFileDialog(ctx, runtime.OpenDialogOptions{
+		Title: "Import tracker cookies",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Cookie files (*.txt;*.json)", Pattern: "*.txt;*.json"},
+			{DisplayName: "All files", Pattern: "*.*"},
+		},
+	})
+	if err != nil {
+		return api.TrackerAuthStatus{}, fmt.Errorf("gui: open tracker cookie dialog: %w", err)
+	}
+	if strings.TrimSpace(selection) == "" {
+		return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Status(context.Background(), tracker))
+	}
+	payload, err := os.ReadFile(selection)
+	if err != nil {
+		return api.TrackerAuthStatus{}, fmt.Errorf("gui: read tracker cookie file: %w", err)
+	}
+	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).ImportCookies(context.Background(), tracker, filepath.Base(selection), string(payload)))
+}
+
+func (a *App) ImportTrackerAuthCookieContent(tracker string, fileName string, content string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).ImportCookies(context.Background(), tracker, fileName, content))
+}
+
+func (a *App) TestTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Validate(context.Background(), tracker))
+}
+
+func (a *App) LoginTrackerAuth(tracker string, req api.TrackerAuthLoginRequest) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Login(context.Background(), tracker, req))
+}
+
+func (a *App) SubmitTrackerAuth2FA(challengeID string, code string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Submit2FA(context.Background(), challengeID, code))
+}
+
+func (a *App) DeleteTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewService(a.currentConfig()).Delete(context.Background(), tracker))
 }
 
 func (a *App) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {

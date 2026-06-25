@@ -13,6 +13,9 @@ import type {
   ConfigMap,
   ConfigValue,
   FieldMeta,
+  TrackerAuthCapability,
+  TrackerAuthLoginRequest,
+  TrackerAuthStatus,
   WebAuthStatus,
 } from "../../types";
 
@@ -21,6 +24,11 @@ type SettingsSection = { key: string; jsonKey: string; label: string };
 const applicationDetailsSection = {
   key: "application_details",
   label: "Application Details",
+};
+
+const trackerAuthSection = {
+  key: "tracker_auth",
+  label: "Tracker Auth",
 };
 
 const settingsInputClass =
@@ -35,6 +43,16 @@ type ConfigOpStatus = {
 
 type AppBridgeWithApplicationInfo = {
   GetApplicationInfo?: () => Promise<ApplicationInfo>;
+};
+
+type AppBridgeWithTrackerAuth = {
+  ListTrackerAuthCapabilities?: () => Promise<TrackerAuthCapability[]>;
+  GetTrackerAuthStatus?: (tracker: string) => Promise<TrackerAuthStatus>;
+  ImportTrackerAuthCookies?: (tracker: string) => Promise<TrackerAuthStatus>;
+  TestTrackerAuth?: (tracker: string) => Promise<TrackerAuthStatus>;
+  LoginTrackerAuth?: (tracker: string, req: TrackerAuthLoginRequest) => Promise<TrackerAuthStatus>;
+  SubmitTrackerAuth2FA?: (challengeID: string, code: string) => Promise<TrackerAuthStatus>;
+  DeleteTrackerAuth?: (tracker: string) => Promise<TrackerAuthStatus>;
 };
 
 type Props = {
@@ -128,6 +146,17 @@ export default function SettingsPage(props: Props) {
   const [applicationInfoLoading, setApplicationInfoLoading] = useState(false);
   const [applicationInfoFetchedAt, setApplicationInfoFetchedAt] = useState<number | null>(null);
   const [uptimeTick, setUptimeTick] = useState(() => Date.now());
+  const [trackerAuthCapabilities, setTrackerAuthCapabilities] = useState<TrackerAuthCapability[]>(
+    [],
+  );
+  const [trackerAuthStatuses, setTrackerAuthStatuses] = useState<Record<string, TrackerAuthStatus>>(
+    {},
+  );
+  const [trackerAuthLoading, setTrackerAuthLoading] = useState(false);
+  const [trackerAuthError, setTrackerAuthError] = useState("");
+  const [trackerAuthFilter, setTrackerAuthFilter] = useState("");
+  const [trackerAuthActions, setTrackerAuthActions] = useState<Record<string, string>>({});
+  const [trackerAuthCodes, setTrackerAuthCodes] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -176,6 +205,258 @@ export default function SettingsPage(props: Props) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [applicationInfo]);
+
+  useEffect(() => {
+    if (settingsSection !== trackerAuthSection.key) {
+      return undefined;
+    }
+    let cancelled = false;
+    const bridge = globalThis.go?.guiapp?.App as AppBridgeWithTrackerAuth | undefined;
+    const list = bridge?.ListTrackerAuthCapabilities;
+    const getStatus = bridge?.GetTrackerAuthStatus;
+    if (!list || !getStatus) {
+      setTrackerAuthError("Tracker auth is unavailable in this build.");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setTrackerAuthLoading(true);
+    setTrackerAuthError("");
+    void list()
+      .then(async (capabilities) => {
+        if (cancelled) {
+          return;
+        }
+        setTrackerAuthCapabilities(capabilities);
+        const entries = await Promise.all(
+          capabilities.map(async (capability) => {
+            try {
+              const status = await getStatus(capability.trackerID);
+              return [capability.trackerID, status] as const;
+            } catch (error) {
+              return [
+                capability.trackerID,
+                {
+                  trackerID: capability.trackerID,
+                  displayName: capability.displayName,
+                  state: "error",
+                  cookieCount: 0,
+                  lastCheckedAt: "",
+                  lastError: String(error),
+                  encryptedStorage: false,
+                  needs2FA: false,
+                  challengeID: "",
+                  message: "",
+                },
+              ] as const;
+            }
+          }),
+        );
+        if (!cancelled) {
+          setTrackerAuthStatuses(Object.fromEntries(entries));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTrackerAuthError(String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTrackerAuthLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsSection]);
+
+  const runTrackerAuthAction = async (
+    trackerID: string,
+    action: string,
+    fn: () => Promise<TrackerAuthStatus>,
+  ) => {
+    setTrackerAuthActions((prev) => ({ ...prev, [trackerID]: action }));
+    setTrackerAuthError("");
+    try {
+      const status = await fn();
+      setTrackerAuthStatuses((prev) => ({ ...prev, [trackerID]: status }));
+    } catch (error) {
+      setTrackerAuthError(String(error));
+    } finally {
+      setTrackerAuthActions((prev) => ({ ...prev, [trackerID]: "" }));
+    }
+  };
+
+  const trackerAuthPanel = (() => {
+    const bridge = globalThis.go?.guiapp?.App as AppBridgeWithTrackerAuth | undefined;
+    const filter = trackerAuthFilter.trim().toLowerCase();
+    const capabilities = trackerAuthCapabilities.filter((capability) => {
+      if (!filter) return true;
+      return (
+        capability.trackerID.toLowerCase().includes(filter) ||
+        capability.authKind.toLowerCase().includes(filter)
+      );
+    });
+    const storageReady = Object.values(trackerAuthStatuses).some(
+      (status) => status.encryptedStorage,
+    );
+    return (
+      <div className="settings-form tracker-auth-panel">
+        <div className="settings-subgroup">
+          <div className="settings-subgroup__title">Tracker Auth</div>
+          <div className="settings-auth-status">
+            <span className={`settings-auth-badge ${storageReady ? "is-ready" : "is-warning"}`}>
+              {storageReady
+                ? "Encrypted cookie storage ready"
+                : "Encrypted cookie storage unavailable"}
+            </span>
+            <p className="helper">
+              Import Netscape or JSON cookies, check local auth state, and confirm which trackers
+              can relogin automatically during unattended uploads.
+            </p>
+          </div>
+          <label className="settings-field tracker-auth-filter">
+            <span>Filter trackers</span>
+            <input
+              className={settingsInputClass}
+              value={trackerAuthFilter}
+              onChange={(event) => setTrackerAuthFilter(event.target.value)}
+              placeholder="MTV, cookies, api"
+            />
+          </label>
+        </div>
+        {trackerAuthLoading ? <p className="muted">Loading tracker auth...</p> : null}
+        {trackerAuthError ? <p className="error">{trackerAuthError}</p> : null}
+        <div className="tracker-auth-list">
+          {capabilities.map((capability) => {
+            const status = trackerAuthStatuses[capability.trackerID];
+            const busy = trackerAuthActions[capability.trackerID] || "";
+            const code = trackerAuthCodes[capability.trackerID] || "";
+            return (
+              <div className="settings-card tracker-auth-card" key={capability.trackerID}>
+                <div className="tracker-auth-card__header">
+                  <div>
+                    <p className="settings-detail-card__label">Tracker</p>
+                    <h2 className="tracker-auth-card__title">
+                      {capability.displayName || capability.trackerID}
+                    </h2>
+                  </div>
+                  <span className={`settings-auth-badge ${statusBadgeClass(status?.state)}`}>
+                    {formatTrackerAuthState(status?.state)}
+                  </span>
+                </div>
+                <div className="tracker-auth-chips">
+                  <span>{capability.authKind}</span>
+                  {capability.supportsCookieFile ? <span>cookie import</span> : null}
+                  {capability.supportsLogin ? <span>login</span> : null}
+                  {capability.supportsAutoLogin ? <span>auto relogin</span> : null}
+                  {capability.supportsTOTP ? <span>TOTP</span> : null}
+                  {capability.supportsManual2FA ? <span>manual 2FA</span> : null}
+                  {capability.requiresAPIKey ? <span>API key</span> : null}
+                  {capability.requiresPasskey ? <span>passkey</span> : null}
+                </div>
+                <div className="tracker-auth-card__meta">
+                  <p>Cookies: {status?.cookieCount ?? 0}</p>
+                  <p>Checked: {formatTrackerAuthDate(status?.lastCheckedAt)}</p>
+                  <p>Storage: {status?.encryptedStorage ? "encrypted" : "unavailable"}</p>
+                </div>
+                {status?.message ? <p className="helper">{status.message}</p> : null}
+                {status?.lastError ? <p className="error">{status.lastError}</p> : null}
+                {capability.notes?.map((note) => (
+                  <p className="muted" key={note}>
+                    {note}
+                  </p>
+                ))}
+                {status?.needs2FA ? (
+                  <div className="tracker-auth-2fa">
+                    <input
+                      className={`${settingsInputClass} tracker-auth-2fa__input`}
+                      value={code}
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      onChange={(event) =>
+                        setTrackerAuthCodes((prev) => ({
+                          ...prev,
+                          [capability.trackerID]: event.target.value,
+                        }))
+                      }
+                      placeholder="2FA code"
+                    />
+                    <Button
+                      type="button"
+                      disabled={
+                        !bridge?.SubmitTrackerAuth2FA || !status.challengeID || !code.trim()
+                      }
+                      onClick={() =>
+                        runTrackerAuthAction(capability.trackerID, "2fa", () =>
+                          bridge!.SubmitTrackerAuth2FA!(status.challengeID, code),
+                        )
+                      }
+                    >
+                      Submit 2FA
+                    </Button>
+                  </div>
+                ) : null}
+                <div className="settings-auth-actions">
+                  {capability.supportsCookieFile ? (
+                    <Button
+                      type="button"
+                      disabled={!bridge?.ImportTrackerAuthCookies || Boolean(busy)}
+                      onClick={() =>
+                        runTrackerAuthAction(capability.trackerID, "import", () =>
+                          bridge!.ImportTrackerAuthCookies!(capability.trackerID),
+                        )
+                      }
+                    >
+                      {busy === "import" ? "Importing..." : "Import Cookies"}
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    disabled={!bridge?.TestTrackerAuth || Boolean(busy)}
+                    onClick={() =>
+                      runTrackerAuthAction(capability.trackerID, "test", () =>
+                        bridge!.TestTrackerAuth!(capability.trackerID),
+                      )
+                    }
+                  >
+                    {busy === "test" ? "Testing..." : "Test Auth"}
+                  </Button>
+                  {capability.supportsLogin ? (
+                    <Button
+                      type="button"
+                      disabled={!bridge?.LoginTrackerAuth || Boolean(busy)}
+                      onClick={() =>
+                        runTrackerAuthAction(capability.trackerID, "login", () =>
+                          bridge!.LoginTrackerAuth!(capability.trackerID, {}),
+                        )
+                      }
+                    >
+                      {busy === "login" ? "Checking..." : "Login/Test"}
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    disabled={!bridge?.DeleteTrackerAuth || Boolean(busy)}
+                    onClick={() =>
+                      runTrackerAuthAction(capability.trackerID, "delete", () =>
+                        bridge!.DeleteTrackerAuth!(capability.trackerID),
+                      )
+                    }
+                  >
+                    {busy === "delete" ? "Deleting..." : "Delete Auth"}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  })();
 
   const uptimeSeconds =
     applicationInfo && applicationInfoFetchedAt !== null
@@ -405,11 +686,27 @@ export default function SettingsPage(props: Props) {
             >
               {applicationDetailsSection.label}
             </button>
+            <button
+              key={trackerAuthSection.key}
+              type="button"
+              className={cn(
+                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
+                settingsSection === trackerAuthSection.key
+                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
+                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
+              )}
+              onClick={() => setSettingsSection(trackerAuthSection.key)}
+            >
+              {trackerAuthSection.label}
+            </button>
           </div>
 
           <div className="settings-body">
             {settingsSection === applicationDetailsSection.key ? applicationDetailsPanel : null}
-            {settingsSection !== applicationDetailsSection.key && webAuthAvailable ? (
+            {settingsSection === trackerAuthSection.key ? trackerAuthPanel : null}
+            {settingsSection !== applicationDetailsSection.key &&
+            settingsSection !== trackerAuthSection.key &&
+            webAuthAvailable ? (
               <details className="settings-subgroup settings-subgroup--collapsible settings-subgroup--auth">
                 <summary>Secret Encryption</summary>
                 <div>
@@ -500,7 +797,8 @@ export default function SettingsPage(props: Props) {
                 </div>
               </details>
             ) : null}
-            {settingsSection === applicationDetailsSection.key ? null : configData ? (
+            {settingsSection === applicationDetailsSection.key ||
+            settingsSection === trackerAuthSection.key ? null : configData ? (
               <div className="settings-form">
                 {showAdvancedToggle ? (
                   <div className="settings-switch-row">
@@ -656,4 +954,46 @@ function formatApplicationUptime(totalSeconds: number) {
   parts.push(`${seconds}s`);
 
   return parts.join(" ");
+}
+
+function formatTrackerAuthState(state?: string) {
+  switch (state) {
+    case "configured":
+      return "Configured";
+    case "has_cookies":
+      return "Has cookies";
+    case "login_required":
+      return "Login required";
+    case "encrypted_storage_unavailable":
+      return "Storage unavailable";
+    case "error":
+      return "Error";
+    default:
+      return "Not configured";
+  }
+}
+
+function statusBadgeClass(state?: string) {
+  switch (state) {
+    case "configured":
+    case "has_cookies":
+      return "is-ready";
+    case "login_required":
+    case "encrypted_storage_unavailable":
+    case "error":
+      return "is-warning";
+    default:
+      return "is-idle";
+  }
+}
+
+function formatTrackerAuthDate(value?: string) {
+  if (!value) {
+    return "Never";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString();
 }

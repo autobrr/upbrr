@@ -284,6 +284,37 @@ export type ApplicationInfo = {
   uptimeSeconds: number;
 };
 
+export type TrackerAuthCapability = {
+  trackerID: string;
+  displayName: string;
+  authKind: string;
+  supportsCookieFile: boolean;
+  supportsLogin: boolean;
+  supportsAutoLogin: boolean;
+  supportsTOTP: boolean;
+  supportsManual2FA: boolean;
+  requiresAPIKey: boolean;
+  requiresPasskey: boolean;
+  notes?: string[];
+};
+
+export type TrackerAuthStatus = {
+  trackerID: string;
+  displayName: string;
+  state: string;
+  cookieCount: number;
+  lastCheckedAt: string;
+  lastError: string;
+  encryptedStorage: boolean;
+  needs2FA: boolean;
+  challengeID: string;
+  message: string;
+};
+
+export type TrackerAuthLoginRequest = {
+  code?: string;
+};
+
 export type ExternalPreview = {
   Provider: string;
   ID: number;

@@ -28,6 +28,7 @@ import (
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -39,6 +40,7 @@ const (
 	arLoginURL   = arBaseURL + "/login.php"
 	arBrowseURL  = arBaseURL + "/torrents.php"
 	arAuthFile   = "AR_auth.txt"
+	arAuthKeyKey = "auth_key"
 	arUserAgent  = "upbrr"
 	arSourceFlag = "AlphaRatio"
 )
@@ -532,8 +534,8 @@ func resolveSession(ctx context.Context, cfg config.TrackerConfig, dbPath string
 	if err := persistLoginCookies(ctx, dbPath, logger, jar.Cookies(base)); err != nil {
 		return nil, "", err
 	}
-	if err := os.WriteFile(authPath(dbPath), []byte(authKey), 0o600); err != nil {
-		return nil, "", fmt.Errorf("trackers: AR write auth key: %w", err)
+	if err := writeAuthKey(ctx, dbPath, authKey); err != nil {
+		return nil, "", err
 	}
 	return client, authKey, nil
 }
@@ -571,15 +573,15 @@ func validateSession(ctx context.Context, client *http.Client, dbPath string) (s
 	if resp.StatusCode != http.StatusOK || arLoginFailurePattern.MatchString(body) {
 		return "", false, nil
 	}
-	if authKey := readAuthKey(dbPath); authKey != "" {
+	if authKey := readAuthKey(ctx, dbPath); authKey != "" {
 		return authKey, true, nil
 	}
 	authKey := extractAuthKey(body)
 	if authKey == "" {
 		return "", false, nil
 	}
-	if err := os.WriteFile(authPath(dbPath), []byte(authKey), 0o600); err != nil {
-		return "", false, fmt.Errorf("trackers: AR write auth key: %w", err)
+	if err := writeAuthKey(ctx, dbPath, authKey); err != nil {
+		return "", false, err
 	}
 	return authKey, true, nil
 }
@@ -717,12 +719,34 @@ func authPath(dbPath string) string {
 	return path
 }
 
-func readAuthKey(dbPath string) string {
+func readAuthKey(ctx context.Context, dbPath string) string {
+	if authKey, err := trackerauth.LoadAuthState(ctx, dbPath, "AR", arAuthKeyKey); err == nil && strings.TrimSpace(authKey) != "" {
+		return strings.TrimSpace(authKey)
+	}
 	payload, err := os.ReadFile(authPath(dbPath))
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(payload))
+}
+
+func writeAuthKey(ctx context.Context, dbPath string, authKey string) error {
+	authKey = strings.TrimSpace(authKey)
+	if authKey == "" {
+		return nil
+	}
+	if err := trackerauth.SaveAuthState(ctx, dbPath, "AR", arAuthKeyKey, authKey); err != nil {
+		if errors.Is(err, cookiepkg.ErrAuthHelperUnavailable) {
+			return nil
+		}
+		return fmt.Errorf("trackers: AR write encrypted auth key: %w", err)
+	}
+	if legacyPath := authPath(dbPath); legacyPath != "" {
+		if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("trackers: AR delete legacy auth key: %w", err)
+		}
+	}
+	return nil
 }
 
 func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {

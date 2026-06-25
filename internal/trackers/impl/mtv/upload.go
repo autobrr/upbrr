@@ -252,6 +252,28 @@ func saveMTVCookies(ctx context.Context, dbPath string, values map[string]string
 	return wrapTrackerError(cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "MTV", values))
 }
 
+func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string) error {
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
+	if baseURL == "" {
+		baseURL = mtvBaseURL
+	}
+	cookies, err := loadMTVCookies(ctx, dbPath)
+	if err == nil && len(cookies) > 0 {
+		if _, _, err := resolveAuthKey(ctx, baseURL, cookies); err == nil {
+			return nil
+		}
+		_ = cookiepkg.DeleteTrackerCookies(ctx, dbPath, "MTV")
+	}
+	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
+		return errors.New("trackers: MTV cookie invalid/missing and username/password not configured")
+	}
+	_, _, values, err := loginAndResolveAuthKey(ctx, cfg, baseURL)
+	if err != nil {
+		return err
+	}
+	return saveMTVCookies(ctx, dbPath, values)
+}
+
 func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string) (string, *http.Client, map[string]string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {

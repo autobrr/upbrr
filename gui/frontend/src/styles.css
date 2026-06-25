@@ -332,6 +332,64 @@ body {
   border-color: rgba(120, 141, 173, 0.35);
 }
 
+.tracker-auth-panel {
+  gap: 1rem;
+}
+
+.tracker-auth-filter {
+  max-width: 360px;
+}
+
+.tracker-auth-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.tracker-auth-card {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.tracker-auth-card__header,
+.tracker-auth-card__meta,
+.tracker-auth-2fa,
+.tracker-auth-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.tracker-auth-card__header {
+  justify-content: space-between;
+}
+
+.tracker-auth-card__title {
+  margin: 0.1rem 0 0;
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.tracker-auth-chips span {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  padding: 0.2rem 0.45rem;
+  background: rgba(15, 23, 42, 0.34);
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1;
+}
+
+.tracker-auth-card__meta p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.tracker-auth-2fa__input {
+  width: 9rem;
+}
+
 .settings-saved {
   margin-top: 9px;
   color: var(--success);
