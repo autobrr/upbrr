@@ -118,6 +118,7 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 				Episode:    1,
 			},
 			DescriptionOverride: "[b]Test[/b] description",
+			Tag:                 "GRP",
 		},
 		TrackerConfig: config.TrackerConfig{
 			URL:      server.URL,
@@ -315,6 +316,7 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 				Season:     1,
 				Episode:    1,
 			},
+			Tag: "GRP",
 		},
 		TrackerConfig: config.TrackerConfig{
 			URL:      server.URL,

@@ -400,17 +400,64 @@ func resolveOrigin(releaseName string) string {
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
-	if name := strings.TrimSpace(meta.ReleaseName); name != "" {
-		return name
+	var name string
+	if n := strings.TrimSpace(meta.ReleaseName); n != "" {
+		name = n
+	} else if n := strings.TrimSpace(meta.ReleaseNameNoTag); n != "" {
+		name = n
+	} else if n := strings.TrimSpace(meta.Filename); n != "" {
+		name = n
+	} else {
+		name = pathutil.Base(meta.SourcePath)
 	}
-	if name := strings.TrimSpace(meta.ReleaseNameNoTag); name != "" {
-		return name
-	}
-	if name := strings.TrimSpace(meta.Filename); name != "" {
-		return name
-	}
-	return pathutil.Base(meta.SourcePath)
+	name = cleanAndNormalizeBTNName(name)
+	return applyBTNNoGroupSuffix(name, meta)
 }
+
+func applyBTNNoGroupSuffix(name string, meta api.PreparedMetadata) string {
+	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
+
+	if tag != "" && !isNoGroupTag(tag) {
+		return name
+	}
+
+        noGroupPattern := regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)`)
+        normalizedName := noGroupPattern.ReplaceAllString(name, "")
+        normalizedName = strings.TrimRight(normalizedName, ".-")
+
+	return normalizedName + "-NOGRP"
+}
+
+func isNoGroupTag(tag string) bool {
+	value := strings.ToLower(strings.TrimSpace(tag))
+	switch value {
+	case "nogrp", "nogroup", "unknown", "unk", "-unk-":
+		return true
+	default:
+		return false
+	}
+}
+
+
+func cleanAndNormalizeBTNName(value string) string {
+	// 1. Dot normalization (spaces to dots, collapse dots)
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.ReplaceAll(value, " ", ".")
+	value = strings.ReplaceAll(value, "..", ".")
+
+	// 2. Audio channel normalization
+	value = strings.ReplaceAll(value, "DD+", "DDP")
+	value = regexp.MustCompile(`\.DDP\.(\d)`).ReplaceAllString(value, `.DDP$1`)
+	value = regexp.MustCompile(`\.DD\.(\d)`).ReplaceAllString(value, `.DD$1`)
+	value = regexp.MustCompile(`\.AC3\.(\d)`).ReplaceAllString(value, `.AC3$1`)
+	value = regexp.MustCompile(`\.DTS\.(\d)`).ReplaceAllString(value, `.DTS$1`)
+
+	// Collapse any double dots that might have been created by the normalization patterns
+	value = strings.ReplaceAll(value, "..", ".")
+
+	return strings.TrimSpace(value)
+}
+
 
 func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
 	candidates := []string{strings.TrimSpace(meta.TorrentPath), strings.TrimSpace(meta.ClientTorrentPath), strings.TrimSpace(meta.SourcePath)}

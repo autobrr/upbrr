@@ -3,7 +3,11 @@
 
 package btn
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
+)
 
 func TestDefinitionName(t *testing.T) {
 	t.Parallel()
@@ -24,5 +28,90 @@ func TestApplyBTNNameMapping(t *testing.T) {
 	}
 	if mapped != "Example.Show.S01E01.1080p.WEB-DL.H.265-GRP" {
 		t.Fatalf("unexpected mapped name: %s", mapped)
+	}
+}
+
+func TestCleanAndNormalizeBTNName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "Example Show S01E01 1080p Web-DL DD+ 5.1 x265-GRP",
+			expected: "Example.Show.S01E01.1080p.Web-DL.DDP5.1.x265-GRP",
+		},
+		{
+			input:    "Some.Movie.2023.DDP.5.1.Atmos.x264",
+			expected: "Some.Movie.2023.DDP5.1.Atmos.x264",
+		},
+		{
+			input:    "Another.Show..S02E03.DD.2.0.x264",
+			expected: "Another.Show.S02E03.DD2.0.x264",
+		},
+		{
+			input:    "Test.AC3.5.1.and.DTS.5.1.Show",
+			expected: "Test.AC35.1.and.DTS5.1.Show",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.input, func(t *testing.T) {
+			result := cleanAndNormalizeBTNName(tc.input)
+			if result != tc.expected {
+				t.Errorf("cleanAndNormalizeBTNName(%q) = %q; expected %q", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestResolveUploadNameGroupTag(t *testing.T) {
+	tests := []struct {
+		name     string
+		meta     api.PreparedMetadata
+		expected string
+	}{
+		{
+			name: "Valid group tag in meta.Tag",
+			meta: api.PreparedMetadata{
+				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265-GRP",
+				Tag:         "GRP",
+			},
+			expected: "Example.Show.S01E01.1080p.Web-DL.x265-GRP",
+		},
+		{
+			name: "Missing group tag",
+			meta: api.PreparedMetadata{
+				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265",
+				Tag:         "",
+			},
+			expected: "Example.Show.S01E01.1080p.Web-DL.x265-NOGRP",
+		},
+		{
+			name: "Unknown group tag in meta.Tag",
+			meta: api.PreparedMetadata{
+				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265",
+				Tag:         "nogrp",
+			},
+			expected: "Example.Show.S01E01.1080p.Web-DL.x265-NOGRP",
+		},
+		{
+			name: "Existing unknown group tag in ReleaseName",
+			meta: api.PreparedMetadata{
+				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265-unknown",
+				Tag:         "unknown",
+			},
+			expected: "Example.Show.S01E01.1080p.Web-DL.x265-NOGRP",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			result := resolveUploadName(tc.meta)
+			if result != tc.expected {
+				t.Errorf("resolveUploadName() = %q; expected %q", result, tc.expected)
+			}
+		})
 	}
 }
