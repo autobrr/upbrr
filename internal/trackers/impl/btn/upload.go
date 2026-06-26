@@ -421,7 +421,7 @@ func applyBTNNoGroupSuffix(name string, meta api.PreparedMetadata) string {
 		return name
 	}
 
-        noGroupPattern := regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)`)
+        noGroupPattern := regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)$`)
         normalizedName := noGroupPattern.ReplaceAllString(name, "")
         normalizedName = strings.TrimRight(normalizedName, ".-")
 
@@ -431,7 +431,7 @@ func applyBTNNoGroupSuffix(name string, meta api.PreparedMetadata) string {
 func isNoGroupTag(tag string) bool {
 	value := strings.ToLower(strings.TrimSpace(tag))
 	switch value {
-	case "nogrp", "nogroup", "unknown", "unk", "-unk-":
+	case "nogrp", "nogroup", "unknown", "unk":
 		return true
 	default:
 		return false
@@ -443,7 +443,6 @@ func cleanAndNormalizeBTNName(value string) string {
 	// 1. Dot normalization (spaces to dots, collapse dots)
 	value = strings.Join(strings.Fields(value), " ")
 	value = strings.ReplaceAll(value, " ", ".")
-	value = strings.ReplaceAll(value, "..", ".")
 
 	// 2. Audio channel normalization
 	value = strings.ReplaceAll(value, "DD+", "DDP")
@@ -452,8 +451,8 @@ func cleanAndNormalizeBTNName(value string) string {
 	value = regexp.MustCompile(`\.AC3\.(\d)`).ReplaceAllString(value, `.AC3$1`)
 	value = regexp.MustCompile(`\.DTS\.(\d)`).ReplaceAllString(value, `.DTS$1`)
 
-	// Collapse any double dots that might have been created by the normalization patterns
-	value = strings.ReplaceAll(value, "..", ".")
+	// Collapse any two or more dots
+	value = regexp.MustCompile(`\.{2,}`).ReplaceAllString(value, ".")
 
 	return strings.TrimSpace(value)
 }
