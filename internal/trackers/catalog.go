@@ -130,6 +130,19 @@ func IsNonUnit3DTracker(name string) bool {
 	return TrackerKind(name) == KindNonUnit3D
 }
 
+// skipsModifiedReleaseCheck reports whether a tracker is exempt from the
+// modified/renamed-release rule (see isRenamedRelease). The rule is on for all
+// trackers by default; this is the single place to exempt special pseudo-trackers
+// or any tracker known to accept modified releases.
+func skipsModifiedReleaseCheck(name string) bool {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "MANUAL":
+		return true
+	default:
+		return false
+	}
+}
+
 // NeedsPTBRLocalizedMetadata reports whether a trimmed tracker name is one of
 // the exact trackers that consumes pt-BR TMDB data.
 func NeedsPTBRLocalizedMetadata(name string) bool {

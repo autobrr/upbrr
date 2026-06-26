@@ -2162,3 +2162,35 @@ func assertTrackerArtifact(t *testing.T, torrentPath string, wantAnnounce string
 		t.Fatalf("expected source %q, got %q", wantSource, info.Source)
 	}
 }
+
+func TestFilterTrackersByRuleFailuresExcludesModifiedReleaseAcrossFamilies(t *testing.T) {
+	t.Parallel()
+
+	contains := func(list []string, want string) bool {
+		for _, v := range list {
+			if v == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	failures := map[string][]api.RuleFailure{
+		"PTP": {{Rule: "modified_release", Reason: "source renamed from original release name"}},
+		"LST": {{Rule: "modified_release", Reason: "source renamed from original release name"}},
+	}
+	trackers := []string{"PTP", "LST", "HDB"}
+
+	got := filterTrackersByRuleFailures(trackers, failures, false, nil)
+	if contains(got, "PTP") || contains(got, "LST") {
+		t.Fatalf("expected PTP and LST skipped for modified_release, got %v", got)
+	}
+	if !contains(got, "HDB") {
+		t.Fatalf("expected HDB (no failure) retained, got %v", got)
+	}
+
+	// The override flag must let the user force-upload past the failure.
+	if got := filterTrackersByRuleFailures(trackers, failures, true, nil); !contains(got, "PTP") || !contains(got, "LST") {
+		t.Fatalf("expected ignore=true to retain all trackers, got %v", got)
+	}
+}
