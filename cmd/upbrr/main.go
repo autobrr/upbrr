@@ -83,11 +83,30 @@ func exitError(code int, err error) error {
 // one explicit path), so large queues are not capped by a shared run deadline.
 const cliItemTimeout = 30 * time.Minute
 
-// cliSetupTimeout bounds pre-upload setup work (core init, queue gathering,
-// disc playlist selection, cleanup, delete-tmp) so the CLI fails instead of
-// hanging on a stuck database or I/O call. It does not cover the per-item
-// upload loop, which uses cliItemTimeout per path.
+// cliSetupTimeout bounds pre-upload setup work (core init, cleanup, delete-tmp)
+// so the CLI fails instead of hanging on a stuck database or I/O call. It does
+// not cover the per-item upload loop, which uses cliItemTimeout per path, nor
+// queue gather / BDMV discovery, which have their own phase-scoped deadlines.
 const cliSetupTimeout = 30 * time.Minute
+
+// cliQueueGatherTimeout bounds queue discovery (GatherQueuePaths) so a stuck
+// filesystem walk over a large queue root fails fast instead of consuming the
+// shared setup deadline that init/cleanup/delete-tmp also need.
+const cliQueueGatherTimeout = 10 * time.Minute
+
+// cliDiscDiscoveryTimeout bounds per-disc BDMV discovery work (disc-type
+// detection, playlist load/discover/save) for ONE disc, so one slow disc in a
+// queue cannot starve the rest. It is applied per disc inside
+// handleBDMVPlaylistSelection and deliberately does NOT cover the interactive
+// playlist prompt, which must run on the untimed-but-cancelable parent context.
+const cliDiscDiscoveryTimeout = 5 * time.Minute
+
+// cliUploadOnlyTimeoutCap bounds how many per-item allowances the non-queue
+// upload-only deadline may sum to. RunUploadPrepared processes every path in a
+// single core call (its abort-on-first-error semantics are shared/immutable), so
+// the deadline is budgeted by item count but capped so a huge --paths list cannot
+// produce an effectively unbounded run-wide timeout.
+const cliUploadOnlyTimeoutCap = 50
 
 func run() error {
 	api.SetApplicationBuild(version, buildIdentifier)
@@ -201,11 +220,17 @@ func run() error {
 	}
 	// Each input path runs under its own cliItemTimeout (applied per item in
 	// processCLIPaths) so a long queue is not killed by a single run-wide
-	// deadline. Pre-upload setup work instead runs under setupCtx so it still
-	// fails fast if a database or I/O call hangs.
+	// deadline. Pre-upload setup is split into purpose-scoped phase contexts,
+	// each derived directly from the root cancelable ctx (siblings, not chained),
+	// so cancellation propagates from the root but deadlines do not compound and
+	// an earlier phase cannot starve a later one:
+	//   - phase 1 (setupCtx): core init + cleanup + delete-tmp (cliSetupTimeout)
+	//   - phase 2 (gatherCtx): queue gather (cliQueueGatherTimeout)
+	//   - phase 3 (per-disc): BDMV discovery (cliDiscDiscoveryTimeout per disc)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ctx = withCLIUploadProgressLogger(ctx, logger)
+	// Phase 1: core init + cleanup + delete-tmp run under cliSetupTimeout.
 	setupCtx, setupCancel := context.WithTimeout(ctx, cliSetupTimeout)
 	defer setupCancel()
 	coreSvc, err := core.NewWithContext(setupCtx, api.CoreDependencies{
@@ -237,7 +262,9 @@ func run() error {
 		if len(paths) != 1 {
 			return exitError(2, errors.New("--queue requires exactly one queue root path"))
 		}
-		queuePaths, err := filesystem.GatherQueuePaths(setupCtx, paths[0])
+		gatherCtx, gatherCancel := context.WithTimeout(ctx, cliQueueGatherTimeout)
+		queuePaths, err := filesystem.GatherQueuePaths(gatherCtx, paths[0])
+		gatherCancel()
 		if err != nil {
 			return exitError(1, err)
 		}
@@ -257,37 +284,24 @@ func run() error {
 		}
 	}
 
-	// Handle BDMV playlist selection before upload
-	if err := handleBDMVPlaylistSelection(setupCtx, paths, coreSvc, cfg, logger, opts); err != nil {
+	// Handle BDMV playlist selection before upload. Pass the root cancelable ctx
+	// (not setupCtx): handleBDMVPlaylistSelection applies its own per-disc
+	// deadline internally and must keep the interactive prompt on an
+	// untimed-but-cancelable context.
+	if err := handleBDMVPlaylistSelection(ctx, paths, coreSvc, cfg, logger, opts); err != nil {
 		return exitError(1, err)
 	}
 
 	if opts.UploadOnly {
-		// Upload-only processes every path in one core call, so budget the
-		// timeout by item count to preserve a per-item allowance.
-		uploadCtx, uploadCancel := context.WithTimeout(ctx, time.Duration(max(1, len(paths)))*cliItemTimeout)
-		defer uploadCancel()
 		uploadReq, err := buildCLIRequest(opts, visitedFlags, paths, screens)
 		if err != nil {
 			return exitError(1, err)
 		}
-		uploadReq, err = prepareCLIUploadMetadata(uploadCtx, coreSvc, uploadReq)
-		if err != nil {
-			return exitError(1, err)
+		queueMode := strings.TrimSpace(opts.QueueName) != ""
+		if queueMode {
+			return runCLIUploadOnlyQueue(ctx, coreSvc, uploadReq, paths, opts.Debug, logger)
 		}
-		if opts.Debug {
-			reviews, err := buildCLIUploadDebugReviews(uploadCtx, coreSvc, paths, uploadReq)
-			if err != nil {
-				return exitError(1, err)
-			}
-			for _, review := range reviews {
-				printDebugUploadReview(review)
-			}
-		}
-		if _, err := coreSvc.RunUploadPrepared(uploadCtx, uploadReq); err != nil {
-			return exitError(1, err)
-		}
-		return nil
+		return runCLIUploadOnlyBatch(ctx, coreSvc, uploadReq, paths, opts.Debug)
 	}
 
 	queueMode := strings.TrimSpace(opts.QueueName) != ""
@@ -299,6 +313,87 @@ func run() error {
 	})
 }
 
+// runCLIUploadOnlyBatch runs upload-only over all paths in a single
+// RunUploadPrepared call (preserving its shared abort-on-first-error
+// semantics) under a deadline budgeted by item count but capped at
+// cliUploadOnlyTimeoutCap items so a large path list cannot create an
+// effectively unbounded run-wide timeout.
+func runCLIUploadOnlyBatch(ctx context.Context, coreSvc api.Core, uploadReq api.Request, paths []string, debug bool) error {
+	budgetItems := min(max(1, len(paths)), cliUploadOnlyTimeoutCap)
+	uploadCtx, uploadCancel := context.WithTimeout(ctx, time.Duration(budgetItems)*cliItemTimeout)
+	defer uploadCancel()
+	preparedReq, err := prepareCLIUploadMetadata(uploadCtx, coreSvc, uploadReq)
+	if err != nil {
+		return exitError(1, err)
+	}
+	if debug {
+		reviews, err := buildCLIUploadDebugReviews(uploadCtx, coreSvc, paths, preparedReq)
+		if err != nil {
+			return exitError(1, err)
+		}
+		for _, review := range reviews {
+			printDebugUploadReview(review)
+		}
+	}
+	if _, err := coreSvc.RunUploadPrepared(uploadCtx, preparedReq); err != nil {
+		return exitError(1, err)
+	}
+	return nil
+}
+
+// runCLIUploadOnlyQueue runs upload-only in queue mode: each gathered path is
+// processed independently under its own cliItemTimeout via processCLIPaths, so a
+// single failing item is logged and skipped (continue-on-error) instead of
+// aborting the whole queue. Per item it prepares metadata, optionally prints the
+// debug review, and runs RunUploadPrepared for that one path, summing uploaded
+// counts across items.
+func runCLIUploadOnlyQueue(ctx context.Context, coreSvc api.Core, uploadReq api.Request, paths []string, debug bool, logger api.Logger) error {
+	var uploaded int
+	err := processCLIPaths(ctx, paths, true, cliItemTimeout, logger, func(itemCtx context.Context, sourcePath string) error {
+		itemReq := uploadReq
+		itemReq.Paths = []string{sourcePath}
+		preparedReq, err := prepareCLIUploadMetadata(itemCtx, coreSvc, itemReq)
+		if err != nil {
+			return err
+		}
+		if debug {
+			// Single-path review: mirror the inline debug-review build rather than
+			// buildCLIUploadDebugReviews, whose Paths[idx] indexing is fragile when
+			// the request is already a single path.
+			resolvedPath := sourcePath
+			if len(preparedReq.Paths) > 0 && strings.TrimSpace(preparedReq.Paths[0]) != "" {
+				resolvedPath = preparedReq.Paths[0]
+			}
+			reviewReq := preparedReq
+			reviewReq.Paths = []string{resolvedPath}
+			reviewReq.ExternalIDSelections = cloneCLIExternalIDSelectionsForResolvedPath(preparedReq.ExternalIDSelections, sourcePath, resolvedPath)
+			review, err := coreSvc.BuildUploadReview(itemCtx, reviewReq)
+			if err != nil {
+				return fmt.Errorf("build upload review for %q: %w", resolvedPath, err)
+			}
+			if strings.TrimSpace(sourcePath) != "" {
+				review.SourcePath = sourcePath
+			}
+			printDebugUploadReview(review)
+		}
+		result, err := coreSvc.RunUploadPrepared(itemCtx, preparedReq)
+		// RunUploadPrepared can accept some tracker uploads and then fail on a
+		// later one, returning a positive count alongside the error, so fold the
+		// count in before propagating the failure.
+		uploaded += result.UploadedCount
+		if err != nil {
+			return fmt.Errorf("upbrr: %w", err)
+		}
+		return nil
+	})
+	if logger != nil {
+		// UploadedCount counts accepted tracker uploads, not queue items (one item
+		// may upload to several trackers), so report it as tracker uploads.
+		logger.Infof("queue: upload-only completed, %d tracker upload(s) accepted", uploaded)
+	}
+	return err
+}
+
 // processCLIPaths runs process for each input path under its own itemTimeout. In
 // queue mode a per-item failure is logged and processing continues so the rest
 // of the queue still runs, with a summary error returned at the end if any item
@@ -306,7 +401,18 @@ func run() error {
 // the original single/multi-path behavior.
 func processCLIPaths(ctx context.Context, paths []string, queueMode bool, itemTimeout time.Duration, logger api.Logger, process func(ctx context.Context, sourcePath string) error) error {
 	failed := make([]string, 0)
-	for _, sourcePath := range paths {
+	var firstErr error
+	for i, sourcePath := range paths {
+		// Honor parent-context cancellation (e.g. Ctrl-C) by aborting the whole
+		// run. Without this the per-item timeout below would derive an
+		// already-done context for every remaining path, logging each as a
+		// spurious "failed, continuing" item instead of stopping.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if logger != nil {
+				logger.Warnf("queue: aborted after %d of %d item(s): %v", i, len(paths), ctxErr)
+			}
+			return exitError(1, fmt.Errorf("aborted after %d of %d item(s): %w", i, len(paths), ctxErr))
+		}
 		err := runCLIPathWithTimeout(ctx, itemTimeout, sourcePath, process)
 		if err == nil {
 			continue
@@ -314,23 +420,35 @@ func processCLIPaths(ctx context.Context, paths []string, queueMode bool, itemTi
 		if !queueMode {
 			return exitError(1, err)
 		}
+		if firstErr == nil {
+			firstErr = err
+		}
 		if logger != nil {
 			logger.Errorf("queue: %q failed, continuing with remaining items: %v", sourcePath, err)
 		}
 		failed = append(failed, sourcePath)
 	}
 	if len(failed) > 0 {
-		if logger != nil {
-			logger.Warnf("queue: %d of %d item(s) failed: %s", len(failed), len(paths), strings.Join(failed, ", "))
+		quoted := make([]string, len(failed))
+		for i, p := range failed {
+			quoted[i] = fmt.Sprintf("%q", p)
 		}
-		return exitError(1, fmt.Errorf("queue completed with %d of %d item(s) failed", len(failed), len(paths)))
+		joined := strings.Join(quoted, ", ")
+		if logger != nil {
+			logger.Warnf("queue: %d of %d item(s) failed: %s", len(failed), len(paths), joined)
+		}
+		return exitError(1, fmt.Errorf("queue completed with %d of %d item(s) failed [%s]: %w", len(failed), len(paths), joined, firstErr))
 	}
 	return nil
 }
 
 // runCLIPathWithTimeout processes a single input path under its own deadline so
 // each queue item receives a full timeout budget rather than sharing one
-// run-wide deadline.
+// run-wide deadline. The deadline is enforced cooperatively: itemCtx is threaded
+// into every core call (FetchMetadataPreview, CheckDupes, screenshot handling,
+// BuildUploadReview, RunUploadPrepared, etc.) and honored only when those calls
+// check ctx. A core operation that ignores ctx will run past itemTimeout; the
+// timeout cannot forcibly kill in-flight work.
 func runCLIPathWithTimeout(ctx context.Context, itemTimeout time.Duration, sourcePath string, process func(ctx context.Context, sourcePath string) error) error {
 	itemCtx, cancel := context.WithTimeout(ctx, itemTimeout)
 	defer cancel()
@@ -994,181 +1112,254 @@ func resolveCLIExternalIDSelection(selections map[string]api.ExternalIDSelection
 	return api.ExternalIDSelection{}, false
 }
 
+// isCtxErr reports whether err is a context cancellation/deadline error,
+// signalling the run-wide deadline or an explicit cancel has fired. BDMV
+// setup must abort (not skip the path) when this happens so cancellation is
+// surfaced instead of being swallowed by a per-path continue.
+func isCtxErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// handleBDMVPlaylistSelection resolves playlist selections for each BDMV disc in
+// paths. ctx is the untimed-but-cancelable parent context; each disc gets its
+// own cliDiscDiscoveryTimeout for the timed detection/load/discover/save work so
+// one slow disc cannot starve the rest of the queue. The interactive playlist
+// prompt runs on the parent (cancelable, untimed) context, not the per-disc
+// deadline, so a long human wait does not abort.
 func handleBDMVPlaylistSelection(ctx context.Context, paths []string, coreSvc api.Core, cfg config.Config, logger api.Logger, opts cliOptions) error {
 	if len(paths) == 0 {
 		return nil
 	}
 
 	for _, path := range paths {
-		// Check if this path is a BDMV folder
-		discType, err := filesystem.DetectDiscType(ctx, path)
+		discCtx, discCancel := context.WithTimeout(ctx, cliDiscDiscoveryTimeout)
+		err := handleBDMVDiscSelection(discCtx, ctx, path, coreSvc, cfg, logger, opts)
+		discCancel()
 		if err != nil {
-			logger.Debugf("cli: disc type detection failed for %s: %v", path, err)
-			continue
+			return err
 		}
+	}
+	return nil
+}
 
-		if discType != "BDMV" {
-			continue
+// handleBDMVDiscSelection resolves the playlist selection for a single BDMV
+// disc. discCtx carries the per-disc deadline and is used for detection, load,
+// discovery and the auto-select saves. promptCtx is the untimed-but-cancelable
+// parent context used for the interactive prompt loop and its saves, so a long
+// human wait does not trip the per-disc deadline. A context error from any timed
+// operation aborts (returns) rather than skipping the path, surfacing
+// cancellation instead of swallowing it.
+func handleBDMVDiscSelection(discCtx context.Context, promptCtx context.Context, path string, coreSvc api.Core, cfg config.Config, logger api.Logger, opts cliOptions) error {
+	// Check if this path is a BDMV folder
+	discType, err := filesystem.DetectDiscType(discCtx, path)
+	if err != nil {
+		if isCtxErr(err) {
+			return fmt.Errorf("upbrr: BDMV disc type detection cancelled for %s: %w", path, err)
 		}
+		logger.Debugf("cli: disc type detection failed for %s: %v", path, err)
+		return nil
+	}
 
-		logger.Infof("cli: BDMV disc detected at %s", path)
+	if discType != "BDMV" {
+		return nil
+	}
 
-		// Normalize to absolute path for consistency
-		absPath, err := filepath.Abs(path)
-		if err != nil {
-			logger.Warnf("cli: resolve path %s: %v", path, err)
-			continue
-		}
+	logger.Infof("cli: BDMV disc detected at %s", path)
 
-		// Check if playlist selection is already persisted
-		_, err = coreSvc.LoadPlaylistSelection(ctx, absPath)
-		if err == nil {
-			logger.Infof("cli: using previously saved playlist selection for %s", absPath)
-			continue
+	// Normalize to absolute path for consistency
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		logger.Warnf("cli: resolve path %s: %v", path, err)
+		return nil
+	}
+
+	// Check if playlist selection is already persisted
+	_, err = coreSvc.LoadPlaylistSelection(discCtx, absPath)
+	if err == nil {
+		logger.Infof("cli: using previously saved playlist selection for %s", absPath)
+		return nil
+	}
+	if err != nil {
+		if isCtxErr(err) {
+			return fmt.Errorf("upbrr: BDMV playlist selection load cancelled for %s: %w", absPath, err)
 		}
 		if !errors.Is(err, internalerrors.ErrNotFound) {
 			logger.Warnf("cli: load playlist selection: %v", err)
-			continue
+			return nil
 		}
+	}
 
-		// No selection exists; check if we should auto-select
-		if cfg.Metadata.UseLargestPlaylist {
-			logger.Infof("cli: auto-selecting largest playlist (use_largest_playlist enabled)")
+	// No selection exists; check if we should auto-select
+	if cfg.Metadata.UseLargestPlaylist {
+		logger.Infof("cli: auto-selecting largest playlist (use_largest_playlist enabled)")
 
-			playlists, err := coreSvc.DiscoverPlaylists(ctx, absPath)
-			if err != nil {
-				if opts.Unattended && !opts.UnattendedConfirm {
-					return fmt.Errorf("upbrr: unattended BDMV playlist discovery failed for %s: %w", absPath, err)
-				}
-				logger.Warnf("cli: discover playlists: %v", err)
-				continue
-			}
-
-			if len(playlists) == 0 {
-				if opts.Unattended && !opts.UnattendedConfirm {
-					return fmt.Errorf("upbrr: unattended BDMV upload found no playlists for %s", absPath)
-				}
-				continue
-			}
-			// Save the best (highest-scoring) playlist
-			selected := []string{playlists[0].File}
-			if err := coreSvc.SavePlaylistSelection(ctx, absPath, selected, false); err != nil {
-				if opts.Unattended && !opts.UnattendedConfirm {
-					return fmt.Errorf("upbrr: unattended BDMV playlist selection save failed for %s: %w", absPath, err)
-				}
-				logger.Warnf("cli: save playlist selection: %v", err)
-			} else {
-				logger.Infof("cli: auto-selected playlist %s (score: %.2f)", playlists[0].File, playlists[0].Score)
-			}
-			continue
-		}
-
-		// Interactive selection required
-		logger.Infof("cli: discovering playlists for %s", absPath)
-		playlists, err := coreSvc.DiscoverPlaylists(ctx, absPath)
+		playlists, err := coreSvc.DiscoverPlaylists(discCtx, absPath)
 		if err != nil {
+			if isCtxErr(err) {
+				return fmt.Errorf("upbrr: BDMV playlist discovery cancelled for %s: %w", absPath, err)
+			}
 			if opts.Unattended && !opts.UnattendedConfirm {
 				return fmt.Errorf("upbrr: unattended BDMV playlist discovery failed for %s: %w", absPath, err)
 			}
 			logger.Warnf("cli: discover playlists: %v", err)
-			continue
+			return nil
 		}
 
 		if len(playlists) == 0 {
 			if opts.Unattended && !opts.UnattendedConfirm {
 				return fmt.Errorf("upbrr: unattended BDMV upload found no playlists for %s", absPath)
 			}
-			logger.Warnf("cli: no playlists found for %s", absPath)
-			continue
+			return nil
 		}
-
-		logger.Infof("cli: found %d playlists", len(playlists))
-		if opts.Unattended && !opts.UnattendedConfirm && len(playlists) > 1 {
-			return fmt.Errorf("upbrr: unattended BDMV upload requires a saved playlist selection or use_largest_playlist for %s", absPath)
+		// Save the best (highest-scoring) playlist
+		selected := []string{playlists[0].File}
+		if err := coreSvc.SavePlaylistSelection(discCtx, absPath, selected, false); err != nil {
+			if isCtxErr(err) {
+				return fmt.Errorf("upbrr: BDMV playlist selection save cancelled for %s: %w", absPath, err)
+			}
+			if opts.Unattended && !opts.UnattendedConfirm {
+				return fmt.Errorf("upbrr: unattended BDMV playlist selection save failed for %s: %w", absPath, err)
+			}
+			logger.Warnf("cli: save playlist selection: %v", err)
+		} else {
+			logger.Infof("cli: auto-selected playlist %s (score: %.2f)", playlists[0].File, playlists[0].Score)
 		}
+		return nil
+	}
 
-		// Display top playlists and prompt user
-		if len(playlists) == 1 {
-			fmt.Printf("[*] Only one playlist found: %s (%.0fs, score: %.2f)\n", playlists[0].File, playlists[0].Duration, playlists[0].Score)
-			fmt.Printf("[*] Auto-selecting...\n")
-			if err := coreSvc.SavePlaylistSelection(ctx, absPath, []string{playlists[0].File}, false); err != nil {
-				if opts.Unattended && !opts.UnattendedConfirm {
-					return fmt.Errorf("upbrr: unattended BDMV playlist selection save failed for %s: %w", absPath, err)
+	// Interactive selection required
+	logger.Infof("cli: discovering playlists for %s", absPath)
+	playlists, err := coreSvc.DiscoverPlaylists(discCtx, absPath)
+	if err != nil {
+		if isCtxErr(err) {
+			return fmt.Errorf("upbrr: BDMV playlist discovery cancelled for %s: %w", absPath, err)
+		}
+		if opts.Unattended && !opts.UnattendedConfirm {
+			return fmt.Errorf("upbrr: unattended BDMV playlist discovery failed for %s: %w", absPath, err)
+		}
+		logger.Warnf("cli: discover playlists: %v", err)
+		return nil
+	}
+
+	if len(playlists) == 0 {
+		if opts.Unattended && !opts.UnattendedConfirm {
+			return fmt.Errorf("upbrr: unattended BDMV upload found no playlists for %s", absPath)
+		}
+		logger.Warnf("cli: no playlists found for %s", absPath)
+		return nil
+	}
+
+	logger.Infof("cli: found %d playlists", len(playlists))
+	if opts.Unattended && !opts.UnattendedConfirm && len(playlists) > 1 {
+		return fmt.Errorf("upbrr: unattended BDMV upload requires a saved playlist selection or use_largest_playlist for %s", absPath)
+	}
+
+	// Display top playlists and prompt user
+	if len(playlists) == 1 {
+		fmt.Printf("[*] Only one playlist found: %s (%.0fs, score: %.2f)\n", playlists[0].File, playlists[0].Duration, playlists[0].Score)
+		fmt.Printf("[*] Auto-selecting...\n")
+		if err := coreSvc.SavePlaylistSelection(discCtx, absPath, []string{playlists[0].File}, false); err != nil {
+			if isCtxErr(err) {
+				return fmt.Errorf("upbrr: BDMV playlist selection save cancelled for %s: %w", absPath, err)
+			}
+			if opts.Unattended && !opts.UnattendedConfirm {
+				return fmt.Errorf("upbrr: unattended BDMV playlist selection save failed for %s: %w", absPath, err)
+			}
+			logger.Warnf("cli: save playlist selection: %v", err)
+		}
+		return nil
+	}
+
+	// Display top 5 playlists
+	topCount := min(len(playlists), 5)
+
+	fmt.Printf("\nAvailable playlists for %s:\n", absPath)
+	for i := range topCount {
+		p := playlists[i]
+		durationStr := formatDuration(p.Duration)
+		fmt.Printf("[%d] %s (%s, score: %.2f)\n", i, p.File, durationStr, p.Score)
+	}
+
+	// Prompt user for selection. This loop runs on the untimed-but-cancelable
+	// promptCtx (NOT discCtx) so a long human wait does not trip the per-disc
+	// deadline; the saves inside it are bounded by a fresh short deadline derived
+	// from promptCtx so they remain cancelable but the user-wait is not timed.
+	for {
+		fmt.Printf("\nEnter playlist numbers (comma-separated), 'ALL' to select all top %d, or press Enter to auto-select best: ", topCount)
+		var input string
+		n, err := fmt.Scanln(&input)
+		if err != nil && err.Error() != "unexpected newline" {
+			logger.Warnf("cli: read input: %v", err)
+			break
+		}
+		if n == 0 || strings.TrimSpace(input) == "" {
+			// Auto-select best
+			saveCtx, saveCancel := context.WithTimeout(promptCtx, cliDiscDiscoveryTimeout)
+			err := coreSvc.SavePlaylistSelection(saveCtx, absPath, []string{playlists[0].File}, false)
+			saveCancel()
+			if err != nil {
+				if isCtxErr(err) {
+					return fmt.Errorf("upbrr: BDMV playlist selection save cancelled for %s: %w", absPath, err)
 				}
 				logger.Warnf("cli: save playlist selection: %v", err)
+			} else {
+				fmt.Printf("[*] Auto-selected best playlist: %s\n", playlists[0].File)
 			}
-		} else {
-			// Display top 5 playlists
-			topCount := min(len(playlists), 5)
-
-			fmt.Printf("\nAvailable playlists for %s:\n", absPath)
-			for i := range topCount {
-				p := playlists[i]
-				durationStr := formatDuration(p.Duration)
-				fmt.Printf("[%d] %s (%s, score: %.2f)\n", i, p.File, durationStr, p.Score)
-			}
-
-			// Prompt user for selection
-			for {
-				fmt.Printf("\nEnter playlist numbers (comma-separated), 'ALL' to select all top %d, or press Enter to auto-select best: ", topCount)
-				var input string
-				n, err := fmt.Scanln(&input)
-				if err != nil && err.Error() != "unexpected newline" {
-					logger.Warnf("cli: read input: %v", err)
-					break
-				}
-				if n == 0 || strings.TrimSpace(input) == "" {
-					// Auto-select best
-					if err := coreSvc.SavePlaylistSelection(ctx, absPath, []string{playlists[0].File}, false); err != nil {
-						logger.Warnf("cli: save playlist selection: %v", err)
-					} else {
-						fmt.Printf("[*] Auto-selected best playlist: %s\n", playlists[0].File)
-					}
-					break
-				}
-
-				input = strings.TrimSpace(input)
-				if strings.ToLower(input) == "all" {
-					var selected []string
-					for i := range topCount {
-						selected = append(selected, playlists[i].File)
-					}
-					if err := coreSvc.SavePlaylistSelection(ctx, absPath, selected, true); err != nil {
-						logger.Warnf("cli: save playlist selection: %v", err)
-					} else {
-						fmt.Printf("[*] Selected all %d playlists\n", len(selected))
-					}
-					break
-				}
-
-				// Parse individual selections
-				indices := strings.Split(input, ",")
-				var selected []string
-				valid := true
-				for _, idx := range indices {
-					idx = strings.TrimSpace(idx)
-					var num int
-					_, err := fmt.Sscanf(idx, "%d", &num)
-					if err != nil || num < 0 || num >= topCount {
-						fmt.Printf("[!] Invalid index: %s\n", idx)
-						valid = false
-						break
-					}
-					selected = append(selected, playlists[num].File)
-				}
-
-				if valid && len(selected) > 0 {
-					if err := coreSvc.SavePlaylistSelection(ctx, absPath, selected, false); err != nil {
-						logger.Warnf("cli: save playlist selection: %v", err)
-					} else {
-						fmt.Printf("[*] Selected %d playlist(s)\n", len(selected))
-					}
-					break
-				}
-
-				fmt.Printf("[!] Please try again.\n")
-			}
+			break
 		}
+
+		input = strings.TrimSpace(input)
+		if strings.ToLower(input) == "all" {
+			var selected []string
+			for i := range topCount {
+				selected = append(selected, playlists[i].File)
+			}
+			saveCtx, saveCancel := context.WithTimeout(promptCtx, cliDiscDiscoveryTimeout)
+			err := coreSvc.SavePlaylistSelection(saveCtx, absPath, selected, true)
+			saveCancel()
+			if err != nil {
+				if isCtxErr(err) {
+					return fmt.Errorf("upbrr: BDMV playlist selection save cancelled for %s: %w", absPath, err)
+				}
+				logger.Warnf("cli: save playlist selection: %v", err)
+			} else {
+				fmt.Printf("[*] Selected all %d playlists\n", len(selected))
+			}
+			break
+		}
+
+		// Parse individual selections
+		indices := strings.Split(input, ",")
+		var selected []string
+		valid := true
+		for _, idx := range indices {
+			idx = strings.TrimSpace(idx)
+			var num int
+			_, err := fmt.Sscanf(idx, "%d", &num)
+			if err != nil || num < 0 || num >= topCount {
+				fmt.Printf("[!] Invalid index: %s\n", idx)
+				valid = false
+				break
+			}
+			selected = append(selected, playlists[num].File)
+		}
+
+		if valid && len(selected) > 0 {
+			saveCtx, saveCancel := context.WithTimeout(promptCtx, cliDiscDiscoveryTimeout)
+			err := coreSvc.SavePlaylistSelection(saveCtx, absPath, selected, false)
+			saveCancel()
+			if err != nil {
+				if isCtxErr(err) {
+					return fmt.Errorf("upbrr: BDMV playlist selection save cancelled for %s: %w", absPath, err)
+				}
+				logger.Warnf("cli: save playlist selection: %v", err)
+			} else {
+				fmt.Printf("[*] Selected %d playlist(s)\n", len(selected))
+			}
+			break
+		}
+
+		fmt.Printf("[!] Please try again.\n")
 	}
 	return nil
 }
