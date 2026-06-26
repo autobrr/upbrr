@@ -163,6 +163,55 @@ func TestProcessCLIPathsAbortsOnParentCancel(t *testing.T) {
 	}
 }
 
+func TestProcessCLIPathsAbortsWhenLastItemCanceled(t *testing.T) {
+	t.Parallel()
+
+	parent, cancel := context.WithCancel(context.Background())
+	paths := []string{"only"}
+	err := processCLIPaths(parent, paths, true, time.Minute, api.NopLogger{}, func(_ context.Context, _ string) error {
+		// Parent cancellation during the final item must abort, not be recorded as
+		// a normal queue failure (no next iteration runs to catch it).
+		cancel()
+		return context.Canceled
+	})
+	var exitErr *cliExitError
+	if !errors.As(err, &exitErr) || exitErr.code != 1 {
+		t.Fatalf("expected cliExitError with code 1, got %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected wrapped context.Canceled, got %v", err)
+	}
+	if strings.Contains(err.Error(), "queue completed") {
+		t.Fatalf("expected an abort error, not a normal queue summary, got %v", err)
+	}
+}
+
+func TestProcessCLIPathsItemTimeoutDoesNotAbortQueue(t *testing.T) {
+	t.Parallel()
+
+	// A per-item timeout (on the derived itemCtx) must be treated as an ordinary
+	// failure that continues the queue, not as a parent-cancellation abort.
+	paths := []string{"slow", "ok"}
+	attempted := 0
+	err := processCLIPaths(context.Background(), paths, true, 10*time.Millisecond, api.NopLogger{}, func(itemCtx context.Context, sourcePath string) error {
+		attempted++
+		if sourcePath == "slow" {
+			<-itemCtx.Done()
+			return itemCtx.Err()
+		}
+		return nil
+	})
+	if attempted != len(paths) {
+		t.Fatalf("expected all items attempted despite an item timeout, got %d", attempted)
+	}
+	if err == nil || !strings.Contains(err.Error(), "queue completed") {
+		t.Fatalf("expected a normal queue summary error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "aborted after") {
+		t.Fatalf("item timeout must not abort the queue, got %v", err)
+	}
+}
+
 func TestParseCLIOptionsCreateAuth(t *testing.T) {
 	t.Parallel()
 

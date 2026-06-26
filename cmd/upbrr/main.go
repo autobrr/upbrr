@@ -402,20 +402,36 @@ func runCLIUploadOnlyQueue(ctx context.Context, coreSvc api.Core, uploadReq api.
 func processCLIPaths(ctx context.Context, paths []string, queueMode bool, itemTimeout time.Duration, logger api.Logger, process func(ctx context.Context, sourcePath string) error) error {
 	failed := make([]string, 0)
 	var firstErr error
+	// abortOnCancel returns a terminal error when the parent context is done (a
+	// run-wide cancellation or deadline), so the queue stops instead of treating
+	// the in-flight item as a normal failure. Per-item timeouts live on the
+	// derived itemCtx, so they leave the parent ctx.Err() nil and fall through to
+	// the ordinary failure handling below.
+	abortOnCancel := func(i int) error {
+		ctxErr := ctx.Err()
+		if ctxErr == nil {
+			return nil
+		}
+		if logger != nil {
+			logger.Warnf("queue: aborted after %d of %d item(s): %v", i, len(paths), ctxErr)
+		}
+		return exitError(1, fmt.Errorf("aborted after %d of %d item(s): %w", i, len(paths), ctxErr))
+	}
 	for i, sourcePath := range paths {
-		// Honor parent-context cancellation (e.g. Ctrl-C) by aborting the whole
-		// run. Without this the per-item timeout below would derive an
-		// already-done context for every remaining path, logging each as a
-		// spurious "failed, continuing" item instead of stopping.
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			if logger != nil {
-				logger.Warnf("queue: aborted after %d of %d item(s): %v", i, len(paths), ctxErr)
-			}
-			return exitError(1, fmt.Errorf("aborted after %d of %d item(s): %w", i, len(paths), ctxErr))
+		// Honor parent-context cancellation (e.g. Ctrl-C) before starting an item,
+		// so we don't derive an already-done context and log spurious failures.
+		if abortErr := abortOnCancel(i); abortErr != nil {
+			return abortErr
 		}
 		err := runCLIPathWithTimeout(ctx, itemTimeout, sourcePath, process)
 		if err == nil {
 			continue
+		}
+		// A failure caused by parent cancellation/expiry must abort immediately
+		// rather than be recorded as an item failure. This also covers the final
+		// item, where the next-iteration check above never runs.
+		if abortErr := abortOnCancel(i); abortErr != nil {
+			return abortErr
 		}
 		if !queueMode {
 			return exitError(1, err)
