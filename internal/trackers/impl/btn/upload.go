@@ -421,9 +421,9 @@ func applyBTNNoGroupSuffix(name string, meta api.PreparedMetadata) string {
 		return name
 	}
 
-        noGroupPattern := regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)$`)
-        normalizedName := noGroupPattern.ReplaceAllString(name, "")
-        normalizedName = strings.TrimRight(normalizedName, ".-")
+	noGroupPattern := regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)$`)
+	normalizedName := noGroupPattern.ReplaceAllString(name, "")
+	normalizedName = strings.TrimRight(normalizedName, ".-")
 
 	return normalizedName + "-NOGRP"
 }
@@ -437,7 +437,6 @@ func isNoGroupTag(tag string) bool {
 		return false
 	}
 }
-
 
 func cleanAndNormalizeBTNName(value string) string {
 	// 1. Dot normalization (spaces to dots, collapse dots)
@@ -456,7 +455,6 @@ func cleanAndNormalizeBTNName(value string) string {
 
 	return strings.TrimSpace(value)
 }
-
 
 func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
 	candidates := []string{strings.TrimSpace(meta.TorrentPath), strings.TrimSpace(meta.ClientTorrentPath), strings.TrimSpace(meta.SourcePath)}

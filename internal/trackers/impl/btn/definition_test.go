@@ -55,7 +55,6 @@ func TestCleanAndNormalizeBTNName(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.input, func(t *testing.T) {
 			result := cleanAndNormalizeBTNName(tc.input)
 			if result != tc.expected {
@@ -106,7 +105,6 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			result := resolveUploadName(tc.meta)
 			if result != tc.expected {
