@@ -14,6 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/trackers/impl/mtv"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ptp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/rtf"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -28,13 +29,30 @@ func defaultAdapters() map[string]Adapter {
 	adapters := map[string]Adapter{}
 	for _, spec := range builtInSpecs() {
 		switch spec.id {
+		case "AR":
+			adapters[spec.id] = trackerAdapter{capability: validationOnlyCapability(spec), resolve: resolveARStoredSessionForTrackerAuth}
+		case "HDB":
+			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveHDBStoredSessionForTrackerAuth}
 		case "MTV":
 			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: mtv.ResolveSessionForTrackerAuthLogin}
 		case "PTP":
 			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: ptp.ResolveSessionForTrackerAuthLogin}
+		case "RTF":
+			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: rtf.ResolveSessionForTrackerAuthLogin}
 		}
 	}
 	return adapters
+}
+
+// validationOnlyCapability keeps cookie import visible while hiding credential
+// login actions for adapters that can only test existing auth material.
+func validationOnlyCapability(spec trackerSpec) api.TrackerAuthCapability {
+	capability := capabilityFromSpec(spec)
+	capability.SupportsLogin = false
+	capability.SupportsAutoLogin = false
+	capability.SupportsTOTP = false
+	capability.SupportsManual2FA = false
+	return capability
 }
 
 func (s *Service) adapterFor(trackerID string) (Adapter, bool) {
@@ -106,6 +124,18 @@ func (a trackerAdapter) Delete(ctx context.Context, dbPath string) error {
 func classifyAdapterError(trackerID string, err error) error {
 	if err == nil {
 		return nil
+	}
+	var authRequired *AuthRequiredError
+	if errors.As(err, &authRequired) {
+		return authRequired
+	}
+	var needs2FA *Needs2FAError
+	if errors.As(err, &needs2FA) {
+		return needs2FA
+	}
+	var unsupported *UnsupportedAuthError
+	if errors.As(err, &unsupported) {
+		return unsupported
 	}
 	if validation, ok := asValidationError(err); ok {
 		return validation

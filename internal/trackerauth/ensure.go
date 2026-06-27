@@ -40,6 +40,10 @@ func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session
 		return s.needs2FASession(ctx, trackerID, adapter, needs2FA)
 	}
 
+	if authRequired, ok := asAuthRequiredError(err); ok && !adapter.Capability().SupportsLogin {
+		return Session{}, authRequired
+	}
+
 	confirmedInvalid := false
 	if validationErr, ok := asValidationError(err); ok {
 		if validationErr.Transient && !validationErr.ConfirmedInvalid {
@@ -87,6 +91,14 @@ func asNeeds2FAError(err error) (*Needs2FAError, bool) {
 	var needsErr *Needs2FAError
 	if errors.As(err, &needsErr) {
 		return needsErr, true
+	}
+	return nil, false
+}
+
+func asAuthRequiredError(err error) (*AuthRequiredError, bool) {
+	var authRequired *AuthRequiredError
+	if errors.As(err, &authRequired) {
+		return authRequired, true
 	}
 	return nil, false
 }

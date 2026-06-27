@@ -145,6 +145,129 @@ func TestDefaultAdaptersExposeMTVPTPManual2FAChallenge(t *testing.T) {
 	}
 }
 
+func TestValidateRTFRefreshesExpiredAPIKey(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthTestDB(t)
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"RTF": {APIKey: "old-token", Username: "user", Password: "pass"},
+			},
+		},
+	}
+	saveTrackerAuthTestConfig(t, dbPath, cfg)
+
+	var testedToken string
+	var loginCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/test":
+			testedToken = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/api/login":
+			loginCalled = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"token":"new-token"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	cfg.Trackers.Trackers["RTF"] = config.TrackerConfig{
+		URL:      server.URL,
+		APIKey:   "old-token",
+		Username: "user",
+		Password: "pass",
+	}
+
+	status, err := NewService(cfg).Validate(context.Background(), "RTF")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
+		t.Fatalf("expected successful RTF auth validation, got %#v", status)
+	}
+	if testedToken != "old-token" {
+		t.Fatalf("expected old token validation, got %q", testedToken)
+	}
+	if !loginCalled {
+		t.Fatal("expected expired API key to trigger RTF login")
+	}
+	if got := loadStoredTrackerConfig(t, dbPath).Trackers.Trackers["RTF"].APIKey; got != "new-token" {
+		t.Fatalf("expected refreshed token persisted, got %q", got)
+	}
+}
+
+func TestValidateARStoredCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/torrents.php" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
+			t.Fatalf("expected AR session cookie, got %q", got)
+		}
+		_, _ = w.Write([]byte(`<a href="/torrents.php?action=download&id=1&auth=session-key">Download</a>`))
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"AR": {URL: server.URL},
+		}},
+	}).Validate(ctx, "AR")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
+		t.Fatalf("expected successful AR auth validation, got %#v", status)
+	}
+}
+
+func TestValidateHDBInvalidCookiesDeletesSession(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "HDB", map[string]string{"session": "expired"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/upload/upload" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/login.php", http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"HDB": {URL: server.URL, Username: "user", Passkey: "passkey"},
+		}},
+	}).Validate(ctx, "HDB")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 0 || status.Message != "stored session expired or invalid" {
+		t.Fatalf("expected HDB login-required expired-session status, got %#v", status)
+	}
+	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "HDB"); err == nil {
+		t.Fatal("expected invalid HDB cookies to be deleted")
+	}
+}
+
 func TestSubmit2FARetriesAdapterLoginWithCurrentConfigAndCode(t *testing.T) {
 	t.Parallel()
 
@@ -826,7 +949,7 @@ func TestStatusCookiesOnlyReportsEncryptedStorageUnavailable(t *testing.T) {
 }
 
 func TestLoginWithoutAdapterDoesNotReportRemoteSuccess(t *testing.T) {
-	for _, trackerID := range []string{"AR", "FF", "FL", "RTF", "THR"} {
+	for _, trackerID := range []string{"FF", "FL", "THR"} {
 		t.Run(trackerID, func(t *testing.T) {
 			cfg := config.Config{
 				Trackers: config.TrackersConfig{
@@ -920,11 +1043,11 @@ func TestValidateWithoutAdapterReportsUnsupportedRemoteValidation(t *testing.T) 
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"AR": {Username: "user", Password: "pass"},
+				"FF": {Username: "user", Password: "pass"},
 			},
 		},
 	}
-	status, err := NewService(cfg).Validate(context.Background(), "AR")
+	status, err := NewService(cfg).Validate(context.Background(), "FF")
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -1346,7 +1469,28 @@ func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 			if !cap.SupportsLogin || !cap.SupportsAutoLogin {
 				t.Fatalf("%s adapter-backed login capability must be preserved: %#v", cap.TrackerID, cap)
 			}
-		case "AR", "FF", "FL", "RTF", "THR":
+		case "RTF":
+			if !cap.SupportsLogin || !cap.SupportsAutoLogin {
+				t.Fatalf("%s API refresh capability must be preserved: %#v", cap.TrackerID, cap)
+			}
+			if cap.SupportsManual2FA || cap.SupportsTOTP {
+				t.Fatalf("%s must not advertise 2FA actions: %#v", cap.TrackerID, cap)
+			}
+		case "AR":
+			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {
+				t.Fatalf("%s auth check is validation-only in tracker-auth UI: %#v", cap.TrackerID, cap)
+			}
+			if !cap.SupportsCookieFile {
+				t.Fatalf("%s must keep cookie import capability: %#v", cap.TrackerID, cap)
+			}
+		case "HDB":
+			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {
+				t.Fatalf("%s auth check is validation-only in tracker-auth UI: %#v", cap.TrackerID, cap)
+			}
+			if !cap.SupportsCookieFile || !cap.RequiresPasskey {
+				t.Fatalf("%s must keep cookie/passkey capability: %#v", cap.TrackerID, cap)
+			}
+		case "FF", "FL", "THR":
 			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {
 				t.Fatalf("%s must not advertise unsupported login actions: %#v", cap.TrackerID, cap)
 			}
@@ -1888,6 +2032,34 @@ func newTrackerAuthTestDB(t *testing.T) string {
 	}
 	_ = repo.Close()
 	return dbPath
+}
+
+func saveTrackerAuthTestConfig(t *testing.T, dbPath string, cfg config.Config) {
+	t.Helper()
+
+	repo, err := servicedb.OpenWithLoggerContext(context.Background(), dbPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("OpenWithLoggerContext: %v", err)
+	}
+	defer repo.Close()
+	if err := config.SaveToDatabase(context.Background(), &cfg, repo); err != nil {
+		t.Fatalf("SaveToDatabase: %v", err)
+	}
+}
+
+func loadStoredTrackerConfig(t *testing.T, dbPath string) config.Config {
+	t.Helper()
+
+	repo, err := servicedb.OpenWithLoggerContext(context.Background(), dbPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("OpenWithLoggerContext: %v", err)
+	}
+	defer repo.Close()
+	cfg, err := config.LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabase: %v", err)
+	}
+	return *cfg
 }
 
 func newMTVManual2FAServer(t *testing.T) *httptest.Server {

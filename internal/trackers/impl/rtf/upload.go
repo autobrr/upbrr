@@ -217,6 +217,36 @@ func resolveAPIKey(ctx context.Context, req trackers.UploadRequest) (string, err
 	return refreshed, nil
 }
 
+// ResolveSessionForTrackerAuthLogin validates RTF API auth or refreshes the API
+// key with configured credentials for tracker-auth checks.
+func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
+	apiKey := strings.TrimSpace(cfg.APIKey)
+	baseURL := resolveBaseURL(cfg)
+	if apiKey != "" {
+		valid, err := testAPIKey(ctx, baseURL, apiKey)
+		if err == nil && valid {
+			return nil
+		}
+		if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
+			if err != nil {
+				return fmt.Errorf("trackers: RTF API key validation failed and username/password not configured: %w", err)
+			}
+			return errors.New("trackers: RTF API key invalid and username/password not configured")
+		}
+	}
+	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
+		return errors.New("trackers: RTF missing api_key or username/password")
+	}
+	refreshed, err := refreshAPIKey(ctx, baseURL, cfg)
+	if err != nil {
+		return err
+	}
+	if err := persistRefreshedAPIKey(ctx, dbPath, refreshed); err != nil {
+		return err
+	}
+	return nil
+}
+
 func testAPIKey(ctx context.Context, baseURL string, apiKey string) (bool, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, joinURL(baseURL, "/api/test"), nil)
 	if err != nil {

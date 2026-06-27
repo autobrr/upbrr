@@ -21,10 +21,12 @@ const baseProps = {
     "AR",
     "COOKIE",
     "FAST",
+    "HDB",
     "MTV",
     "PTP",
     "RTF",
     "SLOW",
+    "ASC",
     "PLAINAPI",
     "PLAINPASS",
   ],
@@ -160,7 +162,7 @@ describe("SettingsPage", () => {
     expect(setSettingsSection).toHaveBeenCalledWith("tracker_auth");
   });
 
-  it("shows Check Auth only for adapter-backed tracker auth", async () => {
+  it("shows Check Auth only for remote-validation tracker auth", async () => {
     vi.stubGlobal("go", {
       guiapp: {
         App: {
@@ -182,8 +184,44 @@ describe("SettingsPage", () => {
               displayName: "AR",
               authKind: "cookies_login",
               supportsCookieFile: true,
+              supportsLogin: false,
+              supportsAutoLogin: false,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: false,
+              requiresPasskey: false,
+            },
+            {
+              trackerID: "HDB",
+              displayName: "HDB",
+              authKind: "passkey_cookies",
+              supportsCookieFile: true,
+              supportsLogin: false,
+              supportsAutoLogin: false,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: false,
+              requiresPasskey: true,
+            },
+            {
+              trackerID: "RTF",
+              displayName: "RTF",
+              authKind: "api_key_credential_refresh",
+              supportsCookieFile: false,
               supportsLogin: true,
               supportsAutoLogin: true,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: true,
+              requiresPasskey: false,
+            },
+            {
+              trackerID: "ASC",
+              displayName: "ASC",
+              authKind: "cookies",
+              supportsCookieFile: true,
+              supportsLogin: false,
+              supportsAutoLogin: false,
               supportsTOTP: false,
               supportsManual2FA: false,
               requiresAPIKey: false,
@@ -215,16 +253,34 @@ describe("SettingsPage", () => {
 
     const mtvTitle = await screen.findByText("MTV");
     const arTitle = await screen.findByText("AR");
+    const hdbTitle = await screen.findByText("HDB");
+    const rtfTitle = await screen.findByText("RTF");
+    const ascTitle = await screen.findByText("ASC");
     const mtvCard = mtvTitle.closest(".tracker-auth-card");
     const arCard = arTitle.closest(".tracker-auth-card");
+    const hdbCard = hdbTitle.closest(".tracker-auth-card");
+    const rtfCard = rtfTitle.closest(".tracker-auth-card");
+    const ascCard = ascTitle.closest(".tracker-auth-card");
 
     expect(mtvCard).not.toBeNull();
     expect(arCard).not.toBeNull();
+    expect(hdbCard).not.toBeNull();
+    expect(rtfCard).not.toBeNull();
+    expect(ascCard).not.toBeNull();
     expect(
       within(mtvCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     ).toBeInTheDocument();
     expect(
-      within(arCard as HTMLElement).queryByRole("button", { name: "Check Auth" }),
+      within(arCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+    ).toBeInTheDocument();
+    expect(
+      within(hdbCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+    ).toBeInTheDocument();
+    expect(
+      within(rtfCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+    ).toBeInTheDocument();
+    expect(
+      within(ascCard as HTMLElement).queryByRole("button", { name: "Check Auth" }),
     ).not.toBeInTheDocument();
   });
 

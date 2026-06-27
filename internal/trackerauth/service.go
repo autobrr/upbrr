@@ -663,10 +663,10 @@ func capabilityFromSpec(spec trackerSpec) api.TrackerAuthCapability {
 // capabilityForSpec exposes remote login, auto-login, and 2FA actions only
 // when this service has an adapter that can execute them.
 func (s *Service) capabilityForSpec(spec trackerSpec) api.TrackerAuthCapability {
-	capability := capabilityFromSpec(spec)
-	if _, ok := s.adapterFor(spec.id); ok {
-		return capability
+	if adapter, ok := s.adapterFor(spec.id); ok {
+		return adapter.Capability()
 	}
+	capability := capabilityFromSpec(spec)
 	capability.SupportsLogin = false
 	capability.SupportsAutoLogin = false
 	capability.SupportsTOTP = false
