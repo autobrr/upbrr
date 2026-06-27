@@ -66,8 +66,8 @@ type Adapter interface {
 	Validate(ctx context.Context, cfg config.TrackerConfig, dbPath string) (Session, error)
 	// Login attempts credential-based auth and may persist refreshed auth material.
 	Login(ctx context.Context, cfg config.TrackerConfig, dbPath string, req api.TrackerAuthLoginRequest) (Session, error)
-	// Submit2FA continues a manual 2FA challenge previously returned by Validate or Login.
-	Submit2FA(ctx context.Context, challengeID string, code string) (Session, error)
+	// Submit2FA retries auth with manual 2FA input for a service-verified challenge.
+	Submit2FA(ctx context.Context, cfg config.TrackerConfig, dbPath string, req api.TrackerAuthLoginRequest) (Session, error)
 	// Delete removes persisted auth material owned by the adapter.
 	Delete(ctx context.Context, dbPath string) error
 }
@@ -126,8 +126,10 @@ type ValidationError struct {
 	ConfirmedInvalid bool
 	// Transient means stored auth material should be preserved because the failure may be temporary.
 	Transient bool
-	Reason    string
-	Err       error
+	// Submitted2FARejected means an adapter proved a submitted manual 2FA code reached the tracker and was rejected.
+	Submitted2FARejected bool
+	Reason               string
+	Err                  error
 }
 
 func (e *ValidationError) Error() string {

@@ -18,6 +18,8 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers/impl/mtv"
+	"github.com/autobrr/upbrr/internal/trackers/impl/ptp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -72,6 +74,356 @@ func TestLoginCreatesManual2FAChallengeBeforeReturning(t *testing.T) {
 	}
 	if status.Needs2FA || status.ChallengeID != "" || status.Message != "2FA auth completed" {
 		t.Fatalf("unexpected submit status: %#v", status)
+	}
+}
+
+func TestDefaultAdaptersExposeMTVPTPManual2FAChallenge(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		cfg    func(string) config.TrackerConfig
+		server func(*testing.T) *httptest.Server
+	}{
+		"MTV": {
+			cfg: func(serverURL string) config.TrackerConfig {
+				return config.TrackerConfig{URL: serverURL, Username: "user", Password: "pass"}
+			},
+			server: newMTVManual2FAServer,
+		},
+		"PTP": {
+			cfg: func(serverURL string) config.TrackerConfig {
+				return config.TrackerConfig{
+					URL:         serverURL,
+					Username:    "user",
+					Password:    "pass",
+					AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+				}
+			},
+			server: newPTPManual2FAServer,
+		},
+	}
+	for trackerID, tt := range tests {
+		t.Run(trackerID, func(t *testing.T) {
+			t.Parallel()
+
+			server := tt.server(t)
+			dbPath := newTrackerAuthTestDB(t)
+			cfg := config.Config{
+				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+				Trackers: config.TrackersConfig{
+					Trackers: map[string]config.TrackerConfig{
+						trackerID: tt.cfg(server.URL),
+					},
+				},
+			}
+
+			for name, action := range map[string]func(*Service) (api.TrackerAuthStatus, error){
+				"Login": func(service *Service) (api.TrackerAuthStatus, error) {
+					return service.Login(context.Background(), trackerID, api.TrackerAuthLoginRequest{})
+				},
+				"Validate": func(service *Service) (api.TrackerAuthStatus, error) {
+					return service.Validate(context.Background(), trackerID)
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					service := NewService(cfg)
+					service.challenges = NewChallengeManager(defaultChallengeTTL)
+
+					status, err := action(service)
+					if err != nil {
+						t.Fatalf("%s: %v", name, err)
+					}
+					if !status.Needs2FA || strings.TrimSpace(status.ChallengeID) == "" {
+						t.Fatalf("%s should expose an active manual 2FA challenge, got %#v", name, status)
+					}
+					if status.State != StateLoginRequired || status.Message != "2FA required" {
+						t.Fatalf("%s returned unexpected status: %#v", name, status)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestSubmit2FARetriesAdapterLoginWithCurrentConfigAndCode(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthTestDB(t)
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {
+					Username:    "user",
+					Password:    "pass",
+					AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+				},
+			},
+		},
+	}
+	var gotCode, gotDBPath, gotUsername string
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{
+			TrackerID:         "PTP",
+			SupportsLogin:     true,
+			SupportsManual2FA: true,
+		},
+		validate: func() (Session, error) {
+			return Session{}, &Needs2FAError{TrackerID: "PTP"}
+		},
+		submit: func(_ context.Context, cfg config.TrackerConfig, dbPath string, req api.TrackerAuthLoginRequest) (Session, error) {
+			gotCode = req.Code
+			gotDBPath = dbPath
+			gotUsername = cfg.Username
+			return Session{TrackerID: "PTP", State: SessionStateReady}, nil
+		},
+	}
+	service := NewService(cfg)
+	service.adapters = map[string]Adapter{"PTP": adapter}
+
+	status, err := service.Login(context.Background(), "PTP", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if strings.TrimSpace(status.ChallengeID) == "" {
+		t.Fatalf("expected challenge: %#v", status)
+	}
+	if _, err := service.Submit2FA(context.Background(), status.ChallengeID, "654321"); err != nil {
+		t.Fatalf("Submit2FA: %v", err)
+	}
+	if gotCode != "654321" || gotDBPath != dbPath || gotUsername != "user" {
+		t.Fatalf("unexpected adapter retry args code=%q db=%q username=%q", gotCode, gotDBPath, gotUsername)
+	}
+}
+
+func TestSubmit2FAFailureKeepsChallengeRetryVisible(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {
+					Username:    "user",
+					Password:    "pass",
+					AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+				},
+			},
+		},
+	}
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{
+			TrackerID:         "PTP",
+			SupportsLogin:     true,
+			SupportsManual2FA: true,
+		},
+		validate: func() (Session, error) {
+			return Session{}, &Needs2FAError{TrackerID: "PTP"}
+		},
+		submit: func(context.Context, config.TrackerConfig, string, api.TrackerAuthLoginRequest) (Session, error) {
+			return Session{}, &ValidationError{TrackerID: "PTP", Transient: true, Submitted2FARejected: true, Err: errors.New("login failed")}
+		},
+	}
+	service := NewService(cfg)
+	service.adapters = map[string]Adapter{"PTP": adapter}
+
+	status, err := service.Login(context.Background(), "PTP", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	status, err = service.Submit2FA(context.Background(), status.ChallengeID, "000000")
+	if err != nil {
+		t.Fatalf("Submit2FA: %v", err)
+	}
+	if !status.Needs2FA || strings.TrimSpace(status.ChallengeID) == "" {
+		t.Fatalf("expected retry-visible challenge after failed code, got %#v", status)
+	}
+}
+
+func TestSubmit2FATransientSubmittedCodeFailureKeepsChallengeRetryVisible(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {
+					Username:    "user",
+					Password:    "pass",
+					AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+				},
+			},
+		},
+	}
+	service := NewService(cfg)
+	service.challenges = NewChallengeManager(defaultChallengeTTL)
+	service.adapters = map[string]Adapter{
+		"PTP": trackerAdapter{
+			capability: api.TrackerAuthCapability{
+				TrackerID:         "PTP",
+				SupportsLogin:     true,
+				SupportsManual2FA: true,
+			},
+			resolve: func(_ context.Context, _ config.TrackerConfig, _ string, login api.TrackerAuthLoginRequest) error {
+				if login.Code != "000000" {
+					t.Fatalf("expected submitted code, got %q", login.Code)
+				}
+				return fmt.Errorf("trackers: PTP login failed: %w", ptp.ErrSubmitted2FARejected)
+			},
+		},
+	}
+	ownerKey, err := service.challengeOwnerKey("PTP")
+	if err != nil {
+		t.Fatalf("challengeOwnerKey: %v", err)
+	}
+	challengeID := service.challenges.Create(context.Background(), "PTP", ownerKey)
+
+	status, err := service.Submit2FA(context.Background(), challengeID, "000000")
+	if err != nil {
+		t.Fatalf("Submit2FA: %v", err)
+	}
+	if !status.Needs2FA || status.ChallengeID != challengeID {
+		t.Fatalf("expected retry-visible challenge after classified failed code, got %#v", status)
+	}
+	if _, ok := service.challenges.Get(challengeID); !ok {
+		t.Fatal("failed submitted code consumed challenge")
+	}
+}
+
+func TestSubmit2FAPreCodeLoginFailureDoesNotExposeRetryChallenge(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {
+					Username:    "user",
+					Password:    "pass",
+					AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+				},
+			},
+		},
+	}
+	service := NewService(cfg)
+	service.challenges = NewChallengeManager(defaultChallengeTTL)
+	service.adapters = map[string]Adapter{
+		"PTP": trackerAdapter{
+			capability: api.TrackerAuthCapability{
+				TrackerID:         "PTP",
+				SupportsLogin:     true,
+				SupportsManual2FA: true,
+			},
+			resolve: func(_ context.Context, _ config.TrackerConfig, _ string, login api.TrackerAuthLoginRequest) error {
+				if login.Code != "000000" {
+					t.Fatalf("expected submitted code, got %q", login.Code)
+				}
+				return errors.New("trackers: PTP login failed")
+			},
+		},
+	}
+	ownerKey, err := service.challengeOwnerKey("PTP")
+	if err != nil {
+		t.Fatalf("challengeOwnerKey: %v", err)
+	}
+	challengeID := service.challenges.Create(context.Background(), "PTP", ownerKey)
+
+	status, err := service.Submit2FA(context.Background(), challengeID, "000000")
+	if err != nil {
+		t.Fatalf("Submit2FA: %v", err)
+	}
+	if status.Needs2FA || strings.TrimSpace(status.ChallengeID) != "" {
+		t.Fatalf("pre-code login failure must not expose retry challenge: %#v", status)
+	}
+	if !strings.Contains(status.LastError, "login failed") {
+		t.Fatalf("expected login failure in status, got %#v", status)
+	}
+}
+
+func TestSubmit2FAMTVSubmittedCodeAuthKeyFailureKeepsChallengeRetryVisible(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"MTV": {
+					Username: "user",
+					Password: "pass",
+				},
+			},
+		},
+	}
+	service := NewService(cfg)
+	service.challenges = NewChallengeManager(defaultChallengeTTL)
+	service.adapters = map[string]Adapter{
+		"MTV": trackerAdapter{
+			capability: api.TrackerAuthCapability{
+				TrackerID:         "MTV",
+				SupportsLogin:     true,
+				SupportsManual2FA: true,
+			},
+			resolve: func(_ context.Context, _ config.TrackerConfig, _ string, login api.TrackerAuthLoginRequest) error {
+				if login.Code != "000000" {
+					t.Fatalf("expected submitted code, got %q", login.Code)
+				}
+				return fmt.Errorf("trackers: MTV auth key not found: %w", mtv.ErrSubmitted2FARejected)
+			},
+		},
+	}
+	ownerKey, err := service.challengeOwnerKey("MTV")
+	if err != nil {
+		t.Fatalf("challengeOwnerKey: %v", err)
+	}
+	challengeID := service.challenges.Create(context.Background(), "MTV", ownerKey)
+
+	status, err := service.Submit2FA(context.Background(), challengeID, "000000")
+	if err != nil {
+		t.Fatalf("Submit2FA: %v", err)
+	}
+	if !status.Needs2FA || status.ChallengeID != challengeID {
+		t.Fatalf("expected retry-visible MTV challenge after auth-key miss, got %#v", status)
+	}
+	if _, ok := service.challenges.Get(challengeID); !ok {
+		t.Fatal("failed MTV submitted code consumed challenge")
+	}
+}
+
+func TestSubmit2FATransientParserFailureDoesNotExposeRetryChallenge(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"MTV": {Username: "user", Password: "pass"},
+			},
+		},
+	}
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{
+			TrackerID:         "MTV",
+			SupportsLogin:     true,
+			SupportsManual2FA: true,
+		},
+		validate: func() (Session, error) {
+			return Session{}, &Needs2FAError{TrackerID: "MTV"}
+		},
+		submit: func(context.Context, config.TrackerConfig, string, api.TrackerAuthLoginRequest) (Session, error) {
+			return Session{}, classifyAdapterError("MTV", errors.New("trackers: MTV 2FA token not found"))
+		},
+	}
+	service := NewService(cfg)
+	service.adapters = map[string]Adapter{"MTV": adapter}
+
+	status, err := service.Login(context.Background(), "MTV", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	status, err = service.Submit2FA(context.Background(), status.ChallengeID, "000000")
+	if err != nil {
+		t.Fatalf("Submit2FA: %v", err)
+	}
+	if status.Needs2FA || strings.TrimSpace(status.ChallengeID) != "" {
+		t.Fatalf("transient parser failure must not expose retry challenge: %#v", status)
+	}
+	if !strings.Contains(status.LastError, "2FA token not found") {
+		t.Fatalf("expected parser failure in status, got %#v", status)
 	}
 }
 
@@ -138,7 +490,7 @@ func TestSubmit2FAUsesCanceledContextWithoutConsumingChallenge(t *testing.T) {
 			SupportsLogin:     true,
 			SupportsManual2FA: true,
 		},
-		submit: func(ctx context.Context, _ string, _ string) (Session, error) {
+		submit: func(ctx context.Context, _ config.TrackerConfig, _ string, _ api.TrackerAuthLoginRequest) (Session, error) {
 			return Session{}, ctx.Err()
 		},
 	}
@@ -187,30 +539,44 @@ func TestLoginMissingCredentialsReturnsLoginRequiredWithoutChallenge(t *testing.
 func TestStatusConfiguredOTPURIAvoidsManualChallenge(t *testing.T) {
 	t.Parallel()
 
-	service := NewService(config.Config{
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"PTP": {
-					Username:    "user",
-					Password:    "pass",
-					AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
-					OTPURI:      "otpauth://totp/PTP:user?secret=ABC",
-				},
-			},
+	tests := map[string]config.TrackerConfig{
+		"configured otp uri": {
+			Username:    "user",
+			Password:    "pass",
+			AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+			OTPURI:      "otpauth://totp/PTP:user?secret=ABC",
 		},
-	})
-	status := service.statusForSpec(context.Background(), trackerSpec{
-		id:               "PTP",
-		login:            true,
-		totp:             true,
-		manual2FA:        true,
-		needsCredentials: true,
-	})
-	if status.State != StateConfigured {
-		t.Fatalf("expected configured status, got %#v", status)
+		"missing otp uri": {
+			Username:    "user",
+			Password:    "pass",
+			AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+		},
 	}
-	if status.Needs2FA || strings.TrimSpace(status.ChallengeID) != "" {
-		t.Fatalf("configured OTPURI must avoid manual challenge path: %#v", status)
+	for name, trackerCfg := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			service := NewService(config.Config{
+				Trackers: config.TrackersConfig{
+					Trackers: map[string]config.TrackerConfig{
+						"PTP": trackerCfg,
+					},
+				},
+			})
+			status := service.statusForSpec(context.Background(), trackerSpec{
+				id:               "PTP",
+				login:            true,
+				totp:             true,
+				manual2FA:        true,
+				needsCredentials: true,
+			})
+			if status.State != StateConfigured {
+				t.Fatalf("expected configured status, got %#v", status)
+			}
+			if status.Needs2FA || strings.TrimSpace(status.ChallengeID) != "" {
+				t.Fatalf("status-only config must not expose manual challenge path: %#v", status)
+			}
+		})
 	}
 }
 
@@ -877,7 +1243,7 @@ func TestImportCookiesReportsMergedCookieCount(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesDoNotAdvertiseUnsupportedMTVPTPManual2FA(t *testing.T) {
+func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 	t.Parallel()
 
 	service := NewService(config.Config{})
@@ -888,8 +1254,8 @@ func TestCapabilitiesDoNotAdvertiseUnsupportedMTVPTPManual2FA(t *testing.T) {
 	for _, cap := range caps {
 		switch cap.TrackerID {
 		case "MTV", "PTP":
-			if cap.SupportsManual2FA {
-				t.Fatalf("%s must not advertise unsupported manual 2FA", cap.TrackerID)
+			if !cap.SupportsManual2FA {
+				t.Fatalf("%s must advertise supported manual 2FA", cap.TrackerID)
 			}
 			if !cap.SupportsTOTP {
 				t.Fatalf("%s TOTP auto-login capability must be preserved", cap.TrackerID)
@@ -1417,4 +1783,41 @@ func newTrackerAuthTestDB(t *testing.T) string {
 	}
 	_ = repo.Close()
 	return dbPath
+}
+
+func newMTVManual2FAServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.php":
+			_, _ = w.Write([]byte("<html>logged out</html>"))
+		case "/login":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+				return
+			}
+			http.Redirect(w, r, "/twofactor/login", http.StatusFound)
+		case "/twofactor/login":
+			_, _ = w.Write([]byte(`<input name="token" value="ponmlkjihgfedcba">`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func newPTPManual2FAServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"Result":"TfaRequired"}`))
+	}))
+	t.Cleanup(server.Close)
+	return server
 }

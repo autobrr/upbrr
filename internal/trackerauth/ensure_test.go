@@ -17,7 +17,7 @@ type fakeAdapter struct {
 	capability api.TrackerAuthCapability
 	validate   func() (Session, error)
 	login      func() (Session, error)
-	submit     func(context.Context, string, string) (Session, error)
+	submit     func(context.Context, config.TrackerConfig, string, api.TrackerAuthLoginRequest) (Session, error)
 	deleted    bool
 }
 
@@ -37,9 +37,9 @@ func (a *fakeAdapter) Login(context.Context, config.TrackerConfig, string, api.T
 	return a.login()
 }
 
-func (a *fakeAdapter) Submit2FA(ctx context.Context, challengeID string, code string) (Session, error) {
+func (a *fakeAdapter) Submit2FA(ctx context.Context, cfg config.TrackerConfig, dbPath string, req api.TrackerAuthLoginRequest) (Session, error) {
 	if a.submit != nil {
-		return a.submit(ctx, challengeID, code)
+		return a.submit(ctx, cfg, dbPath, req)
 	}
 	return Session{TrackerID: a.capability.TrackerID, State: SessionStateReady}, nil
 }
@@ -206,6 +206,79 @@ func TestClassifyAdapterErrorKeepsWrappedContextCancellationTransient(t *testing
 	var validationErr *ValidationError
 	if !errors.As(err, &validationErr) || !validationErr.Transient || validationErr.ConfirmedInvalid {
 		t.Fatalf("expected context cancellation to stay transient, got %v", err)
+	}
+}
+
+func TestClassifyAdapterErrorRequiresExplicit2FARequiredText(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		message string
+		want2FA bool
+	}{
+		"explicit missing code": {
+			message: "trackers: MTV 2FA required but otp_uri invalid: empty otp_uri",
+			want2FA: true,
+		},
+		"separator colon": {
+			message: "trackers: MTV 2FA required: enter code",
+			want2FA: true,
+		},
+		"separator punctuation": {
+			message: "trackers: MTV 2FA required, enter code",
+			want2FA: true,
+		},
+		"separator newline": {
+			message: "trackers: MTV 2FA required\nenter code",
+			want2FA: true,
+		},
+		"separator parentheses": {
+			message: "trackers: MTV (2FA required)",
+			want2FA: true,
+		},
+		"missing form token": {
+			message: "trackers: MTV 2FA token not found",
+		},
+		"otp uri parser": {
+			message: "trackers: MTV parse otp_uri: missing secret",
+		},
+		"tfa layout text": {
+			message: "trackers: PTP tfa layout token missing",
+		},
+		"url path text": {
+			message: "trackers: GET https://example.invalid/2fa/setup failed",
+		},
+		"prefixed phrase": {
+			message: "trackers: MTV x2FA required",
+		},
+		"suffixed phrase": {
+			message: "trackers: MTV 2FA requiredx",
+		},
+		"empty message": {},
+		"whitespace message": {
+			message: "   ",
+		},
+		"grouped parser text": {
+			message: "trackers: MTV otp_uri contains token2FA required value",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := classifyAdapterError("MTV", errors.New(tt.message))
+			var needsErr *Needs2FAError
+			got2FA := errors.As(err, &needsErr)
+			if got2FA != tt.want2FA {
+				t.Fatalf("Needs2FA=%t, want %t for %v", got2FA, tt.want2FA, err)
+			}
+			if !tt.want2FA {
+				var validationErr *ValidationError
+				if !errors.As(err, &validationErr) || !validationErr.Transient {
+					t.Fatalf("expected transient validation error, got %v", err)
+				}
+			}
+		})
 	}
 }
 

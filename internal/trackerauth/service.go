@@ -56,12 +56,13 @@ type Service struct {
 }
 
 type trackerSpec struct {
-	id               string
-	authKind         string
-	cookies          bool
-	login            bool
-	autoLogin        bool
-	totp             bool
+	id        string
+	authKind  string
+	cookies   bool
+	login     bool
+	autoLogin bool
+	totp      bool
+	// manual2FA permits adapter Needs2FA errors to become reusable Submit2FA challenges.
 	manual2FA        bool
 	apiKey           bool
 	passkey          bool
@@ -300,7 +301,10 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 	return status, nil
 }
 
-// Submit2FA completes an active manual 2FA challenge and consumes the challenge only after adapter success.
+// Submit2FA completes an active manual 2FA challenge. Adapter failures return
+// refreshed status without consuming the challenge; only failures classified
+// with [ValidationError.Submitted2FARejected] keep the challenge visible for
+// another try.
 func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string) (status api.TrackerAuthStatus, err error) {
 	logTrackerID := ""
 	defer func() {
@@ -336,13 +340,17 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 	if !ok {
 		return api.TrackerAuthStatus{}, newUnknownTrackerError(challenge.TrackerID)
 	}
-	session, err := adapter.Submit2FA(ctx, challengeID, code)
+	session, err := adapter.Submit2FA(ctx, mustTrackerConfig(s.cfg, challenge.TrackerID), s.cfg.MainSettings.DBPath, api.TrackerAuthLoginRequest{Code: code})
 	if err != nil {
 		status, statusErr := s.Status(ctx, challenge.TrackerID)
 		if statusErr != nil {
 			return api.TrackerAuthStatus{}, statusErr
 		}
 		applyEnsureErrorToStatus(&status, err)
+		if validation, ok := asValidationError(err); ok && validation.Transient && !validation.ConfirmedInvalid && !shouldKeepSubmitted2FARetryVisible(challenge.TrackerID, err) {
+			return status, nil
+		}
+		status.Needs2FA = true
 		status.ChallengeID = challengeID
 		return status, nil
 	}
@@ -360,6 +368,14 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 	status.ChallengeID = ""
 	status.Message = "2FA auth completed"
 	return status, nil
+}
+
+// shouldKeepSubmitted2FARetryVisible reports whether an adapter proved the
+// submitted manual code reached the tracker and was rejected, so the UI can
+// retry the same active challenge.
+func shouldKeepSubmitted2FARetryVisible(_ string, err error) bool {
+	validation, ok := asValidationError(err)
+	return ok && validation.Transient && !validation.ConfirmedInvalid && validation.Submitted2FARejected
 }
 
 func (s *Service) challengeManager() *ChallengeManager {
@@ -418,8 +434,8 @@ func (s *Service) Delete(ctx context.Context, trackerID string) (status api.Trac
 }
 
 // statusForSpec reports configured auth material without hiding encrypted
-// storage availability; cookie-only trackers still surface unavailable storage
-// as the state when no stronger auth material is configured.
+// storage availability. It does not create manual 2FA status; Login, Validate,
+// and Submit2FA attach active challenges only when a challenge ID exists.
 func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.TrackerAuthStatus {
 	encryptedStorage := s.encryptedStorageAvailable()
 	status := api.TrackerAuthStatus{
@@ -453,9 +469,6 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 		if hasCredentials {
 			if status.State == StateNotConfigured {
 				status.State = StateConfigured
-			}
-			if spec.totp && strings.TrimSpace(cfg.OTPURI) == "" && spec.manual2FA {
-				status.Needs2FA = true
 			}
 		} else if status.CookieCount == 0 && spec.needsCredentials {
 			status.State = StateLoginRequired
@@ -584,12 +597,15 @@ func (s *Service) specs() []trackerSpec {
 	return out
 }
 
+// builtInSpecs defines static tracker auth capabilities before adapter support
+// is applied. Manual 2FA is enabled only where login can retry with a submitted
+// api.TrackerAuthLoginRequest.Code.
 func builtInSpecs() []trackerSpec {
 	return []trackerSpec{
 		{id: "AR", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
 		{id: "FL", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
-		{id: "MTV", authKind: "api_key_cookies_login", cookies: true, login: true, autoLogin: true, totp: true, apiKey: true, needsCredentials: true, notes: []string{"API key covers Torznab/search; cookies/login cover upload authkey."}},
-		{id: "PTP", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, totp: true, needsCredentials: true},
+		{id: "MTV", authKind: "api_key_cookies_login_manual_2fa", cookies: true, login: true, autoLogin: true, totp: true, manual2FA: true, apiKey: true, needsCredentials: true, notes: []string{"API key covers Torznab/search; cookies/login cover upload authkey."}},
+		{id: "PTP", authKind: "cookies_login_manual_2fa", cookies: true, login: true, autoLogin: true, totp: true, manual2FA: true, needsCredentials: true},
 		{id: "THR", authKind: "credential_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
 		{id: "RTF", authKind: "api_key_credential_refresh", login: true, autoLogin: true, apiKey: true, needsCredentials: false},
 		{id: "ASC", authKind: "cookies", cookies: true},

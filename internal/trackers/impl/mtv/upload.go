@@ -45,6 +45,12 @@ const (
 var mtvAuthKeyPattern = regexp.MustCompile(`authkey=([a-zA-Z0-9]{32})`)
 var mtvTokenPattern = regexp.MustCompile(`name="token"\s+value="([^"]{16,128})"`)
 
+// ErrSubmitted2FARejected marks an MTV failure after a submitted manual 2FA code
+// reached the tracker and was rejected.
+var ErrSubmitted2FARejected = errors.New("trackers: MTV submitted 2FA rejected")
+
+var errMTVAuthKeyNotFound = errors.New("trackers: MTV auth key not found")
+
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
@@ -70,7 +76,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 			}
 			return api.UploadSummary{}, err
 		}
-		auth, client, cookies, err = loginAndResolveAuthKey(ctx, req.TrackerConfig, baseURL)
+		auth, client, cookies, err = loginAndResolveAuthKey(ctx, req.TrackerConfig, baseURL, api.TrackerAuthLoginRequest{})
 		if err != nil {
 			return api.UploadSummary{}, err
 		}
@@ -239,7 +245,7 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 	}
 	match := mtvAuthKeyPattern.FindStringSubmatch(string(body))
 	if len(match) < 2 {
-		return "", nil, errors.New("trackers: MTV auth key not found")
+		return "", nil, errMTVAuthKeyNotFound
 	}
 	return strings.TrimSpace(match[1]), client, nil
 }
@@ -256,6 +262,16 @@ func saveMTVCookies(ctx context.Context, dbPath string, values map[string]string
 // configured credentials. After a successful login, cookie persistence failures
 // are returned distinctly from remote authentication failures.
 func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string) error {
+	return ResolveSessionForTrackerAuthLogin(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{})
+}
+
+// ResolveSessionForTrackerAuthLogin validates MTV stored cookies or logs in
+// with configured credentials. When MTV requires 2FA, login.Code is used before
+// falling back to the configured OTP URI; if neither yields a code, the error
+// is returned before stored cookies are replaced. A rejected submitted code can
+// return [ErrSubmitted2FARejected] with the auth-key lookup failure before
+// refreshed cookies are persisted.
+func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, login api.TrackerAuthLoginRequest) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	if baseURL == "" {
 		baseURL = mtvBaseURL
@@ -271,7 +287,7 @@ func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig,
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return errors.New("trackers: MTV cookie invalid/missing and username/password not configured")
 	}
-	_, _, values, err := loginAndResolveAuthKey(ctx, cfg, baseURL)
+	_, _, values, err := loginAndResolveAuthKey(ctx, cfg, baseURL, login)
 	if err != nil {
 		return err
 	}
@@ -285,8 +301,10 @@ func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig,
 }
 
 // loginAndResolveAuthKey performs MTV login, optional TOTP submission, and auth
-// key discovery, returning cookies captured from the authenticated jar.
-func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string) (string, *http.Client, map[string]string, error) {
+// key discovery. Missing form tokens and auth-key parser failures remain
+// ordinary errors unless an auth-key miss follows a submitted manual code;
+// authenticated cookies are returned only after auth-key discovery.
+func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string, login api.TrackerAuthLoginRequest) (string, *http.Client, map[string]string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("trackers: MTV create login cookie jar: %w", err)
@@ -333,14 +351,15 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 	body, _ := io.ReadAll(postResp.Body)
 	_ = postResp.Body.Close()
 
+	submittedManualCode := false
 	if postResp.Request != nil && postResp.Request.URL != nil && strings.Contains(postResp.Request.URL.Path, "/twofactor/login") {
 		twoFactorTokenMatch := mtvTokenPattern.FindStringSubmatch(string(body))
 		if len(twoFactorTokenMatch) < 2 {
 			return "", nil, nil, errors.New("trackers: MTV 2FA token not found")
 		}
-		code, err := totpFromOTPURI(strings.TrimSpace(cfg.OTPURI), time.Now())
+		code, err := resolveMTV2FACode(cfg, login)
 		if err != nil {
-			return "", nil, nil, fmt.Errorf("trackers: MTV 2FA required but otp_uri invalid: %w", err)
+			return "", nil, nil, err
 		}
 		twoFactorForm := url.Values{}
 		twoFactorForm.Set("token", twoFactorTokenMatch[1])
@@ -358,14 +377,31 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 		}
 		_, _ = io.ReadAll(twoResp.Body)
 		_ = twoResp.Body.Close()
+		submittedManualCode = strings.TrimSpace(login.Code) != ""
 	}
 
 	auth, authedClient, err := resolveAuthKeyFromClient(ctx, baseURL, client)
 	if err != nil {
+		if submittedManualCode && errors.Is(err, errMTVAuthKeyNotFound) {
+			return "", nil, nil, fmt.Errorf("%w: %w", err, ErrSubmitted2FARejected)
+		}
 		return "", nil, nil, err
 	}
 	cookieMap := cookiesFromJar(baseURL, authedClient.Jar)
 	return auth, authedClient, cookieMap, nil
+}
+
+// resolveMTV2FACode prefers a submitted manual code so users can continue a
+// browser-visible challenge when no reusable OTP URI is configured.
+func resolveMTV2FACode(cfg config.TrackerConfig, login api.TrackerAuthLoginRequest) (string, error) {
+	if code := strings.TrimSpace(login.Code); code != "" {
+		return code, nil
+	}
+	code, err := totpFromOTPURI(strings.TrimSpace(cfg.OTPURI), time.Now())
+	if err != nil {
+		return "", fmt.Errorf("trackers: MTV 2FA required but otp_uri invalid: %w", err)
+	}
+	return code, nil
 }
 
 func resolveAuthKeyFromClient(ctx context.Context, baseURL string, client *http.Client) (string, *http.Client, error) {
@@ -386,7 +422,7 @@ func resolveAuthKeyFromClient(ctx context.Context, baseURL string, client *http.
 	}
 	match := mtvAuthKeyPattern.FindStringSubmatch(string(body))
 	if len(match) < 2 {
-		return "", nil, errors.New("trackers: MTV auth key not found")
+		return "", nil, errMTVAuthKeyNotFound
 	}
 	return strings.TrimSpace(match[1]), client, nil
 }
