@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/mtv"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ptp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -265,6 +266,144 @@ func TestValidateHDBInvalidCookiesDeletesSession(t *testing.T) {
 	}
 	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "HDB"); err == nil {
 		t.Fatal("expected invalid HDB cookies to be deleted")
+	}
+}
+
+func TestValidateFFLoginPersistsCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/upload.php":
+			if cookie, err := r.Cookie("session"); err == nil && cookie.Value == "valid" {
+				_, _ = w.Write([]byte(`<a href="friends.php">Friends</a>`))
+				return
+			}
+			_, _ = w.Write([]byte(`<input name="username">`))
+		case "/takelogin.php":
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("ParseForm: %v", err)
+			}
+			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
+				t.Fatalf("unexpected FF login form: %v", r.Form)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
+			w.Header().Set("Location", "/index.php")
+			w.WriteHeader(http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"FF": {URL: server.URL, Username: "user", Password: "pass"},
+			},
+		},
+	}).Validate(ctx, "FF")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateConfigured {
+		t.Fatalf("expected FF configured after login, got %#v", status)
+	}
+	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FF")
+	if err != nil {
+		t.Fatalf("LoadTrackerCookieMap: %v", err)
+	}
+	if values["session"] != "valid" {
+		t.Fatalf("expected saved FF login cookies, got %#v", values)
+	}
+}
+
+func TestValidateFLLoginPersistsCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login.php":
+			_, _ = w.Write([]byte(`<input name="validator" value="token">`))
+		case "/takelogin.php":
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("ParseForm: %v", err)
+			}
+			if r.FormValue("validator") != "token" || r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
+				t.Fatalf("unexpected FL login form: %v", r.Form)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
+			_, _ = w.Write([]byte("Logout"))
+		case "/index.php":
+			if cookie, err := r.Cookie("session"); err == nil && cookie.Value == "valid" {
+				_, _ = w.Write([]byte("Logout"))
+				return
+			}
+			_, _ = w.Write([]byte(`<input name="username">`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"FL": {URL: server.URL, Username: "user", Password: "pass"},
+			},
+		},
+	}).Validate(ctx, "FL")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateConfigured {
+		t.Fatalf("expected FL configured after login, got %#v", status)
+	}
+	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FL")
+	if err != nil {
+		t.Fatalf("LoadTrackerCookieMap: %v", err)
+	}
+	if values["session"] != "valid" {
+		t.Fatalf("expected saved FL login cookies, got %#v", values)
+	}
+}
+
+func TestValidateTHRChecksCredentialLogin(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/takelogin.php" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm: %v", err)
+		}
+		if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("ssl") != "yes" {
+			t.Fatalf("unexpected THR login form: %v", r.Form)
+		}
+		_, _ = w.Write([]byte(`<a href="logout.php">Logout</a>`))
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"THR": {URL: server.URL, Username: "user", Password: "pass"},
+			},
+		},
+	}).Validate(context.Background(), "THR")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateConfigured {
+		t.Fatalf("expected THR configured after login check, got %#v", status)
 	}
 }
 
@@ -948,34 +1087,6 @@ func TestStatusCookiesOnlyReportsEncryptedStorageUnavailable(t *testing.T) {
 	}
 }
 
-func TestLoginWithoutAdapterDoesNotReportRemoteSuccess(t *testing.T) {
-	for _, trackerID := range []string{"FF", "FL", "THR"} {
-		t.Run(trackerID, func(t *testing.T) {
-			cfg := config.Config{
-				Trackers: config.TrackersConfig{
-					Trackers: map[string]config.TrackerConfig{
-						trackerID: {Username: "user", Password: "pass"},
-					},
-				},
-			}
-			status, err := NewService(cfg).Login(
-				context.Background(),
-				trackerID,
-				api.TrackerAuthLoginRequest{},
-			)
-			if err != nil {
-				t.Fatalf("Login: %v", err)
-			}
-			if strings.Contains(status.Message, "succeeded") {
-				t.Fatalf("unexpected remote success message for %s: %#v", trackerID, status)
-			}
-			if !strings.Contains(status.Message, "not supported") {
-				t.Fatalf("expected unsupported remote login message for %s, got %#v", trackerID, status)
-			}
-		})
-	}
-}
-
 func TestRTFStatusTreatsCredentialsAsRefreshAuth(t *testing.T) {
 	t.Parallel()
 
@@ -1016,7 +1127,7 @@ func TestTHRDoesNotAdvertiseCookieImport(t *testing.T) {
 	t.Fatal("THR capability not found")
 }
 
-func TestFFAdvertisesCookieImportWithoutRemoteLoginAction(t *testing.T) {
+func TestFFAdvertisesCookieImportWithRemoteLoginAction(t *testing.T) {
 	t.Parallel()
 
 	service := NewService(config.Config{})
@@ -1031,8 +1142,8 @@ func TestFFAdvertisesCookieImportWithoutRemoteLoginAction(t *testing.T) {
 		if !cap.SupportsCookieFile {
 			t.Fatalf("FF upload can use DB cookies and must advertise cookie import: %#v", cap)
 		}
-		if cap.SupportsLogin || cap.SupportsAutoLogin {
-			t.Fatalf("FF has no tracker-auth remote adapter and must not advertise login actions: %#v", cap)
+		if !cap.SupportsLogin || !cap.SupportsAutoLogin {
+			t.Fatalf("FF tracker-auth adapter must advertise login actions: %#v", cap)
 		}
 		return
 	}
@@ -1043,11 +1154,11 @@ func TestValidateWithoutAdapterReportsUnsupportedRemoteValidation(t *testing.T) 
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"FF": {Username: "user", Password: "pass"},
+				"ASC": {},
 			},
 		},
 	}
-	status, err := NewService(cfg).Validate(context.Background(), "FF")
+	status, err := NewService(cfg).Validate(context.Background(), "ASC")
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -1490,14 +1601,34 @@ func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 			if !cap.SupportsCookieFile || !cap.RequiresPasskey {
 				t.Fatalf("%s must keep cookie/passkey capability: %#v", cap.TrackerID, cap)
 			}
-		case "FF", "FL", "THR":
+		case "FF", "FL":
+			if !cap.SupportsLogin || !cap.SupportsAutoLogin {
+				t.Fatalf("%s adapter-backed login capability must be preserved: %#v", cap.TrackerID, cap)
+			}
+			if !cap.SupportsCookieFile || cap.SupportsManual2FA {
+				t.Fatalf("%s must advertise cookie import without manual 2FA: %#v", cap.TrackerID, cap)
+			}
+		case "THR":
+			if !cap.SupportsLogin || !cap.SupportsAutoLogin {
+				t.Fatalf("%s adapter-backed login capability must be preserved: %#v", cap.TrackerID, cap)
+			}
+			if cap.SupportsCookieFile || cap.SupportsManual2FA {
+				t.Fatalf("%s must advertise stateless login without cookie import or 2FA: %#v", cap.TrackerID, cap)
+			}
+		case "ASC":
 			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {
 				t.Fatalf("%s must not advertise unsupported login actions: %#v", cap.TrackerID, cap)
 			}
-		case "TTG":
-			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {
-				t.Fatalf("%s must not advertise unsupported login actions: %#v", cap.TrackerID, cap)
-			}
+		}
+	}
+}
+
+func TestBuiltInSpecsOnlyReferenceKnownTrackers(t *testing.T) {
+	t.Parallel()
+
+	for _, spec := range builtInSpecs() {
+		if !trackers.IsKnownTracker(spec.id) {
+			t.Fatalf("built-in tracker auth spec references unknown tracker %s", spec.id)
 		}
 	}
 }

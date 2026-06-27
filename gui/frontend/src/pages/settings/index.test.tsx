@@ -21,10 +21,13 @@ const baseProps = {
     "AR",
     "COOKIE",
     "FAST",
+    "FF",
+    "FL",
     "HDB",
     "MTV",
     "PTP",
     "RTF",
+    "THR",
     "SLOW",
     "ASC",
     "PLAINAPI",
@@ -204,6 +207,30 @@ describe("SettingsPage", () => {
               requiresPasskey: true,
             },
             {
+              trackerID: "FF",
+              displayName: "FF",
+              authKind: "cookies_login",
+              supportsCookieFile: true,
+              supportsLogin: true,
+              supportsAutoLogin: true,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: false,
+              requiresPasskey: false,
+            },
+            {
+              trackerID: "FL",
+              displayName: "FL",
+              authKind: "cookies_login",
+              supportsCookieFile: true,
+              supportsLogin: true,
+              supportsAutoLogin: true,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: false,
+              requiresPasskey: false,
+            },
+            {
               trackerID: "RTF",
               displayName: "RTF",
               authKind: "api_key_credential_refresh",
@@ -213,6 +240,18 @@ describe("SettingsPage", () => {
               supportsTOTP: false,
               supportsManual2FA: false,
               requiresAPIKey: true,
+              requiresPasskey: false,
+            },
+            {
+              trackerID: "THR",
+              displayName: "THR",
+              authKind: "credential_login",
+              supportsCookieFile: false,
+              supportsLogin: true,
+              supportsAutoLogin: true,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: false,
               requiresPasskey: false,
             },
             {
@@ -254,18 +293,27 @@ describe("SettingsPage", () => {
     const mtvTitle = await screen.findByText("MTV");
     const arTitle = await screen.findByText("AR");
     const hdbTitle = await screen.findByText("HDB");
+    const ffTitle = await screen.findByText("FF");
+    const flTitle = await screen.findByText("FL");
     const rtfTitle = await screen.findByText("RTF");
+    const thrTitle = await screen.findByText("THR");
     const ascTitle = await screen.findByText("ASC");
     const mtvCard = mtvTitle.closest(".tracker-auth-card");
     const arCard = arTitle.closest(".tracker-auth-card");
     const hdbCard = hdbTitle.closest(".tracker-auth-card");
+    const ffCard = ffTitle.closest(".tracker-auth-card");
+    const flCard = flTitle.closest(".tracker-auth-card");
     const rtfCard = rtfTitle.closest(".tracker-auth-card");
+    const thrCard = thrTitle.closest(".tracker-auth-card");
     const ascCard = ascTitle.closest(".tracker-auth-card");
 
     expect(mtvCard).not.toBeNull();
     expect(arCard).not.toBeNull();
     expect(hdbCard).not.toBeNull();
+    expect(ffCard).not.toBeNull();
+    expect(flCard).not.toBeNull();
     expect(rtfCard).not.toBeNull();
+    expect(thrCard).not.toBeNull();
     expect(ascCard).not.toBeNull();
     expect(
       within(mtvCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
@@ -277,7 +325,16 @@ describe("SettingsPage", () => {
       within(hdbCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     ).toBeInTheDocument();
     expect(
+      within(ffCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+    ).toBeInTheDocument();
+    expect(
+      within(flCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+    ).toBeInTheDocument();
+    expect(
       within(rtfCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+    ).toBeInTheDocument();
+    expect(
+      within(thrCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     ).toBeInTheDocument();
     expect(
       within(ascCard as HTMLElement).queryByRole("button", { name: "Check Auth" }),

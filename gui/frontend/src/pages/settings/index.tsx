@@ -34,7 +34,7 @@ const settingsInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
 
 /** Trackers with backend adapters that can perform a remote auth check. */
-const remoteAuthValidationTrackers = new Set(["AR", "HDB", "MTV", "PTP", "RTF"]);
+const remoteAuthValidationTrackers = new Set(["AR", "FF", "FL", "HDB", "MTV", "PTP", "RTF", "THR"]);
 
 /** Builds the case-insensitive key shared by main tracker config and tracker auth rows. */
 const trackerNameKey = (name: string) => name.trim().toLowerCase();

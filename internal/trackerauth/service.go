@@ -638,9 +638,7 @@ func builtInSpecs() []trackerSpec {
 		{id: "IS", authKind: "cookies", cookies: true},
 		{id: "PHD", authKind: "cookies", cookies: true},
 		{id: "PTS", authKind: "cookies", cookies: true},
-		{id: "PTER", authKind: "cookies", cookies: true},
 		{id: "TL", authKind: "cookies", cookies: true},
-		{id: "TTG", authKind: "cookies_manual_2fa", cookies: true, manual2FA: true},
 	}
 }
 

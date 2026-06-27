@@ -31,6 +31,10 @@ func defaultAdapters() map[string]Adapter {
 		switch spec.id {
 		case "AR":
 			adapters[spec.id] = trackerAdapter{capability: validationOnlyCapability(spec), resolve: resolveARStoredSessionForTrackerAuth}
+		case "FF":
+			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveFFSessionForTrackerAuth}
+		case "FL":
+			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveFLSessionForTrackerAuth}
 		case "HDB":
 			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveHDBStoredSessionForTrackerAuth}
 		case "MTV":
@@ -39,6 +43,8 @@ func defaultAdapters() map[string]Adapter {
 			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: ptp.ResolveSessionForTrackerAuthLogin}
 		case "RTF":
 			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: rtf.ResolveSessionForTrackerAuthLogin}
+		case "THR":
+			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveTHRSessionForTrackerAuth}
 		}
 	}
 	return adapters
