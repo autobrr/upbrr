@@ -779,7 +779,7 @@ func (b *Backend) ListTrackerAuthCapabilities() ([]api.TrackerAuthCapability, er
 	if b == nil {
 		return nil, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Capabilities(context.Background()))
+	return wrapWebResult(trackerauth.NewServiceWithLogger(b.currentConfig(), b.currentLogger()).Capabilities(context.Background()))
 }
 
 // GetTrackerAuthStatus reports local auth state for tracker from the current
@@ -788,7 +788,7 @@ func (b *Backend) GetTrackerAuthStatus(tracker string) (api.TrackerAuthStatus, e
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Status(context.Background(), tracker))
+	return wrapWebResult(trackerauth.NewServiceWithLogger(b.currentConfig(), b.currentLogger()).Status(context.Background(), tracker))
 }
 
 // ImportTrackerAuthCookieContent imports browser-supplied cookie content with
@@ -797,7 +797,7 @@ func (b *Backend) ImportTrackerAuthCookieContent(ctx context.Context, tracker st
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).ImportCookies(ctx, tracker, fileName, content))
+	return wrapWebResult(trackerauth.NewServiceWithLogger(b.currentConfig(), b.currentLogger()).ImportCookies(ctx, tracker, fileName, content))
 }
 
 // TestTrackerAuth validates tracker auth with ctx so canceled web requests stop
@@ -806,7 +806,7 @@ func (b *Backend) TestTrackerAuth(ctx context.Context, tracker string) (api.Trac
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Validate(ctx, tracker))
+	return wrapWebResult(trackerauth.NewServiceWithLogger(b.currentConfig(), b.currentLogger()).Validate(ctx, tracker))
 }
 
 // LoginTrackerAuth attempts credential-based tracker auth with ctx and returns
@@ -815,7 +815,7 @@ func (b *Backend) LoginTrackerAuth(ctx context.Context, tracker string, req api.
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Login(ctx, tracker, req))
+	return wrapWebResult(trackerauth.NewServiceWithLogger(b.currentConfig(), b.currentLogger()).Login(ctx, tracker, req))
 }
 
 // SubmitTrackerAuth2FA completes an active manual 2FA challenge with ctx and
@@ -824,7 +824,7 @@ func (b *Backend) SubmitTrackerAuth2FA(ctx context.Context, challengeID string, 
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Submit2FA(ctx, challengeID, code))
+	return wrapWebResult(trackerauth.NewServiceWithLogger(b.currentConfig(), b.currentLogger()).Submit2FA(ctx, challengeID, code))
 }
 
 // DeleteTrackerAuth removes stored tracker cookies and tracker-specific auth
@@ -833,7 +833,7 @@ func (b *Backend) DeleteTrackerAuth(ctx context.Context, tracker string) (api.Tr
 	if b == nil {
 		return api.TrackerAuthStatus{}, errors.New("backend not initialized")
 	}
-	return wrapWebResult(trackerauth.NewService(b.currentConfig()).Delete(ctx, tracker))
+	return wrapWebResult(trackerauth.NewServiceWithLogger(b.currentConfig(), b.currentLogger()).Delete(ctx, tracker))
 }
 
 // exportableConfig returns the normalized config snapshot and the DB path that

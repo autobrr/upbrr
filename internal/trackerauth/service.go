@@ -51,6 +51,7 @@ type Service struct {
 	cfg                config.Config
 	adapters           map[string]Adapter
 	challenges         *ChallengeManager
+	logger             api.Logger
 	afterDeleteCleanup func()
 }
 
@@ -70,15 +71,81 @@ type trackerSpec struct {
 
 // NewService builds a tracker auth service with default remote adapters and the shared manual 2FA challenge manager.
 func NewService(cfg config.Config) *Service {
+	return NewServiceWithLogger(cfg, api.NopLogger{})
+}
+
+// NewServiceWithLogger builds a tracker auth service that writes auth operation
+// outcomes to logger without logging cookie values, credentials, 2FA codes, or
+// challenge identifiers. Nil logger uses [api.NopLogger].
+func NewServiceWithLogger(cfg config.Config, logger api.Logger) *Service {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
 	return &Service{
 		cfg:        cfg,
 		adapters:   defaultAdapters(),
 		challenges: sharedChallengeManager,
+		logger:     logger,
 	}
 }
 
+func (s *Service) logInfof(format string, args ...any) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	s.logger.Infof(format, args...)
+}
+
+func (s *Service) logWarnf(format string, args ...any) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	s.logger.Warnf(format, args...)
+}
+
+// logStatus records the user-visible auth state returned to callers, keeping
+// the log payload to tracker ID, state, cookie count, encrypted-storage state,
+// 2FA requirement, and already-redacted status errors.
+func (s *Service) logStatus(operation string, status api.TrackerAuthStatus) {
+	s.logInfof(
+		"tracker auth: %s tracker=%s state=%s cookies=%d encrypted_storage=%t needs_2fa=%t",
+		operation,
+		trackerLogID(status.TrackerID),
+		status.State,
+		status.CookieCount,
+		status.EncryptedStorage,
+		status.Needs2FA,
+	)
+	if strings.TrimSpace(status.LastError) != "" {
+		s.logWarnf(
+			"tracker auth: %s warning tracker=%s state=%s error=%s",
+			operation,
+			trackerLogID(status.TrackerID),
+			status.State,
+			status.LastError,
+		)
+	}
+}
+
+// trackerLogID normalizes tracker IDs for log messages and avoids empty tracker
+// fields when validation fails before a concrete tracker is resolved.
+func trackerLogID(trackerID string) string {
+	trackerID = normalizeTrackerID(trackerID)
+	if trackerID == "" {
+		return "unknown"
+	}
+	return trackerID
+}
+
 // Capabilities returns tracker auth support metadata for built-in trackers and configured custom trackers.
-func (s *Service) Capabilities(_ context.Context) ([]api.TrackerAuthCapability, error) {
+func (s *Service) Capabilities(_ context.Context) (caps []api.TrackerAuthCapability, err error) {
+	defer func() {
+		if err != nil {
+			s.logWarnf("tracker auth: capabilities failed: %v", err)
+			return
+		}
+		s.logInfof("tracker auth: capabilities loaded count=%d", len(caps))
+	}()
 	if err := s.validateTrackerConfigIDs(); err != nil {
 		return nil, err
 	}
@@ -91,7 +158,14 @@ func (s *Service) Capabilities(_ context.Context) ([]api.TrackerAuthCapability, 
 }
 
 // Status returns local tracker auth state derived from config, encrypted cookie storage, and stored cookies.
-func (s *Service) Status(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error) {
+func (s *Service) Status(ctx context.Context, trackerID string) (status api.TrackerAuthStatus, err error) {
+	defer func() {
+		if err != nil {
+			s.logWarnf("tracker auth: status failed tracker=%s: %v", trackerLogID(trackerID), err)
+			return
+		}
+		s.logStatus("status checked", status)
+	}()
 	if err := s.validateTrackerConfigIDs(); err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
@@ -99,13 +173,20 @@ func (s *Service) Status(ctx context.Context, trackerID string) (api.TrackerAuth
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
-	return s.statusForSpec(ctx, spec)
+	return s.statusForSpec(ctx, spec), nil
 }
 
 // ImportCookies parses supplied cookie content, saves it for trackerID, and
 // returns refreshed auth status from persisted cookie/auth state. Parser errors
 // leave existing stored cookies unchanged.
-func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName string, content string) (api.TrackerAuthStatus, error) {
+func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName string, content string) (status api.TrackerAuthStatus, err error) {
+	defer func() {
+		if err != nil {
+			s.logWarnf("tracker auth: cookie import failed tracker=%s bytes=%d: %v", trackerLogID(trackerID), len(content), err)
+			return
+		}
+		s.logStatus("cookies imported", status)
+	}()
 	if err := s.validateTrackerConfigIDs(); err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
@@ -123,10 +204,7 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 	if err := cookies.SaveTrackerCookieMap(ctx, s.cfg.MainSettings.DBPath, spec.id, values); err != nil {
 		return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: import %s cookies: %w", spec.id, err)
 	}
-	status, err := s.statusForSpec(ctx, spec)
-	if err != nil {
-		return api.TrackerAuthStatus{}, err
-	}
+	status = s.statusForSpec(ctx, spec)
 	status.State = StateHasCookies
 	status.Message = "cookies imported"
 	return status, nil
@@ -135,7 +213,14 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 // Validate returns tracker auth status after a remote validation check when the
 // tracker has an adapter. Confirmed-invalid stored sessions are deleted and
 // reported as login-required status without returning an error.
-func (s *Service) Validate(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error) {
+func (s *Service) Validate(ctx context.Context, trackerID string) (status api.TrackerAuthStatus, err error) {
+	defer func() {
+		if err != nil {
+			s.logWarnf("tracker auth: validation failed tracker=%s: %v", trackerLogID(trackerID), err)
+			return
+		}
+		s.logStatus("validation completed", status)
+	}()
 	if err := s.validateTrackerConfigIDs(); err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
@@ -143,10 +228,7 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (api.TrackerAu
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
-	status, err := s.statusForSpec(ctx, spec)
-	if err != nil {
-		return api.TrackerAuthStatus{}, err
-	}
+	status = s.statusForSpec(ctx, spec)
 
 	if _, ok := s.adapterFor(spec.id); ok {
 		session, ensureErr := s.EnsureSession(ctx, EnsureRequest{
@@ -171,7 +253,14 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (api.TrackerAu
 }
 
 // Login runs credential-based tracker auth when supported and returns status for missing credentials, unsupported remote login, or 2FA.
-func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAuthLoginRequest) (api.TrackerAuthStatus, error) {
+func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAuthLoginRequest) (status api.TrackerAuthStatus, err error) {
+	defer func() {
+		if err != nil {
+			s.logWarnf("tracker auth: login failed tracker=%s: %v", trackerLogID(trackerID), err)
+			return
+		}
+		s.logStatus("login completed", status)
+	}()
 	if err := s.validateTrackerConfigIDs(); err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
@@ -182,10 +271,7 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 	if !spec.login {
 		return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: %s does not support credential login", spec.id)
 	}
-	status, err := s.statusForSpec(ctx, spec)
-	if err != nil {
-		return api.TrackerAuthStatus{}, err
-	}
+	status = s.statusForSpec(ctx, spec)
 	if status.State == StateLoginRequired {
 		status.Message = "username/password missing"
 		return status, nil
@@ -215,7 +301,18 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 }
 
 // Submit2FA completes an active manual 2FA challenge and consumes the challenge only after adapter success.
-func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string) (api.TrackerAuthStatus, error) {
+func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string) (status api.TrackerAuthStatus, err error) {
+	logTrackerID := ""
+	defer func() {
+		if logTrackerID == "" {
+			logTrackerID = status.TrackerID
+		}
+		if err != nil {
+			s.logWarnf("tracker auth: 2FA submit failed tracker=%s: %v", trackerLogID(logTrackerID), err)
+			return
+		}
+		s.logStatus("2FA completed", status)
+	}()
 	if strings.TrimSpace(challengeID) == "" {
 		return api.TrackerAuthStatus{}, errors.New("tracker auth: challenge id is required")
 	}
@@ -227,6 +324,7 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 	if !ok {
 		return api.TrackerAuthStatus{}, errors.New("tracker auth: no active manual 2FA challenge")
 	}
+	logTrackerID = challenge.TrackerID
 	ownerKey, err := s.challengeOwnerKey(challenge.TrackerID)
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
@@ -251,7 +349,7 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 	if _, err := challenges.Consume(challengeID, challenge.TrackerID, ownerKey); err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
-	status, err := s.Status(ctx, challenge.TrackerID)
+	status, err = s.Status(ctx, challenge.TrackerID)
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
@@ -275,7 +373,14 @@ func (s *Service) challengeManager() *ChallengeManager {
 // the refreshed local auth status. AR auth-state and cookie cleanup failures
 // restore the previous AR auth state before returning the error even when the
 // caller's context has been canceled.
-func (s *Service) Delete(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error) {
+func (s *Service) Delete(ctx context.Context, trackerID string) (status api.TrackerAuthStatus, err error) {
+	defer func() {
+		if err != nil {
+			s.logWarnf("tracker auth: delete failed tracker=%s: %v", trackerLogID(trackerID), err)
+			return
+		}
+		s.logStatus("auth deleted", status)
+	}()
 	if err := s.validateTrackerConfigIDs(); err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
@@ -306,10 +411,7 @@ func (s *Service) Delete(ctx context.Context, trackerID string) (api.TrackerAuth
 	if s.afterDeleteCleanup != nil {
 		s.afterDeleteCleanup()
 	}
-	status, err := s.statusForSpec(contextWithoutCancel(ctx), spec)
-	if err != nil {
-		return api.TrackerAuthStatus{}, err
-	}
+	status = s.statusForSpec(contextWithoutCancel(ctx), spec)
 	status.CookieCount = 0
 	status.Message = "stored auth deleted"
 	return status, nil
@@ -318,7 +420,7 @@ func (s *Service) Delete(ctx context.Context, trackerID string) (api.TrackerAuth
 // statusForSpec reports configured auth material without hiding encrypted
 // storage availability; cookie-only trackers still surface unavailable storage
 // as the state when no stronger auth material is configured.
-func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) (api.TrackerAuthStatus, error) {
+func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.TrackerAuthStatus {
 	encryptedStorage := s.encryptedStorageAvailable()
 	status := api.TrackerAuthStatus{
 		TrackerID:        spec.id,
@@ -366,7 +468,7 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) (api.Trac
 	if isMTVSpec(spec) && hasAPIKey && status.CookieCount == 0 && !hasCredentials {
 		status.Message = "API key covers Torznab/search; imported cookies or login credentials required for upload auth"
 	}
-	return status, nil
+	return status
 }
 
 func isMTVSpec(spec trackerSpec) bool {

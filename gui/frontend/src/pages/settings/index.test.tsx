@@ -17,6 +17,17 @@ const baseProps = {
   settingsDirty: false,
   settingsSaved: "",
   settingsError: "",
+  trackerSelectionNames: [
+    "AR",
+    "COOKIE",
+    "FAST",
+    "MTV",
+    "PTP",
+    "RTF",
+    "SLOW",
+    "PLAINAPI",
+    "PLAINPASS",
+  ],
   configOpStatus: null,
   dismissConfigOpStatus: vi.fn(),
   settingsSection: "main_settings",
@@ -293,6 +304,145 @@ describe("SettingsPage", () => {
     });
 
     expect(await screen.findByText("slow ready")).toBeInTheDocument();
+  });
+
+  it("hides plain tracker auth capabilities before loading statuses", async () => {
+    const getStatus = vi.fn().mockImplementation((trackerID: string) =>
+      Promise.resolve({
+        trackerID,
+        displayName: trackerID,
+        state: "configured",
+        cookieCount: 0,
+        lastCheckedAt: "",
+        lastError: "",
+        encryptedStorage: true,
+        needs2FA: false,
+        challengeID: "",
+        message: `${trackerID} ready`,
+      }),
+    );
+    vi.stubGlobal("go", {
+      guiapp: {
+        App: {
+          ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([
+            {
+              trackerID: "PLAINAPI",
+              displayName: "PLAINAPI",
+              authKind: "api_key",
+              supportsCookieFile: false,
+              supportsLogin: false,
+              supportsAutoLogin: false,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: true,
+              requiresPasskey: false,
+            },
+            {
+              trackerID: "PLAINPASS",
+              displayName: "PLAINPASS",
+              authKind: "passkey",
+              supportsCookieFile: false,
+              supportsLogin: false,
+              supportsAutoLogin: false,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: false,
+              requiresPasskey: true,
+            },
+            {
+              trackerID: "COOKIE",
+              displayName: "COOKIE",
+              authKind: "cookies",
+              supportsCookieFile: true,
+              supportsLogin: false,
+              supportsAutoLogin: false,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: false,
+              requiresPasskey: false,
+            },
+            {
+              trackerID: "RTF",
+              displayName: "RTF",
+              authKind: "api_key_credential_refresh",
+              supportsCookieFile: false,
+              supportsLogin: false,
+              supportsAutoLogin: false,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: true,
+              requiresPasskey: false,
+            },
+          ]),
+          GetTrackerAuthStatus: getStatus,
+        },
+      },
+    });
+
+    render(
+      <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
+    );
+
+    expect(await screen.findByText("COOKIE ready")).toBeInTheDocument();
+    expect(await screen.findByText("RTF ready")).toBeInTheDocument();
+    expect(screen.queryByText("PLAINAPI")).not.toBeInTheDocument();
+    expect(screen.queryByText("PLAINPASS")).not.toBeInTheDocument();
+    expect(getStatus).toHaveBeenCalledTimes(2);
+    expect(getStatus).toHaveBeenCalledWith("COOKIE");
+    expect(getStatus).toHaveBeenCalledWith("RTF");
+  });
+
+  it("hides managed tracker auth capabilities for trackers not configured in main trackers", async () => {
+    const getStatus = vi.fn().mockImplementation((trackerID: string) =>
+      Promise.resolve({
+        trackerID,
+        displayName: trackerID,
+        state: "configured",
+        cookieCount: 0,
+        lastCheckedAt: "",
+        lastError: "",
+        encryptedStorage: true,
+        needs2FA: false,
+        challengeID: "",
+        message: `${trackerID} ready`,
+      }),
+    );
+    vi.stubGlobal("go", {
+      guiapp: {
+        App: {
+          ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([
+            {
+              trackerID: "ASC",
+              displayName: "ASC",
+              authKind: "cookies",
+              supportsCookieFile: true,
+              supportsLogin: false,
+              supportsAutoLogin: false,
+              supportsTOTP: false,
+              supportsManual2FA: false,
+              requiresAPIKey: false,
+              requiresPasskey: false,
+            },
+            trackerAuthCapability,
+          ]),
+          GetTrackerAuthStatus: getStatus,
+        },
+      },
+    });
+
+    render(
+      <SettingsPage
+        {...baseProps}
+        settingsSection="tracker_auth"
+        trackerSelectionNames={["MTV"]}
+        setSettingsSection={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("MTV ready")).toBeInTheDocument();
+    expect(screen.queryByText("ASC")).not.toBeInTheDocument();
+    expect(getStatus).toHaveBeenCalledTimes(1);
+    expect(getStatus).toHaveBeenCalledWith("MTV");
   });
 
   it.each([

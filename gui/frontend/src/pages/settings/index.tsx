@@ -36,6 +36,26 @@ const settingsInputClass =
 
 const remoteAuthValidationTrackers = new Set(["MTV", "PTP"]);
 
+/** Builds the case-insensitive key shared by main tracker config and tracker auth rows. */
+const trackerNameKey = (name: string) => name.trim().toLowerCase();
+
+/**
+ * Returns true for tracker auth capabilities that perform stored-cookie,
+ * relogin, refresh, or 2FA handling beyond static API-key/passkey config.
+ */
+const isManagedTrackerAuthCapability = (capability: TrackerAuthCapability) => {
+  const authKind = capability.authKind.toLowerCase();
+  return (
+    capability.supportsCookieFile ||
+    capability.supportsLogin ||
+    capability.supportsAutoLogin ||
+    capability.supportsTOTP ||
+    capability.supportsManual2FA ||
+    authKind.includes("refresh") ||
+    authKind.includes("2fa")
+  );
+};
+
 type ConfigOpStatus = {
   type: "success" | "error" | "warning";
   title: string;
@@ -69,6 +89,8 @@ type Props = {
   dismissConfigOpStatus: () => void;
   settingsSection: string;
   settingsSections: SettingsSection[];
+  /** Tracker names already enabled by the main tracker settings panel. */
+  trackerSelectionNames: string[];
   showAdvancedToggle: boolean;
   advancedOpen: boolean;
   setSettingsSection: Dispatch<SetStateAction<string>>;
@@ -117,6 +139,7 @@ export default function SettingsPage(props: Props) {
     dismissConfigOpStatus,
     settingsSection,
     settingsSections,
+    trackerSelectionNames,
     showAdvancedToggle,
     advancedOpen,
     setSettingsSection,
@@ -265,13 +288,19 @@ export default function SettingsPage(props: Props) {
         if (cancelled) {
           return;
         }
-        setTrackerAuthCapabilities(capabilities);
+        const configuredTrackerNames = new Set(trackerSelectionNames.map(trackerNameKey));
+        const managedCapabilities = capabilities.filter(
+          (capability) =>
+            configuredTrackerNames.has(trackerNameKey(capability.trackerID)) &&
+            isManagedTrackerAuthCapability(capability),
+        );
+        setTrackerAuthCapabilities(managedCapabilities);
         setTrackerAuthStatuses({});
-        if (capabilities.length === 0) {
+        if (managedCapabilities.length === 0) {
           setTrackerAuthLoading(false);
           return;
         }
-        let pendingStatuses = capabilities.length;
+        let pendingStatuses = managedCapabilities.length;
         const markStatusComplete = () => {
           pendingStatuses -= 1;
           if (
@@ -282,7 +311,7 @@ export default function SettingsPage(props: Props) {
             setTrackerAuthLoading(false);
           }
         };
-        capabilities.forEach((capability) => {
+        managedCapabilities.forEach((capability) => {
           const statusVersion = trackerAuthStatusVersions.current[capability.trackerID] ?? 0;
           void getStatus(capability.trackerID)
             .then((status) => {
@@ -337,7 +366,7 @@ export default function SettingsPage(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [settingsSection, trackerAuthReloadRevision]);
+  }, [settingsSection, trackerAuthReloadRevision, trackerSelectionNames]);
 
   const reloadTrackerAuthAfterConfigChange = useCallback(
     async (handler: () => void | Promise<void>) => {

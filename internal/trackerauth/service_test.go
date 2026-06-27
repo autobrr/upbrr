@@ -6,6 +6,7 @@ package trackerauth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,20 @@ import (
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type trackerAuthRecordingLogger struct {
+	api.NopLogger
+	info []string
+	warn []string
+}
+
+func (l *trackerAuthRecordingLogger) Infof(format string, args ...any) {
+	l.info = append(l.info, fmt.Sprintf(format, args...))
+}
+
+func (l *trackerAuthRecordingLogger) Warnf(format string, args ...any) {
+	l.warn = append(l.warn, fmt.Sprintf(format, args...))
+}
 
 func TestLoginCreatesManual2FAChallengeBeforeReturning(t *testing.T) {
 	cfg := config.Config{
@@ -184,16 +199,13 @@ func TestStatusConfiguredOTPURIAvoidsManualChallenge(t *testing.T) {
 			},
 		},
 	})
-	status, err := service.statusForSpec(context.Background(), trackerSpec{
+	status := service.statusForSpec(context.Background(), trackerSpec{
 		id:               "PTP",
 		login:            true,
 		totp:             true,
 		manual2FA:        true,
 		needsCredentials: true,
 	})
-	if err != nil {
-		t.Fatalf("statusForSpec: %v", err)
-	}
 	if status.State != StateConfigured {
 		t.Fatalf("expected configured status, got %#v", status)
 	}
@@ -315,10 +327,7 @@ func TestStatusConfiguredAuthReportsEncryptedStorageUnavailableWhenPersistenceRe
 					Trackers: map[string]config.TrackerConfig{tt.spec.id: tt.cfg},
 				},
 			})
-			status, err := service.statusForSpec(context.Background(), tt.spec)
-			if err != nil {
-				t.Fatalf("statusForSpec: %v", err)
-			}
+			status := service.statusForSpec(context.Background(), tt.spec)
 			if status.State != tt.wantState {
 				t.Fatalf("expected %s state, got %#v", tt.wantState, status)
 			}
@@ -418,13 +427,10 @@ func TestStatusCookiesOnlyReportsEncryptedStorageUnavailable(t *testing.T) {
 	service := NewService(config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")},
 	})
-	status, err := service.statusForSpec(context.Background(), trackerSpec{
+	status := service.statusForSpec(context.Background(), trackerSpec{
 		id:      "ASC",
 		cookies: true,
 	})
-	if err != nil {
-		t.Fatalf("statusForSpec: %v", err)
-	}
 	if status.State != StateEncryptedStorageUnavailable {
 		t.Fatalf("expected encrypted storage unavailable, got %#v", status)
 	}
@@ -899,6 +905,45 @@ func TestCapabilitiesDoNotAdvertiseUnsupportedMTVPTPManual2FA(t *testing.T) {
 			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {
 				t.Fatalf("%s must not advertise unsupported login actions: %#v", cap.TrackerID, cap)
 			}
+		}
+	}
+}
+
+func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
+	t.Parallel()
+
+	logger := &trackerAuthRecordingLogger{}
+	service := NewServiceWithLogger(config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"MTV": {APIKey: "secret-api-key", Username: "secret-user", Password: "secret-password"},
+			},
+		},
+	}, logger)
+
+	status, err := service.Status(context.Background(), "MTV")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.TrackerID != "MTV" {
+		t.Fatalf("expected MTV status, got %#v", status)
+	}
+	if _, err := service.ImportCookies(context.Background(), "AR", "cookies.json", "{bad"); err == nil {
+		t.Fatal("expected invalid cookie import to fail")
+	}
+
+	infoLog := strings.Join(logger.info, "\n")
+	warnLog := strings.Join(logger.warn, "\n")
+	allLogs := infoLog + "\n" + warnLog
+	if !strings.Contains(infoLog, "tracker auth: status checked tracker=MTV") {
+		t.Fatalf("expected status info log, got info=%q warn=%q", infoLog, warnLog)
+	}
+	if !strings.Contains(warnLog, "tracker auth: cookie import failed tracker=AR bytes=4") {
+		t.Fatalf("expected import warning log, got info=%q warn=%q", infoLog, warnLog)
+	}
+	for _, secret := range []string{"secret-api-key", "secret-user", "secret-password", "{bad"} {
+		if strings.Contains(allLogs, secret) {
+			t.Fatalf("tracker auth log leaked %q: %s", secret, allLogs)
 		}
 	}
 }

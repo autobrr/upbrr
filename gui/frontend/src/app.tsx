@@ -4098,6 +4098,7 @@ export default function App() {
               dismissConfigOpStatus={dismissConfigOpStatus}
               settingsSection={settingsSection}
               settingsSections={settingsSections}
+              trackerSelectionNames={trackerSelectionNames}
               showAdvancedToggle={showAdvancedToggle}
               advancedOpen={advancedOpen}
               setSettingsSection={setSettingsSection}
