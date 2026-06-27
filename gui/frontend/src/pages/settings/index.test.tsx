@@ -160,7 +160,7 @@ describe("SettingsPage", () => {
     expect(setSettingsSection).toHaveBeenCalledWith("tracker_auth");
   });
 
-  it("shows Test Auth only for adapter-backed tracker auth", async () => {
+  it("shows Check Auth only for adapter-backed tracker auth", async () => {
     vi.stubGlobal("go", {
       guiapp: {
         App: {
@@ -221,10 +221,10 @@ describe("SettingsPage", () => {
     expect(mtvCard).not.toBeNull();
     expect(arCard).not.toBeNull();
     expect(
-      within(mtvCard as HTMLElement).getByRole("button", { name: "Test Auth" }),
+      within(mtvCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     ).toBeInTheDocument();
     expect(
-      within(arCard as HTMLElement).queryByRole("button", { name: "Test Auth" }),
+      within(arCard as HTMLElement).queryByRole("button", { name: "Check Auth" }),
     ).not.toBeInTheDocument();
   });
 
@@ -447,7 +447,7 @@ describe("SettingsPage", () => {
 
   it.each([
     ["Import Cookies", "ImportTrackerAuthCookies"],
-    ["Test Auth", "TestTrackerAuth"],
+    ["Check Auth", "TestTrackerAuth"],
     ["Delete Auth", "DeleteTrackerAuth"],
   ])(
     "keeps newer %s status when initial status resolves late",
@@ -589,10 +589,10 @@ describe("SettingsPage", () => {
     expect(mtvCard).not.toBeNull();
     expect(ptpCard).not.toBeNull();
     await userEvent.click(
-      within(mtvCard as HTMLElement).getByRole("button", { name: "Test Auth" }),
+      within(mtvCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     );
     await userEvent.click(
-      within(ptpCard as HTMLElement).getByRole("button", { name: "Test Auth" }),
+      within(ptpCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     );
     expect(await screen.findByText("new action ready")).toBeInTheDocument();
 
@@ -607,7 +607,7 @@ describe("SettingsPage", () => {
     });
 
     await userEvent.click(
-      within(ptpCard as HTMLElement).getByRole("button", { name: "Test Auth" }),
+      within(ptpCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     );
 
     await waitFor(() => {
@@ -635,7 +635,7 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("initial ready")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Test Auth" }));
+    await userEvent.click(screen.getByRole("button", { name: "Check Auth" }));
 
     rerender(
       <SettingsPage {...baseProps} settingsSection="main_settings" setSettingsSection={vi.fn()} />,
@@ -793,8 +793,8 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("initial ready")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Test Auth" }));
-    expect(screen.getByRole("button", { name: "Testing..." })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Check Auth" }));
+    expect(screen.getByRole("button", { name: "Checking..." })).toBeDisabled();
 
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("after save")).toBeInTheDocument();
@@ -804,7 +804,7 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("after save")).toBeInTheDocument();
       expect(screen.queryByText("action stale")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Test Auth" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Check Auth" })).toBeEnabled();
     });
   });
 
@@ -913,8 +913,8 @@ describe("SettingsPage", () => {
     const { rerender } = render(<SettingsPage {...props} />);
 
     expect(await screen.findByText("initial ready")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Test Auth" }));
-    expect(screen.getByRole("button", { name: "Testing..." })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Check Auth" }));
+    expect(screen.getByRole("button", { name: "Checking..." })).toBeDisabled();
 
     rerender(<SettingsPage {...props} importConfirmOpen />);
 
@@ -928,7 +928,7 @@ describe("SettingsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("after import")).toBeInTheDocument();
       expect(screen.queryByText("action stale")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Test Auth", hidden: true })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Check Auth", hidden: true })).toBeEnabled();
     });
   });
 

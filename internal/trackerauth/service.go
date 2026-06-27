@@ -108,6 +108,16 @@ func (s *Service) logWarnf(format string, args ...any) {
 // the log payload to tracker ID, state, cookie count, encrypted-storage state,
 // 2FA requirement, and already-redacted status errors.
 func (s *Service) logStatus(operation string, status api.TrackerAuthStatus) {
+	if strings.TrimSpace(status.LastError) != "" {
+		s.logWarnf(
+			"tracker auth: %s warning tracker=%s state=%s error=%s",
+			operation,
+			trackerLogID(status.TrackerID),
+			status.State,
+			status.LastError,
+		)
+		return
+	}
 	s.logInfof(
 		"tracker auth: %s tracker=%s state=%s cookies=%d encrypted_storage=%t needs_2fa=%t",
 		operation,
@@ -117,15 +127,6 @@ func (s *Service) logStatus(operation string, status api.TrackerAuthStatus) {
 		status.EncryptedStorage,
 		status.Needs2FA,
 	)
-	if strings.TrimSpace(status.LastError) != "" {
-		s.logWarnf(
-			"tracker auth: %s warning tracker=%s state=%s error=%s",
-			operation,
-			trackerLogID(status.TrackerID),
-			status.State,
-			status.LastError,
-		)
-	}
 }
 
 // trackerLogID normalizes tracker IDs for log messages and avoids empty tracker
@@ -448,6 +449,7 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 
 	cfg, hasCfg := trackerConfig(s.cfg, spec.id)
 	hasAPIKey := spec.apiKey && configAPIKey(cfg) != ""
+	hasPasskey := strings.TrimSpace(cfg.Passkey) != ""
 	hasCredentials := spec.login && hasCfg && hasUsableLoginConfig(spec, cfg)
 	if spec.cookies {
 		values, err := cookies.LoadTrackerCookieMap(ctx, s.cfg.MainSettings.DBPath, spec.id)
@@ -462,8 +464,14 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 	if hasAPIKey && (!isMTVSpec(spec) || status.CookieCount > 0 || hasCredentials) {
 		status.State = StateConfigured
 	}
-	if spec.passkey && strings.TrimSpace(cfg.Passkey) != "" {
+	if passkeyCoversAuth(spec) && hasPasskey {
 		status.State = StateConfigured
+	}
+	if isHDBSpec(spec) && hasPasskey && strings.TrimSpace(cfg.Username) != "" && status.CookieCount > 0 {
+		status.State = StateConfigured
+	}
+	if isHDBSpec(spec) && hasPasskey && strings.TrimSpace(cfg.Username) != "" && status.CookieCount == 0 {
+		status.State = StateLoginRequired
 	}
 	if spec.login {
 		if hasCredentials {
@@ -474,7 +482,7 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 			status.State = StateLoginRequired
 		}
 	}
-	if spec.cookies && status.CookieCount == 0 && !encryptedStorage && authStatusRequiresEncryptedStorage(spec, hasCredentials, hasAPIKey, strings.TrimSpace(cfg.Passkey) != "") {
+	if spec.cookies && status.CookieCount == 0 && !encryptedStorage && authStatusRequiresEncryptedStorage(spec, hasCredentials, hasAPIKey, hasPasskey) {
 		status.State = StateEncryptedStorageUnavailable
 	}
 	status.Message = validationMessage(spec, status)
@@ -486,6 +494,14 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 
 func isMTVSpec(spec trackerSpec) bool {
 	return strings.EqualFold(spec.id, "MTV")
+}
+
+func isHDBSpec(spec trackerSpec) bool {
+	return strings.EqualFold(spec.id, "HDB")
+}
+
+func passkeyCoversAuth(spec trackerSpec) bool {
+	return spec.passkey && !isHDBSpec(spec)
 }
 
 // hasUsableLoginConfig reports whether credential login has every config value
@@ -510,7 +526,7 @@ func (s *Service) encryptedStorageAvailable() bool {
 }
 
 func authStatusRequiresEncryptedStorage(spec trackerSpec, hasCredentials bool, hasAPIKey bool, hasPasskey bool) bool {
-	if spec.passkey && hasPasskey {
+	if passkeyCoversAuth(spec) && hasPasskey {
 		return false
 	}
 	if spec.apiKey && hasAPIKey && !isMTVSpec(spec) {
@@ -580,10 +596,12 @@ func (s *Service) specs() []trackerSpec {
 			}
 		}
 		if strings.TrimSpace(cfg.Username) != "" || strings.TrimSpace(cfg.Password) != "" {
-			spec.login = true
-			spec.autoLogin = spec.autoLogin || spec.id == "AR" || spec.id == "FL" || spec.id == "MTV" || spec.id == "PTP" || spec.id == "THR" || spec.id == "RTF"
-			if spec.authKind == "config" {
-				spec.authKind = "credential_login"
+			if !ok || spec.login {
+				spec.login = true
+				spec.autoLogin = spec.autoLogin || spec.id == "AR" || spec.id == "FF" || spec.id == "FL" || spec.id == "MTV" || spec.id == "PTP" || spec.id == "RTF" || spec.id == "THR"
+				if spec.authKind == "config" {
+					spec.authKind = "credential_login"
+				}
 			}
 		}
 		index[normalizedID] = spec
@@ -603,10 +621,11 @@ func (s *Service) specs() []trackerSpec {
 func builtInSpecs() []trackerSpec {
 	return []trackerSpec{
 		{id: "AR", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
+		{id: "FF", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
 		{id: "FL", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
 		{id: "MTV", authKind: "api_key_cookies_login_manual_2fa", cookies: true, login: true, autoLogin: true, totp: true, manual2FA: true, apiKey: true, needsCredentials: true, notes: []string{"API key covers Torznab/search; cookies/login cover upload authkey."}},
 		{id: "PTP", authKind: "cookies_login_manual_2fa", cookies: true, login: true, autoLogin: true, totp: true, manual2FA: true, needsCredentials: true},
-		{id: "THR", authKind: "credential_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
+		{id: "THR", authKind: "credential_login", login: true, autoLogin: true, needsCredentials: true},
 		{id: "RTF", authKind: "api_key_credential_refresh", login: true, autoLogin: true, apiKey: true, needsCredentials: false},
 		{id: "ASC", authKind: "cookies", cookies: true},
 		{id: "AZ", authKind: "cookies", cookies: true},

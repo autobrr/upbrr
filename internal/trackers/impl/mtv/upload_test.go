@@ -38,6 +38,26 @@ func TestResolveGroupDescriptionIncludesTVDBForTV(t *testing.T) {
 	}
 }
 
+func TestExtractMTVAuthKeyMatchesUploadAssistantShape(t *testing.T) {
+	t.Parallel()
+
+	auth := "abcdefghijklmnopqrstuvwxyzABCDEF"
+	tests := map[string]string{
+		"plain":       "authkey=" + auth,
+		"query tail":  "https://example.test/upload?authkey=" + auth + "&x=1",
+		"last marker": "authkey=oldoldoldoldoldoldoldoldoldoldoldold authkey=" + auth + `">`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := extractMTVAuthKey(body); got != auth {
+				t.Fatalf("expected %q, got %q", auth, got)
+			}
+		})
+	}
+}
+
 func TestResolveSessionForTrackerAuthPreservesCookiesOnTransientAuthFetch(t *testing.T) {
 	t.Parallel()
 
@@ -96,6 +116,97 @@ func TestResolveSessionForTrackerAuthReportsPostLoginCookiePersistenceFailure(t 
 	}
 }
 
+func TestResolveSessionForTrackerAuthSavesCookiesWhenLoginResponseContainsAuthKey(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newMTVAuthDB(t)
+	indexRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "fresh", Path: "/"})
+			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
+		case "/index.php":
+			indexRequests++
+			_, _ = w.Write([]byte(`<html>logged out</html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
+	}, dbPath)
+	if err != nil {
+		t.Fatalf("ResolveSessionForTrackerAuth: %v", err)
+	}
+	if indexRequests != 0 {
+		t.Fatalf("expected login response authkey to avoid index lookup, got %d", indexRequests)
+	}
+	got, err := loadMTVCookies(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("loadMTVCookies: %v", err)
+	}
+	if got["session"] != "fresh" {
+		t.Fatalf("expected saved login cookies, got %#v", got)
+	}
+}
+
+func TestResolveSessionForTrackerAuthPostsLoginToRedirectedHost(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newMTVAuthDB(t)
+	var canonicalURL string
+	postedCanonicalLogin := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login" && r.Method == http.MethodGet && strings.HasPrefix(r.Host, "localhost:"):
+			http.Redirect(w, r, canonicalURL+"/login", http.StatusFound)
+		case r.URL.Path == "/login" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+		case r.URL.Path == "/login" && r.Method == http.MethodPost && strings.HasPrefix(r.Host, "localhost:"):
+			t.Fatalf("login POST used original host")
+		case r.URL.Path == "/login" && r.Method == http.MethodPost:
+			postedCanonicalLogin = true
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "fresh", Path: "/"})
+			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	canonicalURL = server.URL
+	sourceURL := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
+
+	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
+		URL:      sourceURL,
+		Username: "user",
+		Password: "pass",
+	}, dbPath)
+	if err != nil {
+		t.Fatalf("ResolveSessionForTrackerAuth: %v", err)
+	}
+	if !postedCanonicalLogin {
+		t.Fatal("expected login POST on redirected host")
+	}
+	got, err := loadMTVCookies(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("loadMTVCookies: %v", err)
+	}
+	if got["session"] != "fresh" {
+		t.Fatalf("expected saved redirected-login cookies, got %#v", got)
+	}
+}
+
 func TestResolveSessionForTrackerAuthRejectsEmptyLoginCookiesWithoutReplacingStoredCookies(t *testing.T) {
 	t.Parallel()
 
@@ -149,15 +260,12 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 	ctx := context.Background()
 	dbPath := newMTVAuthDB(t)
 	var gotCode string
-	twoFACompleted := false
+	indexRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/index.php":
-			if !twoFACompleted {
-				_, _ = w.Write([]byte(`<html>logged out</html>`))
-				return
-			}
-			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
+			indexRequests++
+			_, _ = w.Write([]byte(`<html>logged out</html>`))
 		case "/login":
 			if r.Method == http.MethodGet {
 				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
@@ -173,9 +281,8 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 				t.Fatalf("ParseForm: %v", err)
 			}
 			gotCode = r.FormValue("code")
-			twoFACompleted = true
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
-			_, _ = w.Write([]byte(`<html>ok</html>`))
+			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -192,6 +299,9 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 	}
 	if gotCode != "654321" {
 		t.Fatalf("expected manual 2FA code, got %q", gotCode)
+	}
+	if indexRequests != 0 {
+		t.Fatalf("expected 2FA response authkey to avoid index lookup, got %d", indexRequests)
 	}
 	got, err := loadMTVCookies(ctx, dbPath)
 	if err != nil {
@@ -240,12 +350,55 @@ func TestResolveSessionForTrackerAuthLoginMarksSubmitted2FAAuthKeyMiss(t *testin
 	if !errors.Is(err, ErrSubmitted2FARejected) {
 		t.Fatalf("expected submitted 2FA rejection marker, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "final_path=/twofactor/login status=200") || !strings.Contains(err.Error(), "path=/index.php status=200") {
+		t.Fatalf("expected safe path/status diagnostics, got %v", err)
+	}
 	got, loadErr := loadMTVCookies(ctx, dbPath)
 	if loadErr != nil {
 		t.Fatalf("loadMTVCookies: %v", loadErr)
 	}
 	if got["session"] != "existing" {
 		t.Fatalf("submitted 2FA rejection must preserve stored cookies, got %#v", got)
+	}
+}
+
+func TestResolveSessionForTrackerAuthLoginReportsSafeAuthKeyDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newMTVAuthDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			_, _ = w.Write([]byte(`<html>login accepted but no upload token secret-response-body</html>`))
+		case "/index.php":
+			_, _ = w.Write([]byte(`<html>logged in but no upload token other-secret-body</html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
+	}, dbPath, api.TrackerAuthLoginRequest{})
+	if !errors.Is(err, errMTVAuthKeyNotFound) {
+		t.Fatalf("expected auth key miss, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "final_path=/login status=200") || !strings.Contains(err.Error(), "path=/index.php status=200") {
+		t.Fatalf("expected path/status diagnostics, got %v", err)
+	}
+	for _, secret := range []string{"secret-response-body", "other-secret-body"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("diagnostic leaked response body %q: %v", secret, err)
+		}
 	}
 }
 

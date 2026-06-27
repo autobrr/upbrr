@@ -675,7 +675,7 @@ func TestStatusConfiguredAuthReportsEncryptedStorageUnavailableWhenPersistenceRe
 		},
 		"passkey": {
 			cfg:       config.TrackerConfig{Passkey: "passkey"},
-			wantState: StateConfigured,
+			wantState: StateEncryptedStorageUnavailable,
 			spec: trackerSpec{
 				id:      "HDB",
 				cookies: true,
@@ -712,7 +712,7 @@ func TestStatusConfiguredAuthReportsCoexistingCookies(t *testing.T) {
 		cfg       config.TrackerConfig
 	}{
 		"api key": {trackerID: "MTV", cfg: config.TrackerConfig{APIKey: "api-key"}},
-		"passkey": {trackerID: "HDB", cfg: config.TrackerConfig{Passkey: "passkey"}},
+		"passkey": {trackerID: "HDB", cfg: config.TrackerConfig{Username: "user", Passkey: "passkey"}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -741,6 +741,26 @@ func TestStatusConfiguredAuthReportsCoexistingCookies(t *testing.T) {
 				t.Fatalf("expected message to preserve cookie presence, got %#v", status)
 			}
 		})
+	}
+}
+
+func TestStatusHDBPasskeyWithoutCookiesIsNotUploadReady(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthTestDB(t)
+	service := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{"HDB": {Username: "user", Passkey: "passkey"}},
+		},
+	})
+
+	status, err := service.Status(context.Background(), "HDB")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.State != StateLoginRequired {
+		t.Fatalf("expected HDB cookie import requirement, got %#v", status)
 	}
 }
 
@@ -806,7 +826,7 @@ func TestStatusCookiesOnlyReportsEncryptedStorageUnavailable(t *testing.T) {
 }
 
 func TestLoginWithoutAdapterDoesNotReportRemoteSuccess(t *testing.T) {
-	for _, trackerID := range []string{"AR", "FL", "THR", "RTF"} {
+	for _, trackerID := range []string{"AR", "FF", "FL", "RTF", "THR"} {
 		t.Run(trackerID, func(t *testing.T) {
 			cfg := config.Config{
 				Trackers: config.TrackersConfig{
@@ -831,6 +851,69 @@ func TestLoginWithoutAdapterDoesNotReportRemoteSuccess(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRTFStatusTreatsCredentialsAsRefreshAuth(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"RTF": {Username: "user", Password: "pass"},
+			},
+		},
+	})
+
+	status, err := service.Status(context.Background(), "RTF")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.State != StateConfigured {
+		t.Fatalf("RTF credentials should report refresh auth configured without api_key: %#v", status)
+	}
+}
+
+func TestTHRDoesNotAdvertiseCookieImport(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(config.Config{})
+	caps, err := service.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	for _, cap := range caps {
+		if cap.TrackerID != "THR" {
+			continue
+		}
+		if cap.SupportsCookieFile {
+			t.Fatalf("THR upload logs in per request and must not advertise DB cookie import: %#v", cap)
+		}
+		return
+	}
+	t.Fatal("THR capability not found")
+}
+
+func TestFFAdvertisesCookieImportWithoutRemoteLoginAction(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(config.Config{})
+	caps, err := service.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	for _, cap := range caps {
+		if cap.TrackerID != "FF" {
+			continue
+		}
+		if !cap.SupportsCookieFile {
+			t.Fatalf("FF upload can use DB cookies and must advertise cookie import: %#v", cap)
+		}
+		if cap.SupportsLogin || cap.SupportsAutoLogin {
+			t.Fatalf("FF has no tracker-auth remote adapter and must not advertise login actions: %#v", cap)
+		}
+		return
+	}
+	t.Fatal("FF capability not found")
 }
 
 func TestValidateWithoutAdapterReportsUnsupportedRemoteValidation(t *testing.T) {
@@ -1263,7 +1346,7 @@ func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 			if !cap.SupportsLogin || !cap.SupportsAutoLogin {
 				t.Fatalf("%s adapter-backed login capability must be preserved: %#v", cap.TrackerID, cap)
 			}
-		case "AR", "FL", "RTF", "THR":
+		case "AR", "FF", "FL", "RTF", "THR":
 			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {
 				t.Fatalf("%s must not advertise unsupported login actions: %#v", cap.TrackerID, cap)
 			}
@@ -1280,6 +1363,7 @@ func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 
 	logger := &trackerAuthRecordingLogger{}
 	service := NewServiceWithLogger(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: newTrackerAuthTestDB(t)},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"MTV": {APIKey: "secret-api-key", Username: "secret-user", Password: "secret-password"},
@@ -1311,6 +1395,27 @@ func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 		if strings.Contains(allLogs, secret) {
 			t.Fatalf("tracker auth log leaked %q: %s", secret, allLogs)
 		}
+	}
+}
+
+func TestTrackerAuthWarningStatusDoesNotLogSuccess(t *testing.T) {
+	t.Parallel()
+
+	logger := &trackerAuthRecordingLogger{}
+	service := NewServiceWithLogger(config.Config{}, logger)
+	service.logStatus("login completed", api.TrackerAuthStatus{
+		TrackerID: "MTV",
+		State:     StateConfigured,
+		LastError: "tracker auth: MTV: validation failed",
+	})
+
+	infoLog := strings.Join(logger.info, "\n")
+	warnLog := strings.Join(logger.warn, "\n")
+	if strings.Contains(infoLog, "tracker auth: login completed") {
+		t.Fatalf("warning status logged success info: info=%q warn=%q", infoLog, warnLog)
+	}
+	if !strings.Contains(warnLog, "tracker auth: login completed warning tracker=MTV") {
+		t.Fatalf("expected warning log, got info=%q warn=%q", infoLog, warnLog)
 	}
 }
 

@@ -5,11 +5,14 @@ package rtf
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -42,4 +45,209 @@ func TestBuildUploadDryRunUsesDescriptionPayloadAndLeavesNFOEmpty(t *testing.T) 
 	if entry.Payload["nfo"] != "" {
 		t.Fatalf("expected empty nfo payload, got %#v", entry.Payload["nfo"])
 	}
+}
+
+func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
+	root := t.TempDir()
+	torrentPath := filepath.Join(root, "test.torrent")
+	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	dbPath := filepath.Join(root, "upbrr.db")
+	seedRTFConfig(t, dbPath, config.TrackerConfig{APIKey: "old-token", Username: "user", Password: "pass"})
+
+	var testedToken string
+	var loginCalled bool
+	var uploadToken string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/test":
+			testedToken = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/api/login":
+			loginCalled = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"token":"new-token"}`))
+		case "/api/upload":
+			uploadToken = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"error":false,"torrent":{"id":123}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	summary, err := upload(context.Background(), trackers.UploadRequest{
+		Tracker: "RTF",
+		Meta: api.PreparedMetadata{
+			TorrentPath: torrentPath,
+			ReleaseName: "Release",
+		},
+		TrackerConfig: config.TrackerConfig{
+			URL:      server.URL,
+			APIKey:   "old-token",
+			Username: "user",
+			Password: "pass",
+		},
+		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+	})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected upload success, got %#v", summary)
+	}
+	if testedToken != "old-token" {
+		t.Fatalf("expected old token to be tested, got %q", testedToken)
+	}
+	if !loginCalled {
+		t.Fatal("expected expired token to trigger API login")
+	}
+	if uploadToken != "new-token" {
+		t.Fatalf("expected upload to use refreshed token, got %q", uploadToken)
+	}
+	if got := loadStoredRTFAPIKey(t, dbPath); got != "new-token" {
+		t.Fatalf("expected refreshed token persisted, got %q", got)
+	}
+}
+
+func TestUploadUsesValidAPIKeyWithoutRefresh(t *testing.T) {
+	root := t.TempDir()
+	torrentPath := filepath.Join(root, "test.torrent")
+	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	var loginCalled bool
+	var uploadToken string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/test":
+			w.WriteHeader(http.StatusOK)
+		case "/api/login":
+			loginCalled = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"token":"new-token"}`))
+		case "/api/upload":
+			uploadToken = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"error":false,"torrent":{"id":123}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	if _, err := upload(context.Background(), trackers.UploadRequest{
+		Tracker: "RTF",
+		Meta: api.PreparedMetadata{
+			TorrentPath: torrentPath,
+			ReleaseName: "Release",
+		},
+		TrackerConfig: config.TrackerConfig{
+			URL:    server.URL,
+			APIKey: "valid-token",
+		},
+	}); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if loginCalled {
+		t.Fatal("valid token should not trigger API login")
+	}
+	if uploadToken != "valid-token" {
+		t.Fatalf("expected upload to use original token, got %q", uploadToken)
+	}
+}
+
+func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
+	root := t.TempDir()
+	torrentPath := filepath.Join(root, "test.torrent")
+	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	dbPath := filepath.Join(root, "upbrr.db")
+	seedRTFConfig(t, dbPath, config.TrackerConfig{Username: "user", Password: "pass"})
+
+	var testCalled bool
+	var uploadToken string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/test":
+			testCalled = true
+			w.WriteHeader(http.StatusOK)
+		case "/api/login":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"token":"generated-token"}`))
+		case "/api/upload":
+			uploadToken = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"error":false,"torrent":{"id":123}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	if _, err := upload(context.Background(), trackers.UploadRequest{
+		Tracker: "RTF",
+		Meta: api.PreparedMetadata{
+			TorrentPath: torrentPath,
+			ReleaseName: "Release",
+		},
+		TrackerConfig: config.TrackerConfig{
+			URL:      server.URL,
+			Username: "user",
+			Password: "pass",
+		},
+		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+	}); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if testCalled {
+		t.Fatal("missing token should refresh directly without API test")
+	}
+	if uploadToken != "generated-token" {
+		t.Fatalf("expected upload to use generated token, got %q", uploadToken)
+	}
+	if got := loadStoredRTFAPIKey(t, dbPath); got != "generated-token" {
+		t.Fatalf("expected generated token persisted, got %q", got)
+	}
+}
+
+func seedRTFConfig(t *testing.T, dbPath string, trackerCfg config.TrackerConfig) {
+	t.Helper()
+
+	repo, err := servicedb.OpenContext(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(context.Background()); err != nil {
+		t.Fatalf("MigrateContext: %v", err)
+	}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{"RTF": trackerCfg},
+		},
+	}
+	if err := config.SaveToDatabase(context.Background(), &cfg, repo); err != nil {
+		t.Fatalf("SaveToDatabase: %v", err)
+	}
+}
+
+func loadStoredRTFAPIKey(t *testing.T, dbPath string) string {
+	t.Helper()
+
+	repo, err := servicedb.OpenContext(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	defer repo.Close()
+	cfg, err := config.LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabase: %v", err)
+	}
+	return cfg.Trackers.Trackers["RTF"].APIKey
 }

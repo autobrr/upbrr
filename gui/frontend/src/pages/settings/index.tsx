@@ -14,7 +14,6 @@ import type {
   ConfigValue,
   FieldMeta,
   TrackerAuthCapability,
-  TrackerAuthLoginRequest,
   TrackerAuthStatus,
   WebAuthStatus,
 } from "../../types";
@@ -72,7 +71,6 @@ type AppBridgeWithTrackerAuth = {
   GetTrackerAuthStatus?: (tracker: string) => Promise<TrackerAuthStatus>;
   ImportTrackerAuthCookies?: (tracker: string) => Promise<TrackerAuthStatus>;
   TestTrackerAuth?: (tracker: string) => Promise<TrackerAuthStatus>;
-  LoginTrackerAuth?: (tracker: string, req: TrackerAuthLoginRequest) => Promise<TrackerAuthStatus>;
   SubmitTrackerAuth2FA?: (challengeID: string, code: string) => Promise<TrackerAuthStatus>;
   DeleteTrackerAuth?: (tracker: string) => Promise<TrackerAuthStatus>;
 };
@@ -559,20 +557,7 @@ export default function SettingsPage(props: Props) {
                         )
                       }
                     >
-                      {busy === "test" ? "Testing..." : "Test Auth"}
-                    </Button>
-                  ) : null}
-                  {capability.supportsLogin ? (
-                    <Button
-                      type="button"
-                      disabled={!bridge?.LoginTrackerAuth || Boolean(busy)}
-                      onClick={() =>
-                        runTrackerAuthAction(capability.trackerID, "login", () =>
-                          bridge!.LoginTrackerAuth!(capability.trackerID, {}),
-                        )
-                      }
-                    >
-                      {busy === "login" ? "Checking..." : "Login/Test"}
+                      {busy === "test" ? "Checking..." : "Check Auth"}
                     </Button>
                   ) : null}
                   <Button
