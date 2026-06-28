@@ -31,6 +31,9 @@ func TestBuildMetadataPreviewMapsExternalData(t *testing.T) {
 		TrackerData: []api.TrackerMetadata{
 			{Tracker: "AITHER", TMDBID: 123},
 		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"NBL": {{Rule: "require_tv_only", Reason: "category movie is not tv"}},
+		},
 	}
 
 	preview := buildMetadataPreview(meta, config.Config{})
@@ -63,6 +66,13 @@ func TestBuildMetadataPreviewMapsExternalData(t *testing.T) {
 	}
 	if previewItem.PosterURL == "" || previewItem.BackdropURL == "" {
 		t.Fatalf("expected poster and backdrop URLs to be populated")
+	}
+	if got := preview.TrackerRuleFailures["NBL"]; len(got) != 1 || got[0].Rule != "require_tv_only" {
+		t.Fatalf("expected tracker rule failures in preview, got %#v", preview.TrackerRuleFailures)
+	}
+	preview.TrackerRuleFailures["NBL"][0].Rule = "mutated"
+	if meta.TrackerRuleFailures["NBL"][0].Rule != "require_tv_only" {
+		t.Fatalf("preview rule failures must not alias prepared metadata, got %#v", meta.TrackerRuleFailures)
 	}
 }
 

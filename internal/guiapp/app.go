@@ -36,9 +36,12 @@ import (
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/trackericon"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+var openTrackerAuthCookieDialog = runtime.OpenFileDialog
 
 const previewTimeout = 30 * time.Minute
 const bdinfoProgressEvent = "bdinfo:progress"
@@ -60,6 +63,8 @@ type App struct {
 	uploadMu    sync.Mutex
 	uploads     map[string]*trackerUploadJob
 	uploadWG    sync.WaitGroup
+
+	sharedCookieMigrator func(context.Context, string, api.Logger) error
 }
 
 type blurayCandidateSelector interface {
@@ -1224,6 +1229,117 @@ func (a *App) ListKnownTrackers() ([]string, error) {
 	return trackers.KnownTrackers(), nil
 }
 
+// ListTrackerAuthCapabilities returns tracker auth support metadata through the Wails bridge.
+func (a *App) ListTrackerAuthCapabilities() ([]api.TrackerAuthCapability, error) {
+	if a == nil {
+		return nil, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()).Capabilities(context.Background()))
+}
+
+// GetTrackerAuthStatus returns the current local auth status for one tracker.
+func (a *App) GetTrackerAuthStatus(tracker string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()).Status(context.Background(), tracker))
+}
+
+// ImportTrackerAuthCookies opens a native file picker, reads the selected file
+// with the shared bounded reader, and returns updated tracker auth status. A
+// cancelled picker or empty selection returns the current status without error.
+func (a *App) ImportTrackerAuthCookies(tracker string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	ctx, err := a.readyRuntimeContext()
+	if err != nil {
+		return api.TrackerAuthStatus{}, err
+	}
+	selection, err := openTrackerAuthCookieDialog(ctx, runtime.OpenDialogOptions{
+		Title: "Import tracker cookies",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Cookie files (*.txt;*.json)", Pattern: "*.txt;*.json"},
+			{DisplayName: "All files", Pattern: "*.*"},
+		},
+	})
+	if err != nil {
+		if isDialogCancelledErr(err) {
+			return wrapGUIResult(trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()).Status(context.Background(), tracker))
+		}
+		return api.TrackerAuthStatus{}, fmt.Errorf("gui: open tracker cookie dialog: %w", err)
+	}
+	if strings.TrimSpace(selection) == "" {
+		return wrapGUIResult(trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()).Status(context.Background(), tracker))
+	}
+	return importTrackerAuthCookieFile(ctx, trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()), tracker, selection)
+}
+
+// ImportTrackerAuthCookieContent imports caller-supplied cookie content for one
+// tracker using the current Wails runtime context and returns updated auth
+// status.
+func (a *App) ImportTrackerAuthCookieContent(tracker string, fileName string, content string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()).ImportCookies(a.runtimeContext(), tracker, fileName, content))
+}
+
+// importTrackerAuthCookieFile imports one host cookie file without reading past
+// the shared raw content limit before rejection.
+func importTrackerAuthCookieFile(ctx context.Context, service *trackerauth.Service, tracker string, path string) (api.TrackerAuthStatus, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return api.TrackerAuthStatus{}, fmt.Errorf("gui: read tracker cookie file: %w", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	content, err := trackerauth.ReadCookieImportContent(file)
+	if err != nil {
+		return api.TrackerAuthStatus{}, fmt.Errorf("gui: read tracker cookie file: %w", err)
+	}
+	return wrapGUIResult(service.ImportCookies(ctx, tracker, filepath.Base(path), content))
+}
+
+// TestTrackerAuth validates tracker auth remotely when supported, using the
+// current Wails runtime context so cancellation can stop remote validation.
+// Unsupported trackers return local status with an unsupported message.
+func (a *App) TestTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()).Validate(a.runtimeContext(), tracker))
+}
+
+// LoginTrackerAuth attempts credential-based tracker auth with the current
+// Wails runtime context and returns status for missing credentials, unsupported
+// login, or 2FA.
+func (a *App) LoginTrackerAuth(tracker string, req api.TrackerAuthLoginRequest) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()).Login(a.runtimeContext(), tracker, req))
+}
+
+// SubmitTrackerAuth2FA submits a manual 2FA code for an active tracker auth
+// challenge using the current Wails runtime context.
+func (a *App) SubmitTrackerAuth2FA(challengeID string, code string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()).Submit2FA(a.runtimeContext(), challengeID, code))
+}
+
+// DeleteTrackerAuth removes stored auth material for one tracker and returns
+// refreshed local status using the current Wails runtime context.
+func (a *App) DeleteTrackerAuth(tracker string) (api.TrackerAuthStatus, error) {
+	if a == nil {
+		return api.TrackerAuthStatus{}, errors.New("app not initialized")
+	}
+	return wrapGUIResult(trackerauth.NewServiceWithLogger(a.currentConfig(), a.currentLogger()).Delete(a.runtimeContext(), tracker))
+}
+
 func (a *App) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {
 	if a == nil {
 		return imagehostpolicy.Metadata{}, errors.New("app not initialized")
@@ -1233,9 +1349,9 @@ func (a *App) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {
 }
 
 // SaveConfig validates encrypted GUI settings, builds the replacement runtime,
-// then syncs cookie encryption metadata and saves the non-env config. Runtime
-// build or save failures leave the persisted config and active runtime unchanged;
-// env overrides apply only to the installed runtime config.
+// migrates shared cookies, then saves the non-env config. Runtime build,
+// migration, or save failures leave the persisted config and active runtime
+// unchanged; env overrides apply only to the installed runtime config.
 func (a *App) SaveConfig(payload string) error {
 	if a == nil {
 		return errors.New("app not initialized")
@@ -1551,9 +1667,10 @@ func (a *App) CreateWebAuth(username string, password string) (WebAuthStatus, er
 }
 
 // ImportConfig opens a native file picker, imports the selected config, builds
-// the replacement runtime, then syncs cookie encryption metadata and saves the
-// non-env config. Runtime build or save failures leave the persisted config and
-// active runtime unchanged; env overrides apply only to the installed runtime.
+// the replacement runtime, migrates shared cookies, then saves the non-env
+// config. Runtime build, migration, or save failures leave the persisted config
+// and active runtime unchanged; env overrides apply only to the installed
+// runtime config.
 func (a *App) ImportConfig() (ImportResult, error) {
 	if a == nil {
 		return ImportResult{}, errors.New("app not initialized")
@@ -1618,8 +1735,8 @@ func (a *App) importConfigFromPath(ctx context.Context, path string) (ImportResu
 	return ImportResult{Message: message, Warnings: warnings}, nil
 }
 
-// saveConfigToRepository enforces the shared pre-save cookie encryption sync
-// before persisting GUI config changes through the already-open repository.
+// saveConfigToRepository persists GUI config changes through the already-open
+// repository.
 func (a *App) saveConfigToRepository(ctx context.Context, cfg *config.Config, dbPath string) error {
 	if err := configstore.SaveToRepository(ctx, cfg, a.repo, dbPath); err != nil {
 		return fmt.Errorf("gui: %w", err)
@@ -1648,9 +1765,9 @@ func validateCookieAuthMaterial(dbPath string) error {
 }
 
 // saveAndApplyConfig builds the replacement runtime before any repository
-// writes, then persists cfg and installs the runtime as one ordered transition.
-// If persistence fails, the built runtime is closed and the active runtime is
-// left untouched.
+// writes, then migrates shared cookies, persists cfg, and installs the runtime
+// as one ordered transition. If migration or persistence fails, the built
+// runtime is closed and the active runtime is left untouched.
 func (a *App) saveAndApplyConfig(ctx context.Context, storedCfg *config.Config, runtimeCfg config.Config, dbPath string) error {
 	if err := validateCookieAuthMaterial(dbPath); err != nil {
 		if !errors.Is(err, cookies.ErrAuthHelperUnavailable) {
@@ -1676,6 +1793,10 @@ func (a *App) saveAndApplyConfig(ctx context.Context, storedCfg *config.Config, 
 		}
 	}()
 
+	if err := a.ensureSharedCookieMigrationForRuntime(ctx, dbPath, rt.Logger); err != nil {
+		return fmt.Errorf("gui: cookie migration failed: %w", err)
+	}
+
 	if err := a.saveConfigToRepository(ctx, storedCfg, dbPath); err != nil {
 		return err
 	}
@@ -1692,6 +1813,46 @@ func (a *App) saveAndApplyConfig(ctx context.Context, storedCfg *config.Config, 
 	}
 
 	return nil
+}
+
+// ensureSharedCookieMigration syncs cookie encryption metadata and migrates
+// legacy cookie files against the shared repository before SkipCookieMigration
+// runtimes serve uploads. Missing auth material is retryable on a later save.
+func (a *App) ensureSharedCookieMigration(ctx context.Context, dbPath string, logger api.Logger) error {
+	if a.repo == nil {
+		return errors.New("repository not initialized")
+	}
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+	if err := cookies.SyncCookieEncryptionWithAuth(ctx, a.repo.RawDB(), dbPath); err != nil {
+		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+			logger.Debugf("gui: cookie encryption sync skipped: web auth helper unavailable")
+		} else {
+			return fmt.Errorf("cookies encryption sync: %w", err)
+		}
+	}
+
+	cookiesDir, err := db.CookiePath(dbPath, "")
+	if err != nil {
+		logger.Debugf("gui: failed to resolve cookies directory: %v", err)
+		return nil
+	}
+	if err := cookies.EnsureCookieMigration(ctx, a.repo.RawDB(), dbPath, cookiesDir, logger); err != nil {
+		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+			logger.Debugf("gui: cookie migration skipped: web auth helper unavailable")
+			return nil
+		}
+		return fmt.Errorf("cookies migration: %w", err)
+	}
+	return nil
+}
+
+func (a *App) ensureSharedCookieMigrationForRuntime(ctx context.Context, dbPath string, logger api.Logger) error {
+	if a.sharedCookieMigrator != nil {
+		return a.sharedCookieMigrator(ctx, dbPath, logger)
+	}
+	return a.ensureSharedCookieMigration(ctx, dbPath, logger)
 }
 
 // applyConfig builds and installs a runtime from cfg without writing cfg to the

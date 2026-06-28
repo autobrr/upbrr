@@ -130,10 +130,17 @@ git clone https://github.com/<your-user>/upbrr && cd upbrr
 ```sh
 pnpm --dir gui/frontend install --frozen-lockfile
 make dev-frontend      # Vite dev server
-make test-frontend     # ESLint, dead-code, typecheck, Vitest, Prettier
+pnpm --dir gui/frontend run lint
+pnpm --dir gui/frontend run lint:dead
+pnpm --dir gui/frontend run typecheck
+pnpm --dir gui/frontend run test:unit
+pnpm --dir gui/frontend run format:check
 
 # CSS changes:
 pnpm --dir gui/frontend run lint:style
+
+# Bundle/runtime changes:
+pnpm --dir gui/frontend run build
 ```
 
 For embedded web visual checks, test the embedded build rather than the Vite-only server. Rebuild the frontend, sync it into embedded assets, rebuild the CLI, then run the auth-disabled embedded server on the main port:
@@ -186,12 +193,32 @@ make gui              # Wails GUI with current embedded assets
 
 ## Tests and checks
 
-Run the local checks before pushing:
+Run checks for the areas you touched:
 
 ```sh
-make test-go            # Go tests with race detector
-make test-frontend      # Frontend checks including Vitest
-make lint               # Path policy, then golangci-lint
+# Backend/Go packages:
+go test -race -v -timeout 20m <package>
+
+# CLI changes:
+go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api
+make backend
+
+# Wails/web/API parity:
+go test -race -v -timeout 20m ./internal/guiapp ./internal/webserver ./internal/guishared ./pkg/api
+
+# Frontend TS/TSX:
+pnpm --dir gui/frontend run lint
+pnpm --dir gui/frontend run lint:dead
+pnpm --dir gui/frontend run typecheck
+pnpm --dir gui/frontend run test:unit
+pnpm --dir gui/frontend run format:check
+
+# CSS:
+pnpm --dir gui/frontend run lint:style
+
+# Broad Go regression, lint, and policy sweeps:
+make test-go
+make lint
 make logpolicy
 make pathpolicy
 ```
@@ -206,7 +233,7 @@ pnpm --dir gui/frontend run lint:style
 ```
 
 Alternatively, `make precommit` and `make prepush` run the configured Lefthook checks.
-`make precommit` also runs stronger local validation: whitespace/conflict-marker checks, changed-package Go fix drift, full Go lint/path policy, log policy, and frontend lint/dead-code/type/unit/format checks. For Go behavior changes, run focused `go test` commands or `make test-go` as well.
+`make precommit` also runs stronger local validation: whitespace/conflict-marker checks, changed-package Go fix drift, full Go lint/path policy, log policy, and frontend lint/dead-code/type/unit/format checks. Hook wrappers do not replace focused Go tests, CSS Stylelint, embedded parity checks, or E2E checks when those areas changed.
 
 ## Project conventions
 
@@ -237,9 +264,9 @@ upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go
 This project uses [AGENTS.md](https://agents.md/) — an open standard for guiding AI coding agents. The root [`AGENTS.md`](./AGENTS.md) file contains always-loaded repo rules and routes agents to scoped references:
 
 - [`gui/frontend/AGENTS.md`](./gui/frontend/AGENTS.md) for frontend, React, CSS, TypeScript, and browser checks.
-- [`docs/backend.md`](./docs/backend.md) for Go, path/log policy, trackers/config/domain rules, and backend validation.
-- [`docs/architecture.md`](./docs/architecture.md) for cross-entrypoint architecture, API/runtime flow, DB/config ownership, and embedded assets.
-- [`docs/linting.md`](./docs/linting.md) for lint/check policy, hook internals, and generated/scratch path risks.
-- [`docs/e2e.md`](./docs/e2e.md) for Playwright E2E harness rules and commands.
+- [`internal/AGENTS.md`](./internal/AGENTS.md) for Go, path/log policy, trackers/config/domain rules, runtime architecture, lint/check policy, and generated/scratch path risks.
+- [`cmd/upbrr/AGENTS.md`](./cmd/upbrr/AGENTS.md) for CLI flags, prompts, and unattended behavior.
+- [`pkg/api/AGENTS.md`](./pkg/api/AGENTS.md) for cross-entrypoint API/runtime contracts.
+- [`gui/frontend/e2e/AGENTS.md`](./gui/frontend/e2e/AGENTS.md) for Playwright E2E harness rules and commands.
 
-Most modern AI coding tools support `AGENTS.md` natively or via simple configuration. `CLAUDE.md` files import the same guidance for Claude Code.
+Most modern AI coding tools support `AGENTS.md` natively or via simple configuration. `CLAUDE.md` files are symlinks to the same guidance for Claude Code.

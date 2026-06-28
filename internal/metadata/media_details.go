@@ -212,6 +212,7 @@ func (s *Service) RefreshPreparedMetadata(ctx context.Context, meta api.Prepared
 	if filenameHDR := filenameHDRFromMeta(meta); filenameHDR != "" && meta.HDR == normalizeFilenameHDRTokens(meta.Release.HDR) {
 		meta.HDR = filenameHDR
 	}
+	normalizeMediaInfoSettings(&meta)
 	ApplyRequestScopedAudioPolicy(&meta, refreshService.cfg, refreshService.logger)
 	RebuildReleaseName(&meta, refreshService.logger)
 
@@ -225,6 +226,25 @@ func (s *Service) RefreshPreparedMetadata(ctx context.Context, meta api.Prepared
 		return api.PreparedMetadata{}, err
 	}
 	return meta, nil
+}
+
+// normalizeMediaInfoSettings re-asserts the ValidMediaInfoSettings invariant on
+// refresh paths that reuse cached or imported metadata without re-reading media.
+// The full media pass (PrepareMetadata) only ever sets this false for a non-BDMV,
+// non-AV1 encode that is missing encoding settings; for every other release kind
+// it is unconditionally true. Cached or imported metadata can carry a stale or
+// zero-value false here, which would wrongly trip the UNIT3D MediaInfo-settings
+// rule (see internal/trackers/rules.go) and block valid remux/web/disc uploads,
+// so restore true whenever the release cannot be a validatable encode.
+func normalizeMediaInfoSettings(meta *api.PreparedMetadata) {
+	if meta == nil || meta.ValidMediaInfoSettings {
+		return
+	}
+	if strings.EqualFold(meta.DiscType, "BDMV") ||
+		!strings.EqualFold(meta.Type, "ENCODE") ||
+		strings.EqualFold(meta.VideoCodec, "AV1") {
+		meta.ValidMediaInfoSettings = true
+	}
 }
 
 func applyMetadataOverrides(meta *api.PreparedMetadata) {

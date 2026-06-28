@@ -20,6 +20,7 @@ import (
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	"github.com/autobrr/upbrr/internal/config"
+	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -277,7 +278,7 @@ func TestResolveUploadTorrentPathReusesPreparedPTPArtifact(t *testing.T) {
 
 func TestDefinitionUploadSuccess(t *testing.T) {
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "ua.db")
+	dbPath := newPTPAuthDB(t)
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
 	markTorrentWithPrivateMetadata(t, torrentPath)
@@ -392,8 +393,67 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if _, err := os.Stat(artifactPath); err != nil {
 		t.Fatalf("expected tracker torrent file: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, "cookies", ptpCookieFile)); !os.IsNotExist(err) {
+	legacyCookiePath, err := servicedb.CookiePath(dbPath, ptpCookieFile)
+	if err != nil {
+		t.Fatalf("resolve legacy PTP cookie path: %v", err)
+	}
+	if _, err := os.Stat(legacyCookiePath); !os.IsNotExist(err) {
 		t.Fatalf("expected no legacy PTP cookie file after upload, got err=%v", err)
+	}
+}
+
+func TestLoginAndFetchAntiCsrfTokenHandles2FA(t *testing.T) {
+	secondLogin := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RequestURI() != ptpLoginPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse login: %v", err)
+		}
+		if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("passkey") != "passkey" || r.FormValue("keeplogged") != "1" {
+			t.Fatalf("unexpected login form: %v", r.Form)
+		}
+		if r.FormValue("TfaCode") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"Result": "TfaRequired"})
+			return
+		}
+		secondLogin = true
+		if r.FormValue("TfaType") != "normal" {
+			t.Fatalf("expected TfaType normal, got %q", r.FormValue("TfaType"))
+		}
+		code := r.FormValue("TfaCode")
+		if len(code) != 6 || strings.Trim(code, "0123456789") != "" {
+			t.Fatalf("expected six digit TfaCode, got %q", code)
+		}
+		http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookievalue", Path: "/"})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"Result":        "Ok",
+			"AntiCsrfToken": "csrf-token",
+		})
+	}))
+	defer server.Close()
+
+	dbPath := newPTPAuthDB(t)
+	client, token, err := loginAndFetchAntiCsrfToken(context.Background(), config.TrackerConfig{
+		Username:    "user",
+		Password:    "pass",
+		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+		OTPURI:      "otpauth://totp/PTP:user?secret=JBSWY3DPEHPK3PXP&issuer=PTP",
+	}, dbPath, server.URL, api.NopLogger{}, api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if token != "csrf-token" {
+		t.Fatalf("expected csrf token, got %q", token)
+	}
+	if client == nil {
+		t.Fatal("expected authenticated client")
+	}
+	if !secondLogin {
+		t.Fatal("expected second 2FA login request")
 	}
 }
 
