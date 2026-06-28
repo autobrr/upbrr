@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -1550,12 +1551,12 @@ func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, strin
 	return cleanEditionText(edition), strings.ToUpper(repack)
 }
 
-// repackFromMeta scans raw path and parsed release tokens so repack markers do
-// not depend on guessit/rls placing them in the edition field.
+// repackFromMeta scans source basenames and parsed release tokens so repack
+// markers do not depend on guessit/rls placing them in the edition field.
 func repackFromMeta(meta api.PreparedMetadata, edition string) string {
 	return repackFromText(
-		meta.SourcePath,
-		meta.VideoPath,
+		pathutil.Base(meta.SourcePath),
+		pathutil.Base(meta.VideoPath),
 		edition,
 		strings.Join(meta.Release.Edition, " "),
 		strings.Join(meta.Release.Other, " "),

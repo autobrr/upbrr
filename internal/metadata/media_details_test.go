@@ -303,6 +303,11 @@ func TestEditionFromMetaExtractsRepackFromSourcePath(t *testing.T) {
 			path: `C:\Movies\Melancholia.2011.PROPER2.1080p.BluRay.DTS.x264-DON`,
 			want: "PROPER2",
 		},
+		{
+			name: "parent path marker ignored",
+			path: `C:\Movies\REPACK\Melancholia.2011.1080p.BluRay.DTS.x264-DON`,
+			want: "",
+		},
 	}
 
 	for _, tc := range tests {
