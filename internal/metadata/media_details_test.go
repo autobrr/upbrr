@@ -743,6 +743,18 @@ func TestAudioFromMediaSkipsCommentaryTitleVariantsForDualAudio(t *testing.T) {
 	}
 }
 
+func TestAudioFromMediaSkipsCompatibilityTitleStringForPrimaryAudio(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","StreamOrder":"0","Title_String":"Compatibility Track"},{"@type":"Audio","Format":"MLP FBA","Format_AdditionalFeatures":"16-ch","Channels":"8","ChannelLayout":"L R C LFE Ls Rs Lb Rb","StreamOrder":"1"}]}}`)
+
+	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "TrueHD 7.1 Atmos" {
+		t.Fatalf("expected compatibility Title_String track to be ignored for primary audio, got %q", audio)
+	}
+	if channels != "7.1" || commentary {
+		t.Fatalf("expected 7.1 with no commentary, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
 func TestAudioFromMediaAddsDubbedWhenOnlyEnglishTrackPresent(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"}]}}`)
 	meta := api.PreparedMetadata{

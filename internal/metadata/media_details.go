@@ -828,10 +828,12 @@ func selectPrimaryAudioTrack(tracks []map[string]any) map[string]any {
 	return filtered[0]
 }
 
+// filterCompatibilityTracks removes fallback audio tracks marked by any
+// MediaInfo title variant, leaving all-track fallback decisions to the caller.
 func filterCompatibilityTracks(tracks []map[string]any) []map[string]any {
 	filtered := make([]map[string]any, 0, len(tracks))
 	for _, track := range tracks {
-		title := strings.ToLower(trackString(track, "Title", "title"))
+		title := strings.ToLower(audioTrackTitle(track))
 		if strings.Contains(title, "compatibility") {
 			continue
 		}
