@@ -559,6 +559,7 @@ func servePersistConfig(storedWebCfg webserver.CLIConfig, runtimeWebCfg webserve
 	}
 
 	persisted := storedWebCfg
+	persisted.BaseURL = ""
 	if visited["addr"] {
 		persisted.Host = runtimeWebCfg.Host
 		persisted.Port = runtimeWebCfg.Port

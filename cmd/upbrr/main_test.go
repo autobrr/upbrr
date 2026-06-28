@@ -243,7 +243,7 @@ func TestRunServePersistWebConfigRequiresWebConfigOverride(t *testing.T) {
 	}
 }
 
-func TestServePersistConfigListenOnlyPreservesStoredBaseURL(t *testing.T) {
+func TestServePersistConfigListenOnlyClearsStoredBaseURL(t *testing.T) {
 	stored := webserver.CLIConfig{
 		Host:           "localhost",
 		Port:           7480,
@@ -261,8 +261,8 @@ func TestServePersistConfigListenOnlyPreservesStoredBaseURL(t *testing.T) {
 	if persisted.Host != "0.0.0.0" || persisted.Port != 9090 {
 		t.Fatalf("listen settings not persisted: %#v", persisted)
 	}
-	if persisted.BaseURL != "/stored/" {
-		t.Fatalf("base url persisted from transient override: %#v", persisted)
+	if persisted.BaseURL != "" {
+		t.Fatalf("base url persisted during listen-only save: %#v", persisted)
 	}
 	if !persisted.OpenBrowser || persisted.SessionTTL != 1440 || len(persisted.TrustedProxies) != 1 || persisted.TrustedProxies[0] != "127.0.0.1" {
 		t.Fatalf("unrelated web config changed: %#v", persisted)
@@ -287,8 +287,28 @@ func TestServePersistConfigListenOnlyPersistsExplicitListenFields(t *testing.T) 
 	runtime := webserver.CLIConfig{Host: "0.0.0.0", Port: 9090, BaseURL: "/env/"}
 
 	persisted := servePersistConfig(stored, runtime, map[string]bool{"persist-listen": true, "port": true})
-	if persisted.Host != "localhost" || persisted.Port != 9090 || persisted.BaseURL != "/stored/" {
+	if persisted.Host != "localhost" || persisted.Port != 9090 || persisted.BaseURL != "" {
 		t.Fatalf("listen persistence included env/transient fields: %#v", persisted)
+	}
+}
+
+func TestServePersistConfigListenOnlyIgnoresInvalidStoredBaseURLWhenSaving(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state", "upbrr.db")
+	stored := webserver.CLIConfig{Host: "localhost", Port: 7480, BaseURL: "javascript:alert(1)"}
+	runtime := webserver.CLIConfig{Host: "127.0.0.1", Port: 9090, BaseURL: "javascript:alert(1)"}
+
+	persisted := servePersistConfig(stored, runtime, map[string]bool{"persist-listen": true, "host": true})
+	if err := webserver.SaveCLIConfig(dbPath, persisted); err != nil {
+		t.Fatalf("SaveCLIConfig with listen-only config: %v", err)
+	}
+
+	saved, err := webserver.LoadCLIConfig(dbPath)
+	if err != nil {
+		t.Fatalf("LoadCLIConfig: %v", err)
+	}
+	if saved.Host != "127.0.0.1" || saved.Port != 7480 || saved.BaseURL != "" {
+		t.Fatalf("saved listen-only config = %#v", saved)
 	}
 }
 
