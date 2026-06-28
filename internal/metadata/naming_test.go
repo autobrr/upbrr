@@ -54,7 +54,7 @@ func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 		Tag:         "-ETHEL",
 	}, api.NopLogger{})
 
-	expectedName := "Greenland 2: Migration 2026 2160p iT WEB-DL DD+ Atmos 5.1 HDR10+ x265-ETHEL"
+	expectedName := "Greenland 2: Migration 2026 2160p iT WEB-DL DD+ 5.1 Atmos HDR10+ x265-ETHEL"
 	if result.Name != expectedName {
 		t.Fatalf("expected name %q, got %q", expectedName, result.Name)
 	}

@@ -694,7 +694,7 @@ func TestAudioFromMediaSkipsCommentaryTitleVariantsForDualAudio(t *testing.T) {
 	}
 
 	audio, channels, commentary := audioFromMedia(meta, doc, nil)
-	if audio != "Dubbed TrueHD Atmos 7.1" {
+	if audio != "Dubbed TrueHD 7.1 Atmos" {
 		t.Fatalf("expected commentary track to be ignored for dual-audio prefix, got %q", audio)
 	}
 	if channels != "7.1" || !commentary {
@@ -1049,8 +1049,8 @@ func TestAudioFromMediaNormalizesBDInfoCodecWithAtmos(t *testing.T) {
 		}},
 	})
 
-	if audio != "TrueHD Atmos 7.1" {
-		t.Fatalf("expected normalized BDInfo audio to be TrueHD Atmos 7.1, got %q", audio)
+	if audio != "TrueHD 7.1 Atmos" {
+		t.Fatalf("expected normalized BDInfo audio to be TrueHD 7.1 Atmos, got %q", audio)
 	}
 	if channels != "7.1" || commentary {
 		t.Fatalf("expected channels=7.1 commentary=false, got channels=%q commentary=%t", channels, commentary)

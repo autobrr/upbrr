@@ -357,6 +357,9 @@ func containerFromMeta(meta api.PreparedMetadata) string {
 	return strings.ToLower(ext)
 }
 
+// audioFromMedia derives the primary audio label, channel count, and
+// commentary presence from BDInfo or MediaInfo. Object-audio markers such as
+// Atmos are emitted after the channel count to match release-name ordering.
 func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discparse.BDInfo) (string, string, bool) {
 	if bdinfo != nil && len(bdinfo.Audio) > 0 {
 		track := bdinfo.Audio[0]
@@ -365,14 +368,15 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 			"Format":            track.Codec,
 		})
 		codec = strings.TrimSpace(codec)
-		if track.Atmos != "" && !strings.Contains(strings.ToLower(codec), "atmos") {
-			codec = strings.TrimSpace(codec + " Atmos")
-		}
 		channels := strings.TrimSpace(track.Channels)
 		if channels == "" {
 			channels = "Unknown"
 		}
-		return strings.TrimSpace(codec + " " + channels), channels, false
+		extra := ""
+		if track.Atmos != "" && !strings.Contains(strings.ToLower(codec), "atmos") {
+			extra = "Atmos"
+		}
+		return strings.Join(strings.Fields(strings.Join([]string{codec, channels, extra}, " ")), " "), channels, false
 	}
 
 	_, _, audioTracks := splitMediaInfoTracks(doc)
@@ -396,8 +400,9 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	}
 
 	formatLower := strings.ToLower(format)
+	extra := ""
 	if isAtmosAudio(additional, formatLower, trackString(track, "ChannelLayout", "ChannelPositions")) && !strings.Contains(formatLower, "atmos") {
-		format = strings.TrimSpace(format + " Atmos")
+		extra = "Atmos"
 	}
 	if isDTSXAudio(additional, formatLower) && !strings.Contains(strings.ToLower(format), "dts:x") {
 		if strings.EqualFold(format, "DTS") {
@@ -412,8 +417,8 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	if formatSettings == "EX" && channels != "5.1" {
 		formatSettings = ""
 	}
-	if !strings.Contains(strings.ToLower(format), "atmos") && strings.Contains(firstAudioTitle, "auro3d") {
-		format = strings.TrimSpace(format + " Auro3D")
+	if extra == "" && strings.Contains(firstAudioTitle, "auro3d") {
+		extra = "Auro3D"
 	}
 	commentary := false
 	for _, audioTrack := range audioTracks {
@@ -427,7 +432,7 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	if strings.TrimSpace(meta.DiscType) == "" {
 		prefix = audioLanguagePrefix(meta, audioTracks)
 	}
-	return strings.Join(strings.Fields(strings.Join([]string{prefix, format, formatSettings, channels}, " ")), " "), channels, commentary
+	return strings.Join(strings.Fields(strings.Join([]string{prefix, format, formatSettings, channels, extra}, " ")), " "), channels, commentary
 }
 
 func normalizeAudioFormatSettings(value string) string {
