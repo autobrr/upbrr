@@ -11,6 +11,7 @@ import (
 )
 
 // EnsureSession validates stored tracker auth, optionally attempts credential login, and returns the ready session or a typed auth error.
+// When AutoLogin is false, it returns [AuthRequiredError] without calling tracker adapter validation or login.
 func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session, error) {
 	if ctx == nil {
 		return Session{}, errors.New("tracker auth: context is required")
@@ -23,6 +24,9 @@ func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session
 	adapter, ok := s.adapterFor(trackerID)
 	if !ok {
 		return Session{}, newUnknownTrackerError(trackerID)
+	}
+	if !req.AutoLogin {
+		return Session{}, &AuthRequiredError{TrackerID: trackerID, Reason: "login required"}
 	}
 
 	session, err := adapter.Validate(ctx, req.Config, req.DBPath)
@@ -63,9 +67,6 @@ func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session
 			return Session{}, &AuthRequiredError{TrackerID: trackerID, Reason: "stored session expired", Err: err}
 		}
 		return Session{}, &UnsupportedAuthError{TrackerID: trackerID, Reason: "credential login unsupported", Err: err}
-	}
-	if !req.AutoLogin {
-		return Session{}, &AuthRequiredError{TrackerID: trackerID, Reason: "login required", Err: err}
 	}
 	if !hasLoginCredentials(req.Config) {
 		return Session{}, &AuthRequiredError{TrackerID: trackerID, Reason: "username/password missing", Err: err}

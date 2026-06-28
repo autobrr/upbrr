@@ -48,7 +48,8 @@ type uploadState struct {
 }
 
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
-	apiKey, err := resolveAPIKey(ctx, req)
+	baseURL := resolveBaseURL(req.TrackerConfig)
+	uploadURL, err := joinURL(baseURL, "/api/upload")
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -61,14 +62,14 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: RTF %s", state.blockedReason)
 	}
 
+	apiKey, err := resolveAPIKey(ctx, req)
+	if err != nil {
+		return api.UploadSummary{}, err
+	}
+
 	body, err := json.Marshal(state.payload)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: RTF marshal upload payload: %w", err)
-	}
-	baseURL := resolveBaseURL(req.TrackerConfig)
-	uploadURL, err := joinURL(baseURL, "/api/upload")
-	if err != nil {
-		return api.UploadSummary{}, err
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, strings.NewReader(string(body)))
 	if err != nil {
@@ -205,6 +206,8 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}, nil
 }
 
+// resolveAPIKey validates configured RTF API auth and persists a refreshed token when credentials are used.
+// Callers must complete no-upload eligibility gates before invoking it.
 func resolveAPIKey(ctx context.Context, req trackers.UploadRequest) (string, error) {
 	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
 	baseURL := resolveBaseURL(req.TrackerConfig)
@@ -233,8 +236,8 @@ func resolveAPIKey(ctx context.Context, req trackers.UploadRequest) (string, err
 	return refreshed, nil
 }
 
-// ResolveSessionForTrackerAuthLogin validates RTF API auth or refreshes the API
-// key with configured credentials for tracker-auth checks.
+// ResolveSessionForTrackerAuthLogin validates RTF API auth or refreshes and
+// persists the API key with configured credentials for tracker-auth checks.
 func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
 	apiKey := strings.TrimSpace(cfg.APIKey)
 	baseURL := resolveBaseURL(cfg)

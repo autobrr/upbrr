@@ -274,7 +274,8 @@ func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig,
 // falling back to the configured OTP URI; if neither yields a code, the error
 // is returned before stored cookies are replaced. A rejected submitted code can
 // return [ErrSubmitted2FARejected] with the auth-key lookup failure before
-// refreshed cookies are persisted.
+// refreshed cookies are persisted. Response read errors are returned directly
+// and are not classified as submitted-code rejections.
 func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, login api.TrackerAuthLoginRequest) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	if baseURL == "" {
@@ -328,8 +329,11 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 	if err != nil {
 		return "", nil, nil, "", fmt.Errorf("trackers: MTV login page request: %w", err)
 	}
-	loginBody, _ := io.ReadAll(loginResp.Body)
+	loginBody, err := io.ReadAll(loginResp.Body)
 	_ = loginResp.Body.Close()
+	if err != nil {
+		return "", nil, nil, "", fmt.Errorf("trackers: MTV read login page response: %w", err)
+	}
 	effectiveBaseURL := mtvEffectiveBaseURL(baseURL, loginResp)
 	effectiveLoginURL := strings.TrimRight(effectiveBaseURL, "/") + "/login"
 	match := mtvTokenPattern.FindStringSubmatch(string(loginBody))
@@ -357,8 +361,11 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 	if err != nil {
 		return "", nil, nil, "", fmt.Errorf("trackers: MTV login request: %w", err)
 	}
-	body, _ := io.ReadAll(postResp.Body)
+	body, err := io.ReadAll(postResp.Body)
 	_ = postResp.Body.Close()
+	if err != nil {
+		return "", nil, nil, "", fmt.Errorf("trackers: MTV read login response: %w", err)
+	}
 	finalAuthBody := string(body)
 	finalAuthTrace := mtvResponseTrace(postResp)
 
@@ -386,8 +393,11 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 		if err != nil {
 			return "", nil, nil, "", fmt.Errorf("trackers: MTV 2FA login request: %w", err)
 		}
-		twoFactorBody, _ := io.ReadAll(twoResp.Body)
+		twoFactorBody, err := io.ReadAll(twoResp.Body)
 		_ = twoResp.Body.Close()
+		if err != nil {
+			return "", nil, nil, "", fmt.Errorf("trackers: MTV read 2FA login response: %w", err)
+		}
 		finalAuthBody = string(twoFactorBody)
 		finalAuthTrace = mtvResponseTrace(twoResp)
 		submittedManualCode = strings.TrimSpace(login.Code) != ""

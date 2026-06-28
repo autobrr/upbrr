@@ -14,11 +14,13 @@ import (
 )
 
 type fakeAdapter struct {
-	capability api.TrackerAuthCapability
-	validate   func() (Session, error)
-	login      func() (Session, error)
-	submit     func(context.Context, config.TrackerConfig, string, api.TrackerAuthLoginRequest) (Session, error)
-	deleted    bool
+	capability    api.TrackerAuthCapability
+	validate      func() (Session, error)
+	login         func() (Session, error)
+	submit        func(context.Context, config.TrackerConfig, string, api.TrackerAuthLoginRequest) (Session, error)
+	validateCalls int
+	loginCalls    int
+	deleteCalls   int
 }
 
 func (a *fakeAdapter) Capability() api.TrackerAuthCapability {
@@ -30,10 +32,18 @@ func (a *fakeAdapter) Status(context.Context, config.TrackerConfig, string) (api
 }
 
 func (a *fakeAdapter) Validate(context.Context, config.TrackerConfig, string) (Session, error) {
+	a.validateCalls++
+	if a.validate == nil {
+		return Session{}, errors.New("unexpected validate")
+	}
 	return a.validate()
 }
 
 func (a *fakeAdapter) Login(context.Context, config.TrackerConfig, string, api.TrackerAuthLoginRequest) (Session, error) {
+	a.loginCalls++
+	if a.login == nil {
+		return Session{}, errors.New("unexpected login")
+	}
 	return a.login()
 }
 
@@ -45,7 +55,7 @@ func (a *fakeAdapter) Submit2FA(ctx context.Context, cfg config.TrackerConfig, d
 }
 
 func (a *fakeAdapter) Delete(context.Context, string) error {
-	a.deleted = true
+	a.deleteCalls++
 	return nil
 }
 
@@ -60,15 +70,42 @@ func TestEnsureSessionReturnsValidStoredSession(t *testing.T) {
 	}
 	service := &Service{adapters: map[string]Adapter{"FAKE": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
 
-	session, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "fake"})
+	session, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "fake", AutoLogin: true})
 	if err != nil {
 		t.Fatalf("EnsureSession: %v", err)
 	}
 	if session.TrackerID != "FAKE" || session.State != SessionStateReady {
 		t.Fatalf("unexpected session: %#v", session)
 	}
-	if adapter.deleted {
+	if adapter.deleteCalls != 0 {
 		t.Fatal("did not expect valid cookies to be deleted")
+	}
+}
+
+func TestEnsureSessionAutoLoginFalseSkipsAdapterValidation(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{TrackerID: "FAKE", SupportsLogin: true},
+		validate: func() (Session, error) {
+			return Session{TrackerID: "FAKE", State: SessionStateReady}, nil
+		},
+		login: func() (Session, error) {
+			return Session{TrackerID: "FAKE", State: SessionStateReady}, nil
+		},
+	}
+	service := &Service{adapters: map[string]Adapter{"FAKE": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
+
+	_, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "FAKE"})
+	if err == nil {
+		t.Fatal("expected auth required error")
+	}
+	var authRequired *AuthRequiredError
+	if !errors.As(err, &authRequired) {
+		t.Fatalf("expected AuthRequiredError, got %v", err)
+	}
+	if adapter.validateCalls != 0 || adapter.loginCalls != 0 || adapter.deleteCalls != 0 {
+		t.Fatalf("AutoLogin=false must not call adapter methods, got validate=%d login=%d delete=%d", adapter.validateCalls, adapter.loginCalls, adapter.deleteCalls)
 	}
 }
 
@@ -94,7 +131,7 @@ func TestEnsureSessionDeletesConfirmedInvalidAndLogsIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureSession: %v", err)
 	}
-	if !adapter.deleted {
+	if adapter.deleteCalls == 0 {
 		t.Fatal("expected confirmed-invalid session to be deleted before login")
 	}
 }
@@ -118,7 +155,7 @@ func TestEnsureSessionKeepsCookiesOnTransientValidationFailure(t *testing.T) {
 	if !errors.As(err, &validationErr) || !validationErr.Transient {
 		t.Fatalf("expected transient validation error, got %v", err)
 	}
-	if adapter.deleted {
+	if adapter.deleteCalls != 0 {
 		t.Fatal("transient validation failure must not delete stored session")
 	}
 }
@@ -142,7 +179,7 @@ func TestEnsureSessionKeepsCookiesOnPTPMissingAntiCSRFToken(t *testing.T) {
 	if !errors.As(err, &validationErr) || validationErr.ConfirmedInvalid {
 		t.Fatalf("expected non-confirmed validation error, got %v", err)
 	}
-	if adapter.deleted {
+	if adapter.deleteCalls != 0 {
 		t.Fatal("PTP parser miss must not delete stored session")
 	}
 }
@@ -170,7 +207,7 @@ func TestEnsureSessionKeepsCookiesOnPTPAuthKeyNotFoundText(t *testing.T) {
 	if !errors.As(err, &validationErr) || !validationErr.Transient || validationErr.ConfirmedInvalid {
 		t.Fatalf("expected transient non-confirmed validation error, got %v", err)
 	}
-	if adapter.deleted {
+	if adapter.deleteCalls != 0 {
 		t.Fatal("free-text auth key miss must not delete stored session")
 	}
 }
@@ -194,7 +231,7 @@ func TestEnsureSessionKeepsCookiesOnInvalidLookingTransientAdapterText(t *testin
 	if !errors.As(err, &validationErr) || !validationErr.Transient || validationErr.ConfirmedInvalid {
 		t.Fatalf("expected transient non-confirmed validation error, got %v", err)
 	}
-	if adapter.deleted {
+	if adapter.deleteCalls != 0 {
 		t.Fatal("transient invalid-looking text must not delete stored session")
 	}
 }
@@ -293,7 +330,7 @@ func TestEnsureSessionCreatesManual2FAChallenge(t *testing.T) {
 	}
 	service := &Service{adapters: map[string]Adapter{"FAKE": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
 
-	session, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "FAKE"})
+	session, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "FAKE", AutoLogin: true})
 	if err == nil {
 		t.Fatal("expected Needs2FAError")
 	}

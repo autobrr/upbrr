@@ -162,6 +162,58 @@ func TestResolveSessionForTrackerAuthSavesCookiesWhenLoginResponseContainsAuthKe
 	}
 }
 
+func TestLoginAndResolveAuthKeyReturnsLoginPageReadError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login" && r.Method == http.MethodGet:
+			writeMalformedChunkedResponse(t, w)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, _, _, _, err := loginAndResolveAuthKey(context.Background(), config.TrackerConfig{
+		Username: "user",
+		Password: "pass",
+	}, server.URL, api.TrackerAuthLoginRequest{})
+	if err == nil {
+		t.Fatal("expected login page read error")
+	}
+	if !strings.Contains(err.Error(), "read login page response") {
+		t.Fatalf("expected login page read-error context, got %v", err)
+	}
+}
+
+func TestLoginAndResolveAuthKeyReturnsLoginPostReadError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+		case r.URL.Path == "/login" && r.Method == http.MethodPost:
+			writeMalformedChunkedResponse(t, w)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, _, _, _, err := loginAndResolveAuthKey(context.Background(), config.TrackerConfig{
+		Username: "user",
+		Password: "pass",
+	}, server.URL, api.TrackerAuthLoginRequest{})
+	if err == nil {
+		t.Fatal("expected login response read error")
+	}
+	if !strings.Contains(err.Error(), "read login response") {
+		t.Fatalf("expected login response read-error context, got %v", err)
+	}
+}
+
 func TestResolveSessionForTrackerAuthPostsLoginToRedirectedHost(t *testing.T) {
 	t.Parallel()
 
@@ -427,6 +479,59 @@ func TestResolveSessionForTrackerAuthLoginMarksSubmitted2FAAuthKeyMiss(t *testin
 	}
 }
 
+func TestResolveSessionForTrackerAuthLoginReturns2FAReadError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newMTVAuthDB(t)
+	if err := saveMTVCookies(ctx, dbPath, map[string]string{"session": "existing"}); err != nil {
+		t.Fatalf("saveMTVCookies: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.php":
+			_, _ = w.Write([]byte(`<html>logged out</html>`))
+		case "/login":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+				return
+			}
+			http.Redirect(w, r, "/twofactor/login", http.StatusFound)
+		case "/twofactor/login":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<input name="token" value="ponmlkjihgfedcba">`))
+				return
+			}
+			writeMalformedChunkedResponse(t, w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
+	}, dbPath, api.TrackerAuthLoginRequest{Code: "123456"})
+	if err == nil {
+		t.Fatal("expected 2FA response read error")
+	}
+	if errors.Is(err, ErrSubmitted2FARejected) {
+		t.Fatalf("read error must not be classified as submitted 2FA rejection: %v", err)
+	}
+	if !strings.Contains(err.Error(), "read 2FA login response") {
+		t.Fatalf("expected read-error context, got %v", err)
+	}
+	got, loadErr := loadMTVCookies(ctx, dbPath)
+	if loadErr != nil {
+		t.Fatalf("loadMTVCookies: %v", loadErr)
+	}
+	if got["session"] != "existing" {
+		t.Fatalf("2FA read error must preserve stored cookies, got %#v", got)
+	}
+}
+
 func TestResolveSessionForTrackerAuthLoginReportsSafeAuthKeyDiagnostics(t *testing.T) {
 	t.Parallel()
 
@@ -528,4 +633,26 @@ func newMTVAuthDB(t *testing.T) string {
 	}
 	_ = repo.Close()
 	return dbPath
+}
+
+func writeMalformedChunkedResponse(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		t.Fatal("response writer does not support hijacking")
+	}
+	conn, rw, err := hijacker.Hijack()
+	if err != nil {
+		t.Fatalf("hijack response: %v", err)
+	}
+	if _, err := rw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\n\r\n20\r\npartial"); err != nil {
+		_ = conn.Close()
+		t.Fatalf("write malformed chunked response: %v", err)
+	}
+	if err := rw.Flush(); err != nil {
+		_ = conn.Close()
+		t.Fatalf("flush malformed chunked response: %v", err)
+	}
+	_ = conn.Close()
 }

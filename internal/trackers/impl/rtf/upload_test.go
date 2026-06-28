@@ -113,6 +113,51 @@ func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
 	}
 }
 
+func TestUploadBlockedExpiredAPIKeyDoesNotRefreshOrPersist(t *testing.T) {
+	root := t.TempDir()
+	torrentPath := filepath.Join(root, "test.torrent")
+	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	dbPath := filepath.Join(root, "upbrr.db")
+	seedRTFConfig(t, dbPath, config.TrackerConfig{APIKey: "old-token", Username: "user", Password: "pass"})
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := upload(context.Background(), trackers.UploadRequest{
+		Tracker: "RTF",
+		Meta: api.PreparedMetadata{
+			TorrentPath: torrentPath,
+			ReleaseName: "Recent Release",
+			Release:     api.ReleaseInfo{Year: 9999},
+		},
+		TrackerConfig: config.TrackerConfig{
+			URL:      server.URL,
+			APIKey:   "old-token",
+			Username: "user",
+			Password: "pass",
+		},
+		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+	})
+	if err == nil {
+		t.Fatal("expected blocked upload error")
+	}
+	if !strings.Contains(err.Error(), "content must be at least 10 years old") {
+		t.Fatalf("expected eligibility error, got %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("blocked upload must not call RTF auth or upload endpoints, got %d requests", requests)
+	}
+	if got := loadStoredRTFAPIKey(t, dbPath); got != "old-token" {
+		t.Fatalf("blocked upload must leave stored token unchanged, got %q", got)
+	}
+}
+
 func TestUploadUsesValidAPIKeyWithoutRefresh(t *testing.T) {
 	root := t.TempDir()
 	torrentPath := filepath.Join(root, "test.torrent")
