@@ -44,7 +44,7 @@ func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg conf
 	}
 	logger.Infof("core: using e2e fake services")
 	if services.Metadata == nil {
-		services.Metadata = e2eMetadataService{}
+		services.Metadata = e2eMetadataService{repo: repo}
 	}
 	if services.Torrents == nil {
 		services.Torrents = e2eTorrentService{dbPath: cfg.MainSettings.DBPath}
@@ -72,9 +72,11 @@ func isE2EEnabled() bool {
 	return value == "1" || strings.EqualFold(value, "true")
 }
 
-type e2eMetadataService struct{}
+type e2eMetadataService struct {
+	repo db.MetadataRepository
+}
 
-func (e2eMetadataService) Prepare(_ context.Context, req api.Request) (api.PreparedMetadata, error) {
+func (s e2eMetadataService) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
 	if len(req.Paths) == 0 || strings.TrimSpace(req.Paths[0]) == "" {
 		return api.PreparedMetadata{}, errors.New("e2e metadata: path is required")
 	}
@@ -83,7 +85,7 @@ func (e2eMetadataService) Prepare(_ context.Context, req api.Request) (api.Prepa
 	if len(trackers) == 0 {
 		trackers = []string{"BTN"}
 	}
-	return api.PreparedMetadata{
+	meta := api.PreparedMetadata{
 		SourcePath:        sourcePath,
 		Paths:             []string{sourcePath},
 		Mode:              req.Mode,
@@ -142,7 +144,28 @@ func (e2eMetadataService) Prepare(_ context.Context, req api.Request) (api.Prepa
 			Description:        "E2E description fixture.",
 			DescriptionHTML:    "<p>E2E description fixture.</p>",
 		}},
-	}, nil
+	}
+	if s.repo != nil {
+		if info, err := os.Stat(sourcePath); err == nil {
+			meta.SourceSize = info.Size()
+		}
+		if err := s.repo.Save(ctx, db.FileMetadata{
+			Path:       sourcePath,
+			UpdatedAt:  time.Now().UTC(),
+			SourceSize: meta.SourceSize,
+			Category:   api.NormalizeCategory(meta.Release.Category),
+			Type:       meta.Release.Type,
+			Title:      meta.Release.Title,
+			Year:       meta.Release.Year,
+			Source:     meta.Release.Source,
+			Resolution: meta.Release.Resolution,
+			Ext:        meta.Release.Ext,
+			Group:      meta.Release.Group,
+		}); err != nil {
+			return api.PreparedMetadata{}, fmt.Errorf("e2e metadata: save: %w", err)
+		}
+	}
+	return meta, nil
 }
 
 func (e e2eMetadataService) RefreshPreparedMetadata(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
@@ -190,7 +213,8 @@ func (s e2eTorrentService) Create(_ context.Context, meta api.PreparedMetadata) 
 		return api.TorrentResult{}, fmt.Errorf("e2e torrent: mkdir: %w", err)
 	}
 	path := filepath.Join(dir, "input.torrent")
-	if err := os.WriteFile(path, []byte("d8:announce13:http://e2e.ee"), 0o600); err != nil {
+	const torrentFixture = "d8:announce13:http://e2e.ee4:infod6:lengthi0e4:name8:test.txt12:piece lengthi16384e6:pieces0:ee"
+	if err := os.WriteFile(path, []byte(torrentFixture), 0o600); err != nil {
 		return api.TorrentResult{}, fmt.Errorf("e2e torrent: write: %w", err)
 	}
 	return api.TorrentResult{Path: path, InfoHash: "0123456789abcdef0123456789abcdef01234567"}, nil

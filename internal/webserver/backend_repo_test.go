@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ func TestBackendApplyConfigKeepsSharedRepositoryUsable(t *testing.T) {
 	cfg := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 
 	backend := &Backend{
@@ -84,7 +85,7 @@ func TestNewBackendKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	cfg := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 
 	backend, err := NewBackend(cfg, newEventHub())
@@ -162,6 +163,7 @@ func TestBackendGetConfigFallsBackToRuntimeConfigWhenDatabaseConfigMissing(t *te
 		t.Fatalf("load embedded config: %v", err)
 	}
 	cfg.MainSettings.DBPath = repoPath
+	cfg.Logging.Level = "error"
 	backend := &Backend{
 		cfg:  *cfg,
 		repo: repo,
@@ -335,7 +337,7 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 	stored := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "stored"},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 9},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	if err := config.SaveToDatabase(context.Background(), &stored, repo); err != nil {
 		t.Fatalf("save stored config: %v", err)
@@ -346,12 +348,12 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 	cfgA := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "runtime-a", DBPath: pathA},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	cfgB := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "runtime-b", DBPath: pathB},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 2},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	backend := &Backend{
 		cfg:  cfgA,
@@ -622,7 +624,7 @@ func TestBackendSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
 	initial := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	backend := &Backend{
 		cfg:  initial,
@@ -760,10 +762,12 @@ func TestBackendLogStreamContinuesAcrossSaveConfigRuntimeReplacement(t *testing.
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-log-stream.db")
 	initial := backendConfigTestConfig(repoPath)
+	initial.Logging.Level = "info"
 	initialLogger, err := logging.New(initial.Logging, repoPath)
 	if err != nil {
 		t.Fatalf("new logger: %v", err)
 	}
+	initialLogger.SetConsoleOutput(io.Discard, io.Discard)
 	backend := &Backend{
 		cfg:     initial,
 		logger:  initialLogger,
@@ -813,10 +817,11 @@ func TestBackendLogStreamContinuesAcrossSaveConfigRuntimeReplacement(t *testing.
 func TestBackendStartLogStreamRejectsNilHubWithoutRegisteringStream(t *testing.T) {
 	t.Parallel()
 
-	logger, err := logging.New(config.LoggingConfig{Level: "info"}, filepath.Join(t.TempDir(), "nil-hub-log-stream.db"))
+	logger, err := logging.New(config.LoggingConfig{Level: "error"}, filepath.Join(t.TempDir(), "nil-hub-log-stream.db"))
 	if err != nil {
 		t.Fatalf("new logger: %v", err)
 	}
+	logger.SetConsoleOutput(io.Discard, io.Discard)
 	t.Cleanup(func() {
 		_ = logger.Close()
 	})
@@ -848,10 +853,12 @@ func TestBackendLogStreamContinuesAcrossImportConfigRuntimeReplacement(t *testin
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-import-log-stream.db")
 	initial := backendConfigTestConfig(repoPath)
+	initial.Logging.Level = "info"
 	initialLogger, err := logging.New(initial.Logging, repoPath)
 	if err != nil {
 		t.Fatalf("new logger: %v", err)
 	}
+	initialLogger.SetConsoleOutput(io.Discard, io.Discard)
 	backend := &Backend{
 		cfg:     initial,
 		logger:  initialLogger,
@@ -913,7 +920,7 @@ func TestBackendSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
 	initial := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	backend := &Backend{
 		cfg:  initial,
@@ -1271,7 +1278,7 @@ func backendConfigTestConfig(repoPath string) config.Config {
 	return config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 }
 
@@ -1489,7 +1496,7 @@ func TestBackendExportConfigRespectsAllowUnencryptedExport(t *testing.T) {
 			cfg := config.Config{
 				MainSettings:       config.MainSettingsConfig{TMDBAPI: "plain-secret", DBPath: repoPath},
 				ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-				Logging:            config.LoggingConfig{Level: "info"},
+				Logging:            config.LoggingConfig{Level: "error"},
 			}
 
 			backend, err := NewBackend(cfg, newEventHub())
