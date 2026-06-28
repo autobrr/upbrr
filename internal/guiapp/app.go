@@ -313,7 +313,7 @@ func (a *App) DetectDiscType(path string) (string, error) {
 	return wrapGUIResult(filesystem.DetectDiscType(ctx, path))
 }
 
-func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (api.MetadataPreview, error) {
+func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string) (api.MetadataPreview, error) {
 	if err := a.requireCore(); err != nil {
 		return api.MetadataPreview{}, err
 	}
@@ -344,6 +344,7 @@ func (a *App) FetchMetadata(path string, sourceLookupURL string, overrides api.E
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIResult(a.currentCore().FetchMetadataPreview(progressCtx, req))
@@ -369,7 +370,7 @@ func (a *App) SelectBlurayCandidate(path string, releaseID string) (api.Metadata
 	return wrapGUIResult(selector.SelectBlurayCandidate(ctx, path, releaseID))
 }
 
-func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (api.MetadataPreview, error) {
+func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string) (api.MetadataPreview, error) {
 	if err := a.requireCore(); err != nil {
 		return api.MetadataPreview{}, err
 	}
@@ -505,6 +506,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 	preview, err := a.currentCore().FetchMetadataPreview(progressCtx, req)
 	if err != nil {
@@ -583,7 +585,7 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 	return true, nil
 }
 
-func (a *App) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (api.DupeCheckSummary, error) {
+func (a *App) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string) (api.DupeCheckSummary, error) {
 	if a == nil || a.currentCore() == nil {
 		return api.DupeCheckSummary{}, errors.New("app not initialized")
 	}
@@ -604,12 +606,16 @@ func (a *App) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOve
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIResult(a.currentCore().CheckDupes(ctx, req))
 }
 
-func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string) (api.PreparationPreview, error) {
+// FetchPreparation builds a GUI preparation preview for a host source path.
+// Caller-provided external ID, release-name, and metadata overrides are applied
+// to the same request so BDInfo playlist preparation sees current UI edits.
+func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string, ignoreDupesFor []string) (api.PreparationPreview, error) {
 	if a == nil || a.currentCore() == nil {
 		return api.PreparationPreview{}, errors.New("app not initialized")
 	}
@@ -631,6 +637,7 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
@@ -646,7 +653,7 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 	return wrapGUIResult(a.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
-func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	rt, err := a.requireRuntime()
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
@@ -688,6 +695,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 		Options:                     buildRunUploadOptions(rt.cfg, runOpts),
 		ExternalIDOverrides:         overrides,
 		ReleaseNameOverrides:        nameOverrides,
+		MetadataOverrides:           metadataOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 	}
 	req.Options.DryRun = true
@@ -711,7 +719,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 	return wrapGUIResult(runCore.FetchTrackerDryRunPreview(progressCtx, req))
 }
 
-func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string) (api.DescriptionBuilderPreview, error) {
+func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string, ignoreDupesFor []string) (api.DescriptionBuilderPreview, error) {
 	if a == nil || a.currentCore() == nil {
 		return api.DescriptionBuilderPreview{}, errors.New("app not initialized")
 	}
@@ -732,6 +740,7 @@ func (a *App) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverr
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIResult(a.currentCore().FetchDescriptionBuilderPreview(ctx, req))
@@ -749,7 +758,7 @@ func (a *App) RenderDescription(raw string) (string, error) {
 	return wrapGUIResult(a.currentCore().RenderDescription(ctx, raw))
 }
 
-func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, trackers []string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.DescriptionBuilderGroup, error) {
+func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, trackers []string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides) (api.DescriptionBuilderGroup, error) {
 	if a == nil || a.currentCore() == nil {
 		return api.DescriptionBuilderGroup{}, errors.New("app not initialized")
 	}
@@ -770,6 +779,7 @@ func (a *App) SaveDescriptionOverride(path string, groupKey string, raw string, 
 	req.Trackers = slices.Clone(trackers)
 	req.ExternalIDOverrides = overrides
 	req.ReleaseNameOverrides = nameOverrides
+	req.MetadataOverrides = metadataOverrides
 
 	return wrapGUIResult(a.currentCore().SaveDescriptionOverride(ctx, req, raw))
 }
@@ -864,7 +874,7 @@ func (a *App) DeleteHistoryRelease(sourcePath string) error {
 	return nil
 }
 
-func (a *App) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.ScreenshotPlan, error) {
+func (a *App) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides) (api.ScreenshotPlan, error) {
 	rt, err := a.requireRuntime()
 	if err != nil {
 		return api.ScreenshotPlan{}, err
@@ -884,12 +894,13 @@ func (a *App) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIResult(rt.core.FetchScreenshotPlan(ctx, req))
 }
 
-func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
+func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
 	rt, err := a.requireRuntime()
 	if err != nil {
 		return api.ScreenshotResult{}, err
@@ -909,12 +920,13 @@ func (a *App) GenerateScreenshots(path string, overrides api.ExternalIDOverrides
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIResult(rt.core.GenerateScreenshots(ctx, req, selections, purpose))
 }
 
-func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.ScreenshotImage, error) {
+func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides) ([]api.ScreenshotImage, error) {
 	rt, err := a.requireRuntime()
 	if err != nil {
 		return nil, err
@@ -934,12 +946,13 @@ func (a *App) ListUploadCandidates(path string, overrides api.ExternalIDOverride
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIResult(rt.core.ListUploadCandidates(ctx, req))
 }
 
-func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.UploadedImageLink, error) {
+func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides) ([]api.UploadedImageLink, error) {
 	rt, err := a.requireRuntime()
 	if err != nil {
 		return nil, err
@@ -959,12 +972,13 @@ func (a *App) ListUploadedImages(path string, overrides api.ExternalIDOverrides,
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIResult(rt.core.ListUploadedImages(ctx, req))
 }
 
-func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
+func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	rt, err := a.requireRuntime()
 	if err != nil {
 		return api.UploadImagesResult{}, err
@@ -990,6 +1004,7 @@ func (a *App) UploadImages(path string, overrides api.ExternalIDOverrides, nameO
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 		Trackers:             slices.Clone(trackers),
 	}
 
@@ -1022,7 +1037,7 @@ func (a *App) DeleteUploadedImage(path string, imagePath string, host string) er
 	return wrapGUIError(a.currentCore().DeleteUploadedImage(ctx, req, imagePath, host))
 }
 
-func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, timestampSeconds float64) (string, error) {
+func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, timestampSeconds float64) (string, error) {
 	if a == nil || a.currentCore() == nil {
 		return "", errors.New("app not initialized")
 	}
@@ -1041,6 +1056,7 @@ func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverri
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	preview, err := a.currentCore().PreviewScreenshotFrame(ctx, req, timestampSeconds)
@@ -1054,7 +1070,7 @@ func (a *App) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverri
 	return "data:image/png;base64," + encoded, nil
 }
 
-func (a *App) DeleteScreenshot(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, imagePath string) error {
+func (a *App) DeleteScreenshot(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, imagePath string) error {
 	if a == nil || a.currentCore() == nil {
 		return errors.New("app not initialized")
 	}
@@ -1076,12 +1092,13 @@ func (a *App) DeleteScreenshot(path string, overrides api.ExternalIDOverrides, n
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIError(a.currentCore().DeleteScreenshot(ctx, req, imagePath))
 }
 
-func (a *App) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, url string) error {
+func (a *App) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, url string) error {
 	if a == nil || a.currentCore() == nil {
 		return errors.New("app not initialized")
 	}
@@ -1103,12 +1120,13 @@ func (a *App) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrid
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIError(a.currentCore().DeleteTrackerImageURL(ctx, req, url))
 }
 
-func (a *App) SaveFinalScreenshotSelections(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, images []api.ScreenshotImage) error {
+func (a *App) SaveFinalScreenshotSelections(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, images []api.ScreenshotImage) error {
 	if a == nil || a.currentCore() == nil {
 		return errors.New("app not initialized")
 	}
@@ -1127,12 +1145,13 @@ func (a *App) SaveFinalScreenshotSelections(path string, overrides api.ExternalI
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIError(a.currentCore().SaveFinalScreenshotSelections(ctx, req, images))
 }
 
-func (a *App) ImportMenuImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, paths []string) error {
+func (a *App) ImportMenuImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, paths []string) error {
 	if a == nil || a.currentCore() == nil {
 		return errors.New("app not initialized")
 	}
@@ -1151,6 +1170,7 @@ func (a *App) ImportMenuImages(path string, overrides api.ExternalIDOverrides, n
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 
 	return wrapGUIError(a.currentCore().ImportMenuImages(ctx, req, paths))

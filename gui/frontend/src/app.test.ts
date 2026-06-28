@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App, { hasExplicitEmptyReleaseTrackerSelection, ruleBlockingTrackerLabels } from "./app";
@@ -40,6 +40,7 @@ type FetchMetadata = (
   sourceLookupURL: string,
   overrides: unknown,
   nameOverrides: unknown,
+  metadataOverrides: unknown,
   trackers: string[],
 ) => Promise<MetadataPreview>;
 
@@ -50,6 +51,7 @@ type FetchDescriptionBuilder = (
   sourcePath: string,
   overrides: unknown,
   nameOverrides: unknown,
+  metadataOverrides: unknown,
   trackers: string[],
   ignoreDupesFor: string[],
 ) => Promise<DescriptionBuilderPreview>;
@@ -57,6 +59,7 @@ type FetchPreparation = (
   sourcePath: string,
   overrides: unknown,
   nameOverrides: unknown,
+  metadataOverrides: unknown,
   trackers: string[],
   ignoreDupesFor: string[],
 ) => Promise<unknown>;
@@ -433,6 +436,38 @@ describe("hasFilteredEmptyUploadTrackerSelection", () => {
 });
 
 describe("metadata tracker payloads", () => {
+  it("sends metadata overrides from edit controls", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Criterion" },
+    });
+    fireEvent.change(screen.getByLabelText("Original language"), {
+      target: { value: "ja" },
+    });
+    fireEvent.change(screen.getByLabelText("Anime"), {
+      target: { value: "false" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][4]).toEqual({
+      Distributor: "Criterion",
+      OriginalLanguage: "ja",
+      Anime: false,
+    });
+  });
+
   it("excludes dupe-blocked upload targets from metadata fetches", async () => {
     const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
     installAppBridge(fetchMetadata);
@@ -450,7 +485,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
-    expect(fetchMetadata.mock.calls[1][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchMetadata.mock.calls[1][5]).toEqual(["AITHER", "BLU"]);
 
     fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
@@ -461,7 +496,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(3));
-    expect(fetchMetadata.mock.calls[2][4]).toEqual(["AITHER"]);
+    expect(fetchMetadata.mock.calls[2][5]).toEqual(["AITHER"]);
   });
 
   it("does not apply dupe blocks from a previous path to metadata fetches", async () => {
@@ -489,7 +524,7 @@ describe("metadata tracker payloads", () => {
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
     expect(fetchMetadata.mock.calls[1][0]).toBe("C:\\media\\Other");
-    expect(fetchMetadata.mock.calls[1][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchMetadata.mock.calls[1][5]).toEqual(["AITHER", "BLU"]);
   });
 
   it("keeps current upload disables when stale dupe state came from another path", async () => {
@@ -518,7 +553,7 @@ describe("metadata tracker payloads", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
-    expect(fetchMetadata.mock.calls[1][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchMetadata.mock.calls[1][5]).toEqual(["AITHER", "BLU"]);
 
     fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
@@ -537,7 +572,7 @@ describe("metadata tracker payloads", () => {
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(3));
     expect(fetchMetadata.mock.calls[2][0]).toBe("C:\\media\\Other");
-    expect(fetchMetadata.mock.calls[2][4]).toEqual(["BLU"]);
+    expect(fetchMetadata.mock.calls[2][5]).toEqual(["BLU"]);
   });
 
   it("blocks metadata fetch when all selected trackers are filtered out", async () => {
@@ -655,8 +690,41 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
     await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
-    expect(fetchPreparation.mock.calls[0][3]).toEqual(["AITHER"]);
-    expect(fetchPreparation.mock.calls[0][4]).toEqual([]);
+    expect(fetchPreparation.mock.calls[0][4]).toEqual(["AITHER"]);
+    expect(fetchPreparation.mock.calls[0][5]).toEqual([]);
+  });
+
+  it("sends edited overrides when preparing selected playlists", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchPreparation = vi.fn<FetchPreparation>(async () => ({}));
+    installAppBridge(fetchMetadata, { fetchPreparation });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "12345" } });
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "BluRay" } });
+    fireEvent.change(screen.getByLabelText("Distributor"), { target: { value: "Criterion" } });
+    fireEvent.change(screen.getByLabelText("Anime"), { target: { value: "false" } });
+    fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
+
+    await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
+    expect(fetchPreparation.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(fetchPreparation.mock.calls[0][2]).toEqual({ Source: "BluRay" });
+    expect(fetchPreparation.mock.calls[0][3]).toEqual({
+      Distributor: "Criterion",
+      Anime: false,
+    });
+    expect(fetchPreparation.mock.calls[0][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchPreparation.mock.calls[0][5]).toEqual([]);
   });
 
   it("does not apply previous path dupe blocks when preparing selected playlists", async () => {
@@ -685,8 +753,8 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
     await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
-    expect(fetchPreparation.mock.calls[0][3]).toEqual(["AITHER", "BLU"]);
-    expect(fetchPreparation.mock.calls[0][4]).toEqual([]);
+    expect(fetchPreparation.mock.calls[0][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchPreparation.mock.calls[0][5]).toEqual([]);
   });
 
   it.each([
@@ -735,8 +803,8 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
     await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
-    expect(fetchPreparation.mock.calls[0][3]).toEqual(["AITHER"]);
-    expect(fetchPreparation.mock.calls[0][4]).toEqual([]);
+    expect(fetchPreparation.mock.calls[0][4]).toEqual(["AITHER"]);
+    expect(fetchPreparation.mock.calls[0][5]).toEqual([]);
   });
 });
 
@@ -774,6 +842,46 @@ describe("tracker upload job tracking", () => {
     await waitFor(() => expect(screen.getByText("Error: start failed")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(getTrackerUploadSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("clears previous upload job state before a failed replacement start resolves", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    let rejectSecondStart: (reason: Error) => void = () => undefined;
+    const startTrackerUpload = vi
+      .fn<StartTrackerUpload>()
+      .mockResolvedValueOnce("upload-job-1")
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((_resolve, reject) => {
+            rejectSecondStart = reject;
+          }),
+      );
+    const getTrackerUploadSnapshot = vi.fn<GetTrackerUploadSnapshot>().mockResolvedValueOnce(
+      trackerUploadSnapshot("upload-job-1", "failed", {
+        failedTrackers: ["AITHER"],
+        error: "upload failed",
+        finishedAt: "2026-06-17T00:00:01Z",
+      }),
+    );
+    await openTrackerUploadPage(fetchMetadata, { startTrackerUpload, getTrackerUploadSnapshot });
+    fireEvent.click(screen.getByRole("button", { name: "Start Upload" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Retry Failed" })).toBeEnabled());
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Start Upload" }));
+
+    expect(startTrackerUpload).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+    expect(getTrackerUploadSnapshot).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      rejectSecondStart(new Error("start failed"));
+    });
+    expect(screen.getByText("Error: start failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry Failed" })).toBeDisabled();
   });
 
   it("keeps retry upload tracking alive when replacement bootstrap snapshot loading fails", async () => {

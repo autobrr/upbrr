@@ -7,14 +7,20 @@ import type {
   UploadedImageLink,
   UploadImageHostFailure,
   ExternalIDOverrides,
+  MetadataOverrides,
   ReleaseNameOverrides,
 } from "../types";
-import { normalizeOverrides, normalizeReleaseOverrides } from "../utils";
+import {
+  normalizeMetadataOverrides,
+  normalizeOverrides,
+  normalizeReleaseOverrides,
+} from "../utils";
 
 interface UploadImagesHookProps {
   path: string;
   idOverrideState?: { overrides?: ExternalIDOverrides };
   releaseOverrideState?: { overrides?: ReleaseNameOverrides };
+  metadataOverrideState?: { overrides?: MetadataOverrides };
   uploadCandidates?: ScreenshotPreviewImage[];
   configuredImageHosts?: string[];
   selectedTrackers?: string[];
@@ -24,6 +30,7 @@ export const useUploadImages = ({
   path,
   idOverrideState,
   releaseOverrideState,
+  metadataOverrideState,
   uploadCandidates = [],
   configuredImageHosts = [],
   selectedTrackers = [],
@@ -137,12 +144,13 @@ export const useUploadImages = ({
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
       );
       setUploadedImageRecords(records || []);
     } catch (err) {
       console.error("Failed to load uploaded images:", err);
     }
-  }, [path, idOverrideState, releaseOverrideState]);
+  }, [path, idOverrideState, releaseOverrideState, metadataOverrideState]);
 
   // Upload selected images to host
   const handleUploadImages = useCallback(
@@ -175,6 +183,7 @@ export const useUploadImages = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
           selectedTrackers,
           uploadHost,
           selected.map((entry) => entry.image),
@@ -218,6 +227,7 @@ export const useUploadImages = ({
       path,
       idOverrideState,
       releaseOverrideState,
+      metadataOverrideState,
       selectedTrackers,
       uploadHost,
       refreshUploadedImages,
@@ -239,6 +249,7 @@ export const useUploadImages = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
         );
 
         if (!refreshed || refreshed.length === 0) {
@@ -261,7 +272,14 @@ export const useUploadImages = ({
         console.error("Failed to delete uploaded image:", err);
       }
     },
-    [path, idOverrideState, releaseOverrideState, uploadHost, refreshUploadedImages],
+    [
+      path,
+      idOverrideState,
+      releaseOverrideState,
+      metadataOverrideState,
+      uploadHost,
+      refreshUploadedImages,
+    ],
   );
 
   // Reset upload state

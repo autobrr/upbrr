@@ -4223,6 +4223,9 @@ func overrideSignature(
 	if nameOverrides.ManualDate != nil {
 		parts = append(parts, "manualDate="+strings.TrimSpace(*nameOverrides.ManualDate))
 	}
+	if nameOverrides.UseSeasonEpisode != nil {
+		parts = append(parts, fmt.Sprintf("useSeasonEpisode=%t", *nameOverrides.UseSeasonEpisode))
+	}
 	if nameOverrides.NoSeason != nil {
 		parts = append(parts, fmt.Sprintf("noSeason=%t", *nameOverrides.NoSeason))
 	}

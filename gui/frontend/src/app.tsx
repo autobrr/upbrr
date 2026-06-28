@@ -44,6 +44,9 @@ import type {
   HistoryEntry,
   HistoryOverview,
   ImageHostPolicyMetadata,
+  MetadataOverrideEditState,
+  MetadataOverrides,
+  MetadataOverrideTouchedState,
   MetadataPreview,
   MetadataProgressUpdate,
   PreparationPreview,
@@ -91,6 +94,7 @@ import {
   hasFilteredEmptyUploadTrackerSelection as hasFilteredEmptyUploadTrackerSelectionState,
   resolveSelectedUploadTrackers,
 } from "./utils/trackerSelection";
+import { normalizeMetadataOverrides, normalizeOverrides, normalizeReleaseOverrides } from "./utils";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -412,6 +416,7 @@ declare global {
               sourceLookupURL: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
             ) => Promise<MetadataPreview>;
             ResetMetadata: (
@@ -419,6 +424,7 @@ declare global {
               sourceLookupURL: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
             ) => Promise<MetadataPreview>;
             SelectBlurayCandidate: (path: string, releaseID: string) => Promise<MetadataPreview>;
@@ -426,6 +432,7 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               ignoreDupesFor: string[],
             ) => Promise<DescriptionBuilderPreview>;
@@ -433,6 +440,7 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               ignoreDupesFor: string[],
             ) => Promise<PreparationPreview>;
@@ -440,6 +448,7 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
@@ -452,12 +461,14 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
             ) => Promise<DupeCheckSummary>;
             StartDupeCheck: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
             ) => Promise<string>;
             CancelDupeCheck: (jobID: string) => Promise<void>;
@@ -466,11 +477,13 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
             ) => Promise<ScreenshotPlan>;
             GenerateScreenshots: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               selections: ScreenshotSelection[],
               purpose: ScreenshotPurpose,
             ) => Promise<ScreenshotResult>;
@@ -478,24 +491,28 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               timestampSeconds: number,
             ) => Promise<string>;
             DeleteScreenshot: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               imagePath: string,
             ) => Promise<void>;
             SaveFinalScreenshotSelections: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               images: ScreenshotImage[],
             ) => Promise<void>;
             ImportMenuImages: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               paths: string[],
             ) => Promise<void>;
             ReadScreenshotImage: (path: string) => Promise<string>;
@@ -503,16 +520,19 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
             ) => Promise<ScreenshotImage[]>;
             ListUploadedImages: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
             ) => Promise<UploadedImageLink[]>;
             UploadImages: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               host: string,
               images: ScreenshotImage[],
@@ -526,6 +546,7 @@ declare global {
               trackers: string[],
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
             ) => Promise<DescriptionBuilderPreview["Groups"][number]>;
             DiscoverPlaylists: (path: string) => Promise<any[]>;
             SavePlaylistSelection: (
@@ -574,6 +595,7 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
@@ -678,6 +700,39 @@ const buildReleaseTouchedState = (overrides?: ReleaseNameOverrides): ReleaseName
   region: overrides?.Region !== undefined && overrides?.Region !== null,
 });
 
+const buildMetadataEditState = (overrides?: MetadataOverrides): MetadataOverrideEditState => ({
+  distributor: overrides?.Distributor ?? "",
+  originalLanguage: overrides?.OriginalLanguage ?? "",
+  personalRelease: boolOverrideEditValue(overrides?.PersonalRelease),
+  commentary: boolOverrideEditValue(overrides?.Commentary),
+  webDV: boolOverrideEditValue(overrides?.WebDV),
+  streamOptimized: boolOverrideEditValue(overrides?.StreamOptimized),
+  anime: boolOverrideEditValue(overrides?.Anime),
+});
+
+const buildMetadataTouchedState = (
+  overrides?: MetadataOverrides,
+): MetadataOverrideTouchedState => ({
+  distributor: overrides?.Distributor !== undefined && overrides?.Distributor !== null,
+  originalLanguage:
+    overrides?.OriginalLanguage !== undefined && overrides?.OriginalLanguage !== null,
+  personalRelease: overrides?.PersonalRelease !== undefined && overrides?.PersonalRelease !== null,
+  commentary: overrides?.Commentary !== undefined && overrides?.Commentary !== null,
+  webDV: overrides?.WebDV !== undefined && overrides?.WebDV !== null,
+  streamOptimized: overrides?.StreamOptimized !== undefined && overrides?.StreamOptimized !== null,
+  anime: overrides?.Anime !== undefined && overrides?.Anime !== null,
+});
+
+const boolOverrideEditValue = (value?: boolean | null): "" | "true" | "false" => {
+  if (value === undefined || value === null) return "";
+  return value ? "true" : "false";
+};
+
+const parseBoolOverrideEditValue = (value: "" | "true" | "false") => {
+  if (value === "") return null;
+  return value === "true";
+};
+
 const normalizeTag = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -738,6 +793,8 @@ export default function App() {
   const [releaseTouched, setReleaseTouched] = useState(() =>
     buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides),
   );
+  const [metadataEdits, setMetadataEdits] = useState(() => buildMetadataEditState({}));
+  const [metadataTouched, setMetadataTouched] = useState(() => buildMetadataTouchedState({}));
   const [showExternalIDInputUI, setShowExternalIDInputUI] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [activeTab, setActiveTab] = useState("input");
@@ -1383,11 +1440,47 @@ export default function App() {
     return { overrides, dirty, invalid };
   }, [releaseEdits, releaseTouched, preview.ReleaseNameOverrides]);
 
+  const metadataOverrideState = useMemo(() => {
+    const overrides: MetadataOverrides = {};
+    if (metadataTouched.distributor) {
+      overrides.Distributor = metadataEdits.distributor.trim();
+    }
+    if (metadataTouched.originalLanguage) {
+      overrides.OriginalLanguage = metadataEdits.originalLanguage.trim();
+    }
+    const personalRelease = parseBoolOverrideEditValue(metadataEdits.personalRelease);
+    const commentary = parseBoolOverrideEditValue(metadataEdits.commentary);
+    const webDV = parseBoolOverrideEditValue(metadataEdits.webDV);
+    const streamOptimized = parseBoolOverrideEditValue(metadataEdits.streamOptimized);
+    const anime = parseBoolOverrideEditValue(metadataEdits.anime);
+    if (metadataTouched.personalRelease && personalRelease !== null) {
+      overrides.PersonalRelease = personalRelease;
+    }
+    if (metadataTouched.commentary && commentary !== null) {
+      overrides.Commentary = commentary;
+    }
+    if (metadataTouched.webDV && webDV !== null) {
+      overrides.WebDV = webDV;
+    }
+    if (metadataTouched.streamOptimized && streamOptimized !== null) {
+      overrides.StreamOptimized = streamOptimized;
+    }
+    if (metadataTouched.anime && anime !== null) {
+      overrides.Anime = anime;
+    }
+    return {
+      overrides,
+      dirty: Object.keys(overrides).length > 0,
+      invalid: false,
+    };
+  }, [metadataEdits, metadataTouched]);
+
   // Screenshot workflow hook (now idOverrideState/releaseOverrideState are defined)
   const screenshots = useScreenshots({
     path,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
   });
 
   // Destructure commonly used screenshot variables
@@ -1518,6 +1611,7 @@ export default function App() {
     path,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
     uploadCandidates: screenshots.uploadCandidates,
     configuredImageHosts,
     selectedTrackers: selectedUploadImageTrackers,
@@ -1835,97 +1929,13 @@ export default function App() {
   const refreshDisabled =
     loading ||
     !path.trim() ||
-    (!idOverrideState?.dirty && !releaseOverrideState?.dirty && !sourceLookupURL.trim()) ||
+    (!idOverrideState?.dirty &&
+      !releaseOverrideState?.dirty &&
+      !metadataOverrideState?.dirty &&
+      !sourceLookupURL.trim()) ||
     idOverrideState?.invalid ||
-    releaseOverrideState?.invalid;
-
-  const normalizeOverrides = (overrides: ExternalIDOverrides) => {
-    const payload: ExternalIDOverrides = {};
-    if (overrides.TMDBID !== null && overrides.TMDBID !== undefined) {
-      payload.TMDBID = overrides.TMDBID;
-    }
-    if (overrides.IMDBID !== null && overrides.IMDBID !== undefined) {
-      payload.IMDBID = overrides.IMDBID;
-    }
-    if (overrides.TVDBID !== null && overrides.TVDBID !== undefined) {
-      payload.TVDBID = overrides.TVDBID;
-    }
-    if (overrides.TVmazeID !== null && overrides.TVmazeID !== undefined) {
-      payload.TVmazeID = overrides.TVmazeID;
-    }
-    return payload;
-  };
-
-  const normalizeReleaseOverrides = (overrides: ReleaseNameOverrides) => {
-    const payload: ReleaseNameOverrides = {};
-    if (overrides.Category !== null && overrides.Category !== undefined) {
-      payload.Category = overrides.Category;
-    }
-    if (overrides.Type !== null && overrides.Type !== undefined) {
-      payload.Type = overrides.Type;
-    }
-    if (overrides.Source !== null && overrides.Source !== undefined) {
-      payload.Source = overrides.Source;
-    }
-    if (overrides.Resolution !== null && overrides.Resolution !== undefined) {
-      payload.Resolution = overrides.Resolution;
-    }
-    if (overrides.Tag !== null && overrides.Tag !== undefined) {
-      payload.Tag = overrides.Tag;
-    }
-    if (overrides.Service !== null && overrides.Service !== undefined) {
-      payload.Service = overrides.Service;
-    }
-    if (overrides.Edition !== null && overrides.Edition !== undefined) {
-      payload.Edition = overrides.Edition;
-    }
-    if (overrides.Season !== null && overrides.Season !== undefined) {
-      payload.Season = overrides.Season;
-    }
-    if (overrides.Episode !== null && overrides.Episode !== undefined) {
-      payload.Episode = overrides.Episode;
-    }
-    if (overrides.EpisodeTitle !== null && overrides.EpisodeTitle !== undefined) {
-      payload.EpisodeTitle = overrides.EpisodeTitle;
-    }
-    if (overrides.ManualYear !== null && overrides.ManualYear !== undefined) {
-      payload.ManualYear = overrides.ManualYear;
-    }
-    if (overrides.ManualDate !== null && overrides.ManualDate !== undefined) {
-      payload.ManualDate = overrides.ManualDate;
-    }
-    if (overrides.UseSeasonEpisode !== null && overrides.UseSeasonEpisode !== undefined) {
-      payload.UseSeasonEpisode = overrides.UseSeasonEpisode;
-    }
-    if (overrides.NoSeason !== null && overrides.NoSeason !== undefined) {
-      payload.NoSeason = overrides.NoSeason;
-    }
-    if (overrides.NoYear !== null && overrides.NoYear !== undefined) {
-      payload.NoYear = overrides.NoYear;
-    }
-    if (overrides.NoAKA !== null && overrides.NoAKA !== undefined) {
-      payload.NoAKA = overrides.NoAKA;
-    }
-    if (overrides.NoTag !== null && overrides.NoTag !== undefined) {
-      payload.NoTag = overrides.NoTag;
-    }
-    if (overrides.NoEdition !== null && overrides.NoEdition !== undefined) {
-      payload.NoEdition = overrides.NoEdition;
-    }
-    if (overrides.NoDub !== null && overrides.NoDub !== undefined) {
-      payload.NoDub = overrides.NoDub;
-    }
-    if (overrides.NoDual !== null && overrides.NoDual !== undefined) {
-      payload.NoDual = overrides.NoDual;
-    }
-    if (overrides.DualAudio !== null && overrides.DualAudio !== undefined) {
-      payload.DualAudio = overrides.DualAudio;
-    }
-    if (overrides.Region !== null && overrides.Region !== undefined) {
-      payload.Region = overrides.Region;
-    }
-    return payload;
-  };
+    releaseOverrideState?.invalid ||
+    metadataOverrideState?.invalid;
 
   const applyPreviewResult = (
     result: MetadataPreview,
@@ -2217,7 +2227,14 @@ export default function App() {
       return false;
     }
     try {
-      await fetcher(path.trim(), {}, {}, selectedTrackers, []);
+      await fetcher(
+        path.trim(),
+        normalizeOverrides(idOverrideState?.overrides || {}),
+        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+        selectedTrackers,
+        [],
+      );
       return true;
     } catch (err) {
       setPlaylistPreparationError(String(err));
@@ -2244,6 +2261,7 @@ export default function App() {
   const runFetch = async (
     overrides: ExternalIDOverrides,
     nameOverrides: ReleaseNameOverrides,
+    metadataOverrides: MetadataOverrides,
     hideExternalIDInputUIOnSuccess = false,
     options: { targetPath?: string; targetMode?: SourcePathMode; switchToInput?: boolean } = {},
   ) => {
@@ -2283,6 +2301,7 @@ export default function App() {
         sourceLookupURL.trim(),
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
+        normalizeMetadataOverrides(metadataOverrides),
         selectedTrackers,
       );
       applyPreviewResult(result, { switchToInput: options.switchToInput });
@@ -2301,7 +2320,12 @@ export default function App() {
   };
 
   const handleFetch = async () => {
-    await runFetch({}, {}, false);
+    await runFetch(
+      idOverrideState?.overrides || {},
+      releaseOverrideState?.overrides || {},
+      metadataOverrideState?.overrides || {},
+      false,
+    );
   };
 
   const handleSourcePathDrop = async (paths: string[]) => {
@@ -2319,7 +2343,7 @@ export default function App() {
     if (!selection || selection.waitsForPlaylistSelection) {
       return;
     }
-    await runFetch({}, {}, false, {
+    await runFetch({}, {}, {}, false, {
       targetPath: selection.path,
       targetMode: selection.mode,
     });
@@ -2352,17 +2376,28 @@ export default function App() {
     setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
     setReleaseEdits(buildReleaseEditState({}));
     setReleaseTouched(buildReleaseTouchedState({}));
+    setMetadataEdits(buildMetadataEditState({}));
+    setMetadataTouched(buildMetadataTouchedState({}));
   };
 
   const handleRefresh = async () => {
     if (
-      (!idOverrideState?.dirty && !releaseOverrideState?.dirty && !sourceLookupURL.trim()) ||
+      (!idOverrideState?.dirty &&
+        !releaseOverrideState?.dirty &&
+        !metadataOverrideState?.dirty &&
+        !sourceLookupURL.trim()) ||
       idOverrideState?.invalid ||
-      releaseOverrideState?.invalid
+      releaseOverrideState?.invalid ||
+      metadataOverrideState?.invalid
     ) {
       return;
     }
-    await runFetch(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {}, true);
+    await runFetch(
+      idOverrideState?.overrides || {},
+      releaseOverrideState?.overrides || {},
+      metadataOverrideState?.overrides || {},
+      true,
+    );
   };
 
   const handleResetMetadata = async () => {
@@ -2397,7 +2432,14 @@ export default function App() {
     setLoading(true);
     setMetadataResetting(true);
     try {
-      const result = await resetter(targetPath, sourceLookupURL.trim(), {}, {}, selectedTrackers);
+      const result = await resetter(
+        targetPath,
+        sourceLookupURL.trim(),
+        {},
+        {},
+        {},
+        selectedTrackers,
+      );
       applyPreviewResult(result);
       setShowExternalIDInputUI(true);
     } catch (err) {
@@ -2494,6 +2536,7 @@ export default function App() {
           path.trim(),
           normalizeOverrides(overrides),
           normalizeReleaseOverrides(nameOverrides),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
           selectedTrackers,
           ignoredDupeTrackers,
         );
@@ -2534,6 +2577,7 @@ export default function App() {
       selectedUploadImageTrackers,
       ignoredDupeTrackers,
       refreshUploadedImages,
+      metadataOverrideState,
     ],
   );
 
@@ -2595,6 +2639,7 @@ export default function App() {
         currentGroup.Trackers || [],
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
       );
       setBuilderPreview((prev) => upsertBuilderGroup(prev, updatedGroup));
       setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
@@ -2660,6 +2705,7 @@ export default function App() {
         currentGroup.Trackers || [],
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
       );
       const nextPreview = upsertBuilderGroup(builderPreview, updatedGroup);
       const shouldRefreshDryRun =
@@ -2702,6 +2748,7 @@ export default function App() {
       path.trim(),
       normalizeOverrides(idOverrideState?.overrides || {}),
       normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+      normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
       selections,
       purpose,
     );
@@ -2724,6 +2771,7 @@ export default function App() {
       sourceLookupURL.trim(),
       normalizeOverrides(idOverrideState?.overrides || {}),
       normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+      normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
       selectedTrackers,
     );
   };
@@ -2782,6 +2830,7 @@ export default function App() {
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
         timestamp,
       );
       if (livePreviewRequestId.current !== requestId) {
@@ -3059,6 +3108,7 @@ export default function App() {
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
         selectedTrackers,
       );
     } catch (err) {
@@ -3188,6 +3238,7 @@ export default function App() {
       path: normalizedPath,
       external: normalizeOverrides(idOverrideState?.overrides || {}),
       release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+      metadata: normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
     });
     if (builderAutoRequestKey === requestKey) return;
     setBuilderAutoRequestKey(requestKey);
@@ -3201,6 +3252,7 @@ export default function App() {
     path,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
     builderAutoRequestKey,
     runDescriptionBuilder,
   ]);
@@ -3246,6 +3298,7 @@ export default function App() {
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
         );
         if (!candidates || candidates.length === 0) {
           setExistingImages([]);
@@ -3275,6 +3328,7 @@ export default function App() {
     path,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
     setExistingImages,
     readScreenshotImage,
     refreshUploadedImages,
@@ -3446,6 +3500,11 @@ export default function App() {
     }
   }, []);
 
+  const clearTrackerUploadJob = useCallback(() => {
+    setTrackerUploadJobID("");
+    setTrackerUploadSnapshot(null);
+  }, []);
+
   const handleStartTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
     const starter = globalThis.go?.guiapp?.App?.StartTrackerUpload;
@@ -3496,13 +3555,14 @@ export default function App() {
       return;
     }
     setTrackerUploadRunning(true);
-    setTrackerUploadSnapshot(null);
+    clearTrackerUploadJob();
     let jobID = "";
     try {
       jobID = await starter(
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
         selectedTrackers,
         ignoredDupeTrackers,
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
@@ -3513,6 +3573,7 @@ export default function App() {
       );
     } catch (err) {
       setTrackerUploadRunning(false);
+      clearTrackerUploadJob();
       setTrackerUploadError(String(err));
       return;
     }
@@ -3529,6 +3590,7 @@ export default function App() {
     path,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
     getSelectedUploadTrackers,
     ignoredDupeTrackers,
     trackerDryRunPreview,
@@ -3538,6 +3600,7 @@ export default function App() {
     uploadSkipClientInjection,
     runLogLevel,
     applyTrackerUploadSnapshot,
+    clearTrackerUploadJob,
   ]);
 
   const runTrackerDryRun = useCallback(
@@ -3598,6 +3661,7 @@ export default function App() {
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
           selectedTrackers,
           ignoredDupeTrackers,
           cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
@@ -3638,6 +3702,7 @@ export default function App() {
       path,
       idOverrideState,
       releaseOverrideState,
+      metadataOverrideState,
       getSelectedUploadTrackers,
       ignoredDupeTrackers,
       trackerQuestionnaireAnswers,
@@ -3780,6 +3845,10 @@ export default function App() {
 
   const markReleaseTouched = (key: keyof ReleaseNameTouchedState) => {
     setReleaseTouched((prev) => ({ ...prev, [key]: true }));
+  };
+
+  const markMetadataTouched = (key: keyof MetadataOverrideTouchedState) => {
+    setMetadataTouched((prev) => ({ ...prev, [key]: true }));
   };
 
   const applyScreenshotSettings = async () => {
@@ -4269,6 +4338,7 @@ export default function App() {
               path={path}
               overrides={idOverrideState?.overrides || {}}
               nameOverrides={releaseOverrideState?.overrides || {}}
+              metadataOverrides={metadataOverrideState?.overrides || {}}
               browseAvailable={browserNativeBrowseAvailable}
               onImportComplete={() => {
                 setActiveTab("upload_images");
@@ -4411,6 +4481,9 @@ export default function App() {
               releaseEdits={releaseEdits}
               setReleaseEdits={setReleaseEdits}
               markReleaseTouched={markReleaseTouched}
+              metadataEdits={metadataEdits}
+              setMetadataEdits={setMetadataEdits}
+              markMetadataTouched={markMetadataTouched}
               idOverrideState={idOverrideState}
               releaseOverrideState={releaseOverrideState}
               showExternalIDInputUI={showExternalIDInputUI}

@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { ExternalIDOverrides, ReleaseNameOverrides } from "../types";
+import type { ExternalIDOverrides, MetadataOverrides, ReleaseNameOverrides } from "../types";
 
 /**
  * Normalize external ID overrides by filtering out null/undefined values
@@ -77,6 +77,53 @@ export const normalizeReleaseOverrides = (
   }
   if (overrides.NoAKA !== null && overrides.NoAKA !== undefined) {
     payload.NoAKA = overrides.NoAKA;
+  }
+  if (overrides.NoTag !== null && overrides.NoTag !== undefined) {
+    payload.NoTag = overrides.NoTag;
+  }
+  if (overrides.NoEdition !== null && overrides.NoEdition !== undefined) {
+    payload.NoEdition = overrides.NoEdition;
+  }
+  if (overrides.NoDub !== null && overrides.NoDub !== undefined) {
+    payload.NoDub = overrides.NoDub;
+  }
+  if (overrides.NoDual !== null && overrides.NoDual !== undefined) {
+    payload.NoDual = overrides.NoDual;
+  }
+  if (overrides.DualAudio !== null && overrides.DualAudio !== undefined) {
+    payload.DualAudio = overrides.DualAudio;
+  }
+  if (overrides.Region !== null && overrides.Region !== undefined) {
+    payload.Region = overrides.Region;
+  }
+  return payload;
+};
+
+/**
+ * Normalizes metadata overrides by dropping nullish fields while preserving explicit false values.
+ */
+export const normalizeMetadataOverrides = (overrides: MetadataOverrides): MetadataOverrides => {
+  const payload: MetadataOverrides = {};
+  if (overrides.Distributor !== null && overrides.Distributor !== undefined) {
+    payload.Distributor = overrides.Distributor;
+  }
+  if (overrides.OriginalLanguage !== null && overrides.OriginalLanguage !== undefined) {
+    payload.OriginalLanguage = overrides.OriginalLanguage;
+  }
+  if (overrides.PersonalRelease !== null && overrides.PersonalRelease !== undefined) {
+    payload.PersonalRelease = overrides.PersonalRelease;
+  }
+  if (overrides.Commentary !== null && overrides.Commentary !== undefined) {
+    payload.Commentary = overrides.Commentary;
+  }
+  if (overrides.WebDV !== null && overrides.WebDV !== undefined) {
+    payload.WebDV = overrides.WebDV;
+  }
+  if (overrides.StreamOptimized !== null && overrides.StreamOptimized !== undefined) {
+    payload.StreamOptimized = overrides.StreamOptimized;
+  }
+  if (overrides.Anime !== null && overrides.Anime !== undefined) {
+    payload.Anime = overrides.Anime;
   }
   return payload;
 };

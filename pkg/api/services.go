@@ -213,6 +213,10 @@ type PreparedMetadata struct {
 	BDInfo                      map[string]any
 }
 
+// MetadataOverrides carries caller-forced metadata facts that override values
+// inferred from external providers, media inspection, or prepared metadata.
+// Nil fields mean "leave the inferred value unchanged"; non-nil false values
+// are explicit overrides and must be preserved across entrypoints.
 type MetadataOverrides struct {
 	Distributor      *string
 	OriginalLanguage *string

@@ -2,18 +2,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useState } from "react";
-import type { ExternalIDOverrides, ReleaseNameOverrides } from "../../types";
+import type { ExternalIDOverrides, MetadataOverrides, ReleaseNameOverrides } from "../../types";
 
 type Props = Readonly<{
   path: string;
   overrides: ExternalIDOverrides;
   nameOverrides: ReleaseNameOverrides;
+  metadataOverrides: MetadataOverrides;
   browseAvailable: boolean;
   onImportComplete: () => void;
 }>;
 
 export default function MenuImagesPage(props: Props) {
-  const { path, overrides, nameOverrides, browseAvailable, onImportComplete } = props;
+  const { path, overrides, nameOverrides, metadataOverrides, browseAvailable, onImportComplete } =
+    props;
 
   const [menuPaths, setMenuPaths] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
@@ -59,7 +61,7 @@ export default function MenuImagesPage(props: Props) {
     try {
       const importFn = globalThis.go?.guiapp?.App?.ImportMenuImages;
       if (!importFn) throw new Error("Import function not available");
-      await importFn(path, overrides, nameOverrides, menuPaths);
+      await importFn(path, overrides, nameOverrides, metadataOverrides, menuPaths);
       setSuccess(true);
       setMenuPaths([]);
       onImportComplete();

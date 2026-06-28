@@ -10,20 +10,27 @@ import type {
   ScreenshotResult,
   ScreenshotLinkedImage,
   ExternalIDOverrides,
+  MetadataOverrides,
   ReleaseNameOverrides,
 } from "../types";
-import { normalizeOverrides, normalizeReleaseOverrides } from "../utils";
+import {
+  normalizeMetadataOverrides,
+  normalizeOverrides,
+  normalizeReleaseOverrides,
+} from "../utils";
 
 interface ScreenshotHookProps {
   path: string;
   idOverrideState?: { overrides?: ExternalIDOverrides };
   releaseOverrideState?: { overrides?: ReleaseNameOverrides };
+  metadataOverrideState?: { overrides?: MetadataOverrides };
 }
 
 export const useScreenshots = ({
   path,
   idOverrideState,
   releaseOverrideState,
+  metadataOverrideState,
 }: ScreenshotHookProps) => {
   // State: Plan & suggestions
   const [screenshotPlan, setScreenshotPlan] = useState<ScreenshotPlan | null>(null);
@@ -134,6 +141,7 @@ export const useScreenshots = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
         );
         setScreenshotPlan(result);
         setScreenshotSelections(result.SuggestedSelections || []);
@@ -221,7 +229,14 @@ export const useScreenshots = ({
         setScreenshotsLoading(false);
       }
     },
-    [path, idOverrideState, releaseOverrideState, livePreviewSeconds, readScreenshotImage],
+    [
+      path,
+      idOverrideState,
+      releaseOverrideState,
+      metadataOverrideState,
+      livePreviewSeconds,
+      readScreenshotImage,
+    ],
   );
 
   // Save final selections
@@ -237,13 +252,14 @@ export const useScreenshots = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
           next.map((entry) => entry.image),
         );
       } catch (err) {
         setScreenshotsError(String(err));
       }
     },
-    [path, idOverrideState, releaseOverrideState],
+    [path, idOverrideState, releaseOverrideState, metadataOverrideState],
   );
 
   // Update selection timestamp
@@ -403,6 +419,7 @@ export const useScreenshots = ({
             path.trim(),
             normalizeOverrides(idOverrideState?.overrides || {}),
             normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+            normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
             image.Path,
           );
           deleted.push(image);
@@ -416,7 +433,7 @@ export const useScreenshots = ({
       }
       return deleted;
     },
-    [path, idOverrideState, releaseOverrideState],
+    [path, idOverrideState, releaseOverrideState, metadataOverrideState],
   );
 
   const deleteTrackerImageURL = useCallback(
@@ -430,13 +447,14 @@ export const useScreenshots = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
           url,
         );
       } catch (err) {
         setScreenshotsError(String(err));
       }
     },
-    [path, idOverrideState, releaseOverrideState],
+    [path, idOverrideState, releaseOverrideState, metadataOverrideState],
   );
 
   const deleteTrackerImageFile = useCallback(
@@ -450,13 +468,14 @@ export const useScreenshots = ({
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
           imagePath,
         );
       } catch (err) {
         setScreenshotsError(String(err));
       }
     },
-    [path, idOverrideState, releaseOverrideState],
+    [path, idOverrideState, releaseOverrideState, metadataOverrideState],
   );
 
   const removeTrackerImageURLState = useCallback((url: string) => {

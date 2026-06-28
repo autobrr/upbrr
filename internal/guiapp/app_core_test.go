@@ -27,7 +27,7 @@ func TestFetchMetadataReportsCoreValidationFailure(t *testing.T) {
 
 	app := &App{coreInitErr: errors.New("invalid config")}
 
-	_, err := app.FetchMetadata("/tmp/example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil)
+	_, err := app.FetchMetadata("/tmp/example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, api.MetadataOverrides{}, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -51,7 +51,7 @@ func TestFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
 		core: coreSvc,
 	}
 
-	_, err := app.FetchMetadata("C:\\releases\\Example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil)
+	_, err := app.FetchMetadata("C:\\releases\\Example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, api.MetadataOverrides{}, nil)
 	if err != nil {
 		t.Fatalf("fetch metadata: %v", err)
 	}
@@ -147,22 +147,22 @@ func TestGUIRequestsUseSingleRuntimeSnapshot(t *testing.T) {
 	})
 
 	for range 200 {
-		if _, err := app.FetchScreenshotPlan("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}); err != nil {
+		if _, err := app.FetchScreenshotPlan("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, api.MetadataOverrides{}); err != nil {
 			t.Fatalf("fetch screenshot plan: %v", err)
 		}
-		if _, err := app.GenerateScreenshots("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, api.ScreenshotPurposeFinal); err != nil {
+		if _, err := app.GenerateScreenshots("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, api.MetadataOverrides{}, nil, api.ScreenshotPurposeFinal); err != nil {
 			t.Fatalf("generate screenshots: %v", err)
 		}
-		if _, err := app.ListUploadCandidates("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}); err != nil {
+		if _, err := app.ListUploadCandidates("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, api.MetadataOverrides{}); err != nil {
 			t.Fatalf("list upload candidates: %v", err)
 		}
-		if _, err := app.ListUploadedImages("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}); err != nil {
+		if _, err := app.ListUploadedImages("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, api.MetadataOverrides{}); err != nil {
 			t.Fatalf("list uploaded images: %v", err)
 		}
-		if _, err := app.UploadImages("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, "host", []api.ScreenshotImage{{Path: "image.jpg"}}); err != nil {
+		if _, err := app.UploadImages("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, api.MetadataOverrides{}, nil, "host", []api.ScreenshotImage{{Path: "image.jpg"}}); err != nil {
 			t.Fatalf("upload images: %v", err)
 		}
-		_, _ = app.FetchTrackerDryRun("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, nil, nil, nil, false, false, "")
+		_, _ = app.FetchTrackerDryRun("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, api.MetadataOverrides{}, nil, nil, nil, nil, false, false, "")
 		select {
 		case err := <-errs:
 			t.Fatal(err)

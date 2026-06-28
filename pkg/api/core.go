@@ -37,21 +37,23 @@ type Request struct {
 	DescriptionOverrideRaw       string
 	DescriptionOverrideURL       string
 	DescriptionOverrideGroup     string
-	MetadataOverrides            MetadataOverrides
-	TrackerConfigOverrides       TrackerConfigOverrides
-	TrackerSiteOverrides         TrackerSiteOverrides
-	ClientOverrides              ClientOverrides
-	ImageHostOverrides           ImageHostOverrides
-	ScreenshotOverrides          ScreenshotOverrides
-	TorrentOverrides             TorrentOverrides
-	TrackerIDOverrides           map[string]string
-	ExternalIDOverrides          ExternalIDOverrides
-	ExternalIDSelections         map[string]ExternalIDSelection // keyed by source path, value is selected external IDs for that path
-	ReleaseNameOverrides         ReleaseNameOverrides
-	TrackerQuestionnaireAnswers  map[string]map[string]string // keyed by tracker, then questionnaire field key
-	PlaylistSelections           map[string][]string          // keyed by source path, value is selected playlist files
-	PlaylistSelectionsUseAll     map[string]bool              // keyed by source path, value is use-all flag
-	ConfirmBDMVRescan            bool
+	// MetadataOverrides contains optional caller-forced facts used by preview,
+	// preparation, screenshots, and uploads.
+	MetadataOverrides           MetadataOverrides
+	TrackerConfigOverrides      TrackerConfigOverrides
+	TrackerSiteOverrides        TrackerSiteOverrides
+	ClientOverrides             ClientOverrides
+	ImageHostOverrides          ImageHostOverrides
+	ScreenshotOverrides         ScreenshotOverrides
+	TorrentOverrides            TorrentOverrides
+	TrackerIDOverrides          map[string]string
+	ExternalIDOverrides         ExternalIDOverrides
+	ExternalIDSelections        map[string]ExternalIDSelection // keyed by source path, value is selected external IDs for that path
+	ReleaseNameOverrides        ReleaseNameOverrides
+	TrackerQuestionnaireAnswers map[string]map[string]string // keyed by tracker, then questionnaire field key
+	PlaylistSelections          map[string][]string          // keyed by source path, value is selected playlist files
+	PlaylistSelectionsUseAll    map[string]bool              // keyed by source path, value is use-all flag
+	ConfirmBDMVRescan           bool
 }
 
 // ExecutionOptions controls queued and site-check execution behavior.

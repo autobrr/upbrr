@@ -44,24 +44,25 @@ type DupeCheckSnapshot struct {
 }
 
 type dupeCheckJob struct {
-	mu             sync.Mutex
-	id             string
-	sourcePath     string
-	overrides      api.ExternalIDOverrides
-	nameOverrides  api.ReleaseNameOverrides
-	trackers       []string
-	states         map[string]DupeCheckTrackerState
-	completedCount int
-	totalCount     int
-	summary        api.DupeCheckSummary
-	status         string
-	errorMessage   string
-	startedAt      time.Time
-	finishedAt     time.Time
-	cancel         context.CancelFunc
+	mu                sync.Mutex
+	id                string
+	sourcePath        string
+	overrides         api.ExternalIDOverrides
+	nameOverrides     api.ReleaseNameOverrides
+	metadataOverrides api.MetadataOverrides
+	trackers          []string
+	states            map[string]DupeCheckTrackerState
+	completedCount    int
+	totalCount        int
+	summary           api.DupeCheckSummary
+	status            string
+	errorMessage      string
+	startedAt         time.Time
+	finishedAt        time.Time
+	cancel            context.CancelFunc
 }
 
-func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (string, error) {
+func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string) (string, error) {
 	if a == nil || a.currentCore() == nil {
 		return "", errors.New("app not initialized")
 	}
@@ -85,16 +86,17 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 	}
 
 	job := &dupeCheckJob{
-		id:            jobID,
-		sourcePath:    trimmedPath,
-		overrides:     overrides,
-		nameOverrides: nameOverrides,
-		trackers:      resolvedTrackers,
-		states:        states,
-		totalCount:    len(states),
-		summary:       api.DupeCheckSummary{SourcePath: trimmedPath},
-		status:        "queued",
-		startedAt:     time.Now().UTC(),
+		id:                jobID,
+		sourcePath:        trimmedPath,
+		overrides:         overrides,
+		nameOverrides:     nameOverrides,
+		metadataOverrides: metadataOverrides,
+		trackers:          resolvedTrackers,
+		states:            states,
+		totalCount:        len(states),
+		summary:           api.DupeCheckSummary{SourcePath: trimmedPath},
+		status:            "queued",
+		startedAt:         time.Now().UTC(),
 	}
 
 	baseCtx := a.runtimeContext()
@@ -176,6 +178,7 @@ func (a *App) runDupeCheckJob(ctx context.Context, eventCtx context.Context, job
 
 		ExternalIDOverrides:  job.overrides,
 		ReleaseNameOverrides: job.nameOverrides,
+		MetadataOverrides:    job.metadataOverrides,
 	}
 
 	summary, err := a.currentCore().CheckDupes(progressCtx, req)

@@ -651,7 +651,7 @@ func TestRunTrackerUploadJobRecoversRunUploadPreparedPanic(t *testing.T) {
 	}
 }
 
-func TestRunTrackerUploadJobContainsCleanupPanic(t *testing.T) {
+func TestRunTrackerUploadJobPreservesCompletedStatusAfterCleanupPanic(t *testing.T) {
 	app := &App{}
 	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
 		{
@@ -663,8 +663,11 @@ func TestRunTrackerUploadJobContainsCleanupPanic(t *testing.T) {
 
 	app.runTrackerUploadJob(context.Background(), context.Background(), job)
 
-	if got := job.status; got != "failed" {
-		t.Fatalf("expected failed status after cleanup panic, got %q", got)
+	if got := job.status; got != "completed" {
+		t.Fatalf("expected completed status after cleanup panic, got %q", got)
+	}
+	if got := job.states["BLU"].Status; got != "success" {
+		t.Fatalf("expected tracker success to survive cleanup panic, got %q", got)
 	}
 	if !strings.Contains(job.errorMessage, "core close panicked") {
 		t.Fatalf("expected cleanup panic message, got %q", job.errorMessage)

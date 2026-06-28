@@ -47,6 +47,7 @@ describe("browser runtime bridge", () => {
       "C:/media/movie.mkv",
       { TMDBID: 1 },
       { Category: "MOVIE" },
+      { Anime: true },
     );
 
     expect(result).toEqual({ ok: true });
@@ -63,6 +64,7 @@ describe("browser runtime bridge", () => {
           Path: "C:/media/movie.mkv",
           Overrides: { TMDBID: 1 },
           NameOverrides: { Category: "MOVIE" },
+          MetadataOverrides: { Anime: true },
         }),
       }),
     );
@@ -98,6 +100,7 @@ describe("browser runtime bridge", () => {
 
     const result = await (globalThis as any).go.guiapp.App.StartDupeCheck(
       "C:/media/movie.mkv",
+      {},
       {},
       {},
       ["AITHER"],
@@ -142,7 +145,9 @@ describe("browser runtime bridge", () => {
     initializeBrowserBridge("session-a-csrf", false);
 
     await expect(
-      (globalThis as any).go.guiapp.App.StartDupeCheck("C:/media/movie.mkv", {}, {}, ["AITHER"]),
+      (globalThis as any).go.guiapp.App.StartDupeCheck("C:/media/movie.mkv", {}, {}, {}, [
+        "AITHER",
+      ]),
     ).rejects.toThrow("Web session changed in another tab");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -170,7 +175,7 @@ describe("browser runtime bridge", () => {
     const listener = vi.fn();
     const unsubscribe = subscribeBrowserNativeBrowseAvailability(listener);
 
-    await (globalThis as any).go.guiapp.App.StartDupeCheck("C:/media/movie.mkv", {}, {}, [
+    await (globalThis as any).go.guiapp.App.StartDupeCheck("C:/media/movie.mkv", {}, {}, {}, [
       "AITHER",
     ]);
 
