@@ -839,6 +839,42 @@ func TestPromptTrackerDupeReviewApprovesUserSkippedDupeChecksInUnattendedMode(t 
 	}
 }
 
+func TestPromptTrackerDupeReviewSkipsAllRuleBlockedTrackersUnattended(t *testing.T) {
+	t.Parallel()
+
+	// When every selected tracker is rule-blocked (e.g. encodes missing
+	// MediaInfo encode settings), unattended review approves none. The caller
+	// relies on an empty approval list to skip the release before
+	// screenshots/torrent/upload, so this guards that early-skip path.
+	req := api.Request{
+		Trackers: []string{"LST", "RF"},
+		Options:  api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
+	}
+	summary := api.DupeCheckSummary{
+		Results: []api.DupeCheckResult{
+			{Tracker: "LST", Status: "skipped", Skipped: true, SkipReason: "rule check failed: missing MediaInfo encode settings"},
+			{Tracker: "RF", Status: "skipped", Skipped: true, SkipReason: "rule check failed: missing MediaInfo encode settings"},
+		},
+	}
+
+	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+		bufio.NewReader(strings.NewReader("")),
+		summary,
+		req,
+		req.Trackers,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("promptTrackerDupeReview: %v", err)
+	}
+	if len(approved) != 0 {
+		t.Fatalf("expected no approved trackers when all are rule-blocked, got %#v", approved)
+	}
+	if len(ignoreDupes) != 0 || len(ruleOverrides) != 0 {
+		t.Fatalf("expected no overrides in unattended mode, got ignoreDupes=%#v ruleOverrides=%#v", ignoreDupes, ruleOverrides)
+	}
+}
+
 func TestPromptTrackerDupeReviewShowsTrackerNamingChange(t *testing.T) {
 	output := captureStdout(t, func() {
 		approved, _, _, err := promptTrackerDupeReview(

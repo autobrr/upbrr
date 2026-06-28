@@ -914,6 +914,76 @@ func TestRefreshPreparedMetadataKeepsRepoForRulePersistence(t *testing.T) {
 	}
 }
 
+func TestRefreshPreparedMetadataNormalizesStaleMISettingsForNonEncodes(t *testing.T) {
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	cases := []struct {
+		name       string
+		meta       api.PreparedMetadata
+		wantBlock  bool
+		wantNormal bool
+	}{
+		{
+			name: "remux not blocked",
+			meta: api.PreparedMetadata{
+				Type:                   "REMUX",
+				ValidMediaInfoSettings: false,
+			},
+			wantNormal: true,
+		},
+		{
+			name: "bdmv not blocked",
+			meta: api.PreparedMetadata{
+				Type:                   "ENCODE",
+				DiscType:               "BDMV",
+				ValidMediaInfoSettings: false,
+			},
+			wantNormal: true,
+		},
+		{
+			name: "av1 encode not blocked",
+			meta: api.PreparedMetadata{
+				Type:                   "ENCODE",
+				VideoCodec:             "AV1",
+				ValidMediaInfoSettings: false,
+			},
+			wantNormal: true,
+		},
+		{
+			name: "genuine encode stays blocked",
+			meta: api.PreparedMetadata{
+				Type:                   "ENCODE",
+				VideoCodec:             "H.265",
+				ValidMediaInfoSettings: false,
+			},
+			wantBlock: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := tc.meta
+			meta.SourcePath = "/media/example.mkv"
+			meta.Trackers = []string{"AITHER"}
+			refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+			if err != nil {
+				t.Fatalf("refresh prepared metadata: %v", err)
+			}
+			if tc.wantNormal && !refreshed.ValidMediaInfoSettings {
+				t.Fatalf("expected ValidMediaInfoSettings normalized to true")
+			}
+			blocked := false
+			for _, failure := range refreshed.TrackerRuleFailures["AITHER"] {
+				if failure.Rule == "require_valid_mi_setting" {
+					blocked = true
+				}
+			}
+			if blocked != tc.wantBlock {
+				t.Fatalf("require_valid_mi_setting blocked=%t, want %t (failures=%#v)", blocked, tc.wantBlock, refreshed.TrackerRuleFailures["AITHER"])
+			}
+		})
+	}
+}
+
 func TestAudioFromMediaUsesChannelsOriginalWhenPresent(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"8 / 6","Channels_Original":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
 	audio, channels, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
