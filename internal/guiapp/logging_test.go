@@ -5,6 +5,7 @@ package guiapp
 
 import (
 	"context"
+	"io"
 	"reflect"
 	"testing"
 	"time"
@@ -164,6 +165,7 @@ func newGUIAppLogStreamTestLogger(t *testing.T) *logging.Logger {
 	if err != nil {
 		t.Fatalf("new logger: %v", err)
 	}
+	logger.SetConsoleOutput(io.Discard, io.Discard)
 	t.Cleanup(func() {
 		_ = logger.Close()
 	})

@@ -10,7 +10,7 @@ test("embedded web runs image upload, tracker dry run, tracker upload, and histo
   const workspace = await createE2EWorkspace();
   const app = await startApp(workspace);
   try {
-    await fetchMetadata(page, workspace.sourcePath);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
 
     await page.getByRole("button", { name: "Dupe Checking" }).click();
     await page.getByRole("button", { name: "Run dupe check" }).click();

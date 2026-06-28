@@ -6,6 +6,7 @@ package webserver
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -203,6 +204,7 @@ func TestLogServeAddressUsesInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new logger: %v", err)
 	}
+	logger.SetConsoleOutput(io.Discard, io.Discard)
 	defer logger.Close()
 
 	server := &Server{
@@ -234,6 +236,7 @@ func TestLogServeAddressRedactsBrowserURLSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new logger: %v", err)
 	}
+	logger.SetConsoleOutput(io.Discard, io.Discard)
 	defer logger.Close()
 
 	server := &Server{
@@ -272,6 +275,7 @@ func TestServerLoggerAccessSynchronizedDuringRuntimeReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new logger A: %v", err)
 	}
+	loggerA.SetConsoleOutput(io.Discard, io.Discard)
 
 	backend := &Backend{logger: loggerA}
 	server := &Server{backend: backend}
@@ -291,6 +295,7 @@ func TestServerLoggerAccessSynchronizedDuringRuntimeReplacement(t *testing.T) {
 					t.Errorf("new replacement logger: %v", err)
 					return
 				}
+				logger.SetConsoleOutput(io.Discard, io.Discard)
 				_, oldLogger := backend.replaceRuntime(config.Config{}, nil, logger)
 				if oldLogger != nil {
 					_ = oldLogger.Close()
