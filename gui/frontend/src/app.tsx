@@ -158,6 +158,7 @@ const emptyPreview: MetadataPreview = {
   ExternalPreview: [],
   Bluray: undefined,
   TrackerData: [],
+  TrackerRuleFailures: {},
 };
 
 const emptyTrackerDryRun: TrackerDryRunPreview = {

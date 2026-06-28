@@ -436,6 +436,12 @@ export type TrackerPreview = {
   UpdatedAt: string;
 };
 
+/** Upload rule failure attached to a tracker before dupe checking or upload. */
+export type RuleFailure = {
+  Rule: string;
+  Reason: string;
+};
+
 export type DupeEntry = {
   Name: string;
   SizeBytes: number;
@@ -546,6 +552,8 @@ export type MetadataPreview = {
   ExternalPreview: ExternalPreview[];
   Bluray?: BlurayMetadata;
   TrackerData: TrackerPreview[];
+  /** Preview-time upload rule failures keyed by normalized tracker code. */
+  TrackerRuleFailures?: Record<string, RuleFailure[]>;
 };
 
 export type MetadataProgressUpdate = {
