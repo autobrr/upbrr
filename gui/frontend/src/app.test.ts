@@ -13,6 +13,7 @@ import type {
   DupeEntry,
   DupeMatch,
   MetadataPreview,
+  ScreenshotImage,
   ScreenshotPlan,
   TrackerUploadSnapshot,
 } from "./types";
@@ -46,7 +47,20 @@ type FetchMetadata = (
 
 type ResetMetadata = FetchMetadata;
 type SaveConfig = (config: string) => Promise<void>;
-type FetchScreenshotPlan = (sourcePath: string) => Promise<ScreenshotPlan>;
+type FetchScreenshotPlan = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+) => Promise<ScreenshotPlan>;
+type SaveFinalScreenshotSelections = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+  images: ScreenshotImage[],
+) => Promise<void>;
+type ReadScreenshotImage = (imagePath: string) => Promise<string>;
 type FetchDescriptionBuilder = (
   sourcePath: string,
   overrides: unknown,
@@ -218,6 +232,8 @@ const installAppBridge = (
     resetMetadata?: ResetMetadata;
     saveConfig?: SaveConfig;
     fetchScreenshotPlan?: FetchScreenshotPlan;
+    saveFinalScreenshotSelections?: SaveFinalScreenshotSelections;
+    readScreenshotImage?: ReadScreenshotImage;
     fetchDescriptionBuilder?: FetchDescriptionBuilder;
     fetchPreparation?: FetchPreparation;
     browseFolder?: () => Promise<string>;
@@ -268,6 +284,9 @@ const installAppBridge = (
         SaveConfig: options.saveConfig ?? (async () => undefined),
         FetchScreenshotPlan:
           options.fetchScreenshotPlan ?? (async (sourcePath: string) => screenshotPlan(sourcePath)),
+        SaveFinalScreenshotSelections:
+          options.saveFinalScreenshotSelections ?? (async () => undefined),
+        ReadScreenshotImage: options.readScreenshotImage ?? (async () => "data:image/png;base64,"),
         FetchDescriptionBuilder:
           options.fetchDescriptionBuilder ??
           (async (sourcePath: string) => descriptionBuilderPreview(sourcePath)),
@@ -465,6 +484,101 @@ describe("metadata tracker payloads", () => {
       Distributor: "Criterion",
       OriginalLanguage: "ja",
       Anime: false,
+    });
+  });
+
+  it("omits cleared metadata text overrides from edit controls", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "   " },
+    });
+    fireEvent.change(screen.getByLabelText("Original language"), {
+      target: { value: "   " },
+    });
+    fireEvent.change(screen.getByLabelText("Anime"), {
+      target: { value: "false" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][4]).toEqual({
+      Anime: false,
+    });
+  });
+
+  it("saves screenshot selections with the metadata overrides used to load the plan", async () => {
+    const existingImage: ScreenshotImage = {
+      Index: 0,
+      TimestampSeconds: 10,
+      Path: "C:\\media\\Example\\screen-001.png",
+      Width: 1920,
+      Height: 1080,
+      SizeBytes: 1024,
+    };
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchScreenshotPlan = vi.fn<FetchScreenshotPlan>(async (sourcePath) => ({
+      ...screenshotPlan(sourcePath),
+      ExistingScreenshots: [existingImage],
+    }));
+    const saveFinalScreenshotSelections = vi.fn<SaveFinalScreenshotSelections>(
+      async () => undefined,
+    );
+    const readScreenshotImage = vi.fn<ReadScreenshotImage>(
+      async () => "data:image/png;base64,AA==",
+    );
+    installAppBridge(fetchMetadata, {
+      fetchScreenshotPlan,
+      saveFinalScreenshotSelections,
+      readScreenshotImage,
+    });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Loaded Distributor" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+
+    await waitFor(() => expect(fetchScreenshotPlan).toHaveBeenCalledTimes(1));
+    expect(fetchScreenshotPlan.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
+    });
+    await screen.findByRole("button", { name: "Add to final" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Drifted Distributor" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add to final" }));
+
+    await waitFor(() => expect(saveFinalScreenshotSelections).toHaveBeenCalledTimes(1));
+    expect(saveFinalScreenshotSelections.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
     });
   });
 

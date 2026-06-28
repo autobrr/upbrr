@@ -1442,11 +1442,13 @@ export default function App() {
 
   const metadataOverrideState = useMemo(() => {
     const overrides: MetadataOverrides = {};
-    if (metadataTouched.distributor) {
-      overrides.Distributor = metadataEdits.distributor.trim();
+    const distributor = metadataEdits.distributor.trim();
+    const originalLanguage = metadataEdits.originalLanguage.trim();
+    if (metadataTouched.distributor && distributor !== "") {
+      overrides.Distributor = distributor;
     }
-    if (metadataTouched.originalLanguage) {
-      overrides.OriginalLanguage = metadataEdits.originalLanguage.trim();
+    if (metadataTouched.originalLanguage && originalLanguage !== "") {
+      overrides.OriginalLanguage = originalLanguage;
     }
     const personalRelease = parseBoolOverrideEditValue(metadataEdits.personalRelease);
     const commentary = parseBoolOverrideEditValue(metadataEdits.commentary);
