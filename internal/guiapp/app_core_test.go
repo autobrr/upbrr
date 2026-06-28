@@ -278,7 +278,7 @@ func TestSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
 	initial := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	app := &App{
 		cfg:  initial,
@@ -340,7 +340,7 @@ func TestSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
 	initial := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	app := &App{
 		cfg:  initial,
@@ -1143,7 +1143,7 @@ func guiConfigTestConfig(repoPath string) config.Config {
 	return config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 }
 
@@ -1293,7 +1293,7 @@ func TestApplyConfigKeepsSharedRepositoryUsable(t *testing.T) {
 	cfg := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 
 	app := &App{
@@ -1335,7 +1335,7 @@ func TestNewAppKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	cfg := &config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 
 	configPath := filepath.Join(t.TempDir(), "config.yaml")

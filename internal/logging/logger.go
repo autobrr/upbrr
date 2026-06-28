@@ -89,6 +89,12 @@ type Entry struct {
 	Message string    `json:"message"`
 }
 
+var (
+	defaultConsoleMu  sync.RWMutex
+	defaultConsoleOut io.Writer = os.Stdout
+	defaultConsoleErr io.Writer = os.Stderr
+)
+
 const defaultBufferCap = 1000
 const defaultSubscriberBuffer = 200
 
@@ -106,10 +112,11 @@ func NewWithLevel(cfg config.LoggingConfig, dbPath string, override string) (*Lo
 		return nil, err
 	}
 
+	consoleOut, consoleErr := defaultConsoleWriters()
 	logger := &Logger{
 		level:      level,
-		consoleOut: log.New(os.Stdout, "", log.LstdFlags),
-		consoleErr: log.New(os.Stderr, "", log.LstdFlags),
+		consoleOut: log.New(consoleOut, "", log.LstdFlags),
+		consoleErr: log.New(consoleErr, "", log.LstdFlags),
 		bufferCap:  defaultBufferCap,
 		subs:       make(map[int]chan Entry),
 	}
@@ -131,6 +138,12 @@ func NewWithLevel(cfg config.LoggingConfig, dbPath string, override string) (*Lo
 	return logger, nil
 }
 
+func defaultConsoleWriters() (io.Writer, io.Writer) {
+	defaultConsoleMu.RLock()
+	defer defaultConsoleMu.RUnlock()
+	return defaultConsoleOut, defaultConsoleErr
+}
+
 func ResolveEffectiveLevel(configured string, runOverride string, debug bool) string {
 	if trimmed := strings.TrimSpace(runOverride); trimmed != "" {
 		return trimmed
@@ -149,6 +162,43 @@ func (l *Logger) Close() error {
 		return fmt.Errorf("close logger: %w", err)
 	}
 	return nil
+}
+
+// SetConsoleOutput replaces the console writers used for stdout and stderr
+// logging. Nil writers leave the corresponding output unchanged.
+func (l *Logger) SetConsoleOutput(stdout io.Writer, stderr io.Writer) {
+	if l == nil {
+		return
+	}
+	if stdout != nil {
+		l.consoleOut.SetOutput(stdout)
+	}
+	if stderr != nil {
+		l.consoleErr.SetOutput(stderr)
+	}
+}
+
+// SetDefaultConsoleOutput replaces the console writers used by new loggers and
+// returns a restore function. Nil writers leave the corresponding output
+// unchanged.
+func SetDefaultConsoleOutput(stdout io.Writer, stderr io.Writer) func() {
+	defaultConsoleMu.Lock()
+	previousOut := defaultConsoleOut
+	previousErr := defaultConsoleErr
+	if stdout != nil {
+		defaultConsoleOut = stdout
+	}
+	if stderr != nil {
+		defaultConsoleErr = stderr
+	}
+	defaultConsoleMu.Unlock()
+
+	return func() {
+		defaultConsoleMu.Lock()
+		defaultConsoleOut = previousOut
+		defaultConsoleErr = previousErr
+		defaultConsoleMu.Unlock()
+	}
 }
 
 func (l *Logger) Tracef(format string, args ...any) {
