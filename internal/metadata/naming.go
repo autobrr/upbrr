@@ -197,6 +197,9 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	}
 }
 
+// releaseNameRequestFromMeta converts prepared metadata into the naming input,
+// omitting TV-pack season titles that are stored in EpisodeTitle only as scoped
+// metadata fallback text.
 func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) api.ReleaseNameRequest {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -269,6 +272,10 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 
 	dailyDate := strings.TrimSpace(meta.DailyEpisodeDate)
 	manualDate := strings.EqualFold(category, "TV") && dailyDate != "" && !meta.TVPack
+	episodeTitle := strings.TrimSpace(meta.EpisodeTitle)
+	if meta.TVPack {
+		episodeTitle = ""
+	}
 
 	return api.ReleaseNameRequest{
 		Category:      category,
@@ -289,7 +296,7 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 		UHD:           meta.UHD,
 		HDR:           meta.HDR,
 		WebDV:         meta.WebDV,
-		EpisodeTitle:  strings.TrimSpace(meta.EpisodeTitle),
+		EpisodeTitle:  episodeTitle,
 		VideoCodec:    meta.VideoCodec,
 		VideoEncode:   meta.VideoEncode,
 		DiscType:      meta.DiscType,

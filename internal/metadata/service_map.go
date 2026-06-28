@@ -3,6 +3,8 @@
 
 package metadata
 
+// serviceCodeMap maps filename/NFO service aliases to the normalized service
+// token used in generated release names.
 func serviceCodeMap() map[string]string {
 	return map[string]string{
 		"9NOW":                             "9NOW",
@@ -206,6 +208,10 @@ func serviceCodeMap() map[string]string {
 		"MBC":                              "MBC",
 		"MNBC":                             "MNBC",
 		"MSNBC":                            "MNBC",
+		"MGMP":                             "MGMP",
+		"MGM+":                             "MGMP",
+		"MGM Plus":                         "MGMP",
+		"MGMPlus":                          "MGMP",
 		"MTOD":                             "MTOD",
 		"Motor Trend OnDemand":             "MTOD",
 		"MTV":                              "MTV",
