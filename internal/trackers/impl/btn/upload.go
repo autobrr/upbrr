@@ -412,7 +412,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"format":       format,
 		"bitrate":      bitrate,
 		"media":        media,
-		"resolution":   metautil.FirstNonEmptyTrimmed(fields["resolution"], "SD"),
+		"resolution":   mapResolution(req.Meta),
 		"release_desc": description,
 		"tvdb":         "autofilled",
 	}
@@ -915,6 +915,21 @@ func mapSource(meta api.PreparedMetadata, fields map[string]string) string {
 		}
 	}
 	return ""
+}
+
+func mapResolution(meta api.PreparedMetadata) string {
+	switch strings.ToLower(strings.TrimSpace(meta.Release.Resolution)) {
+	case "2160p", "4320p", "8640p", "4k", "8k":
+		return "2160p"
+	case "1080p", "1440p":
+		return "1080p"
+	case "1080i":
+		return "1080i"
+	case "720p":
+		return "720p"
+	default:
+		return "SD"
+	}
 }
 
 func applyBTNNameMapping(releaseName string, mappedCodec string, mappedSource string) string {
