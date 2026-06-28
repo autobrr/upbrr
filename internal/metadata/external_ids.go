@@ -1881,9 +1881,14 @@ func (s *Service) applyTVEpisodeMetadata(
 					meta.TVDBAiredDate = strings.TrimSpace(match.Aired)
 					preferredTVDBEpisodeTitle := strings.TrimSpace(match.EpisodeName)
 					englishTVDBEpisodeTitle := ""
+					// Only use original TVDB episode names when the series language is unknown or English.
+					allowOriginalTVDBEpisodeTitle := true
 					if external != nil {
 						if external.TVDB == nil {
 							external.TVDB = &api.TVDBMetadata{TVDBID: ids.TVDBID}
+						}
+						if strings.TrimSpace(external.TVDB.OriginalLanguage) != "" && !isEnglishLanguage(external.TVDB.OriginalLanguage) {
+							allowOriginalTVDBEpisodeTitle = false
 						}
 						external.TVDB.EpisodeSeason = match.SeasonNumber
 						external.TVDB.EpisodeNumber = match.EpisodeNumber
@@ -1910,7 +1915,7 @@ func (s *Service) applyTVEpisodeMetadata(
 					}
 					if englishTVDBEpisodeTitle != "" {
 						tvdbEpisodeTitle = englishTVDBEpisodeTitle
-					} else if !isGenericEpisodeTitle(preferredTVDBEpisodeTitle) {
+					} else if allowOriginalTVDBEpisodeTitle && !isGenericEpisodeTitle(preferredTVDBEpisodeTitle) {
 						tvdbEpisodeTitle = preferredTVDBEpisodeTitle
 					}
 					tvdbEpisodeOverview = strings.TrimSpace(match.Overview)

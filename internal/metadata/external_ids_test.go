@@ -1864,7 +1864,7 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
 	}
 }
 
-func TestApplyTVEpisodeMetadataTVDBEpisodeTitleFallsBackToOriginalWhenEnglishMissing(t *testing.T) {
+func TestApplyTVEpisodeMetadataTVDBEpisodeTitleSkipsOriginalWhenEnglishMissing(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{
@@ -1893,8 +1893,8 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTitleFallsBackToOriginalWhenEnglishMis
 
 	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, tvdbClient, &stubTVmaze{})
 
-	if updated.EpisodeTitle != "Native Title 3" {
-		t.Fatalf("expected original episode title fallback, got %q", updated.EpisodeTitle)
+	if updated.EpisodeTitle != "" {
+		t.Fatalf("expected non-english original episode title to be skipped, got %q", updated.EpisodeTitle)
 	}
 }
 
