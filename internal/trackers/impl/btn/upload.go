@@ -14,8 +14,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -215,7 +217,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: BTN read upload response: %w", err)
+	}
 	finalURL := ""
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
@@ -247,7 +252,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if torrentID != "" {
 		if err := downloadTrackerTorrent(ctx, uploadCtx.client, uploadCtx.baseURL, torrentID, trackerTorrentPath); err != nil {
 			if req.Logger != nil {
-				req.Logger.Warnf("trackers: BTN torrent download fallback to API search: %v", err)
+				req.Logger.Warnf("trackers: BTN torrent download fallback to API search: %s", commonhttp.RedactErrorDetail(err.Error()))
 			}
 			if err := resolveAndDownloadViaAPI(ctx, uploadCtx.apiURL, uploadCtx.apiToken, req, groupID, trackerTorrentPath); err != nil {
 				return api.UploadSummary{}, err
@@ -793,6 +798,9 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		return fmt.Errorf("trackers: BTN API download request: %w", err)
 	}
 	defer downloadResp.Body.Close()
+	if downloadResp.StatusCode < 200 || downloadResp.StatusCode >= 300 {
+		return fmt.Errorf("trackers: BTN API download failed status=%d", downloadResp.StatusCode)
+	}
 	var downloadResult struct {
 		Result struct {
 			DownloadURL string `json:"DownloadURL"`
@@ -805,15 +813,34 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		return errors.New("trackers: BTN API did not return DownloadURL")
 	}
 
+	if err := validateBTNAPIURL(ctx, downloadResult.Result.DownloadURL); err != nil {
+		return fmt.Errorf("trackers: BTN API invalid download url: %w", err)
+	}
+
 	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadResult.Result.DownloadURL, nil)
 	if err != nil {
 		return fmt.Errorf("trackers: BTN API torrent fetch request build: %w", err)
 	}
-	dlResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(dlReq)
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if err := validateBTNAPIURL(req.Context(), req.URL.String()); err != nil {
+				return err
+			}
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
+	dlResp, err := client.Do(dlReq)
 	if err != nil {
 		return fmt.Errorf("trackers: BTN API torrent fetch request: %w", err)
 	}
 	defer dlResp.Body.Close()
+	if dlResp.StatusCode < 200 || dlResp.StatusCode >= 300 {
+		return fmt.Errorf("trackers: BTN API download fetch failed status=%d", dlResp.StatusCode)
+	}
 	body, err := io.ReadAll(io.LimitReader(dlResp.Body, 8*1024*1024))
 	if err != nil {
 		return fmt.Errorf("trackers: BTN API read torrent response: %w", err)
@@ -1092,4 +1119,45 @@ func resolveCountryID(meta api.PreparedMetadata) string {
 	}
 
 	return ""
+}
+
+func validateBTNAPIURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return errors.New("missing host")
+	}
+	lowerHost := strings.ToLower(host)
+	if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") || strings.Contains(lowerHost, "%") {
+		return fmt.Errorf("blocked private host %q", host)
+	}
+
+	if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap()
+		if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+			return fmt.Errorf("blocked private address %q", addr)
+		}
+		return nil
+	}
+
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	for _, item := range addrs {
+		if addr, ok := netip.AddrFromSlice(item.IP); ok {
+			addr = addr.Unmap()
+			if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+				return fmt.Errorf("host %q resolved to blocked address %q", host, addr)
+			}
+		}
+	}
+	return nil
 }

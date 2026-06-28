@@ -271,10 +271,12 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 				_, _ = w.Write([]byte(`{"result":{"torrents":{"777":{"GroupID":"123"}}}}`))
 			case "getTorrentById":
 				apiDownloadCalls.Add(1)
-				_, _ = w.Write([]byte("d8:announce13:https://x.ee"))
+				_, _ = w.Write([]byte(`{"result":{"DownloadURL":"http://` + r.Host + `/mock-download"}}`))
 			default:
 				http.NotFound(w, r)
 			}
+		case r.URL.Path == "/mock-download":
+			_, _ = w.Write([]byte("d8:announce13:https://x.ee"))
 		default:
 			http.NotFound(w, r)
 		}
