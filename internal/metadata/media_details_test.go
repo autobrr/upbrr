@@ -673,6 +673,23 @@ func TestAudioFromMediaAddsDualAudioForEnglishAndOriginalLanguage(t *testing.T) 
 	}
 }
 
+func TestAudioFromMediaSkipsCommentaryTitleVariantsForDualAudio(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"MLP FBA","Format_AdditionalFeatures":"16-ch","Channels":"8","ChannelLayout":"L R C LFE Ls Rs Lb Rb","Language":"en","StreamOrder":"1"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","Language":"ja","StreamOrder":"2","Title_String":"Director Commentary"}]}}`)
+	meta := api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+
+	audio, channels, commentary := audioFromMedia(meta, doc, nil)
+	if audio != "Dubbed TrueHD Atmos 7.1" {
+		t.Fatalf("expected commentary track to be ignored for dual-audio prefix, got %q", audio)
+	}
+	if channels != "7.1" || !commentary {
+		t.Fatalf("expected 7.1 with commentary detected, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
 func TestAudioFromMediaAddsDubbedWhenOnlyEnglishTrackPresent(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"}]}}`)
 	meta := api.PreparedMetadata{

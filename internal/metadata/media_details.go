@@ -379,7 +379,7 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	if len(audioTracks) == 0 {
 		return "", "", false
 	}
-	firstAudioTitle := strings.ToLower(trackString(audioTracks[0], "Title", "title"))
+	firstAudioTitle := strings.ToLower(audioTrackTitle(audioTracks[0]))
 	track := selectPrimaryAudioTrack(audioTracks)
 	format := normalizeAudioFormat(track)
 	additional := trackString(track, "Format_AdditionalFeatures", "Format_AdditionalFeatures_String", "Format_AdditionalFeatures_Original")
@@ -417,7 +417,7 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	}
 	commentary := false
 	for _, audioTrack := range audioTracks {
-		title := strings.ToLower(trackString(audioTrack, "Title", "title"))
+		title := strings.ToLower(audioTrackTitle(audioTrack))
 		if strings.Contains(title, "commentary") {
 			commentary = true
 			break
@@ -441,10 +441,16 @@ func normalizeAudioFormatSettings(value string) string {
 	return ""
 }
 
+// audioTrackTitle returns the first MediaInfo title field used to identify
+// commentary or compatibility tracks before audio language classification.
+func audioTrackTitle(track map[string]any) string {
+	return trackString(track, "Title", "title", "Title_String", "Title_String2", "Title_String3")
+}
+
 func audioLanguagePrefix(meta api.PreparedMetadata, tracks []map[string]any) string {
 	filtered := make([]map[string]any, 0, len(tracks))
 	for _, track := range tracks {
-		if isCommentaryOrCompatibilityAudioValue(trackString(track, "Title", "title")) {
+		if isCommentaryOrCompatibilityAudioValue(audioTrackTitle(track)) {
 			continue
 		}
 		filtered = append(filtered, track)
