@@ -234,9 +234,6 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 
 	groupID := strings.TrimSpace(matches[1])
 	torrentID := strings.TrimSpace(matches[2])
-	if torrentID == "" {
-		torrentID = groupID
-	}
 	torrentURL := strings.TrimRight(uploadCtx.baseURL, "/") + "/torrents.php?id=" + url.QueryEscape(groupID)
 	if torrentID != "" {
 		torrentURL += "&torrentid=" + url.QueryEscape(torrentID)
@@ -246,10 +243,17 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
-	if err := downloadTrackerTorrent(ctx, uploadCtx.client, uploadCtx.baseURL, torrentID, trackerTorrentPath); err != nil {
-		if req.Logger != nil {
-			req.Logger.Warnf("trackers: BTN torrent download fallback to API search: %v", err)
+
+	if torrentID != "" {
+		if err := downloadTrackerTorrent(ctx, uploadCtx.client, uploadCtx.baseURL, torrentID, trackerTorrentPath); err != nil {
+			if req.Logger != nil {
+				req.Logger.Warnf("trackers: BTN torrent download fallback to API search: %v", err)
+			}
+			if err := resolveAndDownloadViaAPI(ctx, uploadCtx.apiURL, uploadCtx.apiToken, req, groupID, trackerTorrentPath); err != nil {
+				return api.UploadSummary{}, err
+			}
 		}
+	} else {
 		if err := resolveAndDownloadViaAPI(ctx, uploadCtx.apiURL, uploadCtx.apiToken, req, groupID, trackerTorrentPath); err != nil {
 			return api.UploadSummary{}, err
 		}
@@ -789,7 +793,28 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		return fmt.Errorf("trackers: BTN API download request: %w", err)
 	}
 	defer downloadResp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(downloadResp.Body, 8*1024*1024))
+	var downloadResult struct {
+		Result struct {
+			DownloadURL string `json:"DownloadURL"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(downloadResp.Body).Decode(&downloadResult); err != nil {
+		return fmt.Errorf("trackers: BTN API decode download response: %w", err)
+	}
+	if downloadResult.Result.DownloadURL == "" {
+		return errors.New("trackers: BTN API did not return DownloadURL")
+	}
+
+	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadResult.Result.DownloadURL, nil)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API torrent fetch request build: %w", err)
+	}
+	dlResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(dlReq)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API torrent fetch request: %w", err)
+	}
+	defer dlResp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(dlResp.Body, 8*1024*1024))
 	if err != nil {
 		return fmt.Errorf("trackers: BTN API read torrent response: %w", err)
 	}
