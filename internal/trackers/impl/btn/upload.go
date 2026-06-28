@@ -569,8 +569,18 @@ func cleanAndNormalizeBTNName(value string) string {
 	value = strings.ReplaceAll(value, "DD+", "DDP")
 	value = regexp.MustCompile(`\.DDP\.(\d)`).ReplaceAllString(value, `.DDP$1`)
 	value = regexp.MustCompile(`\.DD\.(\d)`).ReplaceAllString(value, `.DD$1`)
-	value = regexp.MustCompile(`\.AC3\.(\d)`).ReplaceAllString(value, `.AC3$1`)
 	value = regexp.MustCompile(`\.DTS\.(\d)`).ReplaceAllString(value, `.DTS$1`)
+	value = regexp.MustCompile(`\.AAC\.(\d)`).ReplaceAllString(value, `.AAC$1`)
+	value = regexp.MustCompile(`\.FLAC\.(\d)`).ReplaceAllString(value, `.FLAC$1`)
+	value = regexp.MustCompile(`(?i)\.TrueHD\.(\d)`).ReplaceAllString(value, `.TrueHD$1`)
+	value = regexp.MustCompile(`(?i)\.PCM\.(\d)`).ReplaceAllString(value, `.PCM$1`)
+	value = regexp.MustCompile(`(?i)\.LPCM\.(\d)`).ReplaceAllString(value, `.LPCM$1`)
+
+	// 3. Atmos DDP normalization (e.g. DDP Atmos 5.1 -> DDPA5.1)
+	value = regexp.MustCompile(`(?i)\.DDP\.Atmos\.(\d+(?:\.\d+)?)`).ReplaceAllString(value, `.DDPA$1`)
+
+	// 4. Atmos TrueHD normalization (e.g. TrueHD Atmos 7.1 -> TrueHDA7.1)
+	value = regexp.MustCompile(`(?i)\.TrueHD\.Atmos\.(\d+(?:\.\d+)?)`).ReplaceAllString(value, `.TrueHDA$1`)
 
 	// Collapse any two or more dots
 	value = regexp.MustCompile(`\.{2,}`).ReplaceAllString(value, ".")
