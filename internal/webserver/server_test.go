@@ -342,6 +342,7 @@ func TestBaseURLPreservesExplicitBaseURL(t *testing.T) {
 	}{
 		{name: "path trailing slash", baseURL: " https://example.test/upbrr/ ", want: "https://example.test/upbrr/"},
 		{name: "root slash", baseURL: "https://example.test/", want: "https://example.test/"},
+		{name: "query fragment stripped", baseURL: "https://example.test/upbrr/?token=secret#frag", want: "https://example.test/upbrr/"},
 	}
 
 	for _, tc := range cases {

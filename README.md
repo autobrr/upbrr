@@ -172,6 +172,20 @@ To save that setting to `web-config.json`, add `--persist-web-config`:
 .\upbrr.exe serve --base-url https://example.com/upbrr/ --persist-web-config
 ```
 
+For Docker or unattended deployments, use env vars instead of overriding the
+container command:
+
+```yaml
+environment:
+  - UPBRR_WEB_BASE_URL=/upbrr/
+  - UPBRR_HEALTHCHECK_URL=http://127.0.0.1:7480/upbrr/api/auth/status
+```
+
+Serve settings precedence is CLI flags, then `UPBRR_WEB_*` env vars, then
+`web-config.json`, then defaults. Supported env vars are `UPBRR_WEB_BASE_URL`,
+`UPBRR_WEB_HOST`, `UPBRR_WEB_PORT`, `UPBRR_WEB_OPEN_BROWSER`, and
+`UPBRR_WEB_TRUSTED_PROXIES`.
+
 Example nginx path-prefix proxy:
 
 ```nginx
@@ -194,8 +208,10 @@ server {
 ```
 
 Keep the `/upbrr/` path on both sides of `proxy_pass` unless you intentionally
-configure your proxy to strip the prefix. If the page loads but assets, login,
-or live progress updates fail, check that requests are going to `/upbrr/api/...`
+configure every HTML, API, SSE, cookie, and asset path rewrite yourself. The
+supported mode is path-retained proxying: browsers request `/upbrr/...` and the
+proxy forwards `/upbrr/...` to upbrr. If the page loads but assets, login, or
+live progress updates fail, check that requests are going to `/upbrr/api/...`
 and `/upbrr/assets/...`, not root `/api/...` or `/assets/...`.
 
 If your proxy terminates HTTPS and forwards plain HTTP to upbrr, configure

@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { expect, test } from "@playwright/test";
-import { createE2EWorkspace, startApp } from "./helpers/e2eHarness";
+import { createE2EWorkspace, startApp, type AppServer } from "./helpers/e2eHarness";
 
 test("embedded web boots with dev auth, navigates core pages, and reports invalid paths", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
-  const app = await startApp(workspace);
+  let app: AppServer | undefined;
   try {
+    app = await startApp(workspace);
     await page.goto(app.url);
     await expect(page.getByRole("heading", { name: "Build Release Name" })).toBeVisible();
 
@@ -29,7 +30,7 @@ test("embedded web boots with dev auth, navigates core pages, and reports invali
     await page.getByRole("button", { name: "Fetch metadata" }).click();
     await expect(page.locator(".error")).toContainText(/path|file|stat|missing/i);
   } finally {
-    await app.stop();
+    await app?.stop();
     await workspace.cleanup();
   }
 });

@@ -69,7 +69,10 @@ var (
 // It rejects development no-auth mode for non-loopback hosts.
 func New(opts Options) (*Server, error) {
 	cfg := opts.Config
-	cliCfg := normalizeCLIConfig(opts.CLIConfig)
+	cliCfg, err := normalizeCLIConfig(opts.CLIConfig)
+	if err != nil {
+		return nil, fmt.Errorf("webserver: %w", err)
+	}
 	if opts.DevelopmentNoAuth && !isDevelopmentNoAuthHost(cliCfg.Host) {
 		return nil, fmt.Errorf("webserver: --dev-no-auth requires a loopback host, got %q", cliCfg.Host)
 	}
@@ -308,6 +311,9 @@ func redactLoggedBrowserURLQuery(values url.Values) url.Values {
 // path-only BaseURL values reuse the effective local listener origin.
 func (s *Server) baseURL(addr net.Addr) string {
 	configuredBaseURL := strings.TrimSpace(s.cliCfg.BaseURL)
+	if normalized, err := NormalizeBaseURL(configuredBaseURL); err == nil {
+		configuredBaseURL = normalized
+	}
 	if configuredBaseURL != "" {
 		parsed, err := url.Parse(configuredBaseURL)
 		if err != nil || parsed.IsAbs() || parsed.Host != "" {

@@ -209,6 +209,71 @@ func TestApplyServeOptionOverridesBaseURL(t *testing.T) {
 	}
 }
 
+func TestApplyServeEnvOverrides(t *testing.T) {
+	cfg, err := applyServeEnvOverrides(
+		webserver.DefaultCLIConfig(),
+		serveEnvOptions{
+			Host:           "0.0.0.0",
+			Port:           "9090",
+			BaseURL:        " /upbrr/?token=secret#frag ",
+			OpenBrowser:    "false",
+			TrustedProxies: "127.0.0.1, 10.0.0.0/8",
+		},
+		map[string]bool{
+			"host":            true,
+			"port":            true,
+			"base-url":        true,
+			"open-browser":    true,
+			"trusted-proxies": true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("apply serve env overrides: %v", err)
+	}
+	if cfg.Host != "0.0.0.0" || cfg.Port != 9090 || cfg.BaseURL != "/upbrr" || cfg.OpenBrowser {
+		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+	if len(cfg.TrustedProxies) != 2 || cfg.TrustedProxies[0] != "127.0.0.1" || cfg.TrustedProxies[1] != "10.0.0.0/8" {
+		t.Fatalf("trusted proxies = %#v", cfg.TrustedProxies)
+	}
+}
+
+func TestApplyServeEnvOverridesRejectsEmptyBaseURL(t *testing.T) {
+	stored := webserver.DefaultCLIConfig()
+	stored.BaseURL = "/stored/"
+
+	_, err := applyServeEnvOverrides(
+		stored,
+		serveEnvOptions{BaseURL: " \t "},
+		map[string]bool{"base-url": true},
+	)
+	if err == nil || !strings.Contains(err.Error(), "UPBRR_WEB_BASE_URL cannot be empty") {
+		t.Fatalf("expected empty UPBRR_WEB_BASE_URL error, got %v", err)
+	}
+}
+
+func TestApplyServeOptionOverridesCLIOverridesEnv(t *testing.T) {
+	envCfg, err := applyServeEnvOverrides(
+		webserver.DefaultCLIConfig(),
+		serveEnvOptions{Host: "0.0.0.0", Port: "9090", BaseURL: "/env/"},
+		map[string]bool{"host": true, "port": true, "base-url": true},
+	)
+	if err != nil {
+		t.Fatalf("apply serve env overrides: %v", err)
+	}
+	cfg, err := applyServeOptionOverrides(
+		envCfg,
+		serveOptions{Host: "127.0.0.1", Port: 9191, BaseURL: "/cli/"},
+		map[string]bool{"host": true, "port": true, "base-url": true},
+	)
+	if err != nil {
+		t.Fatalf("apply serve option overrides: %v", err)
+	}
+	if cfg.Host != "127.0.0.1" || cfg.Port != 9191 || cfg.BaseURL != "/cli" {
+		t.Fatalf("CLI did not override env config: %#v", cfg)
+	}
+}
+
 func TestApplyServeOptionOverridesHostPortScopedIPv6(t *testing.T) {
 	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{Host: "[fe80::1%zone]", Port: 9091}, map[string]bool{"host": true, "port": true})
 	if err != nil {
@@ -263,6 +328,7 @@ func TestApplyServeOptionOverridesRejectsInvalidValues(t *testing.T) {
 		{name: "invalid addr", opts: serveOptions{Addr: "localhost"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
 		{name: "unbracketed ipv6 addr", opts: serveOptions{Addr: "::1:9090"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
 		{name: "empty base url", opts: serveOptions{BaseURL: " "}, visited: map[string]bool{"base-url": true}, want: "--base-url cannot be empty"},
+		{name: "invalid base url", opts: serveOptions{BaseURL: "javascript:alert(1)"}, visited: map[string]bool{"base-url": true}, want: "http or https"},
 	}
 
 	for _, tc := range cases {

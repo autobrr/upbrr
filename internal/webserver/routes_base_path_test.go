@@ -185,6 +185,33 @@ func TestRewriteRootAbsoluteManifestPathsPreservesRootMode(t *testing.T) {
 	}
 }
 
+func TestRewriteIndexHTMLDoesNotRewriteNonAppURLsOrJSONScripts(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`<!doctype html><html><head>` +
+		`<link rel="icon" href="/favicon.ico">` +
+		`<link rel="preconnect" href="https://fonts.example.test">` +
+		`<script type="application/json">{"src":"/user/content.png","absolute":"https://cdn.example.test/app.js","protocol":"//cdn.example.test/app.js"}</script>` +
+		`<script type="module" src="/assets/index.js"></script>` +
+		`<script src="//cdn.example.test/lib.js"></script>` +
+		`</head><body></body></html>`)
+	rewritten := string(rewriteIndexHTML(raw, "/upbrr/"))
+
+	for _, want := range []string{
+		`href="/upbrr/favicon.ico"`,
+		`src="/upbrr/assets/index.js"`,
+		`href="https://fonts.example.test"`,
+		`src="//cdn.example.test/lib.js"`,
+		`"src":"/user/content.png"`,
+		`"absolute":"https://cdn.example.test/app.js"`,
+		`"protocol":"//cdn.example.test/app.js"`,
+	} {
+		if !strings.Contains(rewritten, want) {
+			t.Fatalf("rewritten HTML missing %q: %s", want, rewritten)
+		}
+	}
+}
+
 func serveBasePathTestRequest(t *testing.T, handler http.Handler, target string) *httptest.ResponseRecorder {
 	t.Helper()
 

@@ -46,11 +46,18 @@ func LoadCLIConfig(dbPath string) (CLIConfig, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return CLIConfig{}, fmt.Errorf("web config: parse: %w", err)
 	}
-	return normalizeCLIConfig(cfg), nil
+	normalized, err := normalizeCLIConfig(cfg)
+	if err != nil {
+		return CLIConfig{}, fmt.Errorf("web config: %w", err)
+	}
+	return normalized, nil
 }
 
 func SaveCLIConfig(dbPath string, cfg CLIConfig) error {
-	cfg = normalizeCLIConfig(cfg)
+	cfg, err := normalizeCLIConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("web config: %w", err)
+	}
 	path := cliConfigPath(dbPath)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("web config: mkdir: %w", err)
@@ -69,7 +76,7 @@ func cliConfigPath(dbPath string) string {
 	return filepath.Join(filepath.Dir(strings.TrimSpace(dbPath)), cliConfigFileName)
 }
 
-func normalizeCLIConfig(cfg CLIConfig) CLIConfig {
+func normalizeCLIConfig(cfg CLIConfig) (CLIConfig, error) {
 	if strings.TrimSpace(cfg.Host) == "" {
 		cfg.Host = "localhost"
 	}
@@ -79,9 +86,13 @@ func normalizeCLIConfig(cfg CLIConfig) CLIConfig {
 	if cfg.SessionTTL <= 0 {
 		cfg.SessionTTL = 1440
 	}
-	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
+	baseURL, err := NormalizeBaseURL(cfg.BaseURL)
+	if err != nil {
+		return CLIConfig{}, err
+	}
+	cfg.BaseURL = baseURL
 	if len(cfg.TrustedProxies) == 0 {
 		cfg.TrustedProxies = nil
 	}
-	return cfg
+	return cfg, nil
 }

@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	xhtml "golang.org/x/net/html"
+
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
@@ -199,24 +201,48 @@ func rewriteRootAbsoluteAssetPaths(raw []byte, baseURLPath string) []byte {
 	if rewritten, ok := rewriteManifestRootAbsoluteAssetPaths(raw, baseURLPath); ok {
 		return rewritten
 	}
-	replacements := []struct {
-		old string
-		new string
-	}{
-		{old: `href="/`, new: `href="` + baseURLPath},
-		{old: `src="/`, new: `src="` + baseURLPath},
-		{old: `"src": "/`, new: `"src": "` + baseURLPath},
-		{old: `"src":"/`, new: `"src":"` + baseURLPath},
-		{old: `"start_url": "/`, new: `"start_url": "` + baseURLPath},
-		{old: `"start_url":"/`, new: `"start_url":"` + baseURLPath},
-		{old: `"scope": "/`, new: `"scope": "` + baseURLPath},
-		{old: `"scope":"/`, new: `"scope":"` + baseURLPath},
+	return rewriteHTMLRootAbsoluteAssetPaths(raw, baseURLPath)
+}
+
+// rewriteHTMLRootAbsoluteAssetPaths prefixes root-absolute href/src attributes
+// without inspecting script contents or other user-controlled text.
+func rewriteHTMLRootAbsoluteAssetPaths(raw []byte, baseURLPath string) []byte {
+	root, err := xhtml.Parse(bytes.NewReader(raw))
+	if err != nil {
+		return raw
 	}
-	result := string(raw)
-	for _, replacement := range replacements {
-		result = strings.ReplaceAll(result, replacement.old, replacement.new)
+	if !rewriteHTMLNodeRootAbsoluteAssetPaths(root, baseURLPath) {
+		return raw
 	}
-	return []byte(result)
+	var out bytes.Buffer
+	if err := xhtml.Render(&out, root); err != nil {
+		return raw
+	}
+	return out.Bytes()
+}
+
+// rewriteHTMLNodeRootAbsoluteAssetPaths walks parsed HTML nodes in place and
+// reports whether any asset attribute changed.
+func rewriteHTMLNodeRootAbsoluteAssetPaths(node *xhtml.Node, baseURLPath string) bool {
+	if node == nil {
+		return false
+	}
+	changed := false
+	if node.Type == xhtml.ElementNode {
+		for idx := range node.Attr {
+			key := strings.ToLower(node.Attr[idx].Key)
+			if (key == "href" || key == "src") && isRootAbsoluteAssetPath(node.Attr[idx].Val) {
+				node.Attr[idx].Val = baseURLPath + strings.TrimPrefix(node.Attr[idx].Val, "/")
+				changed = true
+			}
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if rewriteHTMLNodeRootAbsoluteAssetPaths(child, baseURLPath) {
+			changed = true
+		}
+	}
+	return changed
 }
 
 // rewriteManifestRootAbsoluteAssetPaths parses a web manifest and prefixes
