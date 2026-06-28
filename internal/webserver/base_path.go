@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"path" //nolint:depguard // Normalizes URL route paths, not local filesystem paths.
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 // NormalizeBaseURL validates and canonicalizes a browser-visible Web UI base
@@ -20,22 +22,22 @@ func NormalizeBaseURL(raw string) (string, error) {
 		return "", nil
 	}
 	if strings.HasPrefix(trimmed, "//") {
-		return "", fmt.Errorf("base URL %q cannot be protocol-relative", raw)
+		return "", fmt.Errorf("base URL %q cannot be protocol-relative", redactedBaseURL(raw))
 	}
 
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", fmt.Errorf("base URL %q is invalid: %w", raw, err)
+		return "", fmt.Errorf("base URL %q is invalid: %s", redactedBaseURL(raw), redactedBaseURLError(err))
 	}
 	if parsed.Scheme != "" {
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return "", fmt.Errorf("base URL %q must use http or https", raw)
+			return "", fmt.Errorf("base URL %q must use http or https", redactedBaseURL(raw))
 		}
 		if parsed.Host == "" {
-			return "", fmt.Errorf("base URL %q must include a host", raw)
+			return "", fmt.Errorf("base URL %q must include a host", redactedBaseURL(raw))
 		}
 		if parsed.User != nil {
-			return "", fmt.Errorf("base URL %q cannot include userinfo", raw)
+			return "", fmt.Errorf("base URL %q cannot include userinfo", redactedBaseURL(raw))
 		}
 		basePath, err := normalizeBaseURLPath(parsed.Path, raw)
 		if err != nil {
@@ -53,10 +55,10 @@ func NormalizeBaseURL(raw string) (string, error) {
 		return parsed.String(), nil
 	}
 	if parsed.Host != "" || parsed.User != nil {
-		return "", fmt.Errorf("base URL %q must be an http(s) URL or path", raw)
+		return "", fmt.Errorf("base URL %q must be an http(s) URL or path", redactedBaseURL(raw))
 	}
 	if parsed.Path == "" && (parsed.RawQuery != "" || parsed.Fragment != "") {
-		return "", fmt.Errorf("base URL %q must include a path", raw)
+		return "", fmt.Errorf("base URL %q must include a path", redactedBaseURL(raw))
 	}
 
 	basePath, err := normalizeBaseURLPath(parsed.Path, raw)
@@ -72,14 +74,14 @@ func normalizeBaseURLPath(rawPath string, raw string) (string, error) {
 		return "", nil
 	}
 	if hasUnsafeBaseURLPathSegment(pathValue) {
-		return "", fmt.Errorf("base URL %q cannot contain path traversal", raw)
+		return "", fmt.Errorf("base URL %q cannot contain path traversal", redactedBaseURL(raw))
 	}
 	decoded, err := url.PathUnescape(pathValue)
 	if err != nil {
-		return "", fmt.Errorf("base URL %q contains invalid path escaping: %w", raw, err)
+		return "", fmt.Errorf("base URL %q contains invalid path escaping: %w", redactedBaseURL(raw), err)
 	}
 	if hasUnsafeBaseURLPathSegment(decoded) {
-		return "", fmt.Errorf("base URL %q cannot contain encoded path traversal", raw)
+		return "", fmt.Errorf("base URL %q cannot contain encoded path traversal", redactedBaseURL(raw))
 	}
 
 	cleaned := path.Clean("/" + strings.Trim(pathValue, "/"))
@@ -87,6 +89,48 @@ func normalizeBaseURLPath(rawPath string, raw string) (string, error) {
 		return "", nil
 	}
 	return cleaned, nil
+}
+
+// redactedBaseURL returns a display-safe version of a rejected base URL for
+// validation errors.
+func redactedBaseURL(raw string) string {
+	redacted := redaction.RedactValue(strings.TrimSpace(raw), nil)
+	return redactURLUserinfo(redacted)
+}
+
+// redactedBaseURLError returns a display-safe parse error. url.Parse errors can
+// include the raw input, so they must be redacted separately from the value.
+func redactedBaseURLError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return redactURLUserinfo(redaction.RedactValue(err.Error(), nil))
+}
+
+// redactURLUserinfo removes credentials from absolute and protocol-relative
+// URL-shaped values before they are surfaced to users.
+func redactURLUserinfo(value string) string {
+	authorityStart := -1
+	if strings.HasPrefix(value, "//") {
+		authorityStart = 2
+	} else if schemeEnd := strings.Index(value, "://"); schemeEnd >= 0 {
+		authorityStart = schemeEnd + len("://")
+	}
+	if authorityStart < 0 {
+		return value
+	}
+
+	authorityEnd := len(value)
+	for _, separator := range []string{"/", "?", "#"} {
+		if idx := strings.Index(value[authorityStart:], separator); idx >= 0 {
+			authorityEnd = min(authorityEnd, authorityStart+idx)
+		}
+	}
+	if at := strings.LastIndex(value[authorityStart:authorityEnd], "@"); at >= 0 {
+		userinfoEnd := authorityStart + at + 1
+		return value[:authorityStart] + "REDACTED@" + value[userinfoEnd:]
+	}
+	return value
 }
 
 func hasUnsafeBaseURLPathSegment(pathValue string) bool {

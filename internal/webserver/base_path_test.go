@@ -72,6 +72,65 @@ func TestNormalizeBaseURLRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestNormalizeBaseURLRejectedErrorsRedactSensitiveInput(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		raw        string
+		want       string
+		notWant    []string
+		wantRedact bool
+	}{
+		{
+			name:       "scheme with secret query",
+			raw:        "ftp://example.test/upbrr?token=secret-token&passkey=secret-passkey",
+			want:       "http or https",
+			notWant:    []string{"secret-token", "secret-passkey"},
+			wantRedact: true,
+		},
+		{
+			name:       "userinfo with secret query",
+			raw:        "https://user:secret-password@example.test/upbrr?token=secret-token",
+			want:       "userinfo",
+			notWant:    []string{"user:secret-password", "secret-password", "secret-token"},
+			wantRedact: true,
+		},
+		{
+			name:       "invalid parse with userinfo and secret query",
+			raw:        "https://user:secret-password@example.test/%zz?token=secret-token",
+			want:       "invalid",
+			notWant:    []string{"user:secret-password", "secret-password", "secret-token"},
+			wantRedact: true,
+		},
+		{
+			name:       "path traversal with secret query",
+			raw:        "/upbrr/../admin?token=secret-token",
+			want:       "path traversal",
+			notWant:    []string{"secret-token"},
+			wantRedact: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := NormalizeBaseURL(tc.raw)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("NormalizeBaseURL(%q) error = %v, want substring %q", tc.raw, err, tc.want)
+			}
+			for _, forbidden := range tc.notWant {
+				if strings.Contains(err.Error(), forbidden) {
+					t.Fatalf("NormalizeBaseURL(%q) error leaked %q: %v", tc.raw, forbidden, err)
+				}
+			}
+			if tc.wantRedact && !strings.Contains(err.Error(), "REDACTED") {
+				t.Fatalf("NormalizeBaseURL(%q) error = %v, want redacted marker", tc.raw, err)
+			}
+		})
+	}
+}
+
 func TestExternalBasePathNormalizesBaseURL(t *testing.T) {
 	t.Parallel()
 

@@ -23,6 +23,7 @@ const png1x1 = Buffer.from(
 );
 const e2eTorrentFixture =
   "d8:announce13:http://e2e.ee4:infod6:lengthi0e4:name8:test.txt12:piece lengthi16384e6:pieces0:ee";
+const startAppBindAttempts = 5;
 
 type FakeCounters = {
   trackerUploads: number;
@@ -93,13 +94,31 @@ export async function createE2EWorkspace(): Promise<E2EWorkspace> {
 
 /**
  * Starts the embedded web server for a workspace and waits for auth status at
- * the configured base path before returning its browser URL.
+ * the configured base path before returning its browser URL. Startup retries
+ * address-in-use failures because the reserved port is released before the
+ * child process can bind it.
  */
 export async function startApp(
   workspace: E2EWorkspace,
   options: StartAppOptions = {},
 ): Promise<AppServer> {
   await seedConfigDatabase(workspace);
+  for (let attempt = 1; attempt <= startAppBindAttempts; attempt++) {
+    try {
+      return await startAppOnce(workspace, options);
+    } catch (error) {
+      if (attempt === startAppBindAttempts || !isAddressInUseStartupError(error)) {
+        throw error;
+      }
+    }
+  }
+  throw new Error("server did not start");
+}
+
+async function startAppOnce(
+  workspace: E2EWorkspace,
+  options: StartAppOptions = {},
+): Promise<AppServer> {
   const port = await reserveLoopbackPort();
   const origin = `http://127.0.0.1:${port}`;
   const basePath = normalizeBasePath(options.baseURL);
@@ -137,6 +156,15 @@ export async function startApp(
       await stopProcess(child);
     },
   };
+}
+
+function isAddressInUseStartupError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /address already in use|only one usage of each socket address|EADDRINUSE/i.test(
+    error.message,
+  );
 }
 
 function normalizeBasePath(value: string | undefined): string {

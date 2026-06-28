@@ -274,6 +274,35 @@ func TestApplyServeOptionOverridesCLIOverridesEnv(t *testing.T) {
 	}
 }
 
+func TestApplyServeOverridesReplaceInvalidPersistedBaseURL(t *testing.T) {
+	persisted := webserver.DefaultCLIConfig()
+	persisted.BaseURL = "javascript:alert(1)"
+
+	envCfg, err := applyServeEnvOverrides(
+		persisted,
+		serveEnvOptions{BaseURL: "/env/"},
+		map[string]bool{"base-url": true},
+	)
+	if err != nil {
+		t.Fatalf("apply serve env overrides: %v", err)
+	}
+	if envCfg.BaseURL != "/env" {
+		t.Fatalf("env base URL override = %q, want /env", envCfg.BaseURL)
+	}
+
+	cliCfg, err := applyServeOptionOverrides(
+		persisted,
+		serveOptions{BaseURL: "/cli/"},
+		map[string]bool{"base-url": true},
+	)
+	if err != nil {
+		t.Fatalf("apply serve option overrides: %v", err)
+	}
+	if cliCfg.BaseURL != "/cli" {
+		t.Fatalf("CLI base URL override = %q, want /cli", cliCfg.BaseURL)
+	}
+}
+
 func TestApplyServeOptionOverridesHostPortScopedIPv6(t *testing.T) {
 	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{Host: "[fe80::1%zone]", Port: 9091}, map[string]bool{"host": true, "port": true})
 	if err != nil {
