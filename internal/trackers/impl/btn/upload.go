@@ -49,6 +49,116 @@ var (
 	btnSelectedOptionRegex = regexp.MustCompile(`(?is)<option[^>]*selected[^>]*value=["']([^"']+)["']`)
 	btnOptionValueRegex    = regexp.MustCompile(`(?is)<option[^>]*value=["']([^"']+)["']`)
 	btnSuccessURLPattern   = regexp.MustCompile(`torrents\.php\?id=(\d+)(?:&torrentid=(\d+))?`)
+	btnCountryMap = map[string]string{
+		"se": "1", "swe": "1", "sweden": "1",
+		"us": "2", "usa": "2", "united states": "2", "united states of america": "2",
+		"ru": "3", "rus": "3", "russia": "3",
+		"fi": "4", "fin": "4", "finland": "4",
+		"ca": "5", "can": "5", "canada": "5",
+		"fr": "6", "fra": "6", "france": "6",
+		"de": "7", "deu": "7", "germany": "7",
+		"cn": "8", "chn": "8", "china": "8",
+		"it": "9", "ita": "9", "italy": "9",
+		"dk": "10", "dnk": "10", "denmark": "10",
+		"no": "11", "nor": "11", "norway": "11",
+		"gb": "12", "uk": "12", "gbr": "12", "united kingdom": "12",
+		"ie": "13", "irl": "13", "ireland": "13",
+		"pl": "14", "pol": "14", "poland": "14",
+		"nl": "15", "nld": "15", "netherlands": "15",
+		"be": "16", "bel": "16", "belgium": "16",
+		"jp": "17", "jpn": "17", "japan": "17",
+		"br": "18", "bra": "18", "brazil": "18",
+		"ar": "19", "arg": "19", "argentina": "19",
+		"au": "20", "aus": "20", "australia": "20",
+		"nz": "21", "nzl": "21", "new zealand": "21",
+		"es": "22", "esp": "22", "spain": "22",
+		"pt": "23", "prt": "23", "portugal": "23",
+		"mx": "24", "mex": "24", "mexico": "24",
+		"sg": "25", "sgp": "25", "singapore": "25",
+		"za": "26", "zaf": "26", "south africa": "26",
+		"kr": "27", "kor": "27", "south korea": "27",
+		"jm": "28", "jam": "28", "jamaica": "28",
+		"lu": "29", "lux": "29", "luxembourg": "29",
+		"hk": "30", "hkg": "30", "hong kong": "30",
+		"bz": "31", "blz": "31", "belize": "31",
+		"dz": "32", "dza": "32", "algeria": "32",
+		"ao": "33", "ago": "33", "angola": "33",
+		"at": "34", "aut": "34", "austria": "34",
+		"yu": "35", "yug": "35", "yugoslavia": "35",
+		"ws": "36", "wsm": "36", "western samoa": "36",
+		"my": "37", "mys": "37", "malaysia": "37",
+		"do": "38", "dom": "38", "dominican republic": "38",
+		"gr": "39", "grc": "39", "greece": "39",
+		"gt": "40", "gtm": "40", "guatemala": "40",
+		"il": "41", "isr": "41", "israel": "41",
+		"pk": "42", "pak": "42", "pakistan": "42",
+		"cz": "43", "cze": "43", "czech republic": "43",
+		"rs": "44", "srb": "44", "serbia": "44",
+		"sc": "45", "syc": "45", "seychelles": "45",
+		"tw": "46", "twn": "46", "taiwan": "46",
+		"pr": "47", "pri": "47", "puerto rico": "47",
+		"cl": "48", "chl": "48", "chile": "48",
+		"cu": "49", "cub": "49", "cuba": "49",
+		"cg": "50", "cog": "50", "congo": "50",
+		"af": "51", "afg": "51", "afghanistan": "51",
+		"tr": "52", "tur": "52", "turkey": "52",
+		"uz": "53", "uzb": "53", "uzbekistan": "53",
+		"ch": "54", "che": "54", "switzerland": "54",
+		"ki": "55", "kir": "55", "kiribati": "55",
+		"ph": "56", "phl": "56", "philippines": "56",
+		"bf": "57", "bfa": "57", "burkina faso": "57",
+		"ng": "58", "nga": "58", "nigeria": "58",
+		"is": "59", "isl": "59", "iceland": "59",
+		"nr": "60", "nru": "60", "nauru": "60",
+		"si": "61", "svn": "61", "slovenia": "61",
+		"al": "62", "alb": "62", "albania": "62",
+		"tm": "63", "tkm": "63", "turkmenistan": "63",
+		"ba": "64", "bih": "64", "bosnia herzegovina": "64",
+		"ad": "65", "and": "65", "andorra": "65",
+		"lt": "66", "ltu": "66", "lithuania": "66",
+		"in": "67", "ind": "67", "india": "67",
+		"an": "68", "ant": "68", "netherlands antilles": "68",
+		"ua": "69", "ukr": "69", "ukraine": "69",
+		"ve": "70", "ven": "70", "venezuela": "70",
+		"hu": "71", "hun": "71", "hungary": "71",
+		"ro": "72", "rou": "72", "romania": "72",
+		"vu": "73", "vut": "73", "vanuatu": "73",
+		"vn": "74", "vnm": "74", "vietnam": "74",
+		"tt": "75", "tto": "75", "trinidad": "75",
+		"hn": "76", "hnd": "76", "honduras": "76",
+		"kg": "77", "kgz": "77", "kyrgyzstan": "77",
+		"ec": "78", "ecu": "78", "ecuador": "78",
+		"bs": "79", "bhs": "79", "bahamas": "79",
+		"pe": "80", "per": "80", "peru": "80",
+		"kh": "81", "khm": "81", "cambodia": "81",
+		"bb": "82", "brb": "82", "barbados": "82",
+		"bd": "83", "bgd": "83", "bangladesh": "83",
+		"la": "84", "lao": "84", "laos": "84",
+		"uy": "85", "ury": "85", "uruguay": "85",
+		"ag": "86", "atg": "86", "antigua barbuda": "86",
+		"py": "87", "pry": "87", "paraguay": "87",
+		"su": "88", "sun": "88", "soviet": "88",
+		"th": "89", "tha": "89", "thailand": "89",
+		"sn": "90", "sen": "90", "senegal": "90",
+		"tg": "91", "tgo": "91", "togo": "91",
+		"kp": "92", "prk": "92", "north korea": "92",
+		"hr": "93", "hrv": "93", "croatia": "93",
+		"ee": "94", "est": "94", "estonia": "94",
+		"co": "95", "col": "95", "colombia": "95",
+		"lb": "96", "lbn": "96", "lebanon": "96",
+		"lv": "97", "lva": "97", "latvia": "97",
+		"cr": "98", "cri": "98", "costa rica": "98",
+		"eg": "99", "egy": "99", "egypt": "99",
+		"bg": "100", "bgr": "100", "bulgaria": "100",
+		"mk": "103", "mkd": "103", "macedonia": "103",
+		"kw": "104", "kwt": "104", "kuwait": "104",
+		"lk": "105", "lka": "105", "sri lanka": "105",
+		"ir": "106", "irn": "106", "iran": "106",
+		"sa": "108", "sau": "108", "saudi arabia": "108",
+		"sk": "110", "svk": "110", "slovakia": "110",
+		"id": "111", "idn": "111", "indonesia": "111",
+		"bn": "113", "brn": "113", "brunei": "113",
+	}
 )
 
 type uploadContext struct {
@@ -308,6 +418,9 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 	}
 	if req.Meta.ExternalMetadata.TVDB != nil && !strings.EqualFold(strings.TrimSpace(req.Meta.ExternalMetadata.TVDB.OriginalLanguage), "en") {
 		payload["foreign"] = "on"
+		if countryID := resolveCountryID(req.Meta); countryID != "" {
+			payload["country"] = countryID
+		}
 	}
 	clean := make(map[string]string, len(payload))
 	for key, value := range payload {
@@ -809,3 +922,56 @@ func applyBTNNameMapping(releaseName string, mappedCodec string, mappedSource st
 	}
 	return updated
 }
+
+// resolveCountryID extracts country information from external metadata and returns the BTN country ID.
+// It tries TVDB first, then TMDB, then IMDB. Returns empty string if no country is found.
+// All inputs are normalized to lowercase before matching to handle:
+// - TVDB alpha-3 codes (e.g., "usa") - converted to alpha-2 then mapped
+// - TMDB alpha-2 codes (e.g., "US") - normalized to lowercase then mapped
+// - IMDB country names (e.g., "United States") - normalized to lowercase then matched
+func resolveCountryID(meta api.PreparedMetadata) string {
+	var countryStr string
+
+	// Try TVDB first (ISO 3166-1 alpha-3, lowercase)
+	if meta.ExternalMetadata.TVDB != nil && meta.ExternalMetadata.TVDB.OriginalCountry != "" {
+		countryStr = meta.ExternalMetadata.TVDB.OriginalCountry
+	}
+
+	// Fall back to TMDB (ISO 3166-1 alpha-2, uppercase)
+	if countryStr == "" && meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.OriginCountry) > 0 {
+		countryStr = meta.ExternalMetadata.TMDB.OriginCountry[0]
+	}
+
+	// Fall back to IMDB (full country names)
+	if countryStr == "" && meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.Country != "" {
+		// IMDB can have multiple countries separated by commas, take the first one
+		parts := strings.Split(meta.ExternalMetadata.IMDB.Country, ",")
+		if len(parts) > 0 {
+			countryStr = strings.TrimSpace(parts[0])
+		}
+	}
+
+	if countryStr == "" {
+		return ""
+	}
+
+	// Normalize to lowercase for all lookups
+	normalized := strings.ToLower(strings.TrimSpace(countryStr))
+
+	// Try direct lookup (handles alpha-2 codes, alpha-3 codes, and country names)
+	if id, ok := btnCountryMap[normalized]; ok {
+		return id
+	}
+
+	// Try partial name matching for fuzzy country name variations
+	// (e.g., "united states of america" partially matches "united states").
+	// Only match against longer names to prevent false positives from short codes.
+	for key, id := range btnCountryMap {
+		if len(key) > 3 && (strings.Contains(normalized, key) || strings.Contains(key, normalized)) {
+			return id
+		}
+	}
+
+	return ""
+}
+
