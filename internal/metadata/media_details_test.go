@@ -277,6 +277,20 @@ func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
 	}
 }
 
+func TestEditionFromMetaStripsRepackAliasesFromEdition(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Edition: []string{"Director's", "Cut", "V3"}},
+	}
+
+	edition, repack := editionFromMeta(meta, mediaInfoDoc{})
+	if edition != "Director's Cut" {
+		t.Fatalf("expected cleaned edition without repack alias, got %q", edition)
+	}
+	if repack != "REPACK2" {
+		t.Fatalf("expected normalized repack alias, got %q", repack)
+	}
+}
+
 func TestEditionFromMetaExtractsRepackFromSourcePath(t *testing.T) {
 	tests := []struct {
 		name string

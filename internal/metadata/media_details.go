@@ -26,7 +26,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var repackPattern = regexp.MustCompile(`(?i)\b(?:REPACK\d?|RERIP|PROPER\d?)\b`)
+var repackPattern = regexp.MustCompile(`(?i)\b(?:REPACK\d?|RERIP|PROPER\d?|V[2-4])\b`)
 var editionWordPattern = regexp.MustCompile(`(?i)\bedition\b`)
 var editionBadTokenPattern = regexp.MustCompile(`(?i)\b(?:internal|limited|retail|version|remastered)\b`)
 var editionWhitespacePattern = regexp.MustCompile(`\s+`)
