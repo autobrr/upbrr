@@ -21,6 +21,8 @@ const png1x1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
   "base64",
 );
+const e2eTorrentFixture =
+  "d8:announce13:http://e2e.ee4:infod6:lengthi0e4:name8:test.txt12:piece lengthi16384e6:pieces0:ee";
 
 type FakeCounters = {
   trackerUploads: number;
@@ -85,18 +87,33 @@ export async function createE2EWorkspace(): Promise<E2EWorkspace> {
 
 export async function startApp(workspace: E2EWorkspace): Promise<AppServer> {
   await seedConfigDatabase(workspace);
-  const child = spawn(e2eBinary, ["serve", "--config", workspace.configPath, "--dev-no-auth"], {
-    cwd: repoRoot,
-    env: workspace.env,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  const port = await reserveLoopbackPort();
+  const url = `http://127.0.0.1:${port}`;
+  const child = spawn(
+    e2eBinary,
+    [
+      "serve",
+      "--config",
+      workspace.configPath,
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      "--dev-no-auth",
+    ],
+    {
+      cwd: repoRoot,
+      env: workspace.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  );
   const output: string[] = [];
   child.stdout?.on("data", (chunk) => output.push(String(chunk)));
   child.stderr?.on("data", (chunk) => output.push(String(chunk)));
-  await waitForHTTP("http://localhost:7480/api/auth/status", child, output);
+  await waitForHTTP(`${url}/api/auth/status`, child, output);
   return {
-    url: "http://localhost:7480",
+    url,
     stop: async () => {
       await stopProcess(child);
     },
@@ -114,8 +131,8 @@ async function seedConfigDatabase(workspace: E2EWorkspace) {
   }
 }
 
-export async function fetchMetadata(page: Page, sourcePath: string) {
-  await page.goto("/");
+export async function fetchMetadata(page: Page, appUrl: string, sourcePath: string) {
+  await page.goto(appUrl);
   await expect(page.getByRole("heading", { name: "Build Release Name" })).toBeVisible();
   await page.getByLabel("Source path").fill(sourcePath);
   await page.getByRole("button", { name: "Fetch metadata" }).click();
@@ -175,7 +192,7 @@ async function startFakeServer(): Promise<FakeServer> {
     }
     if (req.method === "GET" && req.url?.startsWith("/download/")) {
       res.writeHead(200, { "Content-Type": "application/x-bittorrent" });
-      res.end("d8:announce13:http://e2e.ee");
+      res.end(e2eTorrentFixture);
       return;
     }
     writeJSON(res, 404, { error: "not found" });
@@ -190,6 +207,17 @@ async function startFakeServer(): Promise<FakeServer> {
     counters,
     close: () => closeServer(server),
   };
+}
+
+async function reserveLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await listen(server);
+  const address = server.address();
+  await closeServer(server);
+  if (!address || typeof address === "string") {
+    throw new Error("failed to reserve a TCP port");
+  }
+  return address.port;
 }
 
 function listen(server: Server): Promise<void> {

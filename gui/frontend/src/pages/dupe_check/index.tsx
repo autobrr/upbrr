@@ -6,7 +6,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
-import type { DupeCheckSummary } from "../../types";
+import type { DupeCheckResult, DupeCheckSummary, DupeCheckTrackerState } from "../../types";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import { cn } from "../../utils/cn";
@@ -17,6 +17,7 @@ type Props = {
   dupeLoading: boolean;
   dupeError: string;
   dupeSummary: DupeCheckSummary;
+  dupeTrackerStates?: DupeCheckTrackerState[];
   dupeTrackerFlags: Record<string, boolean>;
   dupeIgnore: Record<string, boolean>;
   ruleSkippedTrackerSet: Set<string>;
@@ -39,12 +40,69 @@ const splitTrackerLabel = (value: string) =>
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
 
+const isRuleFailureReason = (reason: string) =>
+  reason.toLowerCase().trim().startsWith("rule check failed");
+
+const isFinishedTrackerStatus = (status: string) => {
+  switch (status.toLowerCase().trim()) {
+    case "complete":
+    case "completed":
+    case "skipped":
+    case "failed":
+    case "canceled":
+      return true;
+    default:
+      return false;
+  }
+};
+
+/**
+ * Converts a finished tracker job state into a displayable dupe result.
+ * Pending states without backend results are skipped so progress snapshots do not
+ * appear as upload-eligible tracker rows.
+ */
+const resultFromTrackerState = (state: DupeCheckTrackerState): DupeCheckResult | null => {
+  const resultTracker = String(state.result?.Tracker || "").trim();
+  const status = String(state.result?.Status || state.status || "").trim();
+  if (!resultTracker && !isFinishedTrackerStatus(status)) return null;
+  const tracker = String(resultTracker || state.tracker || "").trim();
+  if (!tracker) return null;
+  return {
+    ...state.result,
+    Tracker: tracker,
+    Status: status,
+  };
+};
+
+/**
+ * Prefers per-tracker snapshot results over grouped summary rows.
+ *
+ * The backend may group rule-failure skips by reason for compact summaries, but
+ * the page needs individual tracker labels/icons/counts when job state is present.
+ */
+const displayResultsFor = (
+  summaryResults: DupeCheckResult[],
+  trackerStates: DupeCheckTrackerState[] | undefined,
+) => {
+  const stateResults = (trackerStates || [])
+    .map(resultFromTrackerState)
+    .filter((result): result is DupeCheckResult => Boolean(result));
+  return stateResults.length > 0 ? stateResults : summaryResults;
+};
+
+/** Expands comma-grouped tracker labels while preserving normal single-tracker rows. */
+const trackerNamesForResult = (result: DupeCheckResult) => {
+  const splitNames = splitTrackerLabel(result.Tracker);
+  return splitNames.length > 0 && result.Tracker.includes(",") ? splitNames : [result.Tracker];
+};
+
 export default function DupeCheckPage(props: Readonly<Props>) {
   const {
     path,
     dupeLoading,
     dupeError,
     dupeSummary,
+    dupeTrackerStates,
     dupeTrackerFlags,
     dupeIgnore,
     ruleSkippedTrackerSet,
@@ -61,7 +119,8 @@ export default function DupeCheckPage(props: Readonly<Props>) {
 
   const dupeSummaryNotes = dupeSummary.Notes || [];
   const hasDupeNotes = dupeSummaryNotes.length > 0;
-  const hasDupeResults = dupeSummary.Results && dupeSummary.Results.length > 0;
+  const displayResults = displayResultsFor(dupeSummary.Results || [], dupeTrackerStates);
+  const hasDupeResults = displayResults.length > 0;
   const dupeEmptyMessage = hasDupeNotes ? dupeSummaryNotes.join(" ") : "No dupe results yet.";
   const showProgress =
     dupeLoading || dupeProgressStatus === "running" || dupeProgressStatus === "queued";
@@ -69,13 +128,19 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     dupeTotalCount > 0
       ? `${Math.min(dupeCompletedCount, dupeTotalCount)}/${dupeTotalCount} trackers complete`
       : "Preparing tracker search";
-  const sortedResults = (dupeSummary.Results || []).slice().sort((left, right) => {
+  const sortedResults = displayResults.slice().sort((left, right) => {
     const leftCount = left.Filtered?.length ?? 0;
     const rightCount = right.Filtered?.length ?? 0;
     const leftPathed = left.Notes?.includes(pathedNote) ?? false;
     const rightPathed = right.Notes?.includes(pathedNote) ?? false;
-    const leftRuleSkip = ruleSkippedTrackerSet.has(left.Tracker.toLowerCase().trim());
-    const rightRuleSkip = ruleSkippedTrackerSet.has(right.Tracker.toLowerCase().trim());
+    const leftReason = String(left.SkipReason || "").trim();
+    const rightReason = String(right.SkipReason || "").trim();
+    const leftRuleSkip =
+      ruleSkippedTrackerSet.has(left.Tracker.toLowerCase().trim()) ||
+      (left.Skipped && isRuleFailureReason(leftReason));
+    const rightRuleSkip =
+      ruleSkippedTrackerSet.has(right.Tracker.toLowerCase().trim()) ||
+      (right.Skipped && isRuleFailureReason(rightReason));
     const leftHasDupes = leftCount > 0;
     const rightHasDupes = rightCount > 0;
 
@@ -93,22 +158,37 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     }
     return left.Tracker.localeCompare(right.Tracker);
   });
-  const availableTrackers = sortedResults
-    .filter((result) => {
+  const availability = sortedResults.reduce(
+    (next, result) => {
       const normalizedTracker = result.Tracker.toLowerCase().trim();
       const status = String(result.Status || "")
         .toLowerCase()
         .trim();
       const hasFailure = status === "failed" || Boolean(result.Error?.trim());
       const hasPathedNote = result.Notes?.includes(pathedNote) ?? false;
-      if (hasFailure) return false;
-      if (hasPathedNote) return false;
-      if (dupeTrackerFlags[result.Tracker]) return false;
-      if (ruleSkippedTrackerSet.has(normalizedTracker)) return false;
-      return true;
-    })
-    .map((result) => result.Tracker);
-  const unavailableCount = Math.max(sortedResults.length - availableTrackers.length, 0);
+      const isUnavailable =
+        hasFailure ||
+        hasPathedNote ||
+        Boolean(result.Skipped) ||
+        Boolean(dupeTrackerFlags[result.Tracker]) ||
+        ruleSkippedTrackerSet.has(normalizedTracker);
+
+      trackerNamesForResult(result).forEach((tracker) => {
+        const normalized = tracker.toLowerCase().trim();
+        if (!normalized || next.seen.has(normalized)) return;
+        next.seen.add(normalized);
+        if (isUnavailable) {
+          next.unavailableCount += 1;
+        } else {
+          next.availableTrackers.push(tracker);
+        }
+      });
+      return next;
+    },
+    { availableTrackers: [] as string[], unavailableCount: 0, seen: new Set<string>() },
+  );
+  const availableTrackers = availability.availableTrackers;
+  const unavailableCount = availability.unavailableCount;
   const hideTrackerNames = faviconOnly && useFavicons;
 
   return (
@@ -200,7 +280,10 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                 .trim();
               const hasFailure = status === "failed" || Boolean(result.Error?.trim());
               const normalizedTracker = result.Tracker.toLowerCase().trim();
-              const ruleSkipReason = ruleSkipReasons[normalizedTracker];
+              const skipReason = String(result.SkipReason || "").trim();
+              const ruleSkipReason =
+                ruleSkipReasons[normalizedTracker] ||
+                (result.Skipped && isRuleFailureReason(skipReason) ? skipReason : "");
               const visibleNotes =
                 result.Notes?.filter((note) => {
                   if (note === pathedNote) return false;
@@ -213,7 +296,8 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               const showIgnoreToggle = !hasPathedNote && (hasDupes || dupeCount > 0);
               const displayDupeCount =
                 (dupeTrackerFlags[result.Tracker] ?? hasDupes) ? dupeCount : 0;
-              const displayTrackers = hasPathedNote ? splitTrackerLabel(result.Tracker) : [];
+              const displayTrackers =
+                hasPathedNote || ruleSkipReason ? trackerNamesForResult(result) : [];
               const iconTrackers = displayTrackers.length > 0 ? displayTrackers : [result.Tracker];
 
               return (

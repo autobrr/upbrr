@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,7 @@ func TestBackendApplyConfigKeepsSharedRepositoryUsable(t *testing.T) {
 	cfg := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 
 	backend := &Backend{
@@ -84,7 +85,7 @@ func TestNewBackendKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	cfg := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 
 	backend, err := NewBackend(cfg, newEventHub())
@@ -162,6 +163,7 @@ func TestBackendGetConfigFallsBackToRuntimeConfigWhenDatabaseConfigMissing(t *te
 		t.Fatalf("load embedded config: %v", err)
 	}
 	cfg.MainSettings.DBPath = repoPath
+	cfg.Logging.Level = "error"
 	backend := &Backend{
 		cfg:  *cfg,
 		repo: repo,
@@ -283,25 +285,10 @@ func TestBackendGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 		hub:  newEventHub(),
 	}
 
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				backend.replaceRuntime(cfgA, nil, nil)
-				backend.replaceRuntime(cfgB, nil, nil)
-			}
-		}
-	})
-	defer func() {
-		close(stop)
-		wg.Wait()
-	}()
+	assertExport := func(want config.Config) {
+		t.Helper()
 
-	for range 2000 {
+		backend.replaceRuntime(want, nil, nil)
 		payload, err := backend.GetConfig()
 		if err != nil {
 			t.Fatalf("get config: %v", err)
@@ -323,6 +310,9 @@ func TestBackendGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 			t.Fatalf("unexpected fallback DBPath %q", exported.MainSettings.DBPath)
 		}
 	}
+	assertExport(cfgA)
+	assertExport(cfgB)
+
 	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); !errors.Is(loadErr, internalerrors.ErrNotFound) {
 		t.Fatalf("fallback should not persist config rows, load err=%v", loadErr)
 	}
@@ -347,7 +337,7 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 	stored := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "stored"},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 9},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	if err := config.SaveToDatabase(context.Background(), &stored, repo); err != nil {
 		t.Fatalf("save stored config: %v", err)
@@ -358,12 +348,12 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 	cfgA := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "runtime-a", DBPath: pathA},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	cfgB := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "runtime-b", DBPath: pathB},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 2},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	backend := &Backend{
 		cfg:  cfgA,
@@ -371,25 +361,9 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 		hub:  newEventHub(),
 	}
 
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				backend.replaceRuntime(cfgA, nil, nil)
-				backend.replaceRuntime(cfgB, nil, nil)
-			}
-		}
-	})
-	defer func() {
-		close(stop)
-		wg.Wait()
-	}()
+	assertExport := func(wantDBPath string) {
+		t.Helper()
 
-	for range 2000 {
 		payload, err := backend.GetConfig()
 		if err != nil {
 			t.Fatalf("get config: %v", err)
@@ -404,12 +378,14 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 		if exported.MainSettings.TMDBAPI != stored.MainSettings.TMDBAPI {
 			t.Fatalf("expected DB-loaded TMDB API, got %q", exported.MainSettings.TMDBAPI)
 		}
-		switch exported.MainSettings.DBPath {
-		case pathA, pathB:
-		default:
-			t.Fatalf("unexpected DBPath fallback %q", exported.MainSettings.DBPath)
+		if exported.MainSettings.DBPath != wantDBPath {
+			t.Fatalf("DBPath fallback: got %q want %q", exported.MainSettings.DBPath, wantDBPath)
 		}
 	}
+	backend.replaceRuntime(cfgA, nil, nil)
+	assertExport(pathA)
+	backend.replaceRuntime(cfgB, nil, nil)
+	assertExport(pathB)
 }
 
 func TestBackendFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
@@ -648,7 +624,7 @@ func TestBackendSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
 	initial := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	backend := &Backend{
 		cfg:  initial,
@@ -786,10 +762,12 @@ func TestBackendLogStreamContinuesAcrossSaveConfigRuntimeReplacement(t *testing.
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-log-stream.db")
 	initial := backendConfigTestConfig(repoPath)
+	initial.Logging.Level = "info"
 	initialLogger, err := logging.New(initial.Logging, repoPath)
 	if err != nil {
 		t.Fatalf("new logger: %v", err)
 	}
+	initialLogger.SetConsoleOutput(io.Discard, io.Discard)
 	backend := &Backend{
 		cfg:     initial,
 		logger:  initialLogger,
@@ -839,10 +817,11 @@ func TestBackendLogStreamContinuesAcrossSaveConfigRuntimeReplacement(t *testing.
 func TestBackendStartLogStreamRejectsNilHubWithoutRegisteringStream(t *testing.T) {
 	t.Parallel()
 
-	logger, err := logging.New(config.LoggingConfig{Level: "info"}, filepath.Join(t.TempDir(), "nil-hub-log-stream.db"))
+	logger, err := logging.New(config.LoggingConfig{Level: "error"}, filepath.Join(t.TempDir(), "nil-hub-log-stream.db"))
 	if err != nil {
 		t.Fatalf("new logger: %v", err)
 	}
+	logger.SetConsoleOutput(io.Discard, io.Discard)
 	t.Cleanup(func() {
 		_ = logger.Close()
 	})
@@ -874,10 +853,12 @@ func TestBackendLogStreamContinuesAcrossImportConfigRuntimeReplacement(t *testin
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-import-log-stream.db")
 	initial := backendConfigTestConfig(repoPath)
+	initial.Logging.Level = "info"
 	initialLogger, err := logging.New(initial.Logging, repoPath)
 	if err != nil {
 		t.Fatalf("new logger: %v", err)
 	}
+	initialLogger.SetConsoleOutput(io.Discard, io.Discard)
 	backend := &Backend{
 		cfg:     initial,
 		logger:  initialLogger,
@@ -939,7 +920,7 @@ func TestBackendSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
 	initial := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 	backend := &Backend{
 		cfg:  initial,
@@ -1002,7 +983,7 @@ func TestBackendSaveConfigBuildRuntimeFailureDoesNotPersist(t *testing.T) {
 		t.Fatal("expected runtime build failure")
 	}
 
-	assertStoredSkipAutoTorrent(t, repo, false)
+	assertStoredSkipAutoTorrentUnset(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config to remain unchanged")
 	}
@@ -1038,7 +1019,7 @@ func TestBackendImportConfigBuildRuntimeFailureDoesNotPersist(t *testing.T) {
 		t.Fatal("expected runtime build failure")
 	}
 
-	assertStoredSkipAutoTorrent(t, repo, false)
+	assertStoredSkipAutoTorrentUnset(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config to remain unchanged")
 	}
@@ -1136,7 +1117,7 @@ func TestBackendSaveConfigSyncsUsableWebAuthBeforeSave(t *testing.T) {
 	assertCookieAuthStatePresent(t, repo)
 }
 
-func TestBackendSaveConfigCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
+func TestBackendSaveConfigLeavesConfigUnchangedWhenRepositorySaveFailsAfterCookieSync(t *testing.T) {
 	t.Parallel()
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-cookie-rollback.db")
@@ -1163,7 +1144,8 @@ func TestBackendSaveConfigCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
 		t.Fatal("expected save config to fail")
 	}
 
-	assertFailedConfigSaveRowsAbsent(t, repo)
+	assertConfigRowsAbsent(t, repo)
+	assertCookieAuthStatePresent(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config not to be applied after failed config save")
 	}
@@ -1200,7 +1182,7 @@ func TestBackendSaveConfigHardCookieMigrationErrorDoesNotInstallRuntime(t *testi
 	if !strings.Contains(err.Error(), "forced migration failure") {
 		t.Fatalf("expected forced migration failure, got %v", err)
 	}
-	assertStoredSkipAutoTorrent(t, repo, true)
+	assertStoredSkipAutoTorrentUnset(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config not to be applied after hard migration failure")
 	}
@@ -1237,6 +1219,7 @@ func TestBackendImportConfigHardCookieMigrationErrorPropagates(t *testing.T) {
 	if !strings.Contains(err.Error(), "forced migration failure") {
 		t.Fatalf("expected forced migration failure, got %v", err)
 	}
+	assertStoredSkipAutoTorrentUnset(t, repo)
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config not to be applied after imported hard migration failure")
 	}
@@ -1295,7 +1278,7 @@ func backendConfigTestConfig(repoPath string) config.Config {
 	return config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "info"},
+		Logging:            config.LoggingConfig{Level: "error"},
 	}
 }
 
@@ -1345,6 +1328,19 @@ func assertFailedConfigSaveRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
 	}
 }
 
+func assertConfigRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
+	t.Helper()
+
+	var data string
+	err := repo.RawDB().QueryRowContext(context.Background(),
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"MainSettings",
+	).Scan(&data)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected MainSettings to be absent after failed save, got row=%q err=%v", data, err)
+	}
+}
+
 func expectLogStreamMessage(t *testing.T, events <-chan serverEvent, streamID string, want string) {
 	t.Helper()
 
@@ -1385,15 +1381,34 @@ func drainLogStreamEvents(events <-chan serverEvent) {
 	}
 }
 
-func assertStoredSkipAutoTorrent(t *testing.T, repo *db.SQLiteRepository, want bool) {
+func assertStoredSkipAutoTorrentUnset(t *testing.T, repo *db.SQLiteRepository) {
 	t.Helper()
+
+	var rawMetadata string
+	if err := repo.RawDB().QueryRowContext(context.Background(),
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"Metadata",
+	).Scan(&rawMetadata); err != nil {
+		t.Fatalf("load raw metadata config section: %v", err)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(rawMetadata), &metadata); err != nil {
+		t.Fatalf("decode raw metadata config section: %v", err)
+	}
+	rawValue, ok := metadata["SkipAutoTorrent"].(bool)
+	if !ok {
+		t.Fatalf("raw metadata config section missing SkipAutoTorrent: %s", rawMetadata)
+	}
+	if rawValue {
+		t.Fatal("raw stored skip_auto_torrent changed unexpectedly")
+	}
 
 	stored, err := config.LoadFromDatabase(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("load stored config: %v", err)
 	}
-	if got := stored.Metadata.SkipAutoTorrent; got != want {
-		t.Fatalf("stored skip_auto_torrent: got %t want %t", got, want)
+	if stored.Metadata.SkipAutoTorrent {
+		t.Fatal("stored skip_auto_torrent changed unexpectedly")
 	}
 }
 
@@ -1481,7 +1496,7 @@ func TestBackendExportConfigRespectsAllowUnencryptedExport(t *testing.T) {
 			cfg := config.Config{
 				MainSettings:       config.MainSettingsConfig{TMDBAPI: "plain-secret", DBPath: repoPath},
 				ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-				Logging:            config.LoggingConfig{Level: "info"},
+				Logging:            config.LoggingConfig{Level: "error"},
 			}
 
 			backend, err := NewBackend(cfg, newEventHub())

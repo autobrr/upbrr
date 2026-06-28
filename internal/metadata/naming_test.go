@@ -54,7 +54,7 @@ func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 		Tag:         "-ETHEL",
 	}, api.NopLogger{})
 
-	expectedName := "Greenland 2: Migration 2026 2160p iT WEB-DL DD+ Atmos 5.1 HDR10+ x265-ETHEL"
+	expectedName := "Greenland 2: Migration 2026 2160p iT WEB-DL DD+ 5.1 Atmos HDR10+ x265-ETHEL"
 	if result.Name != expectedName {
 		t.Fatalf("expected name %q, got %q", expectedName, result.Name)
 	}
@@ -169,6 +169,38 @@ func TestReleaseNameRequestFromMetaDefaultsToDailyForTVEpisode(t *testing.T) {
 	}
 	if req.EpisodeTitle != "Episode Title" {
 		t.Fatalf("expected episode title preserved, got %q", req.EpisodeTitle)
+	}
+}
+
+func TestReleaseNameRequestFromMetaTVPackOmitsSeasonTitle(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		Release: api.ReleaseInfo{
+			Title:      "A Spy Among Friends",
+			Resolution: "2160p",
+		},
+		Type:         "WEBDL",
+		Source:       "Web",
+		Service:      "MGMP",
+		Audio:        "DD+ 5.1",
+		VideoEncode:  "H.265",
+		SeasonStr:    "S01",
+		TVPack:       true,
+		EpisodeTitle: "Season 1",
+		Tag:          "-XEBEC",
+	}
+
+	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if req.EpisodeTitle != "" {
+		t.Fatalf("expected tv pack season title omitted from naming request, got %q", req.EpisodeTitle)
+	}
+
+	result := BuildReleaseName(req, api.NopLogger{})
+	if strings.Contains(result.NameNoTag, "Season 1") {
+		t.Fatalf("expected tv pack name to omit season title, got %q", result.NameNoTag)
+	}
+	if !containsAll(result.NameNoTag, []string{"A Spy Among Friends", "S01", "MGMP", "WEB-DL"}) {
+		t.Fatalf("expected tv pack name to keep season and service tokens, got %q", result.NameNoTag)
 	}
 }
 

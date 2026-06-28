@@ -12,6 +12,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/additional"
+	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -40,7 +41,10 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 		return evaluateAZFamilyRules(name, meta)
 	}
 	rules, ok := additional.RulesFor(name)
-	if !ok && name != "PTP" {
+	// UNIT3D-known trackers without a tracker-specific RuleSet must still reach
+	// the MediaInfo-settings check below (rules is the zero value for them, which
+	// no-ops every other rule), so don't bail early when the tracker is known.
+	if !ok && name != "PTP" && !unit3dmeta.IsKnown(name) {
 		return nil
 	}
 
@@ -56,7 +60,15 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 	if rules.RequireUniqueID && !meta.ValidMediaInfo {
 		addFailure("require_unique_id", "missing MediaInfo Unique ID")
 	}
-	if rules.RequireValidMISetting && !meta.ValidMediaInfoSettings {
+	// Every UNIT3D upload rejects encodes that lack MediaInfo encoding settings
+	// (see internal/trackers/impl/unit3d/upload.go), so enforce it at
+	// metadata-prep time for all UNIT3D trackers instead of relying on each
+	// RuleSet to opt in. This lets the release be skipped before
+	// screenshots/torrent/upload rather than failing at the upload step.
+	// ValidMediaInfoSettings is only false for encodes missing settings, so
+	// remux/web/disc uploads are unaffected. The per-tracker flag still covers
+	// non-UNIT3D trackers (e.g. BHD) that opt in via their RuleSet.
+	if (rules.RequireValidMISetting || unit3dmeta.IsKnown(name)) && !meta.ValidMediaInfoSettings {
 		addFailure("require_valid_mi_setting", "missing MediaInfo encode settings")
 	}
 

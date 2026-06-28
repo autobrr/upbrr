@@ -20,6 +20,10 @@ let csrfToken = "";
 let nativeBrowseEnabled = false;
 let caseInsensitivePaths = navigator.platform.toLowerCase().startsWith("win");
 
+// Mirrors trackerauth.MaxCookieImportContentBytes so browser imports reject
+// over-limit files before decode and over-limit decoded text before posting.
+const maxCookieImportContentBytes = 1024 * 1024;
+const encodedTextByteLength = (value: string) => new TextEncoder().encode(value).length;
 const sessionChangedMessage =
   "Web session changed in another tab. Reload this tab to continue with the active login.";
 
@@ -607,6 +611,70 @@ export const initializeBrowserBridge = (
         UpdateLogExclusions: (patterns: string[]) =>
           call("UpdateLogExclusions", { Patterns: patterns }),
         ListKnownTrackers: () => call("ListKnownTrackers"),
+        ListTrackerAuthCapabilities: () => call("ListTrackerAuthCapabilities"),
+        GetTrackerAuthStatus: (tracker: string) =>
+          call("GetTrackerAuthStatus", { Tracker: tracker }),
+        ImportTrackerAuthCookies: async (tracker: string) => {
+          const fileData = await new Promise<{ name: string; content: string }>(
+            (resolve, reject) => {
+              const input = document.createElement("input");
+              input.type = "file";
+              input.accept = ".txt,.json";
+              input.onchange = () => {
+                const file = input.files?.[0];
+                if (!file) {
+                  resolve({ name: "", content: "" });
+                  return;
+                }
+                if (file.size > maxCookieImportContentBytes) {
+                  reject(
+                    new Error(
+                      `tracker auth: cookie file content exceeds ${maxCookieImportContentBytes} byte limit`,
+                    ),
+                  );
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const content = reader.result as string;
+                  if (encodedTextByteLength(content) > maxCookieImportContentBytes) {
+                    reject(
+                      new Error(
+                        `tracker auth: cookie file content exceeds ${maxCookieImportContentBytes} byte limit`,
+                      ),
+                    );
+                    return;
+                  }
+                  resolve({ name: file.name, content });
+                };
+                reader.onerror = () => reject(reader.error);
+                reader.readAsText(file);
+              };
+              input.addEventListener("cancel", () => resolve({ name: "", content: "" }));
+              input.click();
+            },
+          );
+          if (!fileData.name) {
+            return call("GetTrackerAuthStatus", { Tracker: tracker });
+          }
+          return call("ImportTrackerAuthCookieContent", {
+            Tracker: tracker,
+            FileName: fileData.name,
+            Content: fileData.content,
+          });
+        },
+        ImportTrackerAuthCookieContent: (tracker: string, fileName: string, content: string) =>
+          call("ImportTrackerAuthCookieContent", {
+            Tracker: tracker,
+            FileName: fileName,
+            Content: content,
+          }),
+        TestTrackerAuth: (tracker: string) => call("TestTrackerAuth", { Tracker: tracker }),
+        LoginTrackerAuth: (tracker: string, login: unknown) =>
+          call("LoginTrackerAuth", { Tracker: tracker, Login: login }),
+        SubmitTrackerAuth2FA: (challengeID: string, code: string) =>
+          call("SubmitTrackerAuth2FA", { ChallengeID: challengeID, Code: code }),
+        DeleteTrackerAuth: (tracker: string) => call("DeleteTrackerAuth", { Tracker: tracker }),
         GetImageHostPolicyMetadata: () => call("GetImageHostPolicyMetadata"),
         ListHistory: () => call("ListHistory"),
         GetHistoryOverview: (sourcePath: string) =>
@@ -650,6 +718,7 @@ export const initializeBrowserBridge = (
   recreateEventSource();
 };
 
+/** Returns whether app calls should use the browser HTTP bridge instead of Wails. */
 export const isBrowserMode = () => {
   browserMode = isWebUIRuntime();
   return browserMode;

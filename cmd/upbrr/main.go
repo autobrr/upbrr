@@ -277,7 +277,7 @@ func run() error {
 			}
 			continue
 		}
-		if err := runInteractiveCLIPath(ctx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens, cfg); err != nil {
+		if err := runInteractiveCLIPathWithLogger(ctx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens, cfg, logger); err != nil {
 			return exitError(1, err)
 		}
 	}

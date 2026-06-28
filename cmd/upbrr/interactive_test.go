@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -24,7 +26,7 @@ func TestRunInteractiveCLIPathReturnsNilAfterSuccessfulUpload(t *testing.T) {
 	coreSvc := &cliCoreForTest{
 		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
 	}
-	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true}, map[string]bool{}, "movie.mkv", config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
 	})
 	if err != nil {
@@ -47,7 +49,7 @@ func TestRunInteractiveCLIPathHandlesScreenshotsBeforeReview(t *testing.T) {
 		},
 		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
 	}
-	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true}, map[string]bool{}, "movie.mkv", config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
 	})
 	if err != nil {
@@ -95,7 +97,7 @@ func TestRunInteractiveCLIPathDoubleDupeBeforeScreenshotAndReview(t *testing.T) 
 		},
 		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
 	}
-	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true, DoubleDupeCheck: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, DoubleDupeCheck: true}, map[string]bool{}, "movie.mkv", config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
 	})
 	if err != nil {
@@ -118,7 +120,7 @@ func TestRunInteractiveCLIPathDryRunSkipsScreenshotSideEffects(t *testing.T) {
 		},
 		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
 	}
-	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true, DryRun: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, DryRun: true}, map[string]bool{}, "movie.mkv", config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
 	})
 	if err != nil {
@@ -145,7 +147,7 @@ func TestRunInteractiveCLIPathDryRunPreservesExplicitNoSeed(t *testing.T) {
 	coreSvc := &cliCoreForTest{
 		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
 	}
-	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true, DryRun: true, NoSeed: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, DryRun: true, NoSeed: true}, map[string]bool{}, "movie.mkv", config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
 	})
 	if err != nil {
@@ -170,7 +172,7 @@ func TestRunInteractiveCLIPathDebugHandlesScreenshotsBeforeReview(t *testing.T) 
 		},
 		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
 	}
-	err := runInteractiveCLIPath(context.Background(), coreSvc, nil, cliOptions{Unattended: true, Debug: true}, map[string]bool{}, "movie.mkv", 1, config.Config{
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, Debug: true}, map[string]bool{}, "movie.mkv", config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
 	})
 	if err != nil {
@@ -202,11 +204,9 @@ func TestRunInteractiveCLIPathUsesResolvedPreviewSourceForPreparedUpload(t *test
 	err := runInteractiveCLIPath(
 		context.Background(),
 		coreSvc,
-		nil,
 		cliOptions{Unattended: true, Rehash: true},
 		map[string]bool{"rehash": true},
 		"folder",
-		1,
 		config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}}},
 	)
 	if err != nil {
@@ -394,6 +394,329 @@ func TestResolveCLIUploadTrackersExplicitTrackersSuppressDefaults(t *testing.T) 
 	}
 }
 
+func TestEnsureCLITrackerAuthBeforeDupeCheckValidatesApplicableTrackers(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{
+			{
+				TrackerID:         "PTP",
+				SupportsLogin:     true,
+				SupportsAutoLogin: true,
+			},
+			{
+				TrackerID:      "AITHER",
+				AuthKind:       "api_key",
+				RequiresAPIKey: true,
+			},
+		},
+		validateStatus: map[string]api.TrackerAuthStatus{
+			"PTP": {TrackerID: "PTP", State: trackerauth.StateConfigured},
+		},
+	}
+
+	got, err := ensureCLITrackerAuthBeforeDupeCheckWithService(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
+		[]string{"PTP", "AITHER", "BLU"},
+	)
+	if err != nil {
+		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
+	}
+	if strings.Join(got, ",") != "PTP,AITHER,BLU" {
+		t.Fatalf("expected PTP and non-applicable trackers to continue, got %#v", got)
+	}
+	if strings.Join(authSvc.validated, ",") != "PTP" {
+		t.Fatalf("expected only applicable PTP validation, got %#v", authSvc.validated)
+	}
+}
+
+func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRuleFailureSkipOnlyForManagedAuth(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{
+			{TrackerID: "MTV", AuthKind: "api_key_cookies_login_manual_2fa", SupportsCookieFile: true, SupportsLogin: true, SupportsManual2FA: true, RequiresAPIKey: true},
+			{TrackerID: "NBL", AuthKind: "api_key", RequiresAPIKey: true},
+			{TrackerID: "PTP", AuthKind: "cookies_login_manual_2fa", SupportsCookieFile: true, SupportsLogin: true, SupportsManual2FA: true},
+		},
+		validateStatus: map[string]api.TrackerAuthStatus{
+			"PTP": {TrackerID: "PTP", State: trackerauth.StateConfigured},
+		},
+	}
+	logger := &cliAuthRecordingLogger{}
+
+	got, err := ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
+		[]string{"MTV", "NBL", "PTP"},
+		api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
+			"MTV": {{Rule: "extra_check", Reason: "managed auth rule failure"}},
+			"NBL": {{Rule: "require_tv_only", Reason: "static api key rule failure"}},
+		}},
+		logger,
+	)
+	if err != nil {
+		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
+	}
+	if strings.Join(got, ",") != "NBL,PTP" {
+		t.Fatalf("expected managed rule-failed tracker removed while static tracker remains eligible, got %#v", got)
+	}
+	if strings.Join(authSvc.validated, ",") != "PTP" {
+		t.Fatalf("expected only rule-eligible managed auth tracker to validate, got %#v", authSvc.validated)
+	}
+
+	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
+	if !strings.Contains(logs, "cli auth: tracker=MTV skipped before auth due to rule failure") {
+		t.Fatalf("expected managed auth rule-failure skip log, got:\n%s", logs)
+	}
+	if strings.Contains(logs, "tracker=NBL skipped before auth due to rule failure") {
+		t.Fatalf("static api-key tracker should not log auth rule-failure skip, got:\n%s", logs)
+	}
+}
+
+func TestEnsureCLITrackerAuthBeforeDupeCheckHonorsPerTrackerRuleFailureOverride(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{
+			{TrackerID: "MTV", AuthKind: "api_key_cookies_login_manual_2fa", SupportsCookieFile: true, SupportsLogin: true, SupportsManual2FA: true},
+			{TrackerID: "PTP", AuthKind: "cookies_login_manual_2fa", SupportsCookieFile: true, SupportsLogin: true, SupportsManual2FA: true},
+		},
+	}
+	logger := &cliAuthRecordingLogger{}
+
+	got, err := ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{
+			Options:                      api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
+			IgnoreTrackerRuleFailuresFor: []string{" mtv "},
+		},
+		[]string{"MTV", "PTP"},
+		api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
+			"mTv": {{Rule: "extra_check", Reason: "managed auth rule failure"}},
+		}},
+		logger,
+	)
+	if err != nil {
+		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
+	}
+	if strings.Join(got, ",") != "MTV,PTP" {
+		t.Fatalf("expected per-tracker rule-failure override to keep MTV eligible, got %#v", got)
+	}
+	if strings.Join(authSvc.validated, ",") != "MTV,PTP" {
+		t.Fatalf("expected overridden managed tracker to validate, got %#v", authSvc.validated)
+	}
+
+	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
+	if strings.Contains(logs, "tracker=MTV skipped before auth due to rule failure") {
+		t.Fatalf("overridden tracker should not log auth rule-failure skip, got:\n%s", logs)
+	}
+}
+
+func TestRemoveUnreadyCLIAuthTrackersKeepsUncheckedCandidates(t *testing.T) {
+	t.Parallel()
+
+	got := removeUnreadyCLIAuthTrackers(
+		[]string{"AITHER", "MTV", "NBL", "PTP"},
+		[]string{"AITHER", "NBL", "PTP"},
+	)
+	if strings.Join(got, ",") != "AITHER,NBL,PTP" {
+		t.Fatalf("expected static trackers kept while unready MTV removed, got %#v", got)
+	}
+}
+
+func TestRemoveUnreadyCLIAuthTrackersRemovesAllWhenNoneReady(t *testing.T) {
+	t.Parallel()
+
+	got := removeUnreadyCLIAuthTrackers(
+		[]string{"MTV", "PTP"},
+		nil,
+	)
+	if len(got) != 0 {
+		t.Fatalf("expected all auth-unready trackers removed, got %#v", got)
+	}
+}
+
+func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRedactedDecisions(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{
+			{
+				TrackerID:         "PTP",
+				AuthKind:          "credential_login",
+				SupportsLogin:     true,
+				SupportsAutoLogin: true,
+			},
+			{
+				TrackerID:          "HDB",
+				AuthKind:           "cookies",
+				SupportsCookieFile: true,
+				RequiresPasskey:    true,
+			},
+		},
+		validateStatus: map[string]api.TrackerAuthStatus{
+			"PTP": {TrackerID: "PTP", State: trackerauth.StateConfigured, CookieCount: 2, EncryptedStorage: true},
+			"HDB": {
+				TrackerID: "HDB",
+				State:     trackerauth.StateLoginRequired,
+				Message:   `{"password":"hunter2","state":"bad"}`,
+			},
+		},
+	}
+	logger := &cliAuthRecordingLogger{}
+
+	got, err := ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
+		[]string{"PTP", "HDB"},
+		api.MetadataPreview{},
+		logger,
+	)
+	if err != nil {
+		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
+	}
+	if strings.Join(got, ",") != "PTP" {
+		t.Fatalf("expected only ready PTP to continue, got %#v", got)
+	}
+
+	logs := strings.Join(append(append([]string{}, logger.info...), logger.warn...), "\n")
+	for _, expected := range []string{
+		"cli auth: pre-dupe check start trackers=2",
+		"cli auth: validating tracker=PTP auth_kind=credential_login",
+		"cli auth: tracker=PTP decision=ready state=configured",
+		"cli auth: tracker=HDB decision=skip state=login_required",
+	} {
+		if !strings.Contains(logs, expected) {
+			t.Fatalf("expected log %q in:\n%s", expected, logs)
+		}
+	}
+	if strings.Contains(logs, "hunter2") {
+		t.Fatalf("auth logs leaked password: %s", logs)
+	}
+	if !strings.Contains(logs, `"password":"[REDACTED]"`) {
+		t.Fatalf("expected redacted password in auth logs, got:\n%s", logs)
+	}
+}
+
+func TestCLITrackerAuthStatusMessageRedactsUserVisibleStatusText(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status api.TrackerAuthStatus
+	}{
+		{
+			name:   "message",
+			status: api.TrackerAuthStatus{Message: `{"password":"hunter2","state":"bad"}`},
+		},
+		{
+			name:   "last error",
+			status: api.TrackerAuthStatus{LastError: `{"api_key":"secret-token"}`},
+		},
+		{
+			name:   "state fallback",
+			status: api.TrackerAuthStatus{State: `{"passkey":"secret-token"}`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := cliTrackerAuthStatusMessage(tt.status)
+			if strings.Contains(got, "hunter2") || strings.Contains(got, "secret-token") {
+				t.Fatalf("status message leaked secret: %q", got)
+			}
+			if !strings.Contains(got, "[REDACTED]") {
+				t.Fatalf("expected redacted status message, got %q", got)
+			}
+		})
+	}
+}
+
+func TestEnsureCLITrackerAuthBeforeDupeCheckPromptsForManual2FA(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{{
+			TrackerID:         "PTP",
+			SupportsLogin:     true,
+			SupportsAutoLogin: true,
+			SupportsManual2FA: true,
+		}},
+		validateStatus: map[string]api.TrackerAuthStatus{
+			"PTP": {
+				TrackerID:   "PTP",
+				State:       trackerauth.StateLoginRequired,
+				Needs2FA:    true,
+				ChallengeID: "challenge-1",
+				Message:     "2FA required",
+			},
+		},
+		submitStatus: api.TrackerAuthStatus{TrackerID: "PTP", State: trackerauth.StateConfigured},
+	}
+
+	got, err := ensureCLITrackerAuthBeforeDupeCheckWithService(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("123456\n")),
+		authSvc,
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
+		[]string{"PTP"},
+	)
+	if err != nil {
+		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
+	}
+	if strings.Join(got, ",") != "PTP" {
+		t.Fatalf("expected PTP to continue after 2FA, got %#v", got)
+	}
+	if authSvc.submittedChallenge != "challenge-1" || authSvc.submittedCode != "123456" {
+		t.Fatalf("expected submitted 2FA challenge/code, got challenge=%q code=%q", authSvc.submittedChallenge, authSvc.submittedCode)
+	}
+}
+
+func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedAuthRequired(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{{
+			TrackerID:          "HDB",
+			SupportsCookieFile: true,
+			RequiresPasskey:    true,
+		}},
+		validateStatus: map[string]api.TrackerAuthStatus{
+			"HDB": {
+				TrackerID: "HDB",
+				State:     trackerauth.StateLoginRequired,
+				Message:   "login credentials or imported cookies required",
+			},
+		},
+	}
+
+	_, err := ensureCLITrackerAuthBeforeDupeCheckWithService(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeUnattended}},
+		[]string{"HDB"},
+	)
+	if err == nil {
+		t.Fatal("expected unattended auth-required error")
+	}
+	if !strings.Contains(err.Error(), "tracker auth HDB not ready before dupe check") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestPromptTrackerDupeReviewBuildsConfirmedTrackerList(t *testing.T) {
 	t.Parallel()
 
@@ -513,6 +836,42 @@ func TestPromptTrackerDupeReviewApprovesUserSkippedDupeChecksInUnattendedMode(t 
 	}
 	if len(ruleOverrides) != 0 {
 		t.Fatalf("expected no rule overrides for user-requested skip, got %#v", ruleOverrides)
+	}
+}
+
+func TestPromptTrackerDupeReviewSkipsAllRuleBlockedTrackersUnattended(t *testing.T) {
+	t.Parallel()
+
+	// When every selected tracker is rule-blocked (e.g. encodes missing
+	// MediaInfo encode settings), unattended review approves none. The caller
+	// relies on an empty approval list to skip the release before
+	// screenshots/torrent/upload, so this guards that early-skip path.
+	req := api.Request{
+		Trackers: []string{"LST", "RF"},
+		Options:  api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
+	}
+	summary := api.DupeCheckSummary{
+		Results: []api.DupeCheckResult{
+			{Tracker: "LST", Status: "skipped", Skipped: true, SkipReason: "rule check failed: missing MediaInfo encode settings"},
+			{Tracker: "RF", Status: "skipped", Skipped: true, SkipReason: "rule check failed: missing MediaInfo encode settings"},
+		},
+	}
+
+	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+		bufio.NewReader(strings.NewReader("")),
+		summary,
+		req,
+		req.Trackers,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("promptTrackerDupeReview: %v", err)
+	}
+	if len(approved) != 0 {
+		t.Fatalf("expected no approved trackers when all are rule-blocked, got %#v", approved)
+	}
+	if len(ignoreDupes) != 0 || len(ruleOverrides) != 0 {
+		t.Fatalf("expected no overrides in unattended mode, got ignoreDupes=%#v ruleOverrides=%#v", ignoreDupes, ruleOverrides)
 	}
 }
 
@@ -891,6 +1250,53 @@ type cliCoreForTest struct {
 	savedDescriptionRaw    []string
 	savedDescriptionReqs   []api.Request
 	savedDescriptionGroup  api.DescriptionBuilderGroup
+}
+
+type cliTrackerAuthForTest struct {
+	capabilities       []api.TrackerAuthCapability
+	validateStatus     map[string]api.TrackerAuthStatus
+	submitStatus       api.TrackerAuthStatus
+	validated          []string
+	submittedChallenge string
+	submittedCode      string
+}
+
+type cliAuthRecordingLogger struct {
+	api.NopLogger
+	debug []string
+	info  []string
+	warn  []string
+}
+
+func (l *cliAuthRecordingLogger) Debugf(format string, args ...any) {
+	l.debug = append(l.debug, fmt.Sprintf(format, args...))
+}
+
+func (l *cliAuthRecordingLogger) Infof(format string, args ...any) {
+	l.info = append(l.info, fmt.Sprintf(format, args...))
+}
+
+func (l *cliAuthRecordingLogger) Warnf(format string, args ...any) {
+	l.warn = append(l.warn, fmt.Sprintf(format, args...))
+}
+
+func (s *cliTrackerAuthForTest) Capabilities(context.Context) ([]api.TrackerAuthCapability, error) {
+	return append([]api.TrackerAuthCapability(nil), s.capabilities...), nil
+}
+
+func (s *cliTrackerAuthForTest) Validate(_ context.Context, trackerID string) (api.TrackerAuthStatus, error) {
+	name := strings.ToUpper(strings.TrimSpace(trackerID))
+	s.validated = append(s.validated, name)
+	if status, ok := s.validateStatus[name]; ok {
+		return status, nil
+	}
+	return api.TrackerAuthStatus{TrackerID: name, State: trackerauth.StateConfigured}, nil
+}
+
+func (s *cliTrackerAuthForTest) Submit2FA(_ context.Context, challengeID string, code string) (api.TrackerAuthStatus, error) {
+	s.submittedChallenge = challengeID
+	s.submittedCode = code
+	return s.submitStatus, nil
 }
 
 type cliCoreRequestForTest struct {

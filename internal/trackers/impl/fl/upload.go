@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
@@ -40,6 +42,7 @@ const (
 var (
 	validatorPattern = regexp.MustCompile(`name="validator"\s+value="([^"]+)"`)
 	successPattern   = regexp.MustCompile(`details\.php\?id=(\d+)&uploaded=`)
+	newHTTPClient    = httpclient.New
 )
 
 type uploadState struct {
@@ -188,6 +191,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	return state, cookies, nil
 }
 
+// resolveCookies returns usable stored FL cookies or performs credential login.
+// Login-page read errors are reported before token parsing, and successful
+// credential login requires durable cookie persistence.
 func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerConfig, dbPath string, dryRun bool) ([]*http.Cookie, error) {
 	loaded, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "FL", ".filelist.io")
 	if err != nil {
@@ -209,16 +215,28 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return nil, errors.New("trackers: FL cookie invalid/missing and username/password not configured")
 	}
+	if err := ensureLoginCookieStorageAvailable(dbPath); err != nil {
+		return nil, err
+	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: FL create login cookie jar: %w", err)
+	}
+	client := newHTTPClient(httpclient.DefaultTimeout)
+	client.Jar = jar
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginPageURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: FL login page request build: %w", err)
 	}
-	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: FL login page request: %w", err)
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("trackers: FL read login page response: %w", err)
+	}
 	match := validatorPattern.FindStringSubmatch(string(body))
 	if len(match) < 2 {
 		return nil, errors.New("trackers: FL validator token not found")
@@ -233,7 +251,6 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 		return nil, fmt.Errorf("trackers: FL login request build: %w", err)
 	}
 	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	client := httpclient.New(httpclient.DefaultTimeout)
 	loginResp, err := client.Do(loginReq)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: FL login request: %w", err)
@@ -242,7 +259,35 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	if loginResp.StatusCode < 200 || loginResp.StatusCode >= 400 {
 		return nil, fmt.Errorf("trackers: FL login failed status=%d", loginResp.StatusCode)
 	}
-	return loginResp.Cookies(), nil
+	base, _ := url.Parse(baseURL)
+	loginCookies := client.Jar.Cookies(base)
+	if err := persistLoginCookies(ctx, dbPath, loginCookies); err != nil {
+		return nil, err
+	}
+	return loginCookies, nil
+}
+
+// persistLoginCookies saves FL login cookies and returns any persistence error
+// so callers do not report login success without durable cookie storage.
+func persistLoginCookies(ctx context.Context, dbPath string, values []*http.Cookie) error {
+	valid := validFLCookies(values)
+	if len(valid) == 0 {
+		return errors.New("trackers: FL login returned no usable cookies")
+	}
+	if err := cookies.SaveTrackerHTTPCookies(ctx, dbPath, "FL", valid); err != nil {
+		return fmt.Errorf("trackers: FL persist login cookies: %w", err)
+	}
+	return nil
+}
+
+func ensureLoginCookieStorageAvailable(dbPath string) error {
+	if _, err := authmaterial.LoadFromDBPath(dbPath); err != nil {
+		if errors.Is(err, authmaterial.ErrUnavailable) {
+			return fmt.Errorf("trackers: FL encrypted cookie storage unavailable before credential login: %w", cookies.ErrAuthHelperUnavailable)
+		}
+		return fmt.Errorf("trackers: FL check encrypted cookie storage before credential login: %w", err)
+	}
+	return nil
 }
 
 func validFLCookies(values []*http.Cookie) []*http.Cookie {
@@ -416,8 +461,6 @@ func isSD(meta api.PreparedMetadata) bool {
 
 func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }
