@@ -280,6 +280,9 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		"release_desc": strings.TrimSpace(req.Meta.DescriptionOverride),
 		"tvdb":         "autofilled",
 	}
+	if resolveFastTorrent(req.TrackerConfig) {
+		payload["fasttorrent"] = "on"
+	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
@@ -415,6 +418,9 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"resolution":   mapResolution(req.Meta),
 		"release_desc": description,
 		"tvdb":         "autofilled",
+	}
+	if resolveFastTorrent(req.TrackerConfig) {
+		payload["fasttorrent"] = "on"
 	}
 	if req.Meta.ExternalMetadata.TVDB != nil && !strings.EqualFold(strings.TrimSpace(req.Meta.ExternalMetadata.TVDB.OriginalLanguage), "en") {
 		payload["foreign"] = "on"
@@ -827,6 +833,20 @@ func resolveBTNAPIURL(cfg config.TrackerConfig) string {
 		}
 	}
 	return btnAPIRPCURL
+}
+
+func resolveFastTorrent(cfg config.TrackerConfig) bool {
+	if cfg.Unknown != nil {
+		if raw, ok := cfg.Unknown["fast_torrent"]; ok {
+			if b, ok := raw.(bool); ok {
+				return b
+			}
+			if s, ok := raw.(string); ok {
+				return strings.EqualFold(strings.TrimSpace(s), "true") || strings.TrimSpace(s) == "1"
+			}
+		}
+	}
+	return false
 }
 
 func stripHTML(value string) string {
