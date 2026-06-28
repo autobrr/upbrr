@@ -49,7 +49,7 @@ var (
 	btnSelectedOptionRegex = regexp.MustCompile(`(?is)<option[^>]*selected[^>]*value=["']([^"']+)["']`)
 	btnOptionValueRegex    = regexp.MustCompile(`(?is)<option[^>]*value=["']([^"']+)["']`)
 	btnSuccessURLPattern   = regexp.MustCompile(`torrents\.php\?id=(\d+)(?:&torrentid=(\d+))?`)
-	btnCountryMap = map[string]string{
+	btnCountryMap          = map[string]string{
 		"se": "1", "swe": "1", "sweden": "1",
 		"us": "2", "usa": "2", "united states": "2", "united states of america": "2",
 		"ru": "3", "rus": "3", "russia": "3",
@@ -512,6 +512,14 @@ func resolveOrigin(releaseName string) string {
 	}
 }
 
+func stripEpisodeTitle(name string, episodeTitle string) string {
+	if episodeTitle == "" || name == "" {
+		return name
+	}
+	// uncleaned episodeTitle is embedded directly into ReleaseName.
+	return strings.ReplaceAll(name, episodeTitle, "")
+}
+
 func resolveUploadName(meta api.PreparedMetadata) string {
 	var name string
 	if n := strings.TrimSpace(meta.ReleaseName); n != "" {
@@ -523,6 +531,7 @@ func resolveUploadName(meta api.PreparedMetadata) string {
 	} else {
 		name = pathutil.Base(meta.SourcePath)
 	}
+	name = stripEpisodeTitle(name, meta.EpisodeTitle)
 	name = cleanAndNormalizeBTNName(name)
 	return applyBTNNoGroupSuffix(name, meta)
 }
@@ -974,4 +983,3 @@ func resolveCountryID(meta api.PreparedMetadata) string {
 
 	return ""
 }
-
