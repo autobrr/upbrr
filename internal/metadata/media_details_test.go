@@ -447,6 +447,18 @@ func TestHDRFromMediaPrefersMediaInfoOverFilenameHDR(t *testing.T) {
 	}
 }
 
+func TestHDRFromMediaNormalizesPQTransferToHDR(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","colour_primaries":"BT.2020","transfer_characteristics":"PQ"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	if got != "HDR" {
+		t.Fatalf("expected PQ transfer to normalize to HDR, got %q", got)
+	}
+}
+
 func TestHDRFromMediaPrefersBDInfoOverFilenameHDR(t *testing.T) {
 	got := hdrFromMedia(mediaInfoDoc{}, &discparse.BDInfo{
 		Video: []discparse.BDVideo{

@@ -1290,8 +1290,9 @@ func uhdFromMeta(meta api.PreparedMetadata) string {
 	return ""
 }
 
-// hdrFromMedia prefers BDInfo and MediaInfo HDR evidence, then falls back to
-// normalized filename tokens from the current source path or parsed release.
+// hdrFromMedia prefers BDInfo and MediaInfo HDR evidence, normalizing bare PQ
+// transfer metadata to HDR for tracker naming, then falls back to normalized
+// filename tokens from the current source path or parsed release.
 func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta api.PreparedMetadata) string {
 	if bdinfo != nil && len(bdinfo.Video) > 0 {
 		hdr := ""
@@ -1338,7 +1339,7 @@ func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta api.PreparedM
 		}
 		transfer := trackString(track, "transfer_characteristics", "transfer_characteristics_Original")
 		if hdrFormat == "" && strings.Contains(strings.ToUpper(transfer), "PQ") {
-			hdr = "PQ10"
+			hdr = "HDR"
 		}
 		if strings.Contains(strings.ToUpper(transfer), "HLG") {
 			hdr = "HLG"
