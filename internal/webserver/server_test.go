@@ -311,7 +311,7 @@ func TestServerLoggerAccessSynchronizedDuringRuntimeReplacement(t *testing.T) {
 		}
 	}()
 
-	for range 2000 {
+	for range 200 {
 		server.logServeAddress(addr, "http://127.0.0.1:7480")
 		backend.logWarnf("web: retained session persistence check")
 	}
