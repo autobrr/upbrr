@@ -4071,6 +4071,7 @@ func buildMetadataPreview(meta api.PreparedMetadata, cfg config.Config) api.Meta
 		ExternalPreview:      buildExternalPreviews(meta.ExternalIDs, meta.ExternalMetadata),
 		Bluray:               deepCopyBlurayMetadata(meta.ExternalMetadata.Bluray),
 		TrackerData:          buildTrackerPreview(meta.TrackerData, cfg),
+		TrackerRuleFailures:  deepCopyTrackerRuleFailures(meta.TrackerRuleFailures),
 	}
 }
 

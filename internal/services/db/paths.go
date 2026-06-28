@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -15,13 +16,45 @@ const defaultDBName = "db.sqlite"
 
 func DefaultPath() (string, error) {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "upbrr", defaultDBName), nil
+		preferred := filepath.Join(xdg, "upbrr", defaultDBName)
+		if dbFileExists(preferred) {
+			return preferred, nil
+		}
+		// Migration fallback: installs predating the XDG move keep their data in
+		// a dotted ".upbrr" dir. The documented Docker setup ran with
+		// HOME=/config (== XDG_CONFIG_HOME here), so that data lives at
+		// $XDG_CONFIG_HOME/.upbrr; older $HOME-based installs at $HOME/.upbrr.
+		// Prefer an existing legacy DB so upgrades do not orphan it.
+		if legacy := filepath.Join(xdg, defaultDirName, defaultDBName); dbFileExists(legacy) {
+			return legacy, nil
+		}
+		if home := os.Getenv("HOME"); home != "" && sameConfigRoot(home, xdg) {
+			if legacy := filepath.Join(home, defaultDirName, defaultDBName); dbFileExists(legacy) {
+				return legacy, nil
+			}
+		}
+		return preferred, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("database: user home dir: %w", err)
 	}
 	return filepath.Join(home, defaultDirName, defaultDBName), nil
+}
+
+// dbFileExists reports whether path is an existing regular file.
+func dbFileExists(path string) bool {
+	info, err := os.Lstat(path) //nolint:gosec // Existence probe for a default/legacy DB path derived from trusted env config.
+	return err == nil && info.Mode().IsRegular()
+}
+
+func sameConfigRoot(a, b string) bool {
+	cleanA := filepath.Clean(a)
+	cleanB := filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(cleanA, cleanB)
+	}
+	return cleanA == cleanB
 }
 
 func RootDir(dbPath string) (string, error) {

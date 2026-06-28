@@ -23,6 +23,9 @@ type MetadataPreview struct {
 	ExternalPreview      []ExternalPreview
 	Bluray               *BlurayMetadata
 	TrackerData          []TrackerPreview
+	// TrackerRuleFailures is keyed by normalized tracker code and contains
+	// upload rule failures known at preview time.
+	TrackerRuleFailures map[string][]RuleFailure
 }
 
 type DescriptionBuilderPreview struct {

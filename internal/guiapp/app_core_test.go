@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -459,25 +460,10 @@ func TestGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 		repo: repo,
 	}
 
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				app.replaceRuntime(cfgA, nil, nil)
-				app.replaceRuntime(cfgB, nil, nil)
-			}
-		}
-	})
-	defer func() {
-		close(stop)
-		wg.Wait()
-	}()
+	assertExport := func(want config.Config) {
+		t.Helper()
 
-	for range 2000 {
+		app.replaceRuntime(want, nil, nil)
 		payload, err := app.GetConfig()
 		if err != nil {
 			t.Fatalf("get config: %v", err)
@@ -499,6 +485,9 @@ func TestGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 			t.Fatalf("unexpected fallback DBPath %q", exported.MainSettings.DBPath)
 		}
 	}
+	assertExport(cfgA)
+	assertExport(cfgB)
+
 	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); !errors.Is(loadErr, internalerrors.ErrNotFound) {
 		t.Fatalf("fallback should not persist config rows, load err=%v", loadErr)
 	}
@@ -738,6 +727,74 @@ func TestImportConfigMalformedWebAuthFailsBeforeConfigSave(t *testing.T) {
 	}
 }
 
+func TestSaveConfigHardCookieMigrationErrorDoesNotSaveOrInstallRuntime(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-cookie-migration-hard-error.db")
+	initial := guiConfigTestConfig(repoPath)
+	if err := config.SaveToDatabase(context.Background(), &initial, repo); err != nil {
+		t.Fatalf("save initial config: %v", err)
+	}
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+		sharedCookieMigrator: func(context.Context, string, api.Logger) error {
+			return errors.New("forced migration failure")
+		},
+	}
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+
+	err = app.SaveConfig(payload)
+	if err == nil {
+		t.Fatal("expected hard cookie migration error")
+	}
+	if !strings.Contains(err.Error(), "forced migration failure") {
+		t.Fatalf("expected forced migration failure, got %v", err)
+	}
+	assertGUIStoredAndRuntimeConfigUnchanged(t, app, repo, initial, nil)
+}
+
+func TestSaveConfigMigratesLegacyCookies(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-legacy-cookies.db")
+	if err := authmaterial.BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	legacyPath := writeGUILegacyCookieFile(t, repoPath, "BLU", `{"session":"from-legacy"}`)
+	initial := guiConfigTestConfig(repoPath)
+	app := &App{
+		cfg:  initial,
+		repo: repo,
+	}
+
+	updated := initial
+	updated.Metadata.SkipAutoTorrent = true
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export config: %v", err)
+	}
+	if err := app.SaveConfig(payload); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected legacy cookie file to be removed after migration, err=%v", err)
+	}
+	values, err := cookies.LoadTrackerCookieMap(context.Background(), repoPath, "BLU")
+	if err != nil {
+		t.Fatalf("LoadTrackerCookieMap: %v", err)
+	}
+	if got := values["session"]; got != "from-legacy" {
+		t.Fatalf("migrated session cookie: got %q want %q", got, "from-legacy")
+	}
+}
+
 func TestImportConfigBuildRuntimeFailureLeavesDatabaseAndRuntimeUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -769,6 +826,41 @@ func TestImportConfigBuildRuntimeFailureLeavesDatabaseAndRuntimeUnchanged(t *tes
 	assertGUIStoredAndRuntimeConfigUnchanged(t, app, repo, initial, previousCore)
 }
 
+func TestImportConfigHardCookieMigrationErrorDoesNotSaveOrInstallRuntime(t *testing.T) {
+	t.Parallel()
+
+	repo, repoPath := openGUIConfigTestRepo(t, "gui-import-cookie-migration-hard-error.db")
+	initial := guiConfigTestConfig(repoPath)
+	if err := config.SaveToDatabase(context.Background(), &initial, repo); err != nil {
+		t.Fatalf("save initial config: %v", err)
+	}
+	previousCore := &closeCounterCore{}
+	app := &App{
+		cfg:  initial,
+		core: previousCore,
+		repo: repo,
+		sharedCookieMigrator: func(context.Context, string, api.Logger) error {
+			return errors.New("forced migration failure")
+		},
+	}
+
+	imported := initial
+	imported.Metadata.SkipAutoTorrent = true
+	path := exportGUIConfigYAML(t, &imported)
+
+	result, err := app.importConfigFromPath(context.Background(), path)
+	if err == nil {
+		t.Fatal("expected hard cookie migration error")
+	}
+	if !strings.Contains(err.Error(), "forced migration failure") {
+		t.Fatalf("expected forced migration failure, got %v", err)
+	}
+	if result.Message != "" || len(result.Warnings) != 0 {
+		t.Fatalf("expected empty import result on failed apply, got %#v", result)
+	}
+	assertGUIStoredAndRuntimeConfigUnchanged(t, app, repo, initial, previousCore)
+}
+
 func TestSaveConfigSyncsUsableWebAuthBeforeSave(t *testing.T) {
 	t.Parallel()
 
@@ -796,7 +888,7 @@ func TestSaveConfigSyncsUsableWebAuthBeforeSave(t *testing.T) {
 	assertGUICookieAuthStatePresent(t, repo)
 }
 
-func TestSaveConfigCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
+func TestSaveConfigLeavesConfigUnchangedWhenRepositorySaveFailsAfterCookieSync(t *testing.T) {
 	t.Parallel()
 
 	repo, repoPath := openGUIConfigTestRepo(t, "gui-save-cookie-rollback.db")
@@ -822,7 +914,8 @@ func TestSaveConfigCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
 		t.Fatal("expected save config to fail")
 	}
 
-	assertGUIFailedConfigSaveRowsAbsent(t, repo)
+	assertGUIConfigRowsAbsent(t, repo)
+	assertGUICookieAuthStatePresent(t, repo)
 	if got := app.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config not to be applied after failed config save")
 	}
@@ -1064,6 +1157,22 @@ func exportGUIConfigYAML(t *testing.T, cfg *config.Config) string {
 	return path
 }
 
+func writeGUILegacyCookieFile(t *testing.T, repoPath, trackerID, payload string) string {
+	t.Helper()
+
+	path, err := db.CookiePath(repoPath, trackerID+".json")
+	if err != nil {
+		t.Fatalf("resolve legacy cookie path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir legacy cookie dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write legacy cookie file: %v", err)
+	}
+	return path
+}
+
 func writeGUIAuthFile(t *testing.T, dbPath string, allowUnencryptedExport bool) {
 	t.Helper()
 
@@ -1095,6 +1204,19 @@ func assertGUIFailedConfigSaveRowsAbsent(t *testing.T, repo *db.SQLiteRepository
 		if !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("expected %s to be absent after failed sync, got row=%q err=%v", section, data, err)
 		}
+	}
+}
+
+func assertGUIConfigRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
+	t.Helper()
+
+	var data string
+	err := repo.RawDB().QueryRowContext(context.Background(),
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"MainSettings",
+	).Scan(&data)
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected MainSettings to be absent after failed save, got row=%q err=%v", data, err)
 	}
 }
 

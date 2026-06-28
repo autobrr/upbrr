@@ -42,7 +42,7 @@ func TestLoadCookiesForTrackerUsesCookieStoreWhenNoStartupCookieExists(t *testin
 	}
 }
 
-func TestLoadCookiesForTrackerStartupCookieOverridesCookieStore(t *testing.T) {
+func TestLoadCookiesForTrackerCookieStoreOverridesStartupCookie(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "state", "upbrr.db")
@@ -75,8 +75,8 @@ func TestLoadCookiesForTrackerStartupCookieOverridesCookieStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCookiesForTracker: %v", err)
 	}
-	if got["session"] != "from-startup" {
-		t.Fatalf("expected startup cookie to override store value, got %#v", got)
+	if got["session"] != "from-db" {
+		t.Fatalf("expected store cookie to override startup value, got %#v", got)
 	}
 	if got["persisted"] != "keep-me" {
 		t.Fatalf("expected db-only cookie to be preserved, got %#v", got)
@@ -150,7 +150,7 @@ func TestLoadCookiesForTrackerFallsBackToNetscapeFileWithoutDomainFilter(t *test
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	netscape := ".example.org\tTRUE\t/\tFALSE\t0\tsession\tfrom-txt\n"
+	netscape := ".example.org\tTRUE\t/\tFALSE\t0\tsession\t from-txt \n"
 	if err := os.WriteFile(txtPath, []byte(netscape), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -165,8 +165,38 @@ func TestLoadCookiesForTrackerFallsBackToNetscapeFileWithoutDomainFilter(t *test
 	if err != nil {
 		t.Fatalf("LoadCookiesForTracker: %v", err)
 	}
-	if got["session"] != "from-txt" {
+	if got["session"] != " from-txt " {
 		t.Fatalf("expected Netscape fallback cookie, got %#v", got)
+	}
+}
+
+func TestLoadNetscapeCookiesPreservesValueWhitespaceAndSkipsEmptyNameOrValue(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "cookies.txt")
+	content := strings.Join([]string{
+		".example.org\tTRUE\t/\tFALSE\t0\t\tmissing-name",
+		".example.org\tTRUE\t/\tFALSE\t0\tempty\t",
+		".example.org\tTRUE\t/\tFALSE\t0\tsession\t padded ",
+		"#HttpOnly_.example.org\tTRUE\t/\tFALSE\t0\thttp_only\t padded http ",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := LoadNetscapeCookies(path, "example.org")
+	if err != nil {
+		t.Fatalf("LoadNetscapeCookies: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected one valid cookie, got %#v", got)
+	}
+	if got[0].Name != "session" || got[0].Value != " padded " {
+		t.Fatalf("expected padded Netscape value to be preserved, got %#v", got[0])
+	}
+	if got[1].Name != "http_only" || got[1].Value != " padded http " {
+		t.Fatalf("expected padded HttpOnly Netscape value to be preserved, got %#v", got[1])
 	}
 }
 

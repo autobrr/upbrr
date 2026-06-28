@@ -57,6 +57,9 @@ import type {
   ScreenshotResult,
   ScreenshotSelection,
   TrackerQuestionnaire,
+  TrackerAuthCapability,
+  TrackerAuthLoginRequest,
+  TrackerAuthStatus,
   TrackerDryRunPreview,
   TrackerUploadSnapshot,
   WebAuthStatus,
@@ -155,6 +158,7 @@ const emptyPreview: MetadataPreview = {
   ExternalPreview: [],
   Bluray: undefined,
   TrackerData: [],
+  TrackerRuleFailures: {},
 };
 
 const emptyTrackerDryRun: TrackerDryRunPreview = {
@@ -505,6 +509,24 @@ declare global {
             GetLogExclusions: () => Promise<string[]>;
             UpdateLogExclusions: (patterns: string[]) => Promise<void>;
             ListKnownTrackers: () => Promise<string[]>;
+            ListTrackerAuthCapabilities?: () => Promise<TrackerAuthCapability[]>;
+            GetTrackerAuthStatus?: (tracker: string) => Promise<TrackerAuthStatus>;
+            ImportTrackerAuthCookies?: (tracker: string) => Promise<TrackerAuthStatus>;
+            ImportTrackerAuthCookieContent?: (
+              tracker: string,
+              fileName: string,
+              content: string,
+            ) => Promise<TrackerAuthStatus>;
+            TestTrackerAuth?: (tracker: string) => Promise<TrackerAuthStatus>;
+            LoginTrackerAuth?: (
+              tracker: string,
+              req: TrackerAuthLoginRequest,
+            ) => Promise<TrackerAuthStatus>;
+            SubmitTrackerAuth2FA?: (
+              challengeID: string,
+              code: string,
+            ) => Promise<TrackerAuthStatus>;
+            DeleteTrackerAuth?: (tracker: string) => Promise<TrackerAuthStatus>;
             GetImageHostPolicyMetadata: () => Promise<ImageHostPolicyMetadata>;
             ListHistory: () => Promise<HistoryEntry[]>;
             GetHistoryOverview: (sourcePath: string) => Promise<HistoryOverview>;
@@ -4077,6 +4099,7 @@ export default function App() {
               dismissConfigOpStatus={dismissConfigOpStatus}
               settingsSection={settingsSection}
               settingsSections={settingsSections}
+              trackerSelectionNames={trackerSelectionNames}
               showAdvancedToggle={showAdvancedToggle}
               advancedOpen={advancedOpen}
               setSettingsSection={setSettingsSection}
