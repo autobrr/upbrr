@@ -786,6 +786,8 @@ type seriesMetadataFields struct {
 	yearConfidence string
 }
 
+// seriesTranslationMetadata selects English title metadata and returns only
+// naming-eligible years proven by explicit translation or alias evidence.
 func seriesTranslationMetadata(data seriesExtendedDataResponse, translation seriesTranslationDataResponse) seriesMetadataFields {
 	translationAliases := trimStringList(translation.Aliases)
 	extendedEnglishAliases := englishAliasNames(data.Aliases)
@@ -816,6 +818,14 @@ func seriesTranslationMetadata(data seriesExtendedDataResponse, translation seri
 				title:          title,
 				year:           year,
 				yearSource:     fallbackYearSource,
+				yearConfidence: seriesYearConfidenceHigh,
+			}
+		}
+		if year, ok := matchingAliasYear(extendedEnglishAliases, title); ok {
+			return seriesMetadataFields{
+				title:          title,
+				year:           year,
+				yearSource:     seriesYearSourceExtendedAlias,
 				yearConfidence: seriesYearConfidenceHigh,
 			}
 		}

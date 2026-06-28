@@ -1589,6 +1589,8 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	}
 }
 
+// mergeTVDBMetadata fills missing stored TVDB fields from newer metadata and
+// refreshes alias-year provenance when TVDB title evidence changes.
 func mergeTVDBMetadata(target *api.TVDBMetadata, incoming *api.TVDBMetadata) {
 	if target == nil || incoming == nil {
 		return
@@ -1617,9 +1619,7 @@ func mergeTVDBMetadata(target *api.TVDBMetadata, incoming *api.TVDBMetadata) {
 	// Alias-derived years are naming-eligible, so refresh or clear the provenance when newer TVDB details change that status.
 	switch {
 	case incoming.YearFromAlias:
-		if !target.YearFromAlias {
-			target.Year = incoming.Year
-		}
+		target.Year = incoming.Year
 		target.YearFromAlias = true
 		target.YearSource = incoming.YearSource
 		target.YearConfidence = incoming.YearConfidence

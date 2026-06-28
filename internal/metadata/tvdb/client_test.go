@@ -429,6 +429,26 @@ func TestSeriesTranslationMetadataUsesSelectedFallbackAliasYear(t *testing.T) {
 			t.Fatalf("expected no year from unselected matching alias, got year=%d source=%q confidence=%q", got.year, got.yearSource, got.yearConfidence)
 		}
 	})
+
+	t.Run("clean selected alias uses extended alias year", func(t *testing.T) {
+		got := seriesTranslationMetadata(seriesExtendedDataResponse{
+			Aliases: []aliasResponse{
+				{Name: "Cats Eye (2025)", Language: "eng"},
+			},
+		}, seriesTranslationDataResponse{
+			Aliases: []string{"Cats Eye"},
+		})
+
+		if got.title != "Cats Eye" {
+			t.Fatalf("expected selected fallback alias title, got %q", got.title)
+		}
+		if got.year != 2025 {
+			t.Fatalf("expected extended alias year 2025, got %d", got.year)
+		}
+		if got.yearSource != seriesYearSourceExtendedAlias || got.yearConfidence != seriesYearConfidenceHigh {
+			t.Fatalf("expected extended alias source/high confidence, got source=%q confidence=%q", got.yearSource, got.yearConfidence)
+		}
+	})
 }
 
 func TestSeriesTranslationMetadataUsesOnlyExplicitTranslationNameYear(t *testing.T) {

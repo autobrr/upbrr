@@ -2092,6 +2092,40 @@ func TestMergeTVDBMetadataClearsStaleAliasYear(t *testing.T) {
 	}
 }
 
+func TestMergeTVDBMetadataRefreshesAliasYear(t *testing.T) {
+	target := &api.TVDBMetadata{
+		TVDBID:         200,
+		Name:           "Cats Eye",
+		Year:           2024,
+		YearFromAlias:  true,
+		YearSource:     "extended_alias",
+		YearConfidence: "medium",
+	}
+	incoming := &api.TVDBMetadata{
+		TVDBID:         200,
+		Name:           "Cats Eye",
+		Year:           2025,
+		YearFromAlias:  true,
+		YearSource:     "translation_alias",
+		YearConfidence: "high",
+	}
+
+	mergeTVDBMetadata(target, incoming)
+
+	if target.Year != 2025 {
+		t.Fatalf("expected alias-derived year refreshed from incoming metadata, got %d", target.Year)
+	}
+	if !target.YearFromAlias {
+		t.Fatalf("expected alias-derived year provenance to remain set")
+	}
+	if target.YearSource != "translation_alias" {
+		t.Fatalf("expected incoming alias year source, got %q", target.YearSource)
+	}
+	if target.YearConfidence != "high" {
+		t.Fatalf("expected incoming alias confidence, got %q", target.YearConfidence)
+	}
+}
+
 func TestResolveExternalIDsTVDBExplicitSeriesYearUsedForNamingYear(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{}
