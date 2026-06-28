@@ -809,14 +809,15 @@ func audioBloatReason(languages []string, hardBlocked bool) string {
 	return fmt.Sprintf("audio languages %s may be considered bloated", parts)
 }
 
-// selectPrimaryAudioTrack filters out compatibility tracks before selection.
-// This intentionally diverges from the Python reference, which selects from
-// all tracks, to avoid fallback compatibility tracks representing the release.
+// selectPrimaryAudioTrack returns the track used to derive the release audio
+// label, excluding commentary and compatibility tracks when possible. This
+// intentionally diverges from the Python reference, which selects from all
+// tracks, to avoid fallback tracks representing the release.
 func selectPrimaryAudioTrack(tracks []map[string]any) map[string]any {
 	if len(tracks) == 0 {
 		return nil
 	}
-	filtered := filterCompatibilityTracks(tracks)
+	filtered := filterPrimaryAudioTracks(tracks)
 	if len(filtered) == 0 {
 		filtered = tracks
 	}
@@ -829,13 +830,13 @@ func selectPrimaryAudioTrack(tracks []map[string]any) map[string]any {
 	return filtered[0]
 }
 
-// filterCompatibilityTracks removes fallback audio tracks marked by any
-// MediaInfo title variant, leaving all-track fallback decisions to the caller.
-func filterCompatibilityTracks(tracks []map[string]any) []map[string]any {
+// filterPrimaryAudioTracks returns tracks eligible to represent primary release
+// audio by ignoring commentary and compatibility markers in any MediaInfo title
+// variant. It leaves all-track fallback decisions to the caller.
+func filterPrimaryAudioTracks(tracks []map[string]any) []map[string]any {
 	filtered := make([]map[string]any, 0, len(tracks))
 	for _, track := range tracks {
-		title := strings.ToLower(audioTrackTitle(track))
-		if strings.Contains(title, "compatibility") {
+		if isCommentaryOrCompatibilityAudioValue(audioTrackTitle(track)) {
 			continue
 		}
 		filtered = append(filtered, track)
