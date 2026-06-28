@@ -20,7 +20,15 @@ pnpm --dir gui/frontend run format:check
 pnpm --dir gui/frontend run build
 ```
 
-CSS changes require `lint:style`; `make test-frontend` does not include Stylelint. Runtime/API bridge changes usually need `test:unit` + `typecheck`.
+## Check Selection
+
+- TS/TSX changes: `pnpm --dir gui/frontend run lint`, `lint:dead`, `typecheck`, `test:unit`, and `format:check`.
+- CSS changes: `pnpm --dir gui/frontend run lint:style`; also run `format:check`.
+- Runtime/API bridge or Wails binding changes: frontend `test:unit` + `typecheck`, plus backend/API parity tests from `internal/AGENTS.md` and `pkg/api/AGENTS.md`.
+- Bundle/import/env changes: `pnpm --dir gui/frontend run build`.
+- Visual/embedded behavior changes: rebuild/sync embedded assets and inspect `http://localhost:7480`; avoid Vite `5173` for parity.
+
+`make test-frontend` runs lint, dead-code, typecheck, unit, and format checks, but not Stylelint. Run Stylelint explicitly for CSS.
 
 ## React / TypeScript
 
@@ -54,4 +62,4 @@ go build -o .\dist\upbrr.exe .\cmd\upbrr
 
 ## E2E
 
-For Playwright E2E work, read `docs/e2e.md` first. E2E tests must use the embedded web UI, local fake services, isolated temp config/DB, and no real credentials.
+For Playwright E2E work, read `e2e/AGENTS.md` first. E2E tests must use the embedded web UI, local fake services, isolated temp config/DB, and no real credentials.

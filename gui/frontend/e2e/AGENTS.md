@@ -1,6 +1,6 @@
-# End-To-End Testing
+# E2E Guidelines
 
-Scoped reference for Playwright E2E coverage.
+Scoped rules for Playwright E2E under `gui/frontend/e2e`. Root and frontend rules still apply.
 
 ## Commands
 
