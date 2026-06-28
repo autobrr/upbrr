@@ -360,10 +360,28 @@ func login(ctx context.Context, uploadCtx uploadContext, cfg config.TrackerConfi
 
 func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCtx uploadContext) (map[string]string, error) {
 	autofillPayload := url.Values{}
-	autofillPayload.Set("type", resolveUploadType(req.Meta))
-	autofillPayload.Set("scene_yesno", "yes")
-	autofillPayload.Set("autofill", resolveUploadName(req.Meta))
+	uploadType := resolveUploadType(req.Meta)
+	autofillPayload.Set("type", uploadType)
 	autofillPayload.Set("tvdb", "Get Info")
+
+	if req.Meta.ExternalMetadata.TVDB != nil && req.Meta.ExternalMetadata.TVDB.TVDBID > 0 {
+		autofillPayload.Set("scene_yesno", "No")
+		autofillPayload.Set("auto_series", strconv.Itoa(req.Meta.ExternalMetadata.TVDB.TVDBID))
+
+		if uploadType == "Episode" {
+			seasonPart := fmt.Sprintf("S%02d", req.Meta.Release.Season)
+			episodePart := ""
+			if req.Meta.Release.Episode > 0 {
+				episodePart = fmt.Sprintf("E%02d", req.Meta.Release.Episode)
+			}
+			autofillPayload.Set("auto_title", seasonPart+episodePart)
+		} else {
+			autofillPayload.Set("auto_season", strconv.Itoa(req.Meta.Release.Season))
+		}
+	} else {
+		autofillPayload.Set("scene_yesno", "Yes")
+		autofillPayload.Set("autofill", resolveUploadName(req.Meta))
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadCtx.uploadURL, strings.NewReader(autofillPayload.Encode()))
 	if err != nil {
@@ -385,7 +403,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		return nil, fmt.Errorf("trackers: BTN read autofill response: %w", err)
 	}
 	fields := extractAutofillFields(string(htmlPayload))
-	if !validateAutofill(fields) {
+	if !validateAutofill(fields, uploadType) {
 		return nil, errors.New("trackers: BTN autofill validation failed")
 	}
 
@@ -471,10 +489,13 @@ func extractAutofillFields(html string) map[string]string {
 	return fields
 }
 
-func validateAutofill(fields map[string]string) bool {
+func validateAutofill(fields map[string]string, uploadType string) bool {
 	artist := strings.TrimSpace(fields["artist"])
 	title := strings.TrimSpace(fields["title"])
-	if artist == "" || title == "" {
+	if artist == "" {
+		return false
+	}
+	if uploadType == "Episode" && title == "" {
 		return false
 	}
 	if strings.EqualFold(artist, "autofill fail") || strings.EqualFold(title, "autofill fail") {
