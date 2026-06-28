@@ -97,7 +97,9 @@ func TestResolveCookiesPostsFirstValidatorMatch(t *testing.T) {
 		requests++
 		switch {
 		case req.Method == http.MethodGet && req.URL.String() == loginPageURL:
-			return textResponse(req, `<input name="validator" value="first"><input name="validator" value="second">`), nil
+			resp := textResponse(req, `<input name="validator" value="first"><input name="validator" value="second">`)
+			resp.Header.Add("Set-Cookie", "validator_cookie=from-page; Path=/")
+			return resp, nil
 		case req.Method == http.MethodPost && req.URL.String() == loginURL:
 			if err := req.ParseForm(); err != nil {
 				t.Fatalf("ParseForm: %v", err)
@@ -128,7 +130,11 @@ func TestResolveCookiesPostsFirstValidatorMatch(t *testing.T) {
 	if postedValidator != "first" {
 		t.Fatalf("validator = %q, want first", postedValidator)
 	}
-	if len(values) != 1 || values[0].Name != "session" || values[0].Value != "abc" {
+	cookieValues := make(map[string]string, len(values))
+	for _, cookie := range values {
+		cookieValues[cookie.Name] = cookie.Value
+	}
+	if cookieValues["validator_cookie"] != "from-page" || cookieValues["session"] != "abc" {
 		t.Fatalf("unexpected cookies: %#v", values)
 	}
 	if requests != 2 {

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -212,6 +213,19 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 	}
 	if got := loadStoredRTFAPIKey(t, dbPath); got != "generated-token" {
 		t.Fatalf("expected generated token persisted, got %q", got)
+	}
+}
+
+func TestUploadRejectsMalformedBaseURL(t *testing.T) {
+	_, err := upload(context.Background(), trackers.UploadRequest{
+		Tracker:       "RTF",
+		TrackerConfig: config.TrackerConfig{URL: "not a url", APIKey: "token"},
+	})
+	if err == nil {
+		t.Fatal("expected malformed base URL error")
+	}
+	if !strings.Contains(err.Error(), "invalid base URL") {
+		t.Fatalf("expected invalid base URL error, got %v", err)
 	}
 }
 

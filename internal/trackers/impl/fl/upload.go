@@ -218,11 +218,17 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	if err := ensureLoginCookieStorageAvailable(dbPath); err != nil {
 		return nil, err
 	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: FL create login cookie jar: %w", err)
+	}
+	client := newHTTPClient(httpclient.DefaultTimeout)
+	client.Jar = jar
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginPageURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: FL login page request build: %w", err)
 	}
-	resp, err := newHTTPClient(httpclient.DefaultTimeout).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: FL login page request: %w", err)
 	}
@@ -245,7 +251,6 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 		return nil, fmt.Errorf("trackers: FL login request build: %w", err)
 	}
 	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	client := newHTTPClient(httpclient.DefaultTimeout)
 	loginResp, err := client.Do(loginReq)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: FL login request: %w", err)
@@ -254,7 +259,8 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	if loginResp.StatusCode < 200 || loginResp.StatusCode >= 400 {
 		return nil, fmt.Errorf("trackers: FL login failed status=%d", loginResp.StatusCode)
 	}
-	loginCookies := loginResp.Cookies()
+	base, _ := url.Parse(baseURL)
+	loginCookies := client.Jar.Cookies(base)
 	if err := persistLoginCookies(ctx, dbPath, loginCookies); err != nil {
 		return nil, err
 	}

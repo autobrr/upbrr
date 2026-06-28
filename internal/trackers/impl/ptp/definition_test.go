@@ -20,6 +20,7 @@ import (
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	"github.com/autobrr/upbrr/internal/config"
+	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -392,7 +393,11 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if _, err := os.Stat(artifactPath); err != nil {
 		t.Fatalf("expected tracker torrent file: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, "cookies", ptpCookieFile)); !os.IsNotExist(err) {
+	legacyCookiePath, err := servicedb.CookiePath(dbPath, ptpCookieFile)
+	if err != nil {
+		t.Fatalf("resolve legacy PTP cookie path: %v", err)
+	}
+	if _, err := os.Stat(legacyCookiePath); !os.IsNotExist(err) {
 		t.Fatalf("expected no legacy PTP cookie file after upload, got err=%v", err)
 	}
 }

@@ -66,7 +66,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: RTF marshal upload payload: %w", err)
 	}
 	baseURL := resolveBaseURL(req.TrackerConfig)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(baseURL, "/api/upload"), strings.NewReader(string(body)))
+	uploadURL, err := joinURL(baseURL, "/api/upload")
+	if err != nil {
+		return api.UploadSummary{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, strings.NewReader(string(body)))
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: RTF create upload request: %w", err)
 	}
@@ -88,7 +92,15 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		if id == "" {
 			return api.UploadSummary{}, errors.New("trackers: RTF upload succeeded but torrent id missing")
 		}
-		tURL := joinURL(baseURL, "/browse/t/") + id
+		torrentURL, err := joinURL(baseURL, "/browse/t/")
+		if err != nil {
+			return api.UploadSummary{}, err
+		}
+		downloadURL, err := joinURL(baseURL, "/api/torrent/")
+		if err != nil {
+			return api.UploadSummary{}, err
+		}
+		tURL := torrentURL + id
 		artifactPath := ""
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
 			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "RTF")
@@ -105,7 +117,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 				Tracker:     "RTF",
 				TorrentID:   id,
 				TorrentURL:  tURL,
-				DownloadURL: joinURL(baseURL, "/api/torrent/") + id + "/download",
+				DownloadURL: downloadURL + id + "/download",
 				TorrentPath: artifactPath,
 			}},
 		}, nil
@@ -130,6 +142,10 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	for key, value := range state.payload {
 		payload[key] = strings.TrimSpace(fmt.Sprint(value))
 	}
+	endpoint, err := joinURL(resolveBaseURL(req.TrackerConfig), "/api/upload")
+	if err != nil {
+		return api.TrackerDryRunEntry{}, err
+	}
 	return api.TrackerDryRunEntry{
 		Tracker:          "RTF",
 		Status:           status,
@@ -137,7 +153,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		ReleaseName:      state.releaseName,
 		DescriptionGroup: "rtf",
 		Description:      state.description,
-		Endpoint:         joinURL(resolveBaseURL(req.TrackerConfig), "/api/upload"),
+		Endpoint:         endpoint,
 		Payload:          payload,
 		Files:            []api.TrackerDryRunFile{{Field: "file", Path: state.torrentPath, Present: strings.TrimSpace(state.torrentPath) != ""}},
 	}, nil
@@ -248,7 +264,11 @@ func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerCo
 }
 
 func testAPIKey(ctx context.Context, baseURL string, apiKey string) (bool, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, joinURL(baseURL, "/api/test"), nil)
+	testURL, err := joinURL(baseURL, "/api/test")
+	if err != nil {
+		return false, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)
 	if err != nil {
 		return false, fmt.Errorf("trackers: RTF create API test request: %w", err)
 	}
@@ -271,7 +291,11 @@ func refreshAPIKey(ctx context.Context, baseURL string, cfg config.TrackerConfig
 	if err != nil {
 		return "", fmt.Errorf("trackers: RTF marshal API login payload: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(baseURL, "/api/login"), strings.NewReader(string(body)))
+	loginURL, err := joinURL(baseURL, "/api/login")
+	if err != nil {
+		return "", err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(string(body)))
 	if err != nil {
 		return "", fmt.Errorf("trackers: RTF create API login request: %w", err)
 	}
@@ -339,16 +363,17 @@ func resolveBaseURL(cfg config.TrackerConfig) string {
 	return defaultBaseURL
 }
 
-func joinURL(baseURL string, path string) string {
+// joinURL resolves path against baseURL and rejects malformed configured URLs instead of falling back to the default tracker host.
+func joinURL(baseURL string, path string) (string, error) {
 	parsed, err := url.Parse(strings.TrimRight(baseURL, "/") + "/")
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return strings.TrimRight(defaultBaseURL, "/") + path
+		return "", fmt.Errorf("trackers: RTF invalid base URL %q", baseURL)
 	}
 	ref, err := url.Parse(strings.TrimLeft(path, "/"))
 	if err != nil {
-		return strings.TrimRight(baseURL, "/") + path
+		return "", fmt.Errorf("trackers: RTF invalid URL path %q: %w", path, err)
 	}
-	return parsed.ResolveReference(ref).String()
+	return parsed.ResolveReference(ref).String(), nil
 }
 
 func buildDescription(assets trackers.DescriptionAssets) string {

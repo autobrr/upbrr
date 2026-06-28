@@ -1377,6 +1377,25 @@ func drainLogStreamEvents(events <-chan serverEvent) {
 func assertStoredSkipAutoTorrentUnset(t *testing.T, repo *db.SQLiteRepository) {
 	t.Helper()
 
+	var rawMetadata string
+	if err := repo.RawDB().QueryRowContext(context.Background(),
+		`SELECT data FROM config_settings WHERE section = ?`,
+		"Metadata",
+	).Scan(&rawMetadata); err != nil {
+		t.Fatalf("load raw metadata config section: %v", err)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(rawMetadata), &metadata); err != nil {
+		t.Fatalf("decode raw metadata config section: %v", err)
+	}
+	rawValue, ok := metadata["SkipAutoTorrent"].(bool)
+	if !ok {
+		t.Fatalf("raw metadata config section missing SkipAutoTorrent: %s", rawMetadata)
+	}
+	if rawValue {
+		t.Fatal("raw stored skip_auto_torrent changed unexpectedly")
+	}
+
 	stored, err := config.LoadFromDatabase(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("load stored config: %v", err)

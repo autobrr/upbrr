@@ -150,8 +150,8 @@ func LoadNetscapeCookies(path string, expectedDomain string) ([]*http.Cookie, er
 		if trimmedLine == "" {
 			continue
 		}
-		if httpOnlyLine, ok := strings.CutPrefix(trimmedLine, "#HttpOnly_"); ok {
-			line = httpOnlyLine
+		if strings.HasPrefix(trimmedLine, "#HttpOnly_") {
+			line = line[strings.Index(line, "#HttpOnly_")+len("#HttpOnly_"):]
 		} else if strings.HasPrefix(trimmedLine, "#") {
 			continue
 		}

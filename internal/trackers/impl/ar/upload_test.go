@@ -361,7 +361,7 @@ func TestLoginFallbackDoesNotPersistAuthKeyBeforeCookies(t *testing.T) {
 	}
 }
 
-func TestLoginFallbackCookieFailurePreservesPreviousAuthKey(t *testing.T) {
+func TestLoginFallbackPrefersCurrentResponseKeyAndPreservesPreviousAuthKeyOnCookieFailure(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -395,8 +395,8 @@ func TestLoginFallbackCookieFailurePreservesPreviousAuthKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if authKey != "previous-key" {
-		t.Fatalf("expected existing auth key precedence to remain unchanged, got %q", authKey)
+	if authKey != "new-key" {
+		t.Fatalf("expected current response auth key, got %q", authKey)
 	}
 	if err := persistLoginAuth(ctx, dbPath, api.NopLogger{}, nil, authKey); err == nil || !strings.Contains(err.Error(), "no usable cookies") {
 		t.Fatalf("expected cookie persistence failure, got %v", err)

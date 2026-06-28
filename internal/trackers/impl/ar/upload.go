@@ -647,11 +647,11 @@ func validateSessionWithAuthKeyPersistence(ctx context.Context, client *http.Cli
 	if resp.StatusCode != http.StatusOK || arLoginFailurePattern.MatchString(body) {
 		return "", false, nil
 	}
-	if authKey := readAuthKey(ctx, dbPath); authKey != "" {
-		return authKey, true, nil
-	}
 	authKey := extractAuthKey(body)
 	if authKey == "" {
+		if authKey := readAuthKey(ctx, dbPath); authKey != "" {
+			return authKey, true, nil
+		}
 		return "", false, nil
 	}
 	if !persistAuthKey {

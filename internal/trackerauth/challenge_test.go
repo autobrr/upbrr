@@ -48,3 +48,24 @@ func TestChallengeManagerConsumesTrackerScopedChallenge(t *testing.T) {
 		t.Fatal("expected consumed challenge to be removed")
 	}
 }
+
+func TestChallengeManagerRejectsStaleOwnerKey(t *testing.T) {
+	t.Parallel()
+
+	manager := NewChallengeManager(time.Minute)
+	manager.ids = func() (string, error) { return "challenge-1", nil }
+
+	id := manager.Create(context.Background(), "PTP", "old-owner")
+	if _, err := manager.Consume(id, "PTP", "new-owner"); err == nil {
+		t.Fatal("expected stale owner key rejection")
+	}
+	if _, ok := manager.Get(id); !ok {
+		t.Fatal("stale owner key rejection consumed challenge")
+	}
+	if _, err := manager.Consume(id, "PTP", "old-owner"); err != nil {
+		t.Fatalf("Consume with original owner key: %v", err)
+	}
+	if _, ok := manager.Get(id); ok {
+		t.Fatal("expected consumed challenge to be removed")
+	}
+}

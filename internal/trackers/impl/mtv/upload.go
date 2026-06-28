@@ -75,9 +75,14 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 			}
 			return api.UploadSummary{}, err
 		}
-		auth, client, cookies, err = loginAndResolveAuthKey(ctx, req.TrackerConfig, baseURL, api.TrackerAuthLoginRequest{})
+		var effectiveBaseURL string
+		auth, client, cookies, effectiveBaseURL, err = loginAndResolveAuthKey(ctx, req.TrackerConfig, baseURL, api.TrackerAuthLoginRequest{})
 		if err != nil {
 			return api.UploadSummary{}, err
+		}
+		if strings.TrimSpace(effectiveBaseURL) != "" && !strings.EqualFold(effectiveBaseURL, baseURL) {
+			baseURL = effectiveBaseURL
+			uploadURL = baseURL + mtvUploadPath
 		}
 		if persistErr := saveMTVCookies(ctx, req.AppConfig.MainSettings.DBPath, cookies); persistErr != nil && req.Logger != nil {
 			req.Logger.Warnf("trackers: MTV failed to persist cookies: %v", persistErr)
@@ -286,7 +291,7 @@ func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerCo
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return errors.New("trackers: MTV cookie invalid/missing and username/password not configured")
 	}
-	_, _, values, err := loginAndResolveAuthKey(ctx, cfg, baseURL, login)
+	_, _, values, _, err := loginAndResolveAuthKey(ctx, cfg, baseURL, login)
 	if err != nil {
 		return err
 	}
@@ -303,24 +308,25 @@ func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerCo
 // key discovery. MTV can return authkey in the final login response, so that
 // body is checked before falling back to the index page. Missing form tokens
 // and auth-key parser failures remain ordinary errors unless an auth-key miss
-// follows a submitted manual code; authenticated cookies are returned only
-// after auth-key discovery.
-func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string, login api.TrackerAuthLoginRequest) (string, *http.Client, map[string]string, error) {
+// follows a submitted manual code. Authenticated cookies and the effective base
+// URL are returned only after auth-key discovery so upload can reuse any
+// canonical host reached during login redirects.
+func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string, login api.TrackerAuthLoginRequest) (string, *http.Client, map[string]string, string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("trackers: MTV create login cookie jar: %w", err)
+		return "", nil, nil, "", fmt.Errorf("trackers: MTV create login cookie jar: %w", err)
 	}
 	client := &http.Client{Timeout: 25 * time.Second, Jar: jar}
 
 	loginURL := strings.TrimRight(baseURL, "/") + "/login"
 	loginReq, err := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("trackers: MTV build login page request: %w", err)
+		return "", nil, nil, "", fmt.Errorf("trackers: MTV build login page request: %w", err)
 	}
 	loginReq.Header.Set("User-Agent", mtvUserAgentWeb)
 	loginResp, err := client.Do(loginReq)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("trackers: MTV login page request: %w", err)
+		return "", nil, nil, "", fmt.Errorf("trackers: MTV login page request: %w", err)
 	}
 	loginBody, _ := io.ReadAll(loginResp.Body)
 	_ = loginResp.Body.Close()
@@ -328,7 +334,7 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 	effectiveLoginURL := strings.TrimRight(effectiveBaseURL, "/") + "/login"
 	match := mtvTokenPattern.FindStringSubmatch(string(loginBody))
 	if len(match) < 2 {
-		return "", nil, nil, errors.New("trackers: MTV login token not found")
+		return "", nil, nil, "", errors.New("trackers: MTV login token not found")
 	}
 	token := strings.TrimSpace(match[1])
 
@@ -343,13 +349,13 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 
 	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, effectiveLoginURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("trackers: MTV build login request: %w", err)
+		return "", nil, nil, "", fmt.Errorf("trackers: MTV build login request: %w", err)
 	}
 	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	postReq.Header.Set("User-Agent", mtvUserAgentWeb)
 	postResp, err := client.Do(postReq)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("trackers: MTV login request: %w", err)
+		return "", nil, nil, "", fmt.Errorf("trackers: MTV login request: %w", err)
 	}
 	body, _ := io.ReadAll(postResp.Body)
 	_ = postResp.Body.Close()
@@ -360,11 +366,11 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 	if postResp.Request != nil && postResp.Request.URL != nil && strings.Contains(postResp.Request.URL.Path, "/twofactor/login") {
 		twoFactorTokenMatch := mtvTokenPattern.FindStringSubmatch(string(body))
 		if len(twoFactorTokenMatch) < 2 {
-			return "", nil, nil, errors.New("trackers: MTV 2FA token not found")
+			return "", nil, nil, "", errors.New("trackers: MTV 2FA token not found")
 		}
 		code, err := resolveMTV2FACode(cfg, login)
 		if err != nil {
-			return "", nil, nil, err
+			return "", nil, nil, "", err
 		}
 		twoFactorForm := url.Values{}
 		twoFactorForm.Set("token", twoFactorTokenMatch[1])
@@ -372,13 +378,13 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 		twoFactorForm.Set("submit", "login")
 		twoReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(effectiveBaseURL, "/")+"/twofactor/login", strings.NewReader(twoFactorForm.Encode()))
 		if err != nil {
-			return "", nil, nil, fmt.Errorf("trackers: MTV build 2FA login request: %w", err)
+			return "", nil, nil, "", fmt.Errorf("trackers: MTV build 2FA login request: %w", err)
 		}
 		twoReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		twoReq.Header.Set("User-Agent", mtvUserAgentWeb)
 		twoResp, err := client.Do(twoReq)
 		if err != nil {
-			return "", nil, nil, fmt.Errorf("trackers: MTV 2FA login request: %w", err)
+			return "", nil, nil, "", fmt.Errorf("trackers: MTV 2FA login request: %w", err)
 		}
 		twoFactorBody, _ := io.ReadAll(twoResp.Body)
 		_ = twoResp.Body.Close()
@@ -389,20 +395,20 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 
 	if auth := extractMTVAuthKey(finalAuthBody); auth != "" {
 		cookieMap := cookiesFromJar(effectiveBaseURL, client.Jar)
-		return auth, client, cookieMap, nil
+		return auth, client, cookieMap, effectiveBaseURL, nil
 	}
 	auth, authedClient, err := resolveAuthKeyFromClient(ctx, effectiveBaseURL, client)
 	if err != nil {
 		if submittedManualCode && errors.Is(err, errMTVAuthKeyNotFound) {
-			return "", nil, nil, fmt.Errorf("trackers: MTV auth key not found after submitted 2FA final_%s: %w: %w", finalAuthTrace, err, ErrSubmitted2FARejected)
+			return "", nil, nil, "", fmt.Errorf("trackers: MTV auth key not found after submitted 2FA final_%s: %w: %w", finalAuthTrace, err, ErrSubmitted2FARejected)
 		}
 		if errors.Is(err, errMTVAuthKeyNotFound) {
-			return "", nil, nil, fmt.Errorf("trackers: MTV auth key not found after login final_%s: %w", finalAuthTrace, err)
+			return "", nil, nil, "", fmt.Errorf("trackers: MTV auth key not found after login final_%s: %w", finalAuthTrace, err)
 		}
-		return "", nil, nil, fmt.Errorf("trackers: MTV auth key lookup after login final_%s: %w", finalAuthTrace, err)
+		return "", nil, nil, "", fmt.Errorf("trackers: MTV auth key lookup after login final_%s: %w", finalAuthTrace, err)
 	}
 	cookieMap := cookiesFromJar(effectiveBaseURL, authedClient.Jar)
-	return auth, authedClient, cookieMap, nil
+	return auth, authedClient, cookieMap, effectiveBaseURL, nil
 }
 
 func mtvEffectiveBaseURL(fallback string, resp *http.Response) string {

@@ -178,6 +178,7 @@ func TestLoadNetscapeCookiesPreservesValueWhitespaceAndSkipsEmptyNameOrValue(t *
 		".example.org\tTRUE\t/\tFALSE\t0\t\tmissing-name",
 		".example.org\tTRUE\t/\tFALSE\t0\tempty\t",
 		".example.org\tTRUE\t/\tFALSE\t0\tsession\t padded ",
+		"#HttpOnly_.example.org\tTRUE\t/\tFALSE\t0\thttp_only\t padded http ",
 		"",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -188,11 +189,14 @@ func TestLoadNetscapeCookiesPreservesValueWhitespaceAndSkipsEmptyNameOrValue(t *
 	if err != nil {
 		t.Fatalf("LoadNetscapeCookies: %v", err)
 	}
-	if len(got) != 1 {
+	if len(got) != 2 {
 		t.Fatalf("expected one valid cookie, got %#v", got)
 	}
 	if got[0].Name != "session" || got[0].Value != " padded " {
 		t.Fatalf("expected padded Netscape value to be preserved, got %#v", got[0])
+	}
+	if got[1].Name != "http_only" || got[1].Value != " padded http " {
+		t.Fatalf("expected padded HttpOnly Netscape value to be preserved, got %#v", got[1])
 	}
 }
 

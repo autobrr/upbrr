@@ -81,7 +81,9 @@ func resolveFFSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfi
 		if validationErr == nil {
 			return nil
 		}
-		return validationErr
+		if !shouldRefreshStoredCookiesWithCredentials(validationErr) || !hasLoginCredentials(cfg) {
+			return validationErr
+		}
 	}
 	if !hasLoginCredentials(cfg) {
 		return &AuthRequiredError{TrackerID: "FF", Reason: "cookies or username/password missing", Err: cookieLoadError("FF", err)}
@@ -156,7 +158,9 @@ func resolveFLSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfi
 		if validationErr == nil {
 			return nil
 		}
-		return validationErr
+		if !shouldRefreshStoredCookiesWithCredentials(validationErr) || !hasLoginCredentials(cfg) {
+			return validationErr
+		}
 	}
 	if !hasLoginCredentials(cfg) {
 		return &AuthRequiredError{TrackerID: "FL", Reason: "cookies or username/password missing", Err: cookieLoadError("FL", err)}
@@ -310,6 +314,13 @@ func resolveTHRSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConf
 		return &ValidationError{TrackerID: "THR", ConfirmedInvalid: true, Reason: "login failed", Err: errors.New("trackers: THR login marker not found")}
 	}
 	return nil
+}
+
+// shouldRefreshStoredCookiesWithCredentials reports whether stored cookies were
+// proven expired, allowing credential login to refresh them.
+func shouldRefreshStoredCookiesWithCredentials(err error) bool {
+	validation, ok := asValidationError(err)
+	return ok && validation.ConfirmedInvalid && !validation.Transient
 }
 
 // persistHTTPCookies saves non-empty login cookies and rejects empty login

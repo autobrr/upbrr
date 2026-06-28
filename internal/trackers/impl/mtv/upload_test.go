@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -204,6 +206,69 @@ func TestResolveSessionForTrackerAuthPostsLoginToRedirectedHost(t *testing.T) {
 	}
 	if got["session"] != "fresh" {
 		t.Fatalf("expected saved redirected-login cookies, got %#v", got)
+	}
+}
+
+func TestUploadPostsToRedirectedLoginHost(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	torrentPath := filepath.Join(t.TempDir(), "release.torrent")
+	if err := os.WriteFile(torrentPath, []byte("torrent"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	var canonicalURL string
+	postedCanonicalUpload := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login" && r.Method == http.MethodGet && strings.HasPrefix(r.Host, "localhost:"):
+			http.Redirect(w, r, canonicalURL+"/login", http.StatusFound)
+		case r.URL.Path == "/login" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+		case r.URL.Path == "/login" && r.Method == http.MethodPost:
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "fresh", Path: "/"})
+			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
+		case r.URL.Path == mtvUploadPath && r.Method == http.MethodPost && strings.HasPrefix(r.Host, "localhost:"):
+			t.Fatalf("upload POST used original host")
+		case r.URL.Path == mtvUploadPath && r.Method == http.MethodPost:
+			postedCanonicalUpload = true
+			if _, err := r.Cookie("session"); err != nil {
+				t.Fatalf("expected session cookie on canonical upload: %v", err)
+			}
+			http.Redirect(w, r, canonicalURL+"/torrents.php?id=1", http.StatusFound)
+		case r.URL.Path == "/torrents.php":
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	canonicalURL = server.URL
+	sourceURL := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
+
+	summary, err := upload(ctx, trackers.UploadRequest{
+		Tracker: "MTV",
+		Meta: api.PreparedMetadata{
+			TorrentPath: torrentPath,
+			ReleaseName: "Release",
+		},
+		TrackerConfig: config.TrackerConfig{
+			URL:      sourceURL,
+			Username: "user",
+			Password: "pass",
+		},
+		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		Assets:    &trackers.DescriptionAssets{Final: true, Description: "desc"},
+	})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected upload success, got %#v", summary)
+	}
+	if !postedCanonicalUpload {
+		t.Fatal("expected upload POST on redirected host")
 	}
 }
 

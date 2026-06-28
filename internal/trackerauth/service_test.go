@@ -274,6 +274,9 @@ func TestValidateFFLoginPersistsCookies(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "FF", map[string]string{"session": "expired"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/upload.php":
@@ -326,6 +329,9 @@ func TestValidateFLLoginPersistsCookies(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "FL", map[string]string{"session": "expired"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login.php":
@@ -596,6 +602,52 @@ func TestSubmit2FAPreCodeLoginFailureDoesNotExposeRetryChallenge(t *testing.T) {
 	}
 	if !strings.Contains(status.LastError, "login failed") {
 		t.Fatalf("expected login failure in status, got %#v", status)
+	}
+}
+
+func TestSubmit2FAConfirmedInvalidFailureDoesNotExposeRetryChallenge(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"PTP": {
+					Username:    "user",
+					Password:    "pass",
+					AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+				},
+			},
+		},
+	}
+	service := NewService(cfg)
+	service.challenges = NewChallengeManager(defaultChallengeTTL)
+	service.adapters = map[string]Adapter{
+		"PTP": trackerAdapter{
+			capability: api.TrackerAuthCapability{
+				TrackerID:         "PTP",
+				SupportsLogin:     true,
+				SupportsManual2FA: true,
+			},
+			resolve: func(_ context.Context, _ config.TrackerConfig, _ string, login api.TrackerAuthLoginRequest) error {
+				if login.Code != "000000" {
+					t.Fatalf("expected submitted code, got %q", login.Code)
+				}
+				return &ValidationError{TrackerID: "PTP", ConfirmedInvalid: true, Submitted2FARejected: true, Err: errors.New("login failed")}
+			},
+		},
+	}
+	ownerKey, err := service.challengeOwnerKey("PTP")
+	if err != nil {
+		t.Fatalf("challengeOwnerKey: %v", err)
+	}
+	challengeID := service.challenges.Create(context.Background(), "PTP", ownerKey)
+
+	status, err := service.Submit2FA(context.Background(), challengeID, "000000")
+	if err != nil {
+		t.Fatalf("Submit2FA: %v", err)
+	}
+	if status.Needs2FA || strings.TrimSpace(status.ChallengeID) != "" {
+		t.Fatalf("confirmed-invalid failure must not expose retry challenge: %#v", status)
 	}
 }
 
@@ -1340,6 +1392,10 @@ func TestParseCookieContentPreservesCookieValueWhitespace(t *testing.T) {
 			fileName: "cookies.txt",
 			content:  ".example.test\tTRUE\t/\tTRUE\t0\tsession\t abc ",
 		},
+		"Netscape HttpOnly": {
+			fileName: "cookies.txt",
+			content:  "#HttpOnly_.example.test\tTRUE\t/\tTRUE\t0\tsession\t abc ",
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -1908,7 +1964,7 @@ func TestDeleteARAuthLegacyPathFailureReturnsError(t *testing.T) {
 	}
 }
 
-func TestDeleteARAuthFailureLeavesCookiesUntouched(t *testing.T) {
+func TestDeleteARAuthWithoutWebAuthMaterialDeletesStaleAuth(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1942,21 +1998,14 @@ func TestDeleteARAuthFailureLeavesCookiesUntouched(t *testing.T) {
 	service := NewService(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 
 	_, err = service.Delete(ctx, "AR")
-	if err == nil {
-		t.Fatal("expected encrypted auth deletion uncertainty")
-	}
-	if !strings.Contains(err.Error(), "delete AR auth state uncertain") {
-		t.Fatalf("expected encrypted state uncertainty, got %v", err)
-	}
-	legacyAuth, err := os.ReadFile(legacyPath)
 	if err != nil {
-		t.Fatalf("expected legacy AR auth to be restored after uncertainty: %v", err)
+		t.Fatalf("Delete: %v", err)
 	}
-	if string(legacyAuth) != "legacy-auth-key" {
-		t.Fatalf("unexpected restored legacy auth")
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy AR auth deleted, got %v", err)
 	}
-	if _, err := os.Stat(cookiePath); err != nil {
-		t.Fatalf("expected cookies to remain after auth-state delete failure, got %v", err)
+	if _, err := os.Stat(cookiePath); !os.IsNotExist(err) {
+		t.Fatalf("expected cookies deleted, got %v", err)
 	}
 }
 

@@ -32,6 +32,9 @@ const trackerAuthSection = {
 
 const settingsInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+const trackerAuthChipClass =
+  "rounded-full border border-slate-400/20 bg-slate-950/35 px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-[var(--muted)]";
+const trackerAuthMetaClass = "m-0 text-[0.8rem] text-[var(--muted)]";
 
 /** Trackers with backend adapters that can perform a remote auth check. */
 const remoteAuthValidationTrackers = new Set(["AR", "FF", "FL", "HDB", "MTV", "PTP", "RTF", "THR"]);
@@ -433,7 +436,7 @@ export default function SettingsPage(props: Props) {
       (status) => status.encryptedStorage,
     );
     return (
-      <div className="settings-form tracker-auth-panel">
+      <div className="settings-form gap-4">
         <div className="settings-subgroup">
           <div className="settings-subgroup__title">Tracker Auth</div>
           <div className="settings-auth-status">
@@ -447,7 +450,7 @@ export default function SettingsPage(props: Props) {
               can relogin automatically during unattended uploads.
             </p>
           </div>
-          <label className="settings-field tracker-auth-filter">
+          <label className="settings-field max-w-[360px]">
             <span>Filter trackers</span>
             <input
               className={settingsInputClass}
@@ -459,7 +462,7 @@ export default function SettingsPage(props: Props) {
         </div>
         {trackerAuthLoading ? <p className="muted">Loading tracker auth...</p> : null}
         {trackerAuthError ? <p className="error">{trackerAuthError}</p> : null}
-        <div className="tracker-auth-list">
+        <div className="grid gap-[0.85rem]">
           {capabilities.map((capability) => {
             const status = trackerAuthStatuses[capability.trackerID];
             const busy = trackerAuthActions[capability.trackerID] || "";
@@ -469,11 +472,14 @@ export default function SettingsPage(props: Props) {
               capability.trackerID.trim().toUpperCase(),
             );
             return (
-              <div className="settings-card tracker-auth-card" key={capability.trackerID}>
-                <div className="tracker-auth-card__header">
+              <div
+                className="settings-card tracker-auth-card grid gap-3"
+                key={capability.trackerID}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-[0.6rem]">
                   <div>
                     <p className="settings-detail-card__label">Tracker</p>
-                    <h2 className="tracker-auth-card__title">
+                    <h2 className="m-0 mt-[0.1rem] text-[1.05rem] leading-tight">
                       {capability.displayName || capability.trackerID}
                     </h2>
                   </div>
@@ -481,33 +487,51 @@ export default function SettingsPage(props: Props) {
                     {formatTrackerAuthState(status?.state)}
                   </span>
                 </div>
-                <div className="tracker-auth-chips">
-                  <span>{capability.authKind}</span>
-                  {capability.supportsCookieFile ? <span>cookie import</span> : null}
-                  {capability.supportsLogin ? <span>login</span> : null}
-                  {capability.supportsAutoLogin ? <span>auto relogin</span> : null}
-                  {capability.supportsTOTP ? <span>TOTP</span> : null}
-                  {capability.supportsManual2FA ? <span>manual 2FA</span> : null}
-                  {capability.requiresAPIKey ? <span>API key</span> : null}
-                  {capability.requiresPasskey ? <span>passkey</span> : null}
+                <div className="flex flex-wrap items-center gap-[0.6rem]">
+                  <span className={trackerAuthChipClass}>{capability.authKind}</span>
+                  {capability.supportsCookieFile ? (
+                    <span className={trackerAuthChipClass}>cookie import</span>
+                  ) : null}
+                  {capability.supportsLogin ? (
+                    <span className={trackerAuthChipClass}>login</span>
+                  ) : null}
+                  {capability.supportsAutoLogin ? (
+                    <span className={trackerAuthChipClass}>auto relogin</span>
+                  ) : null}
+                  {capability.supportsTOTP ? (
+                    <span className={trackerAuthChipClass}>TOTP</span>
+                  ) : null}
+                  {capability.supportsManual2FA ? (
+                    <span className={trackerAuthChipClass}>manual 2FA</span>
+                  ) : null}
+                  {capability.requiresAPIKey ? (
+                    <span className={trackerAuthChipClass}>API key</span>
+                  ) : null}
+                  {capability.requiresPasskey ? (
+                    <span className={trackerAuthChipClass}>passkey</span>
+                  ) : null}
                 </div>
-                <div className="tracker-auth-card__meta">
-                  <p>Cookies: {status?.cookieCount ?? 0}</p>
-                  <p>Checked: {formatTrackerAuthDate(status?.lastCheckedAt)}</p>
-                  <p>Storage: {status?.encryptedStorage ? "encrypted" : "unavailable"}</p>
+                <div className="flex flex-wrap items-center gap-[0.6rem]">
+                  <p className={trackerAuthMetaClass}>Cookies: {status?.cookieCount ?? 0}</p>
+                  <p className={trackerAuthMetaClass}>
+                    Checked: {formatTrackerAuthDate(status?.lastCheckedAt)}
+                  </p>
+                  <p className={trackerAuthMetaClass}>
+                    Storage: {status?.encryptedStorage ? "encrypted" : "unavailable"}
+                  </p>
                 </div>
                 {status?.message ? <p className="helper">{status.message}</p> : null}
                 {status?.lastError ? <p className="error">{status.lastError}</p> : null}
                 {actionError ? <p className="error">{actionError}</p> : null}
-                {capability.notes?.map((note) => (
+                {(capability.notes ?? []).map((note) => (
                   <p className="muted" key={note}>
                     {note}
                   </p>
                 ))}
                 {status?.needs2FA ? (
-                  <div className="tracker-auth-2fa">
+                  <div className="flex flex-wrap items-center gap-[0.6rem]">
                     <input
-                      className={`${settingsInputClass} tracker-auth-2fa__input`}
+                      className={`${settingsInputClass} w-36`}
                       value={code}
                       inputMode="numeric"
                       autoComplete="one-time-code"

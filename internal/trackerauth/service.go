@@ -348,7 +348,7 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 			return api.TrackerAuthStatus{}, statusErr
 		}
 		applyEnsureErrorToStatus(&status, err)
-		if validation, ok := asValidationError(err); ok && validation.Transient && !validation.ConfirmedInvalid && !shouldKeepSubmitted2FARetryVisible(challenge.TrackerID, err) {
+		if !shouldKeepSubmitted2FARetryVisible(challenge.TrackerID, err) {
 			return status, nil
 		}
 		status.Needs2FA = true
@@ -1004,8 +1004,8 @@ func parseNetscapeCookieContent(content string) (map[string]string, error) {
 		if trimmedLine == "" {
 			continue
 		}
-		if httpOnlyLine, ok := strings.CutPrefix(trimmedLine, "#HttpOnly_"); ok {
-			line = httpOnlyLine
+		if strings.HasPrefix(trimmedLine, "#HttpOnly_") {
+			line = line[strings.Index(line, "#HttpOnly_")+len("#HttpOnly_"):]
 		} else if strings.HasPrefix(trimmedLine, "#") {
 			continue
 		}

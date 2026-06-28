@@ -298,7 +298,8 @@ export type TrackerAuthCapability = {
   supportsManual2FA: boolean;
   requiresAPIKey: boolean;
   requiresPasskey: boolean;
-  notes?: string[];
+  /** Optional tracker-specific UI notes; Go bridge may serialize a nil slice as null. */
+  notes?: string[] | null;
 };
 
 /** Current tracker auth state returned after status, import, login, validation, 2FA, or delete actions. */
