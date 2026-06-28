@@ -265,10 +265,16 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 	if strings.EqualFold(category, "TV") && year > 0 {
 		searchYear = strconv.Itoa(year)
 	}
+	tvdbYearSource := ""
+	tvdbYearFromAlias := false
+	if strings.EqualFold(category, "TV") && meta.ExternalMetadata.TVDB != nil {
+		tvdbYearSource = strings.TrimSpace(meta.ExternalMetadata.TVDB.YearSource)
+		tvdbYearFromAlias = meta.ExternalMetadata.TVDB.YearFromAlias
+	}
 
 	typeValue = normalizeReleaseTypeForCategory(category, typeValue, source, meta.SourcePath)
 
-	logger.Tracef("metadata: release name request resolved category=%q type=%q base_type=%q source=%q season=%q episode=%q date=%q tv_pack=%t", category, typeValue, baseType, source, strings.TrimSpace(meta.SeasonStr), strings.TrimSpace(meta.EpisodeStr), strings.TrimSpace(meta.DailyEpisodeDate), meta.TVPack)
+	logger.Tracef("metadata: release name request resolved category=%q type=%q base_type=%q source=%q season=%q episode=%q date=%q tv_pack=%t year=%d search_year=%q year_source=%q tvdb_year_from_alias=%t", category, typeValue, baseType, source, strings.TrimSpace(meta.SeasonStr), strings.TrimSpace(meta.EpisodeStr), strings.TrimSpace(meta.DailyEpisodeDate), meta.TVPack, year, searchYear, tvdbYearSource, tvdbYearFromAlias)
 
 	dailyDate := strings.TrimSpace(meta.DailyEpisodeDate)
 	manualDate := strings.EqualFold(category, "TV") && dailyDate != "" && !meta.TVPack

@@ -213,6 +213,12 @@ export type TVDBMetadata = {
   OverviewEnglish: string;
   FirstAired: string;
   Year: number;
+  /** True when Year is naming-eligible for TV release names. */
+  YearFromAlias: boolean;
+  /** TVDB source used for Year, such as first_aired, translation_name, translation_alias, extended_alias, or slug. */
+  YearSource: string;
+  /** "high" for explicit title or alias years; "low" for guarded slug-derived naming years. */
+  YearConfidence: string;
   Type: string;
   Status: string;
   Network: string;

@@ -596,6 +596,21 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 				} else {
 					mergeTVDBMetadata(metadata.TVDB, mapped)
 				}
+				if s.logger != nil && metadata.TVDB != nil {
+					namingYear := 0
+					if metadata.TVDB.YearFromAlias {
+						namingYear = metadata.TVDB.Year
+					}
+					s.logger.Tracef(
+						"metadata: tvdb year resolved id=%d first_aired_year=%d naming_year=%d naming_year_source=%q naming_year_confidence=%q naming_eligible=%t",
+						metadata.TVDB.TVDBID,
+						parseYearFromDate(metadata.TVDB.FirstAired),
+						namingYear,
+						metadata.TVDB.YearSource,
+						metadata.TVDB.YearConfidence,
+						metadata.TVDB.YearFromAlias,
+					)
+				}
 				if strings.TrimSpace(tvdbName) == "" {
 					tvdbName = strings.TrimSpace(mapped.Name)
 				}
@@ -1527,9 +1542,16 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	}
 	year := parseYearFromDate(details.FirstAired)
 	yearFromAlias := false
-	if details.SeriesYear > 0 {
+	yearSource := "first_aired"
+	yearConfidence := ""
+	if year == 0 {
+		yearSource = ""
+	}
+	if details.SeriesYear > 0 && strings.TrimSpace(details.SeriesYearSource) != "" {
 		year = details.SeriesYear
 		yearFromAlias = true
+		yearSource = strings.TrimSpace(details.SeriesYearSource)
+		yearConfidence = strings.TrimSpace(details.SeriesYearConfidence)
 	}
 	name := metautil.FirstNonEmptyTrimmed(details.Name, fallbackName)
 	aliases := make([]string, 0, len(details.Aliases))
@@ -1553,6 +1575,8 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 		FirstAired:       strings.TrimSpace(details.FirstAired),
 		Year:             year,
 		YearFromAlias:    yearFromAlias,
+		YearSource:       yearSource,
+		YearConfidence:   yearConfidence,
 		Type:             strings.TrimSpace(details.Type),
 		Status:           strings.TrimSpace(details.Status),
 		Network:          strings.TrimSpace(details.Network),
@@ -1590,8 +1614,27 @@ func mergeTVDBMetadata(target *api.TVDBMetadata, incoming *api.TVDBMetadata) {
 	if target.Year == 0 {
 		target.Year = incoming.Year
 	}
-	if incoming.YearFromAlias {
+	// Alias-derived years are naming-eligible, so refresh or clear the provenance when newer TVDB details change that status.
+	switch {
+	case incoming.YearFromAlias:
+		if !target.YearFromAlias {
+			target.Year = incoming.Year
+		}
 		target.YearFromAlias = true
+		target.YearSource = incoming.YearSource
+		target.YearConfidence = incoming.YearConfidence
+	case target.YearFromAlias:
+		target.Year = incoming.Year
+		target.YearFromAlias = false
+		target.YearSource = incoming.YearSource
+		target.YearConfidence = incoming.YearConfidence
+	default:
+		if strings.TrimSpace(target.YearSource) == "" {
+			target.YearSource = incoming.YearSource
+		}
+		if strings.TrimSpace(target.YearConfidence) == "" {
+			target.YearConfidence = incoming.YearConfidence
+		}
 	}
 	if strings.TrimSpace(target.Type) == "" {
 		target.Type = incoming.Type
@@ -1821,6 +1864,15 @@ func (s *Service) applyTVEpisodeMetadata(
 					if aliasYear > 0 {
 						external.TVDB.Year = aliasYear
 						external.TVDB.YearFromAlias = true
+						// Preserve the series-level source when the alias string was synthesized from TVDB title metadata.
+						yearSource := "extended_alias"
+						yearConfidence := "high"
+						if episodes.SeriesYear == aliasYear && strings.TrimSpace(episodes.SeriesYearSource) != "" {
+							yearSource = strings.TrimSpace(episodes.SeriesYearSource)
+							yearConfidence = strings.TrimSpace(episodes.SeriesYearConfidence)
+						}
+						external.TVDB.YearSource = yearSource
+						external.TVDB.YearConfidence = yearConfidence
 					}
 				}
 			}

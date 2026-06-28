@@ -11,23 +11,27 @@ type SeriesSearchResult struct {
 }
 
 type SeriesMetadata struct {
-	TVDBID           int
-	Name             string
-	NameEnglish      string
-	SeriesYear       int
-	Overview         string
-	OverviewEnglish  string
-	Slug             string
-	FirstAired       string
-	Type             string
-	Status           string
-	Network          string
-	OriginalCountry  string
-	OriginalLanguage string
-	HasEnglish       bool
-	Genres           []string
-	Poster           string
-	Aliases          []Alias
+	TVDBID      int
+	Name        string
+	NameEnglish string
+	SeriesYear  int
+	// SeriesYearSource identifies the TVDB title signal that made SeriesYear safe for release-name disambiguation.
+	SeriesYearSource string
+	// SeriesYearConfidence is "high" for explicit title/alias years and "low" for guarded slug-derived years.
+	SeriesYearConfidence string
+	Overview             string
+	OverviewEnglish      string
+	Slug                 string
+	FirstAired           string
+	Type                 string
+	Status               string
+	Network              string
+	OriginalCountry      string
+	OriginalLanguage     string
+	HasEnglish           bool
+	Genres               []string
+	Poster               string
+	Aliases              []Alias
 }
 
 type Alias struct {
@@ -36,15 +40,19 @@ type Alias struct {
 }
 
 type EpisodesData struct {
-	Episodes           []Episode
-	Aliases            []Alias
-	Slug               string
-	SeriesTitle        string
-	SeriesYear         int
-	AirsDays           []string
-	AirsTime           string
-	AirsTimezone       string
-	AirsTimezoneSource string
+	Episodes    []Episode
+	Aliases     []Alias
+	Slug        string
+	SeriesTitle string
+	SeriesYear  int
+	// SeriesYearSource identifies the TVDB title signal that made SeriesYear safe for release-name disambiguation.
+	SeriesYearSource string
+	// SeriesYearConfidence is "high" for explicit title/alias years and "low" for guarded slug-derived years.
+	SeriesYearConfidence string
+	AirsDays             []string
+	AirsTime             string
+	AirsTimezone         string
+	AirsTimezoneSource   string
 }
 
 type Episode struct {

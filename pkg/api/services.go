@@ -582,14 +582,19 @@ type IMDBSeasonSummary struct {
 }
 
 type TVDBMetadata struct {
-	TVDBID                 int
-	Name                   string
-	NameEnglish            string
-	Overview               string
-	OverviewEnglish        string
-	FirstAired             string
-	Year                   int
-	YearFromAlias          bool
+	TVDBID          int
+	Name            string
+	NameEnglish     string
+	Overview        string
+	OverviewEnglish string
+	FirstAired      string
+	Year            int
+	// YearFromAlias reports whether Year is naming-eligible for TV release names.
+	YearFromAlias bool
+	// YearSource identifies the TVDB source used for Year, such as first_aired, translation_name, translation_alias, extended_alias, or slug.
+	YearSource string
+	// YearConfidence is "high" for explicit TVDB title/alias years and "low" for guarded slug-derived naming years.
+	YearConfidence         string
 	Type                   string
 	Status                 string
 	Network                string

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,16 @@ var (
 	yearPattern             = regexp.MustCompile(`(?:19|20)\d{2}`)
 	nonAlphaNumSpacePattern = regexp.MustCompile(`[^a-z0-9 ]+`)
 	multiSpacePattern       = regexp.MustCompile(`\s+`)
+)
+
+const (
+	seriesYearSourceTranslationName  = "translation_name"
+	seriesYearSourceTranslationAlias = "translation_alias"
+	seriesYearSourceExtendedAlias    = "extended_alias"
+	seriesYearSourceSlug             = "slug"
+
+	seriesYearConfidenceHigh = "high"
+	seriesYearConfidenceLow  = "low"
 )
 
 var cityTimezoneMap = map[string]string{
@@ -164,7 +175,9 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 				if c.logger != nil {
 					c.logger.Tracef("tvdb: episodes cache hit series_id=%d language=%s episodes=%d", seriesID, languageKey, len(cached.Episodes))
 				}
-				if strings.TrimSpace(cached.SeriesTitle) == "" && cached.SeriesYear == 0 {
+				needsSeriesDetails := strings.TrimSpace(cached.SeriesTitle) == "" && cached.SeriesYear == 0
+				needsSeriesDetails = needsSeriesDetails || (cached.SeriesYear > 0 && strings.TrimSpace(cached.SeriesYearSource) == "")
+				if needsSeriesDetails {
 					if details, err := c.fetchSeriesDetails(ctx, seriesID, language); err == nil {
 						cached = applySeriesDetails(cached, details)
 						if cachePath != "" {
@@ -191,15 +204,17 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 		details = fetchedDetails
 	}
 	data := EpisodesData{
-		Episodes:           episodes,
-		Aliases:            details.aliases,
-		Slug:               slug,
-		SeriesTitle:        details.seriesTitle,
-		SeriesYear:         details.seriesYear,
-		AirsDays:           details.airsDays,
-		AirsTime:           details.airsTime,
-		AirsTimezone:       details.airsTimezone,
-		AirsTimezoneSource: details.airsTimezoneSource,
+		Episodes:             episodes,
+		Aliases:              details.aliases,
+		Slug:                 slug,
+		SeriesTitle:          details.seriesTitle,
+		SeriesYear:           details.seriesYear,
+		SeriesYearSource:     details.seriesYearSource,
+		SeriesYearConfidence: details.seriesYearConfidence,
+		AirsDays:             details.airsDays,
+		AirsTime:             details.airsTime,
+		AirsTimezone:         details.airsTimezone,
+		AirsTimezoneSource:   details.airsTimezoneSource,
 	}
 
 	if cachePath != "" && len(episodes) > 0 {
@@ -284,6 +299,8 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 		metadata.NameEnglish = metautil.FirstNonEmptyTrimmed(seriesMeta.title, metadata.NameEnglish)
 	}
 	metadata.SeriesYear = seriesMeta.year
+	metadata.SeriesYearSource = seriesMeta.yearSource
+	metadata.SeriesYearConfidence = seriesMeta.yearConfidence
 
 	if metadata.Name == "" && len(resp.Data.Aliases) > 0 {
 		metadata.Name = strings.TrimSpace(resp.Data.Aliases[0].Name)
@@ -306,11 +323,17 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 
 	if c.logger != nil {
 		c.logger.Tracef(
-			"tvdb: series metadata loaded series_id=%d language=%q name=%q first_aired=%q",
+			"tvdb: series metadata loaded series_id=%d language=%q name=%q first_aired=%q api_year=%d series_year=%d series_year_source=%q series_year_confidence=%q name_english=%q slug=%q",
 			seriesID,
 			normalizeLanguageParam(language),
 			metadata.Name,
 			metadata.FirstAired,
+			int(resp.Data.Year),
+			metadata.SeriesYear,
+			metadata.SeriesYearSource,
+			metadata.SeriesYearConfidence,
+			metadata.NameEnglish,
+			metadata.Slug,
 		)
 	}
 
@@ -444,13 +467,15 @@ func (c *Client) fetchEpisodes(ctx context.Context, seriesID int, language strin
 }
 
 type seriesDetails struct {
-	aliases            []Alias
-	seriesTitle        string
-	seriesYear         int
-	airsDays           []string
-	airsTime           string
-	airsTimezone       string
-	airsTimezoneSource string
+	aliases              []Alias
+	seriesTitle          string
+	seriesYear           int
+	seriesYearSource     string
+	seriesYearConfidence string
+	airsDays             []string
+	airsTime             string
+	airsTimezone         string
+	airsTimezoneSource   string
 }
 
 func (c *Client) fetchSeriesDetails(ctx context.Context, seriesID int, language string) (seriesDetails, error) {
@@ -466,13 +491,15 @@ func (c *Client) fetchSeriesDetails(ctx context.Context, seriesID int, language 
 	}
 	seriesMeta := seriesTranslationMetadata(resp.Data, translation)
 	return seriesDetails{
-		aliases:            mapAliases(resp.Data.Aliases),
-		seriesTitle:        seriesMeta.title,
-		seriesYear:         seriesMeta.year,
-		airsDays:           airsDays,
-		airsTime:           airsTime,
-		airsTimezone:       airsTimezone,
-		airsTimezoneSource: airsTimezoneSource,
+		aliases:              mapAliases(resp.Data.Aliases),
+		seriesTitle:          seriesMeta.title,
+		seriesYear:           seriesMeta.year,
+		seriesYearSource:     seriesMeta.yearSource,
+		seriesYearConfidence: seriesMeta.yearConfidence,
+		airsDays:             airsDays,
+		airsTime:             airsTime,
+		airsTimezone:         airsTimezone,
+		airsTimezoneSource:   airsTimezoneSource,
 	}, nil
 }
 
@@ -753,38 +780,161 @@ func deriveEnglishSeriesOverview(data seriesExtendedDataResponse, requestLanguag
 }
 
 type seriesMetadataFields struct {
-	title string
-	year  int
+	title          string
+	year           int
+	yearSource     string
+	yearConfidence string
 }
 
 func seriesTranslationMetadata(data seriesExtendedDataResponse, translation seriesTranslationDataResponse) seriesMetadataFields {
 	translationAliases := trimStringList(translation.Aliases)
 	extendedEnglishAliases := englishAliasNames(data.Aliases)
-	englishAliases := append(append([]string{}, translationAliases...), extendedEnglishAliases...)
 
 	fallbackTitle := ""
+	fallbackYearSource := ""
 	if len(translationAliases) > 0 {
 		fallbackTitle = translationAliases[len(translationAliases)-1]
+		fallbackYearSource = seriesYearSourceTranslationAlias
 	} else if len(extendedEnglishAliases) > 0 {
 		fallbackTitle = extendedEnglishAliases[len(extendedEnglishAliases)-1]
+		fallbackYearSource = seriesYearSourceExtendedAlias
 	}
 
-	title := metautil.FirstNonEmptyTrimmed(translation.Name, fallbackTitle)
-	year := 0
-	for _, alias := range englishAliases {
-		if parsed := extractYearFromText(alias); parsed != "" {
-			year, _ = strconv.Atoi(parsed)
-			break
+	translationName := strings.TrimSpace(translation.Name)
+	title := metautil.FirstNonEmptyTrimmed(translationName, fallbackTitle)
+	if year, ok := explicitTitleYear(translationName); ok {
+		return seriesMetadataFields{
+			title:          title,
+			year:           year,
+			yearSource:     seriesYearSourceTranslationName,
+			yearConfidence: seriesYearConfidenceHigh,
 		}
 	}
-	if len(englishAliases) == 0 {
-		if data.Year != 0 {
-			year = int(data.Year)
-		} else if parsed := extractYearFromText(data.Slug); parsed != "" {
-			year, _ = strconv.Atoi(parsed)
+	if translationName == "" {
+		if year, ok := aliasYear(fallbackTitle); ok {
+			return seriesMetadataFields{
+				title:          title,
+				year:           year,
+				yearSource:     fallbackYearSource,
+				yearConfidence: seriesYearConfidenceHigh,
+			}
+		}
+	} else {
+		if year, ok := matchingAliasYear(translationAliases, title); ok {
+			return seriesMetadataFields{
+				title:          title,
+				year:           year,
+				yearSource:     seriesYearSourceTranslationAlias,
+				yearConfidence: seriesYearConfidenceHigh,
+			}
+		}
+		if year, ok := matchingAliasYear(extendedEnglishAliases, title); ok {
+			return seriesMetadataFields{
+				title:          title,
+				year:           year,
+				yearSource:     seriesYearSourceExtendedAlias,
+				yearConfidence: seriesYearConfidenceHigh,
+			}
 		}
 	}
-	return seriesMetadataFields{title: title, year: year}
+	if year, ok := slugFallbackYear(data.Slug, data.Name, translation.Name, translationAliases, extendedEnglishAliases); ok {
+		return seriesMetadataFields{
+			title:          title,
+			year:           year,
+			yearSource:     seriesYearSourceSlug,
+			yearConfidence: seriesYearConfidenceLow,
+		}
+	}
+	return seriesMetadataFields{title: title}
+}
+
+// aliasYear returns the first standalone year embedded in an alias.
+func aliasYear(alias string) (int, bool) {
+	yearText := extractYearFromText(alias)
+	if yearText == "" {
+		return 0, false
+	}
+	year, err := strconv.Atoi(yearText)
+	if err != nil {
+		return 0, false
+	}
+	return year, true
+}
+
+// explicitTitleYear returns a naming-safe title year only when the title carries an explicit parenthesized year.
+func explicitTitleYear(title string) (int, bool) {
+	matches := yearAliasPattern.FindStringSubmatch(title)
+	if len(matches) != 2 {
+		return 0, false
+	}
+	year, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, false
+	}
+	return year, true
+}
+
+func matchingAliasYear(aliases []string, title string) (int, bool) {
+	for _, alias := range aliases {
+		if normalizedTitleWithoutYear(title) != "" && normalizedTitleWithoutYear(alias) != normalizedTitleWithoutYear(title) {
+			continue
+		}
+		if year, ok := aliasYear(alias); ok {
+			return year, true
+		}
+	}
+	return 0, false
+}
+
+func slugFallbackYear(slug, originalTitle, translationName string, translationAliases, extendedEnglishAliases []string) (int, bool) {
+	slugYear := extractYearFromText(slug)
+	if slugYear == "" {
+		return 0, false
+	}
+	if cleanEnglishTitleExists(translationName, translationAliases, extendedEnglishAliases) {
+		return 0, false
+	}
+	slugBase := normalizedTitleWithoutYear(strings.ReplaceAll(slug, "-", " "))
+	if slugBase == "" {
+		return 0, false
+	}
+	originalBase := normalizedTitleWithoutYear(originalTitle)
+	if comparableTitleBase(originalBase) && originalBase != slugBase {
+		return 0, false
+	}
+	year, err := strconv.Atoi(slugYear)
+	if err != nil {
+		return 0, false
+	}
+	return year, true
+}
+
+func comparableTitleBase(value string) bool {
+	return len(strings.ReplaceAll(value, " ", "")) >= 3
+}
+
+func cleanEnglishTitleExists(translationName string, translationAliases, extendedEnglishAliases []string) bool {
+	for _, value := range append(append([]string{translationName}, translationAliases...), extendedEnglishAliases...) {
+		if strings.TrimSpace(value) != "" && extractYearFromText(value) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedTitleWithoutYear(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	withoutYear := yearAliasPattern.ReplaceAllString(trimmed, " ")
+	withoutYear = yearPattern.ReplaceAllString(withoutYear, " ")
+	withoutYear = strings.ReplaceAll(withoutYear, "×", "x")
+	withoutYear = strings.ReplaceAll(withoutYear, "&", " and ")
+	withoutYear = strings.ToLower(withoutYear)
+	withoutYear = nonAlphaNumSpacePattern.ReplaceAllString(withoutYear, " ")
+	withoutYear = multiSpacePattern.ReplaceAllString(withoutYear, " ")
+	return strings.TrimSpace(withoutYear)
 }
 
 func englishAliasNames(values []aliasResponse) []string {
@@ -832,12 +982,7 @@ func (c *Client) fetchSeriesTranslation(ctx context.Context, seriesID int, langu
 }
 
 func containsEnglishTranslation(values []string) bool {
-	for _, value := range values {
-		if isEnglishCode(value) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(values, isEnglishCode)
 }
 
 func selectEnglishAlias(values []aliasResponse) string {
@@ -943,8 +1088,14 @@ func applySeriesDetails(data EpisodesData, details seriesDetails) EpisodesData {
 	if strings.TrimSpace(data.SeriesTitle) == "" {
 		data.SeriesTitle = details.seriesTitle
 	}
-	if data.SeriesYear == 0 {
+	if data.SeriesYear == 0 || strings.TrimSpace(data.SeriesYearSource) == "" {
 		data.SeriesYear = details.seriesYear
+	}
+	if strings.TrimSpace(data.SeriesYearSource) == "" {
+		data.SeriesYearSource = details.seriesYearSource
+	}
+	if strings.TrimSpace(data.SeriesYearConfidence) == "" {
+		data.SeriesYearConfidence = details.seriesYearConfidence
 	}
 	if len(data.AirsDays) == 0 {
 		data.AirsDays = details.airsDays
@@ -964,12 +1115,24 @@ func applySeriesDetails(data EpisodesData, details seriesDetails) EpisodesData {
 func specificSeriesAlias(data EpisodesData) string {
 	title := strings.TrimSpace(data.SeriesTitle)
 	if title != "" {
-		if data.SeriesYear > 0 {
+		if data.SeriesYear > 0 && seriesYearSourceNamingEligible(data.SeriesYearSource) {
+			if extractYearFromText(title) == strconv.Itoa(data.SeriesYear) {
+				return title
+			}
 			return fmt.Sprintf("%s (%d)", title, data.SeriesYear)
 		}
 		return title
 	}
 	return explicitYearAlias(data.Aliases)
+}
+
+func seriesYearSourceNamingEligible(source string) bool {
+	switch strings.TrimSpace(source) {
+	case seriesYearSourceTranslationName, seriesYearSourceTranslationAlias, seriesYearSourceExtendedAlias, seriesYearSourceSlug:
+		return true
+	default:
+		return false
+	}
 }
 
 func explicitYearAlias(aliases []Alias) string {
@@ -1352,6 +1515,32 @@ type seriesResult struct {
 type aliasResponse struct {
 	Name     string `json:"name"`
 	Language string `json:"language"`
+}
+
+// UnmarshalJSON accepts both object aliases and the string aliases returned by TVDB search.
+func (a *aliasResponse) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*a = aliasResponse{}
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var name string
+		if err := json.Unmarshal(trimmed, &name); err != nil {
+			return fmt.Errorf("tvdb: unmarshal alias string: %w", err)
+		}
+		*a = aliasResponse{Name: strings.TrimSpace(name), Language: "eng"}
+		return nil
+	}
+	var payload struct {
+		Name     string `json:"name"`
+		Language string `json:"language"`
+	}
+	if err := json.Unmarshal(trimmed, &payload); err != nil {
+		return fmt.Errorf("tvdb: unmarshal alias object: %w", err)
+	}
+	*a = aliasResponse{Name: strings.TrimSpace(payload.Name), Language: strings.TrimSpace(payload.Language)}
+	return nil
 }
 
 type episodesResponse struct {
