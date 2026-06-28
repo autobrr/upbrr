@@ -32,8 +32,10 @@ const trackerAuthSection = {
 
 const settingsInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+// Tracker-supplied auth kinds can be long adapter descriptors; keep chips
+// wrapped inside the auth card on narrow screens.
 const trackerAuthChipClass =
-  "rounded-full border border-slate-400/20 bg-slate-950/35 px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-[var(--muted)]";
+  "max-w-full whitespace-normal rounded-full border border-slate-400/20 bg-slate-950/35 px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-[var(--muted)] [overflow-wrap:anywhere]";
 const trackerAuthMetaClass = "m-0 text-[0.8rem] text-[var(--muted)]";
 
 /** Trackers with backend adapters that can perform a remote auth check. */
@@ -473,13 +475,13 @@ export default function SettingsPage(props: Props) {
             );
             return (
               <div
-                className="settings-card tracker-auth-card grid gap-3"
+                className="settings-card tracker-auth-card grid min-w-0 gap-3"
                 key={capability.trackerID}
               >
-                <div className="flex flex-wrap items-center justify-between gap-[0.6rem]">
-                  <div>
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-[0.6rem]">
+                  <div className="min-w-0 flex-1">
                     <p className="settings-detail-card__label">Tracker</p>
-                    <h2 className="m-0 mt-[0.1rem] text-[1.05rem] leading-tight">
+                    <h2 className="m-0 mt-[0.1rem] text-[1.05rem] leading-tight [overflow-wrap:anywhere]">
                       {capability.displayName || capability.trackerID}
                     </h2>
                   </div>
@@ -487,7 +489,7 @@ export default function SettingsPage(props: Props) {
                     {formatTrackerAuthState(status?.state)}
                   </span>
                 </div>
-                <div className="flex flex-wrap items-center gap-[0.6rem]">
+                <div className="flex min-w-0 flex-wrap items-center gap-[0.6rem]">
                   <span className={trackerAuthChipClass}>{capability.authKind}</span>
                   {capability.supportsCookieFile ? (
                     <span className={trackerAuthChipClass}>cookie import</span>
@@ -520,11 +522,15 @@ export default function SettingsPage(props: Props) {
                     Storage: {status?.encryptedStorage ? "encrypted" : "unavailable"}
                   </p>
                 </div>
-                {status?.message ? <p className="helper">{status.message}</p> : null}
-                {status?.lastError ? <p className="error">{status.lastError}</p> : null}
+                {status?.message ? (
+                  <p className="helper [overflow-wrap:anywhere]">{status.message}</p>
+                ) : null}
+                {status?.lastError ? (
+                  <p className="error [overflow-wrap:anywhere]">{status.lastError}</p>
+                ) : null}
                 {actionError ? <p className="error">{actionError}</p> : null}
                 {(capability.notes ?? []).map((note) => (
-                  <p className="muted" key={note}>
+                  <p className="muted [overflow-wrap:anywhere]" key={note}>
                     {note}
                   </p>
                 ))}

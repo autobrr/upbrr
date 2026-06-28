@@ -6,6 +6,7 @@ package mtv
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -165,12 +166,16 @@ func TestResolveSessionForTrackerAuthSavesCookiesWhenLoginResponseContainsAuthKe
 func TestLoginAndResolveAuthKeyReturnsLoginPageReadError(t *testing.T) {
 	t.Parallel()
 
+	handlerErrs := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/login" && r.Method == http.MethodGet:
-			writeMalformedChunkedResponse(t, w)
+			if err := writeMalformedChunkedResponse(w); err != nil {
+				recordHandlerError(handlerErrs, "write malformed chunked response: %v", err)
+			}
 		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+			recordHandlerError(handlerErrs, "unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -179,6 +184,7 @@ func TestLoginAndResolveAuthKeyReturnsLoginPageReadError(t *testing.T) {
 		Username: "user",
 		Password: "pass",
 	}, server.URL, api.TrackerAuthLoginRequest{})
+	assertNoHandlerError(t, handlerErrs)
 	if err == nil {
 		t.Fatal("expected login page read error")
 	}
@@ -190,14 +196,18 @@ func TestLoginAndResolveAuthKeyReturnsLoginPageReadError(t *testing.T) {
 func TestLoginAndResolveAuthKeyReturnsLoginPostReadError(t *testing.T) {
 	t.Parallel()
 
+	handlerErrs := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/login" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
 		case r.URL.Path == "/login" && r.Method == http.MethodPost:
-			writeMalformedChunkedResponse(t, w)
+			if err := writeMalformedChunkedResponse(w); err != nil {
+				recordHandlerError(handlerErrs, "write malformed chunked response: %v", err)
+			}
 		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+			recordHandlerError(handlerErrs, "unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -206,6 +216,7 @@ func TestLoginAndResolveAuthKeyReturnsLoginPostReadError(t *testing.T) {
 		Username: "user",
 		Password: "pass",
 	}, server.URL, api.TrackerAuthLoginRequest{})
+	assertNoHandlerError(t, handlerErrs)
 	if err == nil {
 		t.Fatal("expected login response read error")
 	}
@@ -487,6 +498,7 @@ func TestResolveSessionForTrackerAuthLoginReturns2FAReadError(t *testing.T) {
 	if err := saveMTVCookies(ctx, dbPath, map[string]string{"session": "existing"}); err != nil {
 		t.Fatalf("saveMTVCookies: %v", err)
 	}
+	handlerErrs := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/index.php":
@@ -502,7 +514,9 @@ func TestResolveSessionForTrackerAuthLoginReturns2FAReadError(t *testing.T) {
 				_, _ = w.Write([]byte(`<input name="token" value="ponmlkjihgfedcba">`))
 				return
 			}
-			writeMalformedChunkedResponse(t, w)
+			if err := writeMalformedChunkedResponse(w); err != nil {
+				recordHandlerError(handlerErrs, "write malformed chunked response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -514,6 +528,7 @@ func TestResolveSessionForTrackerAuthLoginReturns2FAReadError(t *testing.T) {
 		Username: "user",
 		Password: "pass",
 	}, dbPath, api.TrackerAuthLoginRequest{Code: "123456"})
+	assertNoHandlerError(t, handlerErrs)
 	if err == nil {
 		t.Fatal("expected 2FA response read error")
 	}
@@ -635,24 +650,46 @@ func newMTVAuthDB(t *testing.T) string {
 	return dbPath
 }
 
-func writeMalformedChunkedResponse(t *testing.T, w http.ResponseWriter) {
+// recordHandlerError preserves handler failures for assertion from the test
+// goroutine, where testing.T failures are safe to report.
+func recordHandlerError(errs chan<- string, format string, args ...any) {
+	select {
+	case errs <- fmt.Sprintf(format, args...):
+	default:
+	}
+}
+
+// assertNoHandlerError fails the test if the server handler recorded a setup or
+// routing error while servicing the request under test.
+func assertNoHandlerError(t *testing.T, errs <-chan string) {
 	t.Helper()
 
+	select {
+	case err := <-errs:
+		t.Fatal(err)
+	default:
+	}
+}
+
+// writeMalformedChunkedResponse sends an intentionally truncated chunked body so
+// callers exercise response-body read errors after headers are received.
+func writeMalformedChunkedResponse(w http.ResponseWriter) error {
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		t.Fatal("response writer does not support hijacking")
+		return errors.New("response writer does not support hijacking")
 	}
 	conn, rw, err := hijacker.Hijack()
 	if err != nil {
-		t.Fatalf("hijack response: %v", err)
+		return fmt.Errorf("hijack response: %w", err)
 	}
 	if _, err := rw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\n\r\n20\r\npartial"); err != nil {
 		_ = conn.Close()
-		t.Fatalf("write malformed chunked response: %v", err)
+		return fmt.Errorf("write response: %w", err)
 	}
 	if err := rw.Flush(); err != nil {
 		_ = conn.Close()
-		t.Fatalf("flush malformed chunked response: %v", err)
+		return fmt.Errorf("flush response: %w", err)
 	}
 	_ = conn.Close()
+	return nil
 }

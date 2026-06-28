@@ -479,6 +479,47 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRuleFailureSkipOnlyForManagedAut
 	}
 }
 
+func TestEnsureCLITrackerAuthBeforeDupeCheckHonorsPerTrackerRuleFailureOverride(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{
+			{TrackerID: "MTV", AuthKind: "api_key_cookies_login_manual_2fa", SupportsCookieFile: true, SupportsLogin: true, SupportsManual2FA: true},
+			{TrackerID: "PTP", AuthKind: "cookies_login_manual_2fa", SupportsCookieFile: true, SupportsLogin: true, SupportsManual2FA: true},
+		},
+	}
+	logger := &cliAuthRecordingLogger{}
+
+	got, err := ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{
+			Options:                      api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
+			IgnoreTrackerRuleFailuresFor: []string{" mtv "},
+		},
+		[]string{"MTV", "PTP"},
+		api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
+			"mTv": {{Rule: "extra_check", Reason: "managed auth rule failure"}},
+		}},
+		logger,
+	)
+	if err != nil {
+		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
+	}
+	if strings.Join(got, ",") != "MTV,PTP" {
+		t.Fatalf("expected per-tracker rule-failure override to keep MTV eligible, got %#v", got)
+	}
+	if strings.Join(authSvc.validated, ",") != "MTV,PTP" {
+		t.Fatalf("expected overridden managed tracker to validate, got %#v", authSvc.validated)
+	}
+
+	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
+	if strings.Contains(logs, "tracker=MTV skipped before auth due to rule failure") {
+		t.Fatalf("overridden tracker should not log auth rule-failure skip, got:\n%s", logs)
+	}
+}
+
 func TestRemoveUnreadyCLIAuthTrackersKeepsUncheckedCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -564,6 +605,42 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRedactedDecisions(t *testing.T) 
 	}
 	if !strings.Contains(logs, `"password":"[REDACTED]"`) {
 		t.Fatalf("expected redacted password in auth logs, got:\n%s", logs)
+	}
+}
+
+func TestCLITrackerAuthStatusMessageRedactsUserVisibleStatusText(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status api.TrackerAuthStatus
+	}{
+		{
+			name:   "message",
+			status: api.TrackerAuthStatus{Message: `{"password":"hunter2","state":"bad"}`},
+		},
+		{
+			name:   "last error",
+			status: api.TrackerAuthStatus{LastError: `{"api_key":"secret-token"}`},
+		},
+		{
+			name:   "state fallback",
+			status: api.TrackerAuthStatus{State: `{"passkey":"secret-token"}`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := cliTrackerAuthStatusMessage(tt.status)
+			if strings.Contains(got, "hunter2") || strings.Contains(got, "secret-token") {
+				t.Fatalf("status message leaked secret: %q", got)
+			}
+			if !strings.Contains(got, "[REDACTED]") {
+				t.Fatalf("expected redacted status message, got %q", got)
+			}
+		})
 	}
 }
 

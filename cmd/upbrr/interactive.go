@@ -262,6 +262,24 @@ func trackerRuleFailuresForPreview(preview api.MetadataPreview, tracker string) 
 	return nil
 }
 
+// cliTrackerRuleFailuresIgnored reports whether a preview rule failure should
+// be bypassed for a tracker, using the global flag or a per-tracker override.
+func cliTrackerRuleFailuresIgnored(req api.Request, tracker string) bool {
+	if req.IgnoreTrackerRuleFailures {
+		return true
+	}
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if name == "" {
+		return false
+	}
+	for _, allowed := range req.IgnoreTrackerRuleFailuresFor {
+		if strings.EqualFold(strings.TrimSpace(allowed), name) {
+			return true
+		}
+	}
+	return false
+}
+
 // removeUnreadyCLIAuthTrackers keeps only trackers marked ready to continue
 // after auth filtering, including unmanaged trackers that need no auth call.
 // An empty ready list means auth filtering ran and no candidate remained ready.
@@ -344,7 +362,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 			readyByTracker[name] = struct{}{}
 			continue
 		}
-		if !req.IgnoreTrackerRuleFailures && len(trackerRuleFailuresForPreview(preview, name)) > 0 {
+		if !cliTrackerRuleFailuresIgnored(req, name) && len(trackerRuleFailuresForPreview(preview, name)) > 0 {
 			logger.Debugf("cli auth: tracker=%s skipped before auth due to rule failure", name)
 			continue
 		}
@@ -505,9 +523,9 @@ func cliAuthLogTrackerID(trackerID string) string {
 }
 
 // cliAuthStatusMessageForLog returns the same status detail shown to users,
-// passed through the log redaction policy.
+// already passed through the auth redaction policy.
 func cliAuthStatusMessageForLog(status api.TrackerAuthStatus) string {
-	return cliAuthLogField(cliTrackerAuthStatusMessage(status))
+	return cliTrackerAuthStatusMessage(status)
 }
 
 // cliAuthLogError formats an error for logs after applying redaction.
@@ -542,12 +560,12 @@ func cliTrackerAuthReady(status api.TrackerAuthStatus) bool {
 	}
 }
 
-// cliTrackerAuthStatusMessage selects the safest user-visible status detail
-// available for CLI prompts and errors.
+// cliTrackerAuthStatusMessage selects and redacts the safest user-visible status
+// detail available for CLI prompts and errors.
 func cliTrackerAuthStatusMessage(status api.TrackerAuthStatus) string {
 	for _, value := range []string{status.Message, status.LastError, status.State} {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
+			return cliAuthLogField(trimmed)
 		}
 	}
 	return "auth not ready"
