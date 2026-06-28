@@ -23,6 +23,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
@@ -566,7 +571,16 @@ func isNoGroupTag(tag string) bool {
 	}
 }
 
+func removeDiacritics(s string) string {
+	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	result, _, _ := transform.String(t, s)
+	return result
+}
+
 func cleanAndNormalizeBTNName(value string) string {
+	// 0. Remove diacritics
+	value = removeDiacritics(value)
+
 	// 1. Dot normalization (spaces to dots, collapse dots)
 	value = strings.Join(strings.Fields(value), " ")
 	value = strings.ReplaceAll(value, " ", ".")
@@ -589,6 +603,9 @@ func cleanAndNormalizeBTNName(value string) string {
 	value = regexp.MustCompile(`(?i)\.TrueHD\.(\d)`).ReplaceAllString(value, `.TrueHD$1`)
 	value = regexp.MustCompile(`(?i)\.PCM\.(\d)`).ReplaceAllString(value, `.PCM$1`)
 	value = regexp.MustCompile(`(?i)\.LPCM\.(\d)`).ReplaceAllString(value, `.LPCM$1`)
+
+	// 6. Remove non-alphanumeric characters (except dots and hyphens)
+	value = regexp.MustCompile(`[^a-zA-Z0-9.\-]`).ReplaceAllString(value, ".")
 
 	// Collapse any two or more dots
 	value = regexp.MustCompile(`\.{2,}`).ReplaceAllString(value, ".")
