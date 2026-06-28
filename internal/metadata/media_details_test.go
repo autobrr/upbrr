@@ -277,6 +277,47 @@ func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
 	}
 }
 
+func TestEditionFromMetaExtractsRepackFromSourcePath(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "explicit repack2",
+			path: `C:\Movies\Melancholia.2011.REPACK2.1080p.BluRay.DTS.x264-DON`,
+			want: "REPACK2",
+		},
+		{
+			name: "v3 maps to repack2",
+			path: `C:\Movies\Melancholia.2011.V3.1080p.BluRay.DTS.x264-DON`,
+			want: "REPACK2",
+		},
+		{
+			name: "v4 maps to repack3",
+			path: `C:\Movies\Melancholia.2011.V4.1080p.BluRay.DTS.x264-DON`,
+			want: "REPACK3",
+		},
+		{
+			name: "proper2",
+			path: `C:\Movies\Melancholia.2011.PROPER2.1080p.BluRay.DTS.x264-DON`,
+			want: "PROPER2",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			edition, repack := editionFromMeta(api.PreparedMetadata{SourcePath: tc.path}, mediaInfoDoc{})
+			if edition != "" {
+				t.Fatalf("expected empty edition, got %q", edition)
+			}
+			if repack != tc.want {
+				t.Fatalf("expected repack %q, got %q", tc.want, repack)
+			}
+		})
+	}
+}
+
 func TestMediaDurationSecondsParsesMediaInfoDurationFormats(t *testing.T) {
 	tests := []struct {
 		name string

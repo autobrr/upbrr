@@ -31,6 +31,7 @@ var editionBadTokenPattern = regexp.MustCompile(`(?i)\b(?:internal|limited|retai
 var editionWhitespacePattern = regexp.MustCompile(`\s+`)
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 var numericPattern = regexp.MustCompile(`\d+`)
+var releaseTokenSeparatorPattern = regexp.MustCompile(`[^A-Z0-9]+`)
 
 // ApplyMediaDetails enriches prepared metadata from MediaInfo, BDInfo, filename
 // tokens, overrides, and tracker policies, then rebuilds the release name.
@@ -1531,18 +1532,82 @@ func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, strin
 	if edition == "" && len(meta.Release.Edition) > 0 {
 		edition = strings.TrimSpace(strings.Join(meta.Release.Edition, " "))
 	}
+	repack := repackFromMeta(meta, edition)
 	if edition == "" {
-		return "", ""
+		return "", repack
 	}
-	repack := ""
 	if repackPattern.MatchString(edition) {
-		repack = repackPattern.FindString(edition)
+		if repack == "" {
+			repack = repackPattern.FindString(edition)
+		}
 		edition = strings.TrimSpace(repackPattern.ReplaceAllString(edition, ""))
 	}
 	if isIMDbEdition {
 		return cleanIMDbEditionText(edition), strings.ToUpper(repack)
 	}
 	return cleanEditionText(edition), strings.ToUpper(repack)
+}
+
+// repackFromMeta scans raw path and parsed release tokens so repack markers do
+// not depend on guessit/rls placing them in the edition field.
+func repackFromMeta(meta api.PreparedMetadata, edition string) string {
+	return repackFromText(
+		meta.SourcePath,
+		meta.VideoPath,
+		edition,
+		strings.Join(meta.Release.Edition, " "),
+		strings.Join(meta.Release.Other, " "),
+	)
+}
+
+// repackFromText returns the highest-priority repack/proper marker present in
+// release tokens, matching Upload Assistant's V2/V3/V4 repack aliases.
+func repackFromText(values ...string) string {
+	tokens := releaseTokens(values...)
+	repack := ""
+	if hasReleaseToken(tokens, "REPACK") || hasReleaseToken(tokens, "V2") {
+		repack = "REPACK"
+	}
+	if hasReleaseToken(tokens, "REPACK2") || hasReleaseToken(tokens, "V3") {
+		repack = "REPACK2"
+	}
+	if hasReleaseToken(tokens, "REPACK3") || hasReleaseToken(tokens, "V4") {
+		repack = "REPACK3"
+	}
+	if hasReleaseToken(tokens, "PROPER") {
+		repack = "PROPER"
+	}
+	if hasReleaseToken(tokens, "PROPER2") {
+		repack = "PROPER2"
+	}
+	if hasReleaseToken(tokens, "PROPER3") {
+		repack = "PROPER3"
+	}
+	if hasReleaseToken(tokens, "RERIP") {
+		repack = "RERIP"
+	}
+	return repack
+}
+
+// releaseTokens splits release-name text into uppercase tokens using
+// punctuation, whitespace, and path separators as boundaries.
+func releaseTokens(values ...string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	for _, value := range values {
+		for _, token := range releaseTokenSeparatorPattern.Split(strings.ToUpper(value), -1) {
+			if token == "" {
+				continue
+			}
+			tokens[token] = struct{}{}
+		}
+	}
+	return tokens
+}
+
+// hasReleaseToken reports whether a normalized token set contains value.
+func hasReleaseToken(tokens map[string]struct{}, value string) bool {
+	_, ok := tokens[value]
+	return ok
 }
 
 func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
