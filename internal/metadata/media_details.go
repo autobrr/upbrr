@@ -362,6 +362,8 @@ func containerFromMeta(meta api.PreparedMetadata) string {
 // audioFromMedia derives the primary audio label, channel count, and
 // commentary presence from BDInfo or MediaInfo. Object-audio markers such as
 // Atmos are emitted after the channel count to match release-name ordering.
+// MediaInfo title-derived markers such as Auro3D come from the selected
+// primary audio track.
 func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discparse.BDInfo) (string, string, bool) {
 	if bdinfo != nil && len(bdinfo.Audio) > 0 {
 		track := bdinfo.Audio[0]
@@ -385,8 +387,8 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	if len(audioTracks) == 0 {
 		return "", "", false
 	}
-	firstAudioTitle := strings.ToLower(audioTrackTitle(audioTracks[0]))
 	track := selectPrimaryAudioTrack(audioTracks)
+	primaryAudioTitle := strings.ToLower(audioTrackTitle(track))
 	format := normalizeAudioFormat(track)
 	additional := trackString(track, "Format_AdditionalFeatures", "Format_AdditionalFeatures_String", "Format_AdditionalFeatures_Original")
 	formatSettings := normalizeAudioFormatSettings(trackString(track, "Format_Settings"))
@@ -419,7 +421,7 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	if formatSettings == "EX" && channels != "5.1" {
 		formatSettings = ""
 	}
-	if extra == "" && strings.Contains(firstAudioTitle, "auro3d") {
+	if extra == "" && strings.Contains(primaryAudioTitle, "auro3d") {
 		extra = "Auro3D"
 	}
 	commentary := false
