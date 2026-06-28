@@ -215,7 +215,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	finalURL := ""
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
