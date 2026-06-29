@@ -185,11 +185,16 @@ type uploadContext struct {
 	client    *http.Client
 }
 
+// btnNameNormalizationRule applies one ordered rewrite to the BTN scene name.
 type btnNameNormalizationRule struct {
 	pattern     *regexp.Regexp
 	replacement string
 }
 
+// btnNameNormalizationRules normalizes release-name tokens after whitespace and
+// DD+ cleanup. The order is significant: Atmos-specific compaction must happen
+// before generic audio channel joins, and dot collapse must run after character
+// replacement.
 var btnNameNormalizationRules = []btnNameNormalizationRule{
 	{pattern: regexp.MustCompile(`(?i)\.DDP\.(\d+(?:\.\d+)?)\.Atmos`), replacement: `.DDPA$1`},
 	{pattern: regexp.MustCompile(`(?i)\.TrueHD\.(\d+(?:\.\d+)?)\.Atmos`), replacement: `.TrueHDA$1`},
@@ -831,6 +836,9 @@ func removeDiacritics(s string) string {
 	return result
 }
 
+// cleanAndNormalizeBTNName converts prepared release names into BTN scene-name
+// syntax. It removes diacritics, uses dots as token separators, compacts known
+// audio channel tokens, and keeps hyphens for group tags.
 func cleanAndNormalizeBTNName(value string) string {
 	// 0. Remove diacritics
 	value = removeDiacritics(value)
@@ -926,6 +934,10 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, baseURL st
 	return nil
 }
 
+// resolveAndDownloadViaAPI finds the uploaded torrent through BTN's JSON-RPC
+// API, validates the returned DownloadURL, and writes the fetched bencoded
+// torrent to outputPath. It is used when the post-upload HTML flow cannot
+// provide a usable torrent download.
 func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken string, req trackers.UploadRequest, groupID string, outputPath string) error {
 	if strings.TrimSpace(apiToken) == "" {
 		return errors.New("trackers: BTN api token missing for torrent resolution")
@@ -1452,6 +1464,10 @@ func resolveCountryID(meta api.PreparedMetadata) string {
 	return ""
 }
 
+// validateBTNAPIURL accepts only HTTP(S) URLs that resolve to public addresses.
+// It rejects localhost, scoped hosts, private IPs, and DNS results that point to
+// private or otherwise non-routable addresses before a BTN-provided URL is
+// fetched.
 func validateBTNAPIURL(ctx context.Context, rawURL string) error {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
@@ -1493,6 +1509,10 @@ func validateBTNAPIURL(ctx context.Context, rawURL string) error {
 	return nil
 }
 
+// validateBTNAPIDownloadURL applies public-address validation to a BTN API
+// DownloadURL, but permits a same-origin private URL when the caller explicitly
+// configured the API endpoint to that private origin. The same-origin exception
+// keeps local test servers usable without allowing arbitrary private redirects.
 func validateBTNAPIDownloadURL(ctx context.Context, apiURL string, rawURL string) error {
 	if err := validateBTNAPIURL(ctx, rawURL); err == nil {
 		return nil
@@ -1502,6 +1522,7 @@ func validateBTNAPIDownloadURL(ctx context.Context, apiURL string, rawURL string
 	return nil
 }
 
+// sameOriginURL reports whether two HTTP(S) URLs have the same scheme and host.
 func sameOriginURL(first string, second string) bool {
 	firstURL, err := url.Parse(strings.TrimSpace(first))
 	if err != nil {

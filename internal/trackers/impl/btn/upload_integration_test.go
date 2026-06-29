@@ -34,17 +34,22 @@ type httpHandlerErrorRecorder struct {
 	messages []string
 }
 
+// newHTTPHandlerErrorRecorder binds handler-side assertion collection to the
+// owning test.
 func newHTTPHandlerErrorRecorder(t *testing.T) *httpHandlerErrorRecorder {
 	t.Helper()
 	return &httpHandlerErrorRecorder{t: t}
 }
 
+// Errorf records a handler assertion failure without calling testing.T from the
+// server goroutine.
 func (r *httpHandlerErrorRecorder) Errorf(format string, args ...any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.messages = append(r.messages, fmt.Sprintf(format, args...))
 }
 
+// Check fails the owning test if any handler assertions were recorded.
 func (r *httpHandlerErrorRecorder) Check() {
 	r.t.Helper()
 
