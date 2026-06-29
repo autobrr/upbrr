@@ -1894,6 +1894,9 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
 	if updated.EpisodeTitle != "" {
 		t.Fatalf("expected episode title blanked when title contains episode/tba, got %q", updated.EpisodeTitle)
 	}
+	if updated.EpisodeOverview != "English episode overview" {
+		t.Fatalf("expected english episode overview, got %q", updated.EpisodeOverview)
+	}
 }
 
 func TestApplyTVEpisodeMetadataTVDBEpisodeTitleSkipsOriginalWhenEnglishMissing(t *testing.T) {
@@ -1927,6 +1930,9 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTitleSkipsOriginalWhenEnglishMissing(t
 
 	if updated.EpisodeTitle != "" {
 		t.Fatalf("expected non-english original episode title to be skipped, got %q", updated.EpisodeTitle)
+	}
+	if updated.EpisodeOverview != "" {
+		t.Fatalf("expected non-english original episode overview to be skipped, got %q", updated.EpisodeOverview)
 	}
 }
 
