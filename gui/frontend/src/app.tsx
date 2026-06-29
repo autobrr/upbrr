@@ -38,7 +38,6 @@ import type {
   DupeCheckResult,
   DupeCheckSnapshot,
   DupeCheckSummary,
-  ExternalIDInfo,
   ExternalIDOverrides,
   ExternalIDs,
   HistoryEntry,
@@ -626,21 +625,6 @@ const parseIDInput = (provider: string, value: string) => {
   return Number(normalized);
 };
 
-const providerOrder = ["tmdb", "imdb", "tvdb", "tvmaze"] as const;
-
-const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
-  const orderIndex = new Map<string, number>(
-    providerOrder.map((provider, index) => [provider, index]),
-  );
-
-  return [...info].sort((left, right) => {
-    const leftIndex = orderIndex.get(left.Provider) ?? providerOrder.length;
-    const rightIndex = orderIndex.get(right.Provider) ?? providerOrder.length;
-    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-    return left.Provider.localeCompare(right.Provider);
-  });
-};
-
 const formatNumber = (value: number) => (value ? value.toString() : "");
 
 const buildIDEditState = (ids: ExternalIDs) => ({
@@ -649,6 +633,23 @@ const buildIDEditState = (ids: ExternalIDs) => ({
   tvdb: formatNumber(ids.TVDBID),
   tvmaze: formatNumber(ids.TVmazeID),
 });
+
+/**
+ * Picks the initially opened metadata preview from backend result order.
+ *
+ * External ID cards may render in a fixed provider display order, so this must
+ * not reuse that sorted list when deciding which provider the backend selected.
+ */
+const defaultSelectedProviderForPreview = (result: MetadataPreview) => {
+  const ids = result.ExternalIDInfo || [];
+  const previews = result.ExternalPreview || [];
+  const previewProviders = new Set(previews.map((item) => item.Provider).filter(Boolean));
+  const firstIDWithPreview = ids.find(
+    (item) => item.Provider && (previewProviders.size === 0 || previewProviders.has(item.Provider)),
+  );
+  if (firstIDWithPreview?.Provider) return firstIDWithPreview.Provider;
+  return previews.find((item) => item.Provider)?.Provider || "";
+};
 
 const buildReleaseEditState = (overrides?: ReleaseNameOverrides): ReleaseNameEditState => ({
   category: overrides?.Category ?? "",
@@ -711,7 +712,7 @@ const buildMetadataEditState = (overrides?: MetadataOverrides): MetadataOverride
   anime: boolOverrideEditValue(overrides?.Anime),
 });
 
-/** Returns metadata fields whose edited tri-state controls were explicitly reset to Auto. */
+/** Returns metadata fields carried by an explicit Clear override payload. */
 const metadataOverrideClears = (overrides?: MetadataOverrides) =>
   new Set((overrides?.Clear || []).map((field) => String(field || "").trim()));
 
@@ -783,6 +784,8 @@ export default function App() {
     () => true,
   );
   const [path, setPath] = useState("");
+  const activePathRef = useRef(path.trim());
+  activePathRef.current = path.trim();
   const [sourcePathHistory, setSourcePathHistory] = useState<SourcePathHistoryEntry[]>(() => {
     try {
       return normalizeSourcePathHistory(
@@ -838,6 +841,7 @@ export default function App() {
   // same tick as a fetch/reset request are not dropped by a stale React closure.
   const metadataProgressActiveRef = useRef(false);
   const metadataProgressTargetRef = useRef("");
+  const uploadCandidatesRequestIdRef = useRef(0);
   const [dupeSummary, setDupeSummary] = useState<DupeCheckSummary>(emptyDupeSummary);
   const [dupeLoading, setDupeLoading] = useState(false);
   const [dupeError, setDupeError] = useState("");
@@ -1001,10 +1005,21 @@ export default function App() {
     [inputHistoryLimit, persistSourcePathHistory],
   );
 
-  const handleSourcePathChange = useCallback((value: string) => {
-    setPath(value);
-    setSourcePathMode(undefined);
+  const resetMetadataOverrideState = useCallback(() => {
+    setMetadataEdits(buildMetadataEditState({}));
+    setMetadataTouched(buildMetadataTouchedState({}));
   }, []);
+
+  const handleSourcePathChange = useCallback(
+    (value: string) => {
+      if (!isSourcePathContextMatch(path, value, isRuntimePathCaseInsensitive())) {
+        resetMetadataOverrideState();
+      }
+      setPath(value);
+      setSourcePathMode(undefined);
+    },
+    [path, resetMetadataOverrideState],
+  );
 
   useEffect(() => {
     setSourcePathHistory((prev) => {
@@ -1457,7 +1472,6 @@ export default function App() {
 
   const metadataOverrideState = useMemo(() => {
     const overrides: MetadataOverrides = {};
-    const clear: string[] = [];
     const distributor = metadataEdits.distributor.trim();
     const originalLanguage = metadataEdits.originalLanguage.trim();
     if (metadataTouched.distributor) {
@@ -1472,27 +1486,19 @@ export default function App() {
     const streamOptimized = parseBoolOverrideEditValue(metadataEdits.streamOptimized);
     const anime = parseBoolOverrideEditValue(metadataEdits.anime);
     if (metadataTouched.personalRelease) {
-      if (personalRelease === null) clear.push("PersonalRelease");
-      else overrides.PersonalRelease = personalRelease;
+      if (personalRelease !== null) overrides.PersonalRelease = personalRelease;
     }
     if (metadataTouched.commentary) {
-      if (commentary === null) clear.push("Commentary");
-      else overrides.Commentary = commentary;
+      if (commentary !== null) overrides.Commentary = commentary;
     }
     if (metadataTouched.webDV) {
-      if (webDV === null) clear.push("WebDV");
-      else overrides.WebDV = webDV;
+      if (webDV !== null) overrides.WebDV = webDV;
     }
     if (metadataTouched.streamOptimized) {
-      if (streamOptimized === null) clear.push("StreamOptimized");
-      else overrides.StreamOptimized = streamOptimized;
+      if (streamOptimized !== null) overrides.StreamOptimized = streamOptimized;
     }
     if (metadataTouched.anime) {
-      if (anime === null) clear.push("Anime");
-      else overrides.Anime = anime;
-    }
-    if (clear.length > 0) {
-      overrides.Clear = clear;
+      if (anime !== null) overrides.Anime = anime;
     }
     return {
       overrides,
@@ -1979,12 +1985,7 @@ export default function App() {
     setIdEdits(buildIDEditState(result.ExternalIDs));
     setReleaseEdits(buildReleaseEditState(result.ReleaseNameOverrides || {}));
     setReleaseTouched(buildReleaseTouchedState(result.ReleaseNameOverrides || {}));
-    const orderedIDs = filterAndOrderExternalIDs(result.ExternalIDInfo || []);
-    if (orderedIDs.length > 0) {
-      setSelectedProvider(orderedIDs[0].Provider);
-    } else {
-      setSelectedProvider("");
-    }
+    setSelectedProvider(defaultSelectedProviderForPreview(result));
     setDupeSummary(emptyDupeSummary);
     setDupeError("");
     setBuilderPreview(emptyDescriptionBuilder);
@@ -2184,6 +2185,9 @@ export default function App() {
       return null;
     }
     const selectedMode = mode ?? inferSourcePathMode(trimmedPath);
+    if (!isSourcePathContextMatch(path, trimmedPath, isRuntimePathCaseInsensitive())) {
+      resetMetadataOverrideState();
+    }
     setPath(trimmedPath);
     setSourcePathMode(selectedMode);
     rememberSourcePath(trimmedPath, selectedMode);
@@ -3325,8 +3329,19 @@ export default function App() {
     if (activeTab !== "upload_images") return;
     if (!path.trim()) return;
     if (dupeChecked && !screenshots.screenshotPlan) return;
+    // Candidate previews are loaded in multiple awaits; keep only the latest
+    // request for the current source path eligible to update upload state.
+    const requestId = uploadCandidatesRequestIdRef.current + 1;
+    uploadCandidatesRequestIdRef.current = requestId;
+    let canceled = false;
+    const isCurrentRequest = () =>
+      !canceled &&
+      uploadCandidatesRequestIdRef.current === requestId &&
+      activePathRef.current === path.trim();
+
     const loadUploadCandidates = async () => {
       try {
+        const sourcePath = path.trim();
         const screenshotOverrides: ScreenshotOverrideSnapshot = screenshots.screenshotPlan
           ? getLoadedScreenshotOverrides()
           : {
@@ -3335,11 +3350,14 @@ export default function App() {
               metadata: normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
             };
         const candidates = await globalThis.go?.guiapp?.App?.ListUploadCandidates(
-          path.trim(),
+          sourcePath,
           screenshotOverrides.external,
           screenshotOverrides.release,
           screenshotOverrides.metadata,
         );
+        if (!isCurrentRequest()) {
+          return;
+        }
         if (!candidates || candidates.length === 0) {
           setExistingImages([]);
           await refreshUploadedImages();
@@ -3354,6 +3372,9 @@ export default function App() {
             }
           }),
         );
+        if (!isCurrentRequest()) {
+          return;
+        }
         setExistingImages(
           previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
         );
@@ -3363,6 +3384,12 @@ export default function App() {
       }
     };
     loadUploadCandidates();
+    return () => {
+      canceled = true;
+      if (uploadCandidatesRequestIdRef.current === requestId) {
+        uploadCandidatesRequestIdRef.current += 1;
+      }
+    };
   }, [
     activeTab,
     path,

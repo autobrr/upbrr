@@ -475,7 +475,7 @@ func (b *Backend) startTrackerUpload(sessionID string, path string, overrides ap
 	if err != nil {
 		return "", err
 	}
-	runCore, runLogger, err := b.buildRunCoreFromSnapshot(rt, runOpts)
+	runCore, runLogger, err := b.buildRunCoreFromSnapshot(context.Background(), rt, runOpts)
 	if err != nil {
 		return "", err
 	}

@@ -234,7 +234,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.FetchMetadata(current.ID, req.Path, req.SourceLookupURL, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.ConfirmBDMVRescan)
+		value, err := s.backend.FetchMetadata(r.Context(), current.ID, req.Path, req.SourceLookupURL, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.ConfirmBDMVRescan)
 		if err != nil {
 			writeAppError(w, err)
 			return
@@ -256,7 +256,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.ResetMetadata(current.ID, req.Path, req.SourceLookupURL, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.ConfirmBDMVRescan)
+		value, err := s.backend.ResetMetadata(r.Context(), current.ID, req.Path, req.SourceLookupURL, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.ConfirmBDMVRescan)
 		if err != nil {
 			writeAppError(w, err)
 			return
@@ -273,7 +273,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.SelectBlurayCandidate(req.Path, req.ReleaseID)
+		value, err := s.backend.SelectBlurayCandidate(r.Context(), req.Path, req.ReleaseID)
 		if err != nil {
 			writeAppError(w, err)
 			return
@@ -293,7 +293,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.CheckDupes(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers)
+		value, err := s.backend.CheckDupes(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -314,7 +314,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.FetchPreparation(current.ID, req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.IgnoreDupesFor)
+		value, err := s.backend.FetchPreparation(r.Context(), current.ID, req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.IgnoreDupesFor)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -340,7 +340,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.FetchTrackerDryRun(current.ID, req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.NoSeed, req.RunLogLevel)
+		value, err := s.backend.FetchTrackerDryRun(r.Context(), current.ID, req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.IgnoreDupesFor, req.QuestionnaireAnswers, req.DescriptionGroups, req.Debug, req.NoSeed, req.RunLogLevel)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -361,7 +361,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.FetchDescriptionBuilder(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.IgnoreDupesFor)
+		value, err := s.backend.FetchDescriptionBuilder(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.IgnoreDupesFor)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -397,7 +397,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.SaveDescriptionOverride(req.Path, req.GroupKey, req.Raw, req.Trackers, req.Overrides, req.NameOverrides, req.MetadataOverrides)
+		value, err := s.backend.SaveDescriptionOverride(r.Context(), req.Path, req.GroupKey, req.Raw, req.Trackers, req.Overrides, req.NameOverrides, req.MetadataOverrides)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -488,7 +488,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.FetchScreenshotPlan(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides)
+		value, err := s.backend.FetchScreenshotPlan(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -509,7 +509,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.GenerateScreenshots(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Selections, req.Purpose)
+		value, err := s.backend.GenerateScreenshots(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Selections, req.Purpose)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -529,7 +529,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.PreviewScreenshotFrame(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.TimestampSeconds)
+		value, err := s.backend.PreviewScreenshotFrame(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.TimestampSeconds)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -549,7 +549,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.backend.DeleteScreenshot(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.ImagePath); err != nil {
+		if err := s.backend.DeleteScreenshot(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.ImagePath); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -568,7 +568,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.backend.DeleteTrackerImageURL(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.URL); err != nil {
+		if err := s.backend.DeleteTrackerImageURL(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.URL); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -587,7 +587,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.backend.SaveFinalScreenshotSelections(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Images); err != nil {
+		if err := s.backend.SaveFinalScreenshotSelections(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Images); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -620,7 +620,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.backend.ImportMenuImages(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, importPaths); err != nil {
+		if err := s.backend.ImportMenuImages(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, importPaths); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -652,7 +652,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.ListUploadCandidates(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides)
+		value, err := s.backend.ListUploadCandidates(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -671,7 +671,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.ListUploadedImages(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides)
+		value, err := s.backend.ListUploadedImages(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -693,7 +693,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.UploadImages(req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.Host, req.Images)
+		value, err := s.backend.UploadImages(r.Context(), req.Path, req.Overrides, req.NameOverrides, req.MetadataOverrides, req.Trackers, req.Host, req.Images)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
