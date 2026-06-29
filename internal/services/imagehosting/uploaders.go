@@ -24,6 +24,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 type uploadResult struct {
@@ -155,10 +156,7 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 	}
 	if status != http.StatusOK {
 		// Try to extract error message from response
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return uploadResult{}, fmt.Errorf("imgbox upload failed with status %d, response: %s", status, bodyStr)
 	}
 
@@ -173,10 +171,7 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return uploadResult{}, fmt.Errorf("imgbox invalid JSON response: %w, body: %s", err, bodyStr)
 	}
 	if !response.OK && len(response.Files) == 0 {
@@ -184,10 +179,7 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 		if response.Error != "" {
 			errMsg = response.Error
 		}
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return uploadResult{}, fmt.Errorf("imgbox upload rejected: %s (response: %s)", errMsg, bodyStr)
 	}
 	if len(response.Files) == 0 {
@@ -386,18 +378,12 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 		return imgboxUploadToken{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return imgboxUploadToken{}, fmt.Errorf("imgbox token request failed with status %d, response: %s", resp.StatusCode, bodyStr)
 	}
 	var tokenResp map[string]any
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return imgboxUploadToken{}, fmt.Errorf("imgbox token response invalid JSON: %w, body: %s", err, bodyStr)
 	}
 	return imgboxUploadToken{
@@ -1279,6 +1265,14 @@ func readAndCloseResponseBody(resp *http.Response) ([]byte, error) {
 		return nil, fmt.Errorf("image hosting: read response body: %w", err)
 	}
 	return body, nil
+}
+
+func safeResponsePreview(body []byte) string {
+	text := strings.TrimSpace(redaction.RedactValue(string(body), nil))
+	if len(text) > 200 {
+		text = strings.TrimSpace(text[:200]) + "..."
+	}
+	return text
 }
 
 func closeResponseBody(resp *http.Response) {

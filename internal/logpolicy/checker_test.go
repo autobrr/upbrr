@@ -616,6 +616,74 @@ func check(log logger, body []byte) {
 	}
 }
 
+func TestCheckRepositoryFlagsHelperResponseBodyError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+import "fmt"
+
+func check() error {
+	body, _, err := postForm()
+	if err != nil {
+		return err
+	}
+	bodyStr := string(body)
+	return fmt.Errorf("sample response: %s", bodyStr)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "redacted") {
+		t.Fatalf("expected redaction violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsSafeHelperResponseBodyError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+import "fmt"
+
+func check() error {
+	body, _, err := postForm()
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("sample response: %s", safeResponsePreview(body))
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryFlagsRawUsernameLogging(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {

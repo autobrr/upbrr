@@ -550,7 +550,7 @@ func sensitiveSinkArgs(call *ast.CallExpr, aliases map[string]string, testFile b
 		return []sinkArg{{expr: call.Args[1], forceRawError: forceRawError}}
 	}
 
-	if isFmtSelector(selector, aliases, "Errorf") && testFile && hasStringArg(call, 0) {
+	if isFmtSelector(selector, aliases, "Errorf") && hasStringArg(call, 0) {
 		return sinkArgsWithFormat(call.Args[1:], false, stringArgValue(call, 0))
 	}
 	if isFmtPrintSelector(selector, aliases) && testFile {
@@ -695,7 +695,12 @@ func markSensitiveRange(model sensitiveModel, stmt *ast.RangeStmt) {
 
 func sensitivityOfExprResult(model sensitiveModel, expr ast.Expr, resultIndex int) (sensitiveValue, bool) {
 	if call, ok := expr.(*ast.CallExpr); ok {
-		return sensitivityOfKnownCallResult(model, call, resultIndex)
+		if value, sensitive := sensitivityOfKnownCallResult(model, call, resultIndex); sensitive {
+			return value, true
+		}
+		if resultIndex != 0 {
+			return sensitiveValue{}, false
+		}
 	}
 	return sensitivityOfExpr(model, expr)
 }
@@ -844,6 +849,8 @@ func sensitivityOfKnownSensitiveCall(model sensitiveModel, call *ast.CallExpr) (
 	switch callName(call) {
 	case "LoadTrackerCookieMap", "LoadTrackerHTTPCookies", "CookieMapToHTTPCookies", "CookiesToMap", "httpCookiesToMap", "cookiesFromJar", "btnCookiesFromJar":
 		return sensitiveValue{kind: sensitiveCookieContainer, label: "cookies"}, true
+	case "postForm", "postMultipart", "postMultipartWithFields", "postMultipartRepeatedFileField", "readAndCloseResponseBody":
+		return sensitiveValue{kind: sensitiveBody, label: "response body"}, true
 	case "String":
 		if selector, ok := call.Fun.(*ast.SelectorExpr); ok && isSensitiveURLReceiver(model, selector.X) {
 			return sensitiveValue{kind: sensitiveEndpoint, label: "url"}, true
@@ -1170,7 +1177,10 @@ func isSafeOutputCall(call *ast.CallExpr) bool {
 	switch fun := call.Fun.(type) {
 	case *ast.Ident:
 		lower := strings.ToLower(strings.TrimSpace(fun.Name))
-		return strings.HasPrefix(lower, "redact") || fun.Name == "safeDryRunEndpoint" || fun.Name == "formatDryRunPayloadValue"
+		return strings.HasPrefix(lower, "redact") ||
+			fun.Name == "safeDryRunEndpoint" ||
+			fun.Name == "formatDryRunPayloadValue" ||
+			fun.Name == "safeResponsePreview"
 	case *ast.SelectorExpr:
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(fun.Sel.Name)), "redact") {
 			return true

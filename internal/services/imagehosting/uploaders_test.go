@@ -548,7 +548,7 @@ func TestReadAndCloseResponseBodyClosesBody(t *testing.T) {
 		t.Fatalf("readAndCloseResponseBody returned error: %v", err)
 	}
 	if string(payload) != "partial response" {
-		t.Fatalf("unexpected payload: %q", string(payload))
+		t.Fatalf("unexpected payload: %q", safeResponsePreview(payload))
 	}
 	if !body.closed {
 		t.Fatal("expected response body to be closed")
