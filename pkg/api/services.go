@@ -216,7 +216,9 @@ type PreparedMetadata struct {
 // MetadataOverrides carries caller-forced metadata facts that override values
 // inferred from external providers, media inspection, or prepared metadata.
 // Nil fields mean "leave the inferred value unchanged"; non-nil false values
-// are explicit overrides and must be preserved across entrypoints.
+// are explicit overrides and must be preserved across entrypoints. Clear carries
+// field names whose prepared values should be reset when a caller explicitly
+// clears an existing override.
 type MetadataOverrides struct {
 	Distributor      *string
 	OriginalLanguage *string
@@ -225,6 +227,10 @@ type MetadataOverrides struct {
 	WebDV            *bool
 	StreamOptimized  *bool
 	Anime            *bool
+	// Clear names metadata fields explicitly reset by the caller. Nil fields
+	// outside this list keep prepared metadata; fields in this list clear the
+	// prepared value before any non-nil override is applied.
+	Clear []string
 }
 
 type ClientOverrides struct {

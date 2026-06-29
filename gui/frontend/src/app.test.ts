@@ -534,7 +534,7 @@ describe("metadata tracker payloads", () => {
     });
   });
 
-  it("omits cleared metadata text overrides from edit controls", async () => {
+  it("sends cleared metadata overrides from edit controls", async () => {
     const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
     installAppBridge(fetchMetadata);
 
@@ -556,11 +556,16 @@ describe("metadata tracker payloads", () => {
     fireEvent.change(screen.getByLabelText("Anime"), {
       target: { value: "false" },
     });
+    fireEvent.change(screen.getByLabelText("Anime"), {
+      target: { value: "" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
     expect(fetchMetadata.mock.calls[1][4]).toEqual({
-      Anime: false,
+      Distributor: "",
+      OriginalLanguage: "",
+      Clear: ["Anime"],
     });
   });
 

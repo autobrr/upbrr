@@ -100,10 +100,14 @@ export const normalizeReleaseOverrides = (
 };
 
 /**
- * Normalizes metadata overrides by dropping nullish fields while preserving explicit false values.
+ * Normalizes metadata overrides by dropping nullish fields while preserving explicit clears,
+ * empty strings, and false values.
  */
 export const normalizeMetadataOverrides = (overrides: MetadataOverrides): MetadataOverrides => {
   const payload: MetadataOverrides = {};
+  const clear = (overrides.Clear || [])
+    .map((field) => String(field || "").trim())
+    .filter((field) => field.length > 0);
   if (overrides.Distributor !== null && overrides.Distributor !== undefined) {
     payload.Distributor = overrides.Distributor;
   }
@@ -124,6 +128,9 @@ export const normalizeMetadataOverrides = (overrides: MetadataOverrides): Metada
   }
   if (overrides.Anime !== null && overrides.Anime !== undefined) {
     payload.Anime = overrides.Anime;
+  }
+  if (clear.length > 0) {
+    payload.Clear = clear;
   }
   return payload;
 };

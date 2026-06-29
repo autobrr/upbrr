@@ -106,6 +106,7 @@ describe("normalizeMetadataOverrides", () => {
         WebDV: false,
         StreamOptimized: true,
         Anime: false,
+        Clear: ["Anime"],
       }),
     ).toEqual({
       Distributor: "",
@@ -115,6 +116,7 @@ describe("normalizeMetadataOverrides", () => {
       WebDV: false,
       StreamOptimized: true,
       Anime: false,
+      Clear: ["Anime"],
     });
   });
 

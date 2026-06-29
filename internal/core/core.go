@@ -3311,6 +3311,7 @@ func deepCopyMetadataOverrides(overrides api.MetadataOverrides) api.MetadataOver
 		WebDV:            clonePtr(overrides.WebDV),
 		StreamOptimized:  clonePtr(overrides.StreamOptimized),
 		Anime:            clonePtr(overrides.Anime),
+		Clear:            append([]string(nil), overrides.Clear...),
 	}
 }
 
@@ -4274,6 +4275,9 @@ func overrideSignature(
 	if metadataOverrides.Anime != nil {
 		parts = append(parts, fmt.Sprintf("anime=%t", *metadataOverrides.Anime))
 	}
+	for _, field := range normalizedMetadataOverrideClearFields(metadataOverrides.Clear) {
+		parts = append(parts, "metadataClear="+field)
+	}
 	if trackerOverrides.Anon != nil {
 		parts = append(parts, fmt.Sprintf("anon=%t", *trackerOverrides.Anon))
 	}
@@ -4344,6 +4348,26 @@ func overrideSignature(
 		return ""
 	}
 	return strings.Join(parts, "|")
+}
+
+// normalizedMetadataOverrideClearFields returns stable cache-signature tokens
+// for metadata fields explicitly reset by a request.
+func normalizedMetadataOverrideClearFields(fields []string) []string {
+	normalized := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		value := strings.ToLower(strings.TrimSpace(field))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	slices.Sort(normalized)
+	return normalized
 }
 
 func hasExternalIDOverrides(overrides api.ExternalIDOverrides) bool {

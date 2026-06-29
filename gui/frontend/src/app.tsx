@@ -711,18 +711,32 @@ const buildMetadataEditState = (overrides?: MetadataOverrides): MetadataOverride
   anime: boolOverrideEditValue(overrides?.Anime),
 });
 
-const buildMetadataTouchedState = (
-  overrides?: MetadataOverrides,
-): MetadataOverrideTouchedState => ({
-  distributor: overrides?.Distributor !== undefined && overrides?.Distributor !== null,
-  originalLanguage:
-    overrides?.OriginalLanguage !== undefined && overrides?.OriginalLanguage !== null,
-  personalRelease: overrides?.PersonalRelease !== undefined && overrides?.PersonalRelease !== null,
-  commentary: overrides?.Commentary !== undefined && overrides?.Commentary !== null,
-  webDV: overrides?.WebDV !== undefined && overrides?.WebDV !== null,
-  streamOptimized: overrides?.StreamOptimized !== undefined && overrides?.StreamOptimized !== null,
-  anime: overrides?.Anime !== undefined && overrides?.Anime !== null,
-});
+/** Returns metadata fields whose edited tri-state controls were explicitly reset to Auto. */
+const metadataOverrideClears = (overrides?: MetadataOverrides) =>
+  new Set((overrides?.Clear || []).map((field) => String(field || "").trim()));
+
+const buildMetadataTouchedState = (overrides?: MetadataOverrides): MetadataOverrideTouchedState => {
+  const clears = metadataOverrideClears(overrides);
+  return {
+    distributor:
+      (overrides?.Distributor !== undefined && overrides?.Distributor !== null) ||
+      clears.has("Distributor"),
+    originalLanguage:
+      (overrides?.OriginalLanguage !== undefined && overrides?.OriginalLanguage !== null) ||
+      clears.has("OriginalLanguage"),
+    personalRelease:
+      (overrides?.PersonalRelease !== undefined && overrides?.PersonalRelease !== null) ||
+      clears.has("PersonalRelease"),
+    commentary:
+      (overrides?.Commentary !== undefined && overrides?.Commentary !== null) ||
+      clears.has("Commentary"),
+    webDV: (overrides?.WebDV !== undefined && overrides?.WebDV !== null) || clears.has("WebDV"),
+    streamOptimized:
+      (overrides?.StreamOptimized !== undefined && overrides?.StreamOptimized !== null) ||
+      clears.has("StreamOptimized"),
+    anime: (overrides?.Anime !== undefined && overrides?.Anime !== null) || clears.has("Anime"),
+  };
+};
 
 const boolOverrideEditValue = (value?: boolean | null): "" | "true" | "false" => {
   if (value === undefined || value === null) return "";
@@ -1443,12 +1457,13 @@ export default function App() {
 
   const metadataOverrideState = useMemo(() => {
     const overrides: MetadataOverrides = {};
+    const clear: string[] = [];
     const distributor = metadataEdits.distributor.trim();
     const originalLanguage = metadataEdits.originalLanguage.trim();
-    if (metadataTouched.distributor && distributor !== "") {
+    if (metadataTouched.distributor) {
       overrides.Distributor = distributor;
     }
-    if (metadataTouched.originalLanguage && originalLanguage !== "") {
+    if (metadataTouched.originalLanguage) {
       overrides.OriginalLanguage = originalLanguage;
     }
     const personalRelease = parseBoolOverrideEditValue(metadataEdits.personalRelease);
@@ -1456,20 +1471,28 @@ export default function App() {
     const webDV = parseBoolOverrideEditValue(metadataEdits.webDV);
     const streamOptimized = parseBoolOverrideEditValue(metadataEdits.streamOptimized);
     const anime = parseBoolOverrideEditValue(metadataEdits.anime);
-    if (metadataTouched.personalRelease && personalRelease !== null) {
-      overrides.PersonalRelease = personalRelease;
+    if (metadataTouched.personalRelease) {
+      if (personalRelease === null) clear.push("PersonalRelease");
+      else overrides.PersonalRelease = personalRelease;
     }
-    if (metadataTouched.commentary && commentary !== null) {
-      overrides.Commentary = commentary;
+    if (metadataTouched.commentary) {
+      if (commentary === null) clear.push("Commentary");
+      else overrides.Commentary = commentary;
     }
-    if (metadataTouched.webDV && webDV !== null) {
-      overrides.WebDV = webDV;
+    if (metadataTouched.webDV) {
+      if (webDV === null) clear.push("WebDV");
+      else overrides.WebDV = webDV;
     }
-    if (metadataTouched.streamOptimized && streamOptimized !== null) {
-      overrides.StreamOptimized = streamOptimized;
+    if (metadataTouched.streamOptimized) {
+      if (streamOptimized === null) clear.push("StreamOptimized");
+      else overrides.StreamOptimized = streamOptimized;
     }
-    if (metadataTouched.anime && anime !== null) {
-      overrides.Anime = anime;
+    if (metadataTouched.anime) {
+      if (anime === null) clear.push("Anime");
+      else overrides.Anime = anime;
+    }
+    if (clear.length > 0) {
+      overrides.Clear = clear;
     }
     return {
       overrides,

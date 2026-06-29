@@ -57,6 +57,8 @@ export type MetadataOverrides = {
   WebDV?: boolean | null;
   StreamOptimized?: boolean | null;
   Anime?: boolean | null;
+  /** Field names explicitly reset by the user; absent fields continue using prepared metadata. */
+  Clear?: string[] | null;
 };
 
 /**

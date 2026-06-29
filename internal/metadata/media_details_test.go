@@ -263,6 +263,67 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenAnimeOverridePresent(t *testing.T) {
 	}
 }
 
+func TestApplyMetadataOverridesClearsFields(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Distributor:     "Criterion",
+		PersonalRelease: true,
+		HasCommentary:   true,
+		WebDV:           true,
+		StreamOptimized: 1,
+		Anime:           true,
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB:   &api.TMDBMetadata{OriginalLanguage: "ja"},
+			IMDB:   &api.IMDBMetadata{OriginalLanguage: "ja"},
+			TVDB:   &api.TVDBMetadata{OriginalLanguage: "jpn"},
+			TVmaze: &api.TVmazeMetadata{Language: "Japanese"},
+		},
+		MetadataOverrides: api.MetadataOverrides{
+			Clear: []string{
+				"Distributor",
+				"OriginalLanguage",
+				"PersonalRelease",
+				"Commentary",
+				"WebDV",
+				"StreamOptimized",
+				"Anime",
+			},
+		},
+	}
+
+	applyMetadataOverrides(&meta)
+
+	if meta.Distributor != "" {
+		t.Fatalf("expected distributor clear, got %q", meta.Distributor)
+	}
+	if meta.PersonalRelease {
+		t.Fatalf("expected personal release clear")
+	}
+	if meta.HasCommentary {
+		t.Fatalf("expected commentary clear")
+	}
+	if meta.WebDV {
+		t.Fatalf("expected webdv clear")
+	}
+	if meta.StreamOptimized != 0 {
+		t.Fatalf("expected stream optimized clear, got %d", meta.StreamOptimized)
+	}
+	if meta.Anime {
+		t.Fatalf("expected anime clear")
+	}
+	if got := meta.ExternalMetadata.TMDB.OriginalLanguage; got != "" {
+		t.Fatalf("expected tmdb language clear, got %q", got)
+	}
+	if got := meta.ExternalMetadata.IMDB.OriginalLanguage; got != "" {
+		t.Fatalf("expected imdb language clear, got %q", got)
+	}
+	if got := meta.ExternalMetadata.TVDB.OriginalLanguage; got != "" {
+		t.Fatalf("expected tvdb language clear, got %q", got)
+	}
+	if got := meta.ExternalMetadata.TVmaze.Language; got != "" {
+		t.Fatalf("expected tvmaze language clear, got %q", got)
+	}
+}
+
 func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
 	meta := api.PreparedMetadata{
 		Release: api.ReleaseInfo{Edition: []string{"Limited", "Extended", "Edition", "REPACK2"}},
