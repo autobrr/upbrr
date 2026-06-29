@@ -25,6 +25,11 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
     {
+      name: "web-base-path-smoke",
+      testMatch: /web-base-path-smoke\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
       name: "web-full-upload",
       testMatch: /web-full-upload\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },

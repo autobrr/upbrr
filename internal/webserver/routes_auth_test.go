@@ -12,12 +12,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/pkg/api"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -86,6 +89,31 @@ func TestBootstrapRetainedSessionSetsPersistentCookie(t *testing.T) {
 	}
 	if cookie.Expires.IsZero() {
 		t.Fatal("expected persistent cookie expiry to be set")
+	}
+}
+
+func TestBootstrapSessionCookieUsesConfiguredBasePath(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+	server.cliCfg.BaseURL = "https://example.test/upbrr/"
+
+	body := `{"username":"admin","password":"very-secure-password","retainLogin":true}`
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "example.test"
+	req.RemoteAddr = "127.0.0.1:5000"
+
+	recorder := httptest.NewRecorder()
+	server.handleBootstrap(recorder, req, session{})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleBootstrap returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	cookies := recorder.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one cookie, got %d", len(cookies))
+	}
+	if cookies[0].Path != "/upbrr" {
+		t.Fatalf("cookie path = %q, want /upbrr", cookies[0].Path)
 	}
 }
 
@@ -618,6 +646,36 @@ func TestLogoutRemovesRetainedSessionFromDisk(t *testing.T) {
 	}
 }
 
+func TestLogoutClearsConfiguredBasePathCookie(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+	server.cliCfg.BaseURL = "/upbrr/"
+
+	current, err := server.sessions.Create("admin", true)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/logout", nil)
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5000"
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+	recorder := httptest.NewRecorder()
+
+	server.handleLogout(recorder, req, current)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleLogout returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	cookies := recorder.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one clear cookie, got %d", len(cookies))
+	}
+	if cookies[0].Path != "/upbrr" || cookies[0].MaxAge != -1 {
+		t.Fatalf("unexpected clear cookie: %#v", cookies[0])
+	}
+}
+
 func TestLogoutReturnsErrorWhenRetainedSessionPersistenceFails(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
 	server := newAuthTestServer(t, dbPath)
@@ -761,6 +819,135 @@ func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected retained session to access app route after restart, got %d: %s", recorder.Code, recorder.Body.String())
 	}
+}
+
+func TestTrackerAuthBackendUsesRequestContext(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	trackerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
+	}))
+	t.Cleanup(trackerServer.Close)
+
+	backend := &Backend{
+		cfg: config.Config{
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"MTV": {
+						URL:      trackerServer.URL,
+						Username: "user",
+						Password: "pass",
+					},
+				},
+			},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	status, err := backend.TestTrackerAuth(ctx, "MTV")
+	if err != nil {
+		t.Fatalf("TestTrackerAuth: %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("expected canceled context to prevent remote auth request, got %d request(s)", requests.Load())
+	}
+	if !strings.Contains(status.LastError, "context canceled") {
+		t.Fatalf("expected context canceled status, got %#v", status)
+	}
+}
+
+func TestTrackerAuthBackendLoginBTNCookiesWithoutAPIPreservesMissingAPIStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthWebTestDB(t)
+	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	backend := &Backend{cfg: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}}
+
+	status, err := backend.LoginTrackerAuth(ctx, "BTN", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("LoginTrackerAuth: %v", err)
+	}
+	if status.State != "login_required" || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected BTN cookie-only web login to preserve missing API status, got %#v", status)
+	}
+	if strings.Contains(status.Message, "username/password missing") {
+		t.Fatalf("missing credentials masked missing API status: %#v", status)
+	}
+}
+
+func TestTrackerAuthImportCanceledContextDoesNotPersistCookies(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthWebTestDB(t)
+	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	backend := &Backend{cfg: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := backend.ImportTrackerAuthCookieContent(ctx, "AR", "cookies.txt", ".example.test\tTRUE\t/\tTRUE\t0\tsession\tabc\n")
+	if err == nil {
+		t.Fatal("expected canceled import error")
+	}
+	if _, loadErr := cookies.LoadTrackerCookieMap(context.Background(), dbPath, "AR"); loadErr == nil {
+		t.Fatal("canceled import persisted cookies")
+	}
+}
+
+func TestTrackerAuthDeleteCanceledContextDoesNotDeleteCookies(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthWebTestDB(t)
+	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "AR", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	backend := &Backend{cfg: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := backend.DeleteTrackerAuth(ctx, "AR")
+	if err == nil {
+		t.Fatal("expected canceled delete error")
+	}
+	values, loadErr := cookies.LoadTrackerCookieMap(context.Background(), dbPath, "AR")
+	if loadErr != nil {
+		t.Fatalf("LoadTrackerCookieMap: %v", loadErr)
+	}
+	if values["session"] != "abc" {
+		t.Fatalf("canceled delete changed cookies: %#v", values)
+	}
+}
+
+func newTrackerAuthWebTestDB(t *testing.T) string {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	if err := repo.Migrate(); err != nil {
+		_ = repo.Close()
+		t.Fatalf("migrate repo: %v", err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatalf("close repo: %v", err)
+	}
+	return dbPath
 }
 
 func TestRequestSessionTokenMustMatchCookieSession(t *testing.T) {

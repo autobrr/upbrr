@@ -4,7 +4,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { DupeCheckSummary } from "../../types";
+import type { DupeCheckResult, DupeCheckSummary, DupeCheckTrackerState } from "../../types";
 import DupeCheckPage from "./index";
 
 afterEach(() => {
@@ -37,6 +37,7 @@ const renderPage = (
   options: {
     faviconOnly?: boolean;
     trackerIconSrcByName?: Record<string, string>;
+    dupeTrackerStates?: DupeCheckTrackerState[];
   } = {},
 ) =>
   render(
@@ -45,6 +46,7 @@ const renderPage = (
       dupeLoading={false}
       dupeError=""
       dupeSummary={dupeSummary}
+      dupeTrackerStates={options.dupeTrackerStates ?? []}
       dupeTrackerFlags={{}}
       dupeIgnore={{}}
       ruleSkippedTrackerSet={new Set()}
@@ -59,6 +61,40 @@ const renderPage = (
       setDupeIgnore={vi.fn()}
     />,
   );
+
+const ruleSkippedResult = (tracker: string, reason: string) =>
+  ({
+    Tracker: tracker,
+    Raw: [],
+    Filtered: [],
+    HasDupes: false,
+    ContentFail: false,
+    Match: {},
+    Notes: [],
+    Skipped: true,
+    SkipReason: reason,
+    SkipCode: "",
+    SkipRules: [],
+    Status: "skipped",
+    Error: "",
+    CheckedAt: "",
+  }) as unknown as DupeCheckResult;
+
+const completedResult = (tracker: string) =>
+  ({
+    ...ruleSkippedResult(tracker, ""),
+    Skipped: false,
+    Status: "completed",
+  }) as DupeCheckResult;
+
+const trackerStateFor = (result: DupeCheckResult): DupeCheckTrackerState => ({
+  tracker: result.Tracker,
+  status: result.Status,
+  message: result.SkipReason || "no dupes found",
+  result,
+  startedAt: "",
+  finishedAt: "",
+});
 
 describe("DupeCheckPage", () => {
   it("hides full tracker names in favicon-only mode when cached icons are present", () => {
@@ -115,5 +151,55 @@ describe("DupeCheckPage", () => {
     expect(screen.getAllByText("In client")).toHaveLength(1);
     expect(screen.getByLabelText("AITHER, BLUTOPIA")).toBeTruthy();
     expect(container.querySelectorAll("img")).toHaveLength(2);
+  });
+
+  it("counts split tracker labels on grouped rule-failure rows", () => {
+    renderPage({
+      SourcePath: "C:\\Media\\Watcher.mkv",
+      Results: [
+        ruleSkippedResult("AITHER, DP", "rule check failed: missing language data"),
+        completedResult("ANT"),
+      ],
+      Notes: [],
+    });
+
+    expect(screen.getByText("Available for upload: 1")).toBeInTheDocument();
+    expect(screen.getByText("2 blocked.")).toBeInTheDocument();
+    expect(screen.getByText("AITHER, DP")).toBeInTheDocument();
+    expect(screen.getAllByText("AIT").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("DP").length).toBeGreaterThan(0);
+  });
+
+  it("prefers per-tracker snapshot results over grouped rule-failure summary rows", () => {
+    renderPage(
+      {
+        SourcePath: "C:\\Media\\Watcher.mkv",
+        Results: [
+          ruleSkippedResult(
+            "AITHER, DP",
+            "rule check failed: missing MediaInfo Unique ID; missing language data",
+          ),
+          completedResult("ANT"),
+        ],
+        Notes: [],
+      },
+      {
+        dupeTrackerStates: [
+          trackerStateFor(
+            ruleSkippedResult("AITHER", "rule check failed: missing MediaInfo Unique ID"),
+          ),
+          trackerStateFor(ruleSkippedResult("DP", "rule check failed: missing language data")),
+          trackerStateFor(completedResult("ANT")),
+        ],
+      },
+    );
+
+    expect(screen.getByText("Available for upload: 1")).toBeInTheDocument();
+    expect(screen.getByText("2 blocked.")).toBeInTheDocument();
+    expect(screen.queryByText("AITHER, DP")).toBeNull();
+    expect(screen.getAllByText("AITHER").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("DP").length).toBeGreaterThan(0);
+    expect(screen.getByText("rule check failed: missing MediaInfo Unique ID")).toBeInTheDocument();
+    expect(screen.getByText("rule check failed: missing language data")).toBeInTheDocument();
   });
 });

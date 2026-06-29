@@ -62,7 +62,8 @@ COPY --from=cli-builder /out/upbrr /usr/local/bin/upbrr
 ENV XDG_CONFIG_HOME=/config
 # Probed by the HEALTHCHECK below via busybox wget (shipped in the alpine base, so no
 # extra package). Uses loopback (works regardless of the serve bind host); override this
-# env if you change the served --port so the probe stays accurate.
+# env if you change the served --port or configure UPBRR_WEB_BASE_URL, e.g.
+# http://127.0.0.1:7480/upbrr/api/auth/status.
 ENV UPBRR_HEALTHCHECK_URL=http://127.0.0.1:7480/api/auth/status
 VOLUME /config
 EXPOSE 7480

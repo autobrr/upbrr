@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
-    "test:e2e:web": "playwright test --project=web-smoke --project=web-full-upload",
+    "test:e2e:web": "playwright test --project=web-smoke --project=web-base-path-smoke --project=web-full-upload",
     "test:e2e:full": "playwright test",
     "lint": "eslint --cache \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint --cache --fix src --ext .ts,.tsx",

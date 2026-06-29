@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -503,6 +504,23 @@ type jsonRoundTripRepo struct {
 	saved *Config
 }
 
+type rawConfigRepo struct {
+	raw map[string]any
+}
+
+type fallbackConfigRepo struct {
+	cfg Config
+}
+
+type sectionCaptureRepo struct {
+	saved []string
+	err   error
+}
+
+type sectionBatchPreserveRepo struct {
+	raw map[string]any
+}
+
 func (r *secretRoundTripRepo) SaveFullConfig(_ context.Context, cfg any) error {
 	typed, ok := cfg.(*Config)
 	if !ok {
@@ -549,10 +567,98 @@ func (r *jsonRoundTripRepo) LoadFullConfig(_ context.Context, dest any) error {
 	return nil
 }
 
+func (r *rawConfigRepo) LoadFullConfig(_ context.Context, dest any) error {
+	payload, err := json.Marshal(r.raw)
+	if err != nil {
+		return fmt.Errorf("marshal raw config: %w", err)
+	}
+	if err := json.Unmarshal(payload, dest); err != nil {
+		return fmt.Errorf("unmarshal raw config: %w", err)
+	}
+	return nil
+}
+
+func (r *fallbackConfigRepo) LoadFullConfig(_ context.Context, dest any) error {
+	switch out := dest.(type) {
+	case *map[string]any:
+		return errors.New("raw map load failed")
+	case *Config:
+		*out = r.cfg
+		return nil
+	default:
+		return errors.New("unexpected destination type")
+	}
+}
+
+func (r *sectionCaptureRepo) SaveConfigSection(_ context.Context, section string, _ any) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.saved = append(r.saved, section)
+	return nil
+}
+
+func (r *sectionBatchPreserveRepo) LoadFullConfig(_ context.Context, dest any) error {
+	payload, err := json.Marshal(r.raw)
+	if err != nil {
+		return fmt.Errorf("marshal raw config: %w", err)
+	}
+	if err := json.Unmarshal(payload, dest); err != nil {
+		return fmt.Errorf("unmarshal raw config: %w", err)
+	}
+	return nil
+}
+
+func (r *sectionBatchPreserveRepo) SaveConfigSection(ctx context.Context, section string, data any) error {
+	return r.SaveConfigSections(ctx, map[string]any{section: data})
+}
+
+func (r *sectionBatchPreserveRepo) SaveConfigSections(_ context.Context, sections map[string]any) error {
+	if r.raw == nil {
+		r.raw = map[string]any{}
+	}
+	for section, data := range sections {
+		payload, err := json.Marshal(data)
+		if err != nil {
+			return fmt.Errorf("marshal section %s: %w", section, err)
+		}
+		var stored any
+		if err := json.Unmarshal(payload, &stored); err != nil {
+			return fmt.Errorf("unmarshal section %s: %w", section, err)
+		}
+		r.raw[section] = stored
+	}
+	return nil
+}
+
+func defaultDatabaseConfigMap(t *testing.T) map[string]any {
+	t.Helper()
+
+	defaults, err := LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("LoadEmbeddedDefaultConfig failed: %v", err)
+	}
+	defaults.TorrentClients = map[string]TorrentClientConfig{}
+
+	raw, err := configJSONMap(defaults)
+	if err != nil {
+		t.Fatalf("configJSONMap failed: %v", err)
+	}
+	return raw
+}
+
 func writeWebAuthFixture(t *testing.T, dbPath string) {
 	t.Helper()
+	writeWebAuthFixtureWithSeed(t, dbPath, "stable-seed-for-tests")
+}
+
+func writeWebAuthFixtureWithSeed(t *testing.T, dbPath string, seed string) {
+	t.Helper()
 	authPath := filepath.Join(filepath.Dir(dbPath), webAuthFileName)
-	payload := `{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":"stable-seed-for-tests"}`
+	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
+		t.Fatalf("mkdir web auth fixture: %v", err)
+	}
+	payload := fmt.Sprintf(`{"username":"tester","password_hash":"very-secret-password-hash","encryption_key_seed":%q}`, seed)
 	if err := os.WriteFile(authPath, []byte(payload), 0600); err != nil {
 		t.Fatalf("write web auth fixture: %v", err)
 	}
@@ -563,6 +669,479 @@ func configureConfigSecretEncryption(t *testing.T, cfg *Config) {
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
 	writeWebAuthFixture(t, dbPath)
 	cfg.MainSettings.DBPath = dbPath
+}
+
+func TestLoadFromDatabaseWithDefaultBackfillReportsMissingZeroDefaultKey(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	torrentCreation, ok := raw["TorrentCreation"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected TorrentCreation defaults map")
+	}
+	delete(torrentCreation, "RehashCooldown")
+
+	loaded, backfilledDefaults, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithDefaultBackfill failed: %v", err)
+	}
+	if !backfilledDefaults {
+		t.Fatalf("expected missing zero-value default key to report backfilled defaults")
+	}
+	if loaded.TorrentCreation.RehashCooldown != 0 {
+		t.Fatalf("expected zero default rehash cooldown, got %d", loaded.TorrentCreation.RehashCooldown)
+	}
+}
+
+func TestLoadFromDatabaseWithDefaultBackfillIgnoresExplicitZeroDefaultKey(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	torrentCreation, ok := raw["TorrentCreation"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected TorrentCreation defaults map")
+	}
+	torrentCreation["RehashCooldown"] = float64(0)
+
+	_, backfilledDefaults, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithDefaultBackfill failed: %v", err)
+	}
+	if backfilledDefaults {
+		t.Fatalf("expected explicit zero-value key to avoid default backfill")
+	}
+}
+
+func TestLoadFromDatabaseWithRepairReportDoesNotPersistInvalidObjectRoots(t *testing.T) {
+	t.Parallel()
+
+	for name, value := range map[string]any{
+		"null":   nil,
+		"scalar": "not-an-object",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			raw := defaultDatabaseConfigMap(t)
+			raw["Trackers"] = value
+
+			loaded, report, err := LoadFromDatabaseWithRepairReport(context.Background(), &rawConfigRepo{raw: raw})
+			if err != nil {
+				t.Fatalf("LoadFromDatabaseWithRepairReport failed: %v", err)
+			}
+			if loaded.Trackers.Trackers == nil {
+				t.Fatalf("expected runtime config to retain default Trackers object")
+			}
+			if !report.BackfilledDefaults {
+				t.Fatalf("expected invalid object to report repaired defaults")
+			}
+			if !slices.Contains(report.InvalidPaths, "Trackers") {
+				t.Fatalf("expected invalid Trackers path, got %#v", report.InvalidPaths)
+			}
+			if slices.Contains(report.ChangedSections, "Trackers") {
+				t.Fatalf("expected invalid object root not to be scheduled for persistence, got %#v", report.ChangedSections)
+			}
+		})
+	}
+}
+
+func TestLoadFromDatabaseWithRepairReportFallbackExposesRepairContext(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		MainSettings:       MainSettingsConfig{TMDBAPI: "fallback-token"},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 3},
+	}
+	loaded, report, err := LoadFromDatabaseWithRepairReport(context.Background(), &fallbackConfigRepo{cfg: cfg})
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithRepairReport failed: %v", err)
+	}
+	if loaded.MainSettings.TMDBAPI != "fallback-token" {
+		t.Fatalf("expected struct fallback config to load, got %q", loaded.MainSettings.TMDBAPI)
+	}
+	if !report.BackfilledDefaults {
+		t.Fatalf("expected fallback report to expose repair context")
+	}
+	if !slices.Contains(report.InvalidPaths, "raw-config") {
+		t.Fatalf("expected raw-config diagnostic, got %#v", report.InvalidPaths)
+	}
+	if len(report.ChangedSections) != 0 {
+		t.Fatalf("expected fallback compatibility without section persistence, got %#v", report.ChangedSections)
+	}
+}
+
+func TestSaveSectionsToDatabasePrevalidatesSectionNamesBeforeWrites(t *testing.T) {
+	t.Parallel()
+
+	repo := &sectionCaptureRepo{}
+	cfg := validMinimalConfig()
+
+	err := SaveSectionsToDatabase(context.Background(), cfg, []string{"Logging", "unknown_section"}, repo)
+	if err == nil {
+		t.Fatalf("expected unknown section error")
+	}
+	if len(repo.saved) != 0 {
+		t.Fatalf("expected no sections saved before unknown section error, got %#v", repo.saved)
+	}
+}
+
+func TestSaveSectionsToDatabaseMapsYAMLRootAliases(t *testing.T) {
+	t.Parallel()
+
+	repo := &sectionCaptureRepo{}
+	cfg := validMinimalConfig()
+
+	if err := SaveSectionsToDatabase(context.Background(), cfg, []string{" main_settings ", "MainSettings"}, repo); err != nil {
+		t.Fatalf("SaveSectionsToDatabase failed: %v", err)
+	}
+	if got, want := repo.saved, []string{"MainSettings"}; !slices.Equal(got, want) {
+		t.Fatalf("saved sections mismatch: got %#v want %#v", got, want)
+	}
+}
+
+func TestSaveSectionsToDatabaseIgnoresUnrelatedEncryptedSecrets(t *testing.T) {
+	t.Parallel()
+
+	repo := &sectionCaptureRepo{}
+	cfg := validMinimalConfig()
+	cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "upbrr.db")
+	cfg.MainSettings.TMDBAPI = encryptedEnvelopePrefix + "opaque"
+
+	if err := SaveSectionsToDatabase(context.Background(), cfg, []string{"Logging"}, repo); err != nil {
+		t.Fatalf("SaveSectionsToDatabase failed for unrelated encrypted secret: %v", err)
+	}
+	if got, want := repo.saved, []string{"Logging"}; !slices.Equal(got, want) {
+		t.Fatalf("saved sections mismatch: got %#v want %#v", got, want)
+	}
+}
+
+func TestSaveSectionsToDatabaseRequiresHelperForSelectedEncryptedSecret(t *testing.T) {
+	t.Parallel()
+
+	repo := &sectionCaptureRepo{}
+	cfg := validMinimalConfig()
+	cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "upbrr.db")
+	cfg.MainSettings.TMDBAPI = encryptedEnvelopePrefix + "opaque"
+
+	err := SaveSectionsToDatabase(context.Background(), cfg, []string{"MainSettings"}, repo)
+	if !errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
+		t.Fatalf("expected helper unavailable error, got %v", err)
+	}
+	if len(repo.saved) != 0 {
+		t.Fatalf("expected no sections saved after selected encrypted secret failure, got %#v", repo.saved)
+	}
+}
+
+func TestSaveSectionsToDatabaseRejectsMultiSectionFallbackBeforeWrites(t *testing.T) {
+	t.Parallel()
+
+	repo := &sectionCaptureRepo{}
+	cfg := validMinimalConfig()
+
+	err := SaveSectionsToDatabase(context.Background(), cfg, []string{"Logging", "PostUpload"}, repo)
+	if err == nil {
+		t.Fatal("expected multi-section fallback error")
+	}
+	if !strings.Contains(err.Error(), "requires batch section save") {
+		t.Fatalf("expected batch requirement error, got %v", err)
+	}
+	if len(repo.saved) != 0 {
+		t.Fatalf("expected no fallback sections saved, got %#v", repo.saved)
+	}
+}
+
+func TestSaveSectionsToDatabasePreservesStoredUnknownSameRootFields(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	postUpload, ok := raw["PostUpload"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected PostUpload defaults map")
+	}
+	postUpload["FutureOption"] = map[string]any{"Nested": "keep"}
+	delete(postUpload, "MaxConcurrentTrackers")
+	repo := &sectionBatchPreserveRepo{raw: raw}
+
+	loaded, report, err := LoadFromDatabaseWithRepairReport(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithRepairReport failed: %v", err)
+	}
+	if !slices.Contains(report.ChangedSections, "PostUpload") {
+		t.Fatalf("expected PostUpload repair section, got %#v", report.ChangedSections)
+	}
+	if err := SaveSectionsToDatabase(context.Background(), loaded, report.ChangedSections, repo); err != nil {
+		t.Fatalf("SaveSectionsToDatabase failed: %v", err)
+	}
+
+	persisted, ok := repo.raw["PostUpload"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected persisted PostUpload map")
+	}
+	future, ok := persisted["FutureOption"].(map[string]any)
+	if !ok || future["Nested"] != "keep" {
+		t.Fatalf("expected unknown same-root field to survive, got %#v", persisted["FutureOption"])
+	}
+	if got, ok := persisted["MaxConcurrentTrackers"].(float64); !ok || got != 4 {
+		t.Fatalf("expected repaired max concurrent tracker uploads, got %#v", persisted["MaxConcurrentTrackers"])
+	}
+}
+
+func TestSaveSectionsToDatabaseDoesNotPreserveRepairedTrackerAliases(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	trackerSection, ok := raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected Trackers defaults map")
+	}
+	trackers, ok := trackerSection["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected Trackers.Trackers defaults map")
+	}
+	delete(trackers, "BTN")
+	trackers["btn"] = map[string]any{
+		"apikey":     "stored-token",
+		"FutureFlag": true,
+	}
+	repo := &sectionBatchPreserveRepo{raw: raw}
+
+	loaded, report, err := LoadFromDatabaseWithRepairReport(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithRepairReport failed: %v", err)
+	}
+	if !slices.Contains(report.ChangedSections, "Trackers") {
+		t.Fatalf("expected Trackers repair section, got %#v", report.ChangedSections)
+	}
+	if err := SaveSectionsToDatabase(context.Background(), loaded, report.ChangedSections, repo); err != nil {
+		t.Fatalf("SaveSectionsToDatabase failed: %v", err)
+	}
+
+	persistedTrackers, ok := repo.raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected persisted Trackers map")
+	}
+	persistedEntries, ok := persistedTrackers["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected persisted Trackers.Trackers map")
+	}
+	if _, ok := persistedEntries["btn"]; ok {
+		t.Fatalf("expected folded tracker alias not to be preserved, got %#v", persistedEntries["btn"])
+	}
+	btn, ok := persistedEntries["BTN"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected canonical BTN entry, got %#v", persistedEntries["BTN"])
+	}
+	if _, ok := btn["apikey"]; ok {
+		t.Fatalf("expected folded tracker field alias not to be preserved, got %#v", btn["apikey"])
+	}
+	if got := btn["APIKey"]; got != "stored-token" {
+		t.Fatalf("expected canonical APIKey to keep stored value, got %#v", got)
+	}
+	if got := btn["FutureFlag"]; got != true {
+		t.Fatalf("expected distinct unknown tracker field to be preserved, got %#v", got)
+	}
+}
+
+// TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName verifies stored
+// tracker names fold into canonical defaults and still report backfilled keys.
+func TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	trackerSection, ok := raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected Trackers defaults map")
+	}
+	trackers, ok := trackerSection["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected Trackers.Trackers defaults map")
+	}
+	delete(trackers, "BTN")
+	trackers["btn"] = map[string]any{
+		"APIKey": "stored-token",
+		"URL":    "https://stored.btn.example",
+	}
+
+	loaded, backfilledDefaults, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithDefaultBackfill failed: %v", err)
+	}
+	if !backfilledDefaults {
+		t.Fatalf("expected case-normalized tracker entry to report backfilled defaults")
+	}
+	if _, ok := loaded.Trackers.Trackers["btn"]; ok {
+		t.Fatalf("expected lowercase stored tracker to merge into canonical BTN entry")
+	}
+	btn := loaded.Trackers.Trackers["BTN"]
+	if btn.APIKey != "stored-token" {
+		t.Fatalf("expected stored BTN API key, got %q", btn.APIKey)
+	}
+	if btn.URL != "https://stored.btn.example" {
+		t.Fatalf("expected stored BTN URL, got %q", btn.URL)
+	}
+}
+
+func TestMergeStoredDynamicConfigValueSkipsNonObjectCaseFoldedTrackerEntry(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{
+		"BTN": map[string]any{
+			"APIKey": "",
+		},
+	}
+
+	report, err := mergeStoredDynamicConfigValue(base, "btn", "not-an-object", "Trackers.Trackers")
+	if err != nil {
+		t.Fatalf("merge stored dynamic config value: %v", err)
+	}
+
+	btn, ok := base["BTN"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected canonical BTN entry to remain an object, got %T", base["BTN"])
+	}
+	if got := btn["APIKey"]; got != "" {
+		t.Fatalf("expected canonical BTN entry to remain unchanged, got APIKey %#v", got)
+	}
+	if changed := report.changedRootSections(); len(changed) != 0 {
+		t.Fatalf("expected skipped scalar entry not to mark changes, got %#v", changed)
+	}
+}
+
+func TestMergeStoredConfigMapSkipsNonObjectDynamicEntries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		path         string
+		key          string
+		overlayValue any
+	}{
+		{
+			name:         "tracker entry scalar",
+			path:         "Trackers.Trackers",
+			key:          "NEW",
+			overlayValue: "not-an-object",
+		},
+		{
+			name:         "torrent client array",
+			path:         "TorrentClients",
+			key:          "client",
+			overlayValue: []any{"not-an-object"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			base := map[string]any{}
+			overlay := map[string]any{
+				test.key: test.overlayValue,
+			}
+
+			report, err := mergeStoredConfigMapWithReport(base, overlay, test.path)
+			if err != nil {
+				t.Fatalf("merge stored config map: %v", err)
+			}
+			if _, ok := base[test.key]; ok {
+				t.Fatalf("expected non-object dynamic entry %q not to be inserted", test.key)
+			}
+			if changed := report.changedRootSections(); len(changed) != 0 {
+				t.Fatalf("expected skipped dynamic entry not to mark changes, got %#v", changed)
+			}
+		})
+	}
+}
+
+// TestMergeStoredConfigMapMergesCaseInsensitiveStoredTrackerField verifies
+// case-normalized tracker fields preserve the missing canonical default path.
+func TestMergeStoredConfigMapMergesCaseInsensitiveStoredTrackerField(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{
+		"APIKey": "",
+		"URL":    "https://default.example",
+	}
+	overlay := map[string]any{
+		"apikey": "stored-token",
+	}
+
+	report, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.BTN")
+	if err != nil {
+		t.Fatalf("merge stored config map: %v", err)
+	}
+	missingDefaultPaths := report.missingDefaultPaths
+
+	if _, ok := base["apikey"]; ok {
+		t.Fatalf("expected lowercase tracker field to merge into canonical APIKey")
+	}
+	if got := base["APIKey"]; got != "stored-token" {
+		t.Fatalf("expected stored API key on canonical field, got %#v", got)
+	}
+	if !slices.Contains(missingDefaultPaths, "Trackers.Trackers.BTN.APIKey") {
+		t.Fatalf("expected case-normalized tracker field to report missing canonical default, got %#v", missingDefaultPaths)
+	}
+}
+
+// TestMergeStoredConfigMapRejectsDuplicateTrackerCaseVariants verifies duplicate
+// tracker names differing only by case fold are not resolved by lexical order.
+func TestMergeStoredConfigMapRejectsDuplicateTrackerCaseVariants(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{
+		"BTN": map[string]any{
+			"APIKey": "",
+		},
+	}
+	overlay := map[string]any{
+		"btn": map[string]any{
+			"apikey": "lower-token",
+		},
+		"BTN": map[string]any{
+			"APIKey": "upper-token",
+		},
+	}
+
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers"); err == nil {
+		t.Fatalf("expected duplicate case-folded tracker keys to fail")
+	}
+}
+
+func TestMergeStoredConfigMapRejectsAmbiguousTrackerField(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{
+		"APIKey": "",
+		"ApiKey": "",
+	}
+	overlay := map[string]any{
+		"apikey": "stored-token",
+	}
+
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.BTN"); err == nil {
+		t.Fatalf("expected ambiguous tracker field to fail")
+	}
+}
+
+func TestMergeStoredConfigMapDoesNotUnicodeFoldTrackerField(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{
+		"APIKey": "",
+	}
+	overlay := map[string]any{
+		"API\u212Aey": "stored-token",
+	}
+
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.BTN"); err != nil {
+		t.Fatalf("merge stored config map: %v", err)
+	}
+	if got := base["APIKey"]; got != "" {
+		t.Fatalf("expected unicode folded field not to overwrite APIKey, got %#v", got)
+	}
+	if got := base["API\u212Aey"]; got != "stored-token" {
+		t.Fatalf("expected unicode field to remain distinct, got %#v", got)
+	}
 }
 
 func TestExportToJSONFallsBackToPlaintextWithPermissiveWebAuthPermissions(t *testing.T) {
@@ -1000,5 +1579,187 @@ func TestExportFromDatabaseToYAMLLoadFailure(t *testing.T) {
 	err := ExportFromDatabaseToYAML(context.Background(), filepath.Join(t.TempDir(), "out.yaml"), repo)
 	if err == nil {
 		t.Fatalf("expected load error, got nil")
+	}
+}
+
+type runtimePathRepo struct {
+	dbPath string
+	cfg    Config
+}
+
+func (r *runtimePathRepo) LoadFullConfig(_ context.Context, dest any) error {
+	payload, err := json.Marshal(r.cfg)
+	if err != nil {
+		return fmt.Errorf("marshal runtime path config: %w", err)
+	}
+	if err := json.Unmarshal(payload, dest); err != nil {
+		return fmt.Errorf("unmarshal runtime path config: %w", err)
+	}
+	return nil
+}
+
+func (r *runtimePathRepo) DBPath() string { return r.dbPath }
+
+func TestLoadFromDatabaseDecryptsViaRuntimeDBDir(t *testing.T) {
+	// web-auth.json (the secret-encryption helper) lives next to the *runtime*
+	// database. Encrypt a secret against that helper.
+	runtimeDBPath := filepath.Join(t.TempDir(), "db.sqlite")
+	writeWebAuthFixture(t, runtimeDBPath)
+	plain := &Config{MainSettings: MainSettingsConfig{DBPath: runtimeDBPath, TMDBAPI: "super-secret-token"}}
+	encrypted, err := EncryptConfigSecrets(plain)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if encrypted.MainSettings.TMDBAPI == "super-secret-token" {
+		t.Fatalf("expected TMDBAPI to be encrypted, got plaintext")
+	}
+
+	// Simulate a stored config whose db_path points at a pre-upgrade dir that no
+	// longer holds web-auth.json. Decryption must still succeed by anchoring to
+	// the repo's runtime DB dir, and the stored db_path must be preserved.
+	staleDBPath := filepath.Join(t.TempDir(), "old", "db.sqlite")
+	encrypted.MainSettings.DBPath = staleDBPath
+
+	repo := &runtimePathRepo{dbPath: runtimeDBPath, cfg: *encrypted}
+	got, err := LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabase: %v", err)
+	}
+	if got.MainSettings.TMDBAPI != "super-secret-token" {
+		t.Fatalf("secret not decrypted via runtime DB dir: got %q", got.MainSettings.TMDBAPI)
+	}
+	if got.MainSettings.DBPath != staleDBPath {
+		t.Fatalf("stored db_path not preserved: got %q want %q", got.MainSettings.DBPath, staleDBPath)
+	}
+}
+
+func TestLoadFromDatabaseWithRepairReportDecryptsViaRuntimeDBDir(t *testing.T) {
+	runtimeDBPath := filepath.Join(t.TempDir(), "db.sqlite")
+	writeWebAuthFixture(t, runtimeDBPath)
+	plain := &Config{MainSettings: MainSettingsConfig{DBPath: runtimeDBPath, TMDBAPI: "super-secret-token"}}
+	encrypted, err := EncryptConfigSecrets(plain)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	staleDBPath := filepath.Join(t.TempDir(), "old", "db.sqlite")
+	encrypted.MainSettings.DBPath = staleDBPath
+
+	repo := &runtimePathRepo{dbPath: runtimeDBPath, cfg: *encrypted}
+	got, _, err := LoadFromDatabaseWithRepairReport(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithRepairReport: %v", err)
+	}
+	if got.MainSettings.TMDBAPI != "super-secret-token" {
+		t.Fatalf("secret not decrypted via runtime DB dir: got %q", got.MainSettings.TMDBAPI)
+	}
+	if got.MainSettings.DBPath != staleDBPath {
+		t.Fatalf("stored db_path not preserved: got %q want %q", got.MainSettings.DBPath, staleDBPath)
+	}
+}
+
+func TestLoadFromDatabaseRetriesRuntimeDBDirAfterWrongStoredHelper(t *testing.T) {
+	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "db.sqlite")
+	writeWebAuthFixtureWithSeed(t, runtimeDBPath, "runtime-seed")
+	plain := &Config{MainSettings: MainSettingsConfig{DBPath: runtimeDBPath, TMDBAPI: "super-secret-token"}}
+	encrypted, err := EncryptConfigSecrets(plain)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	staleDBPath := filepath.Join(t.TempDir(), "old", "db.sqlite")
+	writeWebAuthFixtureWithSeed(t, staleDBPath, "wrong-seed")
+	encrypted.MainSettings.DBPath = staleDBPath
+
+	repo := &runtimePathRepo{dbPath: runtimeDBPath, cfg: *encrypted}
+	got, err := LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabase: %v", err)
+	}
+	if got.MainSettings.TMDBAPI != "super-secret-token" {
+		t.Fatalf("secret not decrypted via runtime DB dir: got %q", got.MainSettings.TMDBAPI)
+	}
+}
+
+func TestDecryptConfigSecretsWithDBDirReportsRuntimeRetryError(t *testing.T) {
+	goodDBPath := filepath.Join(t.TempDir(), "good", "db.sqlite")
+	writeWebAuthFixtureWithSeed(t, goodDBPath, "good-seed")
+	plain := &Config{MainSettings: MainSettingsConfig{DBPath: goodDBPath, TMDBAPI: "super-secret-token"}}
+	encrypted, err := EncryptConfigSecrets(plain)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	staleDBPath := filepath.Join(t.TempDir(), "missing", "db.sqlite")
+	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "db.sqlite")
+	writeWebAuthFixtureWithSeed(t, runtimeDBPath, "wrong-seed")
+	encrypted.MainSettings.DBPath = staleDBPath
+
+	_, err = decryptConfigSecretsWithDBDir(encrypted, runtimeDBPath)
+	if err == nil {
+		t.Fatalf("expected decrypt error")
+	}
+	if !errors.Is(err, ErrSecretEncryptionHelperUnavailable) {
+		t.Fatalf("expected original helper unavailable error to be preserved, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "runtime db path decrypt retry") {
+		t.Fatalf("expected runtime retry error context, got %v", err)
+	}
+}
+
+func TestSaveSectionsToDatabaseEncryptsViaRuntimeDBDir(t *testing.T) {
+	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "db.sqlite")
+	writeWebAuthFixture(t, runtimeDBPath)
+	staleDBPath := filepath.Join(t.TempDir(), "old", "db.sqlite")
+
+	repo := &runtimeSectionRepo{dbPath: runtimeDBPath}
+	cfg := validMinimalConfig()
+	cfg.MainSettings.DBPath = staleDBPath
+	cfg.MainSettings.TMDBAPI = "super-secret-token"
+
+	if err := SaveSectionsToDatabase(context.Background(), cfg, []string{"MainSettings"}, repo); err != nil {
+		t.Fatalf("SaveSectionsToDatabase: %v", err)
+	}
+	mainSettings, ok := repo.sections["MainSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected MainSettings map, got %#v", repo.sections["MainSettings"])
+	}
+	if got := mainSettings["DBPath"]; got != staleDBPath {
+		t.Fatalf("stored DBPath got %#v want %q", got, staleDBPath)
+	}
+	token, ok := mainSettings["TMDBAPI"].(string)
+	if !ok || !strings.HasPrefix(token, encryptedEnvelopePrefix) {
+		t.Fatalf("expected TMDBAPI to be encrypted via runtime helper, got %#v", mainSettings["TMDBAPI"])
+	}
+}
+
+type runtimeSectionRepo struct {
+	dbPath   string
+	sections map[string]any
+}
+
+func (r *runtimeSectionRepo) DBPath() string { return r.dbPath }
+
+func (r *runtimeSectionRepo) SaveConfigSection(_ context.Context, section string, data any) error {
+	if r.sections == nil {
+		r.sections = map[string]any{}
+	}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal section %s: %w", section, err)
+	}
+	var stored any
+	if err := json.Unmarshal(payload, &stored); err != nil {
+		return fmt.Errorf("unmarshal section %s: %w", section, err)
+	}
+	r.sections[section] = stored
+	return nil
+}
+
+func TestRepoDBPath(t *testing.T) {
+	if got := repoDBPath(&runtimePathRepo{dbPath: "  /a/b  "}); got != "/a/b" {
+		t.Fatalf("repoDBPath got %q, want /a/b", got)
+	}
+	if got := repoDBPath(struct{}{}); got != "" {
+		t.Fatalf("repoDBPath for repo without DBPath got %q, want empty", got)
 	}
 }

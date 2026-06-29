@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -185,6 +186,40 @@ func TestFullConfigSaveLoad(t *testing.T) {
 	}
 	if _, ok := loaded["torrent_creation"]; !ok {
 		t.Errorf("torrent_creation section missing")
+	}
+}
+
+func TestLoadFullConfigRejectsDuplicateRawSectionKeys(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	repo, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	defer repo.Close()
+
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		INSERT INTO config_settings (section, data, updated_at)
+		VALUES ('Trackers', '{"Trackers":{"BTN":{"APIKey":"one","APIKey":"two"}}}', datetime('now'))
+	`); err != nil {
+		t.Fatalf("insert duplicate raw section: %v", err)
+	}
+
+	var loaded map[string]any
+	err = repo.LoadFullConfig(ctx, &loaded)
+	if err == nil {
+		t.Fatal("expected duplicate raw key error")
+	}
+	if !strings.Contains(err.Error(), `duplicate JSON object key "APIKey"`) {
+		t.Fatalf("expected duplicate key error, got %v", err)
 	}
 }
 

@@ -724,8 +724,12 @@ func TestMergeMissingTrackerDefaults(t *testing.T) {
 		},
 	}
 
-	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
 		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
 	}
 
 	if _, ok := cfg.Trackers.Trackers["BTN"]; !ok {
@@ -934,8 +938,12 @@ func TestMergeMissingTrackerDefaultsBackfillsLegacyBTNAPIIntoTrackerConfig(t *te
 		},
 	}
 
-	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
 		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
 	}
 
 	if got := cfg.Trackers.Trackers["BTN"].APIKey; got != "legacy-token" {
@@ -955,8 +963,12 @@ func TestMergeMissingTrackerDefaultsDoesNotBackfillLegacyBTNAPIOverLowercaseTrac
 		},
 	}
 
-	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
 		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
 	}
 
 	if got := ResolveBTNAPIToken(*cfg); got != "lowercase-token" {
@@ -982,8 +994,12 @@ func TestMergeMissingTrackerDefaultsReconcilesLowercaseBTNWithoutToken(t *testin
 		},
 	}
 
-	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
 		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
 	}
 
 	if _, ok := cfg.Trackers.Trackers["BTN"]; ok {
@@ -1016,8 +1032,12 @@ func TestMergeMissingTrackerDefaultsUsesASCIICaseBTNTrackerConfig(t *testing.T) 
 		},
 	}
 
-	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
 		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
 	}
 
 	if got := ResolveBTNAPIToken(*cfg); got != "legacy-token" {
@@ -1044,8 +1064,12 @@ func TestMergeMissingTrackerDefaultsClearsCZTSensitiveFields(t *testing.T) {
 		},
 	}
 
-	if err := MergeMissingTrackerDefaults(cfg); err != nil {
+	changed, err := MergeMissingTrackerDefaults(cfg)
+	if err != nil {
 		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected merge missing tracker defaults to report changes")
 	}
 	czt := cfg.Trackers.Trackers["CZT"]
 	if czt.APIKey != "" {

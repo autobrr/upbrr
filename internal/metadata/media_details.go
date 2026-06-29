@@ -20,20 +20,22 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var repackPattern = regexp.MustCompile(`(?i)\b(?:REPACK\d?|RERIP|PROPER\d?)\b`)
+var repackPattern = regexp.MustCompile(`(?i)\b(?:REPACK\d?|RERIP|PROPER\d?|V[2-4])\b`)
 var editionWordPattern = regexp.MustCompile(`(?i)\bedition\b`)
 var editionBadTokenPattern = regexp.MustCompile(`(?i)\b(?:internal|limited|retail|version|remastered)\b`)
 var editionWhitespacePattern = regexp.MustCompile(`\s+`)
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 var numericPattern = regexp.MustCompile(`\d+`)
+var releaseTokenSeparatorPattern = regexp.MustCompile(`[^A-Z0-9]+`)
 
 // ApplyMediaDetails enriches prepared metadata from MediaInfo, BDInfo, filename
-// tokens, overrides, and tracker policies, then rebuilds the release name.
+// tokens, overrides, and tracker rules, then rebuilds the release name.
 func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
@@ -188,12 +190,14 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	if err != nil {
 		return api.PreparedMetadata{}, err
 	}
-	meta, err = s.applyTrackerClaims(ctx, meta)
-	if err != nil {
-		return api.PreparedMetadata{}, err
-	}
 
 	return meta, nil
+}
+
+// ApplyTrackerClaims refreshes claim-based tracker blocks after media details
+// and tracker rules have populated the release attributes used for matching.
+func (s *Service) ApplyTrackerClaims(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return s.applyTrackerClaims(ctx, meta)
 }
 
 // RefreshPreparedMetadata reapplies request-scoped audio, naming, rule, and
@@ -212,6 +216,7 @@ func (s *Service) RefreshPreparedMetadata(ctx context.Context, meta api.Prepared
 	if filenameHDR := filenameHDRFromMeta(meta); filenameHDR != "" && meta.HDR == normalizeFilenameHDRTokens(meta.Release.HDR) {
 		meta.HDR = filenameHDR
 	}
+	normalizeMediaInfoSettings(&meta)
 	ApplyRequestScopedAudioPolicy(&meta, refreshService.cfg, refreshService.logger)
 	RebuildReleaseName(&meta, refreshService.logger)
 
@@ -225,6 +230,25 @@ func (s *Service) RefreshPreparedMetadata(ctx context.Context, meta api.Prepared
 		return api.PreparedMetadata{}, err
 	}
 	return meta, nil
+}
+
+// normalizeMediaInfoSettings re-asserts the ValidMediaInfoSettings invariant on
+// refresh paths that reuse cached or imported metadata without re-reading media.
+// The full media pass (PrepareMetadata) only ever sets this false for a non-BDMV,
+// non-AV1 encode that is missing encoding settings; for every other release kind
+// it is unconditionally true. Cached or imported metadata can carry a stale or
+// zero-value false here, which would wrongly trip the UNIT3D MediaInfo-settings
+// rule (see internal/trackers/rules.go) and block valid remux/web/disc uploads,
+// so restore true whenever the release cannot be a validatable encode.
+func normalizeMediaInfoSettings(meta *api.PreparedMetadata) {
+	if meta == nil || meta.ValidMediaInfoSettings {
+		return
+	}
+	if strings.EqualFold(meta.DiscType, "BDMV") ||
+		!strings.EqualFold(meta.Type, "ENCODE") ||
+		strings.EqualFold(meta.VideoCodec, "AV1") {
+		meta.ValidMediaInfoSettings = true
+	}
 }
 
 func applyMetadataOverrides(meta *api.PreparedMetadata) {
@@ -337,6 +361,11 @@ func containerFromMeta(meta api.PreparedMetadata) string {
 	return strings.ToLower(ext)
 }
 
+// audioFromMedia derives the primary audio label, channel count, and
+// commentary presence from BDInfo or MediaInfo. Object-audio markers such as
+// Atmos are emitted after the channel count to match release-name ordering.
+// MediaInfo title-derived markers such as Auro3D come from the selected
+// primary audio track.
 func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discparse.BDInfo) (string, string, bool) {
 	if bdinfo != nil && len(bdinfo.Audio) > 0 {
 		track := bdinfo.Audio[0]
@@ -345,22 +374,23 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 			"Format":            track.Codec,
 		})
 		codec = strings.TrimSpace(codec)
-		if track.Atmos != "" && !strings.Contains(strings.ToLower(codec), "atmos") {
-			codec = strings.TrimSpace(codec + " Atmos")
-		}
 		channels := strings.TrimSpace(track.Channels)
 		if channels == "" {
 			channels = "Unknown"
 		}
-		return strings.TrimSpace(codec + " " + channels), channels, false
+		extra := ""
+		if track.Atmos != "" && !strings.Contains(strings.ToLower(codec), "atmos") {
+			extra = "Atmos"
+		}
+		return strings.Join(strings.Fields(strings.Join([]string{codec, channels, extra}, " ")), " "), channels, false
 	}
 
 	_, _, audioTracks := splitMediaInfoTracks(doc)
 	if len(audioTracks) == 0 {
 		return "", "", false
 	}
-	firstAudioTitle := strings.ToLower(trackString(audioTracks[0], "Title", "title"))
 	track := selectPrimaryAudioTrack(audioTracks)
+	primaryAudioTitle := strings.ToLower(audioTrackTitle(track))
 	format := normalizeAudioFormat(track)
 	additional := trackString(track, "Format_AdditionalFeatures", "Format_AdditionalFeatures_String", "Format_AdditionalFeatures_Original")
 	formatSettings := normalizeAudioFormatSettings(trackString(track, "Format_Settings"))
@@ -376,8 +406,9 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	}
 
 	formatLower := strings.ToLower(format)
+	extra := ""
 	if isAtmosAudio(additional, formatLower, trackString(track, "ChannelLayout", "ChannelPositions")) && !strings.Contains(formatLower, "atmos") {
-		format = strings.TrimSpace(format + " Atmos")
+		extra = "Atmos"
 	}
 	if isDTSXAudio(additional, formatLower) && !strings.Contains(strings.ToLower(format), "dts:x") {
 		if strings.EqualFold(format, "DTS") {
@@ -392,12 +423,12 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	if formatSettings == "EX" && channels != "5.1" {
 		formatSettings = ""
 	}
-	if !strings.Contains(strings.ToLower(format), "atmos") && strings.Contains(firstAudioTitle, "auro3d") {
-		format = strings.TrimSpace(format + " Auro3D")
+	if extra == "" && strings.Contains(primaryAudioTitle, "auro3d") {
+		extra = "Auro3D"
 	}
 	commentary := false
 	for _, audioTrack := range audioTracks {
-		title := strings.ToLower(trackString(audioTrack, "Title", "title"))
+		title := strings.ToLower(audioTrackTitle(audioTrack))
 		if strings.Contains(title, "commentary") {
 			commentary = true
 			break
@@ -407,7 +438,7 @@ func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discpar
 	if strings.TrimSpace(meta.DiscType) == "" {
 		prefix = audioLanguagePrefix(meta, audioTracks)
 	}
-	return strings.Join(strings.Fields(strings.Join([]string{prefix, format, formatSettings, channels}, " ")), " "), channels, commentary
+	return strings.Join(strings.Fields(strings.Join([]string{prefix, format, formatSettings, channels, extra}, " ")), " "), channels, commentary
 }
 
 func normalizeAudioFormatSettings(value string) string {
@@ -421,10 +452,16 @@ func normalizeAudioFormatSettings(value string) string {
 	return ""
 }
 
+// audioTrackTitle returns the first MediaInfo title field used to identify
+// commentary or compatibility tracks before audio language classification.
+func audioTrackTitle(track map[string]any) string {
+	return trackString(track, "Title", "title", "Title_String", "Title_String2", "Title_String3")
+}
+
 func audioLanguagePrefix(meta api.PreparedMetadata, tracks []map[string]any) string {
 	filtered := make([]map[string]any, 0, len(tracks))
 	for _, track := range tracks {
-		if isCommentaryOrCompatibilityAudioValue(trackString(track, "Title", "title")) {
+		if isCommentaryOrCompatibilityAudioValue(audioTrackTitle(track)) {
 			continue
 		}
 		filtered = append(filtered, track)
@@ -776,14 +813,15 @@ func audioBloatReason(languages []string, hardBlocked bool) string {
 	return fmt.Sprintf("audio languages %s may be considered bloated", parts)
 }
 
-// selectPrimaryAudioTrack filters out compatibility tracks before selection.
-// This intentionally diverges from the Python reference, which selects from
-// all tracks, to avoid fallback compatibility tracks representing the release.
+// selectPrimaryAudioTrack returns the track used to derive the release audio
+// label, excluding commentary and compatibility tracks when possible. This
+// intentionally diverges from the Python reference, which selects from all
+// tracks, to avoid fallback tracks representing the release.
 func selectPrimaryAudioTrack(tracks []map[string]any) map[string]any {
 	if len(tracks) == 0 {
 		return nil
 	}
-	filtered := filterCompatibilityTracks(tracks)
+	filtered := filterPrimaryAudioTracks(tracks)
 	if len(filtered) == 0 {
 		filtered = tracks
 	}
@@ -796,11 +834,13 @@ func selectPrimaryAudioTrack(tracks []map[string]any) map[string]any {
 	return filtered[0]
 }
 
-func filterCompatibilityTracks(tracks []map[string]any) []map[string]any {
+// filterPrimaryAudioTracks returns tracks eligible to represent primary release
+// audio by ignoring commentary and compatibility markers in any MediaInfo title
+// variant. It leaves all-track fallback decisions to the caller.
+func filterPrimaryAudioTracks(tracks []map[string]any) []map[string]any {
 	filtered := make([]map[string]any, 0, len(tracks))
 	for _, track := range tracks {
-		title := strings.ToLower(trackString(track, "Title", "title"))
-		if strings.Contains(title, "compatibility") {
+		if isCommentaryOrCompatibilityAudioValue(audioTrackTitle(track)) {
 			continue
 		}
 		filtered = append(filtered, track)
@@ -1264,8 +1304,9 @@ func uhdFromMeta(meta api.PreparedMetadata) string {
 	return ""
 }
 
-// hdrFromMedia prefers BDInfo and MediaInfo HDR evidence, then falls back to
-// normalized filename tokens from the current source path or parsed release.
+// hdrFromMedia prefers BDInfo and MediaInfo HDR evidence, normalizing bare PQ
+// transfer metadata to HDR for tracker naming, then falls back to normalized
+// filename tokens from the current source path or parsed release.
 func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta api.PreparedMetadata) string {
 	if bdinfo != nil && len(bdinfo.Video) > 0 {
 		hdr := ""
@@ -1312,7 +1353,7 @@ func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta api.PreparedM
 		}
 		transfer := trackString(track, "transfer_characteristics", "transfer_characteristics_Original")
 		if hdrFormat == "" && strings.Contains(strings.ToUpper(transfer), "PQ") {
-			hdr = "PQ10"
+			hdr = "HDR"
 		}
 		if strings.Contains(strings.ToUpper(transfer), "HLG") {
 			hdr = "HLG"
@@ -1499,18 +1540,82 @@ func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, strin
 	if edition == "" && len(meta.Release.Edition) > 0 {
 		edition = strings.TrimSpace(strings.Join(meta.Release.Edition, " "))
 	}
+	repack := repackFromMeta(meta, edition)
 	if edition == "" {
-		return "", ""
+		return "", repack
 	}
-	repack := ""
 	if repackPattern.MatchString(edition) {
-		repack = repackPattern.FindString(edition)
+		if repack == "" {
+			repack = repackPattern.FindString(edition)
+		}
 		edition = strings.TrimSpace(repackPattern.ReplaceAllString(edition, ""))
 	}
 	if isIMDbEdition {
 		return cleanIMDbEditionText(edition), strings.ToUpper(repack)
 	}
 	return cleanEditionText(edition), strings.ToUpper(repack)
+}
+
+// repackFromMeta scans source basenames and parsed release tokens so repack
+// markers do not depend on guessit/rls placing them in the edition field.
+func repackFromMeta(meta api.PreparedMetadata, edition string) string {
+	return repackFromText(
+		pathutil.Base(meta.SourcePath),
+		pathutil.Base(meta.VideoPath),
+		edition,
+		strings.Join(meta.Release.Edition, " "),
+		strings.Join(meta.Release.Other, " "),
+	)
+}
+
+// repackFromText returns the highest-priority repack/proper marker present in
+// release tokens, matching Upload Assistant's V2/V3/V4 repack aliases.
+func repackFromText(values ...string) string {
+	tokens := releaseTokens(values...)
+	repack := ""
+	if hasReleaseToken(tokens, "REPACK") || hasReleaseToken(tokens, "V2") {
+		repack = "REPACK"
+	}
+	if hasReleaseToken(tokens, "REPACK2") || hasReleaseToken(tokens, "V3") {
+		repack = "REPACK2"
+	}
+	if hasReleaseToken(tokens, "REPACK3") || hasReleaseToken(tokens, "V4") {
+		repack = "REPACK3"
+	}
+	if hasReleaseToken(tokens, "PROPER") {
+		repack = "PROPER"
+	}
+	if hasReleaseToken(tokens, "PROPER2") {
+		repack = "PROPER2"
+	}
+	if hasReleaseToken(tokens, "PROPER3") {
+		repack = "PROPER3"
+	}
+	if hasReleaseToken(tokens, "RERIP") {
+		repack = "RERIP"
+	}
+	return repack
+}
+
+// releaseTokens splits release-name text into uppercase tokens using
+// punctuation, whitespace, and path separators as boundaries.
+func releaseTokens(values ...string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	for _, value := range values {
+		for _, token := range releaseTokenSeparatorPattern.Split(strings.ToUpper(value), -1) {
+			if token == "" {
+				continue
+			}
+			tokens[token] = struct{}{}
+		}
+	}
+	return tokens
+}
+
+// hasReleaseToken reports whether a normalized token set contains value.
+func hasReleaseToken(tokens map[string]struct{}, value string) bool {
+	_, ok := tokens[value]
+	return ok
 }
 
 func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {

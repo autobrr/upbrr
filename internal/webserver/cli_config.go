@@ -13,6 +13,8 @@ import (
 
 const cliConfigFileName = "web-config.json"
 
+// CLIConfig stores the serve settings that can come from persisted web config,
+// environment variables, or CLI flags.
 type CLIConfig struct {
 	Host           string   `json:"host"`
 	Port           int      `json:"port"`
@@ -22,6 +24,8 @@ type CLIConfig struct {
 	SessionTTL     int      `json:"session_ttl"`
 }
 
+// DefaultCLIConfig returns the serve settings used when no persisted web config
+// exists or persisted fields are omitted.
 func DefaultCLIConfig() CLIConfig {
 	return CLIConfig{
 		Host:           "localhost",
@@ -33,6 +37,9 @@ func DefaultCLIConfig() CLIConfig {
 	}
 }
 
+// LoadCLIConfig reads persisted serve settings from the directory containing
+// dbPath. BaseURL is intentionally left unvalidated so env or CLI overrides can
+// replace stale stored values before final validation.
 func LoadCLIConfig(dbPath string) (CLIConfig, error) {
 	cfg := DefaultCLIConfig()
 	path := cliConfigPath(dbPath)
@@ -46,11 +53,15 @@ func LoadCLIConfig(dbPath string) (CLIConfig, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return CLIConfig{}, fmt.Errorf("web config: parse: %w", err)
 	}
-	return normalizeCLIConfig(cfg), nil
+	return normalizeCLIConfigLoaded(cfg), nil
 }
 
+// SaveCLIConfig writes normalized serve settings next to dbPath.
 func SaveCLIConfig(dbPath string, cfg CLIConfig) error {
-	cfg = normalizeCLIConfig(cfg)
+	cfg, err := normalizeCLIConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("web config: %w", err)
+	}
 	path := cliConfigPath(dbPath)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("web config: mkdir: %w", err)
@@ -69,7 +80,21 @@ func cliConfigPath(dbPath string) string {
 	return filepath.Join(filepath.Dir(strings.TrimSpace(dbPath)), cliConfigFileName)
 }
 
-func normalizeCLIConfig(cfg CLIConfig) CLIConfig {
+// normalizeCLIConfig applies defaults and validates fields used by the runtime
+// or persisted config writer.
+func normalizeCLIConfig(cfg CLIConfig) (CLIConfig, error) {
+	cfg = normalizeCLIConfigLoaded(cfg)
+	baseURL, err := NormalizeBaseURL(cfg.BaseURL)
+	if err != nil {
+		return CLIConfig{}, err
+	}
+	cfg.BaseURL = baseURL
+	return cfg, nil
+}
+
+// normalizeCLIConfigLoaded applies defaults that are safe before env and CLI
+// precedence resolution. It deliberately does not validate BaseURL.
+func normalizeCLIConfigLoaded(cfg CLIConfig) CLIConfig {
 	if strings.TrimSpace(cfg.Host) == "" {
 		cfg.Host = "localhost"
 	}
@@ -79,7 +104,6 @@ func normalizeCLIConfig(cfg CLIConfig) CLIConfig {
 	if cfg.SessionTTL <= 0 {
 		cfg.SessionTTL = 1440
 	}
-	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
 	if len(cfg.TrustedProxies) == 0 {
 		cfg.TrustedProxies = nil
 	}

@@ -92,14 +92,14 @@ func TestParseServeOptionsDevNoAuth(t *testing.T) {
 }
 
 func TestParseServeOptionsAddressHostPort(t *testing.T) {
-	opts, visited, err := parseServeOptions([]string{"--addr", "0.0.0.0:9090", "--host", "localhost", "--port", "7481", "--persist-listen"})
+	opts, visited, err := parseServeOptions([]string{"--addr", "0.0.0.0:9090", "--host", "localhost", "--port", "7481", "--base-url", "https://example.test/upbrr/", "--persist-listen", "--persist-web-config"})
 	if err != nil {
 		t.Fatalf("parse serve options: %v", err)
 	}
-	if opts.Addr != "0.0.0.0:9090" || opts.Host != "localhost" || opts.Port != 7481 || !opts.PersistListen {
+	if opts.Addr != "0.0.0.0:9090" || opts.Host != "localhost" || opts.Port != 7481 || opts.BaseURL != "https://example.test/upbrr/" || !opts.PersistListen || !opts.PersistWebConfig {
 		t.Fatalf("unexpected serve options: %#v", opts)
 	}
-	for _, name := range []string{"addr", "host", "port", "persist-listen"} {
+	for _, name := range []string{"addr", "host", "port", "base-url", "persist-listen", "persist-web-config"} {
 		if !visited[name] {
 			t.Fatalf("expected %s visited flag, got %#v", name, visited)
 		}
@@ -150,6 +150,19 @@ func TestApplyServeOptionOverridesAddress(t *testing.T) {
 	}
 }
 
+func TestApplyServeOptionOverridesAddressWithBaseURL(t *testing.T) {
+	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{
+		Addr:    "0.0.0.0:9090",
+		BaseURL: " https://example.test/upbrr/ ",
+	}, map[string]bool{"addr": true, "base-url": true})
+	if err != nil {
+		t.Fatalf("apply serve overrides: %v", err)
+	}
+	if cfg.Host != "0.0.0.0" || cfg.Port != 9090 || cfg.BaseURL != "https://example.test/upbrr/" {
+		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+}
+
 func TestApplyServeOptionOverridesAddressMatrix(t *testing.T) {
 	cases := []struct {
 		name string
@@ -183,6 +196,110 @@ func TestApplyServeOptionOverridesHostPort(t *testing.T) {
 	}
 	if cfg.Host != "::1" || cfg.Port != 9091 {
 		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+}
+
+func TestApplyServeOptionOverridesBaseURL(t *testing.T) {
+	cfg, err := applyServeOptionOverrides(webserver.DefaultCLIConfig(), serveOptions{BaseURL: " https://example.test/upbrr/ "}, map[string]bool{"base-url": true})
+	if err != nil {
+		t.Fatalf("apply serve overrides: %v", err)
+	}
+	if cfg.BaseURL != "https://example.test/upbrr/" {
+		t.Fatalf("base url = %q, want trimmed configured URL", cfg.BaseURL)
+	}
+}
+
+func TestApplyServeEnvOverrides(t *testing.T) {
+	cfg, err := applyServeEnvOverrides(
+		webserver.DefaultCLIConfig(),
+		serveEnvOptions{
+			Host:           "0.0.0.0",
+			Port:           "9090",
+			BaseURL:        " /upbrr/?token=secret#frag ",
+			OpenBrowser:    "false",
+			TrustedProxies: "127.0.0.1, 10.0.0.0/8",
+		},
+		map[string]bool{
+			"host":            true,
+			"port":            true,
+			"base-url":        true,
+			"open-browser":    true,
+			"trusted-proxies": true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("apply serve env overrides: %v", err)
+	}
+	if cfg.Host != "0.0.0.0" || cfg.Port != 9090 || cfg.BaseURL != "/upbrr" || cfg.OpenBrowser {
+		t.Fatalf("unexpected web config: %#v", cfg)
+	}
+	if len(cfg.TrustedProxies) != 2 || cfg.TrustedProxies[0] != "127.0.0.1" || cfg.TrustedProxies[1] != "10.0.0.0/8" {
+		t.Fatalf("trusted proxies = %#v", cfg.TrustedProxies)
+	}
+}
+
+func TestApplyServeEnvOverridesRejectsEmptyBaseURL(t *testing.T) {
+	stored := webserver.DefaultCLIConfig()
+	stored.BaseURL = "/stored/"
+
+	_, err := applyServeEnvOverrides(
+		stored,
+		serveEnvOptions{BaseURL: " \t "},
+		map[string]bool{"base-url": true},
+	)
+	if err == nil || !strings.Contains(err.Error(), "UPBRR_WEB_BASE_URL cannot be empty") {
+		t.Fatalf("expected empty UPBRR_WEB_BASE_URL error, got %v", err)
+	}
+}
+
+func TestApplyServeOptionOverridesCLIOverridesEnv(t *testing.T) {
+	envCfg, err := applyServeEnvOverrides(
+		webserver.DefaultCLIConfig(),
+		serveEnvOptions{Host: "0.0.0.0", Port: "9090", BaseURL: "/env/"},
+		map[string]bool{"host": true, "port": true, "base-url": true},
+	)
+	if err != nil {
+		t.Fatalf("apply serve env overrides: %v", err)
+	}
+	cfg, err := applyServeOptionOverrides(
+		envCfg,
+		serveOptions{Host: "127.0.0.1", Port: 9191, BaseURL: "/cli/"},
+		map[string]bool{"host": true, "port": true, "base-url": true},
+	)
+	if err != nil {
+		t.Fatalf("apply serve option overrides: %v", err)
+	}
+	if cfg.Host != "127.0.0.1" || cfg.Port != 9191 || cfg.BaseURL != "/cli" {
+		t.Fatalf("CLI did not override env config: %#v", cfg)
+	}
+}
+
+func TestApplyServeOverridesReplaceInvalidPersistedBaseURL(t *testing.T) {
+	persisted := webserver.DefaultCLIConfig()
+	persisted.BaseURL = "javascript:alert(1)"
+
+	envCfg, err := applyServeEnvOverrides(
+		persisted,
+		serveEnvOptions{BaseURL: "/env/"},
+		map[string]bool{"base-url": true},
+	)
+	if err != nil {
+		t.Fatalf("apply serve env overrides: %v", err)
+	}
+	if envCfg.BaseURL != "/env" {
+		t.Fatalf("env base URL override = %q, want /env", envCfg.BaseURL)
+	}
+
+	cliCfg, err := applyServeOptionOverrides(
+		persisted,
+		serveOptions{BaseURL: "/cli/"},
+		map[string]bool{"base-url": true},
+	)
+	if err != nil {
+		t.Fatalf("apply serve option overrides: %v", err)
+	}
+	if cliCfg.BaseURL != "/cli" {
+		t.Fatalf("CLI base URL override = %q, want /cli", cliCfg.BaseURL)
 	}
 }
 
@@ -239,6 +356,8 @@ func TestApplyServeOptionOverridesRejectsInvalidValues(t *testing.T) {
 		{name: "invalid port", opts: serveOptions{Port: 70000}, visited: map[string]bool{"port": true}, want: "invalid port"},
 		{name: "invalid addr", opts: serveOptions{Addr: "localhost"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
 		{name: "unbracketed ipv6 addr", opts: serveOptions{Addr: "::1:9090"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
+		{name: "empty base url", opts: serveOptions{BaseURL: " "}, visited: map[string]bool{"base-url": true}, want: "--base-url cannot be empty"},
+		{name: "invalid base url", opts: serveOptions{BaseURL: "javascript:alert(1)"}, visited: map[string]bool{"base-url": true}, want: "http or https"},
 	}
 
 	for _, tc := range cases {

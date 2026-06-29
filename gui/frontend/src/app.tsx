@@ -57,6 +57,9 @@ import type {
   ScreenshotResult,
   ScreenshotSelection,
   TrackerQuestionnaire,
+  TrackerAuthCapability,
+  TrackerAuthLoginRequest,
+  TrackerAuthStatus,
   TrackerDryRunPreview,
   TrackerUploadSnapshot,
   WebAuthStatus,
@@ -155,6 +158,7 @@ const emptyPreview: MetadataPreview = {
   ExternalPreview: [],
   Bluray: undefined,
   TrackerData: [],
+  TrackerRuleFailures: {},
 };
 
 const emptyTrackerDryRun: TrackerDryRunPreview = {
@@ -203,6 +207,45 @@ export const ruleBlockingTrackerLabels = (result: Pick<DupeCheckResult, "Tracker
   splitLabels.forEach((tracker) => next.add(tracker));
   return next;
 };
+
+const isFinishedDupeTrackerStatus = (status: string) => {
+  switch (status.toLowerCase().trim()) {
+    case "complete":
+    case "completed":
+    case "skipped":
+    case "failed":
+    case "canceled":
+      return true;
+    default:
+      return false;
+  }
+};
+
+/**
+ * Converts a finished per-tracker job state into the same result shape used by
+ * grouped summaries. Queued/running states without a concrete result are ignored
+ * so upload eligibility is derived only from completed tracker outcomes.
+ */
+const dupeResultFromTrackerState = (
+  state: DupeCheckSnapshot["trackers"][number],
+): DupeCheckResult | null => {
+  const resultTracker = String(state.result?.Tracker || "").trim();
+  const status = String(state.result?.Status || state.status || "").trim();
+  if (!resultTracker && !isFinishedDupeTrackerStatus(status)) return null;
+  const tracker = String(resultTracker || state.tracker || "").trim();
+  if (!tracker) return null;
+  return {
+    ...state.result,
+    Tracker: tracker,
+    Status: status,
+  };
+};
+
+/** Returns per-tracker dupe results from a snapshot, excluding unfinished placeholders. */
+const dupeResultsFromSnapshot = (snapshot: DupeCheckSnapshot | null) =>
+  (snapshot?.trackers || [])
+    .map(dupeResultFromTrackerState)
+    .filter((result): result is DupeCheckResult => Boolean(result));
 
 const emptyDescriptionBuilder: DescriptionBuilderPreview = {
   SourcePath: "",
@@ -505,6 +548,24 @@ declare global {
             GetLogExclusions: () => Promise<string[]>;
             UpdateLogExclusions: (patterns: string[]) => Promise<void>;
             ListKnownTrackers: () => Promise<string[]>;
+            ListTrackerAuthCapabilities?: () => Promise<TrackerAuthCapability[]>;
+            GetTrackerAuthStatus?: (tracker: string) => Promise<TrackerAuthStatus>;
+            ImportTrackerAuthCookies?: (tracker: string) => Promise<TrackerAuthStatus>;
+            ImportTrackerAuthCookieContent?: (
+              tracker: string,
+              fileName: string,
+              content: string,
+            ) => Promise<TrackerAuthStatus>;
+            TestTrackerAuth?: (tracker: string) => Promise<TrackerAuthStatus>;
+            LoginTrackerAuth?: (
+              tracker: string,
+              req: TrackerAuthLoginRequest,
+            ) => Promise<TrackerAuthStatus>;
+            SubmitTrackerAuth2FA?: (
+              challengeID: string,
+              code: string,
+            ) => Promise<TrackerAuthStatus>;
+            DeleteTrackerAuth?: (tracker: string) => Promise<TrackerAuthStatus>;
             GetImageHostPolicyMetadata: () => Promise<ImageHostPolicyMetadata>;
             ListHistory: () => Promise<HistoryEntry[]>;
             GetHistoryOverview: (sourcePath: string) => Promise<HistoryOverview>;
@@ -1052,14 +1113,19 @@ export default function App() {
     }
   }, [activeTab, skipAutoTorrentEnabled]);
 
+  const dupeEffectiveResults = useMemo(() => {
+    const trackerResults = dupeResultsFromSnapshot(dupeCheckSnapshot);
+    return trackerResults.length > 0 ? trackerResults : dupeSummary.Results || [];
+  }, [dupeCheckSnapshot, dupeSummary.Results]);
+
   useEffect(() => {
     setDupeIgnore((prev) => {
-      if (!dupeSummary.Results || dupeSummary.Results.length === 0) {
+      if (dupeEffectiveResults.length === 0) {
         return prev;
       }
       let changed = false;
       const next = { ...prev };
-      dupeSummary.Results.forEach((result) => {
+      dupeEffectiveResults.forEach((result) => {
         const tracker = result.Tracker;
         if (!tracker) return;
         if (next[tracker] === undefined) {
@@ -1069,15 +1135,15 @@ export default function App() {
       });
       return changed ? next : prev;
     });
-  }, [dupeSummary]);
+  }, [dupeEffectiveResults]);
 
   useEffect(() => {
-    if (!dupeSummary.Results || dupeSummary.Results.length === 0) {
+    if (dupeEffectiveResults.length === 0) {
       setDupeTrackerFlags({});
       return;
     }
     const next: Record<string, boolean> = {};
-    dupeSummary.Results.forEach((result) => {
+    dupeEffectiveResults.forEach((result) => {
       const tracker = result.Tracker;
       if (!tracker) return;
       const ignored = dupeIgnore[tracker] ?? false;
@@ -1085,7 +1151,7 @@ export default function App() {
       next[tracker] = Boolean(result.HasDupes) && !ignored && !skipped;
     });
     setDupeTrackerFlags(next);
-  }, [dupeSummary, dupeIgnore]);
+  }, [dupeEffectiveResults, dupeIgnore]);
 
   const dupedTrackerSet = useMemo(() => {
     const next = new Set<string>();
@@ -1100,16 +1166,16 @@ export default function App() {
 
   const ruleSkippedTrackerSet = useMemo(() => {
     const next = new Set<string>();
-    (dupeSummary.Results || []).forEach((result) => {
+    dupeEffectiveResults.forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
       ruleBlockingTrackerLabels(result).forEach((tracker) => next.add(tracker));
     });
     return next;
-  }, [dupeSummary]);
+  }, [dupeEffectiveResults]);
 
   const failedDupeTrackerSet = useMemo(() => {
     const next = new Set<string>();
-    (dupeSummary.Results || []).forEach((result) => {
+    dupeEffectiveResults.forEach((result) => {
       if (!result.Tracker) return;
       const status = String(result.Status || "")
         .toLowerCase()
@@ -1121,11 +1187,11 @@ export default function App() {
       splitTrackerLabel(result.Tracker).forEach((tracker) => next.add(tracker));
     });
     return next;
-  }, [dupeSummary]);
+  }, [dupeEffectiveResults]);
 
   const ruleSkipReasons = useMemo(() => {
     const next: Record<string, string> = {};
-    (dupeSummary.Results || []).forEach((result) => {
+    dupeEffectiveResults.forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
       const reason = (result.SkipReason || result.Notes?.join(" ") || "rule check failed").trim();
       ruleBlockingTrackerLabels(result).forEach((tracker) => {
@@ -1133,7 +1199,7 @@ export default function App() {
       });
     });
     return next;
-  }, [dupeSummary]);
+  }, [dupeEffectiveResults]);
 
   const ignoredDupeTrackers = useMemo(() => {
     const next = new Set<string>();
@@ -4077,6 +4143,7 @@ export default function App() {
               dismissConfigOpStatus={dismissConfigOpStatus}
               settingsSection={settingsSection}
               settingsSections={settingsSections}
+              trackerSelectionNames={trackerSelectionNames}
               showAdvancedToggle={showAdvancedToggle}
               advancedOpen={advancedOpen}
               setSettingsSection={setSettingsSection}
@@ -4127,6 +4194,7 @@ export default function App() {
               dupeLoading={dupeLoading}
               dupeError={dupeError}
               dupeSummary={dupeSummary}
+              dupeTrackerStates={dupeCheckSnapshot?.trackers || []}
               dupeTrackerFlags={dupeTrackerFlags}
               dupeIgnore={dupeIgnore}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}

@@ -644,6 +644,10 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 	if err != nil {
 		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
+	meta, err = c.services.Metadata.ApplyTrackerClaims(ctx, meta)
+	if err != nil {
+		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
+	}
 
 	c.storeRefreshedDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 
@@ -1914,6 +1918,13 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 	if err := emitPhase("media-details", "Applying media details", func() error {
 		var applyErr error
 		meta, applyErr = c.services.Metadata.ApplyMediaDetails(ctx, meta)
+		return wrapCoreError(applyErr)
+	}); err != nil {
+		return api.MetadataPreview{}, err
+	}
+	if err := emitPhase("tracker-claims", "Checking tracker claims", func() error {
+		var applyErr error
+		meta, applyErr = c.services.Metadata.ApplyTrackerClaims(ctx, meta)
 		return wrapCoreError(applyErr)
 	}); err != nil {
 		return api.MetadataPreview{}, err
@@ -4071,6 +4082,7 @@ func buildMetadataPreview(meta api.PreparedMetadata, cfg config.Config) api.Meta
 		ExternalPreview:      buildExternalPreviews(meta.ExternalIDs, meta.ExternalMetadata),
 		Bluray:               deepCopyBlurayMetadata(meta.ExternalMetadata.Bluray),
 		TrackerData:          buildTrackerPreview(meta.TrackerData, cfg),
+		TrackerRuleFailures:  deepCopyTrackerRuleFailures(meta.TrackerRuleFailures),
 	}
 }
 

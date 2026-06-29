@@ -1,0 +1,127 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { MetadataPreview, ReleaseNameEditState, ReleaseNameTouchedState } from "../../types";
+import InputPage from "./index";
+
+const preview: MetadataPreview = {
+  SourcePath: "C:\\media\\Example.mkv",
+  TrackerName: "AITHER",
+  ReleaseName: "Example.2026.1080p",
+  Warnings: [],
+  ReleaseNameOverrides: {},
+  ExternalIDs: {
+    TMDBID: 0,
+    IMDBID: 0,
+    TVDBID: 0,
+    TVmazeID: 0,
+    Category: "TV",
+    SourceTMDB: "",
+    SourceIMDB: "",
+    SourceTVDB: "",
+    SourceTVmaze: "",
+  },
+  ExternalIDCandidates: {
+    TMDB: [],
+    IMDB: [],
+    TMDBAutoSelected: false,
+    IMDBAutoSelected: false,
+  },
+  ExternalIDInfo: [],
+  ExternalPreview: [],
+  TrackerData: [],
+};
+
+const releaseEdits: ReleaseNameEditState = {
+  category: "",
+  type: "",
+  source: "",
+  resolution: "",
+  tag: "",
+  service: "",
+  edition: "",
+  season: "",
+  episode: "",
+  episodeTitle: "",
+  manualYear: "",
+  manualDate: "",
+  useSeasonEpisode: false,
+  noSeason: false,
+  noYear: false,
+  noAKA: false,
+  noTag: false,
+  noEdition: false,
+  noDub: false,
+  noDual: false,
+  dualAudio: false,
+  region: "",
+};
+
+describe("InputPage metadata progress", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders tracker data fallback progress updates", () => {
+    render(
+      <InputPage
+        path="C:\media\Example.mkv"
+        handleSourcePathChange={vi.fn()}
+        sourcePathHistory={[]}
+        handleSourcePathHistorySelect={vi.fn()}
+        sourceLookupURL=""
+        setSourceLookupURL={vi.fn()}
+        browseAvailable={false}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        handleFetch={vi.fn()}
+        handleRefresh={vi.fn()}
+        handleResetMetadata={vi.fn()}
+        loading={false}
+        metadataResetting={false}
+        metadataProgressActive={true}
+        metadataProgressUpdates={[
+          {
+            path: "C:\\media\\Example.mkv",
+            phase: "tracker-data-fallback",
+            message: "Retrying tracker data",
+            status: "running",
+            level: "info",
+            timestamp: "2026-06-29T00:00:00Z",
+          },
+        ]}
+        error=""
+        preview={preview}
+        trackerUploadItems={[]}
+        releasePageTrackerSelection={{}}
+        setReleasePageTrackerSelection={vi.fn()}
+        idEdits={{ tmdb: "", imdb: "", tvdb: "", tvmaze: "" }}
+        setIdEdits={vi.fn()}
+        releaseEdits={releaseEdits}
+        setReleaseEdits={vi.fn()}
+        markReleaseTouched={vi.fn<(key: keyof ReleaseNameTouchedState) => void>()}
+        idOverrideState={{ overrides: {}, dirty: false, invalid: false }}
+        releaseOverrideState={{ overrides: {}, dirty: false, invalid: false }}
+        showExternalIDInputUI={false}
+        refreshDisabled={false}
+        selectedProvider=""
+        setSelectedProvider={vi.fn()}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        runDebug={false}
+        setRunDebug={vi.fn()}
+        runLogLevel=""
+        setRunLogLevel={vi.fn()}
+        runLogLevelTouched={false}
+        setRunLogLevelTouched={vi.fn()}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    expect(screen.getByText("Retry tracker data")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+  });
+});

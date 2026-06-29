@@ -362,6 +362,23 @@ func TestResolveServiceDarkroom(t *testing.T) {
 	}
 }
 
+func TestResolveServiceMGMPlus(t *testing.T) {
+	t.Parallel()
+
+	service, longName, filename := resolveService(api.PreparedMetadata{
+		SourcePath: `D:\TV\A.Spy.Among.Friends.S01.2160p.MGMP.WEB-DL.DDP5.1.H.265-XEBEC`,
+	})
+	if service != "MGMP" {
+		t.Fatalf("expected MGMP service, got %q", service)
+	}
+	if longName != "MGM Plus" {
+		t.Fatalf("expected MGM Plus long name, got %q", longName)
+	}
+	if filename == "" {
+		t.Fatalf("expected filename to be preserved")
+	}
+}
+
 func TestResolveServiceValue(t *testing.T) {
 	t.Parallel()
 
@@ -376,6 +393,11 @@ func TestResolveServiceValue(t *testing.T) {
 	service, _ = resolveServiceValue("AMAZON")
 	if service != "AMZN" {
 		t.Fatalf("expected AMZN service, got %q", service)
+	}
+
+	service, _ = resolveServiceValue("MGM+")
+	if service != "MGMP" {
+		t.Fatalf("expected MGMP service, got %q", service)
 	}
 }
 

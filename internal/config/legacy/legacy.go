@@ -44,7 +44,7 @@ func importFromData(data []byte) (*config.Config, []string, error) {
 		return nil, nil, err
 	}
 
-	if err := config.MergeMissingTrackerDefaults(cfg); err != nil {
+	if _, err := config.MergeMissingTrackerDefaults(cfg); err != nil {
 		return nil, nil, fmt.Errorf("merge tracker defaults: %w", err)
 	}
 

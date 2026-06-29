@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -25,11 +26,32 @@ import (
 
 const dryRunPayloadPreviewLimit = 240
 
-func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config) error {
-	return runInteractiveCLIPathWithInput(ctx, coreSvc, baseArgs, opts, visited, sourcePath, screens, cfg, os.Stdin)
+// cliTrackerAuthService is the CLI-facing subset of tracker auth operations
+// needed to verify and refresh tracker auth before dupe checking.
+type cliTrackerAuthService interface {
+	Capabilities(ctx context.Context) ([]api.TrackerAuthCapability, error)
+	Validate(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error)
+	Submit2FA(ctx context.Context, challengeID string, code string) (api.TrackerAuthStatus, error)
+}
+
+func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, cfg config.Config) error {
+	return runInteractiveCLIPathWithInputAndLogger(ctx, coreSvc, nil, opts, visited, sourcePath, 1, cfg, os.Stdin, api.NopLogger{})
+}
+
+// runInteractiveCLIPathWithLogger runs one interactive CLI upload path and
+// sends CLI-only tracker auth decisions to logger.
+func runInteractiveCLIPathWithLogger(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, logger api.Logger) error {
+	return runInteractiveCLIPathWithInputAndLogger(ctx, coreSvc, baseArgs, opts, visited, sourcePath, screens, cfg, os.Stdin, logger)
 }
 
 func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, stdin io.Reader) error {
+	return runInteractiveCLIPathWithInputAndLogger(ctx, coreSvc, baseArgs, opts, visited, sourcePath, screens, cfg, stdin, api.NopLogger{})
+}
+
+// runInteractiveCLIPathWithInputAndLogger is the injectable form of
+// runInteractiveCLIPathWithLogger used when tests need controlled stdin.
+func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, stdin io.Reader, logger api.Logger) error {
+	logger = cliAuthLogger(logger)
 	reader := bufio.NewReader(stdin)
 	currentArgs := append([]string(nil), baseArgs...)
 	currentOpts := opts
@@ -113,6 +135,18 @@ func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, baseA
 	}
 	req.Trackers = candidateTrackers
 	req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(removalBase, candidateTrackers)...)
+
+	readyAuthTrackers, err := ensureCLITrackerAuthBeforeDupeCheckWithLogger(ctx, reader, cfg, req, candidateTrackers, metadataPreview, logger)
+	if err != nil {
+		return err
+	}
+	candidateTrackers = removeUnreadyCLIAuthTrackers(candidateTrackers, readyAuthTrackers)
+	req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(req.Trackers, candidateTrackers)...)
+	req.Trackers = candidateTrackers
+	if len(candidateTrackers) == 0 {
+		fmt.Printf("No trackers selected for %s\n", sourcePath)
+		return nil
+	}
 
 	dupeSummary, err := runCLIDupeCheck(ctx, coreSvc, req)
 	if err != nil {
@@ -208,6 +242,333 @@ func resolveCLIUploadTrackers(visited map[string]bool, req api.Request, preview 
 		available = trackers.ResolveTrackers(cfg, req.Trackers, remove, api.NopLogger{})
 	}
 	return available, removalBase
+}
+
+// trackerRuleFailuresForPreview returns preview-time rule failures for a
+// tracker, accepting mixed-case map keys from older or test-built payloads.
+func trackerRuleFailuresForPreview(preview api.MetadataPreview, tracker string) []api.RuleFailure {
+	if len(preview.TrackerRuleFailures) == 0 {
+		return nil
+	}
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if failures, ok := preview.TrackerRuleFailures[name]; ok {
+		return failures
+	}
+	for key, failures := range preview.TrackerRuleFailures {
+		if strings.EqualFold(strings.TrimSpace(key), name) {
+			return failures
+		}
+	}
+	return nil
+}
+
+// cliTrackerRuleFailuresIgnored reports whether a preview rule failure should
+// be bypassed for a tracker, using the global flag or a per-tracker override.
+func cliTrackerRuleFailuresIgnored(req api.Request, tracker string) bool {
+	if req.IgnoreTrackerRuleFailures {
+		return true
+	}
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if name == "" {
+		return false
+	}
+	for _, allowed := range req.IgnoreTrackerRuleFailuresFor {
+		if strings.EqualFold(strings.TrimSpace(allowed), name) {
+			return true
+		}
+	}
+	return false
+}
+
+// removeUnreadyCLIAuthTrackers keeps only trackers marked ready to continue
+// after auth filtering, including unmanaged trackers that need no auth call.
+// An empty ready list means auth filtering ran and no candidate remained ready.
+func removeUnreadyCLIAuthTrackers(candidateTrackers []string, readyTrackers []string) []string {
+	if len(candidateTrackers) == 0 {
+		return candidateTrackers
+	}
+	ready := make(map[string]struct{}, len(readyTrackers))
+	for _, tracker := range readyTrackers {
+		if name := strings.ToUpper(strings.TrimSpace(tracker)); name != "" {
+			ready[name] = struct{}{}
+		}
+	}
+
+	filtered := make([]string, 0, len(candidateTrackers))
+	for _, tracker := range candidateTrackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		if _, isReady := ready[name]; !isReady {
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered
+}
+
+// ensureCLITrackerAuthBeforeDupeCheckWithLogger validates tracker auth using a
+// service that shares the CLI logger for service-level and CLI decision logs.
+func ensureCLITrackerAuthBeforeDupeCheckWithLogger(ctx context.Context, reader *bufio.Reader, cfg config.Config, req api.Request, trackerNames []string, preview api.MetadataPreview, logger api.Logger) ([]string, error) {
+	if len(trackerNames) == 0 {
+		return trackerNames, nil
+	}
+	logger = cliAuthLogger(logger)
+	return ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx, reader, trackerauth.NewServiceWithLogger(cfg, logger), req, trackerNames, preview, logger)
+}
+
+// ensureCLITrackerAuthBeforeDupeCheckWithService is the injectable form of
+// ensureCLITrackerAuthBeforeDupeCheck used by tests.
+func ensureCLITrackerAuthBeforeDupeCheckWithService(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, req api.Request, trackerNames []string) ([]string, error) {
+	return ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx, reader, authSvc, req, trackerNames, api.MetadataPreview{}, api.NopLogger{})
+}
+
+// ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger applies CLI-specific
+// keep/skip behavior and logs redacted outcomes for managed-auth trackers.
+// Preview rule failures suppress managed-auth checks only after capability
+// classification and leave those managed trackers out of the ready result, so
+// static API-key/passkey trackers stay quiet here.
+func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, req api.Request, trackerNames []string, preview api.MetadataPreview, logger api.Logger) ([]string, error) {
+	logger = cliAuthLogger(logger)
+
+	capabilities, err := authSvc.Capabilities(ctx)
+	if err != nil {
+		logger.Warnf("cli auth: capability load failed error=%s", cliAuthLogError(err))
+		return nil, fmt.Errorf("upbrr: tracker auth capabilities: %w", err)
+	}
+	logger.Debugf("cli auth: capabilities loaded count=%d", len(capabilities))
+	capabilityByTracker := make(map[string]api.TrackerAuthCapability, len(capabilities))
+	for _, capability := range capabilities {
+		name := strings.ToUpper(strings.TrimSpace(capability.TrackerID))
+		if name != "" {
+			capabilityByTracker[name] = capability
+		}
+	}
+
+	readyByTracker := make(map[string]struct{}, len(trackerNames))
+	authCheckTrackers := make([]string, 0, len(trackerNames))
+	for _, trackerName := range trackerNames {
+		name := strings.ToUpper(strings.TrimSpace(trackerName))
+		if name == "" {
+			continue
+		}
+		capability, ok := capabilityByTracker[name]
+		if !ok {
+			readyByTracker[name] = struct{}{}
+			continue
+		}
+		if !cliTrackerAuthApplies(capability) {
+			readyByTracker[name] = struct{}{}
+			continue
+		}
+		if !cliTrackerRuleFailuresIgnored(req, name) && len(trackerRuleFailuresForPreview(preview, name)) > 0 {
+			logger.Debugf("cli auth: tracker=%s skipped before auth due to rule failure", name)
+			continue
+		}
+		authCheckTrackers = append(authCheckTrackers, name)
+	}
+
+	logger.Infof("cli auth: pre-dupe check start trackers=%d", len(authCheckTrackers))
+	for _, name := range authCheckTrackers {
+		capability := capabilityByTracker[name]
+
+		logger.Infof("cli auth: validating tracker=%s auth_kind=%s", name, cliAuthLogField(capability.AuthKind))
+		status, err := authSvc.Validate(ctx, name)
+		if err != nil {
+			logger.Warnf("cli auth: validation failed tracker=%s error=%s", name, cliAuthLogError(err))
+			return nil, fmt.Errorf("upbrr: tracker auth %s: %w", name, err)
+		}
+		logCLITrackerAuthStatus(logger, "validation result", status)
+		status, keep, err := handleCLITrackerAuthStatusWithLogger(ctx, reader, authSvc, capability, status, req, logger)
+		if err != nil {
+			return nil, err
+		}
+		if cliTrackerAuthReady(status) {
+			logger.Infof("cli auth: tracker=%s decision=ready state=%s", name, cliAuthLogField(status.State))
+			readyByTracker[name] = struct{}{}
+			continue
+		}
+		if keep {
+			logger.Infof("cli auth: tracker=%s decision=keep state=%s", name, cliAuthLogField(status.State))
+			readyByTracker[name] = struct{}{}
+			continue
+		}
+		logger.Warnf("cli auth: tracker=%s decision=skip state=%s reason=%s", name, cliAuthLogField(status.State), cliAuthStatusMessageForLog(status))
+	}
+
+	ready := make([]string, 0, len(trackerNames))
+	for _, trackerName := range trackerNames {
+		name := strings.ToUpper(strings.TrimSpace(trackerName))
+		if _, ok := readyByTracker[name]; ok {
+			ready = append(ready, name)
+		}
+	}
+	logger.Infof("cli auth: pre-dupe check complete ready=%d skipped=%d", len(ready), len(trackerNames)-len(ready))
+	return ready, nil
+}
+
+// cliTrackerAuthApplies reports whether a capability represents managed auth
+// work, matching the frontend tracker-auth settings filter instead of static
+// API-key/passkey config.
+func cliTrackerAuthApplies(capability api.TrackerAuthCapability) bool {
+	authKind := strings.ToLower(strings.TrimSpace(capability.AuthKind))
+	return capability.SupportsCookieFile ||
+		capability.SupportsLogin ||
+		capability.SupportsAutoLogin ||
+		capability.SupportsTOTP ||
+		capability.SupportsManual2FA ||
+		strings.Contains(authKind, "refresh") ||
+		strings.Contains(authKind, "2fa")
+}
+
+// handleCLITrackerAuthStatusWithLogger converts one auth status into a CLI
+// decision and logs blocked, prompt, and skip outcomes without secret material.
+func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, capability api.TrackerAuthCapability, status api.TrackerAuthStatus, req api.Request, logger api.Logger) (api.TrackerAuthStatus, bool, error) {
+	logger = cliAuthLogger(logger)
+	if cliTrackerAuthReady(status) {
+		return status, true, nil
+	}
+	trackerID := strings.ToUpper(strings.TrimSpace(status.TrackerID))
+	if trackerID == "" {
+		trackerID = strings.ToUpper(strings.TrimSpace(capability.TrackerID))
+	}
+
+	if status.Needs2FA && strings.TrimSpace(status.ChallengeID) != "" {
+		if isUnattendedNoConfirm(req) {
+			logger.Warnf("cli auth: tracker=%s decision=blocked reason=2fa_required unattended=true", trackerID)
+			return status, false, fmt.Errorf("upbrr: unattended tracker auth %s requires 2FA before dupe check", trackerID)
+		}
+		logger.Infof("cli auth: tracker=%s decision=prompt_2fa", trackerID)
+		return promptCLITrackerAuth2FAWithLogger(ctx, reader, authSvc, trackerID, status, logger)
+	}
+
+	message := cliTrackerAuthStatusMessage(status)
+	if isUnattendedNoConfirm(req) {
+		logger.Warnf("cli auth: tracker=%s decision=blocked reason=%s unattended=true", trackerID, cliAuthStatusMessageForLog(status))
+		return status, false, fmt.Errorf("upbrr: tracker auth %s not ready before dupe check: %s", trackerID, message)
+	}
+	fmt.Printf("Skipping %s before dupe check: tracker auth not ready (%s).\n", trackerID, message)
+	return status, false, nil
+}
+
+// promptCLITrackerAuth2FAWithLogger prompts for manual 2FA and logs only the
+// submitted outcome; it never logs codes or challenge identifiers.
+func promptCLITrackerAuth2FAWithLogger(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, trackerID string, status api.TrackerAuthStatus, logger api.Logger) (api.TrackerAuthStatus, bool, error) {
+	logger = cliAuthLogger(logger)
+	for {
+		fmt.Printf("\n[%s Auth]\n%s\n", trackerID, cliTrackerAuthStatusMessage(status))
+		code, err := promptLine(reader, trackerID+" 2FA code (blank to skip tracker): ")
+		if err != nil {
+			logger.Warnf("cli auth: tracker=%s 2fa prompt failed error=%s", trackerID, cliAuthLogError(err))
+			return status, false, err
+		}
+		if strings.TrimSpace(code) == "" {
+			logger.Warnf("cli auth: tracker=%s decision=skip reason=2fa_code_not_provided", trackerID)
+			fmt.Printf("Skipping %s before dupe check: 2FA code not provided.\n", trackerID)
+			return status, false, nil
+		}
+		nextStatus, err := authSvc.Submit2FA(ctx, status.ChallengeID, code)
+		if err != nil {
+			logger.Warnf("cli auth: tracker=%s 2fa submit failed error=%s", trackerID, cliAuthLogError(err))
+			return status, false, fmt.Errorf("upbrr: tracker auth %s 2FA: %w", trackerID, err)
+		}
+		status = nextStatus
+		logCLITrackerAuthStatus(logger, "2fa result", status)
+		if cliTrackerAuthReady(status) {
+			logger.Infof("cli auth: tracker=%s decision=ready state=%s", trackerID, cliAuthLogField(status.State))
+			fmt.Printf("%s auth ready.\n", trackerID)
+			return status, true, nil
+		}
+		if !status.Needs2FA || strings.TrimSpace(status.ChallengeID) == "" {
+			logger.Warnf("cli auth: tracker=%s decision=skip state=%s reason=%s", trackerID, cliAuthLogField(status.State), cliAuthStatusMessageForLog(status))
+			fmt.Printf("Skipping %s before dupe check: tracker auth not ready (%s).\n", trackerID, cliTrackerAuthStatusMessage(status))
+			return status, false, nil
+		}
+		logger.Infof("cli auth: tracker=%s decision=prompt_2fa_again state=%s", trackerID, cliAuthLogField(status.State))
+	}
+}
+
+// cliAuthLogger returns a no-op logger when callers do not provide one.
+func cliAuthLogger(logger api.Logger) api.Logger {
+	if logger == nil {
+		return api.NopLogger{}
+	}
+	return logger
+}
+
+// logCLITrackerAuthStatus records status metadata that is safe for logs: state,
+// cookie count, encrypted-storage availability, and whether 2FA is still needed.
+func logCLITrackerAuthStatus(logger api.Logger, operation string, status api.TrackerAuthStatus) {
+	logger = cliAuthLogger(logger)
+	logger.Infof(
+		"cli auth: %s tracker=%s state=%s cookies=%d encrypted_storage=%t needs_2fa=%t",
+		cliAuthLogField(operation),
+		cliAuthLogTrackerID(status.TrackerID),
+		cliAuthLogField(status.State),
+		status.CookieCount,
+		status.EncryptedStorage,
+		status.Needs2FA,
+	)
+}
+
+// cliAuthLogTrackerID normalizes tracker IDs for log fields and avoids empty
+// tracker values when status construction fails before a tracker is known.
+func cliAuthLogTrackerID(trackerID string) string {
+	trackerID = strings.ToUpper(strings.TrimSpace(trackerID))
+	if trackerID == "" {
+		return "unknown"
+	}
+	return cliAuthLogField(trackerID)
+}
+
+// cliAuthStatusMessageForLog returns the same status detail shown to users,
+// already passed through the auth redaction policy.
+func cliAuthStatusMessageForLog(status api.TrackerAuthStatus) string {
+	return cliTrackerAuthStatusMessage(status)
+}
+
+// cliAuthLogError formats an error for logs after applying redaction.
+func cliAuthLogError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return cliAuthLogField(err.Error())
+}
+
+// cliAuthLogField trims and redacts a single log field, returning "none" for
+// empty values so structured key/value-style messages stay readable.
+func cliAuthLogField(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "none"
+	}
+	return redaction.RedactValue(value, nil)
+}
+
+// cliTrackerAuthReady reports whether a tracker-auth status is usable without
+// further user input before CLI dupe checking.
+func cliTrackerAuthReady(status api.TrackerAuthStatus) bool {
+	if status.Needs2FA {
+		return false
+	}
+	switch strings.TrimSpace(status.State) {
+	case trackerauth.StateConfigured, trackerauth.StateHasCookies:
+		return true
+	default:
+		return false
+	}
+}
+
+// cliTrackerAuthStatusMessage selects and redacts the safest user-visible status
+// detail available for CLI prompts and errors.
+func cliTrackerAuthStatusMessage(status api.TrackerAuthStatus) string {
+	for _, value := range []string{status.Message, status.LastError, status.State} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return cliAuthLogField(trimmed)
+		}
+	}
+	return "auth not ready"
 }
 
 func matchedPreviewTrackers(preview api.MetadataPreview) []string {

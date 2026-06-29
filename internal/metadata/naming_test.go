@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -54,7 +55,7 @@ func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 		Tag:         "-ETHEL",
 	}, api.NopLogger{})
 
-	expectedName := "Greenland 2: Migration 2026 2160p iT WEB-DL DD+ Atmos 5.1 HDR10+ x265-ETHEL"
+	expectedName := "Greenland 2: Migration 2026 2160p iT WEB-DL DD+ 5.1 Atmos HDR10+ x265-ETHEL"
 	if result.Name != expectedName {
 		t.Fatalf("expected name %q, got %q", expectedName, result.Name)
 	}
@@ -169,6 +170,64 @@ func TestReleaseNameRequestFromMetaDefaultsToDailyForTVEpisode(t *testing.T) {
 	}
 	if req.EpisodeTitle != "Episode Title" {
 		t.Fatalf("expected episode title preserved, got %q", req.EpisodeTitle)
+	}
+}
+
+func TestReleaseNameRequestFromMetaOmitsSeriesTitleEpisodeTitle(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{NameEnglish: "Re: ZERO, Starting Life in Another World"},
+		},
+		Type:         "ENCODE",
+		SeasonStr:    "S04",
+		EpisodeStr:   "E11",
+		EpisodeTitle: "Re:ZERO -Starting Life in Another World-",
+	}
+
+	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if req.EpisodeTitle != "" {
+		t.Fatalf("expected duplicate series episode title omitted, got %q", req.EpisodeTitle)
+	}
+
+	result := BuildReleaseName(req, api.NopLogger{})
+	if strings.Contains(result.NameNoTag, "Re:ZERO -Starting Life in Another World-") {
+		t.Fatalf("expected release name to omit duplicate episode title, got %q", result.NameNoTag)
+	}
+}
+
+func TestReleaseNameRequestFromMetaTVPackOmitsSeasonTitle(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		Release: api.ReleaseInfo{
+			Title:      "A Spy Among Friends",
+			Resolution: "2160p",
+		},
+		Type:         "WEBDL",
+		Source:       "Web",
+		Service:      "MGMP",
+		Audio:        "DD+ 5.1",
+		VideoEncode:  "H.265",
+		SeasonStr:    "S01",
+		TVPack:       true,
+		EpisodeTitle: "Season 1",
+		Tag:          "-XEBEC",
+	}
+
+	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if req.EpisodeTitle != "" {
+		t.Fatalf("expected tv pack season title omitted from naming request, got %q", req.EpisodeTitle)
+	}
+
+	result := BuildReleaseName(req, api.NopLogger{})
+	if strings.Contains(result.NameNoTag, "Season 1") {
+		t.Fatalf("expected tv pack name to omit season title, got %q", result.NameNoTag)
+	}
+	if strings.Contains(result.NameNoTag, "2022") {
+		t.Fatalf("expected tv pack name to omit ordinary tvdb year, got %q", result.NameNoTag)
+	}
+	if !containsAll(result.NameNoTag, []string{"A Spy Among Friends", "S01", "MGMP", "WEB-DL"}) {
+		t.Fatalf("expected tv pack name to keep season and service tokens, got %q", result.NameNoTag)
 	}
 }
 
@@ -378,6 +437,31 @@ func TestReleaseNameRequestFromMetaTVOmitsSearchYearWhenTVDBYearNotAliasDerived(
 	}
 }
 
+func TestReleaseNameRequestFromMetaLogsTVDBYearSource(t *testing.T) {
+	meta := api.PreparedMetadata{
+		SourcePath:  `D:\Shows\Example.Show.S01E01.1080p.BluRay.x264`,
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		Type:        "ENCODE",
+		Source:      "BluRay",
+		Release:     api.ReleaseInfo{Title: "Example Show", Resolution: "1080p"},
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{Name: "TVDB Name", Year: 2024, YearSource: "first_aired"},
+		},
+	}
+	logger := &captureLogger{}
+
+	req := releaseNameRequestFromMeta(meta, logger)
+	if req.SearchYear != "" {
+		t.Fatalf("expected empty tv search year, got %q", req.SearchYear)
+	}
+	if !logger.contains(`year_source="first_aired"`) {
+		t.Fatalf("expected year source in trace logs, got %#v", logger.lines)
+	}
+	if !logger.contains(`tvdb_year_from_alias=false`) {
+		t.Fatalf("expected tvdb_year_from_alias=false in trace logs, got %#v", logger.lines)
+	}
+}
+
 func TestBuildReleaseNameTVUsesSearchYearOverRequestYear(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category:    "TV",
@@ -467,4 +551,37 @@ func containsAll(value string, parts []string) bool {
 		}
 	}
 	return true
+}
+
+type captureLogger struct {
+	lines []string
+}
+
+func (l *captureLogger) Tracef(format string, args ...any) {
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *captureLogger) Debugf(format string, args ...any) {
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *captureLogger) Infof(format string, args ...any) {
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *captureLogger) Warnf(format string, args ...any) {
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *captureLogger) Errorf(format string, args ...any) {
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *captureLogger) contains(value string) bool {
+	for _, line := range l.lines {
+		if strings.Contains(line, value) {
+			return true
+		}
+	}
+	return false
 }
