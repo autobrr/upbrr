@@ -20,6 +20,7 @@ import (
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/btn"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/mtv"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ptp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -248,13 +249,19 @@ func TestValidateBTNStoredCookiesPromotesRemoteSuccess(t *testing.T) {
 	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
+	handlerErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/upload.php" {
 			http.NotFound(w, r)
 			return
 		}
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
-			t.Fatalf("expected BTN session cookie, got %q", got)
+			select {
+			case handlerErr <- fmt.Errorf("expected BTN session cookie, got %q", got):
+			default:
+			}
+			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
+			return
 		}
 		_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
 	}))
@@ -267,6 +274,11 @@ func TestValidateBTNStoredCookiesPromotesRemoteSuccess(t *testing.T) {
 			"BTN": {URL: server.URL},
 		}},
 	}).Validate(ctx, "BTN")
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -309,6 +321,52 @@ func TestValidateBTNRemoteSuccessRequiresAPIKey(t *testing.T) {
 	}
 }
 
+func TestValidateBTNMissingAPIAfterCookieRefreshUpdatesCookieCount(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login.php":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			_, _ = w.Write([]byte("ok"))
+		case "/upload.php":
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
+				select {
+				case handlerErr <- fmt.Errorf("expected refreshed BTN session cookie, got %q", got):
+				default:
+				}
+				http.Error(w, "unexpected cookie", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {URL: server.URL, Username: "user", Password: "pass"},
+		}},
+	}).Validate(ctx, "BTN")
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected missing API status to include refreshed cookie count, got %#v", status)
+	}
+}
+
 func TestValidateBTNInvalidCookiesDeletesOnlyConfirmedInvalid(t *testing.T) {
 	t.Parallel()
 
@@ -341,6 +399,40 @@ func TestValidateBTNInvalidCookiesDeletesOnlyConfirmedInvalid(t *testing.T) {
 	}
 	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "BTN"); err == nil {
 		t.Fatal("expected BTN cookies to be deleted")
+	}
+}
+
+func TestValidateBTNCookieStorageFailureReportsStorageStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	jsonPath := trackerAuthLegacyCookiePathByExt(t, dbPath, "BTN", ".json")
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		t.Fatalf("mkdir cookie dir: %v", err)
+	}
+	if err := os.WriteFile(jsonPath, []byte(`{"session":`), 0o600); err != nil {
+		t.Fatalf("write malformed cookie file: %v", err)
+	}
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {Username: "user", Password: "pass"},
+		}},
+	}).Validate(ctx, "BTN")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateEncryptedStorageUnavailable {
+		t.Fatalf("expected storage-unavailable state, got %#v", status)
+	}
+	if !strings.Contains(status.Message, "cookie storage unavailable") {
+		t.Fatalf("expected storage failure message, got %#v", status)
+	}
+	if !strings.Contains(status.LastError, "unmarshal") {
+		t.Fatalf("expected parse error detail for CLI/frontend consumers, got %#v", status)
 	}
 }
 
@@ -1308,6 +1400,9 @@ func TestStatusConfiguredAuthReportsEncryptedStorageUnavailableWhenPersistenceRe
 			}
 			if status.EncryptedStorage {
 				t.Fatalf("expected storage availability to remain visible as false: %#v", status)
+			}
+			if !strings.Contains(status.Message, "encrypted cookie storage unavailable") {
+				t.Fatalf("expected storage-specific message, got %#v", status)
 			}
 		})
 	}
@@ -2528,6 +2623,20 @@ func newTrackerAuthTestDB(t *testing.T) string {
 	}
 	_ = repo.Close()
 	return dbPath
+}
+
+// trackerAuthLegacyCookiePathByExt selects the concrete legacy candidate path
+// for auth-status tests that seed malformed cookie files by format.
+func trackerAuthLegacyCookiePathByExt(t *testing.T, dbPath string, trackerID string, ext string) string {
+	t.Helper()
+
+	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
+		if filepath.Ext(candidate) == ext {
+			return candidate
+		}
+	}
+	t.Fatalf("expected %s legacy cookie path", ext)
+	return ""
 }
 
 func saveTrackerAuthTestConfig(t *testing.T, dbPath string, cfg config.Config) {

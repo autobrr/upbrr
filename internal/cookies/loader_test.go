@@ -6,6 +6,7 @@ package cookies
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,6 +205,56 @@ func TestLoadTrackerHTTPCookiesStoredValueOverridesStartupCookie(t *testing.T) {
 		if cookie.Domain != "bj-share.info" {
 			t.Fatalf("expected domain to be applied, got cookie %#v", cookie)
 		}
+	}
+}
+
+func TestLoadTrackerCookieMapMalformedLegacyJSONSurfacesParseError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	jsonPath := legacyCookiePathByExt(t, dbPath, "BTN", ".json")
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		t.Fatalf("mkdir cookie dir: %v", err)
+	}
+	if err := os.WriteFile(jsonPath, []byte(`{"session":`), 0o600); err != nil {
+		t.Fatalf("write malformed cookie file: %v", err)
+	}
+
+	_, err := LoadTrackerCookieMap(ctx, dbPath, "BTN")
+	if err == nil {
+		t.Fatal("expected malformed cookie file error")
+	}
+	if errors.Is(err, ErrTrackerCookiesNotFound) {
+		t.Fatalf("expected parse error, got not-found: %v", err)
+	}
+	if !strings.Contains(err.Error(), "unmarshal") {
+		t.Fatalf("expected JSON parse context, got %v", err)
+	}
+}
+
+func TestLoadTrackerHTTPCookiesMalformedLegacyJSONSurfacesParseError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	jsonPath := legacyCookiePathByExt(t, dbPath, "BTN", ".json")
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		t.Fatalf("mkdir cookie dir: %v", err)
+	}
+	if err := os.WriteFile(jsonPath, []byte(`{"session":`), 0o600); err != nil {
+		t.Fatalf("write malformed cookie file: %v", err)
+	}
+
+	_, err := LoadTrackerHTTPCookies(ctx, dbPath, "BTN", "backup.landof.tv")
+	if err == nil {
+		t.Fatal("expected malformed cookie file error")
+	}
+	if errors.Is(err, ErrTrackerCookiesNotFound) {
+		t.Fatalf("expected parse error, got not-found: %v", err)
+	}
+	if !strings.Contains(err.Error(), "unmarshal") {
+		t.Fatalf("expected JSON parse context, got %v", err)
 	}
 }
 
@@ -408,6 +459,20 @@ func writeLegacyCookieCandidates(t *testing.T, dbPath string, trackerID string) 
 		}
 	}
 	return candidates
+}
+
+// legacyCookiePathByExt selects the concrete legacy candidate path for tests
+// that need to seed one cookie format without depending on candidate ordering.
+func legacyCookiePathByExt(t *testing.T, dbPath string, trackerID string, ext string) string {
+	t.Helper()
+
+	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
+		if filepath.Ext(candidate) == ext {
+			return candidate
+		}
+	}
+	t.Fatalf("expected %s legacy cookie path", ext)
+	return ""
 }
 
 func rejectTrackerCookieDeletes(ctx context.Context, t *testing.T, dbPath string) {

@@ -23,6 +23,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// ErrTrackerCookiesNotFound reports that neither encrypted storage nor legacy
+// cookie files contained usable cookies for a tracker.
+var ErrTrackerCookiesNotFound = errors.New("cookies: tracker cookies not found")
+
 // LoadTrackerCookieMap returns cookies for trackerID from encrypted database
 // storage and legacy cookie files. Database values override legacy file values
 // when both sources contain the same cookie name.
@@ -404,11 +408,15 @@ func openTrackerCookieStore(ctx context.Context, dbPath string) (*CookieStore, [
 }
 
 func loadTrackerCookieMapFromFiles(dbPath string, trackerID string) (map[string]string, error) {
+	var firstLoadErr error
 	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
 		switch strings.ToLower(filepath.Ext(candidate)) {
 		case ".txt":
 			cookies, err := commonhttp.LoadNetscapeCookies(candidate, "")
 			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) && firstLoadErr == nil {
+					firstLoadErr = fmt.Errorf("cookies: load legacy cookie file %s: %w", candidate, err)
+				}
 				continue
 			}
 			values := httpCookiesToMap(cookies)
@@ -418,6 +426,9 @@ func loadTrackerCookieMapFromFiles(dbPath string, trackerID string) (map[string]
 		case ".json":
 			values, err := commonhttp.LoadJSONCookieMap(candidate)
 			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) && firstLoadErr == nil {
+					firstLoadErr = fmt.Errorf("cookies: load legacy cookie file %s: %w", candidate, err)
+				}
 				continue
 			}
 			if len(values) > 0 {
@@ -425,16 +436,23 @@ func loadTrackerCookieMapFromFiles(dbPath string, trackerID string) (map[string]
 			}
 		}
 	}
+	if firstLoadErr != nil {
+		return nil, firstLoadErr
+	}
 
-	return nil, fmt.Errorf("cookies: no cookies found for tracker %s", trackerID)
+	return nil, fmt.Errorf("%w: no cookies found for tracker %s", ErrTrackerCookiesNotFound, trackerID)
 }
 
 func loadTrackerHTTPCookiesFromFiles(dbPath string, trackerID string, domain string) ([]*http.Cookie, error) {
+	var firstLoadErr error
 	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
 		switch strings.ToLower(filepath.Ext(candidate)) {
 		case ".txt":
 			cookies, err := commonhttp.LoadNetscapeCookies(candidate, domain)
 			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) && firstLoadErr == nil {
+					firstLoadErr = fmt.Errorf("cookies: load legacy cookie file %s: %w", candidate, err)
+				}
 				continue
 			}
 			if len(cookies) > 0 {
@@ -443,6 +461,9 @@ func loadTrackerHTTPCookiesFromFiles(dbPath string, trackerID string, domain str
 		case ".json":
 			values, err := commonhttp.LoadJSONCookieMap(candidate)
 			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) && firstLoadErr == nil {
+					firstLoadErr = fmt.Errorf("cookies: load legacy cookie file %s: %w", candidate, err)
+				}
 				continue
 			}
 			cookies := CookieMapToHTTPCookies(values, domain)
@@ -451,8 +472,11 @@ func loadTrackerHTTPCookiesFromFiles(dbPath string, trackerID string, domain str
 			}
 		}
 	}
+	if firstLoadErr != nil {
+		return nil, firstLoadErr
+	}
 
-	return nil, fmt.Errorf("cookies: no cookies found for tracker %s", trackerID)
+	return nil, fmt.Errorf("%w: no cookies found for tracker %s", ErrTrackerCookiesNotFound, trackerID)
 }
 
 func httpCookiesToMap(values []*http.Cookie) map[string]string {

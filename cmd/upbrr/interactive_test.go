@@ -761,7 +761,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedBTN2FA(t *testing.T) 
 	if err == nil {
 		t.Fatal("expected unattended BTN 2FA error")
 	}
-	if !strings.Contains(err.Error(), "tracker auth BTN requires 2FA before dupe check") {
+	if !strings.Contains(err.Error(), "unattended tracker auth BTN requires 2FA before dupe check") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

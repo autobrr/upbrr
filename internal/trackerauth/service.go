@@ -251,6 +251,7 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 			}
 			return status, nil
 		}
+		status = s.statusForSpec(ctx, spec)
 		if isBTNSpec(spec) && !s.btnAPIKeyConfigured() {
 			status.State = StateLoginRequired
 			status.Message = btnMissingAPIKeyMessage()
@@ -514,7 +515,7 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 		status.State = StateEncryptedStorageUnavailable
 	}
 	status.Message = validationMessage(spec, status)
-	if uploadAuthNeedsCookiesOrLogin(spec) && hasAPIKey && status.CookieCount == 0 && !hasCredentials {
+	if status.State != StateEncryptedStorageUnavailable && uploadAuthNeedsCookiesOrLogin(spec) && hasAPIKey && status.CookieCount == 0 && !hasCredentials {
 		status.Message = uploadAuthRequiredMessage(spec)
 	}
 	if missingBTNAPIKey {
@@ -1121,6 +1122,12 @@ func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 	status.LastError = redact(err.Error())
 	status.Message = "remote auth test failed"
 
+	if isCookieStorageFailure(err) {
+		status.State = StateEncryptedStorageUnavailable
+		status.Message = "cookie storage unavailable; see error details"
+		return
+	}
+
 	var authRequired *AuthRequiredError
 	if errors.As(err, &authRequired) {
 		status.State = StateLoginRequired
@@ -1162,6 +1169,18 @@ func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 		status.CookieCount = 0
 		status.Message = "stored session expired or invalid"
 	}
+}
+
+// isCookieStorageFailure recognizes cookie persistence/load failures that should
+// be exposed as storage-unavailable rather than login-required auth states.
+func isCookieStorageFailure(err error) bool {
+	if err == nil || errors.Is(err, cookies.ErrTrackerCookiesNotFound) {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "cookies:") ||
+		strings.Contains(lower, "cookie store") ||
+		strings.Contains(lower, "legacy cookie file")
 }
 
 // CookiesToMap converts HTTP cookies to a name/value map, ignoring nil cookies

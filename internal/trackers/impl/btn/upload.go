@@ -167,6 +167,9 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	if err := validateBTNRequest(req); err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
+	if err := validateBTNDryRunUploadAuth(ctx, req); err != nil {
+		return api.TrackerDryRunEntry{}, err
+	}
 
 	uploadCtx, err := newUploadContext(ctx, req)
 	if err != nil {
@@ -204,6 +207,24 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
+// validateBTNDryRunUploadAuth checks only local auth prerequisites needed before
+// an upload can authenticate. It does not perform remote login or persist cookies
+// during dry-run, and it preserves storage/decrypt failures instead of treating
+// them as missing cookies.
+func validateBTNDryRunUploadAuth(ctx context.Context, req trackers.UploadRequest) error {
+	values, cookieErr := loadBTNCookies(ctx, req.AppConfig.MainSettings.DBPath)
+	if cookieErr == nil && len(values) > 0 {
+		return nil
+	}
+	if cookieErr != nil && !errors.Is(cookieErr, errBTNCookiesMissing) {
+		return cookieErr
+	}
+	if strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "" {
+		return errors.New("trackers: BTN cookie invalid/missing and username/password not configured")
+	}
+	return nil
+}
+
 func newUploadContext(ctx context.Context, req trackers.UploadRequest) (uploadContext, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -238,6 +259,9 @@ func ensureBTNUploadSession(ctx context.Context, cfg config.TrackerConfig, dbPat
 				return nil, err
 			}
 		}
+	}
+	if cookieErr != nil && !errors.Is(cookieErr, errBTNCookiesMissing) {
+		return nil, cookieErr
 	}
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return nil, errors.New("trackers: BTN cookie invalid/missing and username/password not configured")
@@ -303,10 +327,14 @@ func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerCo
 
 // validateBTNStoredCookies checks persisted BTN cookies against the upload page.
 // Confirmed logged-out evidence is returned distinctly so tracker auth can delete
-// stale cookies; ambiguous remote or parser failures preserve stored cookies.
+// stale cookies; storage/decrypt failures and ambiguous remote/parser failures
+// preserve stored cookies and block credential login.
 func validateBTNStoredCookies(ctx context.Context, baseURL string, dbPath string) error {
 	values, err := loadBTNCookies(ctx, dbPath)
-	if err != nil || len(values) == 0 {
+	if err != nil {
+		return err
+	}
+	if len(values) == 0 {
 		return errBTNCookiesMissing
 	}
 	client, err := newBTNClientWithCookies(baseURL, values)
@@ -771,11 +799,15 @@ func loadBTNCookiesIntoJar(ctx context.Context, client *http.Client, dbPath stri
 	setBTNCookies(client.Jar, baseURL, values)
 }
 
-// loadBTNCookies reads persisted BTN cookies and wraps storage errors with
-// tracker context for upload and tracker-auth callers.
+// loadBTNCookies reads persisted BTN cookies and maps only typed not-found
+// results to the BTN missing-cookie sentinel. Storage, parse, and decrypt errors
+// are returned with tracker context so callers can avoid replacing valid state.
 func loadBTNCookies(ctx context.Context, dbPath string) (map[string]string, error) {
 	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "BTN")
 	if err != nil {
+		if errors.Is(err, cookies.ErrTrackerCookiesNotFound) {
+			return nil, errBTNCookiesMissing
+		}
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	return values, nil
@@ -890,10 +922,16 @@ func btnLoggedOutPage(body string) bool {
 // BTN session without depending on one exact page layout.
 func btnLooksLikeUploadPage(body string) bool {
 	lower := strings.ToLower(body)
-	return strings.Contains(lower, "upload") ||
-		strings.Contains(lower, "name=\"file_input\"") ||
-		strings.Contains(lower, "name='file_input'") ||
-		strings.Contains(lower, "autofill")
+	hasForm := strings.Contains(lower, "<form")
+	hasUploadAction := strings.Contains(lower, "action=\"/upload.php") ||
+		strings.Contains(lower, "action='/upload.php") ||
+		strings.Contains(lower, "action=\"upload.php") ||
+		strings.Contains(lower, "action='upload.php")
+	hasFileInput := strings.Contains(lower, "name=\"file_input\"") ||
+		strings.Contains(lower, "name='file_input'")
+	hasAutofill := strings.Contains(lower, "name=\"autofill\"") ||
+		strings.Contains(lower, "name='autofill'")
+	return hasForm && (hasFileInput || (hasUploadAction && hasAutofill))
 }
 
 func resolve2FACode(otpURI string) (string, error) {
