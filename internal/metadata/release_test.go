@@ -35,6 +35,7 @@ func TestParseReleaseInfo(t *testing.T) {
 			category: "MOVIE",
 			typ:      "WEBDL",
 			source:   "Web",
+			group:    "GRP",
 		},
 		{
 			name:     "episode uses tv category and webdl source",
@@ -42,6 +43,7 @@ func TestParseReleaseInfo(t *testing.T) {
 			category: "TV",
 			typ:      "WEBDL",
 			source:   "Web",
+			group:    "GRP",
 		},
 		{
 			name:     "season pack uses tv category",
@@ -49,6 +51,7 @@ func TestParseReleaseInfo(t *testing.T) {
 			category: "TV",
 			typ:      "WEBDL",
 			source:   "Web",
+			group:    "GRP",
 		},
 		{
 			name:     "bare web filename uses webdl before webrip",
@@ -56,6 +59,7 @@ func TestParseReleaseInfo(t *testing.T) {
 			category: "MOVIE",
 			typ:      "WEBDL",
 			source:   "Web",
+			group:    "GRP",
 		},
 		{
 			name:     "webrip filename uses webrip",
@@ -63,6 +67,7 @@ func TestParseReleaseInfo(t *testing.T) {
 			category: "MOVIE",
 			typ:      "WEBRIP",
 			source:   "Web",
+			group:    "GRP",
 		},
 		{
 			name:     "bluray remux preserves distinct source and type",
@@ -70,6 +75,7 @@ func TestParseReleaseInfo(t *testing.T) {
 			category: "MOVIE",
 			typ:      "REMUX",
 			source:   "BluRay",
+			group:    "GRP",
 		},
 		{
 			name:     "bluray encode infers encode type",
@@ -77,6 +83,7 @@ func TestParseReleaseInfo(t *testing.T) {
 			category: "MOVIE",
 			typ:      "ENCODE",
 			source:   "BluRay",
+			group:    "GRP",
 		},
 		{
 			name:     "leading bracket anime group falls back from site",
@@ -111,10 +118,10 @@ func TestParseReleaseInfo(t *testing.T) {
 			if release.Source != tc.source {
 				t.Errorf("expected source %q, got %q", tc.source, release.Source)
 			}
-			if tc.site != "" && release.Site != tc.site {
+			if release.Site != tc.site {
 				t.Errorf("expected site %q, got %q", tc.site, release.Site)
 			}
-			if tc.group != "" && release.Group != tc.group {
+			if release.Group != tc.group {
 				t.Errorf("expected group %q, got %q", tc.group, release.Group)
 			}
 		})

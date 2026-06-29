@@ -842,10 +842,13 @@ export default function InputPage(props: Props) {
     ? buildPreviewDetails(selectedPreview, tvdbDisplayMode)
     : [];
 
+  // Keep this aligned with the backend FetchMetadataPreview phase emissions so
+  // progress updates advance without skipping backend work.
   const metadataPhaseOrder = [
     { key: "prepare", label: "Prepare metadata" },
     { key: "tracker-data", label: "Get tracker data" },
     { key: "mediainfo-ids", label: "Apply MediaInfo IDs" },
+    { key: "arr", label: "Apply Sonarr/Radarr data" },
     { key: "external-ids", label: "Resolve external IDs" },
     { key: "media-details", label: "Apply media details" },
     { key: "tracker-claims", label: "Check tracker claims" },

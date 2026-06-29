@@ -22,6 +22,9 @@ import (
 )
 
 const defaultBaseURL = "https://thexem.info"
+
+// maxHTTPErrorBodyBytes caps upstream error pages before sanitizing them.
+const maxHTTPErrorBodyBytes = 16 * 1024
 const maxHTTPErrorDetailLength = 240
 const thexemUserAgent = "upbrr"
 
@@ -32,6 +35,7 @@ var (
 	htmlScriptStylePattern = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
 	htmlTagPattern         = regexp.MustCompile(`(?s)<[^>]+>`)
 	ipv4Pattern            = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+	ipv6Pattern            = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:%\w+)?\b`)
 )
 
 type Client struct {
@@ -82,8 +86,7 @@ func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int)
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		detail := httpErrorDetail(body)
+		detail := httpErrorDetail(resp.Body)
 		if isUnavailableHTTP(resp.StatusCode, detail) {
 			return 0, 0, fmt.Errorf("thexem: map/single: %w", ErrUnavailable)
 		}
@@ -122,8 +125,7 @@ func (c *Client) GetSeasonNames(ctx context.Context, tvdbID int) (map[int][]stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		detail := httpErrorDetail(body)
+		detail := httpErrorDetail(resp.Body)
 		if isUnavailableHTTP(resp.StatusCode, detail) {
 			return nil, fmt.Errorf("thexem: map/names: %w", ErrUnavailable)
 		}
@@ -180,9 +182,11 @@ func (c *Client) MatchSeasonByName(ctx context.Context, tvdbID int, title string
 }
 
 // httpErrorDetail keeps upstream failure text useful without logging raw HTML,
-// script content, IP addresses, or unbounded response bodies.
-func httpErrorDetail(body []byte) string {
-	text := strings.TrimSpace(redaction.RedactValue(string(body), nil))
+// script content, IP addresses, or more than maxHTTPErrorBodyBytes from the
+// response body.
+func httpErrorDetail(body io.Reader) string {
+	payload, _ := io.ReadAll(io.LimitReader(body, maxHTTPErrorBodyBytes))
+	text := strings.TrimSpace(redaction.RedactValue(string(payload), nil))
 	if text == "" {
 		return "empty response body"
 	}
@@ -192,6 +196,7 @@ func httpErrorDetail(body []byte) string {
 	text = htmlScriptStylePattern.ReplaceAllString(text, " ")
 	text = htmlTagPattern.ReplaceAllString(text, " ")
 	text = ipv4Pattern.ReplaceAllString(text, "[REDACTED_IP]")
+	text = ipv6Pattern.ReplaceAllString(text, "[REDACTED_IP]")
 	text = strings.Join(strings.Fields(redaction.RedactValue(text, nil)), " ")
 	if len(text) <= maxHTTPErrorDetailLength {
 		return text

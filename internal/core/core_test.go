@@ -1715,6 +1715,50 @@ func TestCheckDupesUsesPathedTrackerDataWithFreshStoredSnapshot(t *testing.T) {
 	}
 }
 
+func TestCheckDupesAppliesTrackerClaimsBeforeDupeCheck(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{
+		applyTrackerClaims: func(meta api.PreparedMetadata) api.PreparedMetadata {
+			meta.BlockedTrackers = map[string][]api.TrackerBlockReason{
+				"AITHER": {api.TrackerBlockReasonClaim},
+			}
+			return meta
+		},
+	}
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    &stubClient{},
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.CheckDupes(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+		Options: api.UploadOptions{
+			SkipAutoTorrent: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+	if metaSvc.trackerClaimsCalls != 1 {
+		t.Fatalf("expected tracker claims applied once, got %d calls", metaSvc.trackerClaimsCalls)
+	}
+	if got := dupes.lastMeta.BlockedTrackers["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
+		t.Fatalf("expected dupe check to receive claim-blocked metadata, got %#v", dupes.lastMeta.BlockedTrackers)
+	}
+}
+
 func TestCheckDupesReusesCLIMetadataPreviewCache(t *testing.T) {
 	t.Parallel()
 
@@ -4171,15 +4215,19 @@ func (s stubFS) ValidatePaths(_ context.Context, paths []string) ([]string, erro
 }
 
 type stubMeta struct {
-	calls        int
-	enrichCalls  int
-	refreshCalls int
-	resolveCalls int
-	options      api.UploadOptions
-	prepared     api.PreparedMetadata
-	enrichMeta   api.PreparedMetadata
-	enriched     api.PreparedMetadata
-	resolved     api.PreparedMetadata
+	calls              int
+	enrichCalls        int
+	refreshCalls       int
+	resolveCalls       int
+	trackerClaimsCalls int
+	options            api.UploadOptions
+	prepared           api.PreparedMetadata
+	enrichMeta         api.PreparedMetadata
+	enriched           api.PreparedMetadata
+	resolved           api.PreparedMetadata
+	// applyTrackerClaims lets tests inject the metadata mutation normally
+	// returned by claim checks.
+	applyTrackerClaims func(api.PreparedMetadata) api.PreparedMetadata
 }
 
 func (s *stubMeta) Prepare(_ context.Context, req api.Request) (api.PreparedMetadata, error) {
@@ -4239,6 +4287,10 @@ func (s *stubMeta) ApplyMediaDetails(_ context.Context, meta api.PreparedMetadat
 }
 
 func (s *stubMeta) ApplyTrackerClaims(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	s.trackerClaimsCalls++
+	if s.applyTrackerClaims != nil {
+		return s.applyTrackerClaims(meta), nil
+	}
 	return meta, nil
 }
 
