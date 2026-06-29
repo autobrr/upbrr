@@ -791,7 +791,7 @@ func TestSaveConfigMigratesLegacyCookies(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if got := values["session"]; got != "from-legacy" {
-		t.Fatalf("migrated session cookie: got %q want %q", got, "from-legacy")
+		t.Fatal("migrated session cookie mismatch")
 	}
 }
 

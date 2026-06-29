@@ -292,6 +292,145 @@ func check() {
 	}
 }
 
+func TestCheckRepositoryFlagsCookieContainerHelperOutput(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/autobrr/upbrr/internal/cookies"
+)
+
+func check(t testingT, dbPath string) {
+	values, _ := cookies.LoadTrackerCookieMap(context.Background(), dbPath, "BTN")
+	t.Fatalf("expected cookies, got %#v", values)
+	httpCookies := cookies.CookieMapToHTTPCookies(map[string]string{"session": "abc"}, "example.test")
+	t.Fatalf("expected cookies, got %#v", httpCookies)
+	t.Fatalf("expected cookie, got %#v", &http.Cookie{Name: "session", Value: "abc"})
+}
+
+type testingT interface {
+	Fatalf(string, ...any)
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 3 {
+		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "cookie output") {
+			t.Fatalf("expected cookie output violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryFlagsSecretConfigFieldOutput(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type config struct {
+	TMDBAPI string
+	Trackers trackerSet
+}
+type trackerSet struct{ Trackers map[string]trackerConfig }
+type trackerConfig struct {
+	APIKey string
+	Passkey string
+	AnnounceURL string
+	URL string
+}
+
+func check(t testingT, cfg config) {
+	t.Fatalf("TMDBAPI mismatch: got %q", cfg.TMDBAPI)
+	t.Fatalf("tracker API key mismatch: got %q", cfg.Trackers.Trackers["BTN"].APIKey)
+	t.Fatalf("tracker passkey mismatch: got %q", cfg.Trackers.Trackers["CZT"].Passkey)
+	t.Fatalf("tracker announce mismatch: got %q", cfg.Trackers.Trackers["CZT"].AnnounceURL)
+	t.Fatalf("tracker URL mismatch: got %q", cfg.Trackers.Trackers["BTN"].URL)
+}
+
+type testingT interface {
+	Fatalf(string, ...any)
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 5 {
+		t.Fatalf("expected 5 violations, got %d: %#v", len(violations), violations)
+	}
+}
+
+func TestCheckRepositoryFlagsSecretBearingURLOutput(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+func check(t testingT, cfg trackerConfig) {
+	endpoint := "https://tracker.test/api?api_key=" + cfg.APIKey + "&action=upload"
+	t.Fatalf("endpoint: %s", endpoint)
+}
+
+type trackerConfig struct{ APIKey string }
+type testingT interface {
+	Fatalf(string, ...any)
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "secret config field output") {
+		t.Fatalf("expected secret field violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryFlagsSensitiveFixtureLogBufferDump(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+func check(t testingT, logs string) {
+	if !contains(logs, "tracker ready") {
+		t.Fatalf("expected tracker ready in logs: %s", logs)
+	}
+	if contains(logs, "hunter2") {
+		t.Fatalf("logs leaked password")
+	}
+}
+
+func contains(string, string) bool { return false }
+
+type testingT interface {
+	Fatalf(string, ...any)
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "sensitive output") {
+		t.Fatalf("expected sensitive output violation, got %q", violations[0].Message)
+	}
+}
+
 func TestCheckRepositoryFlagsRawDryRunDetailsOutput(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {

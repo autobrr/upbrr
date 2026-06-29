@@ -482,10 +482,10 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRuleFailureSkipOnlyForManagedAut
 
 	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
 	if !strings.Contains(logs, "cli auth: tracker=MTV skipped before auth due to rule failure") {
-		t.Fatalf("expected managed auth rule-failure skip log, got:\n%s", logs)
+		t.Fatal("expected managed auth rule-failure skip log")
 	}
 	if strings.Contains(logs, "tracker=NBL skipped before auth due to rule failure") {
-		t.Fatalf("static api-key tracker should not log auth rule-failure skip, got:\n%s", logs)
+		t.Fatal("static api-key tracker should not log auth rule-failure skip")
 	}
 }
 
@@ -526,7 +526,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckHonorsPerTrackerRuleFailureOverride(
 
 	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
 	if strings.Contains(logs, "tracker=MTV skipped before auth due to rule failure") {
-		t.Fatalf("overridden tracker should not log auth rule-failure skip, got:\n%s", logs)
+		t.Fatal("overridden tracker should not log auth rule-failure skip")
 	}
 }
 
@@ -607,14 +607,14 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRedactedDecisions(t *testing.T) 
 		"cli auth: tracker=HDB decision=skip state=login_required",
 	} {
 		if !strings.Contains(logs, expected) {
-			t.Fatalf("expected log %q in:\n%s", expected, logs)
+			t.Fatalf("expected log %q", expected)
 		}
 	}
 	if strings.Contains(logs, "hunter2") {
-		t.Fatalf("auth logs leaked password: %s", logs)
+		t.Fatal("auth logs leaked password")
 	}
 	if !strings.Contains(logs, `"password":"[REDACTED]"`) {
-		t.Fatalf("expected redacted password in auth logs, got:\n%s", logs)
+		t.Fatal("expected redacted password in auth logs")
 	}
 }
 

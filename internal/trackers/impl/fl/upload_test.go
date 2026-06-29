@@ -179,7 +179,7 @@ func TestPersistLoginCookiesRejectsEmptyResponseWithoutReplacingCookies(t *testi
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("empty response must preserve previous cookies, got %#v", values)
+		t.Fatal("empty response must preserve previous cookies")
 	}
 }
 

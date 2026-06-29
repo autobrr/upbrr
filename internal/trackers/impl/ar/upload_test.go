@@ -108,7 +108,7 @@ func TestPersistLoginCookiesRejectsEmptyJarWithoutReplacingCookies(t *testing.T)
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("empty jar must preserve previous cookies, got %#v", values)
+		t.Fatal("empty jar must preserve previous cookies")
 	}
 }
 
@@ -249,7 +249,7 @@ func TestPersistLoginAuthRestoresPreviousCookiesWhenAuthKeyWriteFails(t *testing
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("expected previous cookies restored, got %#v", values)
+		t.Fatal("expected previous cookies restored")
 	}
 }
 
@@ -285,7 +285,7 @@ func TestPersistLoginAuthRestoresPreviousCookiesWhenCallerContextCanceledDuringW
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("expected previous cookies restored after cancellation, got %#v", values)
+		t.Fatal("expected previous cookies restored after cancellation")
 	}
 }
 

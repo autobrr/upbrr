@@ -122,13 +122,13 @@ func TestLoadTrackerCookieMapStoredValueOverridesStartupCookie(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "from-db" {
-		t.Fatalf("expected db cookie to override startup value, got %#v", values)
+		t.Fatal("expected db cookie to override startup value")
 	}
 	if values["persisted"] != "keep-me" {
-		t.Fatalf("expected db-only cookie to remain available, got %#v", values)
+		t.Fatal("expected db-only cookie to remain available")
 	}
 	if values["fresh"] != "from-file" {
-		t.Fatalf("expected startup-only cookie to be loaded, got %#v", values)
+		t.Fatal("expected startup-only cookie to be loaded")
 	}
 }
 
@@ -141,13 +141,13 @@ func TestCookieMapToHTTPCookiesPreservesCookieValueWhitespace(t *testing.T) {
 		"empty":    "",
 	}, " .example.org ")
 	if len(got) != 1 {
-		t.Fatalf("expected one HTTP cookie, got %#v", got)
+		t.Fatalf("expected one HTTP cookie, got count=%d", len(got))
 	}
 	if got[0].Name != "session" || got[0].Value != " padded " {
-		t.Fatalf("expected cookie value whitespace to be preserved, got %#v", got[0])
+		t.Fatal("expected cookie value whitespace to be preserved")
 	}
 	if got[0].Domain != ".example.org" {
-		t.Fatalf("expected trimmed domain, got %#v", got[0])
+		t.Fatal("expected trimmed domain")
 	}
 }
 
@@ -190,20 +190,20 @@ func TestLoadTrackerHTTPCookiesStoredValueOverridesStartupCookie(t *testing.T) {
 
 	values := httpCookiesToMap(loaded)
 	if values["session"] != "from-db" {
-		t.Fatalf("expected db cookie to override startup value, got %#v", values)
+		t.Fatal("expected db cookie to override startup value")
 	}
 	if values["persisted"] != "keep-me" {
-		t.Fatalf("expected db-only cookie to remain available, got %#v", values)
+		t.Fatal("expected db-only cookie to remain available")
 	}
 	if values["fresh"] != "from-file" {
-		t.Fatalf("expected startup-only cookie to be loaded, got %#v", values)
+		t.Fatal("expected startup-only cookie to be loaded")
 	}
 	for _, cookie := range loaded {
 		if cookie == nil {
 			continue
 		}
 		if cookie.Domain != "bj-share.info" {
-			t.Fatalf("expected domain to be applied, got cookie %#v", cookie)
+			t.Fatal("expected domain to be applied")
 		}
 	}
 }
@@ -348,7 +348,7 @@ func TestDeleteTrackerCookiesRestoresDBCookiesWhenLegacyDeleteFails(t *testing.T
 		t.Fatalf("load restored cookies: %v", err)
 	}
 	if values["session"] != "from-db" {
-		t.Fatalf("expected DB cookie restore after legacy failure, got %#v", values)
+		t.Fatal("expected DB cookie restore after legacy failure")
 	}
 }
 
@@ -405,7 +405,7 @@ func TestDeleteTrackerCookiesRestoresRemovedLegacyCandidateWhenLaterLegacyDelete
 		t.Fatalf("load restored cookies: %v", err)
 	}
 	if values["session"] != "from-db" {
-		t.Fatalf("expected DB cookie restore after legacy failure, got %#v", values)
+		t.Fatal("expected DB cookie restore after legacy failure")
 	}
 }
 

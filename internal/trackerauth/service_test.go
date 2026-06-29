@@ -508,7 +508,7 @@ func TestValidateRTFRefreshesExpiredAPIKey(t *testing.T) {
 		t.Fatal("expected expired API key to trigger RTF login")
 	}
 	if got := loadStoredTrackerConfig(t, dbPath).Trackers.Trackers["RTF"].APIKey; got != "new-token" {
-		t.Fatalf("expected refreshed token persisted, got %q", got)
+		t.Fatal("expected refreshed token persisted")
 	}
 }
 
@@ -631,7 +631,7 @@ func TestValidateFFLoginPersistsCookies(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "valid" {
-		t.Fatalf("expected saved FF login cookies, got %#v", values)
+		t.Fatal("expected saved FF login cookies")
 	}
 }
 
@@ -687,7 +687,7 @@ func TestValidateFLLoginPersistsCookies(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "valid" {
-		t.Fatalf("expected saved FL login cookies, got %#v", values)
+		t.Fatal("expected saved FL login cookies")
 	}
 }
 
@@ -1872,7 +1872,7 @@ func TestCookiesToMapPreservesCookieValueWhitespace(t *testing.T) {
 
 	got := CookiesToMap([]*http.Cookie{{Name: " session ", Value: " abc "}})
 	if got["session"] != " abc " {
-		t.Fatalf("cookie value was normalized: %#v", got)
+		t.Fatal("cookie value was normalized")
 	}
 }
 
@@ -1983,7 +1983,7 @@ func TestImportCookiesRejectsMalformedArrayEntryWithoutReplacingCookies(t *testi
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("existing cookies changed after failed import: %#v", values)
+		t.Fatal("existing cookies changed after failed import")
 	}
 }
 
@@ -2010,7 +2010,7 @@ func TestImportCookiesRejectsOverCapWithoutReplacingCookies(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("existing cookies changed after failed import: %#v", values)
+		t.Fatal("existing cookies changed after failed import")
 	}
 }
 
@@ -2516,7 +2516,7 @@ func TestDeleteARCookieFailureRestoresAuthState(t *testing.T) {
 		t.Fatalf("expected AR cookies to be restored: %v", err)
 	}
 	if cookieValues["session"] != "abc" {
-		t.Fatalf("unexpected restored AR cookies: %#v", cookieValues)
+		t.Fatal("unexpected restored AR cookies")
 	}
 }
 
@@ -2589,7 +2589,7 @@ func TestEnsureSessionPreservesMTVCookiesOnInvalidLookingAdapterText(t *testing.
 				t.Fatalf("LoadTrackerCookieMap: %v", err)
 			}
 			if values[cookieName] != "abc" {
-				t.Fatalf("expected invalid-looking adapter text to preserve cookies, got %#v", values)
+				t.Fatal("expected invalid-looking adapter text to preserve cookies")
 			}
 		})
 	}
@@ -2635,7 +2635,7 @@ func TestValidateTransientAdapterFailurePreservesCookieCount(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "abc" {
-		t.Fatalf("expected transient adapter failure to preserve cookies, got %#v", values)
+		t.Fatal("expected transient adapter failure to preserve cookies")
 	}
 }
 

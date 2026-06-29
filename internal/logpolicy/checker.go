@@ -383,8 +383,11 @@ type sensitiveValue struct {
 }
 
 type sensitiveModel struct {
-	aliases map[string]string
-	vars    map[string]sensitiveValue
+	aliases              map[string]string
+	vars                 map[string]sensitiveValue
+	relPath              string
+	testFile             bool
+	testSensitiveFixture bool
 }
 
 type logpolicyAllow struct {
@@ -416,8 +419,11 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 			continue
 		}
 		model := sensitiveModel{
-			aliases: aliases,
-			vars:    make(map[string]sensitiveValue),
+			aliases:              aliases,
+			vars:                 make(map[string]sensitiveValue),
+			relPath:              relPath,
+			testFile:             testFile,
+			testSensitiveFixture: testFile && containsSensitiveFixtureLiteral(fn.Body),
 		}
 		functionContext := strings.ToLower(relPath + " " + fn.Name.Name)
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -434,6 +440,10 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 					value, ok := sensitivityOfExpr(model, sinkArg.expr)
 					if !ok && sinkArg.forceRawError {
 						value = sensitiveValue{kind: sensitiveRawError, label: "raw error"}
+						ok = true
+					}
+					if !ok && testFile && model.testSensitiveFixture && isTestLogBufferDumpExpr(sinkArg.expr) {
+						value = sensitiveValue{kind: sensitiveGeneric, label: "test log buffer"}
 						ok = true
 					}
 					if !ok {
@@ -685,9 +695,7 @@ func markSensitiveRange(model sensitiveModel, stmt *ast.RangeStmt) {
 
 func sensitivityOfExprResult(model sensitiveModel, expr ast.Expr, resultIndex int) (sensitiveValue, bool) {
 	if call, ok := expr.(*ast.CallExpr); ok {
-		if value, ok := sensitivityOfKnownCallResult(model, call, resultIndex); ok {
-			return value, true
-		}
+		return sensitivityOfKnownCallResult(model, call, resultIndex)
 	}
 	return sensitivityOfExpr(model, expr)
 }
@@ -711,8 +719,14 @@ func sensitivityOfExpr(model sensitiveModel, expr ast.Expr) (sensitiveValue, boo
 		if isBooleanBinaryOp(typed.Op) {
 			return sensitiveValue{}, false
 		}
+		if value, ok := sensitivityOfSecretBearingURLExpr(model, typed); ok {
+			return value, true
+		}
 		return firstSensitiveExpr(model, typed.X, typed.Y)
 	case *ast.SelectorExpr:
+		if value, ok := sensitivityOfSelectorExpr(model, typed); ok {
+			return value, true
+		}
 		return sensitivityOfExpr(model, typed.X)
 	case *ast.IndexExpr:
 		if value, ok := sensitivityOfPayloadIndex(model, typed); ok {
@@ -738,6 +752,9 @@ func sensitivityOfExpr(model sensitiveModel, expr ast.Expr) (sensitiveValue, boo
 			}
 		}
 	case *ast.CompositeLit:
+		if isCookieCompositeType(typed.Type) {
+			return sensitiveValue{kind: sensitiveCookieContainer, label: "cookies"}, true
+		}
 		for _, elt := range typed.Elts {
 			if value, ok := sensitivityOfExpr(model, elt); ok {
 				return value, true
@@ -781,6 +798,9 @@ func sensitivityOfPayloadIndex(model sensitiveModel, index *ast.IndexExpr) (sens
 }
 
 func sensitivityOfDirectCall(model sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
+	if value, ok := sensitivityOfKnownSensitiveCall(model, call); ok {
+		return value, true
+	}
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return sensitiveValue{}, false
@@ -816,6 +836,59 @@ func sensitivityOfDirectCall(model sensitiveModel, call *ast.CallExpr) (sensitiv
 		if ok && model.aliases[pkg.Name] == "io" && len(call.Args) == 1 && isResponseBodyExpr(call.Args[0]) {
 			return sensitiveValue{kind: sensitiveBody, label: "response body"}, true
 		}
+	}
+	return sensitiveValue{}, false
+}
+
+func sensitivityOfKnownSensitiveCall(model sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
+	switch callName(call) {
+	case "LoadTrackerCookieMap", "LoadTrackerHTTPCookies", "CookieMapToHTTPCookies", "CookiesToMap", "httpCookiesToMap", "cookiesFromJar", "btnCookiesFromJar":
+		return sensitiveValue{kind: sensitiveCookieContainer, label: "cookies"}, true
+	case "String":
+		if selector, ok := call.Fun.(*ast.SelectorExpr); ok && isSensitiveURLReceiver(model, selector.X) {
+			return sensitiveValue{kind: sensitiveEndpoint, label: "url"}, true
+		}
+	}
+	return sensitiveValue{}, false
+}
+
+func callName(call *ast.CallExpr) string {
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		return fun.Name
+	case *ast.SelectorExpr:
+		return fun.Sel.Name
+	default:
+		return ""
+	}
+}
+
+func sensitivityOfSelectorExpr(model sensitiveModel, selector *ast.SelectorExpr) (sensitiveValue, bool) {
+	name := strings.TrimSpace(selector.Sel.Name)
+	if model.testFile && isConfigOwnerTestPath(model.relPath) {
+		return sensitiveValue{}, false
+	}
+	if isSensitiveConfigFieldName(name) {
+		return sensitiveValue{kind: sensitiveConfigField, label: name}, true
+	}
+	if isSensitiveEndpointFieldName(name) {
+		return sensitiveValue{kind: sensitiveEndpoint, label: name}, true
+	}
+	if name == "URL" && strings.Contains(strings.ToLower(selectorPath(selector.X)), "tracker") {
+		return sensitiveValue{kind: sensitiveEndpoint, label: name}, true
+	}
+	return sensitiveValue{}, false
+}
+
+func sensitivityOfSecretBearingURLExpr(model sensitiveModel, expr *ast.BinaryExpr) (sensitiveValue, bool) {
+	if !binaryExprContainsSecretURLKey(expr) {
+		return sensitiveValue{}, false
+	}
+	if value, ok := firstSensitiveExpr(model, expr.X, expr.Y); ok {
+		return value, true
+	}
+	if containsSensitiveSelector(model, expr) {
+		return sensitiveValue{kind: sensitiveEndpoint, label: "secret URL"}, true
 	}
 	return sensitiveValue{}, false
 }
@@ -899,6 +972,148 @@ func isSensitiveFormKey(key string) bool {
 func isSensitiveQueryKey(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
 	case "token", "api_key", "api_token", "passkey", "authkey", "secret", "rsskey":
+		return true
+	default:
+		return false
+	}
+}
+
+func isConfigOwnerTestPath(relPath string) bool {
+	return strings.HasPrefix(relPath, "internal/config/") ||
+		strings.HasPrefix(relPath, "internal/configstore/")
+}
+
+func isSensitiveConfigFieldName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "apikey", "api_key", "password", "passkey", "token", "authkey", "anticsrftoken", "otpuri", "tmdbapi", "sonarrapikey", "radarrapikey", "qbitpass":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSensitiveEndpointFieldName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "announceurl", "endpoint":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCookieCompositeType(expr ast.Expr) bool {
+	switch typed := expr.(type) {
+	case *ast.SelectorExpr:
+		return typed.Sel.Name == "Cookie"
+	case *ast.StarExpr:
+		return isCookieCompositeType(typed.X)
+	case *ast.ArrayType:
+		return isCookieCompositeType(typed.Elt)
+	default:
+		return false
+	}
+}
+
+func isSensitiveURLReceiver(model sensitiveModel, expr ast.Expr) bool {
+	if _, ok := sensitivityOfExpr(model, expr); ok {
+		return true
+	}
+	return strings.Contains(strings.ToLower(selectorPath(expr)), "tracker")
+}
+
+func selectorPath(expr ast.Expr) string {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		return typed.Name
+	case *ast.SelectorExpr:
+		prefix := selectorPath(typed.X)
+		if prefix == "" {
+			return typed.Sel.Name
+		}
+		return prefix + "." + typed.Sel.Name
+	case *ast.IndexExpr:
+		return selectorPath(typed.X)
+	default:
+		return ""
+	}
+}
+
+func binaryExprContainsSecretURLKey(expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		lit, ok := node.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		value, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			return true
+		}
+		lower := strings.ToLower(value)
+		if strings.Contains(lower, "api_key=") ||
+			strings.Contains(lower, "api_token=") ||
+			strings.Contains(lower, "passkey=") ||
+			strings.Contains(lower, "authkey=") ||
+			strings.Contains(lower, "token=") {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func containsSensitiveSelector(model sensitiveModel, expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if _, sensitive := sensitivityOfSelectorExpr(model, selector); sensitive {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func containsSensitiveFixtureLiteral(node ast.Node) bool {
+	found := false
+	ast.Inspect(node, func(node ast.Node) bool {
+		lit, ok := node.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		value, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			return true
+		}
+		lower := strings.ToLower(value)
+		if strings.Contains(lower, "hunter2") ||
+			strings.Contains(lower, "secret") ||
+			strings.Contains(lower, "api_key") ||
+			strings.Contains(lower, "api-key") ||
+			strings.Contains(lower, "api token") ||
+			strings.Contains(lower, "api_token") ||
+			strings.Contains(lower, "passkey") ||
+			strings.Contains(lower, "authkey") {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func isTestLogBufferDumpExpr(expr ast.Expr) bool {
+	ident, ok := expr.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(ident.Name)) {
+	case "logs", "log":
 		return true
 	default:
 		return false
