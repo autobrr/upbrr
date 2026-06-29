@@ -385,7 +385,7 @@ func TestApplyTrackerClaimsBlocksAitherAndCachesClaims(t *testing.T) {
 			t.Fatalf("unexpected path %q", got)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer aither-key" {
-			t.Fatalf("unexpected auth header %q", got)
+			t.Fatal("unexpected auth header")
 		}
 		_, _ = w.Write([]byte(`{
 			"data":[

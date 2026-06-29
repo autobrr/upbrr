@@ -112,7 +112,7 @@ func TestRTFHandlerRefreshesAndRetriesOn401(t *testing.T) {
 				}
 				body := string(raw)
 				if !strings.Contains(body, `"username":"user"`) || !strings.Contains(body, `"password":"pass"`) {
-					t.Fatalf("unexpected login body %q", body)
+					t.Fatal("unexpected login body fields")
 				}
 				return &http.Response{
 					StatusCode: http.StatusCreated,
@@ -124,7 +124,7 @@ func TestRTFHandlerRefreshesAndRetriesOn401(t *testing.T) {
 				auth := req.Header.Get("Authorization")
 				if searchCalls == 1 {
 					if auth != "old-key" {
-						t.Fatalf("expected first search to use old key, got %q", auth)
+						t.Fatal("expected first search to use old key")
 					}
 					return &http.Response{
 						StatusCode: http.StatusUnauthorized,
@@ -133,7 +133,7 @@ func TestRTFHandlerRefreshesAndRetriesOn401(t *testing.T) {
 					}, nil
 				}
 				if auth != "new-key" {
-					t.Fatalf("expected retry search to use new key, got %q", auth)
+					t.Fatal("expected retry search to use new key")
 				}
 				return &http.Response{
 					StatusCode: http.StatusOK,

@@ -124,7 +124,7 @@ func TestDefinitionUploadLoginBootstrapSuccess(t *testing.T) {
 				t.Fatalf("parse login form: %v", err)
 			}
 			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				t.Fatalf("unexpected login creds user=%q pass=%q", r.FormValue("username"), r.FormValue("password"))
+				t.Fatal("unexpected login credentials")
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookievalue", Path: "/"})
 			http.Redirect(w, r, "/index.php", http.StatusFound)

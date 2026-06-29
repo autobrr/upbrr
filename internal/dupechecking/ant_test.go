@@ -27,7 +27,7 @@ func TestANTHandlerSendsAPIKeyHeader(t *testing.T) {
 			assertQueryParam(t, query, "o", "json")
 			assertQueryParam(t, query, "tmdb", "123")
 			if got := req.Header.Get("X-Api-Key"); got != "token" {
-				t.Fatalf("unexpected X-API-Key header: got %q want %q", got, "token")
+				t.Fatal("unexpected X-API-Key header")
 			}
 			if got := req.Header.Get("User-Agent"); got == "" {
 				t.Fatal("expected User-Agent header")

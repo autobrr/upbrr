@@ -880,13 +880,13 @@ func assertCZTUploadRequest(r *http.Request, expectedPath string) error {
 		return fmt.Errorf("expected upload path %q, got %q", expectedPath, r.URL.Path)
 	}
 	if got := r.Header.Get("Authorization"); got != "" {
-		return fmt.Errorf("expected no authorization header, got %q", got)
+		return errors.New("expected no authorization header")
 	}
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
 		return fmt.Errorf("parse multipart: %w", err)
 	}
 	if got := r.FormValue("passkey"); got != "pass" {
-		return fmt.Errorf("expected passkey form field, got %q", got)
+		return errors.New("expected passkey form field")
 	}
 	if got := r.FormValue("user_descr"); !strings.Contains(got, "[img]https://img.example/raw.jpg[/img]") {
 		return fmt.Errorf("expected raw screenshot img tag in payload, got %q", got)

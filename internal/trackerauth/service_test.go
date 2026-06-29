@@ -257,7 +257,7 @@ func TestValidateBTNStoredCookiesPromotesRemoteSuccess(t *testing.T) {
 		}
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
 			select {
-			case handlerErr <- fmt.Errorf("expected BTN session cookie, got %q", got):
+			case handlerErr <- errors.New("expected BTN session cookie"):
 			default:
 			}
 			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
@@ -303,7 +303,7 @@ func TestValidateBTNRemoteSuccessRequiresAPIKey(t *testing.T) {
 		}
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
 			select {
-			case handlerErr <- fmt.Errorf("expected BTN session cookie, got %q", got):
+			case handlerErr <- errors.New("expected BTN session cookie"):
 			default:
 			}
 			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
@@ -346,7 +346,7 @@ func TestValidateBTNMissingAPIAfterCookieRefreshUpdatesCookieCount(t *testing.T)
 		case "/upload.php":
 			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
 				select {
-				case handlerErr <- fmt.Errorf("expected refreshed BTN session cookie, got %q", got):
+				case handlerErr <- errors.New("expected refreshed BTN session cookie"):
 				default:
 				}
 				http.Error(w, "unexpected cookie", http.StatusInternalServerError)
@@ -502,7 +502,7 @@ func TestValidateRTFRefreshesExpiredAPIKey(t *testing.T) {
 		t.Fatalf("expected successful RTF auth validation, got %#v", status)
 	}
 	if testedToken != "old-token" {
-		t.Fatalf("expected old token validation, got %q", testedToken)
+		t.Fatal("expected old token validation")
 	}
 	if !loginCalled {
 		t.Fatal("expected expired API key to trigger RTF login")
@@ -526,7 +526,7 @@ func TestValidateARStoredCookies(t *testing.T) {
 			return
 		}
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
-			t.Fatalf("expected AR session cookie, got %q", got)
+			t.Fatal("expected AR session cookie")
 		}
 		_, _ = w.Write([]byte(`<a href="/torrents.php?action=download&id=1&auth=session-key">Download</a>`))
 	}))

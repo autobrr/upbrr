@@ -51,7 +51,7 @@ func check(log logger, err error) {
 	}
 }
 
-func TestCheckRepositoryIgnoresTestsAndContextualLogs(t *testing.T) {
+func TestCheckRepositoryAllowsTestStdlibOutputWithoutSensitiveArgs(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
 		t.Fatalf("mkdir internal sample: %v", err)
@@ -89,6 +89,206 @@ func checkTest() {
 	}
 	if len(violations) != 0 {
 		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsBTNCookieHeaderPatternInTests(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"net/http"
+	"strings"
+)
+
+type recorder struct{}
+
+func (recorder) Errorf(string, ...any) {}
+
+func check(r *http.Request, handlerErrs recorder) {
+	if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=one") {
+		handlerErrs.Errorf("expected cookie one, got %q", got)
+	}
+	if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=two") {
+		handlerErrs.Errorf("expected cookie two, got %q", got)
+	}
+	if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=three") {
+		handlerErrs.Errorf("expected cookie three, got %q", got)
+	}
+	if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=four") {
+		handlerErrs.Errorf("expected cookie four, got %q", got)
+	}
+	if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=five") {
+		handlerErrs.Errorf("expected cookie five, got %q", got)
+	}
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 5 {
+		t.Fatalf("expected 5 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "sensitive HTTP header output") {
+			t.Fatalf("expected sensitive header violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryAllowsCookieHeaderStateAssertionInTests(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"net/http"
+	"strings"
+)
+
+type recorder struct{}
+
+func (recorder) Errorf(string, ...any) {}
+
+func check(r *http.Request, handlerErrs recorder) {
+	if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=one") {
+		handlerErrs.Errorf("expected session cookie")
+	}
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryAllowsRedactedSensitiveHeaderOutput(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"net/http"
+
+	"github.com/autobrr/upbrr/internal/redaction"
+)
+
+func check(t testingT, r *http.Request) {
+	got := r.Header.Get("Authorization")
+	t.Fatalf("expected auth, got %q", redaction.RedactValue(got, nil))
+}
+
+type testingT interface {
+	Fatalf(string, ...any)
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsSensitiveHeaderFormQueryAndBodyOutput(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+)
+
+func check(t testingT, r *http.Request, resp *http.Response) error {
+	auth := r.Header.Get("Authorization")
+	t.Fatalf("expected auth, got %q", auth)
+	if got := r.FormValue("passkey"); got != "pass" {
+		return fmt.Errorf("expected passkey, got %q", got)
+	}
+	if got := r.URL.Query().Get("secret"); got != "secret" {
+		return fmt.Errorf("expected secret, got %q", got)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	t.Fatalf("unexpected response body %s", string(body))
+	return nil
+}
+
+type testingT interface {
+	Fatalf(string, ...any)
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 4 {
+		t.Fatalf("expected 4 violations, got %d: %#v", len(violations), violations)
+	}
+}
+
+func TestCheckRepositoryAllowsLogpolicyAllowForNonHeaderSensitiveOutput(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"fmt"
+	"net/http"
+)
+
+func check(r *http.Request) error {
+	if got := r.URL.Query().Get("secret"); got != "fixture-secret" {
+		//logpolicy:allow fake fixture secret is required to diagnose parser shape
+		return fmt.Errorf("expected secret, got %q", got)
+	}
+	return nil
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryReportsMissingAndUnusedLogpolicyAllow(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+func check() {
+	//logpolicy:allow
+	_ = "missing reason"
+	//logpolicy:allow unused fake fixture reason
+	_ = "unused"
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	}
+	joined := violations[0].Message + "\n" + violations[1].Message
+	if !strings.Contains(joined, "must include a reason") || !strings.Contains(joined, "unused logpolicy allow") {
+		t.Fatalf("expected missing and unused allow violations, got %q", joined)
 	}
 }
 
@@ -861,5 +1061,17 @@ func check(log logger, path string, client string, hash string) {
 		if !strings.Contains(v.Message, "execution flow reporting") {
 			t.Fatalf("expected execution flow debug violation, got %q", v.Message)
 		}
+	}
+}
+
+func writeInternalFixture(t *testing.T, root string, content string) {
+	t.Helper()
+
+	dir := filepath.Join(root, "internal", "sample")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sample_test.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
 	}
 }

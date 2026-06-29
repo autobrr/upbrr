@@ -206,7 +206,7 @@ func TestLookupANTSendsAPIKeyHeader(t *testing.T) {
 			t.Fatalf("unexpected filename query value: got %q", got)
 		}
 		if got := r.Header.Get("X-Api-Key"); got != "token" {
-			t.Fatalf("unexpected X-API-Key header: got %q want %q", got, "token")
+			t.Fatal("unexpected X-API-Key header")
 		}
 		if got := r.Header.Get("User-Agent"); got == "" {
 			t.Fatal("expected User-Agent header")

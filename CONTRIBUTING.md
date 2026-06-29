@@ -259,6 +259,12 @@ upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go
 
 `make pathpolicy` runs the repo-local AST checker for hardcoded OS-rooted literals in `filepath` calls, string-built local paths, wrong `path`/`filepath` package use, slash-data filesystem calls, slash assertions without `filepath.ToSlash`, and ad-hoc local path guard helpers outside `internal/pathutil`. Rare intentional checker exceptions need `//pathpolicy:allow <reason>` on the same or previous line. `make lint`, pre-commit, and pre-push run it automatically.
 
+### Sensitive output
+
+Test assertion output is treated as CI-visible log material. Do not print raw cookies, auth headers, API keys, passkeys, passwords, CSRF tokens, OTP secrets, tracker announce URLs, or unredacted request/response bodies in tests, application logs, CLI output, or checker failure text.
+
+Prefer stable state assertions without raw values, such as `expected session cookie` or `got count=%d`. When diagnostic output needs value shape, use `redaction.RedactValue` or `commonhttp.RedactErrorDetail` before formatting it.
+
 ## AI agent instructions
 
 This project uses [AGENTS.md](https://agents.md/) — an open standard for guiding AI coding agents. The root [`AGENTS.md`](./AGENTS.md) file contains always-loaded repo rules and routes agents to scoped references:

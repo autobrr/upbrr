@@ -326,7 +326,7 @@ func TestLostimgUploaderPostsRepeatedFileFields(t *testing.T) {
 				t.Fatalf("unexpected request URL: %s", req.URL.String())
 			}
 			if got := req.Header.Get("Authorization"); got != "Bearer secret" {
-				t.Fatalf("expected bearer auth, got %q", got)
+				t.Fatal("expected bearer auth")
 			}
 			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 			if err != nil {
@@ -478,7 +478,7 @@ func TestReelflixUploaderPostsSourceWithAPIKey(t *testing.T) {
 				t.Fatalf("unexpected request URL: %s", req.URL.String())
 			}
 			if got := req.Header.Get("X-Api-Key"); got != "secret" {
-				t.Fatalf("expected X-API-Key, got %q", got)
+				t.Fatal("expected X-API-Key")
 			}
 			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 			if err != nil {

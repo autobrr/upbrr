@@ -144,11 +144,17 @@ func CheckRepository(root string) ([]Violation, error) {
 		if entry.IsDir() {
 			return nil
 		}
-		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+		if filepath.Ext(path) != ".go" {
 			return nil
 		}
 
-		fileViolations, err := checkFile(fset, root, path)
+		var fileViolations []Violation
+		var err error
+		if strings.HasSuffix(path, "_test.go") {
+			fileViolations, err = checkTestFile(fset, root, path)
+		} else {
+			fileViolations, err = checkFile(fset, root, path)
+		}
 		if err != nil {
 			return err
 		}
@@ -168,11 +174,17 @@ func CheckRepository(root string) ([]Violation, error) {
 			if entry.IsDir() {
 				return nil
 			}
-			if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			if filepath.Ext(path) != ".go" {
 				return nil
 			}
 
-			fileViolations, err := checkCLISensitiveOutputFile(fset, root, path)
+			var fileViolations []Violation
+			var err error
+			if strings.HasSuffix(path, "_test.go") {
+				fileViolations, err = checkTestFile(fset, root, path)
+			} else {
+				fileViolations, err = checkCLISensitiveOutputFile(fset, root, path)
+			}
 			if err != nil {
 				return err
 			}
@@ -337,7 +349,648 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 		return true
 	})
 
+	sensitiveViolations, err := checkSensitiveOutputFile(fset, root, path, false)
+	if err != nil {
+		return nil, err
+	}
+	violations = append(violations, sensitiveViolations...)
+
 	return violations, nil
+}
+
+func checkTestFile(fset *token.FileSet, root string, path string) ([]Violation, error) {
+	return checkSensitiveOutputFile(fset, root, path, true)
+}
+
+type sensitiveKind string
+
+const (
+	sensitiveHTTPHeader      sensitiveKind = "http-header"
+	sensitiveCookieContainer sensitiveKind = "cookie-container"
+	sensitiveFormValue       sensitiveKind = "form-value"
+	sensitiveQueryValue      sensitiveKind = "query-value"
+	sensitiveConfigField     sensitiveKind = "config-field"
+	sensitiveEndpoint        sensitiveKind = "endpoint"
+	sensitivePayload         sensitiveKind = "payload"
+	sensitiveBody            sensitiveKind = "body"
+	sensitiveRawError        sensitiveKind = "raw-error"
+	sensitiveGeneric         sensitiveKind = "generic"
+)
+
+type sensitiveValue struct {
+	kind  sensitiveKind
+	label string
+}
+
+type sensitiveModel struct {
+	aliases map[string]string
+	vars    map[string]sensitiveValue
+}
+
+type logpolicyAllow struct {
+	line   int
+	pos    token.Pos
+	reason string
+	used   bool
+}
+
+func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, testFile bool) ([]Violation, error) {
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	relPath, err := filepath.Rel(root, path)
+	if err != nil {
+		relPath = path
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	allows, allowViolations := collectLogpolicyAllows(fset, relPath, file)
+	violations := append([]Violation(nil), allowViolations...)
+	aliases := importAliases(file)
+
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		model := sensitiveModel{
+			aliases: aliases,
+			vars:    make(map[string]sensitiveValue),
+		}
+		functionContext := strings.ToLower(relPath + " " + fn.Name.Name)
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			switch typed := node.(type) {
+			case *ast.AssignStmt:
+				markSensitiveAssignment(model, typed.Lhs, typed.Rhs)
+			case *ast.RangeStmt:
+				markSensitiveRange(model, typed)
+			case *ast.CallExpr:
+				for _, sinkArg := range sensitiveSinkArgs(typed, model.aliases, testFile, functionContext) {
+					if isSafeSensitiveOutputExpr(sinkArg.expr) {
+						continue
+					}
+					value, ok := sensitivityOfExpr(model, sinkArg.expr)
+					if !ok && sinkArg.forceRawError {
+						value = sensitiveValue{kind: sensitiveRawError, label: "raw error"}
+						ok = true
+					}
+					if !ok {
+						continue
+					}
+					if value.kind == sensitiveBody && !isBodyOutputFormat(sinkArg.format) {
+						continue
+					}
+					if value.kind == sensitiveBody && isRawErrorLikeExpr(sinkArg.expr) {
+						continue
+					}
+					if shouldSuppressLogpolicyViolation(fset, allows, sinkArg.expr.Pos(), value) {
+						continue
+					}
+					violations = append(violations, violationAt(fset, relPath, sinkArg.expr.Pos(), sensitiveOutputMessage(value)))
+				}
+			}
+			return true
+		})
+	}
+
+	for _, allow := range allows {
+		if allow.reason == "" || allow.used {
+			continue
+		}
+		violations = append(violations, violationAt(fset, relPath, allow.pos, "unused logpolicy allow comment"))
+	}
+
+	return violations, nil
+}
+
+func collectLogpolicyAllows(fset *token.FileSet, relPath string, file *ast.File) (map[int]*logpolicyAllow, []Violation) {
+	allows := make(map[int]*logpolicyAllow)
+	violations := make([]Violation, 0)
+	for _, group := range file.Comments {
+		for _, comment := range group.List {
+			text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
+			if !strings.HasPrefix(text, "logpolicy:allow") {
+				continue
+			}
+			reason := strings.TrimSpace(strings.TrimPrefix(text, "logpolicy:allow"))
+			line := fset.Position(comment.Pos()).Line
+			allows[line] = &logpolicyAllow{
+				line:   line,
+				pos:    comment.Pos(),
+				reason: reason,
+			}
+			if reason == "" {
+				violations = append(violations, violationAt(fset, relPath, comment.Pos(), "logpolicy allow comment must include a reason"))
+			}
+		}
+	}
+	return allows, violations
+}
+
+func shouldSuppressLogpolicyViolation(fset *token.FileSet, allows map[int]*logpolicyAllow, pos token.Pos, value sensitiveValue) bool {
+	if value.kind == sensitiveHTTPHeader && isNeverAllowHeader(value.label) {
+		return false
+	}
+	line := fset.Position(pos).Line
+	for _, candidateLine := range []int{line, line - 1} {
+		allow := allows[candidateLine]
+		if allow == nil || allow.reason == "" {
+			continue
+		}
+		allow.used = true
+		return true
+	}
+	return false
+}
+
+func isNeverAllowHeader(label string) bool {
+	switch strings.ToLower(label) {
+	case "cookie", "set-cookie", "authorization", "proxy-authorization":
+		return true
+	default:
+		return false
+	}
+}
+
+type sinkArg struct {
+	expr          ast.Expr
+	forceRawError bool
+	format        string
+}
+
+func sensitiveSinkArgs(call *ast.CallExpr, aliases map[string]string, testFile bool, functionContext string) []sinkArg {
+	if len(call.Args) == 0 {
+		return nil
+	}
+	if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "panic" {
+		return sinkArgs(call.Args, false)
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+
+	if isHTTPErrorSelector(selector, aliases) {
+		if len(call.Args) < 2 {
+			return nil
+		}
+		forceRawError := isSensitiveHTTPErrorContext(functionContext) && isRawErrorLikeExpr(call.Args[1])
+		return []sinkArg{{expr: call.Args[1], forceRawError: forceRawError}}
+	}
+
+	if isFmtSelector(selector, aliases, "Errorf") && testFile && hasStringArg(call, 0) {
+		return sinkArgsWithFormat(call.Args[1:], false, stringArgValue(call, 0))
+	}
+	if isFmtPrintSelector(selector, aliases) && testFile {
+		switch selector.Sel.Name {
+		case "Printf":
+			if hasStringArg(call, 0) {
+				return sinkArgsWithFormat(call.Args[1:], false, stringArgValue(call, 0))
+			}
+		case "Print", "Println":
+			return sinkArgs(call.Args, false)
+		}
+	}
+	if isFmtSelector(selector, aliases, "Fprintf") && testFile {
+		if len(call.Args) > 2 && hasStringArg(call, 1) {
+			return sinkArgsWithFormat(call.Args[2:], false, stringArgValue(call, 1))
+		}
+	}
+
+	if receiver, ok := selector.X.(*ast.Ident); ok && aliases[receiver.Name] != "" {
+		return nil
+	}
+	if _, logger := loggerMethods[selector.Sel.Name]; logger && hasStringArg(call, 0) {
+		if testFile || selector.Sel.Name == "Tracef" || selector.Sel.Name == "Debugf" ||
+			selector.Sel.Name == "Infof" || selector.Sel.Name == "Warnf" || selector.Sel.Name == "Errorf" {
+			return sinkArgsWithFormat(call.Args[1:], false, stringArgValue(call, 0))
+		}
+	}
+	if testFile && isTestAssertionOutputMethod(selector.Sel.Name) && hasStringArg(call, 0) {
+		return sinkArgsWithFormat(call.Args[1:], false, stringArgValue(call, 0))
+	}
+
+	return nil
+}
+
+func sinkArgs(exprs []ast.Expr, forceRawError bool) []sinkArg {
+	return sinkArgsWithFormat(exprs, forceRawError, "")
+}
+
+func sinkArgsWithFormat(exprs []ast.Expr, forceRawError bool, format string) []sinkArg {
+	result := make([]sinkArg, 0, len(exprs))
+	for _, expr := range exprs {
+		result = append(result, sinkArg{expr: expr, forceRawError: forceRawError, format: format})
+	}
+	return result
+}
+
+func hasStringArg(call *ast.CallExpr, index int) bool {
+	if index >= len(call.Args) {
+		return false
+	}
+	lit, ok := call.Args[index].(*ast.BasicLit)
+	return ok && lit.Kind == token.STRING
+}
+
+func stringArgValue(call *ast.CallExpr, index int) string {
+	if index >= len(call.Args) {
+		return ""
+	}
+	lit, ok := call.Args[index].(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return ""
+	}
+	value, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return ""
+	}
+	return value
+}
+
+func isBodyOutputFormat(format string) bool {
+	lower := strings.ToLower(format)
+	return strings.Contains(lower, "body") ||
+		strings.Contains(lower, "payload") ||
+		strings.Contains(lower, "request") ||
+		strings.Contains(lower, "response")
+}
+
+func isTestAssertionOutputMethod(name string) bool {
+	switch name {
+	case "Fatalf", "Errorf", "Logf":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFmtSelector(selector *ast.SelectorExpr, aliases map[string]string, name string) bool {
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "fmt" && selector.Sel.Name == name
+}
+
+func isHTTPErrorSelector(selector *ast.SelectorExpr, aliases map[string]string) bool {
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "net/http" && selector.Sel.Name == "Error"
+}
+
+func isSensitiveHTTPErrorContext(context string) bool {
+	signals := []string{"auth", "cookie", "login", "credential", "csrf", "token"}
+	for _, signal := range signals {
+		if strings.Contains(context, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func markSensitiveAssignment(model sensitiveModel, lhs []ast.Expr, rhs []ast.Expr) {
+	for index, target := range lhs {
+		ident, ok := target.(*ast.Ident)
+		if !ok || ident.Name == "_" {
+			continue
+		}
+		rhsIndex := index
+		if len(rhs) == 1 {
+			rhsIndex = 0
+		}
+		if rhsIndex >= len(rhs) {
+			delete(model.vars, ident.Name)
+			continue
+		}
+		value, sensitive := sensitivityOfExprResult(model, rhs[rhsIndex], index)
+		if !sensitive {
+			delete(model.vars, ident.Name)
+			continue
+		}
+		model.vars[ident.Name] = value
+	}
+}
+
+func markSensitiveRange(model sensitiveModel, stmt *ast.RangeStmt) {
+	value, ok := sensitivityOfExpr(model, stmt.X)
+	if !ok {
+		return
+	}
+	for _, target := range []ast.Expr{stmt.Key, stmt.Value} {
+		ident, ok := target.(*ast.Ident)
+		if ok && ident.Name != "_" {
+			model.vars[ident.Name] = value
+		}
+	}
+}
+
+func sensitivityOfExprResult(model sensitiveModel, expr ast.Expr, resultIndex int) (sensitiveValue, bool) {
+	if call, ok := expr.(*ast.CallExpr); ok {
+		if value, ok := sensitivityOfKnownCallResult(model, call, resultIndex); ok {
+			return value, true
+		}
+	}
+	return sensitivityOfExpr(model, expr)
+}
+
+func sensitivityOfExpr(model sensitiveModel, expr ast.Expr) (sensitiveValue, bool) {
+	if expr == nil || isSafeSensitiveOutputExpr(expr) {
+		return sensitiveValue{}, false
+	}
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		value, ok := model.vars[typed.Name]
+		return value, ok
+	case *ast.ParenExpr:
+		return sensitivityOfExpr(model, typed.X)
+	case *ast.UnaryExpr:
+		if typed.Op == token.NOT {
+			return sensitiveValue{}, false
+		}
+		return sensitivityOfExpr(model, typed.X)
+	case *ast.BinaryExpr:
+		if isBooleanBinaryOp(typed.Op) {
+			return sensitiveValue{}, false
+		}
+		return firstSensitiveExpr(model, typed.X, typed.Y)
+	case *ast.SelectorExpr:
+		return sensitivityOfExpr(model, typed.X)
+	case *ast.IndexExpr:
+		if value, ok := sensitivityOfPayloadIndex(model, typed); ok {
+			return value, true
+		}
+		return sensitivityOfExpr(model, typed.X)
+	case *ast.SliceExpr:
+		return sensitivityOfExpr(model, typed.X)
+	case *ast.StarExpr:
+		return sensitivityOfExpr(model, typed.X)
+	case *ast.CallExpr:
+		if value, ok := sensitivityOfKnownCallResult(model, typed, 0); ok {
+			return value, true
+		}
+		if value, ok := sensitivityOfDirectCall(model, typed); ok {
+			return value, true
+		}
+		if isSensitivePropagatingCall(model, typed) {
+			for _, arg := range typed.Args {
+				if value, ok := sensitivityOfExpr(model, arg); ok {
+					return value, true
+				}
+			}
+		}
+	case *ast.CompositeLit:
+		for _, elt := range typed.Elts {
+			if value, ok := sensitivityOfExpr(model, elt); ok {
+				return value, true
+			}
+		}
+	}
+	return sensitiveValue{}, false
+}
+
+func isSensitivePropagatingCall(model sensitiveModel, call *ast.CallExpr) bool {
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		return fun.Name == "string"
+	case *ast.SelectorExpr:
+		if pkg, ok := fun.X.(*ast.Ident); ok {
+			switch model.aliases[pkg.Name] {
+			case "fmt":
+				return fun.Sel.Name == "Sprintf"
+			case "strings":
+				return fun.Sel.Name == "TrimSpace"
+			}
+		}
+	}
+	return false
+}
+
+func firstSensitiveExpr(model sensitiveModel, exprs ...ast.Expr) (sensitiveValue, bool) {
+	for _, expr := range exprs {
+		if value, ok := sensitivityOfExpr(model, expr); ok {
+			return value, true
+		}
+	}
+	return sensitiveValue{}, false
+}
+
+func sensitivityOfPayloadIndex(model sensitiveModel, index *ast.IndexExpr) (sensitiveValue, bool) {
+	if value, ok := sensitivityOfExpr(model, index.X); ok {
+		return value, true
+	}
+	return sensitiveValue{}, false
+}
+
+func sensitivityOfDirectCall(model sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return sensitiveValue{}, false
+	}
+	switch selector.Sel.Name {
+	case "Get":
+		if len(call.Args) != 1 {
+			return sensitiveValue{}, false
+		}
+		key, ok := stringLiteral(call.Args[0])
+		if !ok {
+			return sensitiveValue{}, false
+		}
+		if isHeaderGetCall(selector) && isSensitiveHeaderName(key) {
+			return sensitiveValue{kind: sensitiveHTTPHeader, label: canonicalHeaderName(key)}, true
+		}
+		if isQueryGetCall(selector) && isSensitiveQueryKey(key) {
+			return sensitiveValue{kind: sensitiveQueryValue, label: key}, true
+		}
+	case "FormValue":
+		if len(call.Args) == 1 {
+			key, ok := stringLiteral(call.Args[0])
+			if ok && isSensitiveFormKey(key) {
+				return sensitiveValue{kind: sensitiveFormValue, label: key}, true
+			}
+		}
+	case "Cookies":
+		if len(call.Args) == 0 && isJarCookiesCall(selector) {
+			return sensitiveValue{kind: sensitiveCookieContainer, label: "cookies"}, true
+		}
+	case "ReadAll":
+		pkg, ok := selector.X.(*ast.Ident)
+		if ok && model.aliases[pkg.Name] == "io" && len(call.Args) == 1 && isResponseBodyExpr(call.Args[0]) {
+			return sensitiveValue{kind: sensitiveBody, label: "response body"}, true
+		}
+	}
+	return sensitiveValue{}, false
+}
+
+func sensitivityOfKnownCallResult(model sensitiveModel, call *ast.CallExpr, resultIndex int) (sensitiveValue, bool) {
+	if resultIndex != 0 {
+		return sensitiveValue{}, false
+	}
+	return sensitivityOfDirectCall(model, call)
+}
+
+func isHeaderGetCall(selector *ast.SelectorExpr) bool {
+	receiver, ok := selector.X.(*ast.SelectorExpr)
+	return ok && receiver.Sel.Name == "Header"
+}
+
+func isQueryGetCall(selector *ast.SelectorExpr) bool {
+	call, ok := selector.X.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	querySelector, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && querySelector.Sel.Name == "Query"
+}
+
+func isJarCookiesCall(selector *ast.SelectorExpr) bool {
+	receiver, ok := selector.X.(*ast.SelectorExpr)
+	return ok && receiver.Sel.Name == "Jar"
+}
+
+func isResponseBodyExpr(expr ast.Expr) bool {
+	selector, ok := expr.(*ast.SelectorExpr)
+	return ok && selector.Sel.Name == "Body"
+}
+
+func stringLiteral(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	value, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func isBooleanBinaryOp(op token.Token) bool {
+	return op == token.EQL ||
+		op == token.NEQ ||
+		op == token.LSS ||
+		op == token.LEQ ||
+		op == token.GTR ||
+		op == token.GEQ ||
+		op == token.LAND ||
+		op == token.LOR
+}
+
+func isSensitiveHeaderName(name string) bool {
+	switch canonicalHeaderName(name) {
+	case "cookie", "set-cookie", "authorization", "proxy-authorization", "x-api-key", "x-api-token", "x-auth-token":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalHeaderName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func isSensitiveFormKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "password", "passkey", "token", "auth", "anticsrftoken":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSensitiveQueryKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "token", "api_key", "api_token", "passkey", "authkey", "secret", "rsskey":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSafeSensitiveOutputExpr(expr ast.Expr) bool {
+	if containsSafeOutputCall(expr) {
+		return true
+	}
+	switch typed := expr.(type) {
+	case *ast.BasicLit:
+		return true
+	case *ast.Ident:
+		return typed.Name == "true" || typed.Name == "false" || typed.Name == "nil"
+	case *ast.UnaryExpr:
+		return typed.Op == token.NOT
+	case *ast.BinaryExpr:
+		return isBooleanBinaryOp(typed.Op)
+	case *ast.CallExpr:
+		if ident, ok := typed.Fun.(*ast.Ident); ok && ident.Name == "len" {
+			return true
+		}
+		if selector, ok := typed.Fun.(*ast.SelectorExpr); ok {
+			switch selector.Sel.Name {
+			case "Contains", "HasPrefix", "HasSuffix", "EqualFold":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsSafeOutputCall(expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if isSafeOutputCall(call) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func isSafeOutputCall(call *ast.CallExpr) bool {
+	if isRedactionCall(call) {
+		return true
+	}
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		lower := strings.ToLower(strings.TrimSpace(fun.Name))
+		return strings.HasPrefix(lower, "redact") || fun.Name == "safeDryRunEndpoint" || fun.Name == "formatDryRunPayloadValue"
+	case *ast.SelectorExpr:
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(fun.Sel.Name)), "redact") {
+			return true
+		}
+		return fun.Sel.Name == "RedactErrorDetail" || fun.Sel.Name == "ExtractHTTPErrorDetail"
+	default:
+		return false
+	}
+}
+
+func sensitiveOutputMessage(value sensitiveValue) string {
+	switch value.kind {
+	case sensitiveHTTPHeader:
+		return "sensitive HTTP header output must be redacted or replaced with stable state"
+	case sensitiveCookieContainer:
+		return "cookie output must be redacted or reduced to count/state"
+	case sensitiveFormValue:
+		return "sensitive form value output must be redacted or replaced with stable state"
+	case sensitiveQueryValue:
+		return "sensitive query value output must be redacted or replaced with stable state"
+	case sensitiveConfigField:
+		return "secret config field output must be redacted or replaced with stable state"
+	case sensitiveEndpoint:
+		return "secret-bearing URL/endpoint output must be redacted before printing"
+	case sensitivePayload:
+		return "secret-bearing payload output must be redacted or reduced to safe fields"
+	case sensitiveBody:
+		return "request/response body output must be redacted before printing"
+	case sensitiveRawError:
+		return "auth/cookie/token handler errors must not expose raw errors in responses"
+	case sensitiveGeneric:
+		return "sensitive output must be redacted or replaced with stable state"
+	default:
+		return "sensitive output must be redacted or replaced with stable state"
+	}
 }
 
 func collectSanitizedVars(file *ast.File) map[string]struct{} {

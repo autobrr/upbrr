@@ -330,7 +330,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 					t.Fatalf("expected upload torrent announce stripped, got %q", uploadedMeta.Announce)
 				}
 				if r.FormValue("AntiCsrfToken") != "csrf-token" {
-					t.Fatalf("expected csrf token, got %q", r.FormValue("AntiCsrfToken"))
+					t.Fatal("expected csrf token")
 				}
 				if r.FormValue("title") != "Movie" {
 					t.Fatalf("expected new-group title field")
