@@ -449,9 +449,6 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 					if !ok {
 						continue
 					}
-					if value.kind == sensitiveBody && !isBodyOutputFormat(sinkArg.format) {
-						continue
-					}
 					if value.kind == sensitiveBody && isRawErrorLikeExpr(sinkArg.expr) {
 						continue
 					}
@@ -618,14 +615,6 @@ func stringArgValue(call *ast.CallExpr, index int) string {
 		return ""
 	}
 	return value
-}
-
-func isBodyOutputFormat(format string) bool {
-	lower := strings.ToLower(format)
-	return strings.Contains(lower, "body") ||
-		strings.Contains(lower, "payload") ||
-		strings.Contains(lower, "request") ||
-		strings.Contains(lower, "response")
 }
 
 func isTestAssertionOutputMethod(name string) bool {
@@ -849,7 +838,8 @@ func sensitivityOfKnownSensitiveCall(model sensitiveModel, call *ast.CallExpr) (
 	switch callName(call) {
 	case "LoadTrackerCookieMap", "LoadTrackerHTTPCookies", "CookieMapToHTTPCookies", "CookiesToMap", "httpCookiesToMap", "cookiesFromJar", "btnCookiesFromJar":
 		return sensitiveValue{kind: sensitiveCookieContainer, label: "cookies"}, true
-	case "postForm", "postMultipart", "postMultipartWithFields", "postMultipartRepeatedFileField", "readAndCloseResponseBody":
+	case "postForm", "postMultipart", "postMultipartWithFields", "postMultipartRepeatedFileField", "readAndCloseResponseBody",
+		"readTVDBResponseBody", "readIMDbResponseBody":
 		return sensitiveValue{kind: sensitiveBody, label: "response body"}, true
 	case "String":
 		if selector, ok := call.Fun.(*ast.SelectorExpr); ok && isSensitiveURLReceiver(model, selector.X) {

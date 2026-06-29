@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -354,7 +355,7 @@ func doArrJSON(ctx context.Context, httpClient *http.Client, rawURL string, apiK
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(body), nil)))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
 		return fmt.Errorf("decode response: %w", err)

@@ -177,7 +177,7 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 	if !response.OK && len(response.Files) == 0 {
 		errMsg := "unknown error"
 		if response.Error != "" {
-			errMsg = response.Error
+			errMsg = safeResponseMessage(response.Error)
 		}
 		bodyStr := safeResponsePreview(body)
 		return uploadResult{}, fmt.Errorf("imgbox upload rejected: %s (response: %s)", errMsg, bodyStr)
@@ -662,7 +662,7 @@ func (u *ptScreensUploader) Upload(ctx context.Context, imagePath string) (uploa
 		return uploadResult{}, fmt.Errorf("ptscreens invalid response: %w", err)
 	}
 	if response.Image.URL == "" {
-		return uploadResult{}, fmt.Errorf("ptscreens upload failed: %s", strings.TrimSpace(response.Error.Message))
+		return uploadResult{}, fmt.Errorf("ptscreens upload failed: %s", safeResponseMessage(response.Error.Message))
 	}
 
 	return uploadResult{
@@ -750,7 +750,7 @@ func (u *thrUploader) Upload(ctx context.Context, imagePath string) (uploadResul
 	}
 	imageURL := strings.TrimSpace(response.Image.URL)
 	if imageURL == "" {
-		message := strings.TrimSpace(response.Error.Message)
+		message := safeResponseMessage(response.Error.Message)
 		if message == "" {
 			message = "thr upload failed"
 		}
@@ -811,8 +811,8 @@ func (u *lostimgUploader) uploadBatch(ctx context.Context, imagePaths []string) 
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("lostimg invalid response: %w", err)
 	}
-	if strings.TrimSpace(response.Error) != "" {
-		return nil, fmt.Errorf("lostimg upload failed: %s", strings.TrimSpace(response.Error))
+	if safeResponseMessage(response.Error) != "" {
+		return nil, fmt.Errorf("lostimg upload failed: %s", safeResponseMessage(response.Error))
 	}
 
 	urls := response.URLs
@@ -945,7 +945,7 @@ func (u *passTheImageUploader) Upload(ctx context.Context, imagePath string) (up
 		return uploadResult{}, fmt.Errorf("passtheimage invalid response: %w", err)
 	}
 	if response.StatusCode != http.StatusOK {
-		message := strings.TrimSpace(response.Error.Message)
+		message := safeResponseMessage(response.Error.Message)
 		if message == "" {
 			message = "passtheimage upload failed"
 		}
@@ -997,7 +997,7 @@ func (u *reelflixUploader) Upload(ctx context.Context, imagePath string) (upload
 		return uploadResult{}, fmt.Errorf("reelflix invalid response: %w", err)
 	}
 	if response.StatusCode != 0 && response.StatusCode != http.StatusOK {
-		message := strings.TrimSpace(response.Error.Message)
+		message := safeResponseMessage(response.Error.Message)
 		if message == "" {
 			message = "reelflix upload failed"
 		}
@@ -1108,9 +1108,9 @@ func (u *shareXUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 		link = strings.TrimSpace(response.Link)
 	}
 	if link == "" {
-		message := strings.TrimSpace(response.Message)
+		message := safeResponseMessage(response.Message)
 		if message == "" {
-			message = strings.TrimSpace(response.Error)
+			message = safeResponseMessage(response.Error)
 		}
 		if message == "" {
 			message = "sharex upload failed"
@@ -1268,11 +1268,15 @@ func readAndCloseResponseBody(resp *http.Response) ([]byte, error) {
 }
 
 func safeResponsePreview(body []byte) string {
-	text := strings.TrimSpace(redaction.RedactValue(string(body), nil))
+	text := safeResponseMessage(string(body))
 	if len(text) > 200 {
 		text = strings.TrimSpace(text[:200]) + "..."
 	}
 	return text
+}
+
+func safeResponseMessage(value string) string {
+	return strings.TrimSpace(redaction.RedactValue(value, nil))
 }
 
 func closeResponseBody(resp *http.Response) {

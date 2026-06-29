@@ -18,6 +18,7 @@ import (
 	"github.com/moistari/rls"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/redaction"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -543,7 +544,7 @@ func (c *Client) postGraphQL(ctx context.Context, query string, target any) erro
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("imdb: http %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+		return fmt.Errorf("imdb: http %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(payload), nil)))
 	}
 
 	decoder := json.NewDecoder(resp.Body)

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -1382,7 +1383,7 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		return fmt.Errorf("tvdb: read response body for %s: %w", path, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("tvdb: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("tvdb: http %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(body), nil)))
 	}
 
 	if err := json.Unmarshal(body, target); err != nil {
@@ -1449,7 +1450,7 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("tvdb: login http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("tvdb: login http %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(body), nil)))
 	}
 
 	var loginResp loginResponse

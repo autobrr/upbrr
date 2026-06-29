@@ -632,7 +632,7 @@ func check() error {
 		return err
 	}
 	bodyStr := string(body)
-	return fmt.Errorf("sample response: %s", bodyStr)
+	return fmt.Errorf("sample http %d: %s", 500, bodyStr)
 }
 `
 
