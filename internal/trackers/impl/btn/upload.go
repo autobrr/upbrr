@@ -185,6 +185,27 @@ type uploadContext struct {
 	client    *http.Client
 }
 
+type btnNameNormalizationRule struct {
+	pattern     *regexp.Regexp
+	replacement string
+}
+
+var btnNameNormalizationRules = []btnNameNormalizationRule{
+	{pattern: regexp.MustCompile(`(?i)\.DDP\.(\d+(?:\.\d+)?)\.Atmos`), replacement: `.DDPA$1`},
+	{pattern: regexp.MustCompile(`(?i)\.TrueHD\.(\d+(?:\.\d+)?)\.Atmos`), replacement: `.TrueHDA$1`},
+	{pattern: regexp.MustCompile(`\.DDP\.(\d)`), replacement: `.DDP$1`},
+	{pattern: regexp.MustCompile(`\.DD\.(\d)`), replacement: `.DD$1`},
+	{pattern: regexp.MustCompile(`\.AC3\.(\d)`), replacement: `.AC3$1`},
+	{pattern: regexp.MustCompile(`\.DTS\.(\d)`), replacement: `.DTS$1`},
+	{pattern: regexp.MustCompile(`\.AAC\.(\d)`), replacement: `.AAC$1`},
+	{pattern: regexp.MustCompile(`\.FLAC\.(\d)`), replacement: `.FLAC$1`},
+	{pattern: regexp.MustCompile(`(?i)\.TrueHD\.(\d)`), replacement: `.TrueHD$1`},
+	{pattern: regexp.MustCompile(`(?i)\.PCM\.(\d)`), replacement: `.PCM$1`},
+	{pattern: regexp.MustCompile(`(?i)\.LPCM\.(\d)`), replacement: `.LPCM$1`},
+	{pattern: regexp.MustCompile(`[^a-zA-Z0-9.\-]`), replacement: `.`},
+	{pattern: regexp.MustCompile(`\.{2,}`), replacement: `.`},
+}
+
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
 	if err := validateBTNRequest(req); err != nil {
 		return api.UploadSummary{}, err
@@ -821,26 +842,9 @@ func cleanAndNormalizeBTNName(value string) string {
 	// 2. Replace plus in DD+
 	value = strings.ReplaceAll(value, "DD+", "DDP")
 
-	// 3. Atmos audio normalization (e.g. DDP 5.1 Atmos -> DDPA5.1)
-	value = regexp.MustCompile(`(?i)\.DDP\.(\d+(?:\.\d+)?)\.Atmos`).ReplaceAllString(value, `.DDPA$1`)
-	value = regexp.MustCompile(`(?i)\.TrueHD\.(\d+(?:\.\d+)?)\.Atmos`).ReplaceAllString(value, `.TrueHDA$1`)
-
-	// 4. Other audio channel normalization
-	value = regexp.MustCompile(`\.DDP\.(\d)`).ReplaceAllString(value, `.DDP$1`)
-	value = regexp.MustCompile(`\.DD\.(\d)`).ReplaceAllString(value, `.DD$1`)
-	value = regexp.MustCompile(`\.AC3\.(\d)`).ReplaceAllString(value, `.AC3$1`)
-	value = regexp.MustCompile(`\.DTS\.(\d)`).ReplaceAllString(value, `.DTS$1`)
-	value = regexp.MustCompile(`\.AAC\.(\d)`).ReplaceAllString(value, `.AAC$1`)
-	value = regexp.MustCompile(`\.FLAC\.(\d)`).ReplaceAllString(value, `.FLAC$1`)
-	value = regexp.MustCompile(`(?i)\.TrueHD\.(\d)`).ReplaceAllString(value, `.TrueHD$1`)
-	value = regexp.MustCompile(`(?i)\.PCM\.(\d)`).ReplaceAllString(value, `.PCM$1`)
-	value = regexp.MustCompile(`(?i)\.LPCM\.(\d)`).ReplaceAllString(value, `.LPCM$1`)
-
-	// 5. Remove non-alphanumeric characters (except dots and hyphens)
-	value = regexp.MustCompile(`[^a-zA-Z0-9.\-]`).ReplaceAllString(value, ".")
-
-	// Collapse any two or more dots
-	value = regexp.MustCompile(`\.{2,}`).ReplaceAllString(value, ".")
+	for _, rule := range btnNameNormalizationRules {
+		value = rule.pattern.ReplaceAllString(value, rule.replacement)
+	}
 
 	return strings.TrimSpace(value)
 }
