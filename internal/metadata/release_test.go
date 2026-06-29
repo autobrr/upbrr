@@ -12,6 +12,8 @@ func TestParseReleaseInfo(t *testing.T) {
 		category string
 		typ      string
 		source   string
+		site     string
+		group    string
 	}{
 		{
 			name:     "empty input returns defaults",
@@ -76,6 +78,22 @@ func TestParseReleaseInfo(t *testing.T) {
 			typ:      "ENCODE",
 			source:   "BluRay",
 		},
+		{
+			name:     "leading bracket anime group falls back from site",
+			input:    "[SubsPlease] Re Zero kara Hajimeru Isekai Seikatsu - 77 (1080p) [F7DAEC64].mkv",
+			category: "TV",
+			site:     "SubsPlease",
+			group:    "SubsPlease",
+		},
+		{
+			name:     "explicit release group wins over leading bracket site",
+			input:    "[SubsPlease] Show.S01E02.1080p.WEB-DL.x264-GRP.mkv",
+			category: "TV",
+			typ:      "WEBDL",
+			source:   "Web",
+			site:     "SubsPlease",
+			group:    "GRP",
+		},
 	}
 
 	for _, tc := range tests {
@@ -92,6 +110,12 @@ func TestParseReleaseInfo(t *testing.T) {
 			}
 			if release.Source != tc.source {
 				t.Errorf("expected source %q, got %q", tc.source, release.Source)
+			}
+			if tc.site != "" && release.Site != tc.site {
+				t.Errorf("expected site %q, got %q", tc.site, release.Site)
+			}
+			if tc.group != "" && release.Group != tc.group {
+				t.Errorf("expected group %q, got %q", tc.group, release.Group)
 			}
 		})
 	}

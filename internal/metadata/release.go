@@ -28,6 +28,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 	release := rls.ParseString(base)
 	typeValue := parsedReleaseType(base, release.Source, release.Other, release.Codec)
 	sourceValue := parsedReleaseSource(base, release.Source, typeValue)
+	groupValue := parsedReleaseGroup(base, release.Group, release.Site)
 	season := release.Series
 	episode := release.Episode
 	if season == 0 || episode == 0 {
@@ -66,7 +67,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 		Collection: release.Collection,
 		Region:     release.Region,
 		Size:       release.Size,
-		Group:      release.Group,
+		Group:      groupValue,
 		Disc:       release.Disc,
 		Season:     season,
 		Episode:    episode,
@@ -106,4 +107,21 @@ func parsedReleaseSource(base string, source string, typeValue string) string {
 		return "UHDTV"
 	}
 	return trimmed
+}
+
+// parsedReleaseGroup preserves explicit parser groups and treats a leading
+// bracket site token as the group when no explicit suffix group was parsed.
+func parsedReleaseGroup(base string, group string, site string) string {
+	trimmedGroup := strings.TrimSpace(group)
+	if trimmedGroup != "" {
+		return trimmedGroup
+	}
+	trimmedSite := strings.TrimSpace(site)
+	if trimmedSite == "" {
+		return ""
+	}
+	if !strings.HasPrefix(strings.TrimSpace(base), "["+trimmedSite+"]") {
+		return ""
+	}
+	return trimmedSite
 }
