@@ -4,7 +4,6 @@
 package thexem
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,15 +11,28 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const defaultBaseURL = "https://thexem.info"
+const maxHTTPErrorDetailLength = 240
+const thexemUserAgent = "upbrr"
+
+// ErrUnavailable reports that XEM blocked or refused an otherwise valid lookup.
+var ErrUnavailable = errors.New("thexem: unavailable")
+
+var (
+	htmlScriptStylePattern = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>`)
+	htmlTagPattern         = regexp.MustCompile(`(?s)<[^>]+>`)
+	ipv4Pattern            = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+)
 
 type Client struct {
 	baseURL    string
@@ -47,17 +59,21 @@ func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int)
 		return 0, 0, errors.New("thexem: invalid ids")
 	}
 
-	form := url.Values{}
-	form.Set("id", strconv.Itoa(tvdbID))
-	form.Set("origin", "tvdb")
-	form.Set("absolute", strconv.Itoa(absoluteEp))
+	params := url.Values{}
+	params.Set("id", strconv.Itoa(tvdbID))
+	params.Set("origin", "tvdb")
+	params.Set("absolute", strconv.Itoa(absoluteEp))
+	params.Set("destination", "scene")
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/map/single", bytes.NewBufferString(form.Encode()))
+	// XEM documents map/single as query parameters; keep this as GET to match
+	// the public API shape and avoid form posts through Cloudflare.
+	endpoint := c.baseURL + "/map/single?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return 0, 0, fmt.Errorf("thexem: build map/single request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", thexemUserAgent)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -67,7 +83,11 @@ func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return 0, 0, fmt.Errorf("thexem: map/single http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		detail := httpErrorDetail(body)
+		if isUnavailableHTTP(resp.StatusCode, detail) {
+			return 0, 0, fmt.Errorf("thexem: map/single: %w", ErrUnavailable)
+		}
+		return 0, 0, fmt.Errorf("thexem: map/single http %d: %s", resp.StatusCode, detail)
 	}
 
 	var payload map[string]any
@@ -93,6 +113,7 @@ func (c *Client) GetSeasonNames(ctx context.Context, tvdbID int) (map[int][]stri
 		return nil, fmt.Errorf("thexem: build map/names request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", thexemUserAgent)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -102,7 +123,11 @@ func (c *Client) GetSeasonNames(ctx context.Context, tvdbID int) (map[int][]stri
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("thexem: map/names http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		detail := httpErrorDetail(body)
+		if isUnavailableHTTP(resp.StatusCode, detail) {
+			return nil, fmt.Errorf("thexem: map/names: %w", ErrUnavailable)
+		}
+		return nil, fmt.Errorf("thexem: map/names http %d: %s", resp.StatusCode, detail)
 	}
 
 	var payload map[string]any
@@ -152,6 +177,30 @@ func (c *Client) MatchSeasonByName(ctx context.Context, tvdbID int, title string
 		return 0, errors.New("thexem: no confident season name match")
 	}
 	return scores[0].season, nil
+}
+
+// httpErrorDetail keeps upstream failure text useful without logging raw HTML,
+// script content, IP addresses, or unbounded response bodies.
+func httpErrorDetail(body []byte) string {
+	text := strings.TrimSpace(redaction.RedactValue(string(body), nil))
+	if text == "" {
+		return "empty response body"
+	}
+	if strings.Contains(text, "Cloudflare") && strings.Contains(text, "you have been blocked") {
+		return "Cloudflare block page"
+	}
+	text = htmlScriptStylePattern.ReplaceAllString(text, " ")
+	text = htmlTagPattern.ReplaceAllString(text, " ")
+	text = ipv4Pattern.ReplaceAllString(text, "[REDACTED_IP]")
+	text = strings.Join(strings.Fields(redaction.RedactValue(text, nil)), " ")
+	if len(text) <= maxHTTPErrorDetailLength {
+		return text
+	}
+	return strings.TrimSpace(text[:maxHTTPErrorDetailLength]) + "..."
+}
+
+func isUnavailableHTTP(status int, detail string) bool {
+	return status == http.StatusForbidden && strings.EqualFold(strings.TrimSpace(detail), "Cloudflare block page")
 }
 
 func parseSeasonEpisode(payload map[string]any) (int, int) {
