@@ -130,6 +130,94 @@ Web UI:
 .\upbrr.exe serve
 ```
 
+Web UI behind a reverse proxy:
+
+The standard and simplest reverse-proxy setup is to give upbrr its own
+subdomain, such as `https://upbrr.example.com`. In that setup the browser still
+sees upbrr at the web root (`/`), so upbrr does not need any special base path
+setting:
+
+```powershell
+.\upbrr.exe serve
+```
+
+Example nginx subdomain proxy:
+
+```nginx
+server {
+  server_name upbrr.example.com;
+
+  location / {
+    proxy_pass http://localhost:7480/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+  }
+}
+```
+
+A path-prefix proxy is different. Use this only when upbrr must live under an
+existing domain path, such as `https://example.com/upbrr`. In that setup the
+browser requests `/upbrr/...`, so upbrr must be told its external base URL:
+
+```powershell
+.\upbrr.exe serve --base-url https://reverseproxyaddr.com/upbrr/
+```
+
+To save that setting to `web-config.json`, add `--persist-web-config`:
+
+```powershell
+.\upbrr.exe serve --base-url https://example.com/upbrr/ --persist-web-config
+```
+
+For Docker or unattended deployments, use env vars instead of overriding the
+container command:
+
+```yaml
+environment:
+  - UPBRR_WEB_BASE_URL=/upbrr/
+  - UPBRR_HEALTHCHECK_URL=http://127.0.0.1:7480/upbrr/api/auth/status
+```
+
+Serve settings precedence is CLI flags, then `UPBRR_WEB_*` env vars, then
+`web-config.json`, then defaults. Supported env vars are `UPBRR_WEB_BASE_URL`,
+`UPBRR_WEB_HOST`, `UPBRR_WEB_PORT`, `UPBRR_WEB_OPEN_BROWSER`, and
+`UPBRR_WEB_TRUSTED_PROXIES`.
+
+Example nginx path-prefix proxy:
+
+```nginx
+server {
+  server_name example.com;
+
+  location = /upbrr {
+    return 301 /upbrr/;
+  }
+
+  location /upbrr/ {
+    proxy_pass http://localhost:7480/upbrr/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+  }
+}
+```
+
+Keep the `/upbrr/` path on both sides of `proxy_pass` unless you intentionally
+configure every HTML, API, SSE, cookie, and asset path rewrite yourself. The
+supported mode is path-retained proxying: browsers request `/upbrr/...` and the
+proxy forwards `/upbrr/...` to upbrr. If the page loads but assets, login, or
+live progress updates fail, check that requests are going to `/upbrr/api/...`
+and `/upbrr/assets/...`, not root `/api/...` or `/assets/...`.
+
+If your proxy terminates HTTPS and forwards plain HTTP to upbrr, configure
+`trusted_proxies` in `web-config.json` so upbrr can trust `X-Forwarded-Proto`
+when deciding whether to set secure cookies.
+
 CLI upload preparation:
 
 ```powershell

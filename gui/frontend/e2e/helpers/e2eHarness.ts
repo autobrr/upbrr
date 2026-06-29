@@ -23,6 +23,7 @@ const png1x1 = Buffer.from(
 );
 const e2eTorrentFixture =
   "d8:announce13:http://e2e.ee4:infod6:lengthi0e4:name8:test.txt12:piece lengthi16384e6:pieces0:ee";
+const startAppBindAttempts = 5;
 
 type FakeCounters = {
   trackerUploads: number;
@@ -51,6 +52,12 @@ export type AppServer = {
   stop: () => Promise<void>;
 };
 
+type StartAppOptions = {
+  /** External base path passed to `upbrr serve --base-url`; empty or "/" uses root mode. */
+  baseURL?: string;
+};
+
+/** Creates an isolated E2E workspace with temp config, media fixtures, and fake services. */
 export async function createE2EWorkspace(): Promise<E2EWorkspace> {
   const root = await mkdtemp(path.join(tmpdir(), "upbrr-e2e-"));
   const mediaDir = path.join(root, "media");
@@ -85,39 +92,88 @@ export async function createE2EWorkspace(): Promise<E2EWorkspace> {
   };
 }
 
-export async function startApp(workspace: E2EWorkspace): Promise<AppServer> {
+/**
+ * Starts the embedded web server for a workspace and waits for auth status at
+ * the configured base path before returning its browser URL. Startup retries
+ * address-in-use failures because the reserved port is released before the
+ * child process can bind it.
+ */
+export async function startApp(
+  workspace: E2EWorkspace,
+  options: StartAppOptions = {},
+): Promise<AppServer> {
   await seedConfigDatabase(workspace);
+  for (let attempt = 1; attempt <= startAppBindAttempts; attempt++) {
+    try {
+      return await startAppOnce(workspace, options);
+    } catch (error) {
+      if (attempt === startAppBindAttempts || !isAddressInUseStartupError(error)) {
+        throw error;
+      }
+    }
+  }
+  throw new Error("server did not start");
+}
+
+async function startAppOnce(
+  workspace: E2EWorkspace,
+  options: StartAppOptions = {},
+): Promise<AppServer> {
   const port = await reserveLoopbackPort();
-  const url = `http://127.0.0.1:${port}`;
-  const child = spawn(
-    e2eBinary,
-    [
-      "serve",
-      "--config",
-      workspace.configPath,
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(port),
-      "--dev-no-auth",
-    ],
-    {
-      cwd: repoRoot,
-      env: workspace.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    },
-  );
+  const origin = `http://127.0.0.1:${port}`;
+  const basePath = normalizeBasePath(options.baseURL);
+  const args = [
+    "serve",
+    "--config",
+    workspace.configPath,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+    "--dev-no-auth",
+  ];
+  if (basePath) {
+    args.push("--base-url", basePath);
+  }
+  const child = spawn(e2eBinary, args, {
+    cwd: repoRoot,
+    env: workspace.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
   const output: string[] = [];
   child.stdout?.on("data", (chunk) => output.push(String(chunk)));
   child.stderr?.on("data", (chunk) => output.push(String(chunk)));
-  await waitForHTTP(`${url}/api/auth/status`, child, output);
+  try {
+    await waitForHTTP(`${origin}${basePath}/api/auth/status`, child, output);
+  } catch (error) {
+    await stopProcess(child);
+    throw error;
+  }
   return {
-    url,
+    url: `${origin}${basePath ? `${basePath}/` : "/"}`,
     stop: async () => {
       await stopProcess(child);
     },
   };
+}
+
+function isAddressInUseStartupError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /address already in use|only one usage of each socket address|EADDRINUSE/i.test(
+    error.message,
+  );
+}
+
+function normalizeBasePath(value: string | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed || trimmed === "/") {
+    return "";
+  }
+  const prefixed = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return prefixed.endsWith("/") ? prefixed.slice(0, -1) : prefixed;
 }
 
 async function seedConfigDatabase(workspace: E2EWorkspace) {

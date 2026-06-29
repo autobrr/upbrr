@@ -5,6 +5,12 @@ import { EventsOn as wailsEventsOn } from "../../wailsjs/runtime/runtime";
 
 type EventCallback = (payload: unknown) => void;
 
+declare global {
+  interface Window {
+    __UPBRR_BASE_URL__?: string;
+  }
+}
+
 const callbackMap = new Map<string, Set<EventCallback>>();
 const nativeBrowseAvailabilityListeners = new Set<() => void>();
 let eventStreamController: AbortController | null = null;
@@ -38,6 +44,30 @@ const parseJSONResponse = async <T>(response: Response): Promise<T | null> => {
 
 const isAuthFailureStatus = (status: number) => status === 401 || status === 403;
 
+const normalizeBrowserBaseURL = (value: unknown) => {
+  if (typeof value !== "string") {
+    return "/";
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "/") {
+    return "/";
+  }
+  const path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return path.endsWith("/") ? path : `${path}/`;
+};
+
+const browserBaseURL = () => normalizeBrowserBaseURL(window.__UPBRR_BASE_URL__);
+
+/**
+ * Prefixes browser-mode API and event paths with the base URL injected by the
+ * embedded web server. Root and Wails desktop runtimes resolve to root paths.
+ */
+export const withBrowserBasePath = (path: string) => {
+  const baseURL = browserBaseURL();
+  const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
+  return `${baseURL}${normalizedPath}`;
+};
+
 const setNativeBrowseEnabled = (enabled: boolean) => {
   if (nativeBrowseEnabled === enabled) {
     return;
@@ -60,7 +90,7 @@ const refreshBrowserAuthState = async () => {
   if (!browserMode) {
     return false;
   }
-  const response = await fetch("/api/auth/status", { credentials: "include" });
+  const response = await fetch(withBrowserBasePath("/api/auth/status"), { credentials: "include" });
   const payload = await parseJSONResponse<
     Record<string, unknown> & {
       authenticated?: boolean;
@@ -146,7 +176,7 @@ const scheduleEventStreamReconnect = () => {
 const runBrowserEventStream = async (controller: AbortController) => {
   let reconnect = true;
   try {
-    const response = await fetch("/api/events", {
+    const response = await fetch(withBrowserBasePath("/api/events"), {
       method: "GET",
       credentials: "include",
       headers: { "X-CSRF-Token": csrfToken },
@@ -240,10 +270,10 @@ const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  let response = await fetch(path, requestInit());
+  let response = await fetch(withBrowserBasePath(path), requestInit());
   let payload = await parseJSONResponse<T & { error?: string }>(response);
   if (!response.ok && isAuthFailureStatus(response.status) && (await refreshBrowserAuthState())) {
-    response = await fetch(path, requestInit());
+    response = await fetch(withBrowserBasePath(path), requestInit());
     payload = await parseJSONResponse<T & { error?: string }>(response);
   }
   if (!response.ok) {
@@ -694,7 +724,10 @@ export const isBrowserMode = () => {
   return browserMode;
 };
 
-/** Reports native browse availability, defaulting to true for desktop Wails builds. */
+/**
+ * Reports whether browser-mode callers can use host-native browse dialogs.
+ * Wails desktop mode always provides native browse support.
+ */
 export const isBrowserNativeBrowseAvailable = () => {
   if (!isBrowserMode()) {
     return true;
@@ -708,7 +741,9 @@ export const isBrowserNativeBrowseAvailable = () => {
  */
 export const isRuntimePathCaseInsensitive = () => caseInsensitivePaths;
 
-/** Subscribes to browser native-browse availability changes and returns an unsubscribe callback. */
+/**
+ * Subscribes to browser-mode native browse availability changes.
+ */
 export const subscribeBrowserNativeBrowseAvailability = (listener: () => void) => {
   nativeBrowseAvailabilityListeners.add(listener);
   return () => {
@@ -728,10 +763,15 @@ export const updateBrowserCSRFToken = (token: string, runtimeCaseInsensitivePath
   recreateEventSource();
 };
 
-/** Browser-mode auth API wrappers that preserve cookie credentials on every request. */
+/**
+ * Browser-mode auth calls that share the injected base path and cookie-bound
+ * CSRF handling used by the app bridge.
+ */
 export const browserAuth = {
   status: async () => {
-    const response = await fetch("/api/auth/status", { credentials: "include" });
+    const response = await fetch(withBrowserBasePath("/api/auth/status"), {
+      credentials: "include",
+    });
     const payload = await parseJSONResponse<Record<string, unknown> & { error?: string }>(response);
     if (!response.ok) {
       throw new Error(String(payload?.error || response.statusText || "Request failed"));

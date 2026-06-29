@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { expect, test } from "@playwright/test";
-import { createE2EWorkspace, fetchMetadata, startApp } from "./helpers/e2eHarness";
+import { createE2EWorkspace, fetchMetadata, startApp, type AppServer } from "./helpers/e2eHarness";
 
 test("embedded web runs image upload, tracker dry run, tracker upload, and history", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
-  const app = await startApp(workspace);
+  let app: AppServer | undefined;
   try {
+    app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
 
     await page.getByRole("button", { name: "Dupe Checking" }).click();
@@ -56,7 +57,7 @@ test("embedded web runs image upload, tracker dry run, tracker upload, and histo
     await expect(page.getByText("E2E.Movie.2026.1080p.WEB-DL").first()).toBeVisible();
     await expect(page.getByText("BTN").first()).toBeVisible();
   } finally {
-    await app.stop();
+    await app?.stop();
     await workspace.cleanup();
   }
 });

@@ -92,6 +92,31 @@ func TestBootstrapRetainedSessionSetsPersistentCookie(t *testing.T) {
 	}
 }
 
+func TestBootstrapSessionCookieUsesConfiguredBasePath(t *testing.T) {
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
+	server.cliCfg.BaseURL = "https://example.test/upbrr/"
+
+	body := `{"username":"admin","password":"very-secure-password","retainLogin":true}`
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/bootstrap", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = "example.test"
+	req.RemoteAddr = "127.0.0.1:5000"
+
+	recorder := httptest.NewRecorder()
+	server.handleBootstrap(recorder, req, session{})
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleBootstrap returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	cookies := recorder.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one cookie, got %d", len(cookies))
+	}
+	if cookies[0].Path != "/upbrr" {
+		t.Fatalf("cookie path = %q, want /upbrr", cookies[0].Path)
+	}
+}
+
 func TestBootstrapAllowsRemoteFirstRunRequest(t *testing.T) {
 	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
 
@@ -618,6 +643,36 @@ func TestLogoutRemovesRetainedSessionFromDisk(t *testing.T) {
 	reloaded := newAuthTestServer(t, dbPath)
 	if _, ok := reloaded.sessions.Get(current.ID); ok {
 		t.Fatal("expected logout to remove retained session from disk")
+	}
+}
+
+func TestLogoutClearsConfiguredBasePathCookie(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+	server.cliCfg.BaseURL = "/upbrr/"
+
+	current, err := server.sessions.Create("admin", true)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/logout", nil)
+	req.Host = "127.0.0.1:7480"
+	req.RemoteAddr = "127.0.0.1:5000"
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+	recorder := httptest.NewRecorder()
+
+	server.handleLogout(recorder, req, current)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("handleLogout returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	cookies := recorder.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one clear cookie, got %d", len(cookies))
+	}
+	if cookies[0].Path != "/upbrr" || cookies[0].MaxAge != -1 {
+		t.Fatalf("unexpected clear cookie: %#v", cookies[0])
 	}
 }
 

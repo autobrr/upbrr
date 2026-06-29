@@ -32,6 +32,7 @@ describe("browser runtime bridge", () => {
   });
 
   afterEach(() => {
+    delete window.__UPBRR_BASE_URL__;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -64,6 +65,32 @@ describe("browser runtime bridge", () => {
           Overrides: { TMDBID: 1 },
           NameOverrides: { Category: "MOVIE" },
         }),
+      }),
+    );
+  });
+
+  it("prefixes browser API calls with the injected base URL", async () => {
+    window.__UPBRR_BASE_URL__ = "/upbrr/";
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { browserAuth, initializeBrowserBridge, withBrowserBasePath } = await import("./runtime");
+    initializeBrowserBridge("csrf-token", true);
+
+    expect(withBrowserBasePath("/api/auth/status")).toBe("/upbrr/api/auth/status");
+
+    await browserAuth.status();
+    await (globalThis as any).go.guiapp.App.GetConfig();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/upbrr/api/auth/status", {
+      credentials: "include",
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/upbrr/api/app/GetConfig",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
       }),
     );
   });
