@@ -213,7 +213,7 @@ func TestLoadTrackerCookieMapMalformedLegacyJSONSurfacesParseError(t *testing.T)
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	jsonPath := legacyCookiePathByExt(t, dbPath, "BTN", ".json")
+	jsonPath := legacyBTNCookiePathByExt(t, dbPath, ".json")
 	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
 		t.Fatalf("mkdir cookie dir: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestLoadTrackerHTTPCookiesMalformedLegacyJSONSurfacesParseError(t *testing.
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	jsonPath := legacyCookiePathByExt(t, dbPath, "BTN", ".json")
+	jsonPath := legacyBTNCookiePathByExt(t, dbPath, ".json")
 	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
 		t.Fatalf("mkdir cookie dir: %v", err)
 	}
@@ -255,6 +255,59 @@ func TestLoadTrackerHTTPCookiesMalformedLegacyJSONSurfacesParseError(t *testing.
 	}
 	if !strings.Contains(err.Error(), "unmarshal") {
 		t.Fatalf("expected JSON parse context, got %v", err)
+	}
+}
+
+func TestLoadTrackerCookieMapIgnoresLegacyNetscapeNoValidCookies(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "empty", content: ""},
+		{name: "comment-only", content: "# Netscape HTTP Cookie File\n# no cookies\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+			txtPath := legacyBTNCookiePathByExt(t, dbPath, ".txt")
+			if err := os.MkdirAll(filepath.Dir(txtPath), 0o755); err != nil {
+				t.Fatalf("mkdir cookie dir: %v", err)
+			}
+			if err := os.WriteFile(txtPath, []byte(tt.content), 0o600); err != nil {
+				t.Fatalf("write legacy txt cookie file: %v", err)
+			}
+
+			_, err := LoadTrackerCookieMap(ctx, dbPath, "BTN")
+			if !errors.Is(err, ErrTrackerCookiesNotFound) {
+				t.Fatalf("expected not-found for no valid Netscape cookies, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadTrackerHTTPCookiesIgnoresLegacyNetscapeDomainMismatch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	txtPath := legacyBTNCookiePathByExt(t, dbPath, ".txt")
+	if err := os.MkdirAll(filepath.Dir(txtPath), 0o755); err != nil {
+		t.Fatalf("mkdir cookie dir: %v", err)
+	}
+	content := ".example.org\tTRUE\t/\tTRUE\t0\tsession\tfrom-file\n"
+	if err := os.WriteFile(txtPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write legacy txt cookie file: %v", err)
+	}
+
+	_, err := LoadTrackerHTTPCookies(ctx, dbPath, "BTN", "backup.landof.tv")
+	if !errors.Is(err, ErrTrackerCookiesNotFound) {
+		t.Fatalf("expected not-found for domain-mismatched Netscape cookies, got %v", err)
 	}
 }
 
@@ -461,12 +514,12 @@ func writeLegacyCookieCandidates(t *testing.T, dbPath string, trackerID string) 
 	return candidates
 }
 
-// legacyCookiePathByExt selects the concrete legacy candidate path for tests
+// legacyBTNCookiePathByExt selects the concrete legacy candidate path for tests
 // that need to seed one cookie format without depending on candidate ordering.
-func legacyCookiePathByExt(t *testing.T, dbPath string, trackerID string, ext string) string {
+func legacyBTNCookiePathByExt(t *testing.T, dbPath string, ext string) string {
 	t.Helper()
 
-	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
+	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "BTN", ".txt", ".json") {
 		if filepath.Ext(candidate) == ext {
 			return candidate
 		}

@@ -414,7 +414,7 @@ func loadTrackerCookieMapFromFiles(dbPath string, trackerID string) (map[string]
 		case ".txt":
 			cookies, err := commonhttp.LoadNetscapeCookies(candidate, "")
 			if err != nil {
-				if !errors.Is(err, fs.ErrNotExist) && firstLoadErr == nil {
+				if !isIgnorableLegacyNetscapeLoadErr(err) && firstLoadErr == nil {
 					firstLoadErr = fmt.Errorf("cookies: load legacy cookie file %s: %w", candidate, err)
 				}
 				continue
@@ -450,7 +450,7 @@ func loadTrackerHTTPCookiesFromFiles(dbPath string, trackerID string, domain str
 		case ".txt":
 			cookies, err := commonhttp.LoadNetscapeCookies(candidate, domain)
 			if err != nil {
-				if !errors.Is(err, fs.ErrNotExist) && firstLoadErr == nil {
+				if !isIgnorableLegacyNetscapeLoadErr(err) && firstLoadErr == nil {
 					firstLoadErr = fmt.Errorf("cookies: load legacy cookie file %s: %w", candidate, err)
 				}
 				continue
@@ -477,6 +477,16 @@ func loadTrackerHTTPCookiesFromFiles(dbPath string, trackerID string, domain str
 	}
 
 	return nil, fmt.Errorf("%w: no cookies found for tracker %s", ErrTrackerCookiesNotFound, trackerID)
+}
+
+// isIgnorableLegacyNetscapeLoadErr reports whether a legacy Netscape file
+// failed for the same reasons as a missing candidate: absent file or no cookies
+// matching the requested import.
+func isIgnorableLegacyNetscapeLoadErr(err error) bool {
+	if errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	return strings.Contains(err.Error(), "no valid cookies found")
 }
 
 func httpCookiesToMap(values []*http.Cookie) map[string]string {
