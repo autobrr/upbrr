@@ -1704,6 +1704,37 @@ func TestApplyTVEpisodeMetadataTVDBAliasYearApplied(t *testing.T) {
 	}
 }
 
+func TestApplyTVEpisodeMetadataTVDBAliasYearUsesLastYear(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tmdbClient := &stubTMDB{}
+	tvdbClient := &stubTVDB{specificAlias: "Hunter x Hunter (1999) (2011)"}
+
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/Hunter.x.Hunter.S01E01.mkv",
+	}
+	ids := &api.ExternalIDs{
+		TMDBID:   100,
+		TVDBID:   200,
+		Category: "TV",
+	}
+	external := &api.ExternalMetadata{
+		TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		TVDB: &api.TVDBMetadata{TVDBID: 200},
+	}
+
+	_ = svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, tvdbClient, &stubTVmaze{})
+
+	if external.TVDB.Name != "Hunter x Hunter" {
+		t.Fatalf("expected cleaned alias title, got %q", external.TVDB.Name)
+	}
+	if external.TVDB.Year != 2011 {
+		t.Fatalf("expected last alias year 2011, got %d", external.TVDB.Year)
+	}
+	if !external.TVDB.YearFromAlias {
+		t.Fatal("expected multi-year alias to mark YearFromAlias")
+	}
+}
+
 func TestApplyTVEpisodeMetadataTVDBAliasYearPreservesSource(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -2127,6 +2158,39 @@ func TestMergeTVDBMetadataClearsStaleAliasYear(t *testing.T) {
 	}
 	if target.YearConfidence != "" {
 		t.Fatalf("expected alias confidence cleared, got %q", target.YearConfidence)
+	}
+}
+
+func TestMergeTVDBMetadataPreservesAliasYearWhenIncomingHasNoYearSource(t *testing.T) {
+	target := &api.TVDBMetadata{
+		TVDBID:         200,
+		Name:           "Cats Eye",
+		Year:           2025,
+		YearFromAlias:  true,
+		YearSource:     "translation_alias",
+		YearConfidence: "high",
+	}
+	incoming := &api.TVDBMetadata{
+		TVDBID:      200,
+		NameEnglish: "Cat's Eye",
+	}
+
+	mergeTVDBMetadata(target, incoming)
+
+	if target.Year != 2025 {
+		t.Fatalf("expected alias year preserved, got %d", target.Year)
+	}
+	if !target.YearFromAlias {
+		t.Fatal("expected YearFromAlias preserved")
+	}
+	if target.YearSource != "translation_alias" {
+		t.Fatalf("expected alias year source preserved, got %q", target.YearSource)
+	}
+	if target.YearConfidence != "high" {
+		t.Fatalf("expected alias confidence preserved, got %q", target.YearConfidence)
+	}
+	if target.NameEnglish != "Cat's Eye" {
+		t.Fatalf("expected unrelated missing fields to merge, got %q", target.NameEnglish)
 	}
 }
 

@@ -1624,7 +1624,9 @@ func mergeTVDBMetadata(target *api.TVDBMetadata, incoming *api.TVDBMetadata) {
 		target.YearFromAlias = true
 		target.YearSource = incoming.YearSource
 		target.YearConfidence = incoming.YearConfidence
-	case target.YearFromAlias:
+	case target.YearFromAlias && incoming.Year > 0 && strings.TrimSpace(incoming.YearSource) != "":
+		// Only a sourced replacement year can clear alias provenance;
+		// translation misses can return no usable year evidence.
 		target.Year = incoming.Year
 		target.YearFromAlias = false
 		target.YearSource = incoming.YearSource
@@ -2172,8 +2174,11 @@ func parseTVDBAliasNameYear(alias string) (string, int, bool) {
 	}
 	name := trimmed
 	year := 0
-	match := tvdbAliasYearPattern.FindStringSubmatch(trimmed)
-	if len(match) == 2 {
+	// TVDB alias precedence uses the final year-bearing disambiguator while
+	// cleanup removes every year token from the display name.
+	matches := tvdbAliasYearPattern.FindAllStringSubmatch(trimmed, -1)
+	if len(matches) > 0 {
+		match := matches[len(matches)-1]
 		parsed, err := strconv.Atoi(match[1])
 		if err != nil {
 			return "", 0, false

@@ -26,7 +26,12 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const defaultBaseURL = "https://api4.thetvdb.com/v4"
+const (
+	defaultBaseURL = "https://api4.thetvdb.com/v4"
+	// maxTVDBResponseBodyBytes bounds TVDB metadata responses before status
+	// detail formatting or JSON decode.
+	maxTVDBResponseBodyBytes = 16 << 20
+)
 
 var (
 	errNotFound             = errors.New("tvdb: not found")
@@ -1362,10 +1367,6 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("tvdb read response body: %w", err)
-	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.refreshToken(ctx); err != nil {
 			return err
@@ -1375,6 +1376,11 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 	if resp.StatusCode == http.StatusNotFound {
 		return errNotFound
 	}
+
+	body, err := readTVDBResponseBody(resp.Body)
+	if err != nil {
+		return fmt.Errorf("tvdb: read response body for %s: %w", path, err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("tvdb: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
@@ -1383,6 +1389,20 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		return fmt.Errorf("tvdb: decode %s: %w", path, err)
 	}
 	return nil
+}
+
+// readTVDBResponseBody returns a complete TVDB response payload up to
+// maxTVDBResponseBodyBytes and reports oversized responses instead of
+// truncating JSON or upstream error details.
+func readTVDBResponseBody(body io.Reader) ([]byte, error) {
+	payload, err := io.ReadAll(io.LimitReader(body, maxTVDBResponseBodyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read limited response body: %w", err)
+	}
+	if len(payload) > maxTVDBResponseBodyBytes {
+		return nil, fmt.Errorf("response exceeds %d bytes", maxTVDBResponseBodyBytes)
+	}
+	return payload, nil
 }
 
 func (c *Client) ensureToken(ctx context.Context) error {

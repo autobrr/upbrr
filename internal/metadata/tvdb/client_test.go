@@ -6,6 +6,7 @@ package tvdb
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -231,6 +232,60 @@ func TestSearchSeriesDecodesStringAliases(t *testing.T) {
 	}
 	if results[0].Aliases[0].Name != "Hunter x Hunter (2011)" || results[0].Aliases[0].Language != "eng" {
 		t.Fatalf("expected english string alias, got %#v", results[0].Aliases[0])
+	}
+}
+
+func TestGetJSONRejectsOversizedSuccessResponse(t *testing.T) {
+	client := NewClient(&http.Client{Transport: tvdbRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/login":
+			return tvdbTestResponse(http.StatusOK, `{"data":{"token":"token"}}`), nil
+		case "/oversized":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(&repeatingReader{remaining: maxTVDBResponseBodyBytes + 1}),
+				Request:    req,
+			}, nil
+		default:
+			return tvdbTestResponse(http.StatusNotFound, ""), nil
+		}
+	})}, nil, "api-key", "")
+	client.baseURL = "https://tvdb.test"
+
+	var target map[string]any
+	err := client.getJSON(context.Background(), "/oversized", nil, &target)
+	if err == nil {
+		t.Fatal("expected oversized response error")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected oversized response error, got %v", err)
+	}
+}
+
+func TestGetJSONRejectsOversizedErrorResponse(t *testing.T) {
+	client := NewClient(&http.Client{Transport: tvdbRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/login":
+			return tvdbTestResponse(http.StatusOK, `{"data":{"token":"token"}}`), nil
+		case "/oversized":
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       io.NopCloser(&repeatingReader{remaining: maxTVDBResponseBodyBytes + 1}),
+				Request:    req,
+			}, nil
+		default:
+			return tvdbTestResponse(http.StatusNotFound, ""), nil
+		}
+	})}, nil, "api-key", "")
+	client.baseURL = "https://tvdb.test"
+
+	var target map[string]any
+	err := client.getJSON(context.Background(), "/oversized", nil, &target)
+	if err == nil {
+		t.Fatal("expected oversized response error")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected oversized response error, got %v", err)
 	}
 }
 
@@ -801,4 +856,36 @@ func TestGetEpisodeTranslation(t *testing.T) {
 	if translated.Overview != "English episode overview" {
 		t.Fatalf("expected translated overview, got %q", translated.Overview)
 	}
+}
+
+type tvdbRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f tvdbRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func tvdbTestResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}
+}
+
+type repeatingReader struct {
+	remaining int64
+}
+
+func (r *repeatingReader) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:int(r.remaining)]
+	}
+	for i := range p {
+		p[i] = 'x'
+	}
+	r.remaining -= int64(len(p))
+	return len(p), nil
 }
