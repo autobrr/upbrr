@@ -130,6 +130,14 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 			expected: "Example.Show.S01E01.1080p.Web-DL.x265-GRP",
 		},
 		{
+			name: "Valid group tag appended to ReleaseNameNoTag",
+			meta: api.PreparedMetadata{
+				ReleaseNameNoTag: "Example.Show.S01E01.1080p.Web-DL",
+				Tag:              "GRP",
+			},
+			expected: "Example.Show.S01E01.1080p.Web-DL-GRP",
+		},
+		{
 			name: "Missing group tag",
 			meta: api.PreparedMetadata{
 				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265",

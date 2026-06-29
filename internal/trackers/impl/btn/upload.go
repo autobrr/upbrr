@@ -806,10 +806,15 @@ func resolveUploadName(meta api.PreparedMetadata) string {
 	return applyBTNNoGroupSuffix(name, meta)
 }
 
+// applyBTNNoGroupSuffix preserves a valid prepared group tag for no-tag names
+// and falls back to BTN's NOGRP marker when no usable tag is available.
 func applyBTNNoGroupSuffix(name string, meta api.PreparedMetadata) string {
 	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
 
 	if tag != "" && !isNoGroupTag(tag) {
+		if selectedBTNReleaseNameNoTag(name, meta) || !hasBTNGroupSuffix(name) {
+			return strings.TrimRight(name, ".-") + "-" + tag
+		}
 		return name
 	}
 
@@ -818,6 +823,23 @@ func applyBTNNoGroupSuffix(name string, meta api.PreparedMetadata) string {
 	normalizedName = strings.TrimRight(normalizedName, ".-")
 
 	return normalizedName + "-NOGRP"
+}
+
+// selectedBTNReleaseNameNoTag reports whether name is the normalized
+// ReleaseNameNoTag value chosen by resolveUploadName.
+func selectedBTNReleaseNameNoTag(name string, meta api.PreparedMetadata) bool {
+	if strings.TrimSpace(meta.ReleaseName) != "" || strings.TrimSpace(meta.ReleaseNameNoTag) == "" {
+		return false
+	}
+	candidate := stripEpisodeTitle(strings.TrimSpace(meta.ReleaseNameNoTag), meta.EpisodeTitle)
+	candidate = cleanAndNormalizeBTNName(candidate)
+	return strings.TrimSpace(name) == candidate
+}
+
+// hasBTNGroupSuffix reports whether name already ends with a hyphenated BTN
+// group suffix.
+func hasBTNGroupSuffix(name string) bool {
+	return regexp.MustCompile(`-[^-.\s]+$`).MatchString(strings.TrimSpace(name))
 }
 
 func isNoGroupTag(tag string) bool {
