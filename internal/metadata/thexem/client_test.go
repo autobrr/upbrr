@@ -103,7 +103,7 @@ func TestHTTPErrorDetailCompactsCloudflareBlock(t *testing.T) {
 func TestMapAbsoluteEpisodeCloudflareBlockIsUnavailable(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`<html><title>Attention Required! | Cloudflare</title><body>Sorry, you have been blocked</body></html>`))
 	}))

@@ -1804,9 +1804,7 @@ func (s *Service) applyTVEpisodeMetadata(
 			if mappedSeason, mappedEpisode, err := xemClient.MapAbsoluteEpisode(ctx, ids.TVDBID, absoluteEpisode); err == nil {
 				season = metautil.FirstInt(mappedSeason, season)
 				episode = metautil.FirstInt(mappedEpisode, episode)
-			} else if errors.Is(err, thexem.ErrUnavailable) {
-				// XEM can be blocked by Cloudflare; silently fall back to TVDB/TMDb episode data.
-			} else if s.logger != nil {
+			} else if !errors.Is(err, thexem.ErrUnavailable) && s.logger != nil {
 				s.logger.Debugf("metadata: thexem absolute mapping failed: %v", err)
 			}
 			if season == 0 {

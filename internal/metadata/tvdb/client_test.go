@@ -417,7 +417,7 @@ func TestGetEpisodesUpgradesLegacyCachedAliasYearSource(t *testing.T) {
 		t.Fatalf("write cache: %v", err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "offline", http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
@@ -457,7 +457,7 @@ func TestGetEpisodesDoesNotUpgradeUnprovenLegacyCachedYear(t *testing.T) {
 		t.Fatalf("write cache: %v", err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "offline", http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
