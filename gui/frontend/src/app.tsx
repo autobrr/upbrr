@@ -54,6 +54,7 @@ import type {
   ReleaseNameOverrides,
   ReleaseNameTouchedState,
   ScreenshotImage,
+  ScreenshotOverrideSnapshot,
   ScreenshotPlan,
   ScreenshotPreviewImage,
   ScreenshotPurpose,
@@ -1503,6 +1504,7 @@ export default function App() {
     setExistingImages,
     resetScreenshotState: resetScreenshots,
     handleDeleteTrackerImageURL,
+    getLoadedScreenshotOverrides,
   } = screenshots;
 
   /**
@@ -1617,6 +1619,9 @@ export default function App() {
     uploadCandidates: screenshots.uploadCandidates,
     configuredImageHosts,
     selectedTrackers: selectedUploadImageTrackers,
+    screenshotOverrideSnapshot: screenshots.screenshotPlan
+      ? getLoadedScreenshotOverrides()
+      : undefined,
   });
   const {
     refreshUploadedImages,
@@ -2746,11 +2751,12 @@ export default function App() {
     if (!runner) {
       throw new Error("Screenshot capture is unavailable in this build.");
     }
+    const screenshotOverrides = getLoadedScreenshotOverrides();
     return runner(
       path.trim(),
-      normalizeOverrides(idOverrideState?.overrides || {}),
-      normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-      normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+      screenshotOverrides.external,
+      screenshotOverrides.release,
+      screenshotOverrides.metadata,
       selections,
       purpose,
     );
@@ -2828,11 +2834,12 @@ export default function App() {
     setLivePreviewLoading(true);
     const timestamp = clampPreviewSeconds(timestampSeconds);
     try {
+      const screenshotOverrides = getLoadedScreenshotOverrides();
       const dataUri = await previewer(
         path.trim(),
-        normalizeOverrides(idOverrideState?.overrides || {}),
-        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+        screenshotOverrides.external,
+        screenshotOverrides.release,
+        screenshotOverrides.metadata,
         timestamp,
       );
       if (livePreviewRequestId.current !== requestId) {
@@ -3294,13 +3301,21 @@ export default function App() {
   useEffect(() => {
     if (activeTab !== "upload_images") return;
     if (!path.trim()) return;
+    if (dupeChecked && !screenshots.screenshotPlan) return;
     const loadUploadCandidates = async () => {
       try {
+        const screenshotOverrides: ScreenshotOverrideSnapshot = screenshots.screenshotPlan
+          ? getLoadedScreenshotOverrides()
+          : {
+              external: normalizeOverrides(idOverrideState?.overrides || {}),
+              release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+              metadata: normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+            };
         const candidates = await globalThis.go?.guiapp?.App?.ListUploadCandidates(
           path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+          screenshotOverrides.external,
+          screenshotOverrides.release,
+          screenshotOverrides.metadata,
         );
         if (!candidates || candidates.length === 0) {
           setExistingImages([]);
@@ -3328,9 +3343,12 @@ export default function App() {
   }, [
     activeTab,
     path,
+    dupeChecked,
+    screenshots.screenshotPlan,
     idOverrideState,
     releaseOverrideState,
     metadataOverrideState,
+    getLoadedScreenshotOverrides,
     setExistingImages,
     readScreenshotImage,
     refreshUploadedImages,

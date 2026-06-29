@@ -15,6 +15,9 @@ import type {
   MetadataPreview,
   ScreenshotImage,
   ScreenshotPlan,
+  ScreenshotPurpose,
+  ScreenshotResult,
+  ScreenshotSelection,
   TrackerUploadSnapshot,
 } from "./types";
 import { isRuntimePathCaseInsensitive, updateBrowserCSRFToken } from "./utils/runtime";
@@ -60,6 +63,27 @@ type SaveFinalScreenshotSelections = (
   metadataOverrides: unknown,
   images: ScreenshotImage[],
 ) => Promise<void>;
+type GenerateScreenshots = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+  selections: ScreenshotSelection[],
+  purpose: ScreenshotPurpose,
+) => Promise<ScreenshotResult>;
+type PreviewScreenshotFrame = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+  timestampSeconds: number,
+) => Promise<string>;
+type ListUploadCandidates = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+) => Promise<ScreenshotImage[]>;
 type ReadScreenshotImage = (imagePath: string) => Promise<string>;
 type FetchDescriptionBuilder = (
   sourcePath: string,
@@ -233,6 +257,9 @@ const installAppBridge = (
     saveConfig?: SaveConfig;
     fetchScreenshotPlan?: FetchScreenshotPlan;
     saveFinalScreenshotSelections?: SaveFinalScreenshotSelections;
+    generateScreenshots?: GenerateScreenshots;
+    previewScreenshotFrame?: PreviewScreenshotFrame;
+    listUploadCandidates?: ListUploadCandidates;
     readScreenshotImage?: ReadScreenshotImage;
     fetchDescriptionBuilder?: FetchDescriptionBuilder;
     fetchPreparation?: FetchPreparation;
@@ -284,9 +311,29 @@ const installAppBridge = (
         SaveConfig: options.saveConfig ?? (async () => undefined),
         FetchScreenshotPlan:
           options.fetchScreenshotPlan ?? (async (sourcePath: string) => screenshotPlan(sourcePath)),
+        GenerateScreenshots:
+          options.generateScreenshots ??
+          (async (
+            sourcePath: string,
+            _overrides: unknown,
+            _nameOverrides: unknown,
+            _metadataOverrides: unknown,
+            _selections: ScreenshotSelection[],
+            purpose: ScreenshotPurpose,
+          ) => ({
+            SourcePath: sourcePath,
+            Purpose: purpose,
+            Images: [],
+            Tonemapped: false,
+            UsedLibplacebo: false,
+            Errors: [],
+          })),
+        PreviewScreenshotFrame:
+          options.previewScreenshotFrame ?? (async () => "data:image/png;base64,PREVIEW=="),
         SaveFinalScreenshotSelections:
           options.saveFinalScreenshotSelections ?? (async () => undefined),
         ReadScreenshotImage: options.readScreenshotImage ?? (async () => "data:image/png;base64,"),
+        ListUploadCandidates: options.listUploadCandidates ?? (async () => []),
         FetchDescriptionBuilder:
           options.fetchDescriptionBuilder ??
           (async (sourcePath: string) => descriptionBuilderPreview(sourcePath)),
@@ -517,7 +564,7 @@ describe("metadata tracker payloads", () => {
     });
   });
 
-  it("saves screenshot selections with the metadata overrides used to load the plan", async () => {
+  it("saves screenshot selections with the overrides used to load the plan", async () => {
     const existingImage: ScreenshotImage = {
       Index: 0,
       TimestampSeconds: 10,
@@ -552,6 +599,8 @@ describe("metadata tracker payloads", () => {
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "12345" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "movie" } });
     fireEvent.change(screen.getByLabelText("Distributor"), {
       target: { value: "Loaded Distributor" },
     });
@@ -563,6 +612,8 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
 
     await waitFor(() => expect(fetchScreenshotPlan).toHaveBeenCalledTimes(1));
+    expect(fetchScreenshotPlan.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(fetchScreenshotPlan.mock.calls[0][2]).toEqual({ Category: "movie" });
     expect(fetchScreenshotPlan.mock.calls[0][3]).toEqual({
       Distributor: "Loaded Distributor",
     });
@@ -570,6 +621,8 @@ describe("metadata tracker payloads", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Input" }));
     fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "67890" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "tv" } });
     fireEvent.change(screen.getByLabelText("Distributor"), {
       target: { value: "Drifted Distributor" },
     });
@@ -577,7 +630,99 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add to final" }));
 
     await waitFor(() => expect(saveFinalScreenshotSelections).toHaveBeenCalledTimes(1));
+    expect(saveFinalScreenshotSelections.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(saveFinalScreenshotSelections.mock.calls[0][2]).toEqual({ Category: "movie" });
     expect(saveFinalScreenshotSelections.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
+    });
+  });
+
+  it("previews and captures screenshots with the overrides used to load the plan", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchScreenshotPlan = vi.fn<FetchScreenshotPlan>(async (sourcePath) => ({
+      ...screenshotPlan(sourcePath),
+      SuggestedSelections: [
+        {
+          Index: 0,
+          TimestampSeconds: 10,
+          Frame: 240,
+          Source: "auto",
+        },
+      ],
+    }));
+    const previewScreenshotFrame = vi.fn<PreviewScreenshotFrame>(
+      async () => "data:image/png;base64,PREVIEW==",
+    );
+    const generateScreenshots = vi.fn<GenerateScreenshots>(
+      async (sourcePath, _overrides, _nameOverrides, _metadataOverrides, _selections, purpose) => ({
+        SourcePath: sourcePath,
+        Purpose: purpose,
+        Images: [],
+        Tonemapped: false,
+        UsedLibplacebo: false,
+        Errors: [],
+      }),
+    );
+    const listUploadCandidates = vi.fn<ListUploadCandidates>(async () => []);
+    installAppBridge(fetchMetadata, {
+      fetchScreenshotPlan,
+      previewScreenshotFrame,
+      generateScreenshots,
+      listUploadCandidates,
+    });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "12345" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "movie" } });
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Loaded Distributor" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+    await waitFor(() => expect(fetchScreenshotPlan).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "67890" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "tv" } });
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Drifted Distributor" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run preview" }));
+    await waitFor(() => expect(previewScreenshotFrame).toHaveBeenCalledTimes(1));
+    expect(previewScreenshotFrame.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(previewScreenshotFrame.mock.calls[0][2]).toEqual({ Category: "movie" });
+    expect(previewScreenshotFrame.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate screenshots" }));
+    await waitFor(() => expect(generateScreenshots).toHaveBeenCalledTimes(1));
+    expect(generateScreenshots.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(generateScreenshots.mock.calls[0][2]).toEqual({ Category: "movie" });
+    expect(generateScreenshots.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Upload Images" }));
+    await waitFor(() => expect(listUploadCandidates).toHaveBeenCalledTimes(1));
+    expect(listUploadCandidates.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(listUploadCandidates.mock.calls[0][2]).toEqual({ Category: "movie" });
+    expect(listUploadCandidates.mock.calls[0][3]).toEqual({
       Distributor: "Loaded Distributor",
     });
   });

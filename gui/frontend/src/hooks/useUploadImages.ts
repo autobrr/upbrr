@@ -9,6 +9,7 @@ import type {
   ExternalIDOverrides,
   MetadataOverrides,
   ReleaseNameOverrides,
+  ScreenshotOverrideSnapshot,
 } from "../types";
 import {
   normalizeMetadataOverrides,
@@ -24,6 +25,12 @@ interface UploadImagesHookProps {
   uploadCandidates?: ScreenshotPreviewImage[];
   configuredImageHosts?: string[];
   selectedTrackers?: string[];
+  /**
+   * Loaded screenshot-plan overrides to use for screenshot-derived upload candidates.
+   *
+   * Omit this for non-screenshot upload flows that should use live input overrides.
+   */
+  screenshotOverrideSnapshot?: ScreenshotOverrideSnapshot;
 }
 
 export const useUploadImages = ({
@@ -34,6 +41,7 @@ export const useUploadImages = ({
   uploadCandidates = [],
   configuredImageHosts = [],
   selectedTrackers = [],
+  screenshotOverrideSnapshot,
 }: UploadImagesHookProps) => {
   // State: Host & selection
   const [uploadHost, setUploadHost] = useState<string>("");
@@ -75,6 +83,16 @@ export const useUploadImages = ({
     });
     return map;
   }, [uploadedImageRecords]);
+
+  const getWorkflowOverrides = useCallback(
+    (): ScreenshotOverrideSnapshot =>
+      screenshotOverrideSnapshot || {
+        external: normalizeOverrides(idOverrideState?.overrides || {}),
+        release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        metadata: normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+      },
+    [screenshotOverrideSnapshot, idOverrideState, releaseOverrideState, metadataOverrideState],
+  );
 
   // Initialize host if not set and candidates exist
   useEffect(() => {
@@ -140,17 +158,18 @@ export const useUploadImages = ({
       return;
     }
     try {
+      const workflowOverrides = getWorkflowOverrides();
       const records = await fetcher(
         path.trim(),
-        normalizeOverrides(idOverrideState?.overrides || {}),
-        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+        workflowOverrides.external,
+        workflowOverrides.release,
+        workflowOverrides.metadata,
       );
       setUploadedImageRecords(records || []);
     } catch (err) {
       console.error("Failed to load uploaded images:", err);
     }
-  }, [path, idOverrideState, releaseOverrideState, metadataOverrideState]);
+  }, [path, getWorkflowOverrides]);
 
   // Upload selected images to host
   const handleUploadImages = useCallback(
@@ -179,11 +198,12 @@ export const useUploadImages = ({
       setUploadImagesLoading(true);
       setUploadProgress({ current: 0, total: selected.length });
       try {
+        const workflowOverrides = getWorkflowOverrides();
         const result = await uploader(
           path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+          workflowOverrides.external,
+          workflowOverrides.release,
+          workflowOverrides.metadata,
           selectedTrackers,
           uploadHost,
           selected.map((entry) => entry.image),
@@ -223,15 +243,7 @@ export const useUploadImages = ({
         setUploadImagesLoading(false);
       }
     },
-    [
-      path,
-      idOverrideState,
-      releaseOverrideState,
-      metadataOverrideState,
-      selectedTrackers,
-      uploadHost,
-      refreshUploadedImages,
-    ],
+    [path, getWorkflowOverrides, selectedTrackers, uploadHost, refreshUploadedImages],
   );
 
   // Delete a single uploaded image record
@@ -244,12 +256,13 @@ export const useUploadImages = ({
 
       try {
         await globalThis.go?.guiapp?.App?.DeleteUploadedImage(path.trim(), imagePath, host);
+        const workflowOverrides = getWorkflowOverrides();
         // Refresh existing images to reflect deletion
         const refreshed = await globalThis.go?.guiapp?.App?.ListUploadCandidates(
           path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+          workflowOverrides.external,
+          workflowOverrides.release,
+          workflowOverrides.metadata,
         );
 
         if (!refreshed || refreshed.length === 0) {
@@ -272,14 +285,7 @@ export const useUploadImages = ({
         console.error("Failed to delete uploaded image:", err);
       }
     },
-    [
-      path,
-      idOverrideState,
-      releaseOverrideState,
-      metadataOverrideState,
-      uploadHost,
-      refreshUploadedImages,
-    ],
+    [path, getWorkflowOverrides, uploadHost, refreshUploadedImages],
   );
 
   // Reset upload state

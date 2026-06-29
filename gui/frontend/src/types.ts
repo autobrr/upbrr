@@ -59,6 +59,18 @@ export type MetadataOverrides = {
   Anime?: boolean | null;
 };
 
+/**
+ * Normalized override payloads captured when a screenshot plan is loaded.
+ *
+ * Screenshot preview, capture, selection persistence, and upload-image flows reuse this
+ * tuple so later edits in the input form cannot drift from the plan context.
+ */
+export type ScreenshotOverrideSnapshot = {
+  external: ExternalIDOverrides;
+  release: ReleaseNameOverrides;
+  metadata: MetadataOverrides;
+};
+
 export type ExternalIDInfo = {
   Provider: string;
   ID: number;

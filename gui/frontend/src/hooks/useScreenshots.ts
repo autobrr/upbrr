@@ -12,6 +12,7 @@ import type {
   ExternalIDOverrides,
   MetadataOverrides,
   ReleaseNameOverrides,
+  ScreenshotOverrideSnapshot,
 } from "../types";
 import {
   normalizeMetadataOverrides,
@@ -62,7 +63,29 @@ export const useScreenshots = ({
 
   // Refs for state sync
   const finalImagesRef = useRef<ScreenshotPreviewImage[]>([]);
-  const loadedMetadataOverridesRef = useRef<MetadataOverrides>({});
+  const loadedMetadataOverridesRef = useRef<ScreenshotOverrideSnapshot>({
+    external: {},
+    release: {},
+    metadata: {},
+  });
+
+  /** Captures the current normalized override tuple for a new screenshot plan request. */
+  const snapshotCurrentOverrides = useCallback(
+    (): ScreenshotOverrideSnapshot => ({
+      external: normalizeOverrides(idOverrideState?.overrides || {}),
+      release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+      metadata: normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+    }),
+    [idOverrideState, releaseOverrideState, metadataOverrideState],
+  );
+
+  /**
+   * Returns the override tuple from the loaded screenshot plan.
+   *
+   * Callers use this for follow-up screenshot work that must stay bound to the plan
+   * even if the editable override state changes after loading.
+   */
+  const getLoadedScreenshotOverrides = useCallback(() => loadedMetadataOverridesRef.current, []);
 
   // Memoized tracker image maps
   const trackerImageURLs = useMemo(() => {
@@ -138,16 +161,14 @@ export const useScreenshots = ({
 
       setScreenshotsLoading(true);
       try {
-        const metadataOverrides = normalizeMetadataOverrides(
-          metadataOverrideState?.overrides || {},
-        );
+        const loadedOverrides = snapshotCurrentOverrides();
         const result = await fetcher(
           path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          metadataOverrides,
+          loadedOverrides.external,
+          loadedOverrides.release,
+          loadedOverrides.metadata,
         );
-        loadedMetadataOverridesRef.current = metadataOverrides;
+        loadedMetadataOverridesRef.current = loadedOverrides;
         setScreenshotPlan(result);
         setScreenshotSelections(result.SuggestedSelections || []);
         setLivePreviewImage("");
@@ -234,14 +255,7 @@ export const useScreenshots = ({
         setScreenshotsLoading(false);
       }
     },
-    [
-      path,
-      idOverrideState,
-      releaseOverrideState,
-      metadataOverrideState,
-      livePreviewSeconds,
-      readScreenshotImage,
-    ],
+    [path, snapshotCurrentOverrides, livePreviewSeconds, readScreenshotImage],
   );
 
   // Save final selections
@@ -253,18 +267,19 @@ export const useScreenshots = ({
         return;
       }
       try {
+        const loadedOverrides = loadedMetadataOverridesRef.current;
         await saver(
           path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          loadedMetadataOverridesRef.current,
+          loadedOverrides.external,
+          loadedOverrides.release,
+          loadedOverrides.metadata,
           next.map((entry) => entry.image),
         );
       } catch (err) {
         setScreenshotsError(String(err));
       }
     },
-    [path, idOverrideState, releaseOverrideState],
+    [path],
   );
 
   // Update selection timestamp
@@ -418,13 +433,14 @@ export const useScreenshots = ({
 
       const deleted: ScreenshotImage[] = [];
       const failures: string[] = [];
+      const loadedOverrides = loadedMetadataOverridesRef.current;
       for (const image of images) {
         try {
           await deleter(
             path.trim(),
-            normalizeOverrides(idOverrideState?.overrides || {}),
-            normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-            loadedMetadataOverridesRef.current,
+            loadedOverrides.external,
+            loadedOverrides.release,
+            loadedOverrides.metadata,
             image.Path,
           );
           deleted.push(image);
@@ -438,7 +454,7 @@ export const useScreenshots = ({
       }
       return deleted;
     },
-    [path, idOverrideState, releaseOverrideState],
+    [path],
   );
 
   const deleteTrackerImageURL = useCallback(
@@ -448,18 +464,19 @@ export const useScreenshots = ({
         return;
       }
       try {
+        const loadedOverrides = loadedMetadataOverridesRef.current;
         await deleter(
           path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          loadedMetadataOverridesRef.current,
+          loadedOverrides.external,
+          loadedOverrides.release,
+          loadedOverrides.metadata,
           url,
         );
       } catch (err) {
         setScreenshotsError(String(err));
       }
     },
-    [path, idOverrideState, releaseOverrideState],
+    [path],
   );
 
   const deleteTrackerImageFile = useCallback(
@@ -469,18 +486,19 @@ export const useScreenshots = ({
         return;
       }
       try {
+        const loadedOverrides = loadedMetadataOverridesRef.current;
         await deleter(
           path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
-          loadedMetadataOverridesRef.current,
+          loadedOverrides.external,
+          loadedOverrides.release,
+          loadedOverrides.metadata,
           imagePath,
         );
       } catch (err) {
         setScreenshotsError(String(err));
       }
     },
-    [path, idOverrideState, releaseOverrideState],
+    [path],
   );
 
   const removeTrackerImageURLState = useCallback((url: string) => {
@@ -716,7 +734,7 @@ export const useScreenshots = ({
     setLivePreviewError("");
     setDeletedTrackerImages([]);
     finalImagesRef.current = [];
-    loadedMetadataOverridesRef.current = {};
+    loadedMetadataOverridesRef.current = { external: {}, release: {}, metadata: {} };
   }, []);
 
   // Sync finalImagesRef with finalImages state
@@ -816,6 +834,7 @@ export const useScreenshots = ({
     // Handlers & utilities
     normalizeImagePath,
     readScreenshotImage,
+    getLoadedScreenshotOverrides,
     loadScreenshotPlan,
     saveFinalSelections,
     updateSelectionTime,
