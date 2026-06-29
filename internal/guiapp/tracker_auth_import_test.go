@@ -156,6 +156,31 @@ func TestAppTestTrackerAuthUsesRuntimeContext(t *testing.T) {
 	}
 }
 
+func TestAppLoginTrackerAuthBTNCookiesWithoutAPIPreservesMissingAPIStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newGUITrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	app := &App{
+		runtimeCtx: newAppRuntimeContext(ctx),
+		cfg:        config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+	}
+
+	status, err := app.LoginTrackerAuth("BTN", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("LoginTrackerAuth: %v", err)
+	}
+	if status.State != "login_required" || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected BTN cookie-only Wails login to preserve missing API status, got %#v", status)
+	}
+	if strings.Contains(status.Message, "username/password missing") {
+		t.Fatalf("missing credentials masked missing API status: %#v", status)
+	}
+}
+
 func newGUITrackerAuthTestDB(t *testing.T) string {
 	t.Helper()
 

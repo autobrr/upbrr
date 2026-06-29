@@ -405,6 +405,15 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckValidatesApplicableTrackers(t *testi
 				SupportsAutoLogin: true,
 			},
 			{
+				TrackerID:          "BTN",
+				AuthKind:           "api_key_cookies_login_manual_2fa",
+				SupportsCookieFile: true,
+				SupportsLogin:      true,
+				SupportsAutoLogin:  true,
+				SupportsManual2FA:  true,
+				RequiresAPIKey:     true,
+			},
+			{
 				TrackerID:      "AITHER",
 				AuthKind:       "api_key",
 				RequiresAPIKey: true,
@@ -412,6 +421,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckValidatesApplicableTrackers(t *testi
 		},
 		validateStatus: map[string]api.TrackerAuthStatus{
 			"PTP": {TrackerID: "PTP", State: trackerauth.StateConfigured},
+			"BTN": {TrackerID: "BTN", State: trackerauth.StateConfigured},
 		},
 	}
 
@@ -420,16 +430,16 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckValidatesApplicableTrackers(t *testi
 		bufio.NewReader(strings.NewReader("")),
 		authSvc,
 		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
-		[]string{"PTP", "AITHER", "BLU"},
+		[]string{"PTP", "BTN", "AITHER", "BLU"},
 	)
 	if err != nil {
 		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
 	}
-	if strings.Join(got, ",") != "PTP,AITHER,BLU" {
-		t.Fatalf("expected PTP and non-applicable trackers to continue, got %#v", got)
+	if strings.Join(got, ",") != "PTP,BTN,AITHER,BLU" {
+		t.Fatalf("expected PTP, BTN, and non-applicable trackers to continue, got %#v", got)
 	}
-	if strings.Join(authSvc.validated, ",") != "PTP" {
-		t.Fatalf("expected only applicable PTP validation, got %#v", authSvc.validated)
+	if strings.Join(authSvc.validated, ",") != "PTP,BTN" {
+		t.Fatalf("expected applicable PTP and BTN validation, got %#v", authSvc.validated)
 	}
 }
 
@@ -713,6 +723,45 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedAuthRequired(t *testi
 		t.Fatal("expected unattended auth-required error")
 	}
 	if !strings.Contains(err.Error(), "tracker auth HDB not ready before dupe check") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedBTN2FA(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{{
+			TrackerID:          "BTN",
+			AuthKind:           "api_key_cookies_login_manual_2fa",
+			SupportsCookieFile: true,
+			SupportsLogin:      true,
+			SupportsAutoLogin:  true,
+			SupportsManual2FA:  true,
+			RequiresAPIKey:     true,
+		}},
+		validateStatus: map[string]api.TrackerAuthStatus{
+			"BTN": {
+				TrackerID:   "BTN",
+				State:       trackerauth.StateLoginRequired,
+				Needs2FA:    true,
+				ChallengeID: "challenge-1",
+				Message:     "2FA required",
+			},
+		},
+	}
+
+	_, err := ensureCLITrackerAuthBeforeDupeCheckWithService(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeUnattended}},
+		[]string{"BTN"},
+	)
+	if err == nil {
+		t.Fatal("expected unattended BTN 2FA error")
+	}
+	if !strings.Contains(err.Error(), "unattended tracker auth BTN requires 2FA before dupe check") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

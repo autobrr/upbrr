@@ -39,7 +39,17 @@ const trackerAuthChipClass =
 const trackerAuthMetaClass = "m-0 text-[0.8rem] text-[var(--muted)]";
 
 /** Trackers with backend adapters that can perform a remote auth check. */
-const remoteAuthValidationTrackers = new Set(["AR", "FF", "FL", "HDB", "MTV", "PTP", "RTF", "THR"]);
+const remoteAuthValidationTrackers = new Set([
+  "AR",
+  "BTN",
+  "FF",
+  "FL",
+  "HDB",
+  "MTV",
+  "PTP",
+  "RTF",
+  "THR",
+]);
 
 /** Builds the case-insensitive key shared by main tracker config and tracker auth rows. */
 const trackerNameKey = (name: string) => name.trim().toLowerCase();

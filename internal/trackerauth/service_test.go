@@ -19,6 +19,8 @@ import (
 	"github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/btn"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/mtv"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ptp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -91,6 +93,12 @@ func TestDefaultAdaptersExposeMTVPTPManual2FAChallenge(t *testing.T) {
 			},
 			server: newMTVManual2FAServer,
 		},
+		"BTN": {
+			cfg: func(serverURL string) config.TrackerConfig {
+				return config.TrackerConfig{URL: serverURL, APIKey: "api-token", Username: "user", Password: "pass"}
+			},
+			server: newBTNManual2FAServer,
+		},
 		"PTP": {
 			cfg: func(serverURL string) config.TrackerConfig {
 				return config.TrackerConfig{
@@ -143,6 +151,309 @@ func TestDefaultAdaptersExposeMTVPTPManual2FAChallenge(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestBTNCapabilityAndLocalStatusSemantics(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {},
+		}},
+	}
+	service := NewService(cfg)
+	caps, err := service.Capabilities(ctx)
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	var btnCap api.TrackerAuthCapability
+	for _, cap := range caps {
+		if cap.TrackerID == "BTN" {
+			btnCap = cap
+			break
+		}
+	}
+	if btnCap.TrackerID == "" {
+		t.Fatal("expected BTN capability")
+	}
+	if !btnCap.RequiresAPIKey || !btnCap.SupportsCookieFile || !btnCap.SupportsLogin || !btnCap.SupportsAutoLogin || !btnCap.SupportsTOTP || !btnCap.SupportsManual2FA {
+		t.Fatalf("unexpected BTN capability: %#v", btnCap)
+	}
+
+	status, err := service.Status(ctx, "BTN")
+	if err != nil {
+		t.Fatalf("Status api-key only: %v", err)
+	}
+	if status.State != StateLoginRequired && status.State != StateNotConfigured {
+		t.Fatalf("BTN API-key-only must not be upload-ready, got %#v", status)
+	}
+	if !strings.Contains(status.Message, "imported cookies or login credentials required") {
+		t.Fatalf("expected upload-auth message, got %#v", status)
+	}
+
+	cfg.Trackers.Trackers["BTN"] = config.TrackerConfig{Username: "user", Password: "pass"}
+	service = NewService(cfg)
+	status, err = service.Status(ctx, "BTN")
+	if err != nil {
+		t.Fatalf("Status credentials: %v", err)
+	}
+	if status.State != StateConfigured {
+		t.Fatalf("expected BTN API key plus credentials configured, got %#v", status)
+	}
+
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	cfg.Trackers.Trackers["BTN"] = config.TrackerConfig{}
+	service = NewService(cfg)
+	status, err = service.Status(ctx, "BTN")
+	if err != nil {
+		t.Fatalf("Status cookies: %v", err)
+	}
+	if status.State != StateHasCookies || status.CookieCount != 1 {
+		t.Fatalf("expected BTN stored cookies to remain local has_cookies, got %#v", status)
+	}
+
+	cfg.Metadata.BTNAPI = ""
+	cfg.Trackers.Trackers["BTN"] = config.TrackerConfig{Username: "user", Password: "pass"}
+	service = NewService(cfg)
+	status, err = service.Status(ctx, "BTN")
+	if err != nil {
+		t.Fatalf("Status missing API key: %v", err)
+	}
+	if status.State != StateLoginRequired || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected missing API key to block BTN upload readiness, got %#v", status)
+	}
+
+	cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "missing-auth", "upbrr.db")
+	service = NewService(cfg)
+	status, err = service.Status(ctx, "BTN")
+	if err != nil {
+		t.Fatalf("Status missing API key without encrypted storage: %v", err)
+	}
+	if status.State != StateLoginRequired || status.EncryptedStorage || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected missing API key to take precedence over encrypted storage, got %#v", status)
+	}
+}
+
+func TestValidateBTNStoredCookiesPromotesRemoteSuccess(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/upload.php" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
+			select {
+			case handlerErr <- fmt.Errorf("expected BTN session cookie, got %q", got):
+			default:
+			}
+			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {URL: server.URL},
+		}},
+	}).Validate(ctx, "BTN")
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
+		t.Fatalf("expected successful BTN auth validation, got %#v", status)
+	}
+}
+
+func TestValidateBTNRemoteSuccessRequiresAPIKey(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/upload.php" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
+			select {
+			case handlerErr <- fmt.Errorf("expected BTN session cookie, got %q", got):
+			default:
+			}
+			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {URL: server.URL},
+		}},
+	}).Validate(ctx, "BTN")
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected validated BTN session to remain blocked by missing API key, got %#v", status)
+	}
+}
+
+func TestValidateBTNMissingAPIAfterCookieRefreshUpdatesCookieCount(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login.php":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			_, _ = w.Write([]byte("ok"))
+		case "/upload.php":
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
+				select {
+				case handlerErr <- fmt.Errorf("expected refreshed BTN session cookie, got %q", got):
+				default:
+				}
+				http.Error(w, "unexpected cookie", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {URL: server.URL, Username: "user", Password: "pass"},
+		}},
+	}).Validate(ctx, "BTN")
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected missing API status to include refreshed cookie count, got %#v", status)
+	}
+}
+
+func TestValidateBTNInvalidCookiesDeletesOnlyConfirmedInvalid(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "expired"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/upload.php" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/login.php", http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {URL: server.URL},
+		}},
+	}).Validate(ctx, "BTN")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 0 {
+		t.Fatalf("expected confirmed-invalid BTN cookies to be deleted, got %#v", status)
+	}
+	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "BTN"); err == nil {
+		t.Fatal("expected BTN cookies to be deleted")
+	}
+}
+
+func TestValidateBTNCookieStorageFailureReportsStorageStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	jsonPath := trackerAuthLegacyCookiePathByExt(t, dbPath, "BTN", ".json")
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		t.Fatalf("mkdir cookie dir: %v", err)
+	}
+	if err := os.WriteFile(jsonPath, []byte(`{"session":`), 0o600); err != nil {
+		t.Fatalf("write malformed cookie file: %v", err)
+	}
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {Username: "user", Password: "pass"},
+		}},
+	}).Validate(ctx, "BTN")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateEncryptedStorageUnavailable {
+		t.Fatalf("expected storage-unavailable state, got %#v", status)
+	}
+	if !strings.Contains(status.Message, "cookie storage unavailable") {
+		t.Fatalf("expected storage failure message, got %#v", status)
+	}
+	if !strings.Contains(status.LastError, "unmarshal") {
+		t.Fatalf("expected parse error detail for CLI/frontend consumers, got %#v", status)
+	}
+}
+
+func TestClassifyAdapterErrorRecognizesBTNSubmitted2FARejected(t *testing.T) {
+	t.Parallel()
+
+	err := classifyAdapterError("BTN", fmt.Errorf("login failed: %w", btn.ErrSubmitted2FARejected))
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) || !validationErr.Transient || !validationErr.Submitted2FARejected || validationErr.ConfirmedInvalid {
+		t.Fatalf("expected retry-visible BTN submitted 2FA rejection, got %v", err)
 	}
 }
 
@@ -461,6 +772,58 @@ func TestSubmit2FARetriesAdapterLoginWithCurrentConfigAndCode(t *testing.T) {
 	}
 	if gotCode != "654321" || gotDBPath != dbPath || gotUsername != "user" {
 		t.Fatalf("unexpected adapter retry args code=%q db=%q username=%q", gotCode, gotDBPath, gotUsername)
+	}
+}
+
+func TestSubmit2FABTNSuccessPreservesMissingAPIStatus(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthTestDB(t)
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"BTN": {Username: "user", Password: "pass"},
+			},
+		},
+	}
+	var gotCode string
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{
+			TrackerID:         "BTN",
+			SupportsLogin:     true,
+			SupportsManual2FA: true,
+		},
+		validate: func() (Session, error) {
+			return Session{}, &Needs2FAError{TrackerID: "BTN"}
+		},
+		submit: func(_ context.Context, _ config.TrackerConfig, _ string, req api.TrackerAuthLoginRequest) (Session, error) {
+			gotCode = req.Code
+			return Session{TrackerID: "BTN", State: SessionStateReady}, nil
+		},
+	}
+	service := NewService(cfg)
+	service.adapters = map[string]Adapter{"BTN": adapter}
+
+	status, err := service.Login(context.Background(), "BTN", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if strings.TrimSpace(status.ChallengeID) == "" {
+		t.Fatalf("expected challenge: %#v", status)
+	}
+	status, err = service.Submit2FA(context.Background(), status.ChallengeID, "654321")
+	if err != nil {
+		t.Fatalf("Submit2FA: %v", err)
+	}
+	if gotCode != "654321" {
+		t.Fatalf("unexpected submitted code %q", gotCode)
+	}
+	if status.Needs2FA || status.ChallengeID != "" {
+		t.Fatalf("expected challenge cleared after successful submit, got %#v", status)
+	}
+	if status.State != StateLoginRequired || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected successful BTN 2FA to preserve missing API status, got %#v", status)
 	}
 }
 
@@ -850,6 +1213,64 @@ func TestLoginMissingCredentialsReturnsLoginRequiredWithoutChallenge(t *testing.
 	}
 }
 
+func TestLoginBTNCredentialsWithoutAPIAttemptsSessionValidation(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: newTrackerAuthTestDB(t)},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"BTN": {Username: "user", Password: "pass"},
+			},
+		},
+	}
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{TrackerID: "BTN", SupportsLogin: true},
+		validate: func() (Session, error) {
+			return Session{}, &AuthRequiredError{TrackerID: "BTN", Reason: "login required"}
+		},
+		login: func() (Session, error) {
+			return Session{TrackerID: "BTN", State: SessionStateReady}, nil
+		},
+	}
+	service := NewService(cfg)
+	service.adapters = map[string]Adapter{"BTN": adapter}
+
+	status, err := service.Login(context.Background(), "BTN", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if adapter.validateCalls != 1 || adapter.loginCalls != 1 {
+		t.Fatalf("expected BTN session validation and login, got validate=%d login=%d", adapter.validateCalls, adapter.loginCalls)
+	}
+	if status.State != StateLoginRequired || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected successful BTN login to preserve missing API status, got %#v", status)
+	}
+}
+
+func TestLoginBTNCookiesWithoutAPIPreservesMissingAPIStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	}).Login(ctx, "BTN", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected BTN cookie-only login to preserve missing API status, got %#v", status)
+	}
+	if strings.Contains(status.Message, "username/password missing") {
+		t.Fatalf("missing credentials masked missing API status: %#v", status)
+	}
+}
+
 func TestStatusConfiguredOTPURIAvoidsManualChallenge(t *testing.T) {
 	t.Parallel()
 
@@ -1013,6 +1434,9 @@ func TestStatusConfiguredAuthReportsEncryptedStorageUnavailableWhenPersistenceRe
 			}
 			if status.EncryptedStorage {
 				t.Fatalf("expected storage availability to remain visible as false: %#v", status)
+			}
+			if !strings.Contains(status.Message, "encrypted cookie storage unavailable") {
+				t.Fatalf("expected storage-specific message, got %#v", status)
 			}
 		})
 	}
@@ -1616,6 +2040,27 @@ func TestImportCookiesReportsMergedCookieCount(t *testing.T) {
 	}
 }
 
+func TestImportCookiesPreservesBTNMissingAPIStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	service := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {},
+		}},
+	})
+
+	status, err := service.ImportCookies(ctx, "BTN", "cookies.json", `{"session":"abc"}`)
+	if err != nil {
+		t.Fatalf("ImportCookies: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected missing BTN API to survive cookie import, got %#v", status)
+	}
+}
+
 func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 	t.Parallel()
 
@@ -2214,6 +2659,20 @@ func newTrackerAuthTestDB(t *testing.T) string {
 	return dbPath
 }
 
+// trackerAuthLegacyCookiePathByExt selects the concrete legacy candidate path
+// for auth-status tests that seed malformed cookie files by format.
+func trackerAuthLegacyCookiePathByExt(t *testing.T, dbPath string, trackerID string, ext string) string {
+	t.Helper()
+
+	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
+		if filepath.Ext(candidate) == ext {
+			return candidate
+		}
+	}
+	t.Fatalf("expected %s legacy cookie path", ext)
+	return ""
+}
+
 func saveTrackerAuthTestConfig(t *testing.T, dbPath string, cfg config.Config) {
 	t.Helper()
 
@@ -2257,6 +2716,23 @@ func newMTVManual2FAServer(t *testing.T) *httptest.Server {
 			http.Redirect(w, r, "/twofactor/login", http.StatusFound)
 		case "/twofactor/login":
 			_, _ = w.Write([]byte(`<input name="token" value="ponmlkjihgfedcba">`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func newBTNManual2FAServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/upload.php":
+			_, _ = w.Write([]byte(`<form action="/login.php"><input type="password" name="password"></form>`))
+		case "/login.php":
+			_, _ = w.Write([]byte(`<form><input name="codenumber" value=""></form><p>2FA required</p>`))
 		default:
 			http.NotFound(w, r)
 		}
