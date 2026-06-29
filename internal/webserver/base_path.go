@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"path" //nolint:depguard // Normalizes URL route paths, not local filesystem paths.
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -134,12 +135,7 @@ func redactURLUserinfo(value string) string {
 }
 
 func hasUnsafeBaseURLPathSegment(pathValue string) bool {
-	for _, segment := range strings.Split(strings.ReplaceAll(pathValue, `\`, "/"), "/") {
-		if segment == ".." {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(strings.ReplaceAll(pathValue, `\`, "/"), "/"), "..")
 }
 
 // externalBasePath derives the externally visible route prefix from baseURL.
